@@ -973,9 +973,17 @@ def test_deepagents_tools_can_be_converted_to_structured_tools(db):
     tools = mgr._deepagents_backend._default_tools()
     search_tool = StructuredTool.from_function(next(t for t in tools if t.__name__ == "search_messages"))
     channels_tool = StructuredTool.from_function(next(t for t in tools if t.__name__ == "list_channels"))
+    add_channel_tool = StructuredTool.from_function(next(t for t in tools if t.__name__ == "add_channel"))
+    rename_thread_tool = StructuredTool.from_function(next(t for t in tools if t.__name__ == "rename_agent_thread"))
 
     assert "search" in search_tool.description.lower()
     assert "channels" in channels_tool.description.lower()
+    assert search_tool.args_schema.model_json_schema().get("required") == ["query"]
+    assert "limit" not in search_tool.args_schema.model_json_schema().get("required", [])
+    assert channels_tool.args_schema.model_json_schema().get("required", []) == []
+    assert add_channel_tool.args_schema.model_json_schema().get("required") == ["identifier"]
+    assert "confirm" not in add_channel_tool.args_schema.model_json_schema().get("required", [])
+    assert set(rename_thread_tool.args_schema.model_json_schema().get("required", [])) == {"thread_id", "title"}
 
 
 @pytest.mark.anyio

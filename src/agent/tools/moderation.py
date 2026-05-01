@@ -41,7 +41,7 @@ def register(db, client_pool, embedding_service, **kwargs):
                 preview = (r.generated_text or "")[:200]
                 lines.append(
                     f"- run_id={r.id}, pipeline_id={r.pipeline_id}, "
-                    f"created={r.created_at}: {preview}"
+                    f"created={getattr(r, 'created_at', 'unknown')}: {preview}"
                 )
             return _text_response("\n".join(lines))
         except Exception as e:

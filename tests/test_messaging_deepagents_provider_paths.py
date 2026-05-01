@@ -604,6 +604,7 @@ class TestDeepagentsSyncModeration:
         assert "Ошибка" in result
 
     def test_reject_run_success(self, mock_db):
+        mock_db.repos.generation_runs.get = AsyncMock(return_value=SimpleNamespace(id=3))
         mock_db.repos.generation_runs.set_moderation_status = AsyncMock()
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["reject_run"](3)
@@ -612,14 +613,14 @@ class TestDeepagentsSyncModeration:
     def test_bulk_approve_runs(self, mock_db):
         mock_db.repos.generation_runs.set_moderation_status = AsyncMock()
         tool_map = _build_sync_tools(mock_db)
-        result = tool_map["bulk_approve_runs"]("1,2,3")
-        assert "Одобрено: 3" in result
+        result = tool_map["bulk_approve_runs"]("1,2,3", confirm=True)
+        assert "Одобрено 3" in result
 
     def test_bulk_reject_runs(self, mock_db):
         mock_db.repos.generation_runs.set_moderation_status = AsyncMock()
         tool_map = _build_sync_tools(mock_db)
-        result = tool_map["bulk_reject_runs"]("10,20")
-        assert "Отклонено: 2" in result
+        result = tool_map["bulk_reject_runs"]("10,20", confirm=True)
+        assert "Отклонено 2" in result
 
 
 # ===========================================================================
@@ -653,12 +654,13 @@ class TestDeepagentsSyncAccounts:
         mock_db.set_account_active = AsyncMock()
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["toggle_account"](1)
-        assert "переключён" in result.lower()
+        assert "деактивирован" in result.lower()
 
     def test_delete_account_success(self, mock_db):
+        mock_db.get_accounts = AsyncMock(return_value=[])
         mock_db.delete_account = AsyncMock()
         tool_map = _build_sync_tools(mock_db)
-        result = tool_map["delete_account"](1)
+        result = tool_map["delete_account"](1, confirm=True)
         assert "удалён" in result.lower()
 
     def test_get_flood_status_no_accounts(self, mock_db):
@@ -695,9 +697,10 @@ class TestDeepagentsSyncThreads:
         assert "id=42" in result
 
     def test_delete_agent_thread_success(self, mock_db):
+        mock_db.get_agent_thread = AsyncMock(return_value=None)
         mock_db.delete_agent_thread = AsyncMock()
         tool_map = _build_sync_tools(mock_db)
-        result = tool_map["delete_agent_thread"](7)
+        result = tool_map["delete_agent_thread"](7, confirm=True)
         assert "удалён" in result.lower()
 
     def test_rename_agent_thread_success(self, mock_db):

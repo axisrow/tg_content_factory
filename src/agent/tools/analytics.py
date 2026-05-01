@@ -59,11 +59,13 @@ def register(db, client_pool, embedding_service, **kwargs):
                 return _text_response("Статистика пайплайнов не найдена.")
             lines = ["Статистика пайплайнов:"]
             for s in stats:
+                success_rate = getattr(s, "success_rate", 0) or 0
                 lines.append(
-                    f"- {s.pipeline_name} (id={s.pipeline_id}): "
+                    f"- {s.pipeline_name} (id={getattr(s, 'pipeline_id', '?')}): "
                     f"генераций={s.total_generations}, опубл.={s.total_published}, "
-                    f"отклон.={s.total_rejected}, на модерации={s.pending_moderation}, "
-                    f"success_rate={s.success_rate:.0%}"
+                    f"отклон.={getattr(s, 'total_rejected', 0)}, "
+                    f"на модерации={getattr(s, 'pending_moderation', 0)}, "
+                    f"success_rate={success_rate:.0%}"
                 )
             return _text_response("\n".join(lines))
         except Exception as e:
@@ -152,7 +154,10 @@ def register(db, client_pool, embedding_service, **kwargs):
             lines = [f"Топ каналов за {days} дней:"]
             for ch in channels:
                 message_count = getattr(ch, "message_count", getattr(ch, "count", 0))
-                lines.append(f"- {ch.title} (id={ch.channel_id}): {message_count} сообщений")
+                lines.append(
+                    f"- {ch.title} (id={getattr(ch, 'channel_id', '?')}): "
+                    f"{message_count} сообщений"
+                )
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка получения трендов каналов: {e}")
@@ -224,11 +229,13 @@ def register(db, client_pool, embedding_service, **kwargs):
                 return _text_response("Нет запланированных публикаций.")
             lines = [f"Ближайшие публикации ({len(events)}):"]
             for e in events:
-                scheduled = e.scheduled_time or e.created_at
+                scheduled = getattr(e, "scheduled_time", None) or getattr(e, "created_at", "unknown")
+                preview = getattr(e, "preview", "") or ""
                 lines.append(
-                    f"- run_id={e.run_id}, pipeline={e.pipeline_name} (id={e.pipeline_id}), "
+                    f"- run_id={e.run_id}, pipeline={e.pipeline_name} "
+                    f"(id={getattr(e, 'pipeline_id', '?')}), "
                     f"статус={e.moderation_status}, дата={scheduled}, "
-                    f"превью: {e.preview[:100]}"
+                    f"превью: {preview[:100]}"
                 )
             return _text_response("\n".join(lines))
         except Exception as e:
