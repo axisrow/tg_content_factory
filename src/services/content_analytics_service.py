@@ -9,6 +9,13 @@ from src.database import Database
 logger = logging.getLogger(__name__)
 
 
+def _parse_db_datetime(value: str) -> datetime:
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
 @dataclass
 class PipelineStats:
     pipeline_id: int
@@ -159,18 +166,18 @@ class ContentAnalyticsService:
             generations = sum(
                 1 for r in runs
                 if r["created_at"]
-                and day_start <= datetime.fromisoformat(r["created_at"]) < day_end
+                and day_start <= _parse_db_datetime(r["created_at"]) < day_end
             )
             publications = sum(
                 1 for r in runs
                 if r["published_at"]
-                and day_start <= datetime.fromisoformat(r["published_at"]) < day_end
+                and day_start <= _parse_db_datetime(r["published_at"]) < day_end
             )
             rejections = sum(
                 1 for r in runs
                 if r["moderation_status"] == "rejected"
                 and r["updated_at"]
-                and day_start <= datetime.fromisoformat(r["updated_at"]) < day_end
+                and day_start <= _parse_db_datetime(r["updated_at"]) < day_end
             )
 
             results.append(DailyStats(

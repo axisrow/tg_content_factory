@@ -189,11 +189,13 @@ class PhotoLoaderRepository:
         )
         return [self._to_item(row) for row in await cur.fetchall()]
 
-    async def list_items_for_batch(self, batch_id: int) -> list[PhotoBatchItem]:
-        cur = await self._db.execute(
-            "SELECT * FROM photo_batch_items WHERE batch_id = ? ORDER BY id ASC",
-            (batch_id,),
-        )
+    async def list_items_for_batch(self, batch_id: int, limit: int | None = None) -> list[PhotoBatchItem]:
+        sql = "SELECT * FROM photo_batch_items WHERE batch_id = ? ORDER BY id ASC"
+        params: tuple[object, ...] = (batch_id,)
+        if limit is not None:
+            sql += " LIMIT ?"
+            params += (limit,)
+        cur = await self._db.execute(sql, params)
         return [self._to_item(row) for row in await cur.fetchall()]
 
     async def update_item(

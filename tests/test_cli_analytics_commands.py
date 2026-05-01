@@ -147,8 +147,10 @@ def test_daily_empty(capsys):
 
 
 def test_daily_with_data(capsys):
+    from src.services.content_analytics_service import DailyStats
+
     db = make_cli_db()
-    rows = [{"date": "2024-01-01", "count": 5, "published": 3}]
+    rows = [DailyStats(date="2024-01-01", generations=5, publications=3, rejections=0)]
     mock_svc = MagicMock()
     mock_svc.get_daily_stats = AsyncMock(return_value=rows)
     with _init_patches(db)[0], _init_patches(db)[1], \
@@ -190,7 +192,7 @@ def test_trending_topics_with_data(capsys):
 
 def test_trending_channels_with_data(capsys):
     db = make_cli_db()
-    ch = MagicMock(title="NewsCh", count=100)
+    ch = MagicMock(title="NewsCh", message_count=100)
     mock_svc = MagicMock()
     mock_svc.get_trending_channels = AsyncMock(return_value=[ch])
     with _init_patches(db)[0], _init_patches(db)[1], \

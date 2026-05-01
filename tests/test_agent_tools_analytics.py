@@ -121,8 +121,8 @@ class TestAnalyticsToolGetTrendingChannels:
     @pytest.mark.anyio
     async def test_with_channels(self, mock_db):
         channels = [
-            SimpleNamespace(title="TechChannel", channel_id=100, count=200),
-            SimpleNamespace(title="NewsChannel", channel_id=200, count=150),
+            SimpleNamespace(title="TechChannel", channel_id=100, message_count=200),
+            SimpleNamespace(title="NewsChannel", channel_id=200, message_count=150),
         ]
         with patch("src.services.trend_service.TrendService") as mock_svc:
             mock_svc.return_value.get_trending_channels = AsyncMock(return_value=channels)
@@ -248,9 +248,11 @@ class TestAnalyticsToolGetDailyStats:
 
     @pytest.mark.anyio
     async def test_with_data(self, mock_db):
+        from src.services.content_analytics_service import DailyStats
+
         rows = [
-            {"date": "2026-01-01", "count": 10, "published": 8},
-            {"date": "2026-01-02", "count": 15, "published": 12},
+            DailyStats(date="2026-01-01", generations=10, publications=8, rejections=1),
+            DailyStats(date="2026-01-02", generations=15, publications=12, rejections=0),
         ]
         with patch("src.services.content_analytics_service.ContentAnalyticsService") as mock_svc:
             mock_svc.return_value.get_daily_stats = AsyncMock(return_value=rows)

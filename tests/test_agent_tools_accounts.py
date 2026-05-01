@@ -184,12 +184,14 @@ class TestGetAccountInfoTool:
     @pytest.mark.anyio
     async def test_snapshot_runtime_is_explicitly_unavailable(self, mock_db):
         class SnapshotClientPool:
-            pass
+            clients = {"+71112223344": object()}
 
         handlers = _get_tool_handlers(mock_db, client_pool=SnapshotClientPool())
         result = await handlers["get_account_info"]({})
         text = _text(result)
-        assert text == "live Telegram runtime unavailable"
+        assert "live Telegram runtime unavailable" in text
+        assert "Web snapshot runtime" in text
+        assert "+71112223344" in text
         lowered = text.lower()
         assert "disabled" not in lowered
         assert "not connected" not in lowered

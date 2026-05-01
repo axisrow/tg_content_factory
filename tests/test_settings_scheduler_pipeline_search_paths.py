@@ -887,8 +887,7 @@ class TestListChannelsTool:
 class TestGetChannelStatsTool:
     @pytest.mark.anyio
     async def test_no_stats_returns_empty_message(self, mock_db):
-        mock_db.repos = MagicMock()
-        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(return_value={})
+        mock_db.get_latest_stats_for_all = AsyncMock(return_value={})
         handlers = _get_channel_tool_handlers(mock_db)
         result = await handlers["get_channel_stats"]({})
         assert "не собрана" in _text(result)
@@ -898,8 +897,7 @@ class TestGetChannelStatsTool:
         stat = MagicMock()
         stat.subscriber_count = 5000
         stat.avg_views = 200
-        mock_db.repos = MagicMock()
-        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(return_value={100: stat})
+        mock_db.get_latest_stats_for_all = AsyncMock(return_value={100: stat})
         handlers = _get_channel_tool_handlers(mock_db)
         result = await handlers["get_channel_stats"]({})
         text = _text(result)
@@ -908,8 +906,7 @@ class TestGetChannelStatsTool:
 
     @pytest.mark.anyio
     async def test_error_handling(self, mock_db):
-        mock_db.repos = MagicMock()
-        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(side_effect=Exception("stats fail"))
+        mock_db.get_latest_stats_for_all = AsyncMock(side_effect=Exception("stats fail"))
         handlers = _get_channel_tool_handlers(mock_db)
         result = await handlers["get_channel_stats"]({})
         assert "Ошибка" in _text(result)

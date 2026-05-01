@@ -8,6 +8,9 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     sq_sub = sq_parser.add_subparsers(dest="search_query_action")
     sq_sub.add_parser("list", help="List search queries")
 
+    sq_get = sq_sub.add_parser("get", help="Show search query details")
+    sq_get.add_argument("id", type=int, help="Search query id")
+
     sq_add = sq_sub.add_parser("add", help="Add search query")
     sq_add.add_argument("query", help="FTS5 search query text")
     sq_add.add_argument("--interval", type=int, default=60, help="Run interval in minutes")

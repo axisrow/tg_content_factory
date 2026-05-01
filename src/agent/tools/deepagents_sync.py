@@ -123,7 +123,7 @@ def build_deepagents_tools(
     def get_channel_stats() -> str:
         """Get subscriber counts and statistics for all channels."""
         try:
-            stats = _run_sync("get_channel_stats", db.repos.channels.get_latest_stats_for_all)
+            stats = _run_sync("get_channel_stats", db.get_latest_stats_for_all)
         except Exception as exc:
             return f"Ошибка статистики каналов: {exc}"
         if not stats:
@@ -629,7 +629,8 @@ def build_deepagents_tools(
             return "Данные не найдены."
         lines = [f"Топ каналов за {days} дней:"]
         for ch in channels:
-            lines.append(f"- {ch.title}: {ch.count} сообщений")
+            message_count = getattr(ch, "message_count", getattr(ch, "count", 0))
+            lines.append(f"- {ch.title}: {message_count} сообщений")
         return "\n".join(lines)
 
     tools.append(get_trending_channels)
@@ -701,7 +702,13 @@ def build_deepagents_tools(
             return "Нет данных."
         lines = [f"Статистика за {days} дней:"]
         for r in rows:
-            lines.append(f"- {r['date']}: {r.get('count', 0)} генераций")
+            if isinstance(r, dict):
+                date = r.get("date", "")
+                generations = r.get("generations", r.get("count", 0))
+            else:
+                date = getattr(r, "date", "")
+                generations = getattr(r, "generations", 0)
+            lines.append(f"- {date}: {generations} генераций")
         return "\n".join(lines)
 
     tools.append(get_daily_stats)
@@ -711,10 +718,12 @@ def build_deepagents_tools(
     def get_scheduler_status() -> str:
         """Get scheduler status and job info."""
         try:
-            from src.scheduler.service import SchedulerManager
-
-            mgr = SchedulerManager(db)
-            _run_sync("sched_load", mgr.load_settings)
+            mgr = runtime_context.scheduler_manager
+            if mgr is None:
+                return (
+                    "Ошибка: Планировщик недоступен — live SchedulerManager не передан. "
+                    "Эта операция доступна только через web-интерфейс."
+                )
             running = mgr.is_running
             return f"Планировщик: {'запущен' if running else 'остановлен'}, интервал={mgr.interval_minutes}мин"
         except Exception as exc:
@@ -725,10 +734,12 @@ def build_deepagents_tools(
     def toggle_scheduler_job(job_id: str) -> str:
         """Toggle a scheduler job on/off."""
         try:
-            from src.scheduler.service import SchedulerManager
-
-            mgr = SchedulerManager(db)
-            _run_sync("sched_load2", mgr.load_settings)
+            mgr = runtime_context.scheduler_manager
+            if mgr is None:
+                return (
+                    "Ошибка: Планировщик недоступен — live SchedulerManager не передан. "
+                    "Эта операция доступна только через web-интерфейс."
+                )
             current = _run_sync("sched_check", lambda: mgr.is_job_enabled(job_id))
             _run_sync("sched_toggle", lambda: mgr.sync_job_state(job_id, not current))
             return f"Задача '{job_id}' {'выключена' if current else 'включена'}."

@@ -36,6 +36,10 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
 
     photo_sub.add_parser("batch-list", help="List photo batches")
 
+    photo_items = photo_sub.add_parser("items", help="List photo batch items")
+    photo_items.add_argument("--batch-id", type=int, default=None, help="Filter by batch id")
+    photo_items.add_argument("--limit", type=int, default=100, help="Max items to show")
+
     photo_cancel = photo_sub.add_parser("batch-cancel", help="Cancel a photo batch item")
     photo_cancel.add_argument("id", type=int, help="Photo item id")
 

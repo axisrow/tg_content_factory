@@ -87,8 +87,8 @@ class TestCLIAccount:
         run(_ns(account_action="delete", id=pk))
         assert "Deleted" in capsys.readouterr().out
 
-    def test_info_shows_table(self, cli_env_with_pool, capsys):
-        """account info: shows table with connected account profile data."""
+    def test_info_shows_live_account_profile(self, cli_env_with_pool, capsys):
+        """account info: shows connected account profile diagnostics."""
         from src.models import TelegramUserInfo
 
         db = cli_env_with_pool
@@ -118,7 +118,7 @@ class TestCLIAccount:
         assert phone in out
         assert "Alice Smith" in out
         assert "@alice" in out
-        assert "Phone" in out
+        assert "Live Telegram accounts (1)" in out
 
     def test_info_filter_by_phone(self, cli_env_with_pool, capsys):
         """account info --phone: only shows matching account."""
@@ -151,7 +151,7 @@ class TestCLIAccount:
         assert phone2 not in out
 
     def test_info_no_connected_accounts(self, cli_env_with_pool, capsys):
-        """account info: prints message when no accounts are connected."""
+        """account info: prints shared no-live-profile diagnostics."""
         fake_pool = AsyncMock(
             clients={},
             get_users_info=AsyncMock(return_value=[]),
@@ -163,7 +163,27 @@ class TestCLIAccount:
 
             run(_ns(account_action="info", phone=None))
 
-        assert "No connected accounts found." in capsys.readouterr().out
+        assert "Live Telegram accounts not found" in capsys.readouterr().out
+
+    def test_info_connected_runtime_with_empty_profiles(self, cli_env_with_pool, capsys):
+        """account info does not treat connected phones as disconnected when profile fetch is empty."""
+        phone = "+10009998877"
+        _add_account(cli_env_with_pool, phone=phone)
+        fake_pool = AsyncMock(
+            clients={phone: MagicMock()},
+            get_users_info=AsyncMock(return_value=[]),
+            disconnect_all=AsyncMock(),
+        )
+        init_pool_mock = AsyncMock(return_value=(MagicMock(), fake_pool))
+        with patch("src.cli.runtime.init_pool", new=init_pool_mock):
+            from src.cli.commands.account import run
+
+            run(_ns(account_action="info", phone=None))
+
+        out = capsys.readouterr().out
+        assert "Runtime connected phones" in out
+        assert phone in out
+        assert "do not treat this as disconnected" in out
 
     def test_flood_status_no_flood(self, cli_env, capsys):
         _add_account(cli_env, phone="+10001112233")
@@ -1389,3 +1409,45 @@ class TestCLIDialogsTopics:
         )
         assert args.channel_id == 456
         assert args.phone == "+10001112233"
+
+
+class TestCLIParityParser:
+    def test_new_parity_subcommands_parse(self):
+        from src.cli.parser import build_parser
+
+        parser = build_parser()
+
+        args = parser.parse_args(["account", "add", "--phone", "+1000"])
+        assert args.account_action == "add"
+        assert args.phone == "+1000"
+        assert args.code is None
+
+        args = parser.parse_args(["account", "add", "--phone", "+1000", "--code", "12345"])
+        assert args.account_action == "add"
+        assert args.code == "12345"
+
+        args = parser.parse_args(["search-query", "get", "7"])
+        assert args.search_query_action == "get"
+        assert args.id == 7
+
+        args = parser.parse_args(["pipeline", "moderation-list", "--pipeline-id", "3", "--limit", "5"])
+        assert args.pipeline_action == "moderation-list"
+        assert args.pipeline_id == 3
+        assert args.limit == 5
+
+        args = parser.parse_args(["pipeline", "moderation-view", "9"])
+        assert args.pipeline_action == "moderation-view"
+        assert args.run_id == 9
+
+        args = parser.parse_args(["photo-loader", "items", "--batch-id", "4"])
+        assert args.photo_loader_action == "items"
+        assert args.batch_id == 4
+
+        args = parser.parse_args(["dialogs", "resolve", "@example", "--phone", "+1000"])
+        assert args.dialogs_action == "resolve"
+        assert args.identifier == "@example"
+        assert args.phone == "+1000"
+
+        args = parser.parse_args(["image", "generated", "--limit", "3"])
+        assert args.image_action == "generated"
+        assert args.limit == 3

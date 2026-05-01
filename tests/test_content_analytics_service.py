@@ -130,3 +130,32 @@ async def test_content_analytics_daily_stats_aggregate_all_pipelines(db):
     assert stats[1].generations == 1
     assert stats[1].publications == 0
     assert stats[1].rejections == 1
+
+
+@pytest.mark.anyio
+async def test_content_analytics_daily_stats_accepts_naive_db_timestamps(db):
+    analytics = ContentAnalyticsService(db)
+    pipeline_id = await _create_pipeline(db, "Pipeline Naive")
+    now = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+
+    run_id = await db.repos.generation_runs.create_run(pipeline_id, "rejected")
+    await db.repos.generation_runs.save_result(run_id, "post")
+    await db.repos.generation_runs.set_moderation_status(run_id, "rejected")
+    await db.execute(
+        """
+        UPDATE generation_runs
+        SET created_at = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (
+            now.replace(tzinfo=None).isoformat(),
+            (now + timedelta(hours=1)).replace(tzinfo=None).isoformat(),
+            run_id,
+        ),
+    )
+    await db.db.commit()
+
+    stats = await analytics.get_daily_stats(days=1)
+
+    assert stats[0].generations == 1
+    assert stats[0].rejections == 1

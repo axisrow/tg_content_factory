@@ -29,20 +29,76 @@ def _matches_phone(phone: str, phone_filter: str) -> bool:
     return phone == phone_filter
 
 
-async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: str = "") -> str:
-    """Return account info grounded only in the live ClientPool."""
-    if not runtime.has_live_telegram:
-        return _NO_LIVE_RUNTIME
+def _connected_phones(client_pool: object | None) -> set[str]:
+    if client_pool is None:
+        return set()
 
+    connected_phones = None
+    instance_attrs = getattr(client_pool, "__dict__", {})
+    if isinstance(instance_attrs, dict) and "connected_phones" in instance_attrs:
+        connected_phones = instance_attrs["connected_phones"]
+    elif callable(getattr(type(client_pool), "connected_phones", None)):
+        connected_phones = getattr(client_pool, "connected_phones")
+
+    if callable(connected_phones):
+        try:
+            phones = connected_phones()
+        except Exception:
+            phones = set()
+        if isinstance(phones, (set, list, tuple)):
+            return {str(phone) for phone in phones}
+
+    try:
+        clients = getattr(client_pool, "clients")
+    except Exception:
+        clients = {}
+    if isinstance(clients, dict):
+        return {str(phone) for phone in clients}
+    return set()
+
+
+def _format_phones(phones: set[str]) -> str:
+    return ", ".join(sorted(phones)) if phones else "-"
+
+
+async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: str = "") -> str:
+    """Return account info with DB/runtime/profile-fetch states kept separate."""
     phone_filter = normalize_phone(phone.strip()) if phone.strip() else ""
+    connected = _connected_phones(runtime.client_pool)
+    if phone_filter:
+        connected = {p for p in connected if _matches_phone(p, phone_filter)}
+
+    if not runtime.has_live_telegram:
+        details = [_NO_LIVE_RUNTIME]
+        if runtime.runtime_kind == "snapshot":
+            details.append(
+                "Web snapshot runtime can show worker-connected phones, but live Telegram API "
+                "is only available in the worker or embedded-worker process."
+            )
+        else:
+            details.append("No live Telegram client pool is attached to this agent backend.")
+        if connected:
+            details.append(f"Runtime connected phones snapshot: {_format_phones(connected)}.")
+        return "\n".join(details)
+
     users = await runtime.client_pool.get_users_info(include_avatar=False)
     if phone_filter:
         users = [u for u in users if _matches_phone(str(u.phone), phone_filter)]
-    if not users:
-        return "Live Telegram accounts not found for this request: не найдены."
 
     db_accounts = await runtime.db.get_accounts()
     db_by_phone = {a.phone: a for a in db_accounts}
+    active_count = sum(1 for a in db_accounts if getattr(a, "is_active", False))
+    if not users:
+        if connected:
+            lines = [
+                "Live Telegram account profiles unavailable for this request.",
+                f"DB active accounts: {active_count}.",
+                f"Runtime connected phones: {_format_phones(connected)}.",
+                "Telegram profile fetch returned no profiles; do not treat this as disconnected.",
+            ]
+            return "\n".join(lines)
+        return "Live Telegram accounts not found for this request: не найдены."
+
     lines = [f"Live Telegram accounts ({len(users)}):"]
     for u in users:
         db_account = db_by_phone.get(u.phone)

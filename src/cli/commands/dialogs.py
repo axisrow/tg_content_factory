@@ -59,6 +59,27 @@ def run_with_dependencies(
                         )
                     )
 
+            elif args.dialogs_action == "resolve":
+                try:
+                    entity = await pool.resolve_any_entity(args.identifier, phone=args.phone)
+                except RuntimeError as exc:
+                    if "no_client" in str(exc):
+                        print("No connected accounts.")
+                        return
+                    print(f"Error resolving entity: {exc}")
+                    return
+                except Exception as exc:
+                    print(f"Error resolving entity: {exc}")
+                    return
+                if not entity:
+                    print(f"Entity '{args.identifier}' not found.")
+                    return
+                print(f"Title: {entity['title']}")
+                print(f"Type: {entity['channel_type']}")
+                print(f"ID: {entity['channel_id']}")
+                if entity.get("username"):
+                    print(f"Username: @{entity['username']}")
+
             elif args.dialogs_action == "leave":
                 accounts = sorted(pool.clients.keys())
                 if not accounts:

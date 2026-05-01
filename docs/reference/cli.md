@@ -75,6 +75,7 @@ python -m src.main filter hard-delete [--pks PK1,PK2] [--yes]
 
 ```bash
 python -m src.main search-query list
+python -m src.main search-query get ID
 python -m src.main search-query add "query" [--interval MINUTES] [--regex] [--fts] [--notify]
 python -m src.main search-query edit ID [--query TEXT] [--interval MINUTES]
 python -m src.main search-query delete ID
@@ -97,6 +98,8 @@ python -m src.main pipeline generate ID [--model MODEL] [--preview]
 python -m src.main pipeline runs ID [--limit N] [--status STATUS]
 python -m src.main pipeline run-show RUN_ID
 python -m src.main pipeline queue ID [--limit N]
+python -m src.main pipeline moderation-list [--pipeline-id ID] [--limit N]
+python -m src.main pipeline moderation-view RUN_ID
 python -m src.main pipeline publish RUN_ID
 python -m src.main pipeline approve RUN_ID
 python -m src.main pipeline reject RUN_ID
@@ -114,6 +117,7 @@ python -m src.main pipeline filter clear ID
 python -m src.main image generate "prompt" [--model provider:model_id]
 python -m src.main image models --provider PROVIDER [--query TEXT]
 python -m src.main image providers
+python -m src.main image generated [--limit N]
 ```
 
 ## account
@@ -124,6 +128,7 @@ python -m src.main account info [--phone PHONE]
 python -m src.main account toggle ID
 python -m src.main account delete ID
 python -m src.main account add --phone PHONE [--api-id ID] [--api-hash HASH]
+python -m src.main account add --phone PHONE --code CODE [--password PASSWORD]
 python -m src.main account flood-status
 python -m src.main account flood-clear --phone PHONE
 ```
@@ -146,6 +151,7 @@ python -m src.main scheduler clear-pending
 ```bash
 python -m src.main dialogs list [--phone PHONE]
 python -m src.main dialogs refresh [--phone PHONE]
+python -m src.main dialogs resolve IDENTIFIER [--phone PHONE]
 python -m src.main dialogs leave DIALOG_ID [DIALOG_ID ...] [--phone PHONE] [--yes]
 python -m src.main dialogs topics --channel-id ID [--phone PHONE]
 python -m src.main dialogs cache-status
@@ -204,6 +210,7 @@ python -m src.main photo-loader send --phone PHONE --target DIALOG_ID --files FI
 python -m src.main photo-loader schedule-send --phone PHONE --target DIALOG_ID --files FILE [FILE ...] --at ISO_DATETIME [--mode album|separate] [--caption TEXT]
 python -m src.main photo-loader batch-create --phone PHONE --target DIALOG_ID --manifest FILE [--caption TEXT]
 python -m src.main photo-loader batch-list
+python -m src.main photo-loader items [--batch-id ID] [--limit N]
 python -m src.main photo-loader batch-cancel ID
 python -m src.main photo-loader auto-create --phone PHONE --target DIALOG_ID --folder PATH --interval MINUTES [--mode album|separate] [--caption TEXT]
 python -m src.main photo-loader auto-list

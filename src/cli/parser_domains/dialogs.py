@@ -17,6 +17,10 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         "--phone", default=None, help="Account phone (default: first connected)"
     )
 
+    dialogs_resolve = dialogs_sub.add_parser("resolve", help="Resolve @username, t.me link, or numeric ID")
+    dialogs_resolve.add_argument("identifier", help="Identifier to resolve")
+    dialogs_resolve.add_argument("--phone", default=None, help="Preferred account phone")
+
     dialogs_leave = dialogs_sub.add_parser("leave", help="Leave dialogs by ID")
     dialogs_leave.add_argument(
         "dialog_ids",

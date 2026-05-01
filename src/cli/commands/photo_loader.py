@@ -102,6 +102,18 @@ def run(args: argparse.Namespace) -> None:
                     )
                 return
 
+            if action == "items":
+                if args.batch_id is not None:
+                    items = await bundle.list_items_for_batch(args.batch_id, limit=args.limit)
+                else:
+                    items = await tasks.list_items(limit=args.limit)
+                for item in items:
+                    print(
+                        f"#{item.id} batch={item.batch_id or '-'} phone={item.phone} "
+                        f"target={item.target_dialog_id} status={item.status}"
+                    )
+                return
+
             if action == "batch-cancel":
                 ok = await tasks.cancel_item(args.id)
                 print("Cancelled" if ok else "Not cancelled")

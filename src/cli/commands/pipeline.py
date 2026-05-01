@@ -565,6 +565,38 @@ def run(args: argparse.Namespace) -> None:
                         f"{created_at:<19} {_preview_text(run.generated_text)}"
                     )
 
+            elif args.pipeline_action == "moderation-list":
+                runs = await db.repos.generation_runs.list_pending_moderation(
+                    pipeline_id=args.pipeline_id,
+                    limit=args.limit,
+                )
+                if not runs:
+                    print("No pending moderation runs.")
+                    return
+                print(f"{'Run ID':<8} {'Pipeline':<8} {'Status':<12} {'Created':<19} Preview")
+                print("-" * 90)
+                for run in runs:
+                    created_at = (
+                        run.created_at.strftime("%Y-%m-%d %H:%M:%S") if run.created_at else "—"
+                    )
+                    print(
+                        f"{run.id or 0:<8} {run.pipeline_id or 0:<8} {run.moderation_status:<12} "
+                        f"{created_at:<19} {_preview_text(run.generated_text)}"
+                    )
+
+            elif args.pipeline_action == "moderation-view":
+                run = await db.repos.generation_runs.get(args.run_id)
+                if run is None:
+                    print(f"Run id={args.run_id} not found")
+                    return
+                print(f"Run id={run.id} (pipeline_id={run.pipeline_id})")
+                print(f"Status: {run.status}")
+                print(f"Moderation: {run.moderation_status}")
+                print(f"Created: {run.created_at}")
+                print("")
+                print("Generated text:")
+                print(run.generated_text or "(empty)")
+
             elif args.pipeline_action == "approve":
                 run = await db.repos.generation_runs.get(args.run_id)
                 if run is None:

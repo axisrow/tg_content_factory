@@ -563,8 +563,8 @@ class PhotoLoaderBundle:
     async def list_items(self, limit: int = 100) -> list[PhotoBatchItem]:
         return await self.photo_loader.list_items(limit)
 
-    async def list_items_for_batch(self, batch_id: int) -> list[PhotoBatchItem]:
-        return await self.photo_loader.list_items_for_batch(batch_id)
+    async def list_items_for_batch(self, batch_id: int, limit: int | None = None) -> list[PhotoBatchItem]:
+        return await self.photo_loader.list_items_for_batch(batch_id, limit=limit)
 
     async def update_item(
         self,

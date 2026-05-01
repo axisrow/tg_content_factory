@@ -214,6 +214,13 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     pipeline_queue.add_argument("id", type=int, help="Pipeline id")
     pipeline_queue.add_argument("--limit", type=int, default=20, help="Max runs to show")
 
+    moderation_list = pipeline_sub.add_parser("moderation-list", help="Show pending moderation runs")
+    moderation_list.add_argument("--pipeline-id", type=int, default=None, help="Filter by pipeline id")
+    moderation_list.add_argument("--limit", type=int, default=20, help="Max runs to show")
+
+    moderation_view = pipeline_sub.add_parser("moderation-view", help="Show moderation run details")
+    moderation_view.add_argument("run_id", type=int, help="Run id")
+
     pipeline_publish = pipeline_sub.add_parser("publish", help="Publish a generation run")
     pipeline_publish.add_argument("run_id", type=int, help="Run id to publish")
 

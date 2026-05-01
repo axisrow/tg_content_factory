@@ -69,7 +69,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     )
     async def get_channel_stats(args):
         try:
-            stats = await db.repos.channels.get_latest_stats_for_all()
+            stats = await db.get_latest_stats_for_all()
             if not stats:
                 return _text_response("Статистика каналов пока не собрана.")
             lines = [f"Статистика каналов ({len(stats)}):"]

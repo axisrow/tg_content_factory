@@ -22,10 +22,13 @@ def mock_db():
     return db
 
 
-def _build_sync_tools(mock_db, config=None):
+def _build_sync_tools(mock_db, config=None, runtime_context=None):
     from src.agent.tools.deepagents_sync import build_deepagents_tools
 
-    return {t.__name__: t for t in build_deepagents_tools(mock_db, config=config)}
+    return {
+        t.__name__: t
+        for t in build_deepagents_tools(mock_db, config=config, runtime_context=runtime_context)
+    }
 
 
 def _get_tool_handlers(mock_db, client_pool=None, config=None, **kwargs):
@@ -581,7 +584,7 @@ class TestDeepagentsSyncGetTrendingChannels:
         assert "не найдены" in result
 
     def test_with_channels(self, mock_db):
-        ch = SimpleNamespace(title="TechNews", count=100)
+        ch = SimpleNamespace(title="TechNews", message_count=100)
         svc_mock = MagicMock()
         svc_mock.get_trending_channels = AsyncMock(return_value=[ch])
         with patch("src.services.trend_service.TrendService", return_value=svc_mock):
@@ -709,7 +712,9 @@ class TestDeepagentsSyncGetDailyStats:
         assert "Нет данных" in result
 
     def test_with_stats(self, mock_db):
-        row = {"date": "2026-01-01", "count": 5}
+        from src.services.content_analytics_service import DailyStats
+
+        row = DailyStats(date="2026-01-01", generations=5, publications=3, rejections=0)
         svc_mock = MagicMock()
         svc_mock.get_daily_stats = AsyncMock(return_value=[row])
         with patch(
@@ -737,30 +742,31 @@ class TestDeepagentsSyncGetDailyStats:
 
 class TestDeepagentsSyncToggleSchedulerJob:
     def test_disable_job(self, mock_db):
+        from src.agent.runtime_context import AgentRuntimeContext
+
         mgr_mock = MagicMock()
-        mgr_mock.load_settings = AsyncMock(return_value=None)
         mgr_mock.is_job_enabled = AsyncMock(return_value=True)
         mgr_mock.sync_job_state = AsyncMock(return_value=None)
-        with patch("src.scheduler.service.SchedulerManager", return_value=mgr_mock):
-            tool_map = _build_sync_tools(mock_db)
-            result = tool_map["toggle_scheduler_job"](job_id="collect_all")
+        runtime_context = AgentRuntimeContext.build(db=mock_db, scheduler_manager=mgr_mock)
+        tool_map = _build_sync_tools(mock_db, runtime_context=runtime_context)
+        result = tool_map["toggle_scheduler_job"](job_id="collect_all")
         assert "collect_all" in result
         assert "выключена" in result
 
     def test_enable_job(self, mock_db):
+        from src.agent.runtime_context import AgentRuntimeContext
+
         mgr_mock = MagicMock()
-        mgr_mock.load_settings = AsyncMock(return_value=None)
         mgr_mock.is_job_enabled = AsyncMock(return_value=False)
         mgr_mock.sync_job_state = AsyncMock(return_value=None)
-        with patch("src.scheduler.service.SchedulerManager", return_value=mgr_mock):
-            tool_map = _build_sync_tools(mock_db)
-            result = tool_map["toggle_scheduler_job"](job_id="collect_all")
+        runtime_context = AgentRuntimeContext.build(db=mock_db, scheduler_manager=mgr_mock)
+        tool_map = _build_sync_tools(mock_db, runtime_context=runtime_context)
+        result = tool_map["toggle_scheduler_job"](job_id="collect_all")
         assert "включена" in result
 
     def test_error(self, mock_db):
-        with patch("src.scheduler.service.SchedulerManager", side_effect=Exception("sched err")):
-            tool_map = _build_sync_tools(mock_db)
-            result = tool_map["toggle_scheduler_job"](job_id="x")
+        tool_map = _build_sync_tools(mock_db)
+        result = tool_map["toggle_scheduler_job"](job_id="x")
         assert "Ошибка" in result
 
 

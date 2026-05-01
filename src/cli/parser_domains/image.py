@@ -17,3 +17,6 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     image_models.add_argument("--query", default="", help="Search query")
 
     image_sub.add_parser("providers", help="List configured image providers")
+
+    image_generated = image_sub.add_parser("generated", help="List generated images")
+    image_generated.add_argument("--limit", type=int, default=20, help="Max images to show")
