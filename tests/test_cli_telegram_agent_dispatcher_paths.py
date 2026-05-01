@@ -1076,25 +1076,25 @@ class TestAgentProviderServiceCompat:
 # ===========================================================================
 
 
-class TestRunSync:
+class TestAgentRuntimeContextRunSync:
     def test_outside_event_loop(self):
-        from src.agent.tools.deepagents_sync import _run_sync
+        from src.agent.runtime_context import AgentRuntimeContext
 
         async def _op():
             return 42
 
-        result = _run_sync("test_tool", _op)
+        result = AgentRuntimeContext.build(db=MagicMock()).run_sync("test_tool", _op)
         assert result == 42
 
     @pytest.mark.anyio
     async def test_inside_event_loop_raises(self):
-        from src.agent.tools.deepagents_sync import _run_sync
+        from src.agent.runtime_context import AgentRuntimeContext
 
         async def _op():
             return 42
 
         with pytest.raises(RuntimeError, match="cannot run inside"):
-            _run_sync("test_tool", _op)
+            AgentRuntimeContext.build(db=MagicMock()).run_sync("test_tool", _op)
 
 
 class TestDeepagentsSyncTools:
@@ -1106,9 +1106,10 @@ class TestDeepagentsSyncTools:
 
     def test_toggle_pipeline(self, sync_tools, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as svc_cls:
-            svc_cls.return_value.toggle = AsyncMock()
+            svc_cls.return_value.toggle = AsyncMock(return_value=True)
+            svc_cls.return_value.get = AsyncMock(return_value=SimpleNamespace(name="Pipe", is_active=False))
             result = sync_tools["toggle_pipeline"](1)
-        assert "переключён" in result
+        assert "деактивирован" in result
 
     def test_toggle_pipeline_error(self, sync_tools):
         with patch("src.services.pipeline_service.PipelineService", side_effect=RuntimeError("err")):
@@ -1117,20 +1118,22 @@ class TestDeepagentsSyncTools:
 
     def test_delete_pipeline(self, sync_tools, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as svc_cls:
+            svc_cls.return_value.get = AsyncMock(return_value=SimpleNamespace(name="Pipe"))
             svc_cls.return_value.delete = AsyncMock()
-            result = sync_tools["delete_pipeline"](1)
+            result = sync_tools["delete_pipeline"](1, confirm=True)
         assert "удалён" in result
 
     def test_toggle_search_query(self, sync_tools, mock_db):
         with patch("src.services.search_query_service.SearchQueryService") as svc_cls:
+            svc_cls.return_value.get = AsyncMock(return_value=SimpleNamespace(is_active=True))
             svc_cls.return_value.toggle = AsyncMock()
             result = sync_tools["toggle_search_query"](1)
-        assert "переключён" in result
+        assert "деактивирован" in result
 
     def test_delete_search_query(self, sync_tools, mock_db):
         with patch("src.services.search_query_service.SearchQueryService") as svc_cls:
             svc_cls.return_value.delete = AsyncMock()
-            result = sync_tools["delete_search_query"](1)
+            result = sync_tools["delete_search_query"](1, confirm=True)
         assert "удалён" in result
 
     def test_list_accounts_empty(self, sync_tools, mock_db):
@@ -1150,8 +1153,9 @@ class TestDeepagentsSyncTools:
         assert "не найден" in result
 
     def test_delete_account(self, sync_tools, mock_db):
+        mock_db.get_accounts = AsyncMock(return_value=[])
         mock_db.delete_account = AsyncMock()
-        result = sync_tools["delete_account"](1)
+        result = sync_tools["delete_account"](1, confirm=True)
         assert "удалён" in result
 
     def test_get_flood_status(self, sync_tools, mock_db):
@@ -1177,13 +1181,13 @@ class TestDeepagentsSyncTools:
             report = SimpleNamespace(results=[])
             cls.return_value.analyze_all = AsyncMock(return_value=report)
             cls.return_value.apply_filters = AsyncMock(return_value=0)
-            result = sync_tools["apply_filters"]()
+            result = sync_tools["apply_filters"](confirm=True)
         assert "помечены" in result
 
     def test_reset_filters(self, sync_tools, mock_db):
         with patch("src.filters.analyzer.ChannelAnalyzer") as cls:
             cls.return_value.reset_filters = AsyncMock(return_value=3)
-            result = sync_tools["reset_filters"]()
+            result = sync_tools["reset_filters"](confirm=True)
         assert "3" in result
 
     def test_toggle_channel_filter_not_found(self, sync_tools, mock_db):

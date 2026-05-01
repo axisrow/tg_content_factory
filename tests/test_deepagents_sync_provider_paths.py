@@ -132,21 +132,21 @@ class TestDeepagentsSyncAddChannel:
         svc_mock.add_by_identifier = AsyncMock(return_value=SimpleNamespace(title="NewChan"))
         with patch("src.services.channel_service.ChannelService", return_value=svc_mock):
             tool_map = _build_sync_tools(mock_db)
-            result = tool_map["add_channel"]("@newchan")
-        assert "Канал добавлен" in result
+            result = tool_map["add_channel"]("@newchan", confirm=True)
+        assert "успешно добавлен" in result
 
     def test_returns_none(self, mock_db):
         svc_mock = MagicMock()
         svc_mock.add_by_identifier = AsyncMock(return_value=None)
         with patch("src.services.channel_service.ChannelService", return_value=svc_mock):
             tool_map = _build_sync_tools(mock_db)
-            result = tool_map["add_channel"]("@notexist")
-        assert "Не удалось добавить" in result
+            result = tool_map["add_channel"]("@notexist", confirm=True)
+        assert "не удалось добавить" in result
 
     def test_error(self, mock_db):
         with patch("src.services.channel_service.ChannelService", side_effect=Exception("fail")):
             tool_map = _build_sync_tools(mock_db)
-            result = tool_map["add_channel"]("@err")
+            result = tool_map["add_channel"]("@err", confirm=True)
         assert "Ошибка" in result
 
 
@@ -154,16 +154,18 @@ class TestDeepagentsSyncDeleteChannel:
     def test_success(self, mock_db):
         svc_mock = MagicMock()
         svc_mock.delete = AsyncMock(return_value=None)
+        mock_db.get_channel_by_pk = AsyncMock(return_value=SimpleNamespace(title="Channel 42"))
         with patch("src.services.channel_service.ChannelService", return_value=svc_mock):
             tool_map = _build_sync_tools(mock_db)
-            result = tool_map["delete_channel"](42)
-        assert "pk=42" in result
+            result = tool_map["delete_channel"](42, confirm=True)
+        assert "Channel 42" in result
         assert "удалён" in result
 
     def test_error(self, mock_db):
+        mock_db.get_channel_by_pk = AsyncMock(return_value=SimpleNamespace(title="Channel 1"))
         with patch("src.services.channel_service.ChannelService", side_effect=Exception("oops")):
             tool_map = _build_sync_tools(mock_db)
-            result = tool_map["delete_channel"](1)
+            result = tool_map["delete_channel"](1, confirm=True)
         assert "Ошибка" in result
 
 
@@ -171,11 +173,12 @@ class TestDeepagentsSyncToggleChannel:
     def test_success(self, mock_db):
         svc_mock = MagicMock()
         svc_mock.toggle = AsyncMock(return_value=None)
+        mock_db.get_channel_by_pk = AsyncMock(return_value=SimpleNamespace(title="Channel 7", is_active=False))
         with patch("src.services.channel_service.ChannelService", return_value=svc_mock):
             tool_map = _build_sync_tools(mock_db)
             result = tool_map["toggle_channel"](7)
-        assert "pk=7" in result
-        assert "переключён" in result
+        assert "Channel 7" in result
+        assert "неактивен" in result
 
     def test_error(self, mock_db):
         with patch("src.services.channel_service.ChannelService", side_effect=Exception("fail")):
@@ -224,11 +227,12 @@ class TestDeepagentsSyncTogglePipeline:
     def test_success(self, mock_db):
         svc_mock = MagicMock()
         svc_mock.toggle = AsyncMock(return_value=True)
+        svc_mock.get = AsyncMock(return_value=SimpleNamespace(name="Pipeline 5", is_active=False))
         with patch("src.services.pipeline_service.PipelineService", return_value=svc_mock):
             tool_map = _build_sync_tools(mock_db)
             result = tool_map["toggle_pipeline"](5)
-        assert "id=5" in result
-        assert "переключён" in result
+        assert "Pipeline 5" in result
+        assert "деактивирован" in result
 
     def test_error(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService", side_effect=Exception("x")):
@@ -240,11 +244,12 @@ class TestDeepagentsSyncTogglePipeline:
 class TestDeepagentsSyncDeletePipeline:
     def test_success(self, mock_db):
         svc_mock = MagicMock()
+        svc_mock.get = AsyncMock(return_value=SimpleNamespace(name="Pipeline 8"))
         svc_mock.delete = AsyncMock(return_value=None)
         with patch("src.services.pipeline_service.PipelineService", return_value=svc_mock):
             tool_map = _build_sync_tools(mock_db)
-            result = tool_map["delete_pipeline"](8)
-        assert "id=8" in result
+            result = tool_map["delete_pipeline"](8, confirm=True)
+        assert "Pipeline 8" in result
         assert "удалён" in result
 
     def test_error(self, mock_db):
@@ -264,7 +269,7 @@ class TestDeepagentsSyncListPipelineRuns:
         mock_db.repos.generation_runs.list_by_pipeline = AsyncMock(return_value=[])
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["list_pipeline_runs"](pipeline_id=1)
-        assert "Нет runs" in result
+        assert "Нет генераций" in result
 
     def test_with_runs(self, mock_db):
         run = SimpleNamespace(id=3, status="done", moderation_status="approved")
@@ -312,6 +317,7 @@ class TestDeepagentsSyncGetPipelineRun:
 
 class TestDeepagentsSyncApproveRun:
     def test_success(self, mock_db):
+        mock_db.repos.generation_runs.get = AsyncMock(return_value=SimpleNamespace(id=10))
         mock_db.repos.generation_runs.set_moderation_status = AsyncMock(return_value=None)
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["approve_run"](run_id=10)
@@ -327,6 +333,7 @@ class TestDeepagentsSyncApproveRun:
 
 class TestDeepagentsSyncRejectRun:
     def test_success(self, mock_db):
+        mock_db.repos.generation_runs.get = AsyncMock(return_value=SimpleNamespace(id=12))
         mock_db.repos.generation_runs.set_moderation_status = AsyncMock(return_value=None)
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["reject_run"](run_id=12)
@@ -348,8 +355,8 @@ class TestDeepagentsSyncBulkApproveRuns:
     def test_success(self, mock_db):
         mock_db.repos.generation_runs.set_moderation_status = AsyncMock(return_value=None)
         tool_map = _build_sync_tools(mock_db)
-        result = tool_map["bulk_approve_runs"]("1,2,3")
-        assert "Одобрено: 3" in result
+        result = tool_map["bulk_approve_runs"]("1,2,3", confirm=True)
+        assert "Одобрено 3" in result
 
     def test_error_on_invalid_ids(self, mock_db):
         tool_map = _build_sync_tools(mock_db)
@@ -360,15 +367,15 @@ class TestDeepagentsSyncBulkApproveRuns:
         mock_db.repos.generation_runs.set_moderation_status = AsyncMock(return_value=None)
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["bulk_approve_runs"]("")
-        assert "Одобрено: 0" in result
+        assert "run_ids пуст" in result
 
 
 class TestDeepagentsSyncBulkRejectRuns:
     def test_success(self, mock_db):
         mock_db.repos.generation_runs.set_moderation_status = AsyncMock(return_value=None)
         tool_map = _build_sync_tools(mock_db)
-        result = tool_map["bulk_reject_runs"]("10,20")
-        assert "Отклонено: 2" in result
+        result = tool_map["bulk_reject_runs"]("10,20", confirm=True)
+        assert "Отклонено 2" in result
 
     def test_error_on_invalid_ids(self, mock_db):
         tool_map = _build_sync_tools(mock_db)
@@ -384,12 +391,13 @@ class TestDeepagentsSyncBulkRejectRuns:
 class TestDeepagentsSyncToggleSearchQuery:
     def test_success(self, mock_db):
         svc_mock = MagicMock()
+        svc_mock.get = AsyncMock(return_value=SimpleNamespace(is_active=True))
         svc_mock.toggle = AsyncMock(return_value=None)
         with patch("src.services.search_query_service.SearchQueryService", return_value=svc_mock):
             tool_map = _build_sync_tools(mock_db)
             result = tool_map["toggle_search_query"](sq_id=3)
         assert "id=3" in result
-        assert "переключён" in result
+        assert "деактивирован" in result
 
     def test_error(self, mock_db):
         with patch(
@@ -406,7 +414,7 @@ class TestDeepagentsSyncDeleteSearchQuery:
         svc_mock.delete = AsyncMock(return_value=None)
         with patch("src.services.search_query_service.SearchQueryService", return_value=svc_mock):
             tool_map = _build_sync_tools(mock_db)
-            result = tool_map["delete_search_query"](sq_id=5)
+            result = tool_map["delete_search_query"](sq_id=5, confirm=True)
         assert "id=5" in result
         assert "удалён" in result
 
@@ -415,7 +423,7 @@ class TestDeepagentsSyncDeleteSearchQuery:
             "src.services.search_query_service.SearchQueryService", side_effect=Exception("x")
         ):
             tool_map = _build_sync_tools(mock_db)
-            result = tool_map["delete_search_query"](sq_id=1)
+            result = tool_map["delete_search_query"](sq_id=1, confirm=True)
         assert "Ошибка" in result
 
 
@@ -457,7 +465,7 @@ class TestDeepagentsSyncToggleAccount:
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["toggle_account"](account_id=1)
         assert "+7999" in result
-        assert "переключён" in result
+        assert "деактивирован" in result
 
     def test_error(self, mock_db):
         mock_db.get_accounts = AsyncMock(side_effect=Exception("db err"))
@@ -468,16 +476,18 @@ class TestDeepagentsSyncToggleAccount:
 
 class TestDeepagentsSyncDeleteAccount:
     def test_success(self, mock_db):
+        mock_db.get_accounts = AsyncMock(return_value=[])
         mock_db.delete_account = AsyncMock(return_value=None)
         tool_map = _build_sync_tools(mock_db)
-        result = tool_map["delete_account"](account_id=3)
+        result = tool_map["delete_account"](account_id=3, confirm=True)
         assert "id=3" in result
         assert "удалён" in result
 
     def test_error(self, mock_db):
+        mock_db.get_accounts = AsyncMock(return_value=[])
         mock_db.delete_account = AsyncMock(side_effect=Exception("fail"))
         tool_map = _build_sync_tools(mock_db)
-        result = tool_map["delete_account"](account_id=3)
+        result = tool_map["delete_account"](account_id=3, confirm=True)
         assert "Ошибка" in result
 
 
@@ -777,16 +787,18 @@ class TestDeepagentsSyncToggleSchedulerJob:
 
 class TestDeepagentsSyncDeleteAgentThread:
     def test_success(self, mock_db):
+        mock_db.get_agent_thread = AsyncMock(return_value=None)
         mock_db.delete_agent_thread = AsyncMock(return_value=None)
         tool_map = _build_sync_tools(mock_db)
-        result = tool_map["delete_agent_thread"](thread_id=4)
+        result = tool_map["delete_agent_thread"](thread_id=4, confirm=True)
         assert "id=4" in result
         assert "удалён" in result
 
     def test_error(self, mock_db):
+        mock_db.get_agent_thread = AsyncMock(return_value=None)
         mock_db.delete_agent_thread = AsyncMock(side_effect=Exception("fail"))
         tool_map = _build_sync_tools(mock_db)
-        result = tool_map["delete_agent_thread"](thread_id=4)
+        result = tool_map["delete_agent_thread"](thread_id=4, confirm=True)
         assert "Ошибка" in result
 
 
@@ -836,7 +848,8 @@ class TestDeepagentsSyncGetThreadMessages:
 class TestDeepagentsSyncGenerateImage:
     def test_success(self, mock_db):
         img_svc_mock = MagicMock()
-        img_svc_mock.generate = AsyncMock(return_value="https://example.com/img.png")
+        img_svc_mock.is_available = AsyncMock(return_value=True)
+        img_svc_mock.generate = AsyncMock(return_value="/generated/img.png")
         img_svc_mock.adapter_names = ["together"]
         with patch(
             "src.services.image_generation_service.ImageGenerationService",
@@ -845,10 +858,11 @@ class TestDeepagentsSyncGenerateImage:
             tool_map = _build_sync_tools(mock_db)
             result = tool_map["generate_image"](prompt="a cat")
         assert "Изображение" in result
-        assert "https://example.com/img.png" in result
+        assert "/generated/img.png" in result
 
     def test_no_result(self, mock_db):
         img_svc_mock = MagicMock()
+        img_svc_mock.is_available = AsyncMock(return_value=True)
         img_svc_mock.generate = AsyncMock(return_value=None)
         img_svc_mock.adapter_names = []
         with patch(
@@ -861,6 +875,7 @@ class TestDeepagentsSyncGenerateImage:
 
     def test_error(self, mock_db):
         img_svc_mock = MagicMock()
+        img_svc_mock.is_available = AsyncMock(return_value=True)
         img_svc_mock.generate = AsyncMock(side_effect=Exception("gen fail"))
         img_svc_mock.adapter_names = []
         with patch(

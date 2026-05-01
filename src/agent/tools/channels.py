@@ -46,8 +46,8 @@ def register(db, client_pool, embedding_service, **kwargs):
             lines = [f"Каналы ({len(channels)}):"]
             for ch in channels:
                 status = "активен" if ch.is_active else "неактивен"
-                filtered = " [отфильтрован]" if ch.is_filtered else ""
-                ch_type = ch.channel_type or "unknown"
+                filtered = " [отфильтрован]" if getattr(ch, "is_filtered", False) else ""
+                ch_type = getattr(ch, "channel_type", None) or "unknown"
                 lines.append(f"- {format_channel_identity(ch)}: {status}{filtered}, type={ch_type}")
             return _text_response("\n".join(lines))
         except Exception as e:
