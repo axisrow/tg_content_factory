@@ -14,6 +14,7 @@ from typing import TypeVar
 
 from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.tools._formatters import (
+    format_channel_identity,
     format_channel_stats,
     format_filter_report,
     format_notification_status,
@@ -65,7 +66,7 @@ def build_deepagents_tools(
         lines = [f"Найдено {total} сообщений по запросу '{query_text}':"]
         for m in messages:
             preview = (m.text or "").replace("\n", " ")[:200]
-            lines.append(f"- [{m.date}] channel_id={m.channel_id}: {preview}")
+            lines.append(f"- [{m.date}] {format_channel_identity(m)}: {preview}")
         return "\n".join(lines)
 
     tools.append(search_messages)
@@ -90,7 +91,7 @@ def build_deepagents_tools(
         lines = [f"Семантически найдено {total} сообщений:"]
         for m in messages:
             preview = (m.text or "").replace("\n", " ")[:200]
-            lines.append(f"- [{m.date}] channel_id={m.channel_id}: {preview}")
+            lines.append(f"- [{m.date}] {format_channel_identity(m)}: {preview}")
         return "\n".join(lines)
 
     tools.append(semantic_search)
@@ -121,7 +122,7 @@ def build_deepagents_tools(
         lines = [f"Каналы ({len(channels)}):"]
         for ch in channels:
             status = "активен" if ch.is_active else "неактивен"
-            lines.append(f"- {ch.title} (id={ch.channel_id}, {status})")
+            lines.append(f"- {format_channel_identity(ch)}: {status}")
         return "\n".join(lines)
 
     tools.append(list_channels)

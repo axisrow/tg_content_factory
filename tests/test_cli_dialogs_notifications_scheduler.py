@@ -10,7 +10,7 @@ import pytest
 
 from src.config import AppConfig
 from src.database import Database
-from src.models import Channel, NotificationBot
+from src.models import Account, Channel, NotificationBot
 
 pytestmark = pytest.mark.aiosqlite_serial
 
@@ -502,6 +502,9 @@ class TestNotificationCommand:
     def test_status_no_bot(self, cli_env_with_pool, capsys):
         """Test notification status when no bot configured."""
         cli_env, fake_pool = cli_env_with_pool
+        asyncio.run(
+            cli_env.add_account(Account(phone="+70001112233", session_string="sess", is_primary=True))
+        )
         fake_pool.clients = {"+70001112233": AsyncMock()}
 
         from src.services.notification_service import NotificationService
@@ -519,6 +522,9 @@ class TestNotificationCommand:
     def test_status_with_bot(self, cli_env_with_pool, capsys):
         """Test notification status with configured bot."""
         cli_env, fake_pool = cli_env_with_pool
+        asyncio.run(
+            cli_env.add_account(Account(phone="+70001112233", session_string="sess", is_primary=True))
+        )
         fake_pool.clients = {"+70001112233": AsyncMock()}
 
         from src.services.notification_service import NotificationService

@@ -5,7 +5,7 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
-from src.agent.tools._formatters import format_channel_stats
+from src.agent.tools._formatters import format_channel_identity, format_channel_stats
 from src.agent.tools._registry import (
     ToolInputError,
     _text_response,
@@ -48,10 +48,7 @@ def register(db, client_pool, embedding_service, **kwargs):
                 status = "активен" if ch.is_active else "неактивен"
                 filtered = " [отфильтрован]" if ch.is_filtered else ""
                 ch_type = ch.channel_type or "unknown"
-                lines.append(
-                    f"- {ch.title} (@{ch.username}, channel_id={ch.channel_id}, "
-                    f"{status}{filtered}, type={ch_type})"
-                )
+                lines.append(f"- {format_channel_identity(ch)}: {status}{filtered}, type={ch_type}")
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка получения каналов: {e}")

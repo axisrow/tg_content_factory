@@ -89,6 +89,49 @@ class TestSearchMessagesTool:
         mock_db.search_messages.assert_awaited_once()
 
     @pytest.mark.anyio
+    async def test_with_results_includes_channel_label(self, mock_db):
+        mock_messages = [
+            SimpleNamespace(
+                channel_id=100,
+                channel_title="Readable Title",
+                channel_username="readable_user",
+                message_id=1,
+                text="Labeled message",
+                date="2025-01-01",
+            ),
+        ]
+        mock_db.search_messages = AsyncMock(return_value=(mock_messages, 1))
+        handlers = _get_tool_handlers(mock_db)
+
+        result = await handlers["search_messages"]({"query": "label", "limit": 10})
+
+        text = _text(result)
+        assert "Readable Title" in text
+        assert "@readable_user" in text
+        assert "channel_id=100" in text
+
+    @pytest.mark.anyio
+    async def test_with_results_without_channel_label_falls_back_to_channel_id(self, mock_db):
+        mock_messages = [
+            SimpleNamespace(
+                channel_id=100,
+                channel_title=None,
+                channel_username=None,
+                message_id=1,
+                text="Fallback message",
+                date="2025-01-01",
+            ),
+        ]
+        mock_db.search_messages = AsyncMock(return_value=(mock_messages, 1))
+        handlers = _get_tool_handlers(mock_db)
+
+        result = await handlers["search_messages"]({"query": "fallback", "limit": 10})
+
+        text = _text(result)
+        assert "channel_id=100" in text
+        assert "@None" not in text
+
+    @pytest.mark.anyio
     async def test_text_truncation(self, mock_db):
         """Tool truncates message text to 300 chars."""
         long_text = "x" * 500
@@ -256,7 +299,7 @@ class TestGetChannelsTool:
 
     @pytest.mark.anyio
     async def test_none_username(self, mock_db):
-        """Channel with username=None renders @None (known pre-existing issue)."""
+        """Channel with username=None omits username and still renders title plus channel_id."""
         mock_channels = [
             SimpleNamespace(
                 channel_id=100,
@@ -274,8 +317,8 @@ class TestGetChannelsTool:
 
         text = _text(result)
         assert "Private Channel" in text
-        # Known issue: renders @None for channels without username
-        assert "@None" in text
+        assert "channel_id=100" in text
+        assert "@None" not in text
 
     @pytest.mark.anyio
     async def test_error_returns_text_not_exception(self, mock_db):
