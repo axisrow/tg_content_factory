@@ -14,12 +14,12 @@ from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
 from src.database import Database
 
 logger = logging.getLogger(__name__)
-# jieba imports pkg_resources on Python 3.12; pytest treats that deprecation as an error.
+# jieba imports pkg_resources; pytest treats that deprecation as an error.
 with warnings.catch_warnings():
     warnings.filterwarnings(
         "ignore",
         message="pkg_resources is deprecated as an API.*",
-        category=UserWarning,
+        category=Warning,
     )
     jieba = importlib.import_module("jieba")
 jieba.setLogLevel(logging.WARNING)
