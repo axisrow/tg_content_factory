@@ -5,11 +5,20 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
-from src.agent.tools._registry import _text_response, require_confirmation, require_pool
+from src.agent.tools._registry import (
+    ToolInputError,
+    _text_response,
+    arg_bool,
+    arg_int,
+    arg_str,
+    get_tool_context,
+    require_confirmation,
+)
 
 
 def register(db, client_pool, embedding_service, **kwargs):
     """Register channel-related agent tools."""
+    ctx = get_tool_context(kwargs, db=db, client_pool=client_pool, embedding_service=embedding_service)
     tools = []
 
     # ------------------------------------------------------------------
@@ -27,8 +36,8 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def list_channels(args):
-        active_only = bool(args.get("active_only", False))
-        include_filtered = bool(args.get("include_filtered", True))
+        active_only = arg_bool(args, "active_only", False)
+        include_filtered = arg_bool(args, "include_filtered", True)
         try:
             channels = await db.get_channels(active_only=active_only, include_filtered=include_filtered)
             if not channels:
@@ -91,16 +100,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def add_channel(args):
-        identifier = args.get("identifier")
-        if not identifier:
-            return _text_response("Ошибка: identifier обязателен.")
+        try:
+            identifier = arg_str(args, "identifier", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
         gate = require_confirmation(f"добавит канал по идентификатору '{identifier}'", args)
         if gate:
             return gate
         try:
-            from src.services.channel_service import ChannelService
-
-            svc = ChannelService(db, client_pool, None)
+            svc = ctx.channel_service()
             added = await svc.add_by_identifier(identifier)
             if added:
                 return _text_response(f"Канал '{identifier}' успешно добавлен.")
@@ -125,19 +133,18 @@ def register(db, client_pool, embedding_service, **kwargs):
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_channel(args):
-        pk = args.get("pk")
-        if pk is None:
-            return _text_response("Ошибка: pk обязателен.")
-        ch = await db.get_channel_by_pk(int(pk))
+        try:
+            pk = arg_int(args, "pk", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        ch = await db.get_channel_by_pk(pk)
         name = ch.title if ch else f"id={pk}"
         gate = require_confirmation(f"удалит канал '{name}' и все его сообщения", args)
         if gate:
             return gate
         try:
-            from src.services.channel_service import ChannelService
-
-            svc = ChannelService(db, client_pool, None)
-            await svc.delete(int(pk))
+            svc = ctx.channel_service()
+            await svc.delete(pk)
             return _text_response(f"Канал '{name}' удалён.")
         except Exception as e:
             return _text_response(f"Ошибка удаления канала: {e}")
@@ -154,15 +161,14 @@ def register(db, client_pool, embedding_service, **kwargs):
         {"pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"]},
     )
     async def toggle_channel(args):
-        pk = args.get("pk")
-        if pk is None:
-            return _text_response("Ошибка: pk обязателен.")
         try:
-            from src.services.channel_service import ChannelService
-
-            svc = ChannelService(db, client_pool, None)
-            await svc.toggle(int(pk))
-            ch = await db.get_channel_by_pk(int(pk))
+            pk = arg_int(args, "pk", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        try:
+            svc = ctx.channel_service()
+            await svc.toggle(pk)
+            ch = await db.get_channel_by_pk(pk)
             if ch:
                 status = "активен" if ch.is_active else "неактивен"
                 return _text_response(f"Канал '{ch.title}' теперь {status}.")
@@ -186,9 +192,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def import_channels(args):
-        text = args.get("text")
-        if not text:
-            return _text_response("Ошибка: text обязателен.")
+        try:
+            text = arg_str(args, "text", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
         from src.parsers import extract_identifiers
 
         identifiers = extract_identifiers(text)
@@ -198,9 +205,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            from src.services.channel_service import ChannelService
-
-            svc = ChannelService(db, client_pool, None)
+            svc = ctx.channel_service()
             added = 0
             errors = []
             for ident in identifiers:
@@ -232,7 +237,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
     )
     async def refresh_channel_types(args):
-        pool_gate = require_pool(client_pool, "Обновление типов каналов")
+        pool_gate = ctx.require_pool("Обновление типов каналов")
         if pool_gate:
             return pool_gate
         gate = require_confirmation("обновит типы всех активных каналов через Telegram API", args)
@@ -284,7 +289,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def refresh_channel_meta(args):
-        pool_gate = require_pool(client_pool, "Обновление метаданных каналов")
+        pool_gate = ctx.require_pool("Обновление метаданных каналов")
         if pool_gate:
             return pool_gate
         identifier = args.get("identifier")
@@ -380,9 +385,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def create_tag(args):
-        name = (args.get("name") or "").strip()
-        if not name:
-            return _text_response("Ошибка: name обязателен.")
+        try:
+            name = arg_str(args, "name", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
         gate = require_confirmation(f"создаст тег '{name}'", args)
         if gate:
             return gate
@@ -404,9 +410,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def delete_tag(args):
-        name = (args.get("name") or "").strip()
-        if not name:
-            return _text_response("Ошибка: name обязателен.")
+        try:
+            name = arg_str(args, "name", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
         gate = require_confirmation(f"удалит тег '{name}' у всех каналов", args)
         if gate:
             return gate
@@ -428,16 +435,17 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def set_channel_tags(args):
-        pk = args.get("pk")
-        if pk is None:
-            return _text_response("Ошибка: pk обязателен.")
+        try:
+            pk = arg_int(args, "pk", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
         raw = args.get("tags", "")
         tag_names = [t.strip() for t in str(raw).split(",") if t.strip()]
         try:
-            ch = await db.get_channel_by_pk(int(pk))
+            ch = await db.get_channel_by_pk(pk)
             if ch is None:
                 return _text_response(f"Канал pk={pk} не найден.")
-            await db.repos.channels.set_channel_tags(int(pk), tag_names)
+            await db.repos.channels.set_channel_tags(pk, tag_names)
             if tag_names:
                 return _text_response(f"Теги канала '{ch.title}' обновлены: {', '.join(tag_names)}")
             return _text_response(f"Теги канала '{ch.title}' очищены.")
