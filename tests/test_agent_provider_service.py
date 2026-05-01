@@ -12,6 +12,9 @@ from src.agent.provider_registry import (
     ZAI_CODING_BASE_URL,
     ZAI_GENERAL_BASE_URL,
     ProviderRuntimeConfig,
+    default_base_url_for,
+    normalize_ollama_base_url,
+    normalize_provider_plain_fields,
     provider_spec,
 )
 from src.config import AppConfig
@@ -1323,6 +1326,36 @@ def test_zai_provider_spec_uses_openai_package_hint():
 
     assert spec is not None
     assert spec.package_name == "langchain-openai"
+
+
+@pytest.mark.parametrize(
+    ("provider", "base_url"),
+    [
+        ("openai", "https://api.openai.com/v1"),
+        ("groq", "https://api.groq.com/openai/v1"),
+        ("deepseek", "https://api.deepseek.com/v1"),
+        ("xai", "https://api.x.ai/v1"),
+        ("perplexity", "https://api.perplexity.ai"),
+        ("together", "https://api.together.xyz/v1"),
+        ("fireworks", "https://api.fireworks.ai/inference/v1"),
+        ("mistralai", "https://api.mistral.ai/v1"),
+    ],
+)
+def test_openai_compatible_provider_specs_expose_default_base_urls(provider, base_url):
+    spec = provider_spec(provider)
+
+    assert spec is not None
+    assert spec.openai_compatible is True
+    assert spec.supports_lightweight_adapter is True
+    assert spec.default_base_url == base_url
+    assert default_base_url_for(provider) == base_url
+
+
+def test_registry_normalization_helpers_keep_zai_and_ollama_policy():
+    zai_fields = normalize_provider_plain_fields("zai", {"base_url": ""}, {"api_key": "zai-key"})
+
+    assert zai_fields["base_url"] == ZAI_CODING_BASE_URL
+    assert normalize_ollama_base_url("https://ollama.com/api", "ollama-key") == "https://ollama.com"
 
 
 # === Z.AI edge case tests ===

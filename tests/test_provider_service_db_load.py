@@ -299,6 +299,29 @@ def test_has_valid_secrets_requires_secrets_for_required_providers():
     assert svc._has_valid_secrets(cfg) is False
 
 
+@pytest.mark.parametrize(
+    ("provider", "default_base_url"),
+    [
+        ("openai", "https://api.openai.com/v1"),
+        ("groq", "https://api.groq.com/openai/v1"),
+        ("deepseek", "https://api.deepseek.com/v1"),
+    ],
+)
+def test_build_adapter_for_config_uses_registry_default_base_url(provider, default_base_url):
+    svc = AgentProviderService()
+    cfg = MagicMock()
+    cfg.provider = provider
+    cfg.plain_fields = {"base_url": ""}
+    cfg.secret_fields = {"api_key": f"{provider}-key"}
+    sentinel = AsyncMock()
+
+    with patch.object(svc, "_make_openai_compat_provider", return_value=sentinel) as make_adapter:
+        adapter = svc._build_adapter_for_config(cfg)
+
+    assert adapter is sentinel
+    make_adapter.assert_called_once_with(default_base_url, f"{provider}-key")
+
+
 @pytest.mark.anyio
 async def test_get_provider_status_list_disabled(mock_db, mock_config):
     """get_provider_status_list returns disabled status."""
