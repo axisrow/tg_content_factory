@@ -70,7 +70,8 @@ class TrendService:
         re.IGNORECASE,
     )
     _LATIN_CYRILLIC_TOKEN_RE = re.compile(r"(?u)\b[а-яёa-z]{4,}\b")
-    _CJK_TOKEN_RE = re.compile(r"^[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]{2,}$")
+    _HAN_CHAR_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+    _HAN_TOKEN_RE = re.compile(r"^[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]{2,}$")
     _TOPIC_NOISE_WORDS = frozenset({
         "content",
         "data",
@@ -253,24 +254,27 @@ class TrendService:
         return text
 
     def _rank_trending_topics(self, texts: list[str], limit: int) -> list[TrendingTopic]:
+        tokenized_texts = [self._analyze_topic_text(text) for text in texts]
+        if not any(tokenized_texts):
+            return []
+
         vectorizer = TfidfVectorizer(
-            analyzer=self._analyze_topic_text,
+            analyzer=self._identity_analyzer,
             token_pattern=None,
             max_df=0.85,
             min_df=2,
         )
         try:
-            tfidf_matrix = vectorizer.fit_transform(texts)
+            tfidf_matrix = vectorizer.fit_transform(tokenized_texts)
         except ValueError:
             return []
 
         feature_names = vectorizer.get_feature_names_out()
         scores = tfidf_matrix.sum(axis=0).A1
         mention_counts: Counter[str] = Counter()
-        analyzer = vectorizer.build_analyzer()
 
-        for text in texts:
-            mention_counts.update(analyzer(text))
+        for tokens in tokenized_texts:
+            mention_counts.update(tokens)
 
         top_indices = scores.argsort()[::-1]
         topics: list[TrendingTopic] = []
@@ -281,6 +285,10 @@ class TrendService:
                 break
         return topics
 
+    @staticmethod
+    def _identity_analyzer(tokens: list[str]) -> list[str]:
+        return tokens
+
     @classmethod
     def _analyze_topic_text(cls, text: str) -> list[str]:
         text = text.lower()
@@ -290,11 +298,14 @@ class TrendService:
             if token not in cls._STOP_WORDS
         ]
 
+        if not cls._HAN_CHAR_RE.search(text):
+            return tokens
+
         for token in jieba.cut(text):
             token = token.strip()
             if token in cls._CHINESE_STOP_WORDS:
                 continue
-            if cls._CJK_TOKEN_RE.fullmatch(token):
+            if cls._HAN_TOKEN_RE.fullmatch(token):
                 tokens.append(token)
 
         return tokens

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.services import trend_service as trend_service_module
 from src.services.trend_service import (
     MessageVelocity,
     PeakHour,
@@ -143,6 +144,17 @@ async def test_get_trending_topics_non_alpha_only(service, mock_db):
     assert "123numeric" not in words
     assert "test123" not in words
     assert "keepword" in words
+
+
+def test_analyze_topic_text_skips_jieba_for_ru_en_text(monkeypatch):
+    """RU/EN-only analysis should not call the Chinese segmenter."""
+
+    def fail_cut(_text):
+        raise AssertionError("jieba.cut should not run without Han characters")
+
+    monkeypatch.setattr(trend_service_module.jieba, "cut", fail_cut)
+
+    assert TrendService._analyze_topic_text("quantum рынок keepword") == ["quantum", "рынок", "keepword"]
 
 
 @pytest.mark.anyio
