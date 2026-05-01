@@ -116,6 +116,36 @@ def test_status_target_unavailable_prints_diagnostic(capsys):
     mock_svc.get_status.assert_not_awaited()
 
 
+def test_status_target_unavailable_accepts_sync_status(capsys):
+    db = make_cli_db()
+    pool = _make_pool()
+    config = make_notification_config()
+    target_status = SimpleNamespace(
+        mode="selected",
+        state="missing",
+        message="Выбранный аккаунт уведомлений удалён.",
+        configured_phone="+456",
+        effective_phone=None,
+    )
+    mock_svc = MagicMock()
+    mock_svc.get_status = AsyncMock(side_effect=AssertionError("get_status should not be called"))
+    mock_ts = MagicMock()
+    mock_ts.describe_target = MagicMock(return_value=target_status)
+    with patch("src.cli.commands.notification.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("src.cli.commands.notification.runtime.init_pool", AsyncMock(return_value=(MagicMock(), pool))), \
+         patch("src.cli.commands.notification.NotificationService", return_value=mock_svc), \
+         patch("src.cli.commands.notification.NotificationTargetService", return_value=mock_ts), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(notification_action="status"))
+
+    out = capsys.readouterr().out
+    assert "Notification target unavailable" in out
+    assert "missing" in out
+    assert "+456" in out
+    assert "Выбранный аккаунт уведомлений удалён." in out
+    mock_svc.get_status.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # delete
 # ---------------------------------------------------------------------------

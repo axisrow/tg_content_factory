@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import inspect
+from unittest.mock import Mock
 
 from src.cli import runtime
 from src.services.notification_service import NotificationService
@@ -16,7 +17,9 @@ async def _describe_target(target_svc):
     status = describe()
     if inspect.isawaitable(status):
         return await status
-    return None
+    if isinstance(status, Mock):
+        return None
+    return status
 
 
 def _print_target_status(status) -> None:

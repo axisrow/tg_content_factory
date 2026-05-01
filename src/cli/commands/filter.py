@@ -85,7 +85,7 @@ def run(args: argparse.Namespace) -> None:
 
                 print(
                     f"\nTotal: {report.total_channels}, "
-                    f"Filtered: {report.filtered_count}"
+                    f"Flagged: {report.filtered_count}"
                 )
 
             elif args.filter_action == "apply":

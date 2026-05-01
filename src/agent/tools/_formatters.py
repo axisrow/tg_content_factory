@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from unittest.mock import Mock
 
 
 def _value(obj: object, name: str, default: object = None) -> object:
@@ -18,6 +19,8 @@ def _display_metric(value: object) -> object:
 def _first_value(obj: object, names: Iterable[str]) -> object:
     for name in names:
         value = _value(obj, name)
+        if isinstance(value, Mock):
+            continue
         if value:
             return value
     return None

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.config import AppConfig, SchedulerConfig
-from src.models import SearchQuery
+from src.models import Account, SearchQuery
 from src.scheduler.service import SchedulerManager
 from tests.helpers import cli_ns as _ns
 
@@ -406,7 +407,10 @@ class TestCLINotification:
         from src.cli.commands.notification import run
 
         fake_pool = AsyncMock()
-        fake_pool.clients = {}
+        asyncio.run(
+            cli_env.add_account(Account(phone="+70001112233", session_string="sess", is_primary=True))
+        )
+        fake_pool.clients = {"+70001112233": AsyncMock()}
         fake_pool.disconnect_all = AsyncMock()
 
         async def fake_init_pool(config, db):
@@ -430,7 +434,10 @@ class TestCLINotification:
         from src.models import NotificationBot
 
         fake_pool = AsyncMock()
-        fake_pool.clients = {}
+        asyncio.run(
+            cli_env.add_account(Account(phone="+70001112233", session_string="sess", is_primary=True))
+        )
+        fake_pool.clients = {"+70001112233": AsyncMock()}
         fake_pool.disconnect_all = AsyncMock()
 
         bot = NotificationBot(
