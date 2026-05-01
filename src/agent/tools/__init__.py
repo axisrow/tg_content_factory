@@ -48,16 +48,16 @@ def _wrap_with_session_gate(tool: SdkMcpTool) -> SdkMcpTool:
     )
 
 
-def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
-    """Create an in-process MCP server with all agent tools.
-
-    Args:
-        db: Database instance for all DB operations.
-        client_pool: Optional ClientPool for Telegram operations.
-            If None (CLI mode), pool-dependent tools return an error message.
-        scheduler_manager: Optional live SchedulerManager instance.
-            If None, scheduler tools return an error message.
-    """
+def build_agent_tool_registry(
+    db,
+    client_pool=None,
+    scheduler_manager=None,
+    config=None,
+    runtime_context: AgentRuntimeContext | None = None,
+    *,
+    wrap_session_gate: bool = True,
+) -> list[SdkMcpTool]:
+    """Build the authoritative agent tools registry shared by all backends."""
     from src.services.embedding_service import EmbeddingService
 
     embedding_service = EmbeddingService(db, config=config)
@@ -84,7 +84,7 @@ def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
     )
 
     # Extra context passed alongside the standard (db, client_pool, embedding_service)
-    runtime_context = AgentRuntimeContext.build(
+    runtime_context = runtime_context or AgentRuntimeContext.build(
         db=db,
         config=config,
         client_pool=client_pool,
@@ -126,7 +126,27 @@ def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
         agent_threads,
     ]:
         for tool_obj in module.register(db, client_pool, embedding_service, **extras):
-            all_tools.append(_wrap_with_session_gate(tool_obj))
+            all_tools.append(_wrap_with_session_gate(tool_obj) if wrap_session_gate else tool_obj)
+
+    return all_tools
+
+
+def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
+    """Create an in-process MCP server with all agent tools.
+
+    Args:
+        db: Database instance for all DB operations.
+        client_pool: Optional ClientPool for Telegram operations.
+            If None (CLI mode), pool-dependent tools return an error message.
+        scheduler_manager: Optional live SchedulerManager instance.
+            If None, scheduler tools return an error message.
+    """
+    all_tools = build_agent_tool_registry(
+        db,
+        client_pool=client_pool,
+        scheduler_manager=scheduler_manager,
+        config=config,
+    )
 
     return create_sdk_mcp_server(
         name="telegram_db",
@@ -215,59 +235,23 @@ def build_agent_tools_dict(
         search_engine: Optional SearchEngine for search tools.
         config: Optional config dict.
     """
-    from src.services.embedding_service import EmbeddingService
-
-    embedding_service = EmbeddingService(db, config=config)
-
-    from src.agent.tools import (
-        accounts,
-        agent_threads,
-        analytics,
-        channels,
-        collection,
-        dialogs,
-        filters,
-        images,
-        messaging,
-        moderation,
-        notifications,
-        photo_loader,
-        pipelines,
-        scheduler,
-        search,
-        search_queries,
-        settings,
-    )
-
     runtime_context = runtime_context or AgentRuntimeContext.build(
         db=db,
         config=config,
         client_pool=client_pool,
         scheduler_manager=scheduler_manager,
     )
-    tool_context = AgentToolContext.build(
-        db=db,
-        config=config,
-        client_pool=client_pool,
-        scheduler_manager=scheduler_manager,
-        embedding_service=embedding_service,
-        runtime_context=runtime_context,
-    )
-    extras: dict = {
-        "scheduler_manager": scheduler_manager,
-        "config": config,
-        "runtime_context": runtime_context,
-        "tool_context": tool_context,
-    }
     tools_dict: dict[str, object] = {}
 
-    for module in [
-        search, channels, collection, pipelines, moderation, search_queries,
-        accounts, filters, analytics, scheduler, notifications, photo_loader,
-        dialogs, messaging, images, settings, agent_threads,
-    ]:
-        for tool_obj in module.register(db, client_pool, embedding_service, **extras):
-            if tool_obj.name in _PIPELINE_SAFE_TOOLS:
-                tools_dict[tool_obj.name] = _adapt_sdk_tool(tool_obj)
+    for tool_obj in build_agent_tool_registry(
+        db,
+        client_pool=client_pool,
+        scheduler_manager=scheduler_manager,
+        config=config,
+        runtime_context=runtime_context,
+        wrap_session_gate=False,
+    ):
+        if tool_obj.name in _PIPELINE_SAFE_TOOLS:
+            tools_dict[tool_obj.name] = _adapt_sdk_tool(tool_obj)
 
     return tools_dict

@@ -81,10 +81,12 @@ def register(db, client_pool, embedding_service, **kwargs):
             lines = [f"Пайплайны ({len(pipelines)}):"]
             for p in pipelines:
                 status = "активен" if p.is_active else "неактивен"
-                model = p.llm_model or "default"
-                cron = p.schedule_cron or "manual"
-                backend = getattr(p.generation_backend, "value", p.generation_backend) or "chain"
-                publish = getattr(p.publish_mode, "value", p.publish_mode) or "auto"
+                model = getattr(p, "llm_model", None) or "default"
+                cron = getattr(p, "schedule_cron", None) or "manual"
+                generation_backend = getattr(p, "generation_backend", None)
+                publish_mode = getattr(p, "publish_mode", None)
+                backend = getattr(generation_backend, "value", generation_backend) or "chain"
+                publish = getattr(publish_mode, "value", publish_mode) or "auto"
                 lines.append(
                     f"- id={p.id}: {p.name} [{status}] model={model} "
                     f"publish={publish} schedule={cron} backend={backend}"
@@ -113,15 +115,18 @@ def register(db, client_pool, embedding_service, **kwargs):
             p = detail["pipeline"]
             source_titles = detail.get("source_titles", [])
             target_refs = detail.get("target_refs", [])
+            prompt_template = getattr(p, "prompt_template", "") or ""
+            publish_mode = getattr(p, "publish_mode", None)
+            generation_backend = getattr(p, "generation_backend", None)
             lines = [
                 f"Пайплайн: {p.name} (id={p.id})",
                 f"  Статус: {'активен' if p.is_active else 'неактивен'}",
-                f"  LLM модель: {p.llm_model or 'default'}",
-                f"  Публикация: {getattr(p.publish_mode, 'value', p.publish_mode)}",
-                f"  Бэкенд: {getattr(p.generation_backend, 'value', p.generation_backend) or 'chain'}",
-                f"  Расписание: {p.schedule_cron or 'manual'}",
-                f"  Интервал генерации: {p.generate_interval_minutes} мин.",
-                f"  Шаблон промпта: {p.prompt_template[:200]}{'...' if len(p.prompt_template) > 200 else ''}",
+                f"  LLM модель: {getattr(p, 'llm_model', None) or 'default'}",
+                f"  Публикация: {getattr(publish_mode, 'value', publish_mode) or 'auto'}",
+                f"  Бэкенд: {getattr(generation_backend, 'value', generation_backend) or 'chain'}",
+                f"  Расписание: {getattr(p, 'schedule_cron', None) or 'manual'}",
+                f"  Интервал генерации: {getattr(p, 'generate_interval_minutes', '?')} мин.",
+                f"  Шаблон промпта: {prompt_template[:200]}{'...' if len(prompt_template) > 200 else ''}",
                 f"  Источники ({len(source_titles)}): {', '.join(source_titles) or '—'}",
                 f"  Цели ({len(target_refs)}): {', '.join(target_refs) or '—'}",
             ]
@@ -494,7 +499,7 @@ def register(db, client_pool, embedding_service, **kwargs):
                 return _text_response(f"Нет генераций для пайплайна id={pipeline_id}.")
             lines = [f"Генерации пайплайна id={pipeline_id} ({len(runs)} шт.):"]
             for r in runs:
-                preview = (r.generated_text or "")[:150]
+                preview = (getattr(r, "generated_text", None) or "")[:150]
                 result_kind = getattr(r, "result_kind", None)
                 result_count = getattr(r, "result_count", None)
                 if result_kind is not None and result_count is not None:
@@ -503,7 +508,7 @@ def register(db, client_pool, embedding_service, **kwargs):
                     result_part = ""
                 lines.append(
                     f"- run_id={r.id}, status={r.status}, moderation={r.moderation_status}, "
-                    f"{result_part}created={r.created_at}: {preview}"
+                    f"{result_part}created={getattr(r, 'created_at', 'unknown')}: {preview}"
                 )
             return _text_response("\n".join(lines))
         except Exception as e:
@@ -528,7 +533,8 @@ def register(db, client_pool, embedding_service, **kwargs):
                 f"Run id={run.id} (pipeline_id={run.pipeline_id})",
                 f"  Статус: {run.status}",
                 f"  Модерация: {run.moderation_status}",
-                f"  Качество: {run.quality_score if hasattr(run, 'quality_score') and run.quality_score else 'n/a'}",
+                f"  Качество: "
+                f"{run.quality_score if hasattr(run, 'quality_score') and run.quality_score else 'n/a'}",
             ]
             result_kind = getattr(run, "result_kind", None)
             result_count = getattr(run, "result_count", None)
@@ -541,11 +547,11 @@ def register(db, client_pool, embedding_service, **kwargs):
                 )
             lines.extend(
                 [
-                    f"  Создан: {run.created_at}",
-                    f"  Обновлён: {run.updated_at}",
+                    f"  Создан: {getattr(run, 'created_at', 'unknown')}",
+                    f"  Обновлён: {getattr(run, 'updated_at', 'unknown')}",
                     "",
                     "Текст:",
-                    run.generated_text or "(пусто)",
+                    getattr(run, "generated_text", None) or "(пусто)",
                 ]
             )
             return _text_response("\n".join(lines))

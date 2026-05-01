@@ -8,6 +8,27 @@ from src.filters.models import ChannelFilterResult
 from src.models import NotificationBot
 
 
+def test_deepagents_tools_match_shared_agent_tool_registry(mock_db):
+    from src.agent.tools import build_agent_tool_registry
+    from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+    registry_names = {tool.name for tool in build_agent_tool_registry(mock_db)}
+    deepagents_names = {tool.__name__ for tool in build_deepagents_tools(mock_db)}
+
+    assert deepagents_names == registry_names
+
+
+def test_deepagents_read_messages_is_registered_and_uses_runtime_gate(mock_db):
+    from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+    tool_map = {tool.__name__: tool for tool in build_deepagents_tools(mock_db)}
+
+    assert "read_messages" in tool_map
+    result = tool_map["read_messages"](chat_id="@test", limit=5)
+
+    assert "требует Telegram-клиент" in result
+
+
 class TestDeepagentsSyncSearchMessages:
     def test_results_include_channel_label(self, mock_db):
         from src.agent.tools.deepagents_sync import build_deepagents_tools
@@ -330,6 +351,8 @@ class TestDeepagentsSyncGetSchedulerStatus:
         mgr_mock = MagicMock()
         mgr_mock.is_running = True
         mgr_mock.interval_minutes = 15
+        mgr_mock.get_potential_jobs = AsyncMock(return_value=[])
+        mgr_mock.get_all_jobs_next_run = MagicMock(return_value={})
         runtime_context = AgentRuntimeContext.build(db=mock_db, scheduler_manager=mgr_mock)
         tools = build_deepagents_tools(mock_db, runtime_context=runtime_context)
         tool_map = {t.__name__: t for t in tools}

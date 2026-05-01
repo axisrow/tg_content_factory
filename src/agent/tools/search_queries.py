@@ -35,11 +35,11 @@ def register(db, client_pool, embedding_service, **kwargs):
             for sq in queries:
                 status = "активен" if sq.is_active else "неактивен"
                 flags = []
-                if sq.is_regex:
+                if getattr(sq, "is_regex", False):
                     flags.append("regex")
-                if sq.is_fts:
+                if getattr(sq, "is_fts", False):
                     flags.append("fts")
-                if sq.notify_on_collect:
+                if getattr(sq, "notify_on_collect", False):
                     flags.append("notify")
                 flags_str = f" [{', '.join(flags)}]" if flags else ""
                 lines.append(
