@@ -1,0 +1,99 @@
+"""Shared formatters for read-only agent tool output."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Mapping
+
+
+def _value(obj: object, name: str, default: object = None) -> object:
+    if isinstance(obj, Mapping):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def format_notification_status(bot: object | None, target_status: object | None = None) -> str:
+    lines: list[str]
+    if bot is None:
+        lines = ["Бот уведомлений не настроен."]
+    else:
+        bot_username = _value(bot, "bot_username", "")
+        username = f"@{bot_username}" if bot_username else "неизвестен"
+        lines = [
+            "Бот уведомлений:",
+            f"- Username: {username}",
+            f"- Bot ID: {_value(bot, 'bot_id', 'неизвестен') or 'неизвестен'}",
+            f"- Target user ID: {_value(bot, 'tg_user_id', 'неизвестен')}",
+        ]
+        tg_username = _value(bot, "tg_username")
+        if tg_username:
+            lines.append(f"- Target username: @{tg_username}")
+        created_at = _value(bot, "created_at")
+        if created_at:
+            lines.append(f"- Создан: {created_at}")
+
+    if target_status is not None:
+        lines.extend(
+            [
+                "",
+                "Целевой аккаунт:",
+                f"- Mode: {_value(target_status, 'mode', 'unknown')}",
+                f"- Status: {_value(target_status, 'state', 'unknown')}",
+            ]
+        )
+        configured_phone = _value(target_status, "configured_phone")
+        effective_phone = _value(target_status, "effective_phone")
+        if configured_phone:
+            lines.append(f"- Configured phone: {configured_phone}")
+        if effective_phone:
+            lines.append(f"- Effective phone: {effective_phone}")
+        message = _value(target_status, "message")
+        if message:
+            lines.append(f"- Diagnostic: {message}")
+
+    return "\n".join(lines)
+
+
+def format_filter_report(report: object) -> str:
+    results = list(_value(report, "results", []) or [])
+    if not results:
+        return "Нет каналов для анализа фильтров. 0 каналов проверено, 0 рекомендовано к фильтрации."
+
+    flagged = [result for result in results if bool(_value(result, "is_filtered", False))]
+    lines = [
+        f"Анализ фильтров: {len(results)} каналов проверено, "
+        f"{len(flagged)} рекомендовано к фильтрации."
+    ]
+    for result in flagged:
+        flags_value = _value(result, "flags", []) or []
+        flags = ", ".join(str(flag) for flag in flags_value) if flags_value else "—"
+        title = _value(result, "title") or "Без названия"
+        lines.append(f"- {title} (id={_value(result, 'channel_id', '?')}): {flags}")
+    return "\n".join(lines)
+
+
+def format_channel_stats(stats: Mapping[int, object], channels: Iterable[object] | None = None) -> str:
+    if not stats:
+        return "Статистика каналов пока не собрана."
+
+    channels_by_id = {
+        int(channel_id): channel
+        for channel in channels or []
+        if (channel_id := _value(channel, "channel_id")) is not None
+    }
+    lines = [f"Статистика каналов ({len(stats)}):"]
+    for cid, stat in stats.items():
+        channel = channels_by_id.get(int(cid))
+        title = _value(channel, "title") if channel is not None else None
+        username = _value(channel, "username") if channel is not None else None
+        label = f"{title or 'Без названия'} "
+        if username:
+            label += f"(@{username}, "
+        else:
+            label += "("
+        label += f"channel_id={cid})"
+        lines.append(
+            f"- {label}: "
+            f"subscribers={_value(stat, 'subscriber_count') or '?'}, "
+            f"avg_views={_value(stat, 'avg_views') or '?'}"
+        )
+    return "\n".join(lines)

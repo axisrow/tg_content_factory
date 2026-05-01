@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.models import ChannelStats
 from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
@@ -26,6 +27,39 @@ def _make_channel(
     ch.is_filtered = is_filtered
     ch.channel_type = channel_type
     return ch
+
+
+class TestGetChannelStatsTool:
+    @pytest.mark.anyio
+    async def test_empty(self, mock_db):
+        mock_db.get_latest_stats_for_all = AsyncMock(return_value={})
+        mock_db.get_channels = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_channel_stats"]({})
+        assert "пока не собрана" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_named_and_unnamed_channels(self, mock_db):
+        mock_db.get_latest_stats_for_all = AsyncMock(
+            return_value={
+                100: ChannelStats(channel_id=100, subscriber_count=10, avg_views=2.5),
+                200: ChannelStats(channel_id=200, subscriber_count=20),
+            }
+        )
+        mock_db.get_channels = AsyncMock(
+            return_value=[
+                _make_channel(channel_id=100, title="Named", username="named"),
+                _make_channel(channel_id=200, title=None, username=None),
+            ]
+        )
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_channel_stats"]({})
+        text = _text(result)
+        assert "Named" in text
+        assert "@named" in text
+        assert "channel_id=100" in text
+        assert "Без названия" in text
+        assert "channel_id=200" in text
 
 
 class TestAddChannelTool:
