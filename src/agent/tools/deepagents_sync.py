@@ -7,11 +7,17 @@ These wrappers bridge async DB/service calls via asyncio.run().
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from src.agent.runtime_context import AgentRuntimeContext
+from src.agent.tools._formatters import (
+    format_channel_stats,
+    format_filter_report,
+    format_notification_status,
+)
 
 _T = TypeVar("_T")
 logger = logging.getLogger(__name__)
@@ -124,14 +130,13 @@ def build_deepagents_tools(
         """Get subscriber counts and statistics for all channels."""
         try:
             stats = _run_sync("get_channel_stats", db.get_latest_stats_for_all)
+            channels = _run_sync(
+                "get_channel_stats_channels",
+                lambda: db.get_channels(active_only=False, include_filtered=True),
+            )
         except Exception as exc:
             return f"Ошибка статистики каналов: {exc}"
-        if not stats:
-            return "Статистика каналов не собрана."
-        lines = [f"Статистика ({len(stats)} каналов):"]
-        for cid, s in stats.items():
-            lines.append(f"- channel_id={cid}: subscribers={s.subscriber_count or '?'}")
-        return "\n".join(lines)
+        return format_channel_stats(stats, channels)
 
     tools.append(get_channel_stats)
 
@@ -512,8 +517,7 @@ def build_deepagents_tools(
 
             analyzer = ChannelAnalyzer(db)
             report = _run_sync("analyze_filters", analyzer.analyze_all)
-            flagged = [r for r in report.results if r.should_filter]
-            return f"Анализ: {len(report.results)} проверено, {len(flagged)} к фильтрации."
+            return format_filter_report(report)
         except Exception as exc:
             return f"Ошибка: {exc}"
 
@@ -755,11 +759,22 @@ def build_deepagents_tools(
         try:
             from src.services.notification_service import NotificationService
             from src.services.notification_target_service import NotificationTargetService
-            svc = NotificationService(db, NotificationTargetService(db, client_pool))
+
+            target_service = NotificationTargetService(db, client_pool)
+            describe = getattr(target_service, "describe_target", None)
+            target_status = None
+            if callable(describe):
+                if inspect.iscoroutinefunction(describe):
+                    target_status = _run_sync("notif_target", describe)
+                else:
+                    candidate = describe()
+                    if inspect.isawaitable(candidate):
+                        target_status = _run_sync("notif_target", lambda: candidate)
+            if target_status is not None and getattr(target_status, "state", None) != "available":
+                return format_notification_status(None, target_status)
+            svc = NotificationService(db, target_service)
             bot = _run_sync("notif_status", svc.get_status)
-            if not bot:
-                return "Бот уведомлений не настроен."
-            return f"Бот: @{bot.bot_username}, chat_id={bot.chat_id}"
+            return format_notification_status(bot, target_status)
         except Exception as exc:
             return f"Ошибка: {exc}"
 

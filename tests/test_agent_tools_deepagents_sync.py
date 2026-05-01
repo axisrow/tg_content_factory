@@ -4,6 +4,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from src.filters.models import ChannelFilterResult
+from src.models import NotificationBot
+
 
 class TestDeepagentsSyncListChannels:
     def test_empty(self, mock_db):
@@ -51,11 +54,13 @@ class TestDeepagentsSyncGetChannelStats:
 
         stat = SimpleNamespace(subscriber_count=9999)
         mock_db.get_latest_stats_for_all = AsyncMock(return_value={42: stat})
+        mock_db.get_channels = AsyncMock(return_value=[SimpleNamespace(channel_id=42, title="Named", username="named")])
         tools = build_deepagents_tools(mock_db)
         tool_map = {t.__name__: t for t in tools}
         result = tool_map["get_channel_stats"]()
         assert "9999" in result
         assert "channel_id=42" in result
+        assert "Named" in result
 
 
 class TestDeepagentsSyncListAccounts:
@@ -319,7 +324,7 @@ class TestDeepagentsSyncGetNotificationStatus:
     def test_configured(self, mock_db):
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
-        bot = SimpleNamespace(bot_username="mybot", chat_id=12345)
+        bot = NotificationBot(tg_user_id=12345, bot_id=67890, bot_username="mybot", bot_token="token")
         svc_mock = MagicMock()
         svc_mock.get_status = AsyncMock(return_value=bot)
         target_svc_mock = MagicMock()
@@ -332,6 +337,7 @@ class TestDeepagentsSyncGetNotificationStatus:
                 tool_map = {t.__name__: t for t in tools}
                 result = tool_map["get_notification_status"]()
         assert "@mybot" in result
+        assert "67890" in result
         assert "12345" in result
 
 
@@ -369,16 +375,16 @@ class TestDeepagentsSyncAnalyzeFilters:
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
         analyzer_mock = MagicMock()
-        result_item = SimpleNamespace(should_filter=True)
-        report = SimpleNamespace(results=[result_item, SimpleNamespace(should_filter=False)])
+        result_item = ChannelFilterResult(channel_id=1, title="Bad", is_filtered=True)
+        report = SimpleNamespace(results=[result_item, ChannelFilterResult(channel_id=2, is_filtered=False)])
         analyzer_mock.analyze_all = AsyncMock(return_value=report)
         with patch("src.filters.analyzer.ChannelAnalyzer", return_value=analyzer_mock):
             tools = build_deepagents_tools(mock_db)
             tool_map = {t.__name__: t for t in tools}
             result = tool_map["analyze_filters"]()
         assert "Анализ" in result
-        assert "2 проверено" in result
-        assert "1 к фильтрации" in result
+        assert "2 каналов проверено" in result
+        assert "1 рекомендовано" in result
 
     def test_error_returns_text(self, mock_db):
         from src.agent.tools.deepagents_sync import build_deepagents_tools

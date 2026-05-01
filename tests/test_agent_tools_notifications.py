@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.models import NotificationBot
 from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
@@ -47,8 +48,41 @@ class TestGetNotificationStatusTool:
         assert "не настроен" in _text(result)
 
     @pytest.mark.anyio
+    async def test_target_unavailable_returns_unknown_status(self, mock_db):
+        target_status = SimpleNamespace(
+            mode="primary",
+            state="disconnected",
+            message="Аккаунт +100 не подключён.",
+            effective_phone="+100",
+            configured_phone=None,
+        )
+        target_svc = MagicMock()
+        target_svc.describe_target = AsyncMock(return_value=target_status)
+        with (
+            patch("src.services.notification_service.NotificationService") as mock_ns,
+            patch(
+                "src.services.notification_target_service.NotificationTargetService",
+                return_value=target_svc,
+            ),
+        ):
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["get_notification_status"]({})
+        text = _text(result)
+        assert "невозможно проверить" in text
+        assert "не настроен" not in text
+        assert "disconnected" in text
+        mock_ns.return_value.get_status.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_configured_shows_bot_info(self, mock_db):
-        bot = SimpleNamespace(bot_username="mybot", chat_id=12345, created_at="2025-01-01")
+        bot = NotificationBot(
+            tg_user_id=12345,
+            tg_username="target",
+            bot_id=67890,
+            bot_username="mybot",
+            bot_token="token",
+            created_at="2025-01-01",
+        )
         with (
             patch("src.services.notification_service.NotificationService") as mock_ns,
             patch("src.services.notification_target_service.NotificationTargetService"),
@@ -58,6 +92,7 @@ class TestGetNotificationStatusTool:
             result = await handlers["get_notification_status"]({})
         text = _text(result)
         assert "@mybot" in text
+        assert "67890" in text
         assert "12345" in text
 
     @pytest.mark.anyio
@@ -85,10 +120,13 @@ class TestGetNotificationStatusTool:
     @pytest.mark.anyio
     async def test_configured_shows_bot_details_with_pool(self, mock_db):
         notif_svc = MagicMock()
-        bot = MagicMock()
-        bot.bot_username = "my_bot"
-        bot.chat_id = 123456
-        bot.created_at = "2025-01-01"
+        bot = NotificationBot(
+            tg_user_id=123456,
+            bot_id=987654,
+            bot_username="my_bot",
+            bot_token="token",
+            created_at="2025-01-01",
+        )
         notif_svc.get_status = AsyncMock(return_value=bot)
         mock_pool = _make_mock_pool()
 
@@ -97,6 +135,7 @@ class TestGetNotificationStatusTool:
             result = await handlers["get_notification_status"]({})
         text = _text(result)
         assert "my_bot" in text
+        assert "987654" in text
         assert "123456" in text
 
 
@@ -117,7 +156,7 @@ class TestSetupNotificationBotTool:
     @pytest.mark.anyio
     async def test_with_confirm_creates_bot(self, mock_db):
         pool = MagicMock()
-        bot = SimpleNamespace(bot_username="newbot", chat_id=99999)
+        bot = SimpleNamespace(bot_username="newbot", bot_id=99999, tg_user_id=111)
         with (
             patch("src.services.notification_service.NotificationService") as mock_ns,
             patch("src.services.notification_target_service.NotificationTargetService"),
@@ -140,7 +179,8 @@ class TestSetupNotificationBotTool:
         notif_svc = MagicMock()
         bot = MagicMock()
         bot.bot_username = "test_notify_bot"
-        bot.chat_id = 789
+        bot.bot_id = 789
+        bot.tg_user_id = 111
         notif_svc.setup_bot = AsyncMock(return_value=bot)
         mock_pool = _make_mock_pool()
 
@@ -211,7 +251,7 @@ class TestTestNotificationTool:
     @pytest.mark.anyio
     async def test_sends_notification(self, mock_db):
         pool = MagicMock()
-        bot = SimpleNamespace(bot_username="testbot", chat_id=1)
+        bot = SimpleNamespace(bot_username="testbot", bot_id=1, tg_user_id=111)
         with (
             patch("src.services.notification_service.NotificationService") as mock_ns,
             patch("src.services.notification_target_service.NotificationTargetService"),
