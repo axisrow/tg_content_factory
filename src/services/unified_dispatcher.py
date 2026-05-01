@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Awaitable, Callable, TypeVar
 
 from src.database.bundles import ChannelBundle, PipelineBundle, SearchQueryBundle
 from src.database.repositories.collection_tasks import CollectionTasksRepository
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
+TTaskHandler = TypeVar("TTaskHandler", bound=TaskHandler)
 
 _HANDLER_CLASSES = (
     StatsTaskHandler,
@@ -38,7 +39,11 @@ _HANDLER_CLASSES = (
     TranslationTaskHandler,
 )
 
-HANDLED_TYPES = [task_type.value for handler_cls in _HANDLER_CLASSES for task_type in handler_cls.task_types]
+HANDLED_TYPES = [
+    task_type.value
+    for handler_cls in _HANDLER_CLASSES
+    for task_type in handler_cls.task_types
+]
 
 
 class UnifiedDispatcher:
@@ -101,11 +106,7 @@ class UnifiedDispatcher:
             llm_provider_service=self._llm_provider_service,
         )
 
-    def _build_handlers(self) -> dict[type[TaskHandler], TaskHandler]:
-        context = self._handler_context()
-        return {handler_cls: handler_cls(context) for handler_cls in _HANDLER_CLASSES}
-
-    def _handler(self, handler_cls: type[TaskHandler]) -> TaskHandler:
+    def _handler(self, handler_cls: type[TTaskHandler]) -> TTaskHandler:
         return handler_cls(self._handler_context())
 
     async def _build_image_service(self) -> "ImageGenerationService":
@@ -167,7 +168,7 @@ class UnifiedDispatcher:
                         logger.exception("Failed to mark broken task as failed")
                 await asyncio.sleep(current_interval)
 
-    def _handler_map(self) -> dict[CollectionTaskType, object]:
+    def _handler_map(self) -> dict[CollectionTaskType, Callable[[CollectionTask], Awaitable[None]]]:
         try:
             return self.__handler_map
         except AttributeError:
