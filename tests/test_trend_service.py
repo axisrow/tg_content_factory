@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.services import trend_service as trend_service_module
 from src.services.trend_service import (
     MessageVelocity,
     PeakHour,
@@ -143,6 +144,83 @@ async def test_get_trending_topics_non_alpha_only(service, mock_db):
     assert "123numeric" not in words
     assert "test123" not in words
     assert "keepword" in words
+
+
+def test_analyze_topic_text_skips_jieba_for_ru_en_text(monkeypatch):
+    """RU/EN-only analysis should not call the Chinese segmenter."""
+
+    def fail_cut(_text):
+        raise AssertionError("jieba.cut should not run without Han characters")
+
+    monkeypatch.setattr(trend_service_module.jieba, "cut", fail_cut)
+
+    assert TrendService._analyze_topic_text("quantum рынок keepword") == ["quantum", "рынок", "keepword"]
+
+
+@pytest.mark.anyio
+async def test_get_trending_topics_segments_chinese_keywords(service, mock_db):
+    """get_trending_topics returns segmented Chinese topic keywords."""
+    mock_db.execute_fetchall = AsyncMock(
+        return_value=[
+            {"text": "人工智能 推动 芯片 市场 增长"},
+            {"text": "人工智能 芯片 公司 发布 新产品"},
+            {"text": "芯片 市场 需求 上升"},
+            {"text": "新能源汽车 出口 增长"},
+        ]
+    )
+
+    result = await service.get_trending_topics(days=7, limit=20)
+    keywords = [t.keyword for t in result]
+
+    assert result
+    assert "人工智能" in keywords
+    assert "芯片" in keywords
+    chip = next(t for t in result if t.keyword == "芯片")
+    assert chip.count == 3
+
+
+@pytest.mark.anyio
+async def test_get_trending_topics_filters_chinese_stop_words(service, mock_db):
+    """get_trending_topics filters common Chinese stop words."""
+    mock_db.execute_fetchall = AsyncMock(
+        return_value=[
+            {"text": "这个 我们 可以 因为 人工智能 芯片"},
+            {"text": "这个 我们 可以 因为 人工智能 市场"},
+            {"text": "芯片 市场 需求 增长"},
+            {"text": "新能源汽车 出口 增长"},
+        ]
+    )
+
+    result = await service.get_trending_topics(days=7, limit=20)
+    keywords = [t.keyword for t in result]
+
+    assert "人工智能" in keywords
+    assert "芯片" in keywords
+    assert "这个" not in keywords
+    assert "我们" not in keywords
+    assert "可以" not in keywords
+    assert "因为" not in keywords
+
+
+@pytest.mark.anyio
+async def test_get_trending_topics_mixed_ru_en_chinese_corpus(service, mock_db):
+    """get_trending_topics keeps meaningful RU, EN, and Chinese keywords together."""
+    mock_db.execute_fetchall = AsyncMock(
+        return_value=[
+            {"text": "quantum рынок 人工智能 芯片"},
+            {"text": "quantum рынок 人工智能 市场"},
+            {"text": "robotics криптовалюта 芯片"},
+            {"text": "analytics финансы 出口"},
+        ]
+    )
+
+    result = await service.get_trending_topics(days=7, limit=20)
+    keywords = [t.keyword for t in result]
+
+    assert "quantum" in keywords
+    assert "рынок" in keywords
+    assert "人工智能" in keywords
+    assert "芯片" in keywords
 
 
 @pytest.mark.anyio
@@ -450,3 +528,29 @@ async def test_get_trending_topics_cleans_urls_html_and_stop_words(service, mock
     assert "example" not in keywords
     assert "after" not in keywords
     assert "before" not in keywords
+
+
+@pytest.mark.anyio
+async def test_get_trending_topics_filters_english_and_generic_topic_noise(service, mock_db):
+    """Regression #541 follow-up: generic English words should not become trends."""
+    messages = [
+        {"text": "your will need content data robotics"},
+        {"text": "your will need page site robotics"},
+        {"text": "machinelearning neural insights"},
+        {"text": "machinelearning neural trends"},
+    ]
+    mock_db.execute_fetchall = AsyncMock(return_value=messages)
+
+    result = await service.get_trending_topics(days=7, limit=20)
+    keywords = [t.keyword for t in result]
+
+    assert "robotics" in keywords
+    assert "machinelearning" in keywords
+    assert "neural" in keywords
+    assert "your" not in keywords
+    assert "will" not in keywords
+    assert "need" not in keywords
+    assert "content" not in keywords
+    assert "data" not in keywords
+    assert "page" not in keywords
+    assert "site" not in keywords
