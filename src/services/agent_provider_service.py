@@ -16,7 +16,6 @@ import aiohttp
 from src.agent.provider_registry import (
     PROVIDER_ORDER,
     PROVIDER_SPECS,
-    ZAI_BASE_URL_REQUIRED_HINT,
     ZAI_CODING_BASE_URL,
     ZAI_GENERAL_BASE_URL,
     ProviderRuntimeConfig,
@@ -468,8 +467,6 @@ class AgentProviderService:
                     f"{ZAI_CODING_BASE_URL}."
                 )
             normalized_base_url = normalize_zai_base_url(raw_base_url)
-            if not normalized_base_url:
-                raise RuntimeError(ZAI_BASE_URL_REQUIRED_HINT)
             extra["base_url"] = normalized_base_url
         return model_provider, extra
 
