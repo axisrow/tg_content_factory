@@ -10,16 +10,16 @@
 | Добавить канал | `channel add` | `POST /channels/add` | `add_channel` |
 | Удалить канал | `channel delete` | `POST /channels/{pk}/delete` | `delete_channel` |
 | Вкл/выкл канал | `channel toggle` | `POST /channels/{pk}/toggle` | `toggle_channel` |
-| Статистика канала | `channel stats` | `POST /channels/{pk}/stats` | `collect_channel_stats` |
+| Статистика канала | `channel stats` | `POST /channels/{pk}/stats` | `collect_channel_stats`, `get_channel_stats` |
 | Импорт каналов | `channel import` | `POST /channels/import` | `import_channels` |
 | Обновить типы | `channel refresh-types` | `POST /channels/refresh-types` | `refresh_channel_types` |
 | Обновить метаданные | `channel refresh-meta` | — | `refresh_channel_meta` |
 | Массовое добавление из диалогов | `channel add-bulk` | `POST /channels/add-bulk` | — |
-| Список тегов | `channel tag list` | `GET /channels/tags` | — |
-| Создать тег | `channel tag add` | `POST /channels/tags` | — |
-| Удалить тег | `channel tag delete` | `DELETE /channels/tags/{name}` | — |
+| Список тегов | `channel tag list` | `GET /channels/tags` | `list_tags` |
+| Создать тег | `channel tag add` | `POST /channels/tags` | `create_tag` |
+| Удалить тег | `channel tag delete` | `DELETE /channels/tags/{name}` | `delete_tag` |
 | Получить теги канала | `channel tag get` | `GET /channels/{pk}/tags` | — |
-| Обновить теги канала | `channel tag set` | `POST /channels/{pk}/tags` | — |
+| Обновить теги канала | `channel tag set` | `POST /channels/{pk}/tags` | `set_channel_tags` |
 | Список диалогов для импорта | — | `GET /channels/dialogs` | — |
 
 ## Сбор сообщений
@@ -28,7 +28,7 @@
 |----------|-----|-------------|------------|
 | Собрать все каналы | `collect` | `POST /channels/collect-all` | `collect_all_channels` |
 | Собрать один канал | `channel collect` | `POST /channels/{pk}/collect` | `collect_channel` |
-| Статистика всех | — | `POST /channels/stats/all` | `collect_all_stats` |
+| Статистика всех | `channel stats --all` | `POST /channels/stats/all` | `collect_all_stats` |
 | Превью без сохранения | `collect sample` | — | — |
 | Отменить задачу | `scheduler task-cancel` | `POST /scheduler/tasks/{id}/cancel` | `cancel_scheduler_task` |
 | Очистить очередь | `scheduler clear-pending` | `POST /scheduler/tasks/clear-pending-collect` | `clear_pending_tasks` |
@@ -43,13 +43,13 @@
 | Telegram-поиск | `search --mode telegram` | `GET /search?mode=telegram` | `search_telegram` |
 | Поиск по чатам | `search --mode my_chats` | `GET /search?mode=my_chats` | `search_my_chats` |
 | Поиск в канале | `search --mode channel` | `GET /search?mode=channel` | `search_in_channel` |
-| Индексация | — | `POST /settings/semantic-index` | `index_messages` |
+| Индексация | `search --index-now` | `POST /settings/semantic-index` | `index_messages` |
 
 ## Сообщения
 
 | Операция | CLI | Web Endpoint | Agent Tool |
 |----------|-----|-------------|------------|
-| Чтение сообщений | `messages read` | — | — |
+| Чтение сообщений | `messages read` | — | `read_messages` |
 | Перевод одного сообщения | `translate message` | `POST /search/translate/{message_db_id}` | — |
 | Экспорт сообщений | `export json|csv|rss` | — | — |
 
@@ -63,7 +63,7 @@
 | Удалить | `search-query delete` | `POST /search-queries/{id}/delete` | `delete_search_query` |
 | Вкл/выкл | `search-query toggle` | `POST /search-queries/{id}/toggle` | `toggle_search_query` |
 | Запустить вручную | `search-query run` | `POST /search-queries/{id}/run` | `run_search_query` |
-| Получить | — | — | `get_search_query` |
+| Получить | `search-query get` | — | `get_search_query` |
 | Статистика | `search-query stats` | — | `get_search_query_stats` |
 
 ## Фильтры
@@ -100,9 +100,14 @@
 | Отклонить | `pipeline reject` | `POST /moderation/{id}/reject` | `reject_run` |
 | Одобрить (bulk) | `pipeline bulk-approve` | `POST /moderation/bulk-approve` | `bulk_approve_runs` |
 | Отклонить (bulk) | `pipeline bulk-reject` | `POST /moderation/bulk-reject` | `bulk_reject_runs` |
-| Шаги refinement | `pipeline refinement-steps` | `GET/POST /pipelines/{id}/refinement-steps` | — |
-| Страница модерации | — | `GET /moderation/` | `list_pending_moderation` |
-| Просмотр модерации | — | `GET /moderation/{id}/view` | `view_moderation_run` |
+| Шаги refinement | `pipeline refinement-steps` | `GET/POST /pipelines/{id}/refinement-steps` | `get_refinement_steps`, `set_refinement_steps` |
+| Экспорт JSON | `pipeline export` | — | `export_pipeline_json` |
+| Импорт JSON | `pipeline import` | — | `import_pipeline_json` |
+| Список шаблонов | `pipeline templates` | — | `list_pipeline_templates` |
+| Создать из шаблона | `pipeline from-template` | — | `create_pipeline_from_template` |
+| AI edit | `pipeline ai-edit` | — | `ai_edit_pipeline` |
+| Страница модерации | `pipeline moderation-list` | `GET /moderation/` | `list_pending_moderation` |
+| Просмотр модерации | `pipeline moderation-view` | `GET /moderation/{id}/view` | `view_moderation_run` |
 | Стрим генерации | — | `GET /pipelines/{id}/generate-stream` | — |
 
 ## Планировщик
@@ -115,6 +120,7 @@
 | Триггер | `scheduler trigger` | `POST /scheduler/trigger` | `trigger_collection` |
 | Вкл/выкл job | `scheduler job-toggle` | `POST /scheduler/jobs/{id}/toggle` | `toggle_scheduler_job` |
 | Изменить интервал | `scheduler set-interval` | `POST /scheduler/jobs/{id}/set-interval` | `set_scheduler_interval` |
+| Сохранить настройки | `settings set` | `POST /settings/save-scheduler` | `save_scheduler_settings` |
 
 ## Уведомления
 
@@ -164,11 +170,13 @@
 | Список диалогов | `dialogs list` | `GET /dialogs/` | `search_dialogs` |
 | Обновить кеш | `dialogs refresh` | `POST /dialogs/refresh` | `refresh_dialogs` |
 | Покинуть диалоги | `dialogs leave` | `POST /dialogs/leave` | `leave_dialogs` |
+| Resolve entity | `dialogs resolve` | — | `resolve_entity` |
 | Статус кеша | `dialogs cache-status` | `GET /dialogs/cache-status` | `get_cache_status` |
 | Очистить кеш | `dialogs cache-clear` | `POST /dialogs/cache-clear` | `clear_dialog_cache` |
 | Топики форума | `dialogs topics` | `GET /agent/forum-topics` | `get_forum_topics` |
 | Создать канал | `dialogs create-channel` | `POST /dialogs/create-channel` | `create_telegram_channel` |
 | Отправить сообщение | `dialogs send` | `POST /dialogs/send` | `send_message` |
+| Переслать сообщение | `dialogs forward` | `POST /dialogs/forward` | `forward_messages` |
 | Редактировать | `dialogs edit-message` | `POST /dialogs/edit-message` | `edit_message` |
 | Удалить | `dialogs delete-message` | `POST /dialogs/delete-message` | `delete_message` |
 | Закрепить | `dialogs pin-message` | `POST /dialogs/pin-message` | `pin_message` |
@@ -200,7 +208,7 @@
 | Вкл/выкл авто | `photo-loader auto-toggle` | `POST /dialogs/photos/auto/{id}/toggle` | `toggle_auto_upload` |
 | Удалить авто | `photo-loader auto-delete` | `POST /dialogs/photos/auto/{id}/delete` | `delete_auto_upload` |
 | Запустить due | `photo-loader run-due` | `POST /dialogs/photos/run-due` | `run_photo_due` |
-| Список items | — | — | `list_photo_items` |
+| Список items | `photo-loader items` | — | `list_photo_items` |
 
 ## Изображения
 
@@ -209,6 +217,7 @@
 | Генерация | `image generate` | `POST /images/generate` | `generate_image` |
 | Поиск моделей | `image models` | `GET /images/models/search` | `list_image_models` |
 | Список провайдеров | `image providers` | — | `list_image_providers` |
+| Список генераций | `image generated` | — | `list_generated_images` |
 
 ## LLM-провайдеры
 

@@ -553,20 +553,20 @@ class TestDeepagentsSyncChannels:
         assert "Ошибка" in result
 
     def test_get_channel_stats_empty(self, mock_db):
-        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(return_value={})
+        mock_db.get_latest_stats_for_all = AsyncMock(return_value={})
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["get_channel_stats"]()
         assert "не собрана" in result.lower()
 
     def test_get_channel_stats_with_data(self, mock_db):
         stat = SimpleNamespace(subscriber_count=500)
-        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(return_value={10: stat})
+        mock_db.get_latest_stats_for_all = AsyncMock(return_value={10: stat})
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["get_channel_stats"]()
         assert "500" in result
 
     def test_get_channel_stats_error(self, mock_db):
-        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(side_effect=Exception("oops"))
+        mock_db.get_latest_stats_for_all = AsyncMock(side_effect=Exception("oops"))
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["get_channel_stats"]()
         assert "Ошибка" in result

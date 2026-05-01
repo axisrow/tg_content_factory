@@ -171,32 +171,44 @@ class TrendService:
         )
         return [TrendingEmoji(emoji=r["emoji"], count=int(r["total"])) for r in rows]
 
-    async def get_message_velocity(self, channel_id: int, days: int = 30) -> list[MessageVelocity]:
-        """Return daily message count for a specific channel."""
+    async def get_message_velocity(self, channel_id: int | None = None, days: int = 30) -> list[MessageVelocity]:
+        """Return daily message count for one channel or all channels."""
+        channel_filter = "AND m.channel_id = ?" if channel_id is not None else ""
+        params: tuple[object, ...]
+        if channel_id is not None:
+            params = (f"-{days} days", channel_id)
+        else:
+            params = (f"-{days} days",)
         rows = await self._db.execute_fetchall(
-            """
+            f"""
             SELECT date(m.date) AS day, COUNT(*) AS cnt
             FROM messages m
-            WHERE m.channel_id = ?
-              AND m.date >= date('now', ?)
+            WHERE m.date >= date('now', ?)
+              {channel_filter}
             GROUP BY day
             ORDER BY day ASC
             """,
-            (channel_id, f"-{days} days"),
+            params,
         )
         return [MessageVelocity(date=r["day"], count=int(r["cnt"])) for r in rows]
 
-    async def get_peak_hours(self, channel_id: int, days: int = 30) -> list[PeakHour]:
-        """Return message count distribution by hour of day for a channel."""
+    async def get_peak_hours(self, channel_id: int | None = None, days: int = 30) -> list[PeakHour]:
+        """Return message count distribution by hour for one channel or all channels."""
+        channel_filter = "AND m.channel_id = ?" if channel_id is not None else ""
+        params: tuple[object, ...]
+        if channel_id is not None:
+            params = (f"-{days} days", channel_id)
+        else:
+            params = (f"-{days} days",)
         rows = await self._db.execute_fetchall(
-            """
+            f"""
             SELECT CAST(strftime('%H', m.date) AS INTEGER) AS hour, COUNT(*) AS cnt
             FROM messages m
-            WHERE m.channel_id = ?
-              AND m.date >= date('now', ?)
+            WHERE m.date >= date('now', ?)
+              {channel_filter}
             GROUP BY hour
             ORDER BY hour ASC
             """,
-            (channel_id, f"-{days} days"),
+            params,
         )
         return [PeakHour(hour=int(r["hour"]), count=int(r["cnt"])) for r in rows]

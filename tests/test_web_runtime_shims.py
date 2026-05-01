@@ -30,6 +30,7 @@ async def test_snapshot_pool_refresh():
     pool = SnapshotClientPool(db)
     await pool.refresh()
     assert set(pool.clients.keys()) == {"+1", "+2"}
+    assert pool.connected_phones() == {"+1", "+2"}
 
 
 async def test_snapshot_pool_refresh_no_snapshot():

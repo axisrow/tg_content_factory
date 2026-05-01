@@ -40,8 +40,7 @@ class TestDeepagentsSyncGetChannelStats:
     def test_empty(self, mock_db):
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
-        mock_db.repos = MagicMock()
-        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(return_value={})
+        mock_db.get_latest_stats_for_all = AsyncMock(return_value={})
         tools = build_deepagents_tools(mock_db)
         tool_map = {t.__name__: t for t in tools}
         result = tool_map["get_channel_stats"]()
@@ -51,8 +50,7 @@ class TestDeepagentsSyncGetChannelStats:
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
         stat = SimpleNamespace(subscriber_count=9999)
-        mock_db.repos = MagicMock()
-        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(return_value={42: stat})
+        mock_db.get_latest_stats_for_all = AsyncMock(return_value={42: stat})
         tools = build_deepagents_tools(mock_db)
         tool_map = {t.__name__: t for t in tools}
         result = tool_map["get_channel_stats"]()
@@ -111,7 +109,7 @@ class TestDeepagentsSyncGetAccountInfo:
         tools = build_deepagents_tools(mock_db)
         tool_map = {t.__name__: t for t in tools}
         result = tool_map["get_account_info"]()
-        assert result == "live Telegram runtime unavailable"
+        assert "live Telegram runtime unavailable" in result
         lowered = result.lower()
         assert "disabled" not in lowered
         assert "sms" not in lowered
@@ -146,6 +144,38 @@ class TestDeepagentsSyncGetAccountInfo:
         assert "Live Pool" in result
         assert "db_primary=да" in result
         pool.get_users_info.assert_awaited_once_with(include_avatar=False)
+
+    def test_connected_runtime_with_empty_profiles_via_sync_bridge(self, mock_db):
+        from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+        pool = MagicMock()
+        pool.clients = {"+66982102247": object(), "+66824602531": object()}
+        pool.get_users_info = AsyncMock(return_value=[])
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(
+                id=1,
+                phone="+66982102247",
+                is_active=True,
+                is_primary=True,
+                session_string="s",
+            ),
+            SimpleNamespace(
+                id=2,
+                phone="+66824602531",
+                is_active=True,
+                is_primary=False,
+                session_string="s",
+            ),
+        ])
+
+        tools = build_deepagents_tools(mock_db, client_pool=pool)
+        tool_map = {t.__name__: t for t in tools}
+        result = tool_map["get_account_info"]()
+
+        assert "Runtime connected phones" in result
+        assert "+66982102247" in result
+        assert "+66824602531" in result
+        assert "do not treat this as disconnected" in result
 
 
 class TestDeepagentsSyncAgentThreads:
@@ -248,25 +278,24 @@ class TestDeepagentsSyncListSearchQueries:
 
 class TestDeepagentsSyncGetSchedulerStatus:
     def test_returns_status(self, mock_db):
+        from src.agent.runtime_context import AgentRuntimeContext
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
         mgr_mock = MagicMock()
-        mgr_mock.load_settings = AsyncMock(return_value=None)
         mgr_mock.is_running = True
         mgr_mock.interval_minutes = 15
-        with patch("src.scheduler.service.SchedulerManager", return_value=mgr_mock):
-            tools = build_deepagents_tools(mock_db)
-            tool_map = {t.__name__: t for t in tools}
-            result = tool_map["get_scheduler_status"]()
+        runtime_context = AgentRuntimeContext.build(db=mock_db, scheduler_manager=mgr_mock)
+        tools = build_deepagents_tools(mock_db, runtime_context=runtime_context)
+        tool_map = {t.__name__: t for t in tools}
+        result = tool_map["get_scheduler_status"]()
         assert "Планировщик" in result
 
     def test_error_returns_text(self, mock_db):
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
-        with patch("src.scheduler.service.SchedulerManager", side_effect=Exception("no sched")):
-            tools = build_deepagents_tools(mock_db)
-            tool_map = {t.__name__: t for t in tools}
-            result = tool_map["get_scheduler_status"]()
+        tools = build_deepagents_tools(mock_db)
+        tool_map = {t.__name__: t for t in tools}
+        result = tool_map["get_scheduler_status"]()
         assert "Ошибка" in result
 
 

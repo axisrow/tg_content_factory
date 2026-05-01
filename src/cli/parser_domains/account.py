@@ -33,6 +33,18 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     acc_verify.add_argument("--api-hash", default=None, dest="api_hash",
                             help="Telegram API hash (uses stored if omitted)")
 
+    acc_add = acc_sub.add_parser(
+        "add",
+        help="Compatibility alias for send-code / verify-code account onboarding",
+    )
+    acc_add.add_argument("--phone", required=True, help="Phone number with country code")
+    acc_add.add_argument("--code", default=None, help="Auth code received in Telegram")
+    acc_add.add_argument("--password", default=None, help="2FA password (if required)")
+    acc_add.add_argument("--api-id", type=int, default=None, dest="api_id",
+                         help="Telegram API ID (uses stored if omitted)")
+    acc_add.add_argument("--api-hash", default=None, dest="api_hash",
+                         help="Telegram API hash (uses stored if omitted)")
+
     acc_sub.add_parser("flood-status", help="Show flood wait timers for all accounts")
 
     acc_flood_clear = acc_sub.add_parser("flood-clear", help="Clear flood wait for an account")

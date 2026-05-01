@@ -294,6 +294,20 @@ async def test_get_message_velocity_by_channel(service, mock_db):
     assert result[0].count == 5
     assert result[1].date == "2024-01-02"
     assert result[1].count == 10
+    assert mock_db.execute_fetchall.await_args.args[1] == ("-30 days", 123)
+
+
+@pytest.mark.anyio
+async def test_get_message_velocity_all_channels_when_channel_id_omitted(service, mock_db):
+    """get_message_velocity aggregates all channels when channel_id is omitted."""
+    mock_db.execute_fetchall = AsyncMock(return_value=[{"day": "2024-01-01", "cnt": 15}])
+
+    result = await service.get_message_velocity(days=7)
+
+    sql = mock_db.execute_fetchall.await_args.args[0]
+    assert "m.channel_id = ?" not in sql
+    assert mock_db.execute_fetchall.await_args.args[1] == ("-7 days",)
+    assert result[0].count == 15
 
 
 # === get_peak_hours tests ===
@@ -326,6 +340,21 @@ async def test_get_peak_hours_distribution(service, mock_db):
     assert result[0].count == 5
     assert result[1].hour == 18
     assert result[1].count == 10
+    assert mock_db.execute_fetchall.await_args.args[1] == ("-30 days", 123)
+
+
+@pytest.mark.anyio
+async def test_get_peak_hours_all_channels_when_channel_id_omitted(service, mock_db):
+    """get_peak_hours aggregates all channels when channel_id is omitted."""
+    mock_db.execute_fetchall = AsyncMock(return_value=[{"hour": 9, "cnt": 7}])
+
+    result = await service.get_peak_hours(days=7)
+
+    sql = mock_db.execute_fetchall.await_args.args[0]
+    assert "m.channel_id = ?" not in sql
+    assert mock_db.execute_fetchall.await_args.args[1] == ("-7 days",)
+    assert result[0].hour == 9
+    assert result[0].count == 7
 
 
 # === Dataclass tests ===

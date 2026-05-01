@@ -14,6 +14,9 @@ class SnapshotClientPool:
     def clients(self) -> dict[str, object]:
         return getattr(self, "_clients_cache", {})
 
+    def connected_phones(self) -> set[str]:
+        return set(self.clients.keys())
+
     async def refresh(self) -> None:
         snapshot = await self._db.repos.runtime_snapshots.get_snapshot("accounts_status")
         payload = snapshot.payload if snapshot is not None else {}
