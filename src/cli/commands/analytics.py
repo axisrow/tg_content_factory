@@ -107,7 +107,15 @@ def run(args: argparse.Namespace) -> None:
                 print(fmt.format("Date", "Generated", "Published"))
                 print("-" * 38)
                 for row in rows:
-                    print(fmt.format(str(row["date"]), str(row.get("count", 0)), str(row.get("published", 0))))
+                    if isinstance(row, dict):
+                        date = row.get("date", "")
+                        generated = row.get("generations", row.get("count", 0))
+                        published = row.get("publications", row.get("published", 0))
+                    else:
+                        date = getattr(row, "date", "")
+                        generated = getattr(row, "generations", 0)
+                        published = getattr(row, "publications", 0)
+                    print(fmt.format(str(date), str(generated), str(published)))
 
             elif action == "trending-topics":
                 from src.services.trend_service import TrendService
@@ -139,7 +147,8 @@ def run(args: argparse.Namespace) -> None:
                 print(fmt.format("#", "Channel", "Messages"))
                 print("-" * 54)
                 for i, ch in enumerate(channels, 1):
-                    print(fmt.format(str(i), str(ch.title)[:40], str(ch.count)))
+                    message_count = getattr(ch, "message_count", getattr(ch, "count", 0))
+                    print(fmt.format(str(i), str(ch.title)[:40], str(message_count)))
 
             elif action == "velocity":
                 from src.services.trend_service import TrendService

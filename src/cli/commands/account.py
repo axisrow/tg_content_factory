@@ -6,6 +6,8 @@ import json
 import logging
 from datetime import datetime, timezone
 
+from src.agent.runtime_context import AgentRuntimeContext
+from src.agent.tools.accounts import get_live_account_info_text
 from src.cli import runtime
 from src.models import Account
 from src.settings_utils import parse_int_setting
@@ -36,6 +38,9 @@ def run(args: argparse.Namespace) -> None:
         config, db = await runtime.init_db(args.config)
         pool = None
         try:
+            if args.account_action == "add":
+                args.account_action = "verify-code" if getattr(args, "code", None) else "send-code"
+
             if args.account_action == "send-code":
                 phone = args.phone
                 api_id, api_hash = await _resolve_credentials(args, config, db)
@@ -128,24 +133,8 @@ def run(args: argparse.Namespace) -> None:
 
             elif args.account_action == "info":
                 _, pool = await runtime.init_pool(config, db)
-                users = await pool.get_users_info(include_avatar=False)
-                phone_filter = getattr(args, "phone", None)
-                if phone_filter:
-                    users = [u for u in users if u.phone == phone_filter]
-                if not users:
-                    print("No connected accounts found.")
-                    return
-                db_accounts = await db.get_accounts()
-                active_by_phone = {a.phone: a.is_active for a in db_accounts}
-                fmt = "{:<16} {:<25} {:<20} {:<9} {:<8}"
-                print(fmt.format("Phone", "Name", "Username", "Premium", "Active"))
-                print("-" * 82)
-                for u in users:
-                    name = f"{u.first_name} {u.last_name}".strip() or "—"
-                    username = f"@{u.username}" if u.username else "—"
-                    premium = "Yes" if u.is_premium else "No"
-                    active = "Yes" if active_by_phone.get(u.phone, False) else "No"
-                    print(fmt.format(u.phone, name[:25], username[:20], premium, active))
+                ctx = AgentRuntimeContext.build(db=db, config=config, client_pool=pool)
+                print(await get_live_account_info_text(ctx, getattr(args, "phone", None) or ""))
                 return
             if args.account_action == "list":
                 accounts = await db.get_accounts()

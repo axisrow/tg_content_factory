@@ -536,8 +536,7 @@ class TestPipelineStatsTool:
 class TestChannelStatsTool:
     @pytest.mark.anyio
     async def test_with_stats(self, mock_db):
-        mock_db.repos = MagicMock()
-        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(
+        mock_db.get_latest_stats_for_all = AsyncMock(
             return_value={100: SimpleNamespace(channel_id=100, subscriber_count=5000, avg_views=1200)}
         )
         handlers = _get_tool_handlers(mock_db)
@@ -549,8 +548,7 @@ class TestChannelStatsTool:
 
     @pytest.mark.anyio
     async def test_empty(self, mock_db):
-        mock_db.repos = MagicMock()
-        mock_db.repos.channels.get_latest_stats_for_all = AsyncMock(return_value={})
+        mock_db.get_latest_stats_for_all = AsyncMock(return_value={})
         handlers = _get_tool_handlers(mock_db)
 
         result = await handlers["get_channel_stats"]({})
@@ -883,6 +881,52 @@ class TestGetAccountInfoTool:
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["get_account_info"]({})
         assert "не найдены" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_connected_runtime_with_empty_profiles_is_not_reported_as_disconnected(self, mock_db):
+        mock_pool = MagicMock()
+        mock_pool.clients = {
+            "+66982102247": object(),
+            "+66990712629": object(),
+            "+8613392919509": object(),
+            "+66824602531": object(),
+        }
+        mock_pool.get_users_info = AsyncMock(return_value=[])
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(id=1, phone="+66982102247", is_active=True, is_primary=True, session_string="s"),
+            SimpleNamespace(id=2, phone="+66990712629", is_active=True, is_primary=False, session_string="s"),
+            SimpleNamespace(id=3, phone="+8613392919509", is_active=True, is_primary=False, session_string="s"),
+            SimpleNamespace(id=4, phone="+66824602531", is_active=True, is_primary=False, session_string="s"),
+        ])
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["get_account_info"]({})
+        text = _text(result)
+
+        assert "Runtime connected phones" in text
+        assert "+66982102247" in text
+        assert "+66824602531" in text
+        assert "DB active accounts: 4" in text
+        assert "do not treat this as disconnected" in text
+        assert "not found" not in text.lower()
+
+    @pytest.mark.anyio
+    async def test_phone_filter_reports_connected_phone_when_profile_unavailable(self, mock_db):
+        mock_pool = MagicMock()
+        mock_pool.clients = {"+8613392919509": object(), "+66824602531": object()}
+        mock_pool.get_users_info = AsyncMock(return_value=[])
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(id=1, phone="+8613392919509", is_active=True, is_primary=False, session_string="s"),
+            SimpleNamespace(id=2, phone="+66824602531", is_active=True, is_primary=False, session_string="s"),
+        ])
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["get_account_info"]({"phone": "+8613*"})
+        text = _text(result)
+
+        assert "+8613392919509" in text
+        assert "+66824602531" not in text
+        assert "profiles unavailable" in text
 
 
 # ---------------------------------------------------------------------------

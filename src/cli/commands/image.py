@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+from src.cli import runtime
 from src.services.image_generation_service import ImageGenerationService
 
 
@@ -47,7 +48,24 @@ def run(args: argparse.Namespace) -> None:
             for name in names:
                 print(f"  {name}")
 
+        elif action == "generated":
+            _, db = await runtime.init_db(args.config)
+            try:
+                images = await db.repos.generated_images.list_recent(limit=args.limit)
+                if not images:
+                    print("No generated images found.")
+                    return
+                for img in images:
+                    prompt = (img.prompt[:60] + "...") if len(img.prompt) > 60 else img.prompt
+                    print(f"[{img.id}] {img.created_at} — {prompt}")
+                    if img.local_path:
+                        print(f"    file=/{img.local_path}")
+                    if img.model:
+                        print(f"    model={img.model}")
+            finally:
+                await db.close()
+
         else:
-            print("Usage: image {generate|models|providers}")
+            print("Usage: image {generate|models|providers|generated}")
 
     asyncio.run(_run())

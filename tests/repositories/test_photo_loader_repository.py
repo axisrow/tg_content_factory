@@ -97,6 +97,7 @@ async def test_list_items_for_batch(db):
     await repo.create_item(PhotoBatchItem(batch_id=b1, phone="+1", target_dialog_id=1, file_paths=["/b"]))
     await repo.create_item(PhotoBatchItem(batch_id=b2, phone="+2", target_dialog_id=2, file_paths=["/c"]))
     assert len(await repo.list_items_for_batch(b1)) == 2
+    assert len(await repo.list_items_for_batch(b1, limit=1)) == 1
     assert len(await repo.list_items_for_batch(b2)) == 1
 
 

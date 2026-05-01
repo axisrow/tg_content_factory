@@ -36,6 +36,22 @@ def run(args: argparse.Namespace) -> None:
                         )
                     )
 
+            elif args.search_query_action == "get":
+                sq = await svc.get(args.id)
+                if not sq:
+                    print(f"Search query id={args.id} not found")
+                    return
+                print(f"ID: {sq.id}")
+                print(f"Query: {sq.query}")
+                print(f"Interval: {sq.interval_minutes}m")
+                print(f"Active: {sq.is_active}")
+                print(f"Regex: {sq.is_regex}")
+                print(f"FTS: {sq.is_fts}")
+                print(f"Notify: {sq.notify_on_collect}")
+                print(f"Track stats: {sq.track_stats}")
+                print(f"Max length: {sq.max_length if sq.max_length is not None else '—'}")
+                print(f"Exclude patterns: {sq.exclude_patterns or '—'}")
+
             elif args.search_query_action == "add":
                 exclude = (
                     args.exclude_patterns.replace("\\n", "\n") if args.exclude_patterns else ""

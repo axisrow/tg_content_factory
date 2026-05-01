@@ -9,6 +9,14 @@ from claude_agent_sdk import tool
 from src.agent.tools._registry import _text_response
 
 
+def _daily_stat_value(row: object, attr: str, legacy_key: str | None = None, default: int | str = 0) -> object:
+    if hasattr(row, attr):
+        return getattr(row, attr)
+    if isinstance(row, dict):
+        return row.get(legacy_key or attr, default)
+    return default
+
+
 def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
@@ -86,7 +94,10 @@ def register(db, client_pool, embedding_service, **kwargs):
                 return _text_response("Нет данных за указанный период.")
             lines = [f"Ежедневная статистика за {days} дней:"]
             for row in rows:
-                lines.append(f"- {row['date']}: генераций={row.get('count', 0)}, опубл.={row.get('published', 0)}")
+                date = _daily_stat_value(row, "date", default="")
+                generations = _daily_stat_value(row, "generations", "count")
+                publications = _daily_stat_value(row, "publications", "published")
+                lines.append(f"- {date}: генераций={generations}, опубл.={publications}")
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка получения дневной статистики: {e}")
@@ -140,7 +151,8 @@ def register(db, client_pool, embedding_service, **kwargs):
                 return _text_response("Данные о каналах не найдены.")
             lines = [f"Топ каналов за {days} дней:"]
             for ch in channels:
-                lines.append(f"- {ch.title} (id={ch.channel_id}): {ch.count} сообщений")
+                message_count = getattr(ch, "message_count", getattr(ch, "count", 0))
+                lines.append(f"- {ch.title} (id={ch.channel_id}): {message_count} сообщений")
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка получения трендов каналов: {e}")
