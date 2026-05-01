@@ -943,96 +943,91 @@ class TestMessagingTools:
 
 
 class TestDeepagentsSyncRemainingTools:
-    """Test sync tools by patching _run_sync at call-time."""
+    """Test sync tools through the runtime-context sync bridge."""
 
-    def _build_tools(self):
+    def _build_tools(self, run_sync_side_effect):
         db = _make_mock_db()
         config = AppConfig()
+        runtime_context = SimpleNamespace(
+            config=config,
+            client_pool=None,
+            scheduler_manager=None,
+            run_sync=MagicMock(side_effect=run_sync_side_effect),
+        )
         from src.agent.tools.deepagents_sync import build_deepagents_tools
-        tools = build_deepagents_tools(db, config=config, client_pool=None)
+
+        tools = build_deepagents_tools(
+            db,
+            config=config,
+            client_pool=None,
+            runtime_context=runtime_context,
+        )
         return {f.__name__: f for f in tools}
 
-    def _call(self, func, se, *args, **kwargs):
-        with patch("src.agent.tools.deepagents_sync._run_sync", side_effect=se):
-            return func(*args, **kwargs)
+    def _call(self, tool_name, se, *args, **kwargs):
+        return self._build_tools(se)[tool_name](*args, **kwargs)
 
     def test_list_pipelines_empty(self):
-        tm = self._build_tools()
-        result = self._call(tm["list_pipelines"], lambda n, c: [])
+        result = self._call("list_pipelines", lambda n, c: [])
         assert isinstance(result, str)
 
     def test_get_pipeline_detail_not_found(self):
-        tm = self._build_tools()
-        result = self._call(tm["get_pipeline_detail"], lambda n, c: None, pipeline_id=999)
+        result = self._call("get_pipeline_detail", lambda n, c: "не найден", pipeline_id=999)
         assert "не найден" in result.lower() or "ошибка" in result.lower()
 
     def test_run_pipeline_not_found(self):
-        tm = self._build_tools()
-        result = self._call(tm["run_pipeline"], lambda n, c: None, pipeline_id=999)
+        result = self._call("run_pipeline", lambda n, c: "не найден", pipeline_id=999)
         assert "не найден" in result.lower() or "ошибка" in result.lower()
 
     def test_list_pipeline_runs_empty(self):
-        tm = self._build_tools()
-        result = self._call(tm["list_pipeline_runs"], lambda n, c: [], pipeline_id=1)
+        result = self._call("list_pipeline_runs", lambda n, c: "нет генераций", pipeline_id=1)
         assert "нет генераций" in result.lower() or "ошибка" in result.lower()
 
     def test_get_pipeline_run_not_found(self):
-        tm = self._build_tools()
-        result = self._call(tm["get_pipeline_run"], lambda n, c: None, run_id=999)
+        result = self._call("get_pipeline_run", lambda n, c: "не найден", run_id=999)
         assert "не найден" in result.lower() or "ошибка" in result.lower()
 
     def test_list_pending_moderation_empty(self):
-        tm = self._build_tools()
-        result = self._call(tm["list_pending_moderation"], lambda n, c: [])
+        result = self._call("list_pending_moderation", lambda n, c: "нет черновиков")
         assert "нет черновиков" in result.lower() or "ошибка" in result.lower()
 
     def test_list_search_queries_empty(self):
-        tm = self._build_tools()
-        result = self._call(tm["list_search_queries"], lambda n, c: [])
+        result = self._call("list_search_queries", lambda n, c: "не найден")
         assert "не найден" in result.lower() or "ошибка" in result.lower()
 
     def test_run_search_query(self):
-        tm = self._build_tools()
-        result = self._call(tm["run_search_query"], lambda n, c: 5, sq_id=1)
+        result = self._call("run_search_query", lambda n, c: 5, sq_id=1)
         assert isinstance(result, str)
 
     def test_get_notification_status_no_bot(self):
-        tm = self._build_tools()
-        result = self._call(tm["get_notification_status"], lambda n, c: None)
+        result = self._call("get_notification_status", lambda n, c: "не настроен")
         assert "не настроен" in result.lower() or "ошибка" in result.lower()
 
     def test_get_analytics_summary(self):
-        tm = self._build_tools()
-
         def se(n, c):
-            return {"total_generations": 10, "total_published": 5, "total_pending": 3, "total_rejected": 2}
+            return {"content": [{"type": "text", "text": "Аналитика"}]}
 
-        result = self._call(tm["get_analytics_summary"], se)
+        result = self._call("get_analytics_summary", se)
         assert "Аналитика" in result
 
     def test_get_pipeline_stats_empty(self):
-        tm = self._build_tools()
-        result = self._call(tm["get_pipeline_stats"], lambda n, c: [])
+        result = self._call("get_pipeline_stats", lambda n, c: "не найдена")
         assert "не найдена" in result.lower()
 
     def test_get_trending_topics_empty(self):
-        tm = self._build_tools()
-        result = self._call(tm["get_trending_topics"], lambda n, c: [])
+        result = self._call("get_trending_topics", lambda n, c: "не найден")
         assert "не найден" in result.lower()
 
     def test_get_trending_channels_empty(self):
-        tm = self._build_tools()
-        result = self._call(tm["get_trending_channels"], lambda n, c: [])
+        result = self._call("get_trending_channels", lambda n, c: "не найден")
         assert "не найден" in result.lower()
 
     def test_get_calendar_empty(self):
-        tm = self._build_tools()
-        result = self._call(tm["get_calendar"], lambda n, c: [])
+        result = self._call("get_calendar", lambda n, c: "нет запланированных")
         assert "нет запланированных" in result.lower() or "ошибка" in result.lower()
 
     def test_get_daily_stats_empty(self):
-        tm = self._build_tools()
-        result = self._call(tm["get_daily_stats"], lambda n, c: [])
+        result = self._call("get_daily_stats", lambda n, c: "нет данных")
         assert "нет данных" in result.lower() or "ежедневная статистика" in result.lower()
 
 

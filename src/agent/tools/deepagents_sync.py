@@ -2,33 +2,22 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import logging
-from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar
+from collections.abc import Callable
+from typing import Any
 
 from claude_agent_sdk import SdkMcpTool
 
 from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.tools import build_agent_tool_registry
 
-_T = TypeVar("_T")
 logger = logging.getLogger(__name__)
 
 _LEGACY_ARG_ALIASES: dict[str, dict[str, str]] = {
     "search_messages": {"query_text": "query"},
     "semantic_search": {"query_text": "query"},
 }
-
-
-def _run_sync(tool_name: str, operation: Callable[[], Awaitable[_T]]) -> _T:
-    """Run an async operation synchronously (must be called outside event loop)."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(operation())
-    raise RuntimeError(f"Deepagents tool '{tool_name}' cannot run inside an active event loop")
 
 
 def _schema_items(input_schema: object) -> list[tuple[str, object]]:

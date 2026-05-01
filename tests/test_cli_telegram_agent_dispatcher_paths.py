@@ -1076,25 +1076,25 @@ class TestAgentProviderServiceCompat:
 # ===========================================================================
 
 
-class TestRunSync:
+class TestAgentRuntimeContextRunSync:
     def test_outside_event_loop(self):
-        from src.agent.tools.deepagents_sync import _run_sync
+        from src.agent.runtime_context import AgentRuntimeContext
 
         async def _op():
             return 42
 
-        result = _run_sync("test_tool", _op)
+        result = AgentRuntimeContext.build(db=MagicMock()).run_sync("test_tool", _op)
         assert result == 42
 
     @pytest.mark.anyio
     async def test_inside_event_loop_raises(self):
-        from src.agent.tools.deepagents_sync import _run_sync
+        from src.agent.runtime_context import AgentRuntimeContext
 
         async def _op():
             return 42
 
         with pytest.raises(RuntimeError, match="cannot run inside"):
-            _run_sync("test_tool", _op)
+            AgentRuntimeContext.build(db=MagicMock()).run_sync("test_tool", _op)
 
 
 class TestDeepagentsSyncTools:
