@@ -48,6 +48,32 @@ class TestGetNotificationStatusTool:
         assert "не настроен" in _text(result)
 
     @pytest.mark.anyio
+    async def test_target_unavailable_returns_unknown_status(self, mock_db):
+        target_status = SimpleNamespace(
+            mode="primary",
+            state="disconnected",
+            message="Аккаунт +100 не подключён.",
+            effective_phone="+100",
+            configured_phone=None,
+        )
+        target_svc = MagicMock()
+        target_svc.describe_target = AsyncMock(return_value=target_status)
+        with (
+            patch("src.services.notification_service.NotificationService") as mock_ns,
+            patch(
+                "src.services.notification_target_service.NotificationTargetService",
+                return_value=target_svc,
+            ),
+        ):
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["get_notification_status"]({})
+        text = _text(result)
+        assert "невозможно проверить" in text
+        assert "не настроен" not in text
+        assert "disconnected" in text
+        mock_ns.return_value.get_status.assert_not_called()
+
+    @pytest.mark.anyio
     async def test_configured_shows_bot_info(self, mock_db):
         bot = NotificationBot(
             tg_user_id=12345,

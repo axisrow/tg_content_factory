@@ -11,10 +11,18 @@ def _value(obj: object, name: str, default: object = None) -> object:
     return getattr(obj, name, default)
 
 
+def _display_metric(value: object) -> object:
+    return "?" if value is None else value
+
+
 def format_notification_status(bot: object | None, target_status: object | None = None) -> str:
     lines: list[str]
     if bot is None:
-        lines = ["Бот уведомлений не настроен."]
+        target_state = _value(target_status, "state") if target_status is not None else None
+        if target_status is not None and target_state != "available":
+            lines = ["Статус бота уведомлений невозможно проверить: целевой аккаунт недоступен."]
+        else:
+            lines = ["Бот уведомлений не настроен."]
     else:
         bot_username = _value(bot, "bot_username", "")
         username = f"@{bot_username}" if bot_username else "неизвестен"
@@ -93,7 +101,7 @@ def format_channel_stats(stats: Mapping[int, object], channels: Iterable[object]
         label += f"channel_id={cid})"
         lines.append(
             f"- {label}: "
-            f"subscribers={_value(stat, 'subscriber_count') or '?'}, "
-            f"avg_views={_value(stat, 'avg_views') or '?'}"
+            f"subscribers={_display_metric(_value(stat, 'subscriber_count'))}, "
+            f"avg_views={_display_metric(_value(stat, 'avg_views'))}"
         )
     return "\n".join(lines)

@@ -43,7 +43,7 @@ class TestGetChannelStatsTool:
         mock_db.get_latest_stats_for_all = AsyncMock(
             return_value={
                 100: ChannelStats(channel_id=100, subscriber_count=10, avg_views=2.5),
-                200: ChannelStats(channel_id=200, subscriber_count=20),
+                200: ChannelStats(channel_id=200, subscriber_count=0, avg_views=0.0),
             }
         )
         mock_db.get_channels = AsyncMock(
@@ -60,6 +60,8 @@ class TestGetChannelStatsTool:
         assert "channel_id=100" in text
         assert "Без названия" in text
         assert "channel_id=200" in text
+        assert "subscribers=0" in text
+        assert "avg_views=0.0" in text
 
 
 class TestAddChannelTool:
