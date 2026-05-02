@@ -5,8 +5,10 @@ import logging
 import signal
 from dataclasses import asdict
 from datetime import datetime, timezone
+from inspect import isawaitable
 
 from src.config import AppConfig
+from src.database.repositories.accounts import AccountSessionDecryptError
 from src.models import RuntimeSnapshot
 from src.services.notification_service import NotificationService
 from src.telegram.utils import normalize_utc
@@ -16,20 +18,52 @@ from src.web.log_handler import LogBuffer
 logger = logging.getLogger(__name__)
 
 
+def _worker_decrypt_failure_payload(exc: AccountSessionDecryptError) -> dict[str, str]:
+    return {
+        "status": "worker_down",
+        "reason": "telegram_session_decrypt_failed",
+        "resource": exc.resource,
+        "identifier": exc.identifier,
+        "decrypt_status": exc.status,
+        "action": exc.action,
+        "detail": str(exc),
+    }
+
+
+async def _publish_worker_down_snapshot(container, exc: AccountSessionDecryptError) -> None:
+    await container.db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="worker_heartbeat",
+            payload=_worker_decrypt_failure_payload(exc),
+        )
+    )
+
+
 async def _publish_snapshots(container) -> None:
     now = datetime.now(timezone.utc)
     connected_phones = sorted(getattr(container.pool, "clients", {}).keys())
     active_accounts = []
-    try:
-        active_accounts = await container.db.get_accounts(active_only=True)
-    except Exception:
-        logger.debug("Failed to load accounts while publishing account status snapshot", exc_info=True)
+    for getter_name in ("get_account_summaries", "get_accounts"):
+        getter = getattr(container.db, getter_name, None)
+        if not callable(getter):
+            continue
+        try:
+            result = getter(active_only=True)
+            if isawaitable(result):
+                result = await result
+            if isinstance(result, (list, tuple)):
+                active_accounts = list(result)
+                break
+        except Exception:
+            logger.debug("Failed to load accounts while publishing account status snapshot", exc_info=True)
     flood_waits = {}
     available_phones = []
     if active_accounts:
         connected_set = set(connected_phones)
         for account in active_accounts:
             phone = getattr(account, "phone", "")
+            if str(getattr(account, "session_status", "ok")) != "ok":
+                continue
             flood_until = normalize_utc(getattr(account, "flood_wait_until", None))
             if flood_until is not None and flood_until > now:
                 flood_waits[phone] = flood_until.isoformat()
@@ -154,7 +188,19 @@ async def _run_worker_async(config: AppConfig) -> None:
         except NotImplementedError:
             pass
 
-    await start_container(container)
+    try:
+        await start_container(container)
+    except AccountSessionDecryptError as exc:
+        logger.error(
+            "worker startup blocked: resource=%s identifier=%s status=%s action=%s",
+            exc.resource,
+            exc.identifier,
+            exc.status,
+            exc.action,
+        )
+        await _publish_worker_down_snapshot(container, exc)
+        await stop_container(container)
+        return
     try:
         while not stop_event.is_set():
             await _publish_snapshots(container)

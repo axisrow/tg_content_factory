@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from inspect import isawaitable
 from typing import Annotated
 
 from claude_agent_sdk import tool
@@ -10,6 +11,7 @@ from mcp.types import ToolAnnotations
 from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.tools._registry import (
     _text_response,
+    account_session_status,
     available_live_read_phones,
     connected_phones_from_pool,
     get_accounts_with_flood_cleanup,
@@ -74,6 +76,19 @@ def _diagnostic_lines(accounts: list[object], client_pool: object | None) -> lis
     ]
 
 
+async def _get_account_summaries(db: object) -> list[object]:
+    for getter_name in ("get_account_summaries", "get_accounts"):
+        getter = getattr(db, getter_name, None)
+        if not callable(getter):
+            continue
+        result = getter()
+        if isawaitable(result):
+            result = await result
+        if isinstance(result, (list, tuple)):
+            return list(result)
+    return []
+
+
 async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: object = "") -> str:
     """Return account info with DB/runtime/profile-fetch states kept separate."""
     phone_filter = normalize_phone(phone)
@@ -124,7 +139,8 @@ async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: object
         premium = "да" if u.is_premium else "нет"
         active = "да" if getattr(db_account, "is_active", False) else "нет"
         primary = "да" if getattr(db_account, "is_primary", False) else "нет"
-        session_present = "да" if getattr(db_account, "session_string", "") else "нет"
+        session_status = account_session_status(db_account) if db_account else "missing"
+        session_present = "да" if db_account and session_status == "ok" else session_status
         lines.append(
             f"- {u.phone}: {name} ({username}), premium={premium}, "
             f"db_active={active}, db_primary={primary}, session-present={session_present}"
@@ -157,7 +173,9 @@ def register(db, client_pool, embedding_service, **kwargs):
                     remaining = _remaining_seconds(a)
                     suffix = f", remaining={remaining}s" if remaining is not None else ""
                     flood = f" [flood_wait до {a.flood_wait_until}{suffix}]"
-                lines.append(f"- id={a.id}, phone={a.phone}, {status}{flood}")
+                session_status = account_session_status(a)
+                session_suffix = "" if session_status == "ok" else f", session_status={session_status}"
+                lines.append(f"- id={a.id}, phone={a.phone}, {status}{session_suffix}{flood}")
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка получения аккаунтов: {e}")
@@ -174,7 +192,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         if account_id is None:
             return _text_response("Ошибка: account_id обязателен.")
         try:
-            accounts = await db.get_accounts()
+            accounts = await _get_account_summaries(db)
             acc = next((a for a in accounts if a.id == int(account_id)), None)
             if acc is None:
                 return _text_response(f"Аккаунт id={account_id} не найден.")
@@ -202,7 +220,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         if account_id is None:
             return _text_response("Ошибка: account_id обязателен.")
         try:
-            accounts = await db.get_accounts()
+            accounts = await _get_account_summaries(db)
             acc = next((a for a in accounts if a.id == int(account_id)), None)
             name = acc.phone if acc else f"id={account_id}"
             gate = require_confirmation(f"удалит аккаунт '{name}' из системы", args)
@@ -252,7 +270,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            accounts = await db.get_accounts()
+            accounts = await _get_account_summaries(db)
             acc = next((a for a in accounts if a.phone == phone), None)
             if acc is None:
                 return _text_response(f"Аккаунт {phone} не найден.")

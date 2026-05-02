@@ -18,6 +18,7 @@ from src.agent.prompt_template import (
 )
 from src.agent.provider_registry import PROVIDER_ORDER, ProviderRuntimeConfig
 from src.agent.provider_registry import provider_spec as deepagents_provider_spec
+from src.models import AccountSessionStatus
 from src.services.agent_provider_service import (
     AgentProviderService,
     ProviderModelCacheEntry,
@@ -455,7 +456,10 @@ async def handle_settings_page(request: Request) -> dict[str, object]:
         default=config.scheduler.collect_interval_minutes,
         logger=logger,
     )
-    accounts = await db.get_accounts()
+    accounts = await db.get_account_summaries()
+    telegram_session_warning = any(
+        account.session_status != AccountSessionStatus.OK for account in accounts
+    )
     now = datetime.now(UTC)
     for account in accounts:
         if account.flood_wait_until is not None:
@@ -470,7 +474,10 @@ async def handle_settings_page(request: Request) -> dict[str, object]:
     flooded_connected = []
     for account in accounts:
         connected = account.phone in connected_phones
-        if not account.is_active:
+        if account.session_status != AccountSessionStatus.OK:
+            state = "session_unavailable"
+            remaining_seconds = 0
+        elif not account.is_active:
             state = "inactive"
             remaining_seconds = 0
         elif not connected:
@@ -495,7 +502,13 @@ async def handle_settings_page(request: Request) -> dict[str, object]:
             "remaining_minutes": max(1, remaining_seconds // 60) if remaining_seconds else 0,
         }
     all_accounts_flooded = bool(flooded_connected) and len(flooded_connected) == len(
-        [acc for acc in accounts if acc.is_active and acc.phone in connected_phones]
+        [
+            acc
+            for acc in accounts
+            if acc.is_active
+            and acc.phone in connected_phones
+            and acc.session_status == AccountSessionStatus.OK
+        ]
     )
     next_available_at = min(flooded_connected) if flooded_connected else None
     notification_target = await deps.get_notification_target_service(request).describe_target()
@@ -546,6 +559,7 @@ async def handle_settings_page(request: Request) -> dict[str, object]:
         "auto_delete_filtered": auto_delete_filtered,
         "auto_delete_on_collect": auto_delete_on_collect,
         "accounts": accounts,
+        "telegram_session_warning": telegram_session_warning,
         "account_status": account_status,
         "account_phones": [acc.phone for acc in accounts],
         "connected_phones": connected_phones,
@@ -770,6 +784,8 @@ async def handle_save_agent_providers(request: Request, form: ProviderConfigForm
                 plain_fields=cfg.plain_fields,
                 secret_fields=cfg.secret_fields,
                 last_validation_error=validation_error,
+                secret_status=cfg.secret_status,
+                secret_fields_enc_preserved=cfg.secret_fields_enc_preserved,
             )
         )
     await service.save_provider_configs(validated)
@@ -1027,7 +1043,7 @@ async def handle_save_notification_account(
     form: NotificationAccountForm,
 ) -> SettingsFlash:
     db = deps.get_db(request)
-    valid_phones = {acc.phone for acc in await db.get_accounts()}
+    valid_phones = {acc.phone for acc in await db.get_account_summaries()}
     if form.selected_phone and form.selected_phone not in valid_phones:
         return SettingsFlash(error="notification_account_invalid")
 

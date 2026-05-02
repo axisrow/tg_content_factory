@@ -104,21 +104,22 @@ async def test_account_toggle_in_web_mode_enqueues_command(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_account_delete_in_web_mode_enqueues_command(tmp_path):
-    """POST /settings/{id}/delete in real web bootstrap: DB row untouched, command enqueued."""
+async def test_account_delete_in_web_mode_removes_row_and_enqueues_cleanup(tmp_path):
+    """POST /settings/{id}/delete in real web bootstrap: DB row removed, cleanup command enqueued."""
     async with _web_mode_client(tmp_path) as (client, container):
         accounts = await container.db.get_accounts(active_only=False)
         acc = accounts[0]
 
         resp = await client.post(f"/settings/{acc.id}/delete")
         assert resp.status_code == 303
-        assert "account_delete_queued" in resp.headers["location"]
+        assert "account_deleted" in resp.headers["location"]
 
         remaining = await container.db.get_accounts(active_only=False)
-        assert any(a.id == acc.id for a in remaining)
+        assert not any(a.id == acc.id for a in remaining)
 
         commands = await container.db.repos.telegram_commands.list_commands(limit=1)
         assert commands[0].command_type == "accounts.delete"
+        assert commands[0].payload == {"account_id": acc.id, "phone": acc.phone}
 
 
 @pytest.mark.anyio

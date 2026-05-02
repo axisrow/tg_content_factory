@@ -73,7 +73,7 @@
 </div>
 
 {% if collector_health.state != 'healthy' or collector_health.load_level != 'ok' %}
-<div class="card mb-4 border-{% if collector_health.state in ['worker_down', 'all_flooded', 'no_clients'] or collector_health.load_level == 'overload' %}danger{% else %}warning{% endif %}">
+<div class="card mb-4 border-{% if collector_health.state in ['worker_down', 'all_flooded', 'no_clients', 'session_degraded'] or collector_health.load_level == 'overload' %}danger{% else %}warning{% endif %}">
     <div class="card-header fw-semibold">
         Здоровье коллектора
         {% if collector_health.state == 'worker_down' %}
@@ -82,6 +82,8 @@
         <span class="badge text-bg-danger ms-2">Все аккаунты во Flood Wait</span>
         {% elif collector_health.state == 'no_clients' %}
         <span class="badge text-bg-danger ms-2">Нет доступных клиентов</span>
+        {% elif collector_health.state == 'session_degraded' %}
+        <span class="badge text-bg-danger ms-2">SESSION_ENCRYPTION_KEY не подходит</span>
         {% elif collector_health.state == 'degraded' %}
         <span class="badge text-bg-warning ms-2">Частичная деградация</span>
         {% endif %}
@@ -97,6 +99,9 @@
                 <div class="small text-muted">Аккаунты</div>
                 <div><strong>{{ collector_health.available_accounts_now }}</strong> доступно сейчас</div>
                 <div><strong>{{ collector_health.connected_accounts }}</strong> подключено</div>
+                {% if collector_health.session_degraded_accounts %}
+                <div><strong>{{ collector_health.session_degraded_accounts }}</strong> требуют ключ</div>
+                {% endif %}
             </div>
             <div class="col-6 col-md-3">
                 <div class="small text-muted">Flood Wait</div>
@@ -126,8 +131,15 @@
 
         {% if collector_health.state == 'worker_down' %}
         <p class="mb-2"><strong>Почему сейчас не собираем:</strong> веб-процесс принимает задачи и пишет их в БД, но Telegram-коннекты держит отдельный воркер-процесс — он сейчас не запущен (нет свежего heartbeat в <code>runtime_snapshots</code>). Задачи из <code>collection_tasks</code> копятся в статусе <em>pending</em>, но никто их не исполняет.</p>
+        {% if collector_health.worker_reason %}
+        <p class="mb-2"><strong>Причина:</strong> {{ collector_health.worker_reason }}</p>
+        {% endif %}
         <p class="mb-2"><strong>Как починить:</strong> запустите воркер во втором терминале — он подхватит все накопившиеся задачи автоматически:</p>
         <pre class="mb-2"><code>python -m src.main worker</code></pre>
+        {% endif %}
+
+        {% if collector_health.state == 'session_degraded' %}
+        <p class="mb-2"><strong>Почему сейчас не собираем:</strong> активные Telegram-сессии сохранены, но не расшифровываются текущим <code>SESSION_ENCRYPTION_KEY</code>. Live-операции заблокированы до восстановления ключа или повторного входа.</p>
         {% endif %}
 
         {% if collector_health.flooded_accounts %}

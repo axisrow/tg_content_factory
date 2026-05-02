@@ -7,6 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from src.models import AccountSessionStatus
 from src.web import deps
 
 router = APIRouter()
@@ -51,7 +52,11 @@ async def dialogs_page(
 ):
     started_at = time.perf_counter()
     db = deps.get_db(request)
-    accounts = sorted(account.phone for account in await db.get_accounts(active_only=False))
+    accounts = sorted(
+        account.phone
+        for account in await db.get_account_summaries(active_only=False)
+        if account.session_status == AccountSessionStatus.OK
+    )
     selected_phone = phone if phone in accounts else None
     dialogs = []
     dialogs_cached_at = None
@@ -458,7 +463,11 @@ async def mark_read(request: Request):
 @router.get("/create-channel", response_class=HTMLResponse)
 async def create_channel_page(request: Request):
     db = deps.get_db(request)
-    accounts = sorted(account.phone for account in await db.get_accounts(active_only=False))
+    accounts = sorted(
+        account.phone
+        for account in await db.get_account_summaries(active_only=False)
+        if account.session_status == AccountSessionStatus.OK
+    )
     command = await _get_command_state(request, request.query_params.get("command_id"))
     return deps.get_templates(request).TemplateResponse(
         request,

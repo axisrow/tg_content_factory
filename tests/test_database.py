@@ -9,6 +9,7 @@ from cryptography.fernet import Fernet
 from src.database import Database
 from src.models import (
     Account,
+    AccountSessionStatus,
     Channel,
     CollectionTaskStatus,
     CollectionTaskType,
@@ -159,8 +160,8 @@ async def test_legacy_v1_sessions_migrate_to_v2_on_init(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_migrate_sessions_rollback_on_bad_row(tmp_path):
-    """Migration rolls back when a row has an unsupported encryption version."""
+async def test_migrate_sessions_skips_bad_row_without_blocking_readonly_startup(tmp_path):
+    """Unsupported encrypted rows stay visible through the metadata API."""
     db_path = str(tmp_path / "rollback_migration.db")
 
     db = Database(db_path)
@@ -176,24 +177,26 @@ async def test_migrate_sessions_rollback_on_bad_row(tmp_path):
 
     encrypted_db = Database(db_path, session_encryption_secret="some-key")
     try:
-        with pytest.raises(RuntimeError, match="Failed to migrate session"):
-            await encrypted_db.initialize()
+        await encrypted_db.initialize()
+        summaries = await encrypted_db.get_account_summaries()
+        by_phone = {item.phone: item for item in summaries}
+        assert by_phone["+71230000011"].session_status == AccountSessionStatus.UNSUPPORTED_VERSION
     finally:
         await encrypted_db.close()
 
-    # Verify rollback: both rows should be unchanged
+    # Verify the bad row was left untouched while the plaintext row migrated.
     async with aiosqlite.connect(db_path) as conn:
         conn.row_factory = aiosqlite.Row
         cur = await conn.execute("SELECT phone, session_string FROM accounts ORDER BY phone")
         rows = await cur.fetchall()
         assert len(rows) == 2
-        assert rows[0]["session_string"] == "good_session"
+        assert rows[0]["session_string"].startswith("enc:v2:")
         assert rows[1]["session_string"] == "enc:v99:garbage"
 
 
 @pytest.mark.anyio
-async def test_initialize_fails_without_key_when_encrypted_sessions_exist(tmp_path):
-    db_path = str(tmp_path / "no_key_fail_fast.db")
+async def test_initialize_without_key_reports_encrypted_sessions_as_degraded(tmp_path):
+    db_path = str(tmp_path / "no_key_degraded.db")
 
     encrypted_db = Database(db_path, session_encryption_secret="strict-key")
     await encrypted_db.initialize()
@@ -202,8 +205,11 @@ async def test_initialize_fails_without_key_when_encrypted_sessions_exist(tmp_pa
 
     db_without_key = Database(db_path)
     try:
-        with pytest.raises(RuntimeError, match="SESSION_ENCRYPTION_KEY"):
-            await db_without_key.initialize()
+        await db_without_key.initialize()
+        summaries = await db_without_key.get_account_summaries()
+        assert summaries[0].session_status == AccountSessionStatus.MISSING_KEY
+        with pytest.raises(RuntimeError, match="SESSION_ENCRYPTION_KEY|status=missing_key"):
+            await db_without_key.get_accounts()
     finally:
         await db_without_key.close()
 

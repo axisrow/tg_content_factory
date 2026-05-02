@@ -4,7 +4,8 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.runtime.worker import _publish_snapshots
+from src.database.repositories.accounts import AccountSessionDecryptError
+from src.runtime.worker import _publish_snapshots, _publish_worker_down_snapshot
 from src.services.notification_target_service import NotificationTargetStatus
 
 
@@ -187,3 +188,17 @@ async def test_publish_snapshots_notification_bot_exception():
     notif_call = [c for c in calls if c[0][0].snapshot_type == "notification_target_status"][0]
     bot_payload = notif_call[0][0].payload["bot"]
     assert bot_payload["configured"] is False
+
+
+async def test_publish_worker_down_snapshot_for_decrypt_failure():
+    container = _make_container()
+    exc = AccountSessionDecryptError(phone="+1234", status="key_mismatch")
+
+    await _publish_worker_down_snapshot(container, exc)
+
+    snapshot = container.db.repos.runtime_snapshots.upsert_snapshot.call_args[0][0]
+    assert snapshot.snapshot_type == "worker_heartbeat"
+    assert snapshot.payload["status"] == "worker_down"
+    assert snapshot.payload["reason"] == "telegram_session_decrypt_failed"
+    assert snapshot.payload["decrypt_status"] == "key_mismatch"
+    assert snapshot.payload["action"] == "restore_key_or_relogin"

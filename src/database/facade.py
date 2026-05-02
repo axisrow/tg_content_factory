@@ -32,6 +32,7 @@ from src.database.repositories.telegram_commands import TelegramCommandsReposito
 from src.database.schema import SCHEMA_SQL
 from src.models import (
     Account,
+    AccountSummary,
     Channel,
     ChannelStats,
     CollectionTask,
@@ -96,14 +97,6 @@ class Database:
         if not self._fts_available:
             logger.warning(
                 "FTS5 full-text search is unavailable; text queries will use LIKE fallback"
-            )
-
-        if not self._session_encryption_secret and await self._has_encrypted_sessions():
-            await self._connection.close()
-            self._db = None
-            raise RuntimeError(
-                "Encrypted account sessions found in DB but SESSION_ENCRYPTION_KEY is not set. "
-                "Set SESSION_ENCRYPTION_KEY to start the application."
             )
 
         session_cipher = None
@@ -220,6 +213,10 @@ class Database:
     async def get_accounts(self, active_only: bool = False) -> list[Account]:
         self._require()
         return await self._accounts.get_accounts(active_only)
+
+    async def get_account_summaries(self, active_only: bool = False) -> list[AccountSummary]:
+        self._require()
+        return await self._accounts.get_account_summaries(active_only)
 
     async def update_account_flood(self, phone: str, until) -> None:
         self._require()

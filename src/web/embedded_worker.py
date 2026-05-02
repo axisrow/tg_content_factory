@@ -30,7 +30,8 @@ import asyncio
 import logging
 
 from src.config import AppConfig
-from src.runtime.worker import _publish_snapshots
+from src.database.repositories.accounts import AccountSessionDecryptError
+from src.runtime.worker import _publish_snapshots, _publish_worker_down_snapshot
 from src.web.bootstrap import build_worker_container, start_container, stop_container
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
@@ -118,11 +119,26 @@ class EmbeddedWorker:
             )
             await start_container(self._container)
             self._agent_ready_event.set()
+        except AccountSessionDecryptError as exc:
+            self._startup_error = str(exc)
+            logger.error(
+                "[embedded-worker] startup blocked: resource=%s identifier=%s status=%s action=%s",
+                exc.resource,
+                exc.identifier,
+                exc.status,
+                exc.action,
+            )
+            if self._container is not None:
+                try:
+                    await _publish_worker_down_snapshot(self._container, exc)
+                except Exception:
+                    logger.debug("[embedded-worker] failed to publish worker_down snapshot", exc_info=True)
         except Exception:
             self._startup_error = "Embedded worker failed to start. Check server logs for details."
             logger.exception(
                 "[embedded-worker] failed to start; UI will show worker_down banner"
             )
+        if self._startup_error is not None:
             if self._container is not None:
                 try:
                     await stop_container(self._container)
