@@ -995,12 +995,12 @@ class AgentProviderService:
         *,
         preserved: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        assert self._cipher is not None
         encrypted: dict[str, str] = {}
         preserved = preserved or {}
         for spec_field in spec.secret_fields:
             value = values.get(spec_field.name, "").strip()
             if value:
+                assert self._cipher is not None
                 encrypted[spec_field.name] = self._cipher.encrypt(value)
             elif preserved.get(spec_field.name):
                 encrypted[spec_field.name] = preserved[spec_field.name]

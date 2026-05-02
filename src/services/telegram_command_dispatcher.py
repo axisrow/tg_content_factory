@@ -662,6 +662,7 @@ class TelegramCommandDispatcher:
     async def _handle_accounts_delete(self, payload: dict[str, Any]) -> dict[str, Any]:
         account_id = int(payload["account_id"])
         phone = str(payload.get("phone") or "").strip()
+        delete_from_db = not phone
         if not phone:
             accounts = await self._db.get_account_summaries(active_only=False)
             account = next((a for a in accounts if a.id == account_id), None)
@@ -671,8 +672,13 @@ class TelegramCommandDispatcher:
                 await self._pool.remove_client(phone)
             except Exception as exc:
                 logger.warning("accounts.delete: failed to remove client %s: %s", phone, exc)
-        await self._db.delete_account(account_id)
-        return {"account_id": account_id, "deleted": True}
+        if delete_from_db:
+            await self._db.delete_account(account_id)
+        return {
+            "account_id": account_id,
+            "deleted": delete_from_db,
+            "client_removed": bool(phone),
+        }
 
     async def _handle_notifications_setup_bot(self, payload: dict[str, Any]) -> dict[str, Any]:
         bot = await self._notification_service().setup_bot()

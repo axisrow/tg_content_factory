@@ -612,9 +612,10 @@ async def test_accounts_delete():
     db.get_accounts.side_effect = AssertionError("delete must not decrypt sessions")
     d = _dispatcher(db=db, pool=pool)
     r = await d._handle_accounts_delete({"account_id": 1, "phone": "+1"})
-    assert r["deleted"] is True
+    assert r["deleted"] is False
+    assert r["client_removed"] is True
     pool.remove_client.assert_awaited_once_with("+1")
-    db.delete_account.assert_awaited_once_with(1)
+    db.delete_account.assert_not_awaited()
     db.get_accounts.assert_not_awaited()
 
 
@@ -626,6 +627,7 @@ async def test_accounts_delete_legacy_payload_uses_summary_fallback():
     d = _dispatcher(db=db, pool=pool)
     r = await d._handle_accounts_delete({"account_id": 1})
     assert r["deleted"] is True
+    assert r["client_removed"] is True
     db.get_account_summaries.assert_awaited_once_with(active_only=False)
     pool.remove_client.assert_awaited_once_with("+1")
     db.delete_account.assert_awaited_once_with(1)
@@ -1565,8 +1567,9 @@ async def test_accounts_delete_remove_failure():
     pool.remove_client = AsyncMock(side_effect=Exception("err"))
     d = _dispatcher(db=db, pool=pool)
     r = await d._handle_accounts_delete({"account_id": 1, "phone": "+1"})
-    assert r["deleted"] is True
-    db.delete_account.assert_awaited_once_with(1)
+    assert r["deleted"] is False
+    assert r["client_removed"] is True
+    db.delete_account.assert_not_awaited()
     db.get_accounts.assert_not_awaited()
 
 

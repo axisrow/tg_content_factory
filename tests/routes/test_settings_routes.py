@@ -78,7 +78,7 @@ async def test_settings_degrades_when_account_session_key_is_wrong(route_client,
         resp = await route_client.get("/settings/")
 
     assert resp.status_code == 200
-    assert "Saved Telegram logins cannot be decrypted" in resp.text
+    assert "Saved Telegram logins are unavailable" in resp.text
     assert "provider API keys cannot be decrypted" not in resp.text
     assert "decrypt_failed" in resp.text
 
@@ -98,7 +98,7 @@ async def test_settings_degrades_for_image_provider_only_key_failure(route_clien
 
     assert resp.status_code == 200
     assert "Image provider API keys cannot be decrypted: Replicate" in resp.text
-    assert "Saved Telegram logins cannot be decrypted" not in resp.text
+    assert "Saved Telegram logins are unavailable" not in resp.text
     assert "Saved Telegram logins and provider API keys cannot be decrypted" not in resp.text
 
 
@@ -123,7 +123,7 @@ async def test_settings_degrades_with_separate_telegram_and_image_warnings(route
         resp = await route_client.get("/settings/")
 
     assert resp.status_code == 200
-    assert "Saved Telegram logins cannot be decrypted" in resp.text
+    assert "Saved Telegram logins are unavailable" in resp.text
     assert "Image provider API keys cannot be decrypted: Replicate" in resp.text
 
 

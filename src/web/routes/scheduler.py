@@ -122,7 +122,7 @@ async def _worker_status(db) -> tuple[bool, str]:
     payload = snapshot.payload if isinstance(snapshot.payload, dict) else {}
     status = str(payload.get("status", "alive"))
     if status not in {"alive", "ok"}:
-        reason = str(payload.get("reason", "") or payload.get("detail", ""))
+        reason = str(payload.get("detail", "") or payload.get("reason", ""))
         return False, reason
     updated_at = snapshot.updated_at
     if updated_at.tzinfo is None:

@@ -10,8 +10,8 @@
     <ul class="mb-0">
         {% if telegram_session_warning %}
         <li>
-            Saved Telegram logins cannot be decrypted with the current <code>SESSION_ENCRYPTION_KEY</code>.
-            Restore the old <code>SESSION_ENCRYPTION_KEY</code> or re-login accounts.
+            Saved Telegram logins are unavailable.
+            Restore <code>SESSION_ENCRYPTION_KEY</code> if it changed, upgrade the app if needed, or re-login accounts.
         </li>
         {% endif %}
         {% if failed_agent_providers %}
