@@ -611,7 +611,7 @@ class TestFloodWaitRotation:
 
         from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 
-        ch = Channel(channel_id=-100777, title="Flood Test", username="flood_test")
+        ch = Channel(channel_id=-100777, title="Flood Test")
         await test_db.add_channel(ch)
 
         flood_err = FloodWaitError(request=None, capture=0)

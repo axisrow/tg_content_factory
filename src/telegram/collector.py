@@ -46,8 +46,7 @@ from src.telegram.notifier import Notifier
 logger = logging.getLogger(__name__)
 
 RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
-RESOLVE_USERNAME_GLOBAL_BACKOFF_THRESHOLD_SEC = 300
-RESOLVE_USERNAME_GLOBAL_BACKOFF_MAX_SEC = 3600
+RESOLVE_USERNAME_BACKOFF_BUFFER_SEC = 5
 
 
 class NoActiveStatsClientsError(RuntimeError):
@@ -79,6 +78,18 @@ class AllCollectionClientsFloodedError(RuntimeError):
             f"{next_available_at.isoformat()} (retry in {retry_after_sec}s)"
         )
         self.retry_after_sec = retry_after_sec
+        self.next_available_at = next_available_at
+
+
+class UsernameResolveFloodWaitDeferredError(RuntimeError):
+    """Raised when username resolution is deferred by Flood Wait backoff."""
+
+    def __init__(self, wait_seconds: int, next_available_at: datetime):
+        super().__init__(
+            "Username resolve is flood-waited until "
+            f"{next_available_at.isoformat()} (retry in {wait_seconds}s)"
+        )
+        self.wait_seconds = wait_seconds
         self.next_available_at = next_available_at
 
 
@@ -130,12 +141,20 @@ class Collector:
             return 0
         return int(remaining)
 
-    def _set_resolve_username_backoff(self, wait_seconds: int) -> int:
-        backoff_seconds = min(wait_seconds, RESOLVE_USERNAME_GLOBAL_BACKOFF_MAX_SEC)
+    def _set_resolve_username_backoff(self, wait_seconds: int) -> datetime:
         self._resolve_username_backoff_until_utc = datetime.now(timezone.utc) + timedelta(
-            seconds=backoff_seconds
+            seconds=wait_seconds
         )
-        return backoff_seconds
+        return self._resolve_username_backoff_until_utc
+
+    def _raise_resolve_username_deferred(self) -> None:
+        remaining = self._get_resolve_username_backoff_remaining_sec()
+        if remaining <= 0 or self._resolve_username_backoff_until_utc is None:
+            return
+        raise UsernameResolveFloodWaitDeferredError(
+            wait_seconds=remaining,
+            next_available_at=self._resolve_username_backoff_until_utc,
+        )
 
     async def get_collection_availability(self):
         availability_fn = getattr(self._pool, "get_stats_availability", None)
@@ -332,6 +351,50 @@ class Collector:
             logger.exception("Failed to auto-purge channel %d", channel_id)
             return False
 
+    async def _resolve_channel_input_entity(
+        self,
+        session,
+        *,
+        channel_id: int,
+        username: str,
+        phone: str,
+    ):
+        try:
+            return await session.resolve_cached_input_entity(PeerChannel(channel_id))
+        except (AttributeError, ValueError, TypeError):
+            pass
+
+        try:
+            cached = await session.resolve_cached_input_entity(username)
+        except (AttributeError, ValueError, TypeError):
+            cached = None
+        if cached is not None and getattr(cached, "channel_id", None) == channel_id:
+            return cached
+
+        raw_client = None
+        if isinstance(getattr(type(session), "raw_client", None), property):
+            raw_client = session.raw_client
+        live_input_resolver = getattr(raw_client, "get_input_entity", None)
+        def _session_resolver(name: str):
+            if getattr(type(session), name, None) is not None:
+                return getattr(session, name)
+            return vars(session).get(name)
+
+        if live_input_resolver is None:
+            live_input_resolver = _session_resolver("get_input_entity")
+        if live_input_resolver is None:
+            live_input_resolver = _session_resolver("resolve_input_entity")
+        if live_input_resolver is None:
+            live_input_resolver = session.get_entity
+        return await run_with_flood_wait(
+            live_input_resolver(username),
+            operation=RESOLVE_USERNAME_OPERATION,
+            phone=phone,
+            pool=None,
+            logger_=logger,
+            timeout=30.0,
+        )
+
     async def collect_single_channel(
         self,
         channel: Channel,
@@ -396,6 +459,13 @@ class Collector:
                         await asyncio.sleep(self._config.delay_between_channels_sec)
                     except (AllCollectionClientsFloodedError, NoActiveCollectionClientsError) as e:
                         logger.error("Stopping collection: %s", e)
+                        stats["errors"] += 1
+                        break
+                    except UsernameResolveFloodWaitDeferredError as e:
+                        logger.warning(
+                            "Stopping collection until %s: username resolve flood wait",
+                            e.next_available_at.isoformat(),
+                        )
                         stats["errors"] += 1
                         break
                     except Exception as e:
@@ -475,7 +545,7 @@ class Collector:
                         RESOLVE_USERNAME_OPERATION,
                         backoff_remaining_sec,
                     )
-                    return total_collected
+                    self._raise_resolve_username_deferred()
 
             # For private groups (no username):
             #   1. preferred_phone from DB (persists across restarts)
@@ -584,17 +654,15 @@ class Collector:
             try:
                 if channel.username:
                     try:
-                        entity = await run_with_flood_wait(
-                            session.resolve_entity(channel.username),
-                            operation=RESOLVE_USERNAME_OPERATION,
+                        entity = await self._resolve_channel_input_entity(
+                            session,
+                            channel_id=channel_id,
+                            username=channel.username,
                             phone=phone,
-                            pool=self._pool,
-                            logger_=logger,
-                            timeout=30.0,
                         )
                     except asyncio.TimeoutError:
                         logger.warning(
-                            "get_entity timed out for channel %d, skipping",
+                            "get_input_entity timed out for channel %d, skipping",
                             channel_id,
                         )
                         return total_collected
@@ -926,28 +994,29 @@ class Collector:
             # Rotate regular collection FloodWaits to another account
             # regardless of wait duration — report_flood() was already
             # called, so the next get_available_client() call will skip
-            # the flooded account. Long username-resolve FloodWaits are
-            # handled below with a process-local backoff instead.
+            # the flooded account. Username-resolve FloodWaits are handled
+            # below with a process-local backoff instead.
             # Only skip the channel if the channel no longer exists in DB.
             if flood_wait_sec is not None:
-                if (
-                    flood_wait_operation == RESOLVE_USERNAME_OPERATION
-                    and flood_wait_sec > RESOLVE_USERNAME_GLOBAL_BACKOFF_THRESHOLD_SEC
-                ):
-                    backoff_seconds = self._set_resolve_username_backoff(flood_wait_sec)
+                if flood_wait_operation == RESOLVE_USERNAME_OPERATION:
+                    next_available_at = self._set_resolve_username_backoff(flood_wait_sec)
                     logger.warning(
-                        "%s got long FloodWait %ss on %s; pausing username resolves for %ss",
+                        "%s got FloodWait %ss on %s; pausing username resolves until %s",
                         RESOLVE_USERNAME_OPERATION,
                         flood_wait_sec,
                         phone,
-                        backoff_seconds,
+                        next_available_at.isoformat(),
                     )
                     if self._notifier:
                         await self._notifier.notify(
                             f"FloodWait {flood_wait_sec}s on {phone}, "
-                            f"channel {channel_id} — pausing username resolves for {backoff_seconds}s"
+                            f"channel {channel_id} — pausing username resolves until "
+                            f"{next_available_at.isoformat()}"
                         )
-                    return total_collected + len(all_messages)
+                    raise UsernameResolveFloodWaitDeferredError(
+                        wait_seconds=flood_wait_sec,
+                        next_available_at=next_available_at,
+                    )
 
                 if self._notifier and flood_wait_sec > self._config.max_flood_wait_sec:
                     await self._notifier.notify(

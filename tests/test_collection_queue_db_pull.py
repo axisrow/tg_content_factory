@@ -9,13 +9,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from src.collection_queue import CollectionQueue
 from src.database import Database
 from src.models import Channel
+from src.telegram.collector import UsernameResolveFloodWaitDeferredError
 
 
 class _FakeCollector:
@@ -29,6 +30,19 @@ class _FakeCollector:
 
     async def cancel(self):
         return None
+
+
+class _UsernameResolveFloodCollector(_FakeCollector):
+    def __init__(self, next_available_at: datetime):
+        super().__init__()
+        self.next_available_at = next_available_at
+
+    async def collect_single_channel(self, channel, *, full=False, progress_callback=None, force=False):
+        self.calls.append(channel.channel_id)
+        raise UsernameResolveFloodWaitDeferredError(
+            wait_seconds=120,
+            next_available_at=self.next_available_at,
+        )
 
 
 class _BlockingCollector:
@@ -89,6 +103,38 @@ async def test_db_pull_picks_up_pending_task_added_after_startup(tmp_path):
             await queue.stop_db_pull()
             await queue.shutdown()
     finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_username_resolve_flood_defer_keeps_task_pending(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        next_available_at = datetime.now(timezone.utc) + timedelta(minutes=2)
+
+        collector = _UsernameResolveFloodCollector(next_available_at)
+        queue = CollectionQueue(collector, db)
+        channel = (await db.get_channels(active_only=True))[0]
+        task_id = await queue.enqueue(channel)
+
+        deadline = asyncio.get_event_loop().time() + 2.0
+        while asyncio.get_event_loop().time() < deadline:
+            task = await db.get_collection_task(task_id)
+            if task.status == "pending" and task.run_after is not None:
+                break
+            await asyncio.sleep(0.05)
+
+        task = await db.get_collection_task(task_id)
+        assert task.status == "pending"
+        assert task.error is None
+        assert task.run_after is not None
+        assert task.run_after > next_available_at
+        assert "Flood Wait на resolve_username" in (task.note or "")
+        assert task.run_after.astimezone(timezone.utc).isoformat() in (task.note or "")
+    finally:
+        await queue.shutdown()
         await db.close()
 
 

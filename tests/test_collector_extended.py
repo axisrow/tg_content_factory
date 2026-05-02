@@ -219,7 +219,7 @@ async def test_collect_channel_entity_timeout(collector, mock_pool):
     channel = Channel(channel_id=123, username="user")
     client = AsyncMock()
     mock_pool.get_available_client.return_value = (client, "+7999")
-    client.get_entity.side_effect = asyncio.TimeoutError()
+    client.get_input_entity = AsyncMock(side_effect=asyncio.TimeoutError())
 
     res = await collector._collect_channel(channel)
     assert res == 0
@@ -232,10 +232,8 @@ async def test_collect_channel_username_changed(collector, mock_pool, mock_db):
     mock_pool.get_available_client.return_value = (client, "+7999")
 
     # Fails by username, succeeds by numeric ID
-    client.get_entity.side_effect = [
-        ValueError(),
-        MagicMock(id=123, username="new_user", title="New"),
-    ]
+    client.get_input_entity = AsyncMock(side_effect=ValueError())
+    client.get_entity = AsyncMock(return_value=MagicMock(id=123, username="new_user", title="New"))
 
     res = await collector._collect_channel(channel)
     assert res == 0
