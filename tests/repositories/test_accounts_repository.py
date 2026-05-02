@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 import pytest
@@ -115,7 +116,7 @@ async def test_get_accounts_decrypts_sessions(repo_with_cipher, cipher):
     assert accounts[0].session_string == "my_secret"
 
 
-async def test_get_account_summaries_reports_decrypt_failed_without_session(repo_with_cipher):
+async def test_get_account_summaries_reports_decrypt_failed_without_session(repo_with_cipher, caplog):
     writer_cipher = SessionCipher("correct-key")
     await repo_with_cipher._db.execute(
         "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
@@ -128,11 +129,18 @@ async def test_get_account_summaries_reports_decrypt_failed_without_session(repo
         session_cipher=SessionCipher("wrong-key"),
     )
 
-    summaries = await wrong_key_repo.get_account_summaries()
+    with caplog.at_level(logging.DEBUG, logger="src.database.repositories.accounts"):
+        summaries = await wrong_key_repo.get_account_summaries()
 
     assert len(summaries) == 1
     assert summaries[0].phone == "+1234567890"
     assert summaries[0].session_status == AccountSessionStatus.DECRYPT_FAILED
+    assert any(
+        record.levelno == logging.DEBUG
+        and "decrypt failed: resource=telegram_account identifier=+1234567890 status=key_mismatch" in record.message
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
 async def test_get_accounts_wrong_key_still_fails_for_live_use(repo_with_cipher):

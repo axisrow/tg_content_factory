@@ -38,8 +38,10 @@ def log_expected_decrypt_failure(
     identifier: str,
     status: str,
     action: str,
+    level: int = logging.ERROR,
 ) -> None:
-    logger.error(
+    logger.log(
+        level,
         "decrypt failed: resource=%s identifier=%s status=%s action=%s",
         resource,
         identifier,

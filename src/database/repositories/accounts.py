@@ -128,6 +128,7 @@ class AccountsRepository:
                     identifier=phone,
                     status="unsupported_version",
                     action=_RESTORE_ACCOUNT_ACTION,
+                    level=logging.DEBUG,
                 )
                 return AccountSessionStatus.UNSUPPORTED_VERSION
             if raw_session.startswith("enc:"):
@@ -137,6 +138,7 @@ class AccountsRepository:
                     identifier=phone,
                     status="encrypted_unknown",
                     action=_RESTORE_ACCOUNT_ACTION,
+                    level=logging.DEBUG,
                 )
                 return AccountSessionStatus.ENCRYPTED_UNKNOWN
             return AccountSessionStatus.OK
@@ -148,6 +150,7 @@ class AccountsRepository:
                 identifier=phone,
                 status="missing_key",
                 action=_RESTORE_ACCOUNT_ACTION,
+                level=logging.DEBUG,
             )
             return AccountSessionStatus.MISSING_KEY
 
@@ -161,6 +164,7 @@ class AccountsRepository:
                 identifier=phone,
                 status=status,
                 action=_RESTORE_ACCOUNT_ACTION,
+                level=logging.DEBUG,
             )
             if status == "unsupported_version":
                 return AccountSessionStatus.UNSUPPORTED_VERSION
