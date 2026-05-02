@@ -185,17 +185,18 @@ async def test_toggle_account_enqueues_command(route_client):
 
 
 @pytest.mark.anyio
-async def test_delete_account_enqueues_command(route_client):
-    """Web route only enqueues a telegram command; worker removes the route_client and deletes the row."""
+async def test_delete_account_removes_row_and_enqueues_cleanup(route_client):
+    """Web route deletes the row immediately and enqueues worker cleanup."""
     resp = await route_client.post("/settings/1/delete", follow_redirects=False)
     assert resp.status_code == 303
-    assert "msg=account_delete_queued" in resp.headers["location"]
+    assert "msg=account_deleted" in resp.headers["location"]
     assert "command_id=" in resp.headers["location"]
 
     db = route_client._transport.app.state.db
     commands = await db.repos.telegram_commands.list_commands(limit=1)
     assert commands[0].command_type == "accounts.delete"
-    assert commands[0].payload == {"account_id": 1}
+    assert commands[0].payload["account_id"] == 1
+    assert commands[0].payload["phone"]
 
 
 @pytest.mark.anyio

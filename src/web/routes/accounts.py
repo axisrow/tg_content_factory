@@ -25,13 +25,20 @@ async def toggle_account(request: Request, account_id: int):
 
 @router.post("/{account_id}/delete")
 async def delete_account(request: Request, account_id: int):
+    db = deps.get_db(request)
+    accounts = await db.get_account_summaries(active_only=False)
+    account = next((a for a in accounts if a.id == account_id), None)
+    if account is None:
+        return RedirectResponse(url="/settings?error=invalid_account", status_code=303)
+
     command_id = await deps.telegram_command_service(request).enqueue(
         "accounts.delete",
-        payload={"account_id": account_id},
+        payload={"account_id": account_id, "phone": account.phone},
         requested_by="web:accounts.delete",
     )
+    await db.delete_account(account_id)
     return RedirectResponse(
-        url=f"/settings?msg=account_delete_queued&command_id={command_id}",
+        url=f"/settings?msg=account_deleted&command_id={command_id}",
         status_code=303,
     )
 

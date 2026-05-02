@@ -181,6 +181,7 @@ async def test_notification_service_without_config_uses_defaults(tmp_path):
 def _mock_db():
     db = MagicMock()
     db.get_accounts = AsyncMock(return_value=[])
+    db.get_account_summaries = AsyncMock(return_value=[])
     db.add_account = AsyncMock()
     db.get_setting = AsyncMock(return_value=None)
     db.set_account_active = AsyncMock()
@@ -606,14 +607,29 @@ async def test_accounts_toggle_not_found():
 
 
 async def test_accounts_delete():
-    from src.models import Account
-
     db = _mock_db()
     pool = _mock_pool()
-    db.get_accounts.return_value = [Account(id=1, phone="+1", session_string="s")]
+    db.get_accounts.side_effect = AssertionError("delete must not decrypt sessions")
+    d = _dispatcher(db=db, pool=pool)
+    r = await d._handle_accounts_delete({"account_id": 1, "phone": "+1"})
+    assert r["deleted"] is True
+    pool.remove_client.assert_awaited_once_with("+1")
+    db.delete_account.assert_awaited_once_with(1)
+    db.get_accounts.assert_not_awaited()
+
+
+async def test_accounts_delete_legacy_payload_uses_summary_fallback():
+    db = _mock_db()
+    pool = _mock_pool()
+    db.get_accounts.side_effect = AssertionError("delete must not decrypt sessions")
+    db.get_account_summaries.return_value = [Account(id=1, phone="+1", session_string="")]
     d = _dispatcher(db=db, pool=pool)
     r = await d._handle_accounts_delete({"account_id": 1})
     assert r["deleted"] is True
+    db.get_account_summaries.assert_awaited_once_with(active_only=False)
+    pool.remove_client.assert_awaited_once_with("+1")
+    db.delete_account.assert_awaited_once_with(1)
+    db.get_accounts.assert_not_awaited()
 
 
 async def test_forum_topics_refresh():
@@ -1543,16 +1559,15 @@ async def test_accounts_toggle_activate_add_failure():
 
 
 async def test_accounts_delete_remove_failure():
-    from src.models import Account
-
     db = _mock_db()
     pool = _mock_pool()
-    db.get_accounts.return_value = [Account(id=1, phone="+1", session_string="s")]
+    db.get_accounts.side_effect = AssertionError("delete must not decrypt sessions")
     pool.remove_client = AsyncMock(side_effect=Exception("err"))
     d = _dispatcher(db=db, pool=pool)
-    r = await d._handle_accounts_delete({"account_id": 1})
+    r = await d._handle_accounts_delete({"account_id": 1, "phone": "+1"})
     assert r["deleted"] is True
     db.delete_account.assert_awaited_once_with(1)
+    db.get_accounts.assert_not_awaited()
 
 
 # --- _handle_accounts_delete: account not found (still deletes by id) ---
@@ -1561,12 +1576,14 @@ async def test_accounts_delete_remove_failure():
 async def test_accounts_delete_not_found():
     db = _mock_db()
     pool = _mock_pool()
-    db.get_accounts.return_value = []
+    db.get_accounts.side_effect = AssertionError("delete must not decrypt sessions")
+    db.get_account_summaries.return_value = []
     d = _dispatcher(db=db, pool=pool)
     r = await d._handle_accounts_delete({"account_id": 99})
     assert r["deleted"] is True
     pool.remove_client.assert_not_awaited()
     db.delete_account.assert_awaited_once_with(99)
+    db.get_accounts.assert_not_awaited()
 
 
 # --- _handle_moderation_publish_run: pipeline not found ---

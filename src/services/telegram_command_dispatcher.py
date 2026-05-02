@@ -661,13 +661,16 @@ class TelegramCommandDispatcher:
 
     async def _handle_accounts_delete(self, payload: dict[str, Any]) -> dict[str, Any]:
         account_id = int(payload["account_id"])
-        accounts = await self._db.get_accounts()
-        account = next((a for a in accounts if a.id == account_id), None)
-        if account is not None:
+        phone = str(payload.get("phone") or "").strip()
+        if not phone:
+            accounts = await self._db.get_account_summaries(active_only=False)
+            account = next((a for a in accounts if a.id == account_id), None)
+            phone = account.phone if account is not None else ""
+        if phone:
             try:
-                await self._pool.remove_client(account.phone)
+                await self._pool.remove_client(phone)
             except Exception as exc:
-                logger.warning("accounts.delete: failed to remove client %s: %s", account.phone, exc)
+                logger.warning("accounts.delete: failed to remove client %s: %s", phone, exc)
         await self._db.delete_account(account_id)
         return {"account_id": account_id, "deleted": True}
 
