@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timezone
 
 from src.models import Message
+from src.telegram.identity import SenderIdentity, extract_message_sender_identity, extract_sender_identity
 
 
 class TelegramMessageTransformer:
@@ -68,14 +69,7 @@ class TelegramMessageTransformer:
         chat_title = getattr(chat, "title", None)
         chat_username = getattr(chat, "username", None)
 
-        sender = getattr(msg, "sender", None)
-        sender_id = getattr(sender, "id", None) if sender else None
-        sender_name = None
-        if sender:
-            first = getattr(sender, "first_name", "") or ""
-            last = getattr(sender, "last_name", "") or ""
-            title = getattr(sender, "title", "") or ""
-            sender_name = " ".join(p for p in (first, last) if p) or title or None
+        sender_identity = extract_message_sender_identity(msg)
 
         date = msg.date
         if date and date.tzinfo is None:
@@ -84,8 +78,11 @@ class TelegramMessageTransformer:
         return Message(
             channel_id=chat_id,
             message_id=msg.id,
-            sender_id=sender_id,
-            sender_name=sender_name,
+            sender_id=sender_identity.sender_id,
+            sender_name=sender_identity.sender_name,
+            sender_first_name=sender_identity.sender_first_name,
+            sender_last_name=sender_identity.sender_last_name,
+            sender_username=sender_identity.sender_username,
             text=getattr(msg, "message", None) or getattr(msg, "text", None),
             media_type=TelegramMessageTransformer.media_type_from_message(msg),
             date=date,
@@ -94,25 +91,23 @@ class TelegramMessageTransformer:
         )
 
     @staticmethod
-    def resolve_sender(msg, chats_map, users_map) -> tuple[int | None, str | None]:
+    def resolve_sender_identity(msg, chats_map, users_map) -> SenderIdentity:
         from telethon.tl.types import PeerChannel, PeerUser
 
-        sender_id = None
-        sender_name = None
         from_id = getattr(msg, "from_id", None)
 
         if isinstance(from_id, PeerUser):
             sender_id = from_id.user_id
             user = users_map.get(sender_id)
-            if user:
-                parts = [
-                    getattr(user, "first_name", "") or "",
-                    getattr(user, "last_name", "") or "",
-                ]
-                sender_name = " ".join(p for p in parts if p) or None
+            return extract_sender_identity(user, fallback_sender_id=sender_id)
         elif isinstance(from_id, PeerChannel):
             sender_id = from_id.channel_id
             ch = chats_map.get(sender_id)
-            sender_name = getattr(ch, "title", None) if ch else None
+            return extract_sender_identity(ch, fallback_sender_id=sender_id)
 
-        return sender_id, sender_name
+        return extract_message_sender_identity(msg)
+
+    @staticmethod
+    def resolve_sender(msg, chats_map, users_map) -> tuple[int | None, str | None]:
+        identity = TelegramMessageTransformer.resolve_sender_identity(msg, chats_map, users_map)
+        return identity.sender_id, identity.sender_name

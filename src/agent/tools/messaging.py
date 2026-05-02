@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Annotated
 
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
+from src.agent.tools._formatters import format_sender_identity
 from src.agent.tools._registry import (
     ToolInputError,
     _text_response,
@@ -20,6 +22,7 @@ from src.agent.tools._registry import (
     resolve_phone,
 )
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.telegram.identity import extract_message_sender_identity
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -752,13 +755,44 @@ def register(db, client_pool, embedding_service, **kwargs):
             count = 0
             total_chars = 0
             budget = 50_000
+            sender_cache: dict[int, object | None] = {}
+
+            async def _resolve_message_sender(msg):
+                sender = getattr(msg, "sender", None)
+                if sender is not None:
+                    return sender
+
+                sender_id = getattr(msg, "sender_id", None)
+                if sender_id is not None:
+                    try:
+                        cache_key = int(sender_id)
+                    except (TypeError, ValueError):
+                        cache_key = None
+                    if cache_key is not None and cache_key in sender_cache:
+                        return sender_cache[cache_key]
+                else:
+                    cache_key = None
+
+                getter = getattr(msg, "get_sender", None)
+                if not callable(getter):
+                    return None
+                try:
+                    result = getter()
+                    sender = await result if inspect.isawaitable(result) else result
+                except Exception:
+                    sender = None
+                if cache_key is not None:
+                    sender_cache[cache_key] = sender
+                return sender
 
             async def _read_recent() -> None:
                 nonlocal count, total_chars
                 async for msg in client.iter_messages(entity, limit=limit):
                     if not msg.text:
                         continue
-                    sender = f" [id:{msg.sender_id}]" if msg.sender_id else ""
+                    sender_entity = await _resolve_message_sender(msg)
+                    sender_identity = extract_message_sender_identity(msg, sender=sender_entity)
+                    sender = f" {format_sender_identity(sender_identity)}"
                     date_str = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
                     preview = msg.text[:500]
                     line = f"#{msg.id} {date_str}{sender}: {preview}"

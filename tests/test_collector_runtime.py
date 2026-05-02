@@ -86,6 +86,43 @@ async def test_collect_single_channel_retries_on_flood_with_second_account(
 
 
 @pytest.mark.anyio
+async def test_collect_single_channel_persists_sender_identity(db, real_pool_harness_factory):
+    await db.add_channel(Channel(channel_id=123, title="Ch", username="ch"))
+    channel = (await db.get_channels())[0]
+    msg = _message(11, "identity")
+    msg.sender_id = 77
+    msg.sender = SimpleNamespace(
+        id=77,
+        first_name="Ivan",
+        last_name="Petrov",
+        username="@ivanp",
+    )
+
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(
+            entity_resolver=lambda _peer: _resolved_channel_entity(123, "ch"),
+            iter_messages_factory=lambda *args, **kwargs: AsyncIterMessages([msg]),
+        ),
+    )
+    await harness.add_account("+7000", session_string="session-identity", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    collector = Collector(harness.pool, db, SchedulerConfig())
+    collected = await collector.collect_single_channel(channel, force=True)
+
+    assert collected == 1
+    messages, total = await db.search_messages(channel_id=123)
+    assert total == 1
+    assert messages[0].sender_id == 77
+    assert messages[0].sender_name == "Ivan Petrov"
+    assert messages[0].sender_first_name == "Ivan"
+    assert messages[0].sender_last_name == "Petrov"
+    assert messages[0].sender_username == "ivanp"
+
+
+@pytest.mark.anyio
 async def test_collect_channel_stats_uses_transport_session_and_persists_stats(
     db,
     real_pool_harness_factory,

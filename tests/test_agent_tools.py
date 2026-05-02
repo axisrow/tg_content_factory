@@ -69,6 +69,10 @@ class TestSearchMessagesTool:
                 message_id=1,
                 text="Test message one",
                 date="2025-01-01",
+                sender_id=42,
+                sender_first_name="John",
+                sender_last_name="Doe",
+                sender_username="jdoe",
             ),
             SimpleNamespace(
                 channel_id=200,
@@ -86,6 +90,7 @@ class TestSearchMessagesTool:
         assert "Найдено 2 сообщений" in text
         assert "channel_id=100" in text
         assert "channel_id=200" in text
+        assert "sender=[sender id=42, first_name=John, last_name=Doe, username=@jdoe]" in text
         mock_db.search_messages.assert_awaited_once()
 
     @pytest.mark.anyio

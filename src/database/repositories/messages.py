@@ -34,6 +34,13 @@ def _normalize_date_to(date_to: str) -> tuple[str, str]:
     return "<", (parsed + timedelta(days=1)).isoformat()
 
 
+def _normalize_username(username: str | None) -> str | None:
+    if not username:
+        return None
+    cleaned = str(username).strip().lstrip("@")
+    return cleaned or None
+
+
 class MessagesRepository:
     def __init__(
         self,
@@ -107,17 +114,21 @@ class MessagesRepository:
             cur = await self._db.execute(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
+                    sender_first_name, sender_last_name, sender_username,
                     text, message_kind, media_type, service_action_raw,
                     service_action_semantic, service_action_payload_json, sender_kind,
                     topic_id, reactions_json,
                     views, forwards, reply_count, date, detected_lang,
                     forward_from_channel_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     msg.channel_id,
                     msg.message_id,
                     msg.sender_id,
                     msg.sender_name,
+                    msg.sender_first_name,
+                    msg.sender_last_name,
+                    _normalize_username(msg.sender_username),
                     msg.text,
                     msg.message_kind,
                     msg.media_type,
@@ -179,6 +190,9 @@ class MessagesRepository:
                 m.message_id,
                 m.sender_id,
                 m.sender_name,
+                m.sender_first_name,
+                m.sender_last_name,
+                _normalize_username(m.sender_username),
                 m.text,
                 m.message_kind,
                 m.media_type,
@@ -201,12 +215,13 @@ class MessagesRepository:
             cur = await self._db.executemany(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
+                    sender_first_name, sender_last_name, sender_username,
                     text, message_kind, media_type, service_action_raw,
                     service_action_semantic, service_action_payload_json, sender_kind,
                     topic_id, reactions_json,
                     views, forwards, reply_count, date, detected_lang,
                     forward_from_channel_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 data,
             )
             await self._db.commit()
@@ -703,6 +718,9 @@ class MessagesRepository:
                 message_id=r["message_id"],
                 sender_id=r["sender_id"],
                 sender_name=r["sender_name"],
+                sender_first_name=r["sender_first_name"] if "sender_first_name" in r.keys() else None,
+                sender_last_name=r["sender_last_name"] if "sender_last_name" in r.keys() else None,
+                sender_username=r["sender_username"] if "sender_username" in r.keys() else None,
                 text=r["text"],
                 message_kind=r["message_kind"] if "message_kind" in r.keys() else None,
                 media_type=r["media_type"],

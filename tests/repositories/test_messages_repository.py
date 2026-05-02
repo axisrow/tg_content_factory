@@ -81,6 +81,29 @@ async def test_insert_message_with_all_fields(messages_repo):
     assert messages[0].topic_id == 5
 
 
+async def test_insert_message_sender_identity_round_trips(messages_repo):
+    msg = Message(
+        channel_id=1,
+        message_id=102,
+        sender_id=12345,
+        sender_name="John Doe",
+        sender_first_name="John",
+        sender_last_name="Doe",
+        sender_username="@jdoe",
+        text="Identity message",
+        date=datetime(2026, 3, 16, 12, 0, 0),
+    )
+    assert await messages_repo.insert_message(msg) is True
+
+    messages, _ = await messages_repo.search_messages()
+    stored = messages[0]
+    assert stored.sender_id == 12345
+    assert stored.sender_name == "John Doe"
+    assert stored.sender_first_name == "John"
+    assert stored.sender_last_name == "Doe"
+    assert stored.sender_username == "jdoe"
+
+
 async def test_insert_message_with_structured_facets(messages_repo):
     """Structured message classification fields should round-trip through storage."""
     msg = Message(
@@ -147,6 +170,41 @@ async def test_insert_messages_batch_with_duplicates(messages_repo):
     texts = {m.text for m in messages_list}
     assert "Original" in texts
     assert "New" in texts
+
+
+async def test_insert_messages_batch_sender_identity_round_trips(messages_repo):
+    messages = [
+        make_message(
+            1,
+            110,
+            "First",
+            sender_id=1,
+            sender_name="Alice Smith",
+            sender_first_name="Alice",
+            sender_last_name="Smith",
+            sender_username="alice",
+        ),
+        make_message(
+            1,
+            111,
+            "Second",
+            sender_id=2,
+            sender_name="Bob",
+            sender_first_name="Bob",
+            sender_username="@bob",
+        ),
+    ]
+    assert await messages_repo.insert_messages_batch(messages) == 2
+
+    stored, total = await messages_repo.search_messages()
+    assert total == 2
+    by_id = {message.message_id: message for message in stored}
+    assert by_id[110].sender_first_name == "Alice"
+    assert by_id[110].sender_last_name == "Smith"
+    assert by_id[110].sender_username == "alice"
+    assert by_id[111].sender_first_name == "Bob"
+    assert by_id[111].sender_last_name is None
+    assert by_id[111].sender_username == "bob"
 
 
 # _normalize_date_from tests

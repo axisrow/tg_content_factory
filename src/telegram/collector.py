@@ -40,6 +40,7 @@ from src.settings_utils import parse_int_setting
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.telegram.identity import extract_message_sender_identity
 from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
@@ -821,11 +822,15 @@ class Collector:
                             if hasattr(from_id, "channel_id"):
                                 fwd_from_channel_id = from_id.channel_id
 
+                        sender_identity = extract_message_sender_identity(msg)
                         message = Message(
                             channel_id=channel_id,
                             message_id=msg.id,
-                            sender_id=msg.sender_id,
-                            sender_name=self._get_sender_name(msg),
+                            sender_id=sender_identity.sender_id,
+                            sender_name=sender_identity.sender_name,
+                            sender_first_name=sender_identity.sender_first_name,
+                            sender_last_name=sender_identity.sender_last_name,
+                            sender_username=sender_identity.sender_username,
                             text=msg.text,
                             message_kind=self._get_message_kind(msg),
                             detected_lang=TranslationService.detect_language(msg.text),

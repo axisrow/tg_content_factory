@@ -50,6 +50,9 @@ class TestNormalizePhone:
     def test_empty_string(self):
         assert normalize_phone("") == ""
 
+    def test_none_is_empty_string(self):
+        assert normalize_phone(None) == ""
+
     def test_whitespace_only(self):
         assert normalize_phone("   ") == ""
 
@@ -163,6 +166,16 @@ class TestResolvePhone:
         db.get_accounts = AsyncMock(return_value=[secondary, primary])
 
         phone, err = await resolve_phone(db, "")
+        assert phone == "+11111111111"
+        assert err is None
+
+    @pytest.mark.anyio
+    async def test_none_phone_defaults_to_primary(self):
+        primary = SimpleNamespace(phone="+11111111111", is_primary=True)
+        db = MagicMock()
+        db.get_accounts = AsyncMock(return_value=[primary])
+
+        phone, err = await resolve_phone(db, None)
         assert phone == "+11111111111"
         assert err is None
 

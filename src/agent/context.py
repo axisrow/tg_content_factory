@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from itertools import groupby
 
+from src.agent.tools._formatters import format_sender_identity
 from src.models import Message
 
 _MAX_TEXT_LEN = 200
@@ -26,11 +27,16 @@ def format_context(
     lines: list[str] = [header]
 
     def _msg_line(m: Message) -> str:
+        sender_username = f"@{m.sender_username.lstrip('@')}" if m.sender_username else None
         return json.dumps(
             {
                 "id": m.message_id,
                 "date": m.date.strftime("%Y-%m-%d"),
-                "author": m.sender_name or (f"id={m.sender_id}" if m.sender_id else "unknown"),
+                "author": format_sender_identity(m, bracketed=False),
+                "sender_id": m.sender_id,
+                "sender_first_name": m.sender_first_name,
+                "sender_last_name": m.sender_last_name,
+                "sender_username": sender_username,
                 "text": (m.text or "").replace("\n", " ")[:_MAX_TEXT_LEN],
             },
             ensure_ascii=False,
