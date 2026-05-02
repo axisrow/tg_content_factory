@@ -295,7 +295,7 @@ class CollectionQueue:
                 )
                 note = (
                     "Отложено: Flood Wait на resolve_username до "
-                    f"{exc.next_available_at.astimezone(timezone.utc).isoformat()}"
+                    f"{run_after.astimezone(timezone.utc).isoformat()}"
                 )
                 self._retried_tasks.discard(task_id)
                 await self._channels.reschedule_collection_task(

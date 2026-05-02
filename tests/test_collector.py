@@ -325,6 +325,25 @@ async def test_collect_channel_skips_username_resolve_when_backoff_active(db):
 
 
 @pytest.mark.anyio
+async def test_collect_all_channels_stops_on_username_resolve_backoff(db):
+    await db.add_channel(
+        Channel(channel_id=1970788987, title="Backoff Active 1", username="backoff_active_1")
+    )
+    await db.add_channel(
+        Channel(channel_id=1970788988, title="Backoff Active 2", username="backoff_active_2")
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(AsyncMock(), "+7001")))
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+    collector._set_resolve_username_backoff(600)
+
+    stats = await collector.collect_all_channels()
+
+    assert stats == {"channels": 0, "messages": 0, "errors": 1}
+    pool.get_available_client.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_collect_no_username_channel_fetches_dialogs_once(db):
     """For no-username channels get_dialogs() is called once per process to warm entity cache."""
     ch = Channel(channel_id=123, title="No Username")

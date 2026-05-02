@@ -132,6 +132,7 @@ async def test_username_resolve_flood_defer_keeps_task_pending(tmp_path):
         assert task.run_after is not None
         assert task.run_after > next_available_at
         assert "Flood Wait на resolve_username" in (task.note or "")
+        assert task.run_after.astimezone(timezone.utc).isoformat() in (task.note or "")
     finally:
         await queue.shutdown()
         await db.close()

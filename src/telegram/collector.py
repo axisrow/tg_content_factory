@@ -371,17 +371,18 @@ class Collector:
         if cached is not None and getattr(cached, "channel_id", None) == channel_id:
             return cached
 
-        try:
-            no_report_session = session.with_flood_context(
-                phone=phone,
-                pool=self._pool,
-                logger_=logger,
-                report_flood_wait=False,
-            )
-        except AttributeError:
-            no_report_session = session
+        raw_client = None
+        if isinstance(getattr(type(session), "raw_client", None), property):
+            raw_client = session.raw_client
+        live_input_resolver = getattr(raw_client, "get_input_entity", None)
+        if live_input_resolver is None:
+            live_input_resolver = vars(session).get("get_input_entity")
+        if live_input_resolver is None:
+            live_input_resolver = vars(session).get("resolve_input_entity")
+        if live_input_resolver is None:
+            live_input_resolver = session.get_entity
         return await run_with_flood_wait(
-            no_report_session.resolve_input_entity(username),
+            live_input_resolver(username),
             operation=RESOLVE_USERNAME_OPERATION,
             phone=phone,
             pool=None,
@@ -453,6 +454,13 @@ class Collector:
                         await asyncio.sleep(self._config.delay_between_channels_sec)
                     except (AllCollectionClientsFloodedError, NoActiveCollectionClientsError) as e:
                         logger.error("Stopping collection: %s", e)
+                        stats["errors"] += 1
+                        break
+                    except UsernameResolveFloodWaitDeferredError as e:
+                        logger.warning(
+                            "Stopping collection until %s: username resolve flood wait",
+                            e.next_available_at.isoformat(),
+                        )
                         stats["errors"] += 1
                         break
                     except Exception as e:
