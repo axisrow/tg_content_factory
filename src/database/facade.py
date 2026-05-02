@@ -214,6 +214,10 @@ class Database:
         self._require()
         return await self._accounts.get_accounts(active_only)
 
+    async def get_live_usable_accounts(self, active_only: bool = False) -> list[Account]:
+        self._require()
+        return await self._accounts.get_live_usable_accounts(active_only)
+
     async def get_account_summaries(self, active_only: bool = False) -> list[AccountSummary]:
         self._require()
         return await self._accounts.get_account_summaries(active_only)

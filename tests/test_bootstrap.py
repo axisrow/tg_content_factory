@@ -1,6 +1,7 @@
 """Tests for start_container bootstrap behavior."""
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -8,6 +9,7 @@ from telethon import TelegramClient
 
 from src.config import AppConfig, DatabaseConfig
 from src.database import Database
+from src.database.repositories.accounts import AccountSessionDecryptError
 from src.search.engine import SearchEngine
 from src.web.bootstrap import build_web_container, start_container
 from src.web.log_handler import LogBuffer
@@ -170,6 +172,68 @@ async def test_start_container_worker_mode_initializes_runtime(tmp_path):
         container.pool.initialize.assert_awaited_once()
         container.unified_dispatcher.start.assert_awaited_once()
         container.scheduler.load_settings.assert_awaited_once()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_empty_pool_skips_collection_requeue_and_schedules_retry(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    container.runtime_mode = "worker"
+    container.auth.is_configured = True
+    container.pool.initialize = AsyncMock()
+    container.pool.clients = {}
+    container.pool.warm_all_dialogs = AsyncMock()
+    container.collection_queue = MagicMock()
+    container.collection_queue.requeue_startup_tasks = AsyncMock(return_value=0)
+    container.collection_queue.start_db_pull = MagicMock()
+    container.bg_tasks = set()
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+    container.unified_dispatcher = AsyncMock()
+    container.unified_dispatcher.start = AsyncMock()
+
+    try:
+        await start_container(container)
+        container.collection_queue.requeue_startup_tasks.assert_not_called()
+        container.collection_queue.start_db_pull.assert_called_once()
+        assert any(task.get_name() == "telegram_pool_reconnect_retry" for task in container.bg_tasks)
+    finally:
+        for task in list(container.bg_tasks):
+            task.cancel()
+        await asyncio.gather(*container.bg_tasks, return_exceptions=True)
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_continues_when_pool_init_decrypt_fails(tmp_path, caplog):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    container.runtime_mode = "worker"
+    container.auth.is_configured = True
+    container.pool.initialize = AsyncMock(
+        side_effect=AccountSessionDecryptError(phone="+7000", status="key_mismatch")
+    )
+    container.pool.warm_all_dialogs = AsyncMock()
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+    container.unified_dispatcher = AsyncMock()
+    container.unified_dispatcher.start = AsyncMock()
+    container.agent_manager = MagicMock()
+    container.agent_manager.refresh_settings_cache = AsyncMock()
+
+    try:
+        with caplog.at_level("WARNING"):
+            await start_container(container)
+        assert "telegram pool degraded by session decrypt failure" in caplog.text
+        container.agent_manager.refresh_settings_cache.assert_awaited_once_with(preflight=True)
+        container.agent_manager.initialize.assert_called_once()
+        container.pool.warm_all_dialogs.assert_not_called()
     finally:
         await db.close()
 

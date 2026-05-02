@@ -24,6 +24,7 @@ from src.database.bundles import (
     SearchBundle,
     SearchQueryBundle,
 )
+from src.database.repositories.accounts import AccountSessionDecryptError
 from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -49,8 +50,77 @@ from src.web.timing import TimingBuffer
 logger = logging.getLogger(__name__)
 _is_dev = os.environ.get("ENV", "PROD").upper() == "DEV"
 _POOL_INIT_TIMEOUT = 20
+_POOL_RETRY_INTERVAL_SEC = 60.0
 _SHUTDOWN_DEFAULT_TIMEOUT = 15.0
 _SHUTDOWN_COLLECTION_QUEUE_TIMEOUT = 140.0
+
+
+def _connected_pool_count(pool: object) -> int:
+    clients = getattr(pool, "clients", {})
+    try:
+        return len(clients)
+    except TypeError:
+        return 0
+
+
+async def _retry_telegram_pool_until_connected(container: AppContainer) -> None:
+    while _connected_pool_count(container.pool) == 0 and getattr(
+        container, "shutting_down", False
+    ) is not True:
+        try:
+            await asyncio.wait_for(
+                asyncio.sleep(_POOL_RETRY_INTERVAL_SEC),
+                timeout=_POOL_RETRY_INTERVAL_SEC + 1,
+            )
+        except asyncio.CancelledError:
+            raise
+        if (
+            getattr(container, "shutting_down", False) is True
+            or _connected_pool_count(container.pool) > 0
+        ):
+            return
+        try:
+            await asyncio.wait_for(container.pool.initialize(), timeout=_POOL_INIT_TIMEOUT)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "startup: telegram pool retry timed out after %ds; connected_count=0",
+                _POOL_INIT_TIMEOUT,
+            )
+        except AccountSessionDecryptError as exc:
+            logger.warning(
+                "startup: telegram pool retry degraded by session decrypt failure "
+                "resource=%s identifier=%s status=%s action=%s",
+                exc.resource,
+                exc.identifier,
+                exc.status,
+                exc.action,
+            )
+        except Exception:
+            logger.exception("startup: telegram pool retry failed")
+        else:
+            connected_count = _connected_pool_count(container.pool)
+            if connected_count > 0:
+                logger.info(
+                    "startup: telegram pool recovered after retry; connected_count=%d",
+                    connected_count,
+                )
+                return
+
+
+def _schedule_telegram_pool_retry(container: AppContainer) -> None:
+    bg_tasks = getattr(container, "bg_tasks", None)
+    if not isinstance(bg_tasks, set):
+        bg_tasks = set()
+        setattr(container, "bg_tasks", bg_tasks)
+    for task in bg_tasks:
+        if not task.done() and task.get_name() == "telegram_pool_reconnect_retry":
+            return
+    task = asyncio.create_task(
+        _retry_telegram_pool_until_connected(container),
+        name="telegram_pool_reconnect_retry",
+    )
+    bg_tasks.add(task)
+    task.add_done_callback(bg_tasks.discard)
 
 
 async def load_telegram_credentials(db: Database, config: AppConfig) -> tuple[int, str]:
@@ -310,6 +380,7 @@ async def start_container(container: AppContainer) -> None:
         t1 = time.monotonic()
 
     if runtime_mode == "worker" and container.auth.is_configured:
+        telegram_pool_degraded = False
         try:
             await asyncio.wait_for(container.pool.initialize(), timeout=_POOL_INIT_TIMEOUT)
         except asyncio.TimeoutError:
@@ -317,9 +388,28 @@ async def start_container(container: AppContainer) -> None:
                 "startup: telegram pool timed out after %ds — continuing without full init",
                 _POOL_INIT_TIMEOUT,
             )
+        except AccountSessionDecryptError as exc:
+            telegram_pool_degraded = True
+            logger.warning(
+                "startup: telegram pool degraded by session decrypt failure "
+                "resource=%s identifier=%s status=%s action=%s — continuing",
+                exc.resource,
+                exc.identifier,
+                exc.status,
+                exc.action,
+            )
+        connected_count = _connected_pool_count(container.pool)
+        if connected_count == 0:
+            telegram_pool_degraded = True
+            logger.warning(
+                "startup: telegram pool degraded; connected_count=0 — pending collection tasks "
+                "will stay in DB until a client connects"
+            )
+            if container.collection_queue is not None:
+                _schedule_telegram_pool_retry(container)
         # Warm entity cache + preferred_phone map for all accounts in background.
         # Store the task so the collector can wait on it during a race condition.
-        if hasattr(container.pool, "warm_all_dialogs"):
+        if not telegram_pool_degraded and hasattr(container.pool, "warm_all_dialogs"):
             _warm_task = asyncio.create_task(
                 container.pool.warm_all_dialogs(), name="warm_all_dialogs_startup"
             )
@@ -329,9 +419,14 @@ async def start_container(container: AppContainer) -> None:
         logger.info("startup/start: telegram_pool %.2fs", time.monotonic() - t1)
 
     if runtime_mode == "worker" and container.collection_queue is not None:
-        requeued = await container.collection_queue.requeue_startup_tasks()
-        if requeued:
-            logger.info("Re-enqueued %d pending collection tasks on startup", requeued)
+        if container.auth.is_configured and _connected_pool_count(container.pool) == 0:
+            logger.warning(
+                "Skipping startup collection requeue because telegram pool has no connected clients"
+            )
+        else:
+            requeued = await container.collection_queue.requeue_startup_tasks()
+            if requeued:
+                logger.info("Re-enqueued %d pending collection tasks on startup", requeued)
         # Periodically re-check the DB for new PENDING tasks created by the
         # web container in split / embedded-worker setups (CollectionService
         # falls back to a DB-only insert when collection_queue is None).
