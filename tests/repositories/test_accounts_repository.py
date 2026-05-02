@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 import pytest
 
-from src.database.repositories.accounts import AccountsRepository
-from src.models import Account
+from src.database.repositories.accounts import AccountSessionDecryptError, AccountsRepository
+from src.models import Account, AccountSessionStatus
 from src.security.session_cipher import SessionCipher
 
 
@@ -113,6 +114,50 @@ async def test_get_accounts_decrypts_sessions(repo_with_cipher, cipher):
     accounts = await repo_with_cipher.get_accounts()
     assert len(accounts) == 1
     assert accounts[0].session_string == "my_secret"
+
+
+async def test_get_account_summaries_reports_decrypt_failed_without_session(repo_with_cipher, caplog):
+    writer_cipher = SessionCipher("correct-key")
+    await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
+        ("+1234567890", writer_cipher.encrypt("live-session")),
+    )
+    await repo_with_cipher._db.commit()
+
+    wrong_key_repo = AccountsRepository(
+        repo_with_cipher._db,
+        session_cipher=SessionCipher("wrong-key"),
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="src.database.repositories.accounts"):
+        summaries = await wrong_key_repo.get_account_summaries()
+
+    assert len(summaries) == 1
+    assert summaries[0].phone == "+1234567890"
+    assert summaries[0].session_status == AccountSessionStatus.DECRYPT_FAILED
+    assert any(
+        record.levelno == logging.DEBUG
+        and "decrypt failed: resource=telegram_account identifier=+1234567890 status=key_mismatch" in record.message
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+async def test_get_accounts_wrong_key_still_fails_for_live_use(repo_with_cipher):
+    writer_cipher = SessionCipher("correct-key")
+    await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
+        ("+1234567890", writer_cipher.encrypt("live-session")),
+    )
+    await repo_with_cipher._db.commit()
+
+    wrong_key_repo = AccountsRepository(
+        repo_with_cipher._db,
+        session_cipher=SessionCipher("wrong-key"),
+    )
+
+    with pytest.raises(AccountSessionDecryptError, match="status=key_mismatch"):
+        await wrong_key_repo.get_accounts()
 
 
 async def test_get_accounts_handles_plaintext_when_cipher_set(repo_with_cipher):
@@ -221,6 +266,85 @@ async def test_delete_account(accounts_repo):
 async def test_delete_account_nonexistent(accounts_repo):
     """Test deleting non-existent account does not raise."""
     await accounts_repo.delete_account(999)  # Should not raise
+
+
+async def test_delete_primary_promotes_lowest_id_remaining_account(accounts_repo):
+    """Deleting the primary promotes the next account in repository order."""
+    primary_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))
+    next_id = await accounts_repo.add_account(make_account("+2222222222", is_primary=False))
+    later_id = await accounts_repo.add_account(make_account("+3333333333", is_primary=False))
+
+    await accounts_repo.delete_account(primary_id)
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    assert [acc.id for acc in summaries] == [next_id, later_id]
+    assert summaries[0].is_primary is True
+    assert summaries[1].is_primary is False
+
+
+async def test_delete_non_primary_keeps_existing_primary(accounts_repo):
+    """Deleting a secondary account leaves the current primary unchanged."""
+    primary_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))
+    secondary_id = await accounts_repo.add_account(make_account("+2222222222", is_primary=False))
+    later_id = await accounts_repo.add_account(make_account("+3333333333", is_primary=False))
+
+    await accounts_repo.delete_account(secondary_id)
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    assert [acc.id for acc in summaries] == [primary_id, later_id]
+    assert summaries[0].is_primary is True
+    assert summaries[1].is_primary is False
+
+
+async def test_delete_last_account_leaves_empty_table(accounts_repo):
+    """Deleting the only account does not attempt promotion."""
+    account_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))
+
+    await accounts_repo.delete_account(account_id)
+
+    assert await accounts_repo.get_account_summaries(active_only=False) == []
+
+
+async def test_delete_missing_account_is_noop(accounts_repo):
+    """Deleting a missing ID must not repair or otherwise mutate account rows."""
+    first_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=False))
+    second_id = await accounts_repo.add_account(make_account("+2222222222", is_primary=False))
+
+    await accounts_repo.delete_account(999)
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    assert [(acc.id, acc.is_primary) for acc in summaries] == [
+        (first_id, False),
+        (second_id, False),
+    ]
+
+
+async def test_delete_primary_promotes_with_wrong_session_key(repo_with_cipher):
+    """Promotion uses summaries only and does not require decrypting sessions."""
+    writer_cipher = SessionCipher("correct-key")
+    primary_cur = await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 1, 1)",
+        ("+1111111111", writer_cipher.encrypt("primary-session")),
+    )
+    next_cur = await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
+        ("+2222222222", writer_cipher.encrypt("next-session")),
+    )
+    await repo_with_cipher._db.commit()
+
+    wrong_key_repo = AccountsRepository(
+        repo_with_cipher._db,
+        session_cipher=SessionCipher("wrong-key"),
+    )
+
+    await wrong_key_repo.delete_account(primary_cur.lastrowid)
+
+    summaries = await wrong_key_repo.get_account_summaries(active_only=False)
+    assert len(summaries) == 1
+    assert summaries[0].id == next_cur.lastrowid
+    assert summaries[0].phone == "+2222222222"
+    assert summaries[0].is_primary is True
+    assert summaries[0].session_status == AccountSessionStatus.DECRYPT_FAILED
 
 
 # migrate_sessions tests

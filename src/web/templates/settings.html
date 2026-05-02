@@ -3,6 +3,33 @@
 {% block content %}
 <h1 class="mb-4">Настройки</h1>
 
+{% set failed_agent_providers = agent_provider_views|selectattr("requires_secret_reentry")|list %}
+{% set failed_img_providers = img_provider_views|selectattr("requires_secret_reentry")|list %}
+{% if telegram_session_warning or failed_agent_providers or failed_img_providers %}
+<div class="alert alert-warning" role="alert">
+    <ul class="mb-0">
+        {% if telegram_session_warning %}
+        <li>
+            Saved Telegram logins are unavailable.
+            Restore <code>SESSION_ENCRYPTION_KEY</code> if it changed, upgrade the app if needed, or re-login accounts.
+        </li>
+        {% endif %}
+        {% if failed_agent_providers %}
+        <li>
+            Agent provider API keys cannot be decrypted:{% for item in failed_agent_providers %}{% if loop.first %} {% endif %}{{ item.display_name or item.provider }}{% if not loop.last %}, {% endif %}{% endfor %}.
+            Re-enter the provider API key or restore the old <code>SESSION_ENCRYPTION_KEY</code>.
+        </li>
+        {% endif %}
+        {% if failed_img_providers %}
+        <li>
+            Image provider API keys cannot be decrypted:{% for item in failed_img_providers %}{% if loop.first %} {% endif %}{{ item.display_name or item.provider }}{% if not loop.last %}, {% endif %}{% endfor %}.
+            Re-enter the provider API key or restore the old <code>SESSION_ENCRYPTION_KEY</code>.
+        </li>
+        {% endif %}
+    </ul>
+</div>
+{% endif %}
+
 <ul class="nav nav-pills mb-4" id="settings-tabs" role="tablist">
     <li class="nav-item" role="presentation">
         <button class="nav-link active" id="tab-accounts" data-bs-toggle="pill"

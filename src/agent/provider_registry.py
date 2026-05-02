@@ -479,6 +479,8 @@ class ProviderRuntimeConfig:
     plain_fields: dict[str, str] = field(default_factory=dict)
     secret_fields: dict[str, str] = field(default_factory=dict)
     last_validation_error: str = ""
+    secret_status: str = "ok"
+    secret_fields_enc_preserved: dict[str, str] = field(default_factory=dict)
 
     @property
     def model_name(self) -> str:

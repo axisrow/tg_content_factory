@@ -47,6 +47,12 @@
                 </button>
             </div>
 
+            {% if item.requires_secret_reentry %}
+            <div class="alert alert-warning py-2 mb-3">
+                Saved image provider secret cannot be decrypted. Re-enter the API key or restore <code>SESSION_ENCRYPTION_KEY</code>.
+            </div>
+            {% endif %}
+
             <div class="row g-3 mb-2">
                 <div class="col-12 col-md-3">
                     <label class="form-label" for="img_provider_enabled__{{ item.provider }}">Статус</label>
@@ -64,7 +70,7 @@
                            placeholder="{{ '••••••••' if item.has_key else 'Введите API ключ' }}"
                            {% if not img_provider_writes_enabled %}disabled{% endif %}>
                     <div class="form-text">
-                        {% if item.has_key %}Ключ сохранён и скрыт. Оставьте пустым, чтобы не менять.{% elif item.env_var_set %}Ключ из env будет использован как fallback.{% else %}Значение ещё не задано.{% endif %}
+                        {% if item.requires_secret_reentry %}Сохранённый ключ требует повторного ввода.{% elif item.has_key %}Ключ сохранён и скрыт. Оставьте пустым, чтобы не менять.{% elif item.env_var_set %}Ключ из env будет использован как fallback.{% else %}Значение ещё не задано.{% endif %}
                     </div>
                 </div>
             </div>

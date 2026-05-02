@@ -3,10 +3,11 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from inspect import isawaitable
 
 from src.database import Database
 from src.database.bundles import NotificationBundle
-from src.models import Account
+from src.models import Account, AccountSessionStatus, AccountSummary
 from src.telegram.client_pool import ClientPool
 from src.telegram.utils import normalize_utc
 
@@ -37,7 +38,7 @@ class NotificationTargetService:
         await self._notifications.set_setting(SETTING_KEY, phone or "")
 
     async def describe_target(self) -> NotificationTargetStatus:
-        accounts = await self._notifications.list_accounts()
+        accounts = await self._list_account_records()
         configured_phone = await self.get_configured_phone()
 
         if configured_phone:
@@ -59,7 +60,7 @@ class NotificationTargetService:
 
     def _describe_account(
         self,
-        account: Account | None,
+        account: Account | AccountSummary | None,
         *,
         configured_phone: str | None,
         mode: str,
@@ -81,6 +82,23 @@ class NotificationTargetService:
                 mode=mode,
                 state="inactive",
                 message=f"Аккаунт {account.phone} отключён.",
+                configured_phone=configured_phone,
+                effective_phone=account.phone,
+            )
+        raw_session_status = getattr(account, "session_status", AccountSessionStatus.OK)
+        session_status = (
+            raw_session_status
+            if isinstance(raw_session_status, str)
+            else AccountSessionStatus.OK
+        )
+        if session_status != AccountSessionStatus.OK:
+            return NotificationTargetStatus(
+                mode=mode,
+                state="session_unavailable",
+                message=(
+                    f"Сессия аккаунта {account.phone} недоступна: {session_status}. "
+                    "Восстановите SESSION_ENCRYPTION_KEY или выполните повторный вход."
+                ),
                 configured_phone=configured_phone,
                 effective_phone=account.phone,
             )
@@ -114,6 +132,18 @@ class NotificationTargetService:
             configured_phone=configured_phone,
             effective_phone=account.phone,
         )
+
+    async def _list_account_records(self) -> list[Account | AccountSummary]:
+        for method_name in ("list_account_summaries", "list_accounts"):
+            getter = getattr(self._notifications, method_name, None)
+            if not callable(getter):
+                continue
+            result = getter()
+            if isawaitable(result):
+                result = await result
+            if isinstance(result, (list, tuple)):
+                return list(result)
+        return []
 
     @asynccontextmanager
     async def use_client(self):

@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.models import RuntimeSnapshot
+from src.security import SessionCipher
+from src.services.image_provider_service import ImageProviderConfig, ImageProviderService
 
 
 @pytest.fixture
@@ -16,6 +18,15 @@ async def db(base_app):
     """Get db from base_app."""
     _, db, _ = base_app
     return db
+
+
+async def _seed_image_provider_for_decrypt_failure(route_client, db, provider: str = "replicate") -> None:
+    config = route_client._transport_app.state.config
+    config.security.session_encryption_key = "correct-session-key"
+    await ImageProviderService(db, config).save_provider_configs(
+        [ImageProviderConfig(provider=provider, enabled=True, api_key="test-api-key")]
+    )
+    config.security.session_encryption_key = "wrong-session-key"
 
 
 @pytest.mark.anyio
@@ -45,6 +56,90 @@ async def test_settings_shows_accounts(route_client):
         resp = await route_client.get("/settings/")
         assert resp.status_code == 200
         assert "+1234567890" in resp.text
+
+
+@pytest.mark.anyio
+async def test_settings_degrades_when_account_session_key_is_wrong(route_client, db):
+    encrypted = SessionCipher("correct-session-key").encrypt("test_session")
+    await db.execute(
+        "UPDATE accounts SET session_string = ? WHERE phone = ?",
+        (encrypted, "+1234567890"),
+    )
+    await db.db.commit()
+    db._accounts._session_cipher = SessionCipher("wrong-session-key")
+
+    with patch(
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
+        AsyncMock(return_value=[]),
+    ), patch(
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
+        AsyncMock(return_value={}),
+    ):
+        resp = await route_client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert "Saved Telegram logins are unavailable" in resp.text
+    assert "provider API keys cannot be decrypted" not in resp.text
+    assert "decrypt_failed" in resp.text
+
+
+@pytest.mark.anyio
+async def test_settings_degrades_for_image_provider_only_key_failure(route_client, db):
+    await _seed_image_provider_for_decrypt_failure(route_client, db)
+
+    with patch(
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
+        AsyncMock(return_value=[]),
+    ), patch(
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
+        AsyncMock(return_value={}),
+    ):
+        resp = await route_client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert "Image provider API keys cannot be decrypted: Replicate" in resp.text
+    assert "Saved Telegram logins are unavailable" not in resp.text
+    assert "Saved Telegram logins and provider API keys cannot be decrypted" not in resp.text
+
+
+@pytest.mark.anyio
+async def test_settings_degrades_with_separate_telegram_and_image_warnings(route_client, db):
+    encrypted = SessionCipher("correct-session-key").encrypt("test_session")
+    await db.execute(
+        "UPDATE accounts SET session_string = ? WHERE phone = ?",
+        (encrypted, "+1234567890"),
+    )
+    await db.db.commit()
+    db._accounts._session_cipher = SessionCipher("wrong-session-key")
+    await _seed_image_provider_for_decrypt_failure(route_client, db)
+
+    with patch(
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
+        AsyncMock(return_value=[]),
+    ), patch(
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
+        AsyncMock(return_value={}),
+    ):
+        resp = await route_client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert "Saved Telegram logins are unavailable" in resp.text
+    assert "Image provider API keys cannot be decrypted: Replicate" in resp.text
+
+
+@pytest.mark.anyio
+async def test_readonly_routes_do_not_crash_when_account_session_key_is_wrong(route_client, db):
+    encrypted = SessionCipher("correct-session-key").encrypt("test_session")
+    await db.execute(
+        "UPDATE accounts SET session_string = ? WHERE phone = ?",
+        (encrypted, "+1234567890"),
+    )
+    await db.db.commit()
+    db._accounts._session_cipher = SessionCipher("wrong-session-key")
+
+    for path in ("/dashboard/", "/dialogs/", "/scheduler/", "/settings/flood-status"):
+        resp = await route_client.get(path)
+        assert resp.status_code == 200, path
 
 
 @pytest.mark.anyio
@@ -145,17 +240,18 @@ async def test_toggle_account_enqueues_command(route_client):
 
 
 @pytest.mark.anyio
-async def test_delete_account_enqueues_command(route_client):
-    """Web route only enqueues a telegram command; worker removes the route_client and deletes the row."""
+async def test_delete_account_removes_row_and_enqueues_cleanup(route_client):
+    """Web route deletes the row immediately and enqueues worker cleanup."""
     resp = await route_client.post("/settings/1/delete", follow_redirects=False)
     assert resp.status_code == 303
-    assert "msg=account_delete_queued" in resp.headers["location"]
+    assert "msg=account_deleted" in resp.headers["location"]
     assert "command_id=" in resp.headers["location"]
 
     db = route_client._transport.app.state.db
     commands = await db.repos.telegram_commands.list_commands(limit=1)
     assert commands[0].command_type == "accounts.delete"
-    assert commands[0].payload == {"account_id": 1}
+    assert commands[0].payload["account_id"] == 1
+    assert commands[0].payload["phone"]
 
 
 @pytest.mark.anyio

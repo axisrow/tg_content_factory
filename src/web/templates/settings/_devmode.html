@@ -157,6 +157,12 @@
                 </div>
             </div>
 
+            {% if item.requires_secret_reentry %}
+            <div class="alert alert-warning py-2 mb-3">
+                Saved provider secrets cannot be decrypted. Re-enter the secret or restore <code>SESSION_ENCRYPTION_KEY</code>.
+            </div>
+            {% endif %}
+
             <div class="row g-3 mb-3">
                 <div class="col-12 col-md-2">
                     <label class="form-label" for="provider_priority__{{ item.provider }}">Приоритет</label>
@@ -237,7 +243,7 @@
                            placeholder="{{ field.masked or 'Введите новое значение' }}"
                            {% if not agent_provider_writes_enabled %}disabled{% endif %}>
                     <div class="form-text">
-                        {% if field.has_value %}Значение сохранено и скрыто. Оставьте пустым, чтобы не менять.{% else %}Значение ещё не задано.{% endif %}
+                        {% if field.decrypt_failed %}Сохранённое значение требует повторного ввода.{% elif field.has_value %}Значение сохранено и скрыто. Оставьте пустым, чтобы не менять.{% else %}Значение ещё не задано.{% endif %}
                     </div>
                 </div>
                 {% endfor %}

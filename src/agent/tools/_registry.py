@@ -267,6 +267,11 @@ def flood_waited_phones_from_pool(client_pool: object | None) -> set[str]:
     return set()
 
 
+def account_session_status(account: object) -> str:
+    status = getattr(account, "session_status", "ok")
+    return status if isinstance(status, str) else "ok"
+
+
 def _pool_reports_connections(client_pool: object | None) -> bool:
     """Whether an empty connected set is a reliable runtime signal."""
     if client_pool is None:
@@ -285,16 +290,19 @@ def _pool_reports_connections(client_pool: object | None) -> bool:
 
 
 async def _get_accounts(db: object, *, active_only: bool = False) -> list[object]:
-    getter = getattr(db, "get_accounts", None)
-    if not callable(getter):
-        return []
-    try:
-        result = getter(active_only=active_only)
-    except TypeError:
-        result = getter()
-    if isawaitable(result):
-        result = await result
-    return list(result) if isinstance(result, (list, tuple)) else []
+    for getter_name in ("get_account_summaries", "get_accounts"):
+        getter = getattr(db, getter_name, None)
+        if not callable(getter):
+            continue
+        try:
+            result = getter(active_only=active_only)
+        except TypeError:
+            result = getter()
+        if isawaitable(result):
+            result = await result
+        if isinstance(result, (list, tuple)):
+            return list(result)
+    return []
 
 
 async def _clear_account_flood(db: object, phone: str) -> None:
@@ -377,6 +385,8 @@ def available_live_read_phones(
         if not phone:
             continue
         if not getattr(account, "is_active", True):
+            continue
+        if account_session_status(account) != "ok":
             continue
         if connected_filter is not None and phone not in connected_filter:
             continue
@@ -504,12 +514,23 @@ async def resolve_phone(db: object, raw_phone: object) -> tuple[str, dict | None
     if phone:
         return phone, None
     try:
-        accounts = await db.get_accounts()
+        getter = getattr(db, "get_account_summaries", None)
+        result = getter() if callable(getter) else None
+        if isawaitable(result):
+            result = await result
+        if not isinstance(result, (list, tuple)):
+            result = await db.get_accounts()
+        accounts = list(result)
     except Exception:
         return "", _text_response("Ошибка: не удалось получить список аккаунтов.")
-    if not accounts:
+    usable_accounts = [
+        account
+        for account in accounts
+        if account_session_status(account) == "ok"
+    ]
+    if not usable_accounts:
         return "", _text_response("Ошибка: нет подключённых аккаунтов.")
-    primary = next((a for a in accounts if a.is_primary), accounts[0])
+    primary = next((a for a in usable_accounts if a.is_primary), usable_accounts[0])
     return primary.phone, None
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -81,7 +82,44 @@ async def test_load_provider_configs_tolerates_undecryptable_secrets(db):
     assert len(loaded) == 1
     assert loaded[0].provider == "openai"
     assert loaded[0].secret_fields == {}
+    assert loaded[0].secret_status == "decrypt_failed"
     assert "could not be decrypted" in loaded[0].last_validation_error
+
+
+@pytest.mark.anyio
+async def test_save_provider_configs_preserves_encrypted_secret_after_decrypt_failure(db, caplog):
+    write_config = AppConfig()
+    write_config.security.session_encryption_key = "provider-secret"
+    writer = AgentProviderService(db, write_config)
+    await writer.save_provider_configs(
+        [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=0,
+                selected_model="gpt-4.1-mini",
+                secret_fields={"api_key": "sk-test"},
+            )
+        ]
+    )
+
+    read_config = AppConfig()
+    read_config.security.session_encryption_key = "different-secret"
+    reader = AgentProviderService(db, read_config)
+    with caplog.at_level(logging.DEBUG, logger="src.services.agent_provider_service"):
+        loaded = await reader.load_provider_configs()
+    await reader.save_provider_configs(loaded)
+
+    reloaded = await writer.load_provider_configs()
+
+    assert reloaded[0].secret_fields["api_key"] == "sk-test"
+    assert any(
+        record.levelno == logging.DEBUG
+        and "decrypt failed: resource=agent_provider identifier=openai status=key_mismatch" in record.message
+        and record.exc_info is None
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
 @pytest.mark.anyio

@@ -7,6 +7,7 @@ import logging
 import time
 from collections import OrderedDict
 from enum import Enum
+from inspect import isawaitable
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,19 @@ _permissions_cache: tuple[dict[str, bool], float] | None = None
 TOOL_PERMISSIONS_SETTING = "agent_tool_permissions"
 MCP_PREFIX = "mcp__telegram_db__"
 BUILTIN_TOOLS = ["WebSearch", "WebFetch"]
+
+
+async def _load_account_records(db) -> list[object]:
+    for getter_name in ("get_account_summaries", "get_accounts"):
+        getter = getattr(db, getter_name, None)
+        if not callable(getter):
+            continue
+        result = getter()
+        if isawaitable(result):
+            result = await result
+        if isinstance(result, (list, tuple)):
+            return list(result)
+    return []
 
 
 class ToolCategory(str, Enum):
@@ -342,7 +356,7 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
             phone_perms = saved[phone]
         else:
             if phone is None:
-                accounts = await db.get_accounts()
+                accounts = await _load_account_records(db)
                 if accounts:
                     primary = next((a for a in accounts if a.is_primary), accounts[0])
                     phone_used = primary.phone
@@ -403,7 +417,7 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
     # Seed unsaved accounts with all-enabled defaults so they are not implicitly denied
     defaults = _default_permissions()
     try:
-        accounts = await db.get_accounts()
+        accounts = await _load_account_records(db)
         for acc in accounts:
             if acc.phone not in saved:
                 saved[acc.phone] = dict(defaults)

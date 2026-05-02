@@ -24,6 +24,7 @@ from src.database.repositories.settings import SettingsRepository
 from src.database.repositories.telegram_commands import TelegramCommandsRepository
 from src.models import (
     Account,
+    AccountSummary,
     Channel,
     ChannelStats,
     CollectionTask,
@@ -79,6 +80,9 @@ class AccountBundle:
 
     async def list_accounts(self, active_only: bool = False) -> list[Account]:
         return await self.accounts.get_accounts(active_only)
+
+    async def list_account_summaries(self, active_only: bool = False) -> list[AccountSummary]:
+        return await self.accounts.get_account_summaries(active_only)
 
     async def add_account(self, account: Account) -> int:
         return await self.accounts.add_account(account)
@@ -506,6 +510,9 @@ class NotificationBundle:
     async def list_accounts(self, active_only: bool = False) -> list[Account]:
         return await self.accounts.get_accounts(active_only)
 
+    async def list_account_summaries(self, active_only: bool = False) -> list[AccountSummary]:
+        return await self.accounts.get_account_summaries(active_only)
+
     async def get_setting(self, key: str) -> str | None:
         return await self.settings.get_setting(key)
 
@@ -868,6 +875,9 @@ class PipelineBundle:
 
     async def list_accounts(self, active_only: bool = False):
         return await self.accounts.get_accounts(active_only)
+
+    async def list_account_summaries(self, active_only: bool = False):
+        return await self.accounts.get_account_summaries(active_only)
 
     async def get_cached_dialog(self, phone: str, dialog_id: int) -> dict | None:
         return await self.dialog_cache.get_dialog(phone, dialog_id)
