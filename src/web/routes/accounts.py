@@ -39,7 +39,7 @@ async def delete_account(request: Request, account_id: int):
 @router.get("/flood-status")
 async def flood_status(request: Request):
     db = deps.get_db(request)
-    accounts = await db.get_accounts()
+    accounts = await db.get_account_summaries()
     now = datetime.now(timezone.utc)
     result = []
     for acc in accounts:
@@ -67,7 +67,7 @@ async def flood_status(request: Request):
 @router.post("/{account_id}/flood-clear")
 async def flood_clear(request: Request, account_id: int):
     db = deps.get_db(request)
-    accounts = await db.get_accounts()
+    accounts = await db.get_account_summaries()
     acc = next((a for a in accounts if a.id == account_id), None)
     if not acc:
         return RedirectResponse(url="/settings?error=account_not_found", status_code=303)

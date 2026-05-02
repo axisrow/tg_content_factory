@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 
+from src.models import AccountSessionStatus
 from src.web import deps
 
 router = APIRouter()
@@ -33,7 +34,7 @@ async def dashboard(request: Request):
         return RedirectResponse(url="/settings", status_code=303)
 
     db = deps.get_db(request)
-    accounts = await db.get_accounts(active_only=False)
+    accounts = await db.get_account_summaries(active_only=False)
     if not accounts:
         return RedirectResponse(url="/settings?msg=no_accounts", status_code=303)
 
@@ -51,7 +52,11 @@ async def dashboard(request: Request):
                 until = until.replace(tzinfo=timezone.utc)
             if until > now:
                 flood_wait_count += 1
-        if a.is_active and a.phone in deps.get_pool(request).clients:
+        if (
+            a.is_active
+            and a.session_status == AccountSessionStatus.OK
+            and a.phone in deps.get_pool(request).clients
+        ):
             until = a.flood_wait_until
             if until is None:
                 all_connected_flooded = False

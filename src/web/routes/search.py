@@ -50,7 +50,7 @@ async def _render_search_page(
     if not auth.is_configured:
         return RedirectResponse(url="/settings", status_code=303)
     db = deps.get_db(request)
-    if not await db.get_accounts(active_only=False):
+    if not await db.get_account_summaries(active_only=False):
         return RedirectResponse(url="/settings?msg=no_accounts", status_code=303)
 
     result = None

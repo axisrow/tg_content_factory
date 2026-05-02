@@ -81,6 +81,7 @@ async def test_save_preserves_encrypted_on_decrypt_failure(db):
     assert len(loaded) == 1
     assert loaded[0].api_key == ""  # decrypt failed
     assert loaded[0]._api_key_enc_preserved != ""  # raw preserved
+    assert loaded[0].secret_status == "decrypt_failed"
 
     # Save back — should keep the preserved encrypted value
     await _make_service(db).save_provider_configs(loaded)

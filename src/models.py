@@ -20,6 +20,25 @@ class Account(BaseModel):
     created_at: datetime | None = None
 
 
+class AccountSessionStatus(StrEnum):
+    OK = "ok"
+    ENCRYPTED_UNKNOWN = "encrypted_unknown"
+    DECRYPT_FAILED = "decrypt_failed"
+    MISSING_KEY = "missing_key"
+    UNSUPPORTED_VERSION = "unsupported_version"
+
+
+class AccountSummary(BaseModel):
+    id: int | None = None
+    phone: str
+    is_primary: bool = False
+    is_active: bool = True
+    is_premium: bool = False
+    flood_wait_until: datetime | None = None
+    created_at: datetime | None = None
+    session_status: AccountSessionStatus = AccountSessionStatus.OK
+
+
 class TelegramUserInfo(BaseModel):
     phone: str
     first_name: str = ""

@@ -6,8 +6,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.database.repositories.accounts import AccountsRepository
-from src.models import Account
+from src.database.repositories.accounts import AccountSessionDecryptError, AccountsRepository
+from src.models import Account, AccountSessionStatus
 from src.security.session_cipher import SessionCipher
 
 
@@ -113,6 +113,43 @@ async def test_get_accounts_decrypts_sessions(repo_with_cipher, cipher):
     accounts = await repo_with_cipher.get_accounts()
     assert len(accounts) == 1
     assert accounts[0].session_string == "my_secret"
+
+
+async def test_get_account_summaries_reports_decrypt_failed_without_session(repo_with_cipher):
+    writer_cipher = SessionCipher("correct-key")
+    await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
+        ("+1234567890", writer_cipher.encrypt("live-session")),
+    )
+    await repo_with_cipher._db.commit()
+
+    wrong_key_repo = AccountsRepository(
+        repo_with_cipher._db,
+        session_cipher=SessionCipher("wrong-key"),
+    )
+
+    summaries = await wrong_key_repo.get_account_summaries()
+
+    assert len(summaries) == 1
+    assert summaries[0].phone == "+1234567890"
+    assert summaries[0].session_status == AccountSessionStatus.DECRYPT_FAILED
+
+
+async def test_get_accounts_wrong_key_still_fails_for_live_use(repo_with_cipher):
+    writer_cipher = SessionCipher("correct-key")
+    await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
+        ("+1234567890", writer_cipher.encrypt("live-session")),
+    )
+    await repo_with_cipher._db.commit()
+
+    wrong_key_repo = AccountsRepository(
+        repo_with_cipher._db,
+        session_cipher=SessionCipher("wrong-key"),
+    )
+
+    with pytest.raises(AccountSessionDecryptError, match="status=key_mismatch"):
+        await wrong_key_repo.get_accounts()
 
 
 async def test_get_accounts_handles_plaintext_when_cipher_set(repo_with_cipher):

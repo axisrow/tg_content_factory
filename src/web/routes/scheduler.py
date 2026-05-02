@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from src.models import AccountSessionStatus
 from src.services.pipeline_result import result_kind_label
 from src.web import deps
 from src.web.routes.channel_collection import bulk_enqueue_msg
@@ -53,7 +54,7 @@ def _compute_load_level(
     available_accounts_now: int,
     state: str,
 ) -> str:
-    if state in {"worker_down", "all_flooded", "no_clients"}:
+    if state in {"worker_down", "all_flooded", "no_clients", "session_degraded"}:
         return "overload"
     capacity_accounts = max(1, available_accounts_now)
     pressure = active_unfiltered_channels / capacity_accounts
@@ -85,6 +86,10 @@ def _collector_health_recommendations(
         recommendations.append("Дождаться ближайшего окна после Flood Wait и не запускать ручной collect-all повторно.")
     if state == "no_clients":
         recommendations.append("Проверить активность аккаунтов и переподключить хотя бы один рабочий клиент.")
+    if state == "session_degraded":
+        recommendations.append(
+            "Восстановить прежний SESSION_ENCRYPTION_KEY или повторно войти в Telegram-аккаунты."
+        )
     if load_level in {"high", "overload"}:
         recommendations.append(
             f"Поднять интервал автосбора выше текущих {interval_minutes} мин, чтобы снизить частоту обращений."
@@ -98,7 +103,7 @@ def _collector_health_recommendations(
     return recommendations
 
 
-async def _is_worker_alive(db) -> bool:
+async def _worker_status(db) -> tuple[bool, str]:
     """Return True when the worker-process heartbeat snapshot is fresh.
 
     The worker publishes `worker_heartbeat` every ~5s
@@ -111,26 +116,43 @@ async def _is_worker_alive(db) -> bool:
         snapshot = await db.repos.runtime_snapshots.get_snapshot("worker_heartbeat")
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to read worker_heartbeat snapshot: %s", exc)
-        return True
+        return True, ""
     if snapshot is None or snapshot.updated_at is None:
-        return False
+        return False, ""
+    payload = snapshot.payload if isinstance(snapshot.payload, dict) else {}
+    status = str(payload.get("status", "alive"))
+    if status not in {"alive", "ok"}:
+        reason = str(payload.get("reason", "") or payload.get("detail", ""))
+        return False, reason
     updated_at = snapshot.updated_at
     if updated_at.tzinfo is None:
         updated_at = updated_at.replace(tzinfo=timezone.utc)
     age = (datetime.now(timezone.utc) - updated_at).total_seconds()
-    return age <= WORKER_HEARTBEAT_STALE_AFTER_SEC
+    if age > WORKER_HEARTBEAT_STALE_AFTER_SEC:
+        return False, ""
+    return True, ""
+
+
+async def _is_worker_alive(db) -> bool:
+    alive, _ = await _worker_status(db)
+    return alive
 
 
 async def _build_collector_health_context(request: Request) -> dict[str, object]:
     db = deps.get_db(request)
     pool = deps.get_pool(request)
     collector = deps.get_collector(request)
-    accounts = await db.get_accounts(active_only=False)
+    accounts = await db.get_account_summaries(active_only=False)
     connected_phones = set(pool.clients.keys())
-    active_accounts = [acc for acc in accounts if acc.is_active]
+    degraded_session_accounts = [
+        acc for acc in accounts if acc.is_active and acc.session_status != AccountSessionStatus.OK
+    ]
+    active_accounts = [
+        acc for acc in accounts if acc.is_active and acc.session_status == AccountSessionStatus.OK
+    ]
     connected_active_accounts = [acc for acc in active_accounts if acc.phone in connected_phones]
     now = datetime.now(timezone.utc)
-    worker_alive = await _is_worker_alive(db)
+    worker_alive, worker_reason = await _worker_status(db)
 
     flooded_accounts = []
     next_available_at = None
@@ -179,6 +201,8 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         # Worker-process absent dominates: without it `no_clients` /
         # `all_flooded` are symptoms, not the root cause.
         state = "worker_down"
+    elif degraded_session_accounts and not active_accounts:
+        state = "session_degraded"
     elif not connected_active_accounts:
         state = "no_clients"
     elif availability_state == "all_flooded" or available_accounts_now == 0:
@@ -203,6 +227,8 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         "state": state,
         "connected_accounts": len(connected_phones),
         "active_accounts": len(active_accounts),
+        "session_degraded_accounts": len(degraded_session_accounts),
+        "worker_reason": worker_reason,
         "available_accounts_now": available_accounts_now,
         "flooded_accounts": flooded_accounts,
         "flooded_accounts_count": len(flooded_accounts),

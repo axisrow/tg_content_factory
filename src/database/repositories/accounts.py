@@ -5,10 +5,25 @@ from datetime import datetime
 
 import aiosqlite
 
-from src.models import Account
-from src.security import SessionCipher
+from src.models import Account, AccountSessionStatus, AccountSummary
+from src.security import SessionCipher, decrypt_failure_status, log_expected_decrypt_failure
 
 logger = logging.getLogger(__name__)
+
+_RESTORE_ACCOUNT_ACTION = "restore_key_or_relogin"
+
+
+class AccountSessionDecryptError(RuntimeError):
+    def __init__(self, *, phone: str, status: str):
+        super().__init__(
+            "Failed to decrypt Telegram account session "
+            f"for phone={phone} status={status}. "
+            "Restore the original SESSION_ENCRYPTION_KEY or re-login this account."
+        )
+        self.resource = "telegram_account"
+        self.identifier = phone
+        self.status = status
+        self.action = _RESTORE_ACCOUNT_ACTION
 
 
 class AccountsRepository:
@@ -58,9 +73,15 @@ class AccountsRepository:
                 try:
                     migrated_value = self._session_cipher.encrypt(raw_session)
                 except ValueError as exc:
-                    raise RuntimeError(
-                        f"Failed to migrate session for phone={row['phone']}"
-                    ) from exc
+                    status = decrypt_failure_status(exc)
+                    log_expected_decrypt_failure(
+                        logger,
+                        resource="telegram_account",
+                        identifier=str(row["phone"]),
+                        status=status,
+                        action=_RESTORE_ACCOUNT_ACTION,
+                    )
+                    continue
 
                 if migrated_value != raw_session:
                     await self._db.execute(
@@ -76,6 +97,142 @@ class AccountsRepository:
 
         return migrated
 
+    def _parse_dt(self, raw: str | None) -> datetime | None:
+        return datetime.fromisoformat(raw) if raw else None
+
+    def _row_to_summary(
+        self,
+        row: aiosqlite.Row,
+        *,
+        session_status: AccountSessionStatus,
+    ) -> AccountSummary:
+        return AccountSummary(
+            id=row["id"],
+            phone=row["phone"],
+            is_primary=bool(row["is_primary"]),
+            is_active=bool(row["is_active"]),
+            is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
+            flood_wait_until=self._parse_dt(row["flood_wait_until"]),
+            created_at=self._parse_dt(row["created_at"]),
+            session_status=session_status,
+        )
+
+    def _classify_session_status(self, raw_session: str, phone: str) -> AccountSessionStatus:
+        version = SessionCipher.encryption_version(raw_session)
+        if version is None:
+            if raw_session.startswith("enc:v"):
+                log_expected_decrypt_failure(
+                    logger,
+                    resource="telegram_account",
+                    identifier=phone,
+                    status="unsupported_version",
+                    action=_RESTORE_ACCOUNT_ACTION,
+                )
+                return AccountSessionStatus.UNSUPPORTED_VERSION
+            if raw_session.startswith("enc:"):
+                log_expected_decrypt_failure(
+                    logger,
+                    resource="telegram_account",
+                    identifier=phone,
+                    status="encrypted_unknown",
+                    action=_RESTORE_ACCOUNT_ACTION,
+                )
+                return AccountSessionStatus.ENCRYPTED_UNKNOWN
+            return AccountSessionStatus.OK
+
+        if self._session_cipher is None:
+            log_expected_decrypt_failure(
+                logger,
+                resource="telegram_account",
+                identifier=phone,
+                status="missing_key",
+                action=_RESTORE_ACCOUNT_ACTION,
+            )
+            return AccountSessionStatus.MISSING_KEY
+
+        try:
+            self._session_cipher.decrypt(raw_session)
+        except ValueError as exc:
+            status = decrypt_failure_status(exc)
+            log_expected_decrypt_failure(
+                logger,
+                resource="telegram_account",
+                identifier=phone,
+                status=status,
+                action=_RESTORE_ACCOUNT_ACTION,
+            )
+            if status == "unsupported_version":
+                return AccountSessionStatus.UNSUPPORTED_VERSION
+            return AccountSessionStatus.DECRYPT_FAILED
+        return AccountSessionStatus.OK
+
+    def _decrypt_session_for_live_use(self, raw_session: str, phone: str) -> str:
+        version = SessionCipher.encryption_version(raw_session)
+        if version is None:
+            if raw_session.startswith("enc:v"):
+                status = "unsupported_version"
+                log_expected_decrypt_failure(
+                    logger,
+                    resource="telegram_account",
+                    identifier=phone,
+                    status=status,
+                    action=_RESTORE_ACCOUNT_ACTION,
+                )
+                raise AccountSessionDecryptError(phone=phone, status=status)
+            if raw_session.startswith("enc:"):
+                status = "encrypted_unknown"
+                log_expected_decrypt_failure(
+                    logger,
+                    resource="telegram_account",
+                    identifier=phone,
+                    status=status,
+                    action=_RESTORE_ACCOUNT_ACTION,
+                )
+                raise AccountSessionDecryptError(phone=phone, status=status)
+            return raw_session
+
+        if self._session_cipher is None:
+            status = "missing_key"
+            log_expected_decrypt_failure(
+                logger,
+                resource="telegram_account",
+                identifier=phone,
+                status=status,
+                action=_RESTORE_ACCOUNT_ACTION,
+            )
+            raise AccountSessionDecryptError(phone=phone, status=status)
+
+        try:
+            return self._session_cipher.decrypt(raw_session)
+        except ValueError as exc:
+            status = decrypt_failure_status(exc)
+            log_expected_decrypt_failure(
+                logger,
+                resource="telegram_account",
+                identifier=phone,
+                status=status,
+                action=_RESTORE_ACCOUNT_ACTION,
+            )
+            raise AccountSessionDecryptError(phone=phone, status=status) from exc
+
+    async def get_account_summaries(self, active_only: bool = False) -> list[AccountSummary]:
+        sql = "SELECT * FROM accounts"
+        if active_only:
+            sql += " WHERE is_active = 1"
+        sql += " ORDER BY is_primary DESC, id ASC"
+        cur = await self._db.execute(sql)
+        rows = await cur.fetchall()
+        return [
+            self._row_to_summary(
+                row,
+                session_status=self._classify_session_status(
+                    str(row["session_string"] or ""),
+                    str(row["phone"]),
+                ),
+            )
+            for row in rows
+        ]
+
     async def get_accounts(self, active_only: bool = False) -> list[Account]:
         sql = "SELECT * FROM accounts"
         if active_only:
@@ -86,18 +243,8 @@ class AccountsRepository:
         accounts: list[Account] = []
 
         for row in rows:
-            raw_session = row["session_string"]
-            session_string = raw_session
-            if self._session_cipher:
-                if self._session_cipher.is_encrypted(raw_session):
-                    try:
-                        session_string = self._session_cipher.decrypt(raw_session)
-                    except ValueError as exc:
-                        raise RuntimeError(
-                            f"Failed to decrypt session for phone={row['phone']}"
-                        ) from exc
-                # If plaintext is still in DB, use it as-is (migrate_sessions
-                # should have been called during initialize).
+            raw_session = str(row["session_string"] or "")
+            session_string = self._decrypt_session_for_live_use(raw_session, str(row["phone"]))
 
             accounts.append(
                 Account(
@@ -107,14 +254,8 @@ class AccountsRepository:
                     is_primary=bool(row["is_primary"]),
                     is_active=bool(row["is_active"]),
                     is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
-                    flood_wait_until=(
-                        datetime.fromisoformat(row["flood_wait_until"])
-                        if row["flood_wait_until"]
-                        else None
-                    ),
-                    created_at=(
-                        datetime.fromisoformat(row["created_at"]) if row["created_at"] else None
-                    ),
+                    flood_wait_until=self._parse_dt(row["flood_wait_until"]),
+                    created_at=self._parse_dt(row["created_at"]),
                 )
             )
 

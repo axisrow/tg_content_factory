@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from src.config import AppConfig, resolve_session_encryption_secret
 from src.database import Database
-from src.security import SessionCipher
+from src.security import SessionCipher, decrypt_failure_status, log_expected_decrypt_failure
 from src.utils.json import safe_json_dumps
 
 if TYPE_CHECKING:
@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SETTINGS_KEY = "image_providers_v1"
+_IMAGE_SECRET_ACTION = "restore_key_or_reenter_secret"
 
 
 @dataclass(slots=True)
@@ -49,6 +50,7 @@ class ImageProviderConfig:
     enabled: bool = True
     api_key: str = ""
     _api_key_enc_preserved: str = ""  # raw encrypted value kept on decrypt failure
+    secret_status: str = "ok"
 
 
 def image_provider_spec(name: str) -> ImageProviderSpec | None:
@@ -88,19 +90,40 @@ class ImageProviderService:
                 continue
             api_key = ""
             preserved_enc = ""
+            secret_status = "ok"
             enc_key = str(item.get("api_key_enc", "")).strip()
             if enc_key:
-                try:
-                    api_key = self._cipher.decrypt(enc_key) if self._cipher else ""
-                except ValueError:
-                    logger.warning("Failed to decrypt image provider key for %s", provider, exc_info=True)
-                    preserved_enc = enc_key  # keep raw so save doesn't destroy it
+                if self._cipher is None:
+                    preserved_enc = enc_key
+                    secret_status = "missing_key"
+                    log_expected_decrypt_failure(
+                        logger,
+                        resource="image_provider",
+                        identifier=provider,
+                        status=secret_status,
+                        action=_IMAGE_SECRET_ACTION,
+                    )
+                else:
+                    try:
+                        api_key = self._cipher.decrypt(enc_key)
+                    except ValueError as exc:
+                        preserved_enc = enc_key  # keep raw so save doesn't destroy it
+                        status = decrypt_failure_status(exc)
+                        secret_status = "decrypt_failed" if status == "key_mismatch" else status
+                        log_expected_decrypt_failure(
+                            logger,
+                            resource="image_provider",
+                            identifier=provider,
+                            status=status,
+                            action=_IMAGE_SECRET_ACTION,
+                        )
             configs.append(
                 ImageProviderConfig(
                     provider=provider,
                     enabled=bool(item.get("enabled", True)),
                     api_key=api_key,
                     _api_key_enc_preserved=preserved_enc,
+                    secret_status=secret_status,
                 )
             )
         return configs
@@ -142,6 +165,8 @@ class ImageProviderService:
                     "display_name": spec.display_name,
                     "enabled": cfg.enabled,
                     "has_key": bool(cfg.api_key.strip()),
+                    "secret_status": cfg.secret_status,
+                    "requires_secret_reentry": cfg.secret_status != "ok",
                     "env_var_set": env_var_set,
                     "env_var_names": ", ".join(spec.env_vars),
                 }
@@ -164,14 +189,21 @@ class ImageProviderService:
             preserved = ""
             if new_key:
                 api_key = new_key
+                secret_status = "ok"
             elif old_cfg:
                 api_key = old_cfg.api_key
                 preserved = old_cfg._api_key_enc_preserved
+                secret_status = old_cfg.secret_status if preserved else "ok"
             else:
                 api_key = ""
+                secret_status = "ok"
             configs.append(
                 ImageProviderConfig(
-                    provider=name, enabled=enabled, api_key=api_key, _api_key_enc_preserved=preserved,
+                    provider=name,
+                    enabled=enabled,
+                    api_key=api_key,
+                    _api_key_enc_preserved=preserved,
+                    secret_status=secret_status,
                 )
             )
         return configs

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.models import RuntimeSnapshot
+from src.security import SessionCipher
 
 
 @pytest.fixture
@@ -45,6 +46,45 @@ async def test_settings_shows_accounts(route_client):
         resp = await route_client.get("/settings/")
         assert resp.status_code == 200
         assert "+1234567890" in resp.text
+
+
+@pytest.mark.anyio
+async def test_settings_degrades_when_account_session_key_is_wrong(route_client, db):
+    encrypted = SessionCipher("correct-session-key").encrypt("test_session")
+    await db.execute(
+        "UPDATE accounts SET session_string = ? WHERE phone = ?",
+        (encrypted, "+1234567890"),
+    )
+    await db.db.commit()
+    db._accounts._session_cipher = SessionCipher("wrong-session-key")
+
+    with patch(
+        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
+        AsyncMock(return_value=[]),
+    ), patch(
+        "src.web.settings.handlers.AgentProviderService.load_model_cache",
+        AsyncMock(return_value={}),
+    ):
+        resp = await route_client.get("/settings/")
+
+    assert resp.status_code == 200
+    assert "Saved Telegram logins and provider API keys cannot be decrypted" in resp.text
+    assert "decrypt_failed" in resp.text
+
+
+@pytest.mark.anyio
+async def test_readonly_routes_do_not_crash_when_account_session_key_is_wrong(route_client, db):
+    encrypted = SessionCipher("correct-session-key").encrypt("test_session")
+    await db.execute(
+        "UPDATE accounts SET session_string = ? WHERE phone = ?",
+        (encrypted, "+1234567890"),
+    )
+    await db.db.commit()
+    db._accounts._session_cipher = SessionCipher("wrong-session-key")
+
+    for path in ("/dashboard/", "/dialogs/", "/scheduler/", "/settings/flood-status"):
+        resp = await route_client.get(path)
+        assert resp.status_code == 200, path
 
 
 @pytest.mark.anyio

@@ -31,7 +31,7 @@ from src.agent.provider_registry import (
 )
 from src.config import AppConfig, resolve_session_encryption_secret
 from src.database import Database
-from src.security import SessionCipher
+from src.security import SessionCipher, decrypt_failure_status, log_expected_decrypt_failure
 from src.utils.json import safe_json_dumps
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,7 @@ _PYPROJECT_PATH = _PROJECT_ROOT / "pyproject.toml"
 COMMUNITY_COMPATIBILITY_CATALOG_PATH = (
     _PROJECT_ROOT / "data" / "deepagents_model_compatibility_catalog.json"
 )
+_PROVIDER_SECRET_ACTION = "restore_key_or_reenter_secret"
 
 @dataclass(slots=True)
 class ProviderModelCompatibilityRecord:
@@ -106,15 +107,12 @@ class AgentProviderService:
                 for field in spec.plain_fields
             }
             last_validation_error = str(item.get("last_validation_error", "")).strip()
-            try:
-                secret_fields = self._decrypt_secret_fields(item.get("secret_fields_enc", {}), spec)
-            except ValueError:
-                logger.warning(
-                    "Failed to decrypt provider secrets for %s",
-                    provider,
-                    exc_info=True,
-                )
-                secret_fields = {}
+            secret_fields, secret_fields_enc_preserved, secret_status = self._decrypt_secret_fields(
+                item.get("secret_fields_enc", {}),
+                spec,
+                provider,
+            )
+            if secret_status != "ok":
                 last_validation_error = (
                     "Saved secret values could not be decrypted. "
                     "Re-enter them with the current SESSION_ENCRYPTION_KEY."
@@ -128,6 +126,8 @@ class AgentProviderService:
                     plain_fields=plain_fields,
                     secret_fields=secret_fields,
                     last_validation_error=last_validation_error,
+                    secret_status=secret_status,
+                    secret_fields_enc_preserved=secret_fields_enc_preserved,
                 )
             )
         return sorted(configs, key=self._config_sort_key)
@@ -148,7 +148,11 @@ class AgentProviderService:
                         field.name: cfg.plain_fields.get(field.name, "").strip()
                         for field in spec.plain_fields
                     },
-                    "secret_fields_enc": self._encrypt_secret_fields(cfg.secret_fields, spec),
+                    "secret_fields_enc": self._encrypt_secret_fields(
+                        cfg.secret_fields,
+                        spec,
+                        preserved=cfg.secret_fields_enc_preserved,
+                    ),
                     "last_validation_error": cfg.last_validation_error,
                 }
             )
@@ -316,8 +320,20 @@ class AgentProviderService:
                             "required": field.required,
                             "placeholder": field.placeholder,
                             "help_text": field.help_text,
-                            "masked": "••••••••" if cfg.secret_fields.get(field.name) else "",
-                            "has_value": bool(cfg.secret_fields.get(field.name)),
+                            "masked": (
+                                "••••••••"
+                                if (
+                                    cfg.secret_fields.get(field.name)
+                                    or cfg.secret_fields_enc_preserved.get(field.name)
+                                )
+                                else ""
+                            ),
+                            "has_value": bool(
+                                cfg.secret_fields.get(field.name)
+                                or cfg.secret_fields_enc_preserved.get(field.name)
+                            ),
+                            "decrypt_failed": bool(cfg.secret_fields_enc_preserved.get(field.name))
+                            and not cfg.secret_fields.get(field.name),
                         }
                         for field in spec.secret_fields
                     ],
@@ -332,6 +348,8 @@ class AgentProviderService:
                         cache_entry,
                     ),
                     "last_validation_error": cfg.last_validation_error,
+                    "secret_status": cfg.secret_status,
+                    "requires_secret_reentry": cfg.secret_status != "ok",
                 }
             )
         return views
@@ -409,12 +427,19 @@ class AgentProviderService:
             selected_model=default_model,
             plain_fields={field.name: "" for field in spec.plain_fields},
             secret_fields={},
+            secret_status="ok",
+            secret_fields_enc_preserved={},
         )
 
     def validate_provider_config(self, cfg: ProviderRuntimeConfig) -> str:
         spec = provider_spec(cfg.provider)
         if spec is None:
             return f"Unknown provider: {cfg.provider}"
+        if cfg.secret_status != "ok":
+            return (
+                "Saved secret values could not be decrypted. "
+                "Restore SESSION_ENCRYPTION_KEY or re-enter provider secrets."
+            )
         if cfg.provider == "zai":
             base_url = cfg.plain_fields.get("base_url", "").strip()
             if is_zai_legacy_anthropic_base_url(base_url):
@@ -913,14 +938,22 @@ class AgentProviderService:
             if f"provider_priority__{provider_name}" not in form:
                 priority = current.priority
         secret_fields: dict[str, str] = {}
+        secret_fields_enc_preserved: dict[str, str] = {}
         if current is not None:
             secret_fields.update(current.secret_fields)
+            secret_fields_enc_preserved.update(current.secret_fields_enc_preserved)
         for spec_field in spec.secret_fields:
             submitted = str(
                 form.get(f"provider_secret__{provider_name}__{spec_field.name}", "")
             ).strip()
             if submitted:
                 secret_fields[spec_field.name] = submitted
+                secret_fields_enc_preserved.pop(spec_field.name, None)
+        secret_status = (
+            "ok"
+            if not secret_fields_enc_preserved
+            else (current.secret_status if current is not None else "decrypt_failed")
+        )
         plain_fields = {}
         for spec_field in spec.plain_fields:
             key = f"provider_field__{provider_name}__{spec_field.name}"
@@ -951,33 +984,73 @@ class AgentProviderService:
             selected_model=selected_model,
             plain_fields=plain_fields,
             secret_fields=secret_fields,
+            secret_status=secret_status,
+            secret_fields_enc_preserved=secret_fields_enc_preserved,
         )
 
-    def _encrypt_secret_fields(self, values: dict[str, str], spec: ProviderSpec) -> dict[str, str]:
+    def _encrypt_secret_fields(
+        self,
+        values: dict[str, str],
+        spec: ProviderSpec,
+        *,
+        preserved: dict[str, str] | None = None,
+    ) -> dict[str, str]:
         assert self._cipher is not None
-        return {
-            field.name: self._cipher.encrypt(values.get(field.name, "").strip())
-            for field in spec.secret_fields
-            if values.get(field.name, "").strip()
-        }
+        encrypted: dict[str, str] = {}
+        preserved = preserved or {}
+        for spec_field in spec.secret_fields:
+            value = values.get(spec_field.name, "").strip()
+            if value:
+                encrypted[spec_field.name] = self._cipher.encrypt(value)
+            elif preserved.get(spec_field.name):
+                encrypted[spec_field.name] = preserved[spec_field.name]
+        return encrypted
 
     def _decrypt_secret_fields(
         self,
         payload: dict[str, Any],
         spec: ProviderSpec,
-    ) -> dict[str, str]:
+        provider: str | None = None,
+    ) -> tuple[dict[str, str], dict[str, str], str]:
         values: dict[str, str] = {}
+        preserved: dict[str, str] = {}
+        secret_status = "ok"
+        legacy_raise = provider is None
+        provider_name = provider or spec.name
         for spec_field in spec.secret_fields:
             raw = str(payload.get(spec_field.name, "")).strip() if isinstance(payload, dict) else ""
             if not raw:
                 continue
             if self._cipher is None:
-                raise ValueError(
-                    "SESSION_ENCRYPTION_KEY is not configured; "
-                    "cannot decrypt saved provider secrets."
+                if legacy_raise:
+                    raise ValueError(
+                        "SESSION_ENCRYPTION_KEY is not configured; "
+                        "cannot decrypt saved provider secrets."
+                    )
+                preserved[spec_field.name] = raw
+                secret_status = "missing_key"
+                log_expected_decrypt_failure(
+                    logger,
+                    resource="agent_provider",
+                    identifier=provider_name,
+                    status=secret_status,
+                    action=_PROVIDER_SECRET_ACTION,
                 )
-            values[spec_field.name] = self._cipher.decrypt(raw)
-        return values
+                continue
+            try:
+                values[spec_field.name] = self._cipher.decrypt(raw)
+            except ValueError as exc:
+                preserved[spec_field.name] = raw
+                status = decrypt_failure_status(exc)
+                secret_status = "decrypt_failed" if status == "key_mismatch" else status
+                log_expected_decrypt_failure(
+                    logger,
+                    resource="agent_provider",
+                    identifier=provider_name,
+                    status=status,
+                    action=_PROVIDER_SECRET_ACTION,
+                )
+        return values, preserved, secret_status
 
     def _app_version(self) -> str:
         try:
