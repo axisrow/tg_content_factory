@@ -169,9 +169,11 @@ def require_args(args: dict[str, Any], *names: str) -> dict[str, str]:
     return values
 
 
-def normalize_phone(phone: str) -> str:
+def normalize_phone(phone: object) -> str:
     """Ensure phone starts with '+' — models sometimes omit it."""
-    phone = phone.strip()
+    if phone is None:
+        return ""
+    phone = str(phone).strip()
     if phone and not phone.startswith("+"):
         phone = "+" + phone
     return phone
@@ -205,7 +207,7 @@ def require_pool(client_pool: object | None, action: str = "Эта операц�
     )
 
 
-async def resolve_phone(db: object, raw_phone: str) -> tuple[str, dict | None]:
+async def resolve_phone(db: object, raw_phone: object) -> tuple[str, dict | None]:
     """Normalize phone, default to primary account if empty.
 
     Returns ``(phone, None)`` on success or ``("", error_response)`` on failure.

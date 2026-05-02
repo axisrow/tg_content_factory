@@ -95,13 +95,18 @@ def test_convert_telethon_message_basic():
     msg.sender.id = 789
     msg.sender.first_name = "John"
     msg.sender.last_name = "Doe"
+    msg.sender.username = "jdoe"
     msg.date = datetime(2025, 1, 1)
     msg.message = "hello"
     msg.media = None
 
     res = TelegramMessageTransformer.convert_telethon_message(msg)
     assert res.channel_id == 456
+    assert res.sender_id == 789
     assert res.sender_name == "John Doe"
+    assert res.sender_first_name == "John"
+    assert res.sender_last_name == "Doe"
+    assert res.sender_username == "jdoe"
     assert res.date.tzinfo == timezone.utc
 
 
@@ -112,15 +117,24 @@ def test_convert_telethon_message_no_chat():
 
 def test_resolve_sender_user():
     msg = MagicMock(from_id=PeerUser(user_id=1))
-    user = MagicMock(first_name="First", last_name="Last")
+    user = MagicMock(first_name="First", last_name="Last", username="firstlast")
     res_id, res_name = TelegramMessageTransformer.resolve_sender(msg, {}, {1: user})
     assert res_id == 1
     assert res_name == "First Last"
+    identity = TelegramMessageTransformer.resolve_sender_identity(msg, {}, {1: user})
+    assert identity.sender_first_name == "First"
+    assert identity.sender_last_name == "Last"
+    assert identity.sender_username == "firstlast"
 
 
 def test_resolve_sender_channel():
     msg = MagicMock(from_id=PeerChannel(channel_id=2))
-    chat = MagicMock(title="Chan Title")
+    chat = MagicMock(title="Chan Title", username="chan")
     res_id, res_name = TelegramMessageTransformer.resolve_sender(msg, {2: chat}, {})
     assert res_id == 2
     assert res_name == "Chan Title"
+    identity = TelegramMessageTransformer.resolve_sender_identity(msg, {2: chat}, {})
+    assert identity.sender_name == "Chan Title"
+    assert identity.sender_first_name is None
+    assert identity.sender_last_name is None
+    assert identity.sender_username == "chan"

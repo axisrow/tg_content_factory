@@ -60,6 +60,15 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     """Run schema migrations. Returns True if FTS5 is available, False otherwise."""
     cur = await db.execute("PRAGMA table_info(messages)")
     msg_columns = {row["name"] for row in await cur.fetchall()}
+    if "sender_first_name" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN sender_first_name TEXT")
+        await db.commit()
+    if "sender_last_name" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN sender_last_name TEXT")
+        await db.commit()
+    if "sender_username" not in msg_columns:
+        await db.execute("ALTER TABLE messages ADD COLUMN sender_username TEXT")
+        await db.commit()
     if "media_type" not in msg_columns:
         await db.execute("ALTER TABLE messages ADD COLUMN media_type TEXT")
         await db.commit()

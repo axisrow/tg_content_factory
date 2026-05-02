@@ -843,7 +843,89 @@ class TestReadMessagesTool:
 
         text = _text(result)
         assert "2025-06-15 12:30" in text
-        assert "[id:42]" in text
+        assert "[sender id=42]" in text
+
+    @pytest.mark.anyio
+    async def test_with_sender_entity_identity(self, mock_db, mock_pool):
+        client = _make_client()
+        _setup_resolve_entity(mock_pool, client)
+
+        msg = SimpleNamespace(
+            id=5,
+            sender_id=42,
+            sender=SimpleNamespace(
+                id=42,
+                first_name="Ivan",
+                last_name="Petrov",
+                username="ivanp",
+            ),
+            date=None,
+            text="Identity message",
+        )
+
+        async def iter_msgs(*a, **kw):
+            yield msg
+
+        client.iter_messages = iter_msgs
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["read_messages"]({
+            "phone": "+79001234567",
+            "chat_id": "@test",
+        })
+
+        text = _text(result)
+        assert "[sender id=42, first_name=Ivan, last_name=Petrov, username=@ivanp]" in text
+
+    @pytest.mark.anyio
+    async def test_sender_lookup_fallback_and_cache(self, mock_db, mock_pool):
+        client = _make_client()
+        _setup_resolve_entity(mock_pool, client)
+        sender = SimpleNamespace(id=42, first_name="Ivan", last_name="", username="ivanp")
+        msg1 = SimpleNamespace(id=1, sender_id=42, date=None, text="One")
+        msg1.get_sender = AsyncMock(return_value=sender)
+        msg2 = SimpleNamespace(id=2, sender_id=42, date=None, text="Two")
+        msg2.get_sender = AsyncMock(return_value=sender)
+
+        async def iter_msgs(*a, **kw):
+            yield msg1
+            yield msg2
+
+        client.iter_messages = iter_msgs
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["read_messages"]({
+            "phone": "+79001234567",
+            "chat_id": "@test",
+        })
+
+        text = _text(result)
+        assert "first_name=Ivan" in text
+        assert "username=@ivanp" in text
+        msg1.get_sender.assert_awaited_once()
+        msg2.get_sender.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_sender_lookup_error_keeps_message_text(self, mock_db, mock_pool):
+        client = _make_client()
+        _setup_resolve_entity(mock_pool, client)
+        msg = SimpleNamespace(id=1, sender_id=42, date=None, text="Still visible")
+        msg.get_sender = AsyncMock(side_effect=RuntimeError("lookup failed"))
+
+        async def iter_msgs(*a, **kw):
+            yield msg
+
+        client.iter_messages = iter_msgs
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["read_messages"]({
+            "phone": "+79001234567",
+            "chat_id": "@test",
+        })
+
+        text = _text(result)
+        assert "Still visible" in text
+        assert "[sender id=42]" in text
 
     @pytest.mark.anyio
     async def test_exception_returns_error(self, mock_db, mock_pool):

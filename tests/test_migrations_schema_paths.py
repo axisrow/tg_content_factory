@@ -109,7 +109,18 @@ async def test_run_migrations_adds_missing_columns(fresh_db):
 
     cur = await fresh_db.execute("PRAGMA table_info(messages)")
     cols = {row["name"] for row in await cur.fetchall()}
-    for expected in ("media_type", "topic_id", "reactions_json", "views", "forwards", "reply_count", "detected_lang"):
+    for expected in (
+        "sender_first_name",
+        "sender_last_name",
+        "sender_username",
+        "media_type",
+        "topic_id",
+        "reactions_json",
+        "views",
+        "forwards",
+        "reply_count",
+        "detected_lang",
+    ):
         assert expected in cols
 
 

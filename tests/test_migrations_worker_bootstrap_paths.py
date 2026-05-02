@@ -326,6 +326,17 @@ async def test_run_migrations_forward_from_channel_id(fresh_db):
 
 
 @pytest.mark.anyio
+async def test_run_migrations_adds_sender_identity_columns(fresh_db):
+    await _init_minimal_schema(fresh_db)
+    await run_migrations(fresh_db)
+    cur = await fresh_db.execute("PRAGMA table_info(messages)")
+    cols = {row["name"] for row in await cur.fetchall()}
+    assert "sender_first_name" in cols
+    assert "sender_last_name" in cols
+    assert "sender_username" in cols
+
+
+@pytest.mark.anyio
 async def test_run_migrations_fwd_abs_normalization(fresh_db):
     """Covers _migration_fwd_abs_v1: negative forward_from_channel_id abs normalization."""
     await _init_minimal_schema(fresh_db)

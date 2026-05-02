@@ -61,9 +61,9 @@ def _format_phones(phones: set[str]) -> str:
     return ", ".join(sorted(phones)) if phones else "-"
 
 
-async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: str = "") -> str:
+async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: object = "") -> str:
     """Return account info with DB/runtime/profile-fetch states kept separate."""
-    phone_filter = normalize_phone(phone.strip()) if phone.strip() else ""
+    phone_filter = normalize_phone(phone)
     connected = _connected_phones(runtime.client_pool)
     if phone_filter:
         connected = {p for p in connected if _matches_phone(p, phone_filter)}
