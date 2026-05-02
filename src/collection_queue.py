@@ -9,9 +9,11 @@ from src.database import Database
 from src.database.bundles import ChannelBundle
 from src.models import Channel, CollectionTaskStatus
 from src.telegram.collector import (
+    RESOLVE_USERNAME_BACKOFF_BUFFER_SEC,
     AllCollectionClientsFloodedError,
     Collector,
     NoActiveCollectionClientsError,
+    UsernameResolveFloodWaitDeferredError,
 )
 
 logger = logging.getLogger(__name__)
@@ -283,6 +285,33 @@ class CollectionQueue:
                 )
                 logger.warning(
                     "Rescheduled collection task %d for channel %d until %s: all clients flooded",
+                    task_id,
+                    channel.channel_id,
+                    run_after.isoformat(),
+                )
+            except UsernameResolveFloodWaitDeferredError as exc:
+                run_after = exc.next_available_at + timedelta(
+                    seconds=RESOLVE_USERNAME_BACKOFF_BUFFER_SEC
+                )
+                note = (
+                    "Отложено: Flood Wait на resolve_username до "
+                    f"{run_after.astimezone(timezone.utc).isoformat()}"
+                )
+                self._retried_tasks.discard(task_id)
+                await self._channels.reschedule_collection_task(
+                    task_id,
+                    run_after=run_after,
+                    note=note,
+                )
+                self._schedule_requeue_after_delay(
+                    task_id=task_id,
+                    channel=channel,
+                    force=force,
+                    full=full,
+                    run_after=run_after,
+                )
+                logger.warning(
+                    "Rescheduled collection task %d for channel %d until %s: username resolve flood wait",
                     task_id,
                     channel.channel_id,
                     run_after.isoformat(),

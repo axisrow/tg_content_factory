@@ -8,7 +8,7 @@ from src.cli import runtime
 from src.database.bundles import ChannelBundle
 from src.services.collection_service import CollectionService
 from src.services.task_enqueuer import TaskEnqueuer
-from src.telegram.collector import Collector
+from src.telegram.collector import Collector, UsernameResolveFloodWaitDeferredError
 
 
 def run(args: argparse.Namespace) -> None:
@@ -37,7 +37,12 @@ def run(args: argparse.Namespace) -> None:
                 if channel.is_filtered:
                     print(f"Channel {args.channel_id} is filtered and excluded from collection")
                     return
-                count = await collector.collect_single_channel(channel, full=True)
+                try:
+                    count = await collector.collect_single_channel(channel, full=True)
+                except UsernameResolveFloodWaitDeferredError as exc:
+                    retry_at = exc.next_available_at.astimezone().isoformat()
+                    print(f"Username resolve Flood Wait active until {retry_at}; try again later.")
+                    return
                 print(f"Collected {count} messages from channel {args.channel_id}")
             else:
                 channel_bundle = ChannelBundle.from_database(db)

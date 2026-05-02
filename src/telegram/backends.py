@@ -147,6 +147,18 @@ class TelegramTransportSession:
     async def get_input_entity(self, peer: Any) -> Any:
         return await self.resolve_input_entity(peer)
 
+    async def resolve_cached_input_entity(self, peer: Any) -> Any:
+        """Resolve an InputPeer from Telethon's local session cache only."""
+        try:
+            session = object.__getattribute__(self._client, "session")
+            resolver = session.get_input_entity
+        except AttributeError as exc:
+            raise ValueError("No local entity cache is available") from exc
+        result = resolver(peer)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
     async def warm_dialog_cache(self) -> Any:
         return await self._run("telegram_warm_dialog_cache", self._client.get_dialogs())
 

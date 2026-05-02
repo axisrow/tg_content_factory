@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon.errors import FloodWaitError, UsernameNotOccupiedError
-from telethon.tl.types import PeerChannel
+from telethon.tl.types import InputPeerChannel, PeerChannel
 
 from src.config import SchedulerConfig
 from src.models import Channel, ChannelStats, CollectionTaskStatus, Message, StatsAllTaskPayload
@@ -14,6 +14,7 @@ from src.telegram.collector import (
     AllCollectionClientsFloodedError,
     Collector,
     NoActiveCollectionClientsError,
+    UsernameResolveFloodWaitDeferredError,
 )
 from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 from tests.helpers import AsyncIterMessages as _AsyncIterMessages
@@ -162,32 +163,36 @@ async def test_collect_channel_uses_peer_channel_without_username(db):
 
 @pytest.mark.anyio
 async def test_collect_channel_uses_username_when_available(db):
-    """_collect_channel resolves by username when it is stored."""
+    """_collect_channel uses cache-only PeerChannel before live username resolve."""
     ch = Channel(channel_id=1970788983, title="Test Channel", username="test_chan")
     await db.add_channel(ch)
 
-    mock_client = AsyncMock()
-    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
-    mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
+    input_peer = InputPeerChannel(channel_id=1970788983, access_hash=123)
+    mock_client = FakeTelethonClient(cached_input_entity_resolver=lambda _arg: input_peer)
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
     collector = Collector(pool, db, SchedulerConfig())
     await collector._collect_channel(ch)
 
-    call_arg = mock_client.get_entity.call_args[0][0]
-    assert call_arg == "test_chan"
+    call_arg = mock_client.session.get_input_entity.call_args[0][0]
+    assert isinstance(call_arg, PeerChannel)
+    assert call_arg.channel_id == 1970788983
+    mock_client.get_entity.assert_not_awaited()
+    mock_client.get_input_entity.assert_not_awaited()
 
 
 @pytest.mark.anyio
 async def test_collect_positive_id_end_to_end(db):
-    """End-to-end: collect_all_channels with username resolves by username."""
+    """End-to-end: collect_all_channels falls back to live InputPeer username resolve."""
     ch = Channel(channel_id=1970788983, title="Positive ID Channel", username="my_chan")
     await db.add_channel(ch)
 
-    mock_client = AsyncMock()
-    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
-    mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
+    input_peer = InputPeerChannel(channel_id=1970788983, access_hash=123)
+    mock_client = FakeTelethonClient(
+        input_entity_resolver=lambda arg: input_peer if arg == "my_chan" else ValueError("cache miss"),
+        cached_input_entity_resolver=lambda _arg: ValueError("cache miss"),
+    )
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
@@ -195,7 +200,7 @@ async def test_collect_positive_id_end_to_end(db):
     stats = await collector.collect_all_channels()
 
     assert stats["channels"] == 1
-    call_arg = mock_client.get_entity.call_args[0][0]
+    call_arg = mock_client.get_input_entity.call_args[0][0]
     assert call_arg == "my_chan"
 
 
@@ -239,18 +244,18 @@ async def test_collect_channel_long_username_resolve_flood_sets_backoff_without_
         SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
     )
 
-    count = await collector._collect_channel(stored)
+    with pytest.raises(UsernameResolveFloodWaitDeferredError):
+        await collector._collect_channel(stored)
 
-    assert count == 0
-    pool.report_flood.assert_awaited_once_with("+7001", 7200)
+    pool.report_flood.assert_not_awaited()
     pool.get_available_client.assert_awaited_once()
-    raw_client2.get_entity.assert_not_awaited()
+    raw_client2.get_input_entity.assert_not_awaited()
     remaining = collector._get_resolve_username_backoff_remaining_sec()
-    assert 3500 < remaining <= 3600
+    assert 7100 < remaining <= 7200
 
 
 @pytest.mark.anyio
-async def test_collect_channel_short_username_resolve_flood_still_rotates(db):
+async def test_collect_channel_username_resolve_flood_does_not_rotate(db):
     ch = Channel(
         channel_id=1970788985,
         title="Short Username Flood",
@@ -289,13 +294,13 @@ async def test_collect_channel_short_username_resolve_flood_still_rotates(db):
         SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
     )
 
-    count = await collector._collect_channel(stored)
+    with pytest.raises(UsernameResolveFloodWaitDeferredError):
+        await collector._collect_channel(stored)
 
-    assert count == 0
-    pool.report_flood.assert_awaited_once_with("+7001", 120)
-    assert pool.get_available_client.await_count == 2
-    raw_client2.get_entity.assert_awaited_once_with("short_flood")
-    assert collector._get_resolve_username_backoff_remaining_sec() == 0
+    pool.report_flood.assert_not_awaited()
+    assert pool.get_available_client.await_count == 1
+    raw_client2.get_input_entity.assert_not_awaited()
+    assert 0 < collector._get_resolve_username_backoff_remaining_sec() <= 120
 
 
 @pytest.mark.anyio
@@ -314,9 +319,27 @@ async def test_collect_channel_skips_username_resolve_when_backoff_active(db):
     collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
     collector._set_resolve_username_backoff(600)
 
-    count = await collector._collect_channel(stored)
+    with pytest.raises(UsernameResolveFloodWaitDeferredError):
+        await collector._collect_channel(stored)
+    pool.get_available_client.assert_not_awaited()
 
-    assert count == 0
+
+@pytest.mark.anyio
+async def test_collect_all_channels_stops_on_username_resolve_backoff(db):
+    await db.add_channel(
+        Channel(channel_id=1970788987, title="Backoff Active 1", username="backoff_active_1")
+    )
+    await db.add_channel(
+        Channel(channel_id=1970788988, title="Backoff Active 2", username="backoff_active_2")
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(AsyncMock(), "+7001")))
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+    collector._set_resolve_username_backoff(600)
+
+    stats = await collector.collect_all_channels()
+
+    assert stats == {"channels": 0, "messages": 0, "errors": 1}
     pool.get_available_client.assert_not_awaited()
 
 
@@ -346,28 +369,52 @@ async def test_collect_no_username_channel_fetches_dialogs_once(db):
 
 @pytest.mark.anyio
 async def test_collect_channel_falls_back_to_username_on_cache_miss(db):
-    """When PeerChannel fails (entity not cached), fall back to username."""
+    """When cache-only lookups fail, fall back to live username InputPeer."""
     ch = Channel(channel_id=1970788983, title="Test", username="agipdoom")
     await db.add_channel(ch)
 
-    mock_entity = MagicMock()
-    mock_client = AsyncMock()
-
-    async def _get_entity(arg):
-        if isinstance(arg, str):
-            return mock_entity
-        raise ValueError("Could not find the input entity")
-
-    mock_client.get_entity = AsyncMock(side_effect=_get_entity)
-    mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
+    input_peer = InputPeerChannel(channel_id=1970788983, access_hash=123)
+    mock_client = FakeTelethonClient(
+        input_entity_resolver=lambda arg: input_peer if arg == "agipdoom" else ValueError("cache miss"),
+        cached_input_entity_resolver=lambda _arg: ValueError("cache miss"),
+    )
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
 
     collector = Collector(pool, db, SchedulerConfig())
     await collector._collect_channel(ch)
 
-    # Username-first: should resolve by username directly
-    mock_client.get_entity.assert_awaited_once_with("agipdoom")
+    mock_client.get_input_entity.assert_awaited_once_with("agipdoom")
+    mock_client.get_entity.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_collect_channel_uses_cached_username_only_when_channel_id_matches(db):
+    ch = Channel(channel_id=1970788983, title="Test", username="agipdoom")
+    await db.add_channel(ch)
+
+    wrong_cached_peer = InputPeerChannel(channel_id=111, access_hash=1)
+    live_peer = InputPeerChannel(channel_id=1970788983, access_hash=2)
+
+    def _cached(arg):
+        if isinstance(arg, PeerChannel):
+            raise ValueError("numeric cache miss")
+        if arg == "agipdoom":
+            return wrong_cached_peer
+        raise ValueError("cache miss")
+
+    mock_client = FakeTelethonClient(
+        input_entity_resolver=lambda arg: live_peer if arg == "agipdoom" else ValueError("live miss"),
+        cached_input_entity_resolver=_cached,
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+
+    collector = Collector(pool, db, SchedulerConfig())
+    await collector._collect_channel(ch)
+
+    assert mock_client.session.get_input_entity.call_count == 2
+    mock_client.get_input_entity.assert_awaited_once_with("agipdoom")
 
 
 @pytest.mark.anyio
@@ -1785,12 +1832,12 @@ async def test_precheck_skipped_when_force_and_first_run(db):
 
 @pytest.mark.anyio
 async def test_get_entity_timeout_returns_zero(db):
-    """get_entity hanging → TimeoutError → _collect_channel returns 0."""
+    """get_input_entity hanging → TimeoutError → _collect_channel returns 0."""
     ch = Channel(channel_id=-100400, title="Hanging Channel", username="hang_chan")
     await db.add_channel(ch)
 
     mock_client = AsyncMock()
-    mock_client.get_entity = AsyncMock(side_effect=asyncio.TimeoutError)
+    mock_client.get_input_entity = AsyncMock(side_effect=asyncio.TimeoutError)
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
     collector = Collector(pool, db, SchedulerConfig())
@@ -1928,12 +1975,13 @@ async def test_username_changed_marks_filtered(db):
     fallback_entity = SimpleNamespace(username="new_username", title="New Title")
 
     async def _get_entity(arg):
-        if isinstance(arg, str):
-            raise ValueError('No user has "raketa_nanobanana4" as username')
         return fallback_entity
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(side_effect=_get_entity)
+    mock_client.get_input_entity = AsyncMock(
+        side_effect=ValueError('No user has "raketa_nanobanana4" as username')
+    )
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
     collector = Collector(pool, db, SchedulerConfig())
@@ -1958,6 +2006,7 @@ async def test_username_not_found_deactivates(db):
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(side_effect=ValueError("No user has username"))
+    mock_client.get_input_entity = AsyncMock(side_effect=ValueError("No user has username"))
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
     collector = Collector(pool, db, SchedulerConfig())

@@ -154,18 +154,39 @@ class FakeTelethonClient:
         self,
         *,
         entity_resolver=None,
+        input_entity_resolver=None,
+        cached_input_entity_resolver=None,
         dialogs=None,
         iter_messages_factory=None,
     ):
         self._entity_resolver = entity_resolver or (lambda arg: SimpleNamespace())
+        self._input_entity_resolver = input_entity_resolver or self._entity_resolver
+        self._cached_input_entity_resolver = cached_input_entity_resolver
         self._dialogs = [] if dialogs is None else dialogs
         self._iter_messages_factory = iter_messages_factory or (lambda *a, **kw: AsyncIterEmpty())
         self.get_entity = AsyncMock(side_effect=self._get_entity)
+        self.get_input_entity = AsyncMock(side_effect=self._get_input_entity)
         self.get_dialogs = AsyncMock(side_effect=self._get_dialogs)
         self.iter_messages = MagicMock(side_effect=self._iter_messages)
+        if cached_input_entity_resolver is not None:
+            self.session = SimpleNamespace(
+                get_input_entity=MagicMock(side_effect=self._get_cached_input_entity)
+            )
 
     async def _get_entity(self, arg):
         result = self._entity_resolver(arg)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    async def _get_input_entity(self, arg):
+        result = self._input_entity_resolver(arg)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    def _get_cached_input_entity(self, arg):
+        result = self._cached_input_entity_resolver(arg)
         if isinstance(result, Exception):
             raise result
         return result
