@@ -375,10 +375,15 @@ class Collector:
         if isinstance(getattr(type(session), "raw_client", None), property):
             raw_client = session.raw_client
         live_input_resolver = getattr(raw_client, "get_input_entity", None)
+        def _session_resolver(name: str):
+            if getattr(type(session), name, None) is not None:
+                return getattr(session, name)
+            return vars(session).get(name)
+
         if live_input_resolver is None:
-            live_input_resolver = vars(session).get("get_input_entity")
+            live_input_resolver = _session_resolver("get_input_entity")
         if live_input_resolver is None:
-            live_input_resolver = vars(session).get("resolve_input_entity")
+            live_input_resolver = _session_resolver("resolve_input_entity")
         if live_input_resolver is None:
             live_input_resolver = session.get_entity
         return await run_with_flood_wait(

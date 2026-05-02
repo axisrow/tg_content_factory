@@ -776,6 +776,29 @@ class TestCollectCommand:
         out = capsys.readouterr().out
         assert "100" in out or "complete" in out.lower()
 
+    def test_collect_single_channel_username_resolve_deferred(self, cli_env_with_pool, capsys):
+        """Username resolve backoff should print a CLI message, not a traceback."""
+        from datetime import datetime, timedelta, timezone
+
+        from src.telegram.collector import Collector, UsernameResolveFloodWaitDeferredError
+
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+70001112233": AsyncMock()}
+        _add_channel(cli_env, channel_id=100, title="Test Channel")
+
+        exc = UsernameResolveFloodWaitDeferredError(
+            wait_seconds=60,
+            next_available_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+        )
+        with patch.object(Collector, "collect_single_channel", new_callable=AsyncMock, side_effect=exc):
+            from src.cli.commands.collect import run
+
+            run(_ns(channel_id=100, full=True))
+
+        out = capsys.readouterr().out
+        assert "Username resolve Flood Wait active until" in out
+        assert "try again later" in out
+
 
 def _add_channel(db: Database, channel_id: int = 100, title: str = "TestCh") -> int:
     return asyncio.run(db.add_channel(Channel(channel_id=channel_id, title=title)))
