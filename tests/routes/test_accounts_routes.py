@@ -57,11 +57,35 @@ async def test_delete_account_removes_row_and_enqueues_cleanup(route_client, bas
 
 
 @pytest.mark.anyio
+async def test_delete_primary_account_promotes_next_visible_account(route_client, base_app):
+    """Deleting the primary account updates the remaining visible primary immediately."""
+    _, db, _ = base_app
+    assert db.db is not None
+    await db.db.execute("UPDATE accounts SET is_primary = 1 WHERE phone = ?", ("+1234567890",))
+    await db.db.commit()
+    await db.add_account(Account(phone="+9999999997", session_string="session_next"))
+    await db.add_account(Account(phone="+9999999996", session_string="session_later"))
+
+    accounts = await db.get_account_summaries(active_only=False)
+    to_delete = next(a for a in accounts if a.phone == "+1234567890")
+
+    resp = await route_client.post(f"/settings/{to_delete.id}/delete", follow_redirects=False)
+    assert resp.status_code in (303, 302)
+    assert "account_deleted" in resp.headers.get("location", "")
+
+    remaining = await db.get_account_summaries(active_only=False)
+    assert not any(a.id == to_delete.id for a in remaining)
+    assert remaining[0].phone == "+9999999997"
+    assert remaining[0].is_primary is True
+    assert all(a.is_primary is False for a in remaining[1:])
+
+
+@pytest.mark.anyio
 async def test_delete_account_works_when_session_key_is_wrong(route_client, base_app):
     """Deleting an account is a recovery action and must not require session decryption."""
-    app, db, pool = base_app
+    _, db, _ = base_app
     encrypted = SessionCipher("correct-session-key").encrypt("session_del")
-    await db.add_account(Account(phone="+9999999998", session_string=encrypted))
+    await db.add_account(Account(phone="+9999999998", session_string=encrypted, is_primary=True))
     db._accounts._session_cipher = SessionCipher("wrong-session-key")
 
     accounts = await db.get_account_summaries(active_only=False)
@@ -73,6 +97,8 @@ async def test_delete_account_works_when_session_key_is_wrong(route_client, base
 
     remaining = await db.get_account_summaries(active_only=False)
     assert not any(a.phone == "+9999999998" for a in remaining)
+    promoted = next(a for a in remaining if a.phone == "+1234567890")
+    assert promoted.is_primary is True
 
     commands = await db.repos.telegram_commands.list_commands(limit=1)
     assert commands[0].command_type == "accounts.delete"

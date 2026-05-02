@@ -5,6 +5,7 @@ from datetime import datetime
 
 import aiosqlite
 
+from src.database.repositories._transactions import begin_immediate
 from src.models import Account, AccountSessionStatus, AccountSummary
 from src.security import SessionCipher, decrypt_failure_status, log_expected_decrypt_failure
 
@@ -282,5 +283,28 @@ class AccountsRepository:
         await self._db.commit()
 
     async def delete_account(self, account_id: int) -> None:
-        await self._db.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
-        await self._db.commit()
+        try:
+            await begin_immediate(self._db)
+            cur = await self._db.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+            if (cur.rowcount or 0) > 0:
+                await self._db.execute(
+                    """
+                    UPDATE accounts
+                    SET is_primary = 1
+                    WHERE id = (
+                        SELECT id
+                        FROM accounts
+                        ORDER BY id ASC
+                        LIMIT 1
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM accounts
+                        WHERE is_primary = 1
+                    )
+                    """
+                )
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
