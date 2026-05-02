@@ -2,12 +2,20 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.database import Database
 from tests.agent_tools_helpers import _get_tool_handlers, _text
+
+
+class SnapshotClientPool:
+    def __init__(self):
+        self.clients = {"+79001234567": object()}
+
+    def connected_phones(self):
+        return set(self.clients)
 
 
 @pytest.fixture
@@ -763,6 +771,14 @@ class TestReadMessagesTool:
         assert "требует Telegram-клиент" in _text(result)
 
     @pytest.mark.anyio
+    async def test_snapshot_runtime_returns_live_runtime_limit(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=SnapshotClientPool())
+        result = await handlers["read_messages"]({"chat_id": "@test"})
+        text = _text(result)
+        assert "live Telegram runtime" in text
+        assert "snapshot" in text
+
+    @pytest.mark.anyio
     async def test_missing_chat_id(self, mock_db, mock_pool):
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["read_messages"]({
@@ -794,6 +810,111 @@ class TestReadMessagesTool:
         text = _text(result)
         assert "Hello world" in text
         assert "1 сообщений" in text
+
+    @pytest.mark.anyio
+    async def test_none_phone_uses_available_connected_account(self, mock_db, mock_pool):
+        client = _make_client()
+        _setup_resolve_entity(mock_pool, client)
+        mock_pool.clients = {"+79001234567": object()}
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(
+                id=1,
+                phone="+79001234567",
+                is_primary=True,
+                is_active=True,
+                flood_wait_until=None,
+            )
+        ])
+
+        msg = SimpleNamespace(id=1, sender_id=42, date=None, text="Hello from default")
+
+        async def iter_msgs(*a, **kw):
+            yield msg
+
+        client.iter_messages = iter_msgs
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["read_messages"]({
+            "phone": None,
+            "chat_id": "@test",
+            "limit": 10,
+        })
+
+        text = _text(result)
+        assert "Hello from default" in text
+        mock_pool.get_native_client_by_phone.assert_awaited_with("+79001234567")
+
+    @pytest.mark.anyio
+    async def test_explicit_disconnected_phone_does_not_fallback(self, mock_db, mock_pool):
+        mock_pool.clients = {"+79000000002": object()}
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(
+                id=1,
+                phone="+79000000001",
+                is_primary=True,
+                is_active=True,
+                flood_wait_until=None,
+            ),
+            SimpleNamespace(
+                id=2,
+                phone="+79000000002",
+                is_primary=False,
+                is_active=True,
+                flood_wait_until=None,
+            ),
+        ])
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["read_messages"]({
+            "phone": "+79000000001",
+            "chat_id": "@test",
+        })
+
+        text = _text(result)
+        assert "не подключён" in text
+        assert "+79000000002" in text
+
+    @pytest.mark.anyio
+    async def test_numeric_chat_title_fallback(self, mock_db, mock_pool):
+        client = _make_client()
+        entity = SimpleNamespace(id=111802)
+        _setup_resolve_entity(mock_pool, client, entity=entity)
+        mock_pool.clients = {"+79001234567": object()}
+        mock_pool.resolve_dialog_entity = AsyncMock(side_effect=[None, None, entity])
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(
+                id=1,
+                phone="+79001234567",
+                is_primary=True,
+                is_active=True,
+                flood_wait_until=None,
+            )
+        ])
+
+        msg = SimpleNamespace(id=1, sender_id=42, date=None, text="From numeric title")
+
+        async def iter_msgs(*a, **kw):
+            yield msg
+
+        client.iter_messages = iter_msgs
+
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(return_value=[
+            {"title": "802", "channel_id": 111802, "channel_type": "group"}
+        ])
+
+        with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["read_messages"]({
+                "phone": None,
+                "chat_id": "802",
+                "limit": 10,
+            })
+
+        text = _text(result)
+        assert "From numeric title" in text
+        assert "111802" in text
+        ch_svc.get_my_dialogs.assert_awaited_once_with("+79001234567")
 
     @pytest.mark.anyio
     async def test_no_text_messages(self, mock_db, mock_pool):

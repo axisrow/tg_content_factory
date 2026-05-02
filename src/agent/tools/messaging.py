@@ -14,11 +14,13 @@ from src.agent.tools._registry import (
     _text_response,
     arg_csv_ints,
     arg_str,
+    find_dialogs_by_exact_title,
+    format_dialog_title_candidates,
     get_tool_context,
     require_confirmation,
     require_phone_permission,
-    require_pool,
     resolve_entity,
+    resolve_live_read_phone,
     resolve_phone,
 )
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
@@ -30,9 +32,9 @@ def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
     async def _prepare_telegram_tool(args, *, tool_name: str, action: str) -> tuple[str, dict | None]:
-        pool_gate = ctx.require_pool(action)
-        if pool_gate:
-            return "", pool_gate
+        live_gate = ctx.require_live_runtime(action, tool_name=tool_name)
+        if live_gate:
+            return "", live_gate
         phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return "", err
@@ -40,6 +42,23 @@ def register(db, client_pool, embedding_service, **kwargs):
         if perm_gate:
             return "", perm_gate
         return phone, None
+
+    async def _find_single_dialog_id_by_title(phone: str, title: object) -> tuple[str, dict | None]:
+        matches = await find_dialogs_by_exact_title(
+            db,
+            client_pool,
+            phone,
+            title,
+            allow_refresh=True,
+        )
+        if not matches:
+            return "", None
+        if len(matches) > 1:
+            return "", format_dialog_title_candidates(title, matches)
+        dialog_id = matches[0].get("channel_id")
+        if dialog_id in (None, ""):
+            return "", None
+        return str(dialog_id), None
 
     @tool(
         "send_message",
@@ -91,9 +110,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def edit_message(args):
-        pool_gate = require_pool(client_pool, "Редактирование сообщения")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Редактирование сообщения", tool_name="edit_message")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -222,9 +241,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def pin_message(args):
-        pool_gate = require_pool(client_pool, "Закрепление сообщения")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Закрепление сообщения", tool_name="pin_message")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -262,9 +281,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def unpin_message(args):
-        pool_gate = require_pool(client_pool, "Открепление сообщения")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Открепление сообщения", tool_name="unpin_message")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -303,9 +322,9 @@ def register(db, client_pool, embedding_service, **kwargs):
     async def download_media(args):
         import pathlib
 
-        pool_gate = require_pool(client_pool, "Загрузка медиа")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Загрузка медиа", tool_name="download_media")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -372,9 +391,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def get_participants(args):
-        pool_gate = require_pool(client_pool, "Получение участников")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Получение участников", tool_name="get_participants")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -563,9 +582,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def get_broadcast_stats(args):
-        pool_gate = require_pool(client_pool, "Получение статистики")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Получение статистики", tool_name="get_broadcast_stats")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -621,9 +640,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def archive_chat(args):
-        pool_gate = require_pool(client_pool, "Архивирование чата")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Архивирование чата", tool_name="archive_chat")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -658,9 +677,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def unarchive_chat(args):
-        pool_gate = require_pool(client_pool, "Разархивирование чата")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Разархивирование чата", tool_name="unarchive_chat")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -695,9 +714,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def mark_read(args):
-        pool_gate = require_pool(client_pool, "Отметка сообщений как прочитанных")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Отметка сообщений как прочитанных", tool_name="mark_read")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -731,10 +750,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def read_messages(args):
-        pool_gate = require_pool(client_pool, "Чтение сообщений")
-        if pool_gate:
-            return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        live_gate = ctx.require_live_runtime("Чтение сообщений", tool_name="read_messages")
+        if live_gate:
+            return live_gate
+        phone, err = await resolve_live_read_phone(
+            db,
+            client_pool,
+            args.get("phone", ""),
+            tool_name="read_messages",
+        )
         if err:
             return err
         perm_gate = await require_phone_permission(db, phone, "read_messages")
@@ -750,7 +774,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             client, entity, err = await resolve_entity(client_pool, phone, chat_id)
             if err:
-                return err
+                fallback_chat_id, fallback_err = await _find_single_dialog_id_by_title(phone, chat_id)
+                if fallback_err:
+                    return fallback_err
+                if fallback_chat_id:
+                    client, entity, err = await resolve_entity(client_pool, phone, fallback_chat_id)
+                    if not err:
+                        chat_id = fallback_chat_id
+                if err:
+                    return err
             lines = [f"Последние {limit} сообщений из {chat_id}:\n"]
             count = 0
             total_chars = 0

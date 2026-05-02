@@ -4,11 +4,20 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from typing import Literal, TypeVar
 
 _T = TypeVar("_T")
 RuntimeKind = Literal["live", "snapshot", "none"]
+
+
+class AgentToolRuntimeError(RuntimeError):
+    """Public runtime failure for sync tool adapters."""
+
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 def detect_runtime_kind(client_pool: object | None) -> RuntimeKind:
@@ -29,6 +38,8 @@ class AgentRuntimeContext:
     client_pool: object | None = None
     scheduler_manager: object | None = None
     runtime_kind: RuntimeKind = "none"
+    owner_loop: asyncio.AbstractEventLoop | None = None
+    sync_timeout_sec: float = 120.0
 
     @classmethod
     def build(
@@ -39,24 +50,62 @@ class AgentRuntimeContext:
         client_pool: object | None = None,
         scheduler_manager: object | None = None,
         runtime_kind: RuntimeKind | None = None,
+        owner_loop: asyncio.AbstractEventLoop | None = None,
     ) -> "AgentRuntimeContext":
+        if owner_loop is None:
+            try:
+                owner_loop = asyncio.get_running_loop()
+            except RuntimeError:
+                owner_loop = None
         return cls(
             db=db,
             config=config,
             client_pool=client_pool,
             scheduler_manager=scheduler_manager,
             runtime_kind=runtime_kind or detect_runtime_kind(client_pool),
+            owner_loop=owner_loop,
         )
 
     @property
     def has_live_telegram(self) -> bool:
         return self.runtime_kind == "live" and self.client_pool is not None
 
+    def bind_owner_loop(self, loop: asyncio.AbstractEventLoop | None = None) -> None:
+        """Bind the asyncio loop that owns live Telegram resources."""
+        if loop is None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                return
+        self.owner_loop = loop
+
     def run_sync(self, tool_name: str, operation: Callable[[], Awaitable[_T]]) -> _T:
         """Run an async operation from a sync tool thread."""
         try:
-            asyncio.get_running_loop()
+            current_loop = asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(operation())
-        raise RuntimeError(f"Agent tool '{tool_name}' cannot run inside an active event loop")
+            current_loop = None
 
+        if self.has_live_telegram and self.owner_loop is not None and self.owner_loop.is_running():
+            if current_loop is self.owner_loop:
+                raise AgentToolRuntimeError(
+                    f"Agent tool '{tool_name}' cannot synchronously block the live Telegram owner event loop.",
+                    retryable=True,
+                )
+            future = asyncio.run_coroutine_threadsafe(operation(), self.owner_loop)
+            try:
+                return future.result(timeout=self.sync_timeout_sec)
+            except FutureTimeoutError as exc:
+                future.cancel()
+                raise AgentToolRuntimeError(
+                    f"Agent tool '{tool_name}' timed out while waiting for the live Telegram runtime.",
+                    retryable=True,
+                ) from exc
+
+        if current_loop is None:
+            return asyncio.run(operation())
+
+        raise AgentToolRuntimeError(
+            f"Agent tool '{tool_name}' cannot run inside an active event loop without a sync bridge.",
+            retryable=True,
+        )

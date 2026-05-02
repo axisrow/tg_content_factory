@@ -1,12 +1,21 @@
 """Tests for agent tools: dialogs.py MCP tools."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from tests.agent_tools_helpers import _get_tool_handlers, _text
+
+
+class SnapshotClientPool:
+    def __init__(self):
+        self.clients = {"+79001234567": object()}
+
+    def connected_phones(self):
+        return set(self.clients)
 
 
 class TestDialogsToolSearchDialogs:
@@ -50,6 +59,84 @@ class TestDialogsToolSearchDialogs:
         assert "My Channel" in text
         assert "id=111" in text
 
+    @pytest.mark.anyio
+    async def test_numeric_query_can_match_title(self, mock_db):
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        mock_db.get_setting = AsyncMock(return_value=None)
+        mock_pool = MagicMock()
+        dialogs = [
+            {"title": "802", "channel_id": 111802, "channel_type": "group"},
+            {"title": "Other", "channel_id": 802, "channel_type": "group"},
+        ]
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(return_value=dialogs)
+        with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["search_dialogs"]({
+                "phone": "+79001234567",
+                "search": "802",
+            })
+        text = _text(result)
+        assert "802" in text
+        assert "id=111802" in text
+        assert "id=802" in text
+
+    @pytest.mark.anyio
+    async def test_empty_phone_uses_available_connected_account(self, mock_db):
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(
+                phone="+79000000001",
+                is_primary=True,
+                is_active=True,
+                flood_wait_until=future,
+            ),
+            SimpleNamespace(
+                phone="+79000000002",
+                is_primary=False,
+                is_active=True,
+                flood_wait_until=None,
+            ),
+        ])
+        mock_db.get_setting = AsyncMock(return_value=None)
+        mock_pool = MagicMock()
+        mock_pool.clients = {"+79000000001": object(), "+79000000002": object()}
+        dialogs = [{"title": "Available", "channel_id": 222, "channel_type": "channel"}]
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(return_value=dialogs)
+        with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["search_dialogs"]({"phone": None})
+        text = _text(result)
+        assert "Available" in text
+        ch_svc.get_my_dialogs.assert_awaited_once_with("+79000000002")
+
+    @pytest.mark.anyio
+    async def test_snapshot_mode_marks_cached_source(self, mock_db):
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(
+                phone="+79001234567",
+                is_primary=True,
+                is_active=True,
+                flood_wait_until=None,
+            )
+        ])
+        mock_db.get_setting = AsyncMock(return_value=None)
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(return_value=[
+            {"title": "Cached Snapshot", "channel_id": 10, "channel_type": "channel"}
+        ])
+
+        with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=SnapshotClientPool())
+            result = await handlers["search_dialogs"]({"phone": "+79001234567"})
+
+        text = _text(result)
+        assert "Cached Snapshot" in text
+        assert "worker snapshot / cached" in text
+
 
 class TestDialogsToolRefreshDialogs:
     @pytest.mark.anyio
@@ -75,6 +162,14 @@ class TestDialogsToolRefreshDialogs:
         text = _text(result)
         assert "обновлены" in text
         assert "1" in text
+
+    @pytest.mark.anyio
+    async def test_snapshot_mode_is_live_runtime_limited(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=SnapshotClientPool())
+        result = await handlers["refresh_dialogs"]({"phone": "+79001234567"})
+        text = _text(result)
+        assert "live Telegram runtime" in text
+        assert "snapshot" in text
 
 
 class TestDialogsToolLeaveDialogs:

@@ -102,6 +102,7 @@ class ClientPool:
         self._dialogs_cache: dict[tuple[str, str], DialogCacheEntry] = {}
         self._dialogs_cache_ttl_sec = 60.0
         self._dialogs_db_cache_ttl_sec = 3600.0  # 1 hour; stale DB cache triggers fresh Telegram fetch
+        self._dialog_refresh_tasks: dict[tuple[str, str], asyncio.Task[list[dict]]] = {}
         self._premium_flood_wait_until: dict[str, datetime] = {}
 
     def is_dialogs_fetched(self, phone: str) -> bool:
@@ -149,7 +150,22 @@ class ClientPool:
         Stores self._warming_task so the collector can wait during a race.
         """
         self._warming_task = asyncio.current_task()
+        now = datetime.now(timezone.utc)
+        flood_waited: set[str] = set()
+        try:
+            accounts = await self._db.get_accounts(active_only=True)
+            flood_waited = {
+                account.phone
+                for account in accounts
+                if normalize_utc(getattr(account, "flood_wait_until", None)) is not None
+                and normalize_utc(getattr(account, "flood_wait_until", None)) > now
+            }
+        except Exception:
+            logger.debug("warm_all_dialogs: failed to load flood-wait status", exc_info=True)
         for phone in list(self._connected_phones()):
+            if phone in flood_waited:
+                logger.info("warm_all_dialogs: skip %s because active flood-wait is stored", phone)
+                continue
             result = await self.get_client_by_phone(phone)
             if result is None:
                 continue
@@ -192,14 +208,37 @@ class ClientPool:
         for key in keys:
             del self._dialogs_cache[key]
 
-    async def _get_db_cached_dialogs(self, phone: str, mode: str) -> list[dict] | None:
+    def _mark_degraded_cached_dialogs(
+        self,
+        dialogs: list[dict],
+        *,
+        source: str,
+        age_sec: float | None = None,
+    ) -> list[dict]:
+        marked = [dict(dialog) for dialog in dialogs]
+        for dialog in marked:
+            dialog["_degraded"] = True
+            dialog["_cache_source"] = source
+            if age_sec is not None:
+                dialog["_cache_age_sec"] = int(age_sec)
+        return marked
+
+    async def _get_db_cached_dialogs(
+        self,
+        phone: str,
+        mode: str,
+        *,
+        allow_stale: bool = False,
+        mark_degraded: bool = False,
+    ) -> list[dict] | None:
         full_dialogs = await self._db.repos.dialog_cache.list_dialogs(phone)
         if not full_dialogs:
             return None
         cached_at = await self._db.repos.dialog_cache.get_cached_at(phone)
+        age_sec = None
         if cached_at is not None:
             age_sec = (datetime.now(timezone.utc) - cached_at).total_seconds()
-            if age_sec > self._dialogs_db_cache_ttl_sec:
+            if age_sec > self._dialogs_db_cache_ttl_sec and not allow_stale:
                 logger.info(
                     "_get_db_cached_dialogs: stale cache for %s age=%.0fs > ttl=%.0fs, forcing refresh",
                     phone,
@@ -207,17 +246,33 @@ class ClientPool:
                     self._dialogs_db_cache_ttl_sec,
                 )
                 return None
+        source = "stale_db_cache" if mark_degraded else "db_cache"
         if mode == "channels_only":
             filtered = [
                 dict(dialog)
                 for dialog in full_dialogs
                 if dialog.get("channel_type") not in ("dm", "bot", "saved")
             ]
+            if mark_degraded:
+                filtered = ClientPool._mark_degraded_cached_dialogs(
+                    self,
+                    filtered,
+                    source=source,
+                    age_sec=age_sec,
+                )
             self._store_cached_dialogs(phone, mode, filtered)
             self._store_cached_dialogs(phone, "full", full_dialogs)
             return filtered
         self._store_cached_dialogs(phone, "full", full_dialogs)
-        return [dict(dialog) for dialog in full_dialogs]
+        dialogs = [dict(dialog) for dialog in full_dialogs]
+        if mark_degraded:
+            dialogs = ClientPool._mark_degraded_cached_dialogs(
+                self,
+                dialogs,
+                source=source,
+                age_sec=age_sec,
+            )
+        return dialogs
 
     def _get_cached_dialogs(self, phone: str, mode: str) -> list[dict] | None:
         entry = self._dialogs_cache.get((phone, mode))
@@ -1134,10 +1189,52 @@ class ClientPool:
                 cache_mode,
             )
 
+        stale_cached = await self._get_db_cached_dialogs(
+            phone,
+            cache_mode,
+            allow_stale=True,
+            mark_degraded=True,
+        )
+        if not isinstance(getattr(self, "_dialog_refresh_tasks", None), dict):
+            self._dialog_refresh_tasks = {}
+        key = (phone, cache_mode)
+        task = self._dialog_refresh_tasks.get(key)
+        if task is None or task.done():
+            task = asyncio.create_task(
+                ClientPool._fetch_dialogs_for_phone(self, phone, include_dm, mode, cache_mode)
+            )
+            self._dialog_refresh_tasks[key] = task
+        else:
+            logger.info("get_dialogs_for_phone: joining in-flight refresh for %s mode=%s", phone, cache_mode)
+        try:
+            return await task
+        except Exception as exc:
+            if stale_cached is not None:
+                logger.warning(
+                    "get_dialogs_for_phone: degraded stale cache for %s mode=%s after %s",
+                    phone,
+                    cache_mode,
+                    type(exc).__name__,
+                )
+                return stale_cached
+            if isinstance(exc, RuntimeError) and str(exc) == "no_client":
+                return []
+            raise
+        finally:
+            if self._dialog_refresh_tasks.get(key) is task and task.done():
+                self._dialog_refresh_tasks.pop(key, None)
+
+    async def _fetch_dialogs_for_phone(
+        self,
+        phone: str,
+        include_dm: bool,
+        mode: str,
+        cache_mode: str,
+    ) -> list[dict]:
         result = await self.get_client_by_phone(phone)
         if not result:
-            return []
-        session, phone = result
+            raise RuntimeError("no_client")
+        session, acquired_phone = result
         session = adapt_transport_session(session, disconnect_on_close=False)
         started_at = time.perf_counter()
         try:
@@ -1200,7 +1297,7 @@ class ClientPool:
                 await run_with_flood_wait(
                     iter_coro,
                     operation="get_dialogs_for_phone",
-                    phone=phone,
+                    phone=acquired_phone,
                     pool=self,
                     logger_=logger,
                     timeout=60.0,
@@ -1210,7 +1307,7 @@ class ClientPool:
                 stats.partial = True
                 logger.warning(
                     "get_dialogs_for_phone: timed out for %s mode=%s, returning %d partial results",
-                    phone,
+                    acquired_phone,
                     cache_mode,
                     len(items),
                 )
@@ -1219,7 +1316,7 @@ class ClientPool:
                 "get_dialogs_for_phone: phone=%s mode=%s duration_ms=%d "
                 "raw=%d channels=%d groups=%d dms=%d bots=%d "
                 "partial=%s result=%d",
-                phone,
+                acquired_phone,
                 cache_mode,
                 elapsed_ms,
                 stats.raw_dialogs,
@@ -1231,14 +1328,14 @@ class ClientPool:
                 len(items),
             )
             if not stats.partial:
-                self.invalidate_dialogs_cache(phone)
-                self._store_cached_dialogs(phone, cache_mode, items)
+                self.invalidate_dialogs_cache(acquired_phone)
+                self._store_cached_dialogs(acquired_phone, cache_mode, items)
                 if cache_mode == "full":
-                    self.mark_dialogs_fetched(phone)
-                    await self._db.repos.dialog_cache.replace_dialogs(phone, items)
+                    self.mark_dialogs_fetched(acquired_phone)
+                    await self._db.repos.dialog_cache.replace_dialogs(acquired_phone, items)
             return items
         finally:
-            await self.release_client(phone)
+            await self.release_client(acquired_phone)
 
     async def leave_channels(self, phone: str, dialogs: list[tuple[int, str]]) -> dict[int, bool]:
         """Leave/unsubscribe from a list of dialogs for the given account.

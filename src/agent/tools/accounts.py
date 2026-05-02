@@ -8,7 +8,17 @@ from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
 from src.agent.runtime_context import AgentRuntimeContext
-from src.agent.tools._registry import _text_response, normalize_phone, require_confirmation, resolve_phone
+from src.agent.tools._registry import (
+    _text_response,
+    available_live_read_phones,
+    connected_phones_from_pool,
+    get_accounts_with_flood_cleanup,
+    is_flood_wait_active,
+    normalize_flood_wait_until,
+    normalize_phone,
+    require_confirmation,
+    resolve_phone,
+)
 
 _NO_LIVE_RUNTIME = "live Telegram runtime unavailable"
 
@@ -29,42 +39,46 @@ def _matches_phone(phone: str, phone_filter: str) -> bool:
     return phone == phone_filter
 
 
-def _connected_phones(client_pool: object | None) -> set[str]:
-    if client_pool is None:
-        return set()
-
-    connected_phones = None
-    instance_attrs = getattr(client_pool, "__dict__", {})
-    if isinstance(instance_attrs, dict) and "connected_phones" in instance_attrs:
-        connected_phones = instance_attrs["connected_phones"]
-    elif callable(getattr(type(client_pool), "connected_phones", None)):
-        connected_phones = getattr(client_pool, "connected_phones")
-
-    if callable(connected_phones):
-        try:
-            phones = connected_phones()
-        except Exception:
-            phones = set()
-        if isinstance(phones, (set, list, tuple)):
-            return {str(phone) for phone in phones}
-
-    try:
-        clients = getattr(client_pool, "clients")
-    except Exception:
-        clients = {}
-    if isinstance(clients, dict):
-        return {str(phone) for phone in clients}
-    return set()
-
-
 def _format_phones(phones: set[str]) -> str:
     return ", ".join(sorted(phones)) if phones else "-"
+
+
+def _format_phone_list(phones: list[str]) -> str:
+    return ", ".join(phones) if phones else "-"
+
+
+def _remaining_seconds(account: object) -> int | None:
+    from datetime import datetime, timezone
+
+    flood_until = normalize_flood_wait_until(getattr(account, "flood_wait_until", None))
+    if flood_until is None:
+        return None
+    return max(1, int((flood_until - datetime.now(timezone.utc)).total_seconds()))
+
+
+def _diagnostic_lines(accounts: list[object], client_pool: object | None) -> list[str]:
+    active_accounts = [a for a in accounts if getattr(a, "is_active", False)]
+    active_phones = [str(getattr(a, "phone", "")) for a in active_accounts if getattr(a, "phone", "")]
+    connected = connected_phones_from_pool(client_pool)
+    available = available_live_read_phones(active_accounts, connected)
+    flood_waited = [
+        str(getattr(a, "phone", ""))
+        for a in active_accounts
+        if getattr(a, "phone", "") and is_flood_wait_active(a)
+    ]
+    return [
+        f"DB active accounts: {len(active_phones)} ({_format_phone_list(active_phones)}).",
+        f"Runtime connected phones: {_format_phones(connected)}.",
+        f"Available phones: {_format_phone_list(available)}.",
+        f"Flood-waited phones: {_format_phone_list(flood_waited)}.",
+    ]
 
 
 async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: object = "") -> str:
     """Return account info with DB/runtime/profile-fetch states kept separate."""
     phone_filter = normalize_phone(phone)
-    connected = _connected_phones(runtime.client_pool)
+    db_accounts = await get_accounts_with_flood_cleanup(runtime.db)
+    connected = connected_phones_from_pool(runtime.client_pool)
     if phone_filter:
         connected = {p for p in connected if _matches_phone(p, phone_filter)}
 
@@ -72,6 +86,7 @@ async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: object
         details = [_NO_LIVE_RUNTIME]
         if runtime.runtime_kind == "snapshot":
             details.append(
+                "worker snapshot видит подключенные телефоны, но этот backend не имеет live Telegram runtime. "
                 "Web snapshot runtime can show worker-connected phones, but live Telegram API "
                 "is only available in the worker or embedded-worker process."
             )
@@ -81,17 +96,19 @@ async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: object
             details.append(f"Runtime connected phones snapshot: {_format_phones(connected)}.")
         return "\n".join(details)
 
-    users = await runtime.client_pool.get_users_info(include_avatar=False)
+    try:
+        users = await runtime.client_pool.get_users_info(include_avatar=False)
+    except Exception:
+        users = []
     if phone_filter:
         users = [u for u in users if _matches_phone(str(u.phone), phone_filter)]
 
-    db_accounts = await runtime.db.get_accounts()
     db_by_phone = {a.phone: a for a in db_accounts}
     active_count = sum(1 for a in db_accounts if getattr(a, "is_active", False))
     if not users:
         if connected:
             lines = [
-                "Live Telegram account profiles unavailable for this request.",
+                "Live Telegram account profiles unavailable for this request; profile fetch unavailable.",
                 f"DB active accounts: {active_count}.",
                 f"Runtime connected phones: {_format_phones(connected)}.",
                 "Telegram profile fetch returned no profiles; do not treat this as disconnected.",
@@ -128,15 +145,18 @@ def register(db, client_pool, embedding_service, **kwargs):
     )
     async def list_accounts(args):
         try:
-            accounts = await db.get_accounts()
+            accounts = await get_accounts_with_flood_cleanup(db)
             if not accounts:
                 return _text_response("Аккаунты не найдены.")
             lines = [f"Аккаунты ({len(accounts)}) в БД:"]
+            lines.extend(_diagnostic_lines(accounts, client_pool))
             for a in accounts:
                 status = "активен" if a.is_active else "неактивен"
                 flood = ""
-                if hasattr(a, "flood_wait_until") and a.flood_wait_until:
-                    flood = f" [flood_wait до {a.flood_wait_until}]"
+                if is_flood_wait_active(a):
+                    remaining = _remaining_seconds(a)
+                    suffix = f", remaining={remaining}s" if remaining is not None else ""
+                    flood = f" [flood_wait до {a.flood_wait_until}{suffix}]"
                 lines.append(f"- id={a.id}, phone={a.phone}, {status}{flood}")
             return _text_response("\n".join(lines))
         except Exception as e:
@@ -198,14 +218,17 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool("get_flood_status", "Get database flood-wait status for all accounts; this is not live connection state.", {})
     async def get_flood_status(args):
         try:
-            accounts = await db.get_accounts()
+            accounts = await get_accounts_with_flood_cleanup(db)
             if not accounts:
                 return _text_response("Аккаунты не найдены.")
             lines = ["Flood-статус аккаунтов в БД:"]
+            lines.extend(_diagnostic_lines(accounts, client_pool))
             for a in accounts:
                 flood = "нет ограничений"
-                if hasattr(a, "flood_wait_until") and a.flood_wait_until:
-                    flood = f"заблокирован до {a.flood_wait_until}"
+                if is_flood_wait_active(a):
+                    remaining = _remaining_seconds(a)
+                    suffix = f" (remaining {remaining}s)" if remaining is not None else ""
+                    flood = f"заблокирован до {a.flood_wait_until}{suffix}"
                 lines.append(f"- {a.phone}: {flood}")
             return _text_response("\n".join(lines))
         except Exception as e:
