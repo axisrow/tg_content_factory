@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 from src.web.routes.scheduler import (
+    _collector_health_border_severity,
     _collector_health_recommendations,
     _compute_load_level,
+    _dedupe_recent_unavailability_events,
     _format_retry_hint,
     _job_label,
 )
@@ -51,6 +54,30 @@ def test_format_retry_hint_datetime():
     assert "UTC" in result
 
 
+def test_dedupe_recent_unavailability_events_handles_mixed_timezone_datetimes():
+    events = _dedupe_recent_unavailability_events(
+        [
+            SimpleNamespace(
+                note="Отложено: нет подключённых активных аккаунтов для сбора.",
+                error=None,
+                completed_at=None,
+                started_at=None,
+                created_at=datetime(2026, 5, 2, 17, 10, 24),
+            ),
+            SimpleNamespace(
+                note="Отложено: все аккаунты во Flood Wait до 2026-05-02T17:12:00+00:00",
+                error=None,
+                completed_at=datetime(2026, 5, 2, 17, 10, 25, tzinfo=timezone.utc),
+                started_at=None,
+                created_at=datetime(2026, 5, 2, 17, 10, 24),
+            ),
+        ]
+    )
+
+    assert len(events) == 2
+    assert events[0]["latest_at"].tzinfo is not None
+
+
 # --- _compute_load_level ---
 
 
@@ -94,6 +121,24 @@ def test_compute_load_ok():
         interval_minutes=60, active_unfiltered_channels=10,
         available_accounts_now=5, state="healthy",
     ) == "ok"
+
+
+def test_collector_health_overload_while_healthy_is_warning():
+    assert _compute_load_level(
+        interval_minutes=15,
+        active_unfiltered_channels=216,
+        available_accounts_now=1,
+        state="healthy",
+    ) == "overload"
+    assert _collector_health_border_severity(state="healthy", load_level="overload") == "warning"
+
+
+def test_collector_health_all_flooded_is_danger():
+    assert _collector_health_border_severity(state="all_flooded", load_level="overload") == "danger"
+
+
+def test_collector_health_worker_down_is_danger():
+    assert _collector_health_border_severity(state="worker_down", load_level="overload") == "danger"
 
 
 # --- _collector_health_recommendations ---

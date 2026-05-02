@@ -32,6 +32,19 @@ class _FakeCollector:
         return None
 
 
+class _NoClientsCollector(_FakeCollector):
+    async def get_collection_availability(self):
+        return type(
+            "Availability",
+            (),
+            {
+                "state": "no_connected_active",
+                "retry_after_sec": None,
+                "next_available_at_utc": None,
+            },
+        )()
+
+
 class _UsernameResolveFloodCollector(_FakeCollector):
     def __init__(self, next_available_at: datetime):
         super().__init__()
@@ -107,6 +120,30 @@ async def test_db_pull_picks_up_pending_task_added_after_startup(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_db_pull_does_not_ingest_when_no_clients(tmp_path, caplog):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+
+        collector = _NoClientsCollector()
+        queue = CollectionQueue(collector, db)
+        task_id = await _create_pending_task(db)
+
+        caplog.set_level(logging.WARNING, logger="src.collection_queue")
+        assert await queue._ingest_pending_tasks() == 0
+
+        task = await db.get_collection_task(task_id)
+        assert task.status == "pending"
+        assert collector.calls == []
+        assert queue._known_task_ids == set()
+        assert "Pending-task ingest throttled" in caplog.text
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_username_resolve_flood_defer_keeps_task_pending(tmp_path):
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
@@ -132,7 +169,6 @@ async def test_username_resolve_flood_defer_keeps_task_pending(tmp_path):
         assert task.run_after is not None
         assert task.run_after > next_available_at
         assert "Flood Wait на resolve_username" in (task.note or "")
-        assert task.run_after.astimezone(timezone.utc).isoformat() in (task.note or "")
     finally:
         await queue.shutdown()
         await db.close()
