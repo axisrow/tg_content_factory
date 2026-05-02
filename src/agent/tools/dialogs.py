@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from claude_agent_sdk import tool
@@ -9,13 +10,19 @@ from mcp.types import ToolAnnotations
 
 from src.agent.tools._registry import (
     _text_response,
+    find_dialogs_by_exact_title,
+    format_dialog_title_candidates,
+    get_tool_context,
     normalize_phone,
     require_confirmation,
     require_phone_permission,
     require_pool,
+    resolve_live_read_phone,
     resolve_phone,
 )
 from src.parsers import normalize_identifier
+
+logger = logging.getLogger(__name__)
 
 _TYPE_ALIASES: dict[str, set[str]] = {
     "channels": {"channel"},
@@ -25,6 +32,7 @@ _TYPE_ALIASES: dict[str, set[str]] = {
 
 
 def register(db, client_pool, embedding_service, **kwargs):
+    ctx = get_tool_context(kwargs, db=db, client_pool=client_pool, embedding_service=embedding_service)
     tools = []
 
     @tool(
@@ -47,7 +55,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         pool_gate = require_pool(client_pool, "Поиск диалогов")
         if pool_gate:
             return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await resolve_live_read_phone(
+            db,
+            client_pool,
+            args.get("phone", ""),
+            tool_name="search_dialogs",
+        )
         if err:
             return err
         perm_gate = await require_phone_permission(db, phone, "search_dialogs")
@@ -77,13 +90,25 @@ def register(db, client_pool, embedding_service, **kwargs):
                     # channel_id stores Telethon entity.id (bare positive int).
                     # Users may provide Bot API format (-1001234567890) where -100 is a prefix.
                     bare_id = clean[4:] if clean.startswith("-100") else clean.lstrip("-")
-                    dialogs = [d for d in dialogs if str(d.get("channel_id", "")) == bare_id]
+                    dialogs = [
+                        d for d in dialogs
+                        if str(d.get("channel_id", "")) == bare_id
+                        or clean in (d.get("title") or "").lower()
+                    ]
                 else:
                     dialogs = [
                         d for d in dialogs
                         if clean in (d.get("title") or "").lower()
                         or clean in (d.get("username") or "").lower()
                     ]
+                logger.info(
+                    "search_dialogs: phone=%s query=%r kind=%s total=%d matched=%d",
+                    phone,
+                    raw_query,
+                    kind,
+                    total,
+                    len(dialogs),
+                )
             limit = args.get("limit")
             if limit is not None:
                 try:
@@ -105,6 +130,14 @@ def register(db, client_pool, embedding_service, **kwargs):
                     f"Всего диалогов для {phone}: {total}."
                 )
             lines = [f"Диалоги ({len(dialogs)}):"]
+            if any(d.get("_degraded") for d in dialogs):
+                lines.append(
+                    "Источник: stale dialog_cache (degraded); live refresh не удался или аккаунт во flood-wait."
+                )
+            elif ctx.runtime_context is not None and ctx.runtime_context.runtime_kind == "snapshot":
+                lines.append(
+                    "Источник: worker snapshot / cached dialog_cache; live Telegram API не вызывался."
+                )
             for d in dialogs:
                 title = d.get("title", "?")
                 did = d.get("channel_id", "?")
@@ -123,9 +156,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         {"phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"]},
     )
     async def refresh_dialogs(args):
-        pool_gate = require_pool(client_pool, "Обновление диалогов")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Обновление диалогов", tool_name="refresh_dialogs")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -137,6 +170,10 @@ def register(db, client_pool, embedding_service, **kwargs):
 
             svc = ChannelService(db, client_pool, None)
             dialogs = await svc.get_my_dialogs(phone, refresh=True)
+            if any(d.get("_degraded") for d in dialogs):
+                return _text_response(
+                    f"Live refresh не удался; показан stale dialog_cache: {len(dialogs)} шт."
+                )
             return _text_response(f"Диалоги обновлены: {len(dialogs)} шт.")
         except Exception as e:
             return _text_response(f"Ошибка обновления диалогов: {e}")
@@ -156,9 +193,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def leave_dialogs(args):
-        pool_gate = require_pool(client_pool, "Выход из диалогов")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Выход из диалогов", tool_name="leave_dialogs")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -199,9 +236,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def create_telegram_channel(args):
-        pool_gate = require_pool(client_pool, "Создание канала")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Создание канала", tool_name="create_telegram_channel")
+        if live_gate:
+            return live_gate
         phone, err = await resolve_phone(db, args.get("phone", ""))
         if err:
             return err
@@ -335,21 +372,50 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def resolve_entity(args):
-        pool_gate = require_pool(client_pool, "Resolve entity")
-        if pool_gate:
-            return pool_gate
+        live_gate = ctx.require_live_runtime("Resolve entity", tool_name="resolve_entity")
+        if live_gate:
+            return live_gate
         identifier = (args.get("identifier") or "").strip()
         if not identifier:
             return _text_response("Ошибка: identifier обязателен.")
-        phone_raw = (args.get("phone") or "").strip()
-        phone = normalize_phone(phone_raw) if phone_raw else None
-        if phone:
-            perm_gate = await require_phone_permission(db, phone, "resolve_entity")
-            if perm_gate:
-                return perm_gate
+        phone, err = await resolve_live_read_phone(
+            db,
+            client_pool,
+            args.get("phone", ""),
+            tool_name="resolve_entity",
+        )
+        if err:
+            return err
+        perm_gate = await require_phone_permission(db, phone, "resolve_entity")
+        if perm_gate:
+            return perm_gate
         try:
             entity = await client_pool.resolve_any_entity(identifier, phone=phone)
             if not entity:
+                matches = await find_dialogs_by_exact_title(
+                    db,
+                    client_pool,
+                    phone,
+                    identifier,
+                    allow_refresh=True,
+                )
+                if len(matches) > 1:
+                    return format_dialog_title_candidates(identifier, matches)
+                if len(matches) == 1:
+                    dialog = matches[0]
+                    lines = [
+                        f"Найдено по названию: {dialog.get('title', identifier)}",
+                        f"- Тип: {dialog.get('channel_type', '?')}",
+                        f"- ID: {dialog.get('channel_id', '?')}",
+                    ]
+                    if dialog.get("username"):
+                        lines.append(f"- Username: @{dialog['username']}")
+                    return _text_response("\n".join(lines))
+                if identifier.lstrip("-").isdigit():
+                    return _text_response(
+                        f"Сущность '{identifier}' не найдена ни как Telegram ID, "
+                        f"ни как название диалога для {phone}."
+                    )
                 return _text_response(f"Сущность '{identifier}' не найдена в Telegram.")
             lines = [
                 f"Найдено: {entity['title']}",
@@ -362,7 +428,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         except RuntimeError as e:
             if "no_client" in str(e):
                 return _text_response("Нет доступных Telegram-аккаунтов.")
-            return _text_response(f"Ошибка: {e}")
+            return _text_response(
+                f"Ошибка runtime при resolve_entity: {e}. "
+                "Это не означает, что аккаунт отключён или чат не существует."
+            )
         except Exception as e:
             return _text_response(f"Ошибка resolve: {e}")
 

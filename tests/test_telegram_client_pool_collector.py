@@ -229,6 +229,21 @@ async def test_warm_all_dialogs_skips_get_client_by_phone_none(mock_auth, mock_d
         await pool.warm_all_dialogs()
 
 
+@pytest.mark.anyio
+async def test_warm_all_dialogs_skips_active_flood_wait(mock_auth, mock_db):
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    mock_db.get_accounts.return_value = [
+        Account(phone="+7001", session_string="s1", is_active=True, flood_wait_until=future)
+    ]
+    pool = ClientPool(mock_auth, mock_db)
+    pool.clients["+7001"] = MagicMock()
+
+    with patch.object(pool, "get_client_by_phone", new=AsyncMock()) as get_client:
+        await pool.warm_all_dialogs()
+
+    get_client.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # ClientPool: _get_cached_dialogs / _store_cached_dialogs / invalidate
 # Missing lines: 203-209, 222-244, 247-251
@@ -297,6 +312,27 @@ async def test_get_db_cached_dialogs_returns_full(mock_auth, mock_db):
     result = await pool._get_db_cached_dialogs("+7001", "full")
     assert result is not None
     assert len(result) == 1
+
+
+@pytest.mark.anyio
+async def test_get_dialogs_for_phone_coalesces_parallel_refresh(mock_auth, mock_db):
+    pool = ClientPool(mock_auth, mock_db)
+    calls = 0
+
+    async def fake_fetch(self, phone, include_dm, mode, cache_mode):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.05)
+        return [{"channel_id": 1, "title": "Coalesced", "channel_type": "channel"}]
+
+    with patch.object(ClientPool, "_fetch_dialogs_for_phone", fake_fetch):
+        first, second = await asyncio.gather(
+            pool.get_dialogs_for_phone("+7001", include_dm=True, mode="full", refresh=True),
+            pool.get_dialogs_for_phone("+7001", include_dm=True, mode="full", refresh=True),
+        )
+
+    assert calls == 1
+    assert first == second
 
 
 # ---------------------------------------------------------------------------
