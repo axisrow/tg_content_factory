@@ -303,6 +303,45 @@ async def test_search_telegram_caches_to_db(db, real_pool_harness_factory):
 
 
 @pytest.mark.anyio
+async def test_search_telegram_preserves_sender_identity(db, real_pool_harness_factory):
+    from telethon.tl.types import PeerUser
+
+    mock_msg = _make_mock_api_message(channel_id=100457, msg_id=8, text="identity search result")
+    mock_msg.from_id = PeerUser(user_id=999)
+    mock_chat = MagicMock()
+    mock_chat.id = 100457
+    mock_chat.title = "Identity Channel"
+    mock_chat.username = None
+    mock_user = SimpleNamespace(id=999, first_name="John", last_name="Doe", username="@jdoe")
+
+    response = _make_search_response([mock_msg], chats=[mock_chat], users=[mock_user])
+    harness = real_pool_harness_factory()
+    await _connect_search_account(
+        harness,
+        phone="+1234567890",
+        session_string="premium-session",
+        is_premium=True,
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(premium=True),
+            invoke_side_effect=lambda request: response,
+        ),
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_telegram("identity", limit=5)
+
+    assert result.total == 1
+    assert result.messages[0].sender_id == 999
+    assert result.messages[0].sender_name == "John Doe"
+    assert result.messages[0].sender_first_name == "John"
+    assert result.messages[0].sender_last_name == "Doe"
+    assert result.messages[0].sender_username == "jdoe"
+    messages, total = await db.search_messages(query="identity", limit=10, offset=0)
+    assert total == 1
+    assert messages[0].sender_username == "jdoe"
+
+
+@pytest.mark.anyio
 async def test_search_telegram_no_pool(db):
     engine = SearchEngine(db, pool=None)
     result = await engine.search_telegram("anything")

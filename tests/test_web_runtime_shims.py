@@ -25,12 +25,20 @@ async def test_snapshot_pool_clients_empty():
 
 async def test_snapshot_pool_refresh():
     db = _mock_db()
-    snapshot = MagicMock(payload={"connected_phones": ["+1", "+2"]})
+    snapshot = MagicMock(payload={
+        "connected_phones": ["+1", "+2"],
+        "available_phones": ["+2"],
+        "flood_waits": {"+1": "2030-01-01T00:00:00+00:00"},
+        "timestamp": "2030-01-01T00:00:00+00:00",
+    })
     db.repos.runtime_snapshots.get_snapshot.return_value = snapshot
     pool = SnapshotClientPool(db)
     await pool.refresh()
     assert set(pool.clients.keys()) == {"+1", "+2"}
     assert pool.connected_phones() == {"+1", "+2"}
+    assert pool.available_phones == {"+2"}
+    assert pool.flood_waits == {"+1": "2030-01-01T00:00:00+00:00"}
+    assert pool.timestamp == "2030-01-01T00:00:00+00:00"
 
 
 async def test_snapshot_pool_refresh_no_snapshot():

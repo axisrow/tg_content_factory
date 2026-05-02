@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,6 +19,20 @@ from src.database import Database
 def mock_db():
     db = MagicMock(spec=Database)
     db.get_setting = AsyncMock(return_value=None)
+    db.get_accounts = AsyncMock(return_value=[
+        SimpleNamespace(
+            phone="+7001",
+            is_primary=True,
+            is_active=True,
+            flood_wait_until=None,
+        ),
+        SimpleNamespace(
+            phone="+66982102247",
+            is_primary=False,
+            is_active=True,
+            flood_wait_until=None,
+        ),
+    ])
     db.repos = MagicMock()
     db.repos.settings = MagicMock()
     db.repos.settings.get = AsyncMock(return_value=None)
@@ -50,6 +65,14 @@ def _make_pool():
     pool.release_client = AsyncMock()
     pool.get_available_client = AsyncMock()
     return pool
+
+
+class SnapshotClientPool:
+    def __init__(self):
+        self.clients = {"+7001": object()}
+
+    def connected_phones(self):
+        return set(self.clients)
 
 
 def _channel_entity(channel_id: int, title: str = "Test Channel", username: str = "testchan",
@@ -468,6 +491,16 @@ class TestResolveEntityTool:
         assert "telegram" in _text(result).lower() or "cli" in _text(result).lower()
 
     @pytest.mark.anyio
+    async def test_snapshot_runtime_returns_live_runtime_limit(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=SnapshotClientPool())
+
+        result = await handlers["resolve_entity"]({"identifier": "802"})
+        text = _text(result)
+
+        assert "live Telegram runtime" in text
+        assert "snapshot" in text
+
+    @pytest.mark.anyio
     async def test_entity_not_found_returns_not_found(self, mock_db):
         pool = MagicMock()
         pool.resolve_any_entity = AsyncMock(return_value=None)
@@ -475,6 +508,43 @@ class TestResolveEntityTool:
 
         result = await handlers["resolve_entity"]({"identifier": "@gibberish_nonexistent"})
         assert "не найдена" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_numeric_identifier_falls_back_to_exact_dialog_title(self, mock_db):
+        pool = MagicMock()
+        pool.resolve_any_entity = AsyncMock(return_value=None)
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(return_value=[
+            {"channel_id": 111802, "title": "802", "channel_type": "supergroup"},
+        ])
+
+        with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["resolve_entity"]({"identifier": "802"})
+
+        text = _text(result)
+        assert "Найдено по названию" in text
+        assert "111802" in text
+        assert "supergroup" in text
+
+    @pytest.mark.anyio
+    async def test_numeric_identifier_multiple_title_matches_returns_candidates(self, mock_db):
+        pool = MagicMock()
+        pool.resolve_any_entity = AsyncMock(return_value=None)
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(return_value=[
+            {"channel_id": 1, "title": "802", "channel_type": "group"},
+            {"channel_id": 2, "title": "802", "channel_type": "channel"},
+        ])
+
+        with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["resolve_entity"]({"identifier": "802"})
+
+        text = _text(result)
+        assert "несколько диалогов" in text
+        assert "id=1" in text
+        assert "id=2" in text
 
     @pytest.mark.anyio
     async def test_no_client_raises_runtime_error(self, mock_db):
@@ -493,6 +563,18 @@ class TestResolveEntityTool:
 
         result = await handlers["resolve_entity"]({"identifier": "@alxz500"})
         assert "Ошибка resolve" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_runtime_error_is_not_reported_as_entity_not_found(self, mock_db):
+        pool = MagicMock()
+        pool.resolve_any_entity = AsyncMock(side_effect=RuntimeError("cross-loop failure"))
+        handlers = _get_tool_handlers(mock_db, client_pool=pool)
+
+        result = await handlers["resolve_entity"]({"identifier": "802"})
+        text = _text(result)
+
+        assert "runtime" in text
+        assert "не найдена" not in text
 
     @pytest.mark.anyio
     async def test_random_garbage_text_attempts_resolve(self, mock_db):

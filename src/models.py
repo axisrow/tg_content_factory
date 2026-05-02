@@ -56,6 +56,9 @@ class Message(BaseModel):
     message_id: int
     sender_id: int | None = None
     sender_name: str | None = None
+    sender_first_name: str | None = None
+    sender_last_name: str | None = None
+    sender_username: str | None = None
     text: str | None = None
     message_kind: str | None = None
     media_type: str | None = None

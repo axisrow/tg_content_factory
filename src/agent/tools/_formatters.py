@@ -29,6 +29,8 @@ def _first_value(obj: object, names: Iterable[str]) -> object:
 def _display_username(value: object) -> str | None:
     if not value:
         return None
+    if isinstance(value, Mock):
+        return None
     username = str(value).strip()
     if not username:
         return None
@@ -49,6 +51,32 @@ def format_channel_identity(
     if not label_parts:
         return id_part
     return f"{' / '.join(label_parts)} ({id_part})"
+
+
+def format_sender_identity(obj: object, *, bracketed: bool = True) -> str:
+    sender_id = _value(obj, "sender_id")
+    if isinstance(sender_id, Mock):
+        sender_id = None
+    first_name = _first_value(obj, ("sender_first_name", "first_name"))
+    last_name = _first_value(obj, ("sender_last_name", "last_name"))
+    username = _display_username(_first_value(obj, ("sender_username", "username")))
+    name = _first_value(obj, ("sender_name", "name", "title"))
+
+    parts: list[str] = []
+    if sender_id is not None:
+        parts.append(f"id={sender_id}")
+    if first_name:
+        parts.append(f"first_name={first_name}")
+    if last_name:
+        parts.append(f"last_name={last_name}")
+    if username:
+        parts.append(f"username={username}")
+    if name and not (first_name or last_name):
+        parts.append(f"name={name}")
+
+    body = ", ".join(parts) if parts else "unknown"
+    text = f"sender {body}"
+    return f"[{text}]" if bracketed else text
 
 
 def format_notification_status(bot: object | None, target_status: object | None = None) -> str:

@@ -1,6 +1,7 @@
 """Tests for agent tools: accounts.py."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -54,11 +55,24 @@ class TestListAccountsTool:
 
     @pytest.mark.anyio
     async def test_flood_wait_shown(self, mock_db):
-        acc = _make_account(flood_wait_until="2025-01-01 12:00:00")
+        acc = _make_account(flood_wait_until="2030-01-01 12:00:00")
         mock_db.get_accounts = AsyncMock(return_value=[acc])
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["list_accounts"]({})
         assert "flood_wait" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_expired_flood_wait_is_cleared(self, mock_db):
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        acc = _make_account(flood_wait_until=past)
+        mock_db.get_accounts = AsyncMock(return_value=[acc])
+        mock_db.update_account_flood = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["list_accounts"]({})
+        text = _text(result)
+        assert "flood_wait до" not in text
+        assert acc.flood_wait_until is None
+        mock_db.update_account_flood.assert_awaited_once_with("+79001234567", None)
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
@@ -165,12 +179,25 @@ class TestGetFloodStatusTool:
 
     @pytest.mark.anyio
     async def test_flood_wait_until_shown(self, mock_db):
-        acc = _make_account(phone="+70001112233", flood_wait_until="2025-06-01 10:00")
+        acc = _make_account(phone="+70001112233", flood_wait_until="2030-06-01 10:00")
         mock_db.get_accounts = AsyncMock(return_value=[acc])
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_flood_status"]({})
         assert "заблокирован" in _text(result)
-        assert "2025-06-01 10:00" in _text(result)
+        assert "2030-06-01 10:00" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_expired_flood_status_shows_no_restrictions(self, mock_db):
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        acc = _make_account(phone="+70001112233", flood_wait_until=past)
+        mock_db.get_accounts = AsyncMock(return_value=[acc])
+        mock_db.update_account_flood = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_flood_status"]({})
+        text = _text(result)
+        assert "нет ограничений" in text
+        assert "заблокирован" not in text
+        mock_db.update_account_flood.assert_awaited_once_with("+70001112233", None)
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
@@ -190,6 +217,7 @@ class TestGetAccountInfoTool:
         result = await handlers["get_account_info"]({})
         text = _text(result)
         assert "live Telegram runtime unavailable" in text
+        assert "worker snapshot видит подключенные телефоны" in text
         assert "Web snapshot runtime" in text
         assert "+71112223344" in text
         lowered = text.lower()

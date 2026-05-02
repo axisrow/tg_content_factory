@@ -6,6 +6,8 @@ import json as _json
 import logging
 import re as _re
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from inspect import isawaitable
 from typing import Any
 
 from src.agent.runtime_context import AgentRuntimeContext
@@ -64,6 +66,9 @@ class AgentToolContext:
 
     def require_pool(self, action: str = "Эта операция") -> dict | None:
         return require_pool(self.client_pool, action)
+
+    def require_live_runtime(self, action: str = "Эта операция", *, tool_name: str | None = None) -> dict | None:
+        return require_live_runtime(self.runtime_context, action, tool_name=tool_name)
 
     async def resolve_phone(self, raw_phone: str) -> tuple[str, dict | None]:
         return await resolve_phone(self.db, raw_phone)
@@ -169,12 +174,297 @@ def require_args(args: dict[str, Any], *names: str) -> dict[str, str]:
     return values
 
 
-def normalize_phone(phone: str) -> str:
+def normalize_phone(phone: object) -> str:
     """Ensure phone starts with '+' — models sometimes omit it."""
-    phone = phone.strip()
+    if phone is None:
+        return ""
+    phone = str(phone).strip()
     if phone and not phone.startswith("+"):
         phone = "+" + phone
     return phone
+
+
+def normalize_flood_wait_until(value: object) -> datetime | None:
+    """Return a UTC-aware flood wait timestamp, accepting DB strings and datetimes."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def is_flood_wait_active(account: object, now: datetime | None = None) -> bool:
+    """True only when the stored flood wait expires in the future."""
+    now = now or datetime.now(timezone.utc)
+    flood_until = normalize_flood_wait_until(getattr(account, "flood_wait_until", None))
+    return flood_until is not None and flood_until > now
+
+
+def connected_phones_from_pool(client_pool: object | None) -> set[str]:
+    """Return phones that the attached runtime reports as connected."""
+    if client_pool is None:
+        return set()
+
+    instance_attrs = getattr(client_pool, "__dict__", {})
+    connected_phones = None
+    if isinstance(instance_attrs, dict) and "connected_phones" in instance_attrs:
+        connected_phones = instance_attrs["connected_phones"]
+    elif callable(getattr(type(client_pool), "connected_phones", None)):
+        connected_phones = getattr(client_pool, "connected_phones")
+
+    if callable(connected_phones):
+        try:
+            phones = connected_phones()
+        except Exception:
+            phones = set()
+        if isinstance(phones, (set, list, tuple)):
+            return {str(phone) for phone in phones}
+
+    try:
+        clients = getattr(client_pool, "clients")
+    except Exception:
+        clients = {}
+    if isinstance(clients, dict):
+        return {str(phone) for phone in clients}
+    return set()
+
+
+def available_phones_from_pool(client_pool: object | None) -> set[str]:
+    """Return phones that a snapshot/live pool reports as currently usable."""
+    if client_pool is None:
+        return set()
+    try:
+        phones = getattr(client_pool, "available_phones", None)
+    except Exception:
+        return set()
+    if isinstance(phones, (set, list, tuple)):
+        return {str(phone) for phone in phones if str(phone)}
+    return set()
+
+
+def flood_waited_phones_from_pool(client_pool: object | None) -> set[str]:
+    """Return phones marked flood-waited by a runtime snapshot, if present."""
+    if client_pool is None:
+        return set()
+    try:
+        waits = getattr(client_pool, "flood_waits", None)
+    except Exception:
+        return set()
+    if isinstance(waits, dict):
+        return {str(phone) for phone in waits if str(phone)}
+    return set()
+
+
+def _pool_reports_connections(client_pool: object | None) -> bool:
+    """Whether an empty connected set is a reliable runtime signal."""
+    if client_pool is None:
+        return True
+    instance_attrs = getattr(client_pool, "__dict__", {})
+    if isinstance(instance_attrs, dict) and (
+        "clients" in instance_attrs or "connected_phones" in instance_attrs
+    ):
+        return True
+    if callable(getattr(type(client_pool), "connected_phones", None)):
+        return True
+    try:
+        return isinstance(getattr(client_pool, "clients"), dict)
+    except Exception:
+        return False
+
+
+async def _get_accounts(db: object, *, active_only: bool = False) -> list[object]:
+    getter = getattr(db, "get_accounts", None)
+    if not callable(getter):
+        return []
+    try:
+        result = getter(active_only=active_only)
+    except TypeError:
+        result = getter()
+    if isawaitable(result):
+        result = await result
+    return list(result) if isinstance(result, (list, tuple)) else []
+
+
+async def _clear_account_flood(db: object, phone: str) -> None:
+    updater = getattr(db, "update_account_flood", None)
+    if not callable(updater):
+        return
+    try:
+        result = updater(phone, None)
+        if isawaitable(result):
+            await result
+    except Exception:
+        logger.debug("Failed to clear expired flood wait for %s", phone, exc_info=True)
+
+
+async def get_accounts_with_flood_cleanup(
+    db: object,
+    *,
+    active_only: bool = False,
+    now: datetime | None = None,
+) -> list[object]:
+    """Load accounts and clear stale flood_wait_until values before callers inspect them."""
+    now = now or datetime.now(timezone.utc)
+    accounts = await _get_accounts(db, active_only=active_only)
+    for account in accounts:
+        flood_until = normalize_flood_wait_until(getattr(account, "flood_wait_until", None))
+        if flood_until is not None and flood_until <= now:
+            phone = str(getattr(account, "phone", ""))
+            if phone:
+                await _clear_account_flood(db, phone)
+            try:
+                account.flood_wait_until = None
+            except Exception:
+                pass
+    return accounts
+
+
+def _format_phone_list(phones: set[str] | list[str] | tuple[str, ...]) -> str:
+    clean = sorted(str(phone) for phone in phones if str(phone))
+    return ", ".join(clean) if clean else "-"
+
+
+def require_live_runtime(
+    runtime_context: AgentRuntimeContext | None,
+    action: str = "Эта операция",
+    *,
+    tool_name: str | None = None,
+) -> dict | None:
+    """Return an explicit error if a tool needs the live Telegram runtime."""
+    if runtime_context is not None and runtime_context.has_live_telegram:
+        return None
+    if runtime_context is None or runtime_context.client_pool is None:
+        return require_pool(None, action)
+
+    name = tool_name or action
+    if runtime_context.runtime_kind == "snapshot":
+        return _text_response(
+            f"Ошибка: {name} требует live Telegram runtime. "
+            "Текущий backend видит только worker snapshot/cache и не выполняет live Telegram API операции. "
+            "Это ограничение runtime, а не признак отключённого аккаунта или отсутствующего чата."
+        )
+    return _text_response(
+        f"Ошибка: {name} требует live Telegram runtime, но он недоступен. "
+        "Это ограничение runtime, а не признак отключённого аккаунта или отсутствующего чата."
+    )
+
+
+def available_live_read_phones(
+    accounts: list[object],
+    connected_phones: set[str],
+    *,
+    trust_empty_connected: bool = True,
+    now: datetime | None = None,
+) -> list[str]:
+    """Return active DB phones that are connected and not currently flood-waited."""
+    now = now or datetime.now(timezone.utc)
+    connected_filter = connected_phones if trust_empty_connected or connected_phones else None
+    phones: list[str] = []
+    for account in accounts:
+        phone = str(getattr(account, "phone", ""))
+        if not phone:
+            continue
+        if not getattr(account, "is_active", True):
+            continue
+        if connected_filter is not None and phone not in connected_filter:
+            continue
+        if is_flood_wait_active(account, now):
+            continue
+        phones.append(phone)
+    return phones
+
+
+async def resolve_live_read_phone(
+    db: object,
+    client_pool: object,
+    raw_phone: object,
+    *,
+    tool_name: str,
+) -> tuple[str, dict | None]:
+    """Resolve a phone for read-only live tools using runtime connection state.
+
+    Explicit phones are never silently replaced.  Omitted phones prefer the
+    primary active connected account, then the first available active connected
+    account.
+    """
+    now = datetime.now(timezone.utc)
+    phone = normalize_phone(raw_phone)
+    accounts = await get_accounts_with_flood_cleanup(db, active_only=True, now=now)
+    connected_all = connected_phones_from_pool(client_pool)
+    pool_available = available_phones_from_pool(client_pool)
+    connected = pool_available or connected_all
+    trust_connected = _pool_reports_connections(client_pool)
+    available = available_live_read_phones(
+        accounts,
+        connected,
+        trust_empty_connected=trust_connected,
+        now=now,
+    )
+    available_set = set(available)
+    flood_waited = {
+        str(getattr(account, "phone", ""))
+        for account in accounts
+        if is_flood_wait_active(account, now)
+    }
+    flood_waited |= flood_waited_phones_from_pool(client_pool)
+    active_phones = {str(getattr(account, "phone", "")) for account in accounts if str(getattr(account, "phone", ""))}
+    connected_for_errors = connected_all if trust_connected else active_phones
+
+    if phone:
+        reason = None
+        if phone not in active_phones:
+            reason = "аккаунт не найден среди активных аккаунтов БД"
+        elif trust_connected and phone not in connected:
+            reason = "аккаунт не подключён в live runtime"
+        elif phone in flood_waited:
+            reason = "аккаунт временно в flood-wait"
+        if reason is not None:
+            return "", _text_response(
+                f"Ошибка: {tool_name} не может использовать {phone}: {reason}. "
+                f"Доступные телефоны: {_format_phone_list(available_set)}. "
+                f"Runtime connected phones: {_format_phone_list(connected_for_errors)}."
+            )
+        return phone, None
+
+    primary = next(
+        (
+            str(getattr(account, "phone", ""))
+            for account in accounts
+            if getattr(account, "is_primary", False) and str(getattr(account, "phone", "")) in available_set
+        ),
+        "",
+    )
+    if primary:
+        return primary, None
+    if available:
+        return available[0], None
+
+    if not accounts:
+        return "", _text_response("Ошибка: нет активных аккаунтов в БД.")
+    if trust_connected and not connected:
+        return "", _text_response("Ошибка: нет подключённых аккаунтов в live runtime.")
+    if flood_waited:
+        return "", _text_response(
+            f"Ошибка: все подключённые аккаунты временно в flood-wait. "
+            f"Flood-waited phones: {_format_phone_list(flood_waited)}."
+        )
+    return "", _text_response(
+        f"Ошибка: нет доступных подключённых активных аккаунтов для {tool_name}. "
+        f"DB active accounts: {_format_phone_list(active_phones)}. "
+        f"Runtime connected phones: {_format_phone_list(connected_for_errors)}."
+    )
 
 
 def require_confirmation(action_description: str, args: dict) -> dict | None:
@@ -205,7 +495,7 @@ def require_pool(client_pool: object | None, action: str = "Эта операц�
     )
 
 
-async def resolve_phone(db: object, raw_phone: str) -> tuple[str, dict | None]:
+async def resolve_phone(db: object, raw_phone: object) -> tuple[str, dict | None]:
     """Normalize phone, default to primary account if empty.
 
     Returns ``(phone, None)`` on success or ``("", error_response)`` on failure.
@@ -285,6 +575,85 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
 
 
 _NUMERIC_ID_RE = _re.compile(r"^-?\d+$")
+
+
+def should_try_dialog_title_lookup(identifier: object) -> bool:
+    """Return True when an identifier can reasonably be a dialog title."""
+    value = str(identifier or "").strip()
+    lowered = value.lower()
+    if not value or lowered == "me" or value.startswith("@") or "t.me/" in lowered:
+        return False
+    return True
+
+
+async def load_dialogs_for_title_lookup(
+    db: object,
+    client_pool: object,
+    phone: str,
+    *,
+    refresh: bool = False,
+) -> list[dict]:
+    """Load account dialogs through the existing ChannelService path."""
+    from src.services.channel_service import ChannelService
+
+    svc = ChannelService(db, client_pool, None)
+    try:
+        if refresh:
+            dialogs = await svc.get_my_dialogs(phone, refresh=True)
+        else:
+            dialogs = await svc.get_my_dialogs(phone)
+    except Exception:
+        logger.debug(
+            "Failed to load dialogs for title lookup phone=%s refresh=%s",
+            phone,
+            refresh,
+            exc_info=True,
+        )
+        return []
+    return [dict(dialog) for dialog in dialogs if isinstance(dialog, dict)]
+
+
+async def find_dialogs_by_exact_title(
+    db: object,
+    client_pool: object,
+    phone: str,
+    title: object,
+    *,
+    allow_refresh: bool = False,
+) -> list[dict]:
+    """Find dialogs whose title exactly matches the identifier, case-insensitively."""
+    query = str(title or "").strip()
+    if not should_try_dialog_title_lookup(query):
+        return []
+    normalized = query.casefold()
+    dialogs = await load_dialogs_for_title_lookup(db, client_pool, phone, refresh=False)
+    matches = [
+        dialog
+        for dialog in dialogs
+        if str(dialog.get("title") or "").strip().casefold() == normalized
+    ]
+    if matches or not allow_refresh:
+        return matches
+    live_dialogs = await load_dialogs_for_title_lookup(db, client_pool, phone, refresh=True)
+    return [
+        dialog
+        for dialog in live_dialogs
+        if str(dialog.get("title") or "").strip().casefold() == normalized
+    ]
+
+
+def format_dialog_title_candidates(title: object, matches: list[dict]) -> dict:
+    """Format ambiguous title lookup matches for tool output."""
+    query = str(title or "").strip()
+    lines = [f"Ошибка: найдено несколько диалогов с названием '{query}'. Уточните chat_id."]
+    for dialog in matches[:10]:
+        lines.append(
+            f"- id={dialog.get('channel_id', '?')}, type={dialog.get('channel_type', '?')}: "
+            f"{dialog.get('title', '?')}"
+        )
+    if len(matches) > 10:
+        lines.append(f"... ещё {len(matches) - 10}")
+    return _text_response("\n".join(lines))
 
 
 async def resolve_entity(

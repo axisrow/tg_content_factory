@@ -877,7 +877,9 @@ async def test_chat_stream_renders_saved_prompt_template_variables(db):
         f"Дата: {date.today().isoformat()}\n"
         "Канал: ForumChan\n"
         "Тема: Вопросы\n"
-        'Сообщения:\n{"id": 1, "date": "2024-01-15", "author": "User", "text": "hello"}'
+        'Сообщения:\n{"id": 1, "date": "2024-01-15", "author": "sender name=User", '
+        '"sender_id": null, "sender_first_name": null, "sender_last_name": null, '
+        '"sender_username": null, "text": "hello"}'
     )
 
     async def mock_query(_prompt, options):
@@ -1343,8 +1345,32 @@ def test_format_context_no_topics():
     lines = [ln for ln in result.split("\n") if ln.startswith("{")]
     assert len(lines) == 2
     parsed = json.loads(lines[0])
-    assert parsed["author"] == "User"
+    assert parsed["author"] == "sender name=User"
+    assert parsed["sender_id"] is None
+    assert parsed["sender_first_name"] is None
+    assert parsed["sender_username"] is None
     assert parsed["date"] == "2024-01-15"
+
+
+def test_format_context_sender_identity_fields():
+    msg = Message(
+        channel_id=100,
+        message_id=1,
+        text="hello",
+        sender_id=42,
+        sender_name="John Doe",
+        sender_first_name="John",
+        sender_last_name="Doe",
+        sender_username="jdoe",
+        date=_NOW,
+    )
+    result = format_context([msg], "TestChan", topic_id=None, topics_map={})
+    parsed = json.loads(next(ln for ln in result.split("\n") if ln.startswith("{")))
+    assert parsed["author"] == "sender id=42, first_name=John, last_name=Doe, username=@jdoe"
+    assert parsed["sender_id"] == 42
+    assert parsed["sender_first_name"] == "John"
+    assert parsed["sender_last_name"] == "Doe"
+    assert parsed["sender_username"] == "@jdoe"
 
 
 def test_format_context_grouped_by_topics():

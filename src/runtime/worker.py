@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from src.config import AppConfig
 from src.models import RuntimeSnapshot
 from src.services.notification_service import NotificationService
+from src.telegram.utils import normalize_utc
 from src.web.bootstrap import build_worker_container, start_container, stop_container
 from src.web.log_handler import LogBuffer
 
@@ -16,11 +17,31 @@ logger = logging.getLogger(__name__)
 
 
 async def _publish_snapshots(container) -> None:
+    now = datetime.now(timezone.utc)
     connected_phones = sorted(getattr(container.pool, "clients", {}).keys())
+    active_accounts = []
+    try:
+        active_accounts = await container.db.get_accounts(active_only=True)
+    except Exception:
+        logger.debug("Failed to load accounts while publishing account status snapshot", exc_info=True)
+    flood_waits = {}
+    available_phones = []
+    if active_accounts:
+        connected_set = set(connected_phones)
+        for account in active_accounts:
+            phone = getattr(account, "phone", "")
+            flood_until = normalize_utc(getattr(account, "flood_wait_until", None))
+            if flood_until is not None and flood_until > now:
+                flood_waits[phone] = flood_until.isoformat()
+                continue
+            if phone in connected_set:
+                available_phones.append(phone)
+    else:
+        available_phones = list(connected_phones)
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="worker_heartbeat",
-            payload={"status": "alive", "timestamp": datetime.now(timezone.utc).isoformat()},
+            payload={"status": "alive", "timestamp": now.isoformat()},
         )
     )
     await container.db.repos.runtime_snapshots.upsert_snapshot(
@@ -29,6 +50,9 @@ async def _publish_snapshots(container) -> None:
             payload={
                 "connected_phones": connected_phones,
                 "connected_count": len(connected_phones),
+                "available_phones": sorted(available_phones),
+                "flood_waits": flood_waits,
+                "timestamp": now.isoformat(),
             },
         )
     )

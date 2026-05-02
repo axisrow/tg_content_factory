@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.runtime.worker import _publish_snapshots
@@ -29,6 +30,7 @@ def _make_container(**overrides):
     container.scheduler = scheduler
 
     container.db = MagicMock()
+    container.db.get_accounts = AsyncMock(return_value=overrides.get("accounts", []))
     container.db.repos.runtime_snapshots = MagicMock()
     container.db.repos.runtime_snapshots.upsert_snapshot = AsyncMock()
 
@@ -69,7 +71,14 @@ async def test_publish_snapshots_writes_heartbeat():
 
 
 async def test_publish_snapshots_accounts_status():
-    container = _make_container(clients={"+111": MagicMock(), "+222": MagicMock()})
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    container = _make_container(
+        clients={"+111": MagicMock(), "+222": MagicMock()},
+        accounts=[
+            SimpleNamespace(phone="+111", flood_wait_until=None),
+            SimpleNamespace(phone="+222", flood_wait_until=future),
+        ],
+    )
     with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
         mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
         await _publish_snapshots(container)
@@ -79,6 +88,9 @@ async def test_publish_snapshots_accounts_status():
     payload = accounts_call[0][0].payload
     assert payload["connected_count"] == 2
     assert payload["connected_phones"] == ["+111", "+222"]
+    assert payload["available_phones"] == ["+111"]
+    assert payload["flood_waits"] == {"+222": future.isoformat()}
+    assert "timestamp" in payload
 
 
 async def test_publish_snapshots_collector_status():
