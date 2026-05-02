@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -105,7 +106,7 @@ async def test_save_provider_configs_preserves_encrypted_secret_after_decrypt_fa
     read_config = AppConfig()
     read_config.security.session_encryption_key = "different-secret"
     reader = AgentProviderService(db, read_config)
-    with caplog.at_level("ERROR"):
+    with caplog.at_level(logging.DEBUG, logger="src.services.agent_provider_service"):
         loaded = await reader.load_provider_configs()
     await reader.save_provider_configs(loaded)
 
@@ -113,11 +114,12 @@ async def test_save_provider_configs_preserves_encrypted_secret_after_decrypt_fa
 
     assert reloaded[0].secret_fields["api_key"] == "sk-test"
     assert any(
-        record.levelname == "ERROR"
+        record.levelno == logging.DEBUG
         and "decrypt failed: resource=agent_provider identifier=openai status=key_mismatch" in record.message
         and record.exc_info is None
         for record in caplog.records
     )
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
 @pytest.mark.anyio

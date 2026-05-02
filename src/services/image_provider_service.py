@@ -102,6 +102,7 @@ class ImageProviderService:
                         identifier=provider,
                         status=secret_status,
                         action=_IMAGE_SECRET_ACTION,
+                        level=logging.DEBUG,
                     )
                 else:
                     try:
@@ -116,6 +117,7 @@ class ImageProviderService:
                             identifier=provider,
                             status=status,
                             action=_IMAGE_SECRET_ACTION,
+                            level=logging.DEBUG,
                         )
             configs.append(
                 ImageProviderConfig(

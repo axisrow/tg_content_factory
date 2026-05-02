@@ -1035,6 +1035,7 @@ class AgentProviderService:
                     identifier=provider_name,
                     status=secret_status,
                     action=_PROVIDER_SECRET_ACTION,
+                    level=logging.DEBUG,
                 )
                 continue
             try:
@@ -1049,6 +1050,7 @@ class AgentProviderService:
                     identifier=provider_name,
                     status=status,
                     action=_PROVIDER_SECRET_ACTION,
+                    level=logging.DEBUG,
                 )
         return values, preserved, secret_status
 

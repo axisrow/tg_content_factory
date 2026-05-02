@@ -1,5 +1,7 @@
 """Tests for ImageProviderService — DB-backed image provider management."""
 
+import logging
+
 import pytest
 
 from src.config import AppConfig
@@ -68,7 +70,7 @@ async def test_save_without_key_omits_encrypted_field(db):
 
 
 @pytest.mark.anyio
-async def test_save_preserves_encrypted_on_decrypt_failure(db):
+async def test_save_preserves_encrypted_on_decrypt_failure(db, caplog):
     """When api_key is empty but _api_key_enc_preserved has a value, it's written to DB."""
     svc = _make_service(db)
     # First save a real key
@@ -77,11 +79,18 @@ async def test_save_preserves_encrypted_on_decrypt_failure(db):
 
     # Load with wrong key (simulates decrypt failure)
     svc2 = _make_service(db, encryption_key="wrong-key")
-    loaded = await svc2.load_provider_configs()
+    with caplog.at_level(logging.DEBUG, logger="src.services.image_provider_service"):
+        loaded = await svc2.load_provider_configs()
     assert len(loaded) == 1
     assert loaded[0].api_key == ""  # decrypt failed
     assert loaded[0]._api_key_enc_preserved != ""  # raw preserved
     assert loaded[0].secret_status == "decrypt_failed"
+    assert any(
+        record.levelno == logging.DEBUG
+        and "decrypt failed: resource=image_provider identifier=together status=key_mismatch" in record.message
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
     # Save back — should keep the preserved encrypted value
     await _make_service(db).save_provider_configs(loaded)
