@@ -300,6 +300,37 @@ async def test_batch_insert(db):
 
 
 @pytest.mark.anyio
+async def test_fresh_schema_has_sender_identity_columns(db):
+    cur = await db.execute("PRAGMA table_info(messages)")
+    columns = {row["name"] for row in await cur.fetchall()}
+    assert "sender_first_name" in columns
+    assert "sender_last_name" in columns
+    assert "sender_username" in columns
+
+
+@pytest.mark.anyio
+async def test_sender_identity_fields_round_trip_via_database(db):
+    msg = Message(
+        channel_id=-100123,
+        message_id=77,
+        sender_id=42,
+        sender_name="Jane Roe",
+        sender_first_name="Jane",
+        sender_last_name="Roe",
+        sender_username="@janeroe",
+        text="Identity fields",
+        date=datetime.now(timezone.utc),
+    )
+    assert await db.insert_message(msg) is True
+
+    results, total = await db.search_messages()
+    assert total == 1
+    assert results[0].sender_first_name == "Jane"
+    assert results[0].sender_last_name == "Roe"
+    assert results[0].sender_username == "janeroe"
+
+
+@pytest.mark.anyio
 async def test_search_messages(db):
     messages = [
         Message(

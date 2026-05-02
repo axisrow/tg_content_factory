@@ -9,6 +9,9 @@ from src.database import Database
 class SnapshotClientPool:
     def __init__(self, db: Database):
         self._db = db
+        self.available_phones: set[str] = set()
+        self.flood_waits: dict[str, str] = {}
+        self.timestamp: str | None = None
 
     @property
     def clients(self) -> dict[str, object]:
@@ -24,6 +27,18 @@ class SnapshotClientPool:
         if not isinstance(phones, list):
             phones = []
         self._clients_cache = {str(phone): object() for phone in phones}
+        available_phones = payload.get("available_phones", [])
+        if not isinstance(available_phones, list):
+            available_phones = []
+        self.available_phones = {str(phone) for phone in available_phones}
+        flood_waits = payload.get("flood_waits", {})
+        self.flood_waits = (
+            {str(phone): str(until) for phone, until in flood_waits.items()}
+            if isinstance(flood_waits, dict)
+            else {}
+        )
+        timestamp = payload.get("timestamp")
+        self.timestamp = str(timestamp) if timestamp is not None else None
 
     async def initialize(self) -> None:
         await self.refresh()

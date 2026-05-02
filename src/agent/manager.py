@@ -1598,6 +1598,7 @@ class DeepagentsBackend:
 
         permissions = await load_tool_permissions_union(self._db)
         enabled_count = sum(1 for v in permissions.values() if v)
+        self._runtime_context.bind_owner_loop(asyncio.get_running_loop())
         logger.info(
             "Deepagents tool permissions: %d/%d enabled",
             enabled_count, len(permissions),
@@ -1686,6 +1687,7 @@ class DeepagentsBackend:
         Returns the final written content.
         """
         errors: list[str] = []
+        self._runtime_context.bind_owner_loop(asyncio.get_running_loop())
         for cfg in await self._candidate_configs():
             validation_error = self._validation_error(cfg)
             if validation_error:

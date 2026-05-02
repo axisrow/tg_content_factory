@@ -109,7 +109,11 @@ def _make_channel_dialog(
 
 def _strip_extra_dialog_fields(dialogs: list[dict]) -> list[dict]:
     return [
-        {key: value for key, value in dialog.items() if key != "already_added"}
+        {
+            key: value
+            for key, value in dialog.items()
+            if key != "already_added" and not str(key).startswith("_")
+        }
         for dialog in dialogs
     ]
 
@@ -705,7 +709,8 @@ async def test_get_dialogs_for_phone_failed_refresh_keeps_existing_db_cache(db):
         refresh=True,
     )
 
-    assert dialogs == []
+    assert dialogs
+    assert all(dialog.get("_degraded") for dialog in dialogs)
     cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
     assert _strip_extra_dialog_fields(cached) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
 

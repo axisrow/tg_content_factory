@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
 from claude_agent_sdk import SdkMcpTool
 
-from src.agent.runtime_context import AgentRuntimeContext
+from src.agent.runtime_context import AgentRuntimeContext, AgentToolRuntimeError
 from src.agent.tools import build_agent_tool_registry
 
 logger = logging.getLogger(__name__)
@@ -160,6 +162,56 @@ def _mcp_result_to_text(result: object) -> str:
     return "\n".join(part for part in parts if part) if parts else str(result)
 
 
+def _safe_repr(value: object, *, max_len: int = 160) -> str:
+    text = repr(value)
+    if len(text) > max_len:
+        return text[: max_len - 3] + "..."
+    return text
+
+
+def _sanitized_args(args: dict[str, object]) -> dict[str, str]:
+    hidden = {"password", "token", "api_key", "secret", "session_string"}
+    result: dict[str, str] = {}
+    for key, value in args.items():
+        if any(part in key.lower() for part in hidden):
+            result[key] = "<redacted>"
+        else:
+            result[key] = _safe_repr(value)
+    return result
+
+
+def _tool_error_text(tool_name: str, exc: Exception) -> str:
+    retryable = bool(getattr(exc, "retryable", False))
+    if isinstance(exc, AgentToolRuntimeError):
+        error_type = "runtime_error"
+        retryable = True
+        message = (
+            f"Ошибка runtime инструмента {tool_name}: {exc}. "
+            "Это не означает, что аккаунт отключён или чат не существует."
+        )
+    elif isinstance(exc, RuntimeError):
+        error_type = "runtime_error"
+        retryable = True
+        message = (
+            f"Ошибка runtime инструмента {tool_name}. "
+            "Это не означает, что аккаунт отключён или чат не существует."
+        )
+    else:
+        error_type = "tool_error"
+        message = f"Ошибка: внутренняя ошибка инструмента {tool_name}."
+
+    return json.dumps(
+        {
+            "tool": tool_name,
+            "error_type": error_type,
+            "retryable": retryable,
+            "cause": type(exc).__name__,
+            "message": message,
+        },
+        ensure_ascii=False,
+    )
+
+
 def _arguments_from_call(tool: SdkMcpTool, args: tuple[object, ...], kwargs: dict[str, object]) -> dict[str, object]:
     schema_names = [name for name, _annotation in _schema_items(tool.input_schema)]
     if len(args) > len(schema_names):
@@ -179,13 +231,39 @@ def _adapt_sdk_tool(tool: SdkMcpTool, runtime_context: AgentRuntimeContext) -> C
     """Adapt an async registry tool to the sync callable shape expected by Deepagents."""
 
     def sync_tool(*args, **kwargs) -> str:
+        started_at = time.perf_counter()
+        tool_args: dict[str, object] = {}
+        runtime_kind = getattr(runtime_context, "runtime_kind", "unknown")
         try:
             tool_args = _arguments_from_call(tool, args, kwargs)
+            logger.info(
+                "Deepagents tool start: tool=%s runtime=%s args=%s",
+                tool.name,
+                runtime_kind,
+                _sanitized_args(tool_args),
+            )
             result = runtime_context.run_sync(tool.name, lambda: tool.handler(tool_args))
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.info(
+                "Deepagents tool done: tool=%s runtime=%s duration_ms=%d result_type=%s",
+                tool.name,
+                runtime_kind,
+                duration_ms,
+                type(result).__name__,
+            )
             return _mcp_result_to_text(result)
         except Exception as exc:
-            logger.warning("Deepagents tool %s failed: %s", tool.name, exc, exc_info=True)
-            return f"Ошибка выполнения {tool.name}: {exc}"
+            duration_ms = int((time.perf_counter() - started_at) * 1000)
+            logger.warning(
+                "Deepagents tool failed: tool=%s runtime=%s duration_ms=%d error_type=%s args=%s",
+                tool.name,
+                runtime_kind,
+                duration_ms,
+                type(exc).__name__,
+                _sanitized_args(tool_args),
+                exc_info=True,
+            )
+            return _tool_error_text(tool.name, exc)
 
     sync_tool.__name__ = tool.name
     sync_tool.__qualname__ = tool.name

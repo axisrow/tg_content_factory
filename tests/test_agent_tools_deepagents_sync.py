@@ -1,8 +1,11 @@
 """Tests for agent tools: deepagents_sync.build_deepagents_tools() — sync wrappers."""
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.filters.models import ChannelFilterResult
 from src.models import NotificationBot
@@ -27,6 +30,31 @@ def test_deepagents_read_messages_is_registered_and_uses_runtime_gate(mock_db):
     result = tool_map["read_messages"](chat_id="@test", limit=5)
 
     assert "требует Telegram-клиент" in result
+
+
+@pytest.mark.anyio
+async def test_live_runtime_sync_bridge_uses_owner_loop_not_asyncio_run(mock_db, monkeypatch):
+    from src.agent.runtime_context import AgentRuntimeContext
+
+    owner_loop = asyncio.get_running_loop()
+    ctx = AgentRuntimeContext.build(
+        db=mock_db,
+        client_pool=object(),
+        runtime_kind="live",
+        owner_loop=owner_loop,
+    )
+
+    async def _operation():
+        assert asyncio.get_running_loop() is owner_loop
+        return "ok"
+
+    run_mock = MagicMock(side_effect=AssertionError("asyncio.run must not be used"))
+    monkeypatch.setattr(asyncio, "run", run_mock)
+
+    result = await asyncio.to_thread(ctx.run_sync, "read_messages", _operation)
+
+    assert result == "ok"
+    run_mock.assert_not_called()
 
 
 class TestDeepagentsSyncSearchMessages:
@@ -145,6 +173,15 @@ class TestDeepagentsSyncListAccounts:
         result = tool_map["list_accounts"]()
         assert "+79001234567" in result
         assert "активен" in result
+
+    def test_adapter_internal_error_is_not_raw_exception(self, mock_db):
+        from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+        tools = build_deepagents_tools(mock_db)
+        tool_map = {t.__name__: t for t in tools}
+        result = tool_map["list_accounts"]("unexpected", "extra")
+        assert "внутренняя ошибка инструмента" in result
+        assert "expected at most" not in result
 
 
 class TestDeepagentsSyncGetFloodStatus:

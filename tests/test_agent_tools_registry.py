@@ -1,6 +1,7 @@
 """Tests for src/agent/tools/_registry.py — helper functions for agent tools."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +19,7 @@ from src.agent.tools._registry import (
     require_confirmation,
     require_phone_permission,
     require_pool,
+    resolve_live_read_phone,
     resolve_phone,
 )
 
@@ -49,6 +51,9 @@ class TestNormalizePhone:
 
     def test_empty_string(self):
         assert normalize_phone("") == ""
+
+    def test_none_is_empty_string(self):
+        assert normalize_phone(None) == ""
 
     def test_whitespace_only(self):
         assert normalize_phone("   ") == ""
@@ -167,6 +172,16 @@ class TestResolvePhone:
         assert err is None
 
     @pytest.mark.anyio
+    async def test_none_phone_defaults_to_primary(self):
+        primary = SimpleNamespace(phone="+11111111111", is_primary=True)
+        db = MagicMock()
+        db.get_accounts = AsyncMock(return_value=[primary])
+
+        phone, err = await resolve_phone(db, None)
+        assert phone == "+11111111111"
+        assert err is None
+
+    @pytest.mark.anyio
     async def test_empty_phone_no_primary_picks_first(self):
         acc1 = SimpleNamespace(phone="+111", is_primary=False)
         acc2 = SimpleNamespace(phone="+222", is_primary=False)
@@ -194,6 +209,68 @@ class TestResolvePhone:
         assert phone == ""
         assert err is not None
         assert "не удалось получить" in err["content"][0]["text"]
+
+
+class TestResolveLiveReadPhone:
+    @pytest.mark.anyio
+    async def test_none_phone_uses_connected_primary(self):
+        primary = SimpleNamespace(phone="+111", is_primary=True, is_active=True, flood_wait_until=None)
+        secondary = SimpleNamespace(phone="+222", is_primary=False, is_active=True, flood_wait_until=None)
+        db = MagicMock()
+        db.get_accounts = AsyncMock(return_value=[secondary, primary])
+        pool = SimpleNamespace(clients={"+111": object(), "+222": object()})
+
+        phone, err = await resolve_live_read_phone(db, pool, None, tool_name="read_messages")
+
+        assert phone == "+111"
+        assert err is None
+
+    @pytest.mark.anyio
+    async def test_none_phone_falls_back_to_available_connected_account(self):
+        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        primary = SimpleNamespace(phone="+111", is_primary=True, is_active=True, flood_wait_until=future)
+        secondary = SimpleNamespace(phone="+222", is_primary=False, is_active=True, flood_wait_until=None)
+        db = MagicMock()
+        db.get_accounts = AsyncMock(return_value=[primary, secondary])
+        pool = SimpleNamespace(clients={"+111": object(), "+222": object()})
+
+        phone, err = await resolve_live_read_phone(db, pool, None, tool_name="read_messages")
+
+        assert phone == "+222"
+        assert err is None
+
+    @pytest.mark.anyio
+    async def test_explicit_disconnected_phone_does_not_fallback(self):
+        db = MagicMock()
+        db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(phone="+111", is_primary=True, is_active=True, flood_wait_until=None),
+            SimpleNamespace(phone="+222", is_primary=False, is_active=True, flood_wait_until=None),
+        ])
+        pool = SimpleNamespace(clients={"+222": object()})
+
+        phone, err = await resolve_live_read_phone(db, pool, "+111", tool_name="search_dialogs")
+
+        assert phone == ""
+        assert err is not None
+        text = err["content"][0]["text"]
+        assert "не подключён" in text
+        assert "+222" in text
+
+    @pytest.mark.anyio
+    async def test_expired_flood_is_cleared_and_available(self):
+        past = datetime.now(timezone.utc) - timedelta(minutes=5)
+        account = SimpleNamespace(phone="+111", is_primary=True, is_active=True, flood_wait_until=past)
+        db = MagicMock()
+        db.get_accounts = AsyncMock(return_value=[account])
+        db.update_account_flood = AsyncMock()
+        pool = SimpleNamespace(clients={"+111": object()})
+
+        phone, err = await resolve_live_read_phone(db, pool, None, tool_name="read_messages")
+
+        assert phone == "+111"
+        assert err is None
+        assert account.flood_wait_until is None
+        db.update_account_flood.assert_awaited_once_with("+111", None)
 
 
 # ── require_phone_permission ──────────────────────────────────────────────────

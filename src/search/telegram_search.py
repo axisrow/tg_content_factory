@@ -244,7 +244,7 @@ class TelegramSearch:
                         username=chat_username,
                     )
 
-                sender_id, sender_name = TelegramMessageTransformer.resolve_sender(
+                sender_identity = TelegramMessageTransformer.resolve_sender_identity(
                     msg,
                     chats_map,
                     users_map,
@@ -254,8 +254,11 @@ class TelegramSearch:
                     Message(
                         channel_id=chat_id,
                         message_id=msg.id,
-                        sender_id=sender_id,
-                        sender_name=sender_name,
+                        sender_id=sender_identity.sender_id,
+                        sender_name=sender_identity.sender_name,
+                        sender_first_name=sender_identity.sender_first_name,
+                        sender_last_name=sender_identity.sender_last_name,
+                        sender_username=sender_identity.sender_username,
                         text=getattr(msg, "message", None),
                         media_type=TelegramMessageTransformer.media_type_from_message(msg),
                         date=(
