@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.database import Database
-from src.models import Account
+from src.models import Account, AccountSessionStatus, AccountSummary
 from src.services import telegram_command_dispatcher as mod
 from src.services.telegram_command_dispatcher import TelegramCommandDispatcher
 
@@ -279,7 +279,8 @@ async def test_auth_send_code_ok():
     auth.send_code = AsyncMock(return_value={"phone_code_hash": "h"})
     d = _dispatcher(auth=auth)
     r = await d._handle_auth_send_code({"phone": "+1"})
-    assert r["phone_code_hash"] == "h"
+    assert r["result"]["phone_code_hash"] == "h"
+    assert r["result"]["phone"] == "+1"
 
 
 async def test_auth_resend_code_not_configured():
@@ -935,8 +936,8 @@ async def test_auth_resend_code_ok():
     auth.resend_code = AsyncMock(return_value={"phone_code_hash": "h2"})
     d = _dispatcher(auth=auth)
     r = await d._handle_auth_resend_code({"phone": "+1"})
-    assert r["phone_code_hash"] == "h2"
-    assert r["phone"] == "+1"
+    assert r["result"]["phone_code_hash"] == "h2"
+    assert r["result"]["phone"] == "+1"
 
 
 # --- _handle_auth_verify_code: first account is_primary ---
@@ -947,16 +948,44 @@ async def test_auth_verify_code_first_account_primary():
     auth.verify_code = AsyncMock(return_value="session_new")
     db = _mock_db()
     pool = _mock_pool()
-    # First call returns empty (for add_account logic), second call returns the
-    # newly added account (for _handle_accounts_connect which looks it up).
     new_account = Account(id=2, phone="+1", session_string="session_new", is_primary=True)
-    db.get_accounts = AsyncMock(side_effect=[[], [new_account]])
+    db.get_account_summaries = AsyncMock(return_value=[])
+    db.get_live_usable_accounts = AsyncMock(return_value=[new_account])
+    db.get_accounts = AsyncMock(side_effect=AssertionError("auth verify must not decrypt unrelated sessions"))
     pool.get_client_by_phone = AsyncMock(return_value=None)
     d = _dispatcher(db=db, pool=pool, auth=auth)
     r = await d._handle_auth_verify_code({"phone": "+1", "code": "123", "phone_code_hash": "h"})
     add_call = db.add_account.call_args
     assert add_call[0][0].is_primary is True
     assert r["result"]["phone"] == "+1"
+
+
+async def test_auth_verify_code_uses_summaries_when_unrelated_session_degraded():
+    auth = MagicMock(is_configured=True)
+    auth.verify_code = AsyncMock(return_value="session_new")
+    db = _mock_db()
+    pool = _mock_pool()
+    db.get_account_summaries = AsyncMock(
+        return_value=[
+            AccountSummary(
+                id=1,
+                phone="+bad",
+                session_status=AccountSessionStatus.DECRYPT_FAILED,
+            )
+        ]
+    )
+    db.get_live_usable_accounts = AsyncMock(
+        return_value=[Account(id=2, phone="+1", session_string="session_new")]
+    )
+    db.get_accounts = AsyncMock(side_effect=AssertionError("must not decrypt summaries"))
+    pool.get_client_by_phone = AsyncMock(return_value=None)
+    d = _dispatcher(db=db, pool=pool, auth=auth)
+
+    await d._handle_auth_verify_code({"phone": "+1", "code": "123", "phone_code_hash": "h"})
+
+    add_call = db.add_account.call_args
+    assert add_call[0][0].is_primary is False
+    db.get_accounts.assert_not_awaited()
 
 
 # --- _handle_auth_verify_code: with 2fa password ---
@@ -968,7 +997,9 @@ async def test_auth_verify_code_with_2fa():
     db = _mock_db()
     pool = _mock_pool()
     new_account = Account(id=2, phone="+1", session_string="session_2fa", is_primary=True)
-    db.get_accounts = AsyncMock(side_effect=[[], [new_account]])
+    db.get_account_summaries = AsyncMock(return_value=[])
+    db.get_live_usable_accounts = AsyncMock(return_value=[new_account])
+    db.get_accounts = AsyncMock(side_effect=AssertionError("auth verify must not decrypt unrelated sessions"))
     pool.get_client_by_phone = AsyncMock(return_value=None)
     d = _dispatcher(db=db, pool=pool, auth=auth)
     r = await d._handle_auth_verify_code({

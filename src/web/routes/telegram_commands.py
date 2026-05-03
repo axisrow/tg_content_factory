@@ -11,6 +11,7 @@ router = APIRouter()
 
 _SENSITIVE_KEYS = {
     "session_string",
+    "session_str",
     "password",
     "passcode",
     "secret",

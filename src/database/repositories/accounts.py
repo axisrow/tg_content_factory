@@ -266,6 +266,44 @@ class AccountsRepository:
 
         return accounts
 
+    async def get_live_usable_accounts(self, active_only: bool = False) -> list[Account]:
+        """Return accounts whose sessions can be decrypted for live Telegram use."""
+        sql = "SELECT * FROM accounts"
+        if active_only:
+            sql += " WHERE is_active = 1"
+        sql += " ORDER BY is_primary DESC, id ASC"
+        cur = await self._db.execute(sql)
+        rows = await cur.fetchall()
+        accounts: list[Account] = []
+
+        for row in rows:
+            raw_session = str(row["session_string"] or "")
+            phone = str(row["phone"])
+            try:
+                session_string = self._decrypt_session_for_live_use(raw_session, phone)
+            except AccountSessionDecryptError as exc:
+                logger.warning(
+                    "Skipping degraded Telegram account for live use: phone=%s status=%s",
+                    exc.identifier,
+                    exc.status,
+                )
+                continue
+
+            accounts.append(
+                Account(
+                    id=row["id"],
+                    phone=row["phone"],
+                    session_string=session_string,
+                    is_primary=bool(row["is_primary"]),
+                    is_active=bool(row["is_active"]),
+                    is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
+                    flood_wait_until=self._parse_dt(row["flood_wait_until"]),
+                    created_at=self._parse_dt(row["created_at"]),
+                )
+            )
+
+        return accounts
+
     async def update_account_flood(self, phone: str, until: datetime | None) -> None:
         await self._db.execute(
             "UPDATE accounts SET flood_wait_until = ? WHERE phone = ?",

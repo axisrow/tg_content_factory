@@ -2,10 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from telethon.errors import FloodWaitError
 
+from src.database.repositories.accounts import AccountSessionDecryptError
+from src.models import Account
+from src.telegram.client_pool import ClientPool
 from tests.helpers import FakeCliTelethonClient, make_channel_entity
 
 
@@ -23,6 +27,41 @@ async def test_pool_initialize_no_accounts(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     await harness.initialize_connected_accounts()
     assert len(harness.pool.clients) == 0
+
+
+@pytest.mark.anyio
+async def test_pool_initialize_with_only_degraded_accounts_does_not_raise():
+    db = MagicMock()
+    db.get_live_usable_accounts = AsyncMock(return_value=[])
+    db.get_accounts = AsyncMock(side_effect=AccountSessionDecryptError(phone="+7000", status="key_mismatch"))
+    db.update_account_premium = AsyncMock()
+    auth = MagicMock(api_id=12345, api_hash="hash")
+
+    pool = ClientPool(auth, db)
+
+    await pool.initialize()
+
+    assert pool.clients == {}
+    db.get_live_usable_accounts.assert_awaited_once_with(active_only=True)
+    db.get_accounts.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_pool_initialize_with_mixed_degraded_and_good_connects_good(telethon_cli_spy):
+    good = Account(phone="+70000000001", session_string="s1", is_active=True, is_primary=True)
+    db = MagicMock()
+    db.get_live_usable_accounts = AsyncMock(return_value=[good])
+    db.get_accounts = AsyncMock(side_effect=AccountSessionDecryptError(phone="+bad", status="key_mismatch"))
+    db.update_account_premium = AsyncMock()
+    auth = MagicMock(api_id=12345, api_hash="hash")
+    telethon_cli_spy.bind("+70000000001", FakeCliTelethonClient())
+
+    pool = ClientPool(auth, db)
+
+    await pool.initialize()
+
+    assert "+70000000001" in pool.clients
+    db.get_accounts.assert_not_awaited()
 
 
 @pytest.mark.anyio

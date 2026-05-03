@@ -21,6 +21,7 @@ from telethon.tl.types import ChannelForbidden, Chat, PeerChannel, PeerUser
 
 from src.config import TelegramRuntimeConfig
 from src.database import Database
+from src.database.live_accounts import load_live_usable_accounts
 from src.models import Account, TelegramUserInfo
 from src.telegram.account_lease_pool import AccountLease, AccountLeasePool
 from src.telegram.auth import TelegramAuth
@@ -77,7 +78,7 @@ class ClientPool:
         self._max_flood_wait_sec = max_flood_wait_sec
         self._runtime_config = self._normalize_runtime_config(runtime_config)
         self.clients: dict[str, object] = {}
-        self.init_timeout: float = 15.0
+        self.init_timeout: float = 45.0
         self._lock = asyncio.Lock()
         self._in_use: set[str] = set()
         self._lease_pool = AccountLeasePool(db, self._in_use)
@@ -153,7 +154,7 @@ class ClientPool:
         now = datetime.now(timezone.utc)
         flood_waited: set[str] = set()
         try:
-            accounts = await self._db.get_accounts(active_only=True)
+            accounts = await load_live_usable_accounts(self._db, active_only=True)
             flood_waited = {
                 account.phone
                 for account in accounts
@@ -382,32 +383,36 @@ class ClientPool:
 
     async def initialize(self) -> None:
         """Load active accounts and validate that their sessions are usable."""
-        accounts = await self._db.get_accounts(active_only=True)
+        accounts = await load_live_usable_accounts(self._db, active_only=True)
         new_accounts = [acc for acc in accounts if acc.phone not in self.clients]
         if not new_accounts:
             return
 
-        async def _init_one(acc: Account) -> None:
-            lease: BackendClientLease | None = None
+        async def _connect_one(acc: Account) -> BackendClientLease | None:
             try:
                 lease = await self._connect_account(acc)
-                session = lease.session
                 logger.info("Connected account: %s (primary=%s)", acc.phone, acc.is_primary)
-                try:
-                    me = await asyncio.wait_for(session.fetch_me(), timeout=10.0)
-                    is_premium = bool(getattr(me, "premium", False))
-                    if is_premium != acc.is_premium:
-                        await self._db.update_account_premium(acc.phone, is_premium)
-                except Exception as e:
-                    logger.warning("Failed to fetch premium status for %s: %s", acc.phone, e)
-                finally:
-                    if lease is not None:
-                        await self._backend_router.release(lease)
+                return lease
             except Exception as e:
                 logger.error("Failed to connect %s: %s", acc.phone, e)
+                return None
 
-        tasks = {asyncio.create_task(_init_one(acc)): acc for acc in new_accounts}
+        tasks = {asyncio.create_task(_connect_one(acc)): acc for acc in new_accounts}
         done, pending = await asyncio.wait(tasks.keys(), timeout=self.init_timeout)
+        for task in done:
+            acc = tasks[task]
+            lease = task.result()
+            if lease is None:
+                continue
+            try:
+                me = await asyncio.wait_for(lease.session.fetch_me(), timeout=5.0)
+                is_premium = bool(getattr(me, "premium", False))
+                if is_premium != acc.is_premium:
+                    await self._db.update_account_premium(acc.phone, is_premium)
+            except Exception as e:
+                logger.warning("Failed to fetch premium status for %s: %s", acc.phone, e)
+            finally:
+                await self._backend_router.release(lease)
         if pending:
             phones = []
             for task in pending:
@@ -485,7 +490,7 @@ class ClientPool:
         return None
 
     async def get_premium_unavailability_reason(self) -> str:
-        accounts = await self._db.get_accounts(active_only=True)
+        accounts = await load_live_usable_accounts(self._db, active_only=True)
         premium = [acc for acc in accounts if acc.is_premium]
         if not premium:
             return "Нет аккаунтов с Telegram Premium. Добавьте Premium-аккаунт в настройках."
@@ -515,7 +520,7 @@ class ClientPool:
 
     async def get_premium_stats_availability(self) -> StatsClientAvailability:
         """Describe premium client availability including premium-only flood waits."""
-        accounts = await self._db.get_accounts(active_only=True)
+        accounts = await load_live_usable_accounts(self._db, active_only=True)
         now = datetime.now(timezone.utc)
         connected_premium = [
             acc
@@ -825,7 +830,7 @@ class ClientPool:
             include_avatar: If True (default), download and encode profile photos as base64.
                            Set to False for CLI usage to skip unnecessary 15s I/O per account.
         """
-        accounts = await self._db.get_accounts(active_only=True)
+        accounts = await load_live_usable_accounts(self._db, active_only=True)
         primary_phones = {a.phone for a in accounts if a.is_primary}
         result: list[TelegramUserInfo] = []
 
@@ -1475,7 +1480,7 @@ class ClientPool:
 
     async def get_dialogs(self) -> list[dict]:
         """Get list of subscribed channels and groups."""
-        accounts = await self._db.get_accounts(active_only=True)
+        accounts = await load_live_usable_accounts(self._db, active_only=True)
         now = datetime.now(timezone.utc)
         for acc in accounts:
             flood_until = normalize_utc(acc.flood_wait_until)

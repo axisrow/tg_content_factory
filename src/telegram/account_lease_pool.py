@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from src.database import Database
+from src.database.live_accounts import load_live_usable_accounts
 from src.models import Account
 from src.telegram.utils import normalize_utc
 
@@ -27,7 +28,7 @@ class AccountLeasePool:
     async def acquire_available(self, connected_phones: set[str]) -> AccountLease | None:
         async with self._lock:
             now = datetime.now(timezone.utc)
-            accounts = await self._db.get_accounts(active_only=True)
+            accounts = await load_live_usable_accounts(self._db, active_only=True)
 
             # Proactively clear flood_wait_until values that have already expired.
             for account in accounts:
@@ -80,7 +81,7 @@ class AccountLeasePool:
         blocked_phones: set[str] | None = None,
     ) -> AccountLease | None:
         async with self._lock:
-            accounts = await self._db.get_accounts(active_only=True)
+            accounts = await load_live_usable_accounts(self._db, active_only=True)
             blocked_phones = blocked_phones or set()
 
             for account in accounts:
@@ -103,11 +104,11 @@ class AccountLeasePool:
             return None
 
     async def get_connected_accounts(self, connected_phones: set[str]) -> list[Account]:
-        accounts = await self._db.get_accounts(active_only=True)
+        accounts = await load_live_usable_accounts(self._db, active_only=True)
         return [account for account in accounts if account.phone in connected_phones]
 
     async def get_account(self, phone: str, *, active_only: bool = True) -> Account | None:
-        accounts = await self._db.get_accounts(active_only=active_only)
+        accounts = await load_live_usable_accounts(self._db, active_only=active_only)
         for account in accounts:
             if account.phone == phone:
                 return account

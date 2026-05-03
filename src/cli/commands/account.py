@@ -103,7 +103,7 @@ def run(args: argparse.Namespace) -> None:
 
                 await db.set_setting(_pending_key(phone), "")
 
-                existing = await db.get_accounts()
+                existing = await db.get_account_summaries(active_only=False)
                 is_primary = len(existing) == 0
 
                 _, pool = await runtime.init_pool(config, db)
@@ -137,7 +137,7 @@ def run(args: argparse.Namespace) -> None:
                 print(await get_live_account_info_text(ctx, getattr(args, "phone", None) or ""))
                 return
             if args.account_action == "list":
-                accounts = await db.get_accounts()
+                accounts = await db.get_account_summaries(active_only=False)
                 if not accounts:
                     print("No accounts found.")
                     return
@@ -155,7 +155,7 @@ def run(args: argparse.Namespace) -> None:
                         )
                     )
             elif args.account_action == "toggle":
-                accounts = await db.get_accounts()
+                accounts = await db.get_account_summaries(active_only=False)
                 acc = next((a for a in accounts if a.id == args.id), None)
                 if not acc:
                     print(f"Account id={args.id} not found")
@@ -167,7 +167,7 @@ def run(args: argparse.Namespace) -> None:
                 await db.delete_account(args.id)
                 print(f"Deleted account id={args.id}")
             elif args.account_action == "flood-status":
-                accounts = await db.get_accounts()
+                accounts = await db.get_account_summaries(active_only=False)
                 if not accounts:
                     print("No accounts found.")
                     return
@@ -192,7 +192,7 @@ def run(args: argparse.Namespace) -> None:
                             remaining_str = ""
                     print(fmt.format(acc.phone, until_str, remaining_str))
             elif args.account_action == "flood-clear":
-                accounts = await db.get_accounts()
+                accounts = await db.get_account_summaries(active_only=False)
                 acc = next((a for a in accounts if a.phone == args.phone), None)
                 if not acc:
                     print(f"Account {args.phone} not found")

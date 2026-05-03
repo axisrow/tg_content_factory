@@ -32,6 +32,18 @@
 <div class="card mb-4">
     <div class="card-body">
         <p class="mb-2">Команда отправлена в worker и сейчас обрабатывается.</p>
+        <p class="text-muted small mb-2">
+            {% if pending_status == 'running' %}
+            Выполняется {{ pending_elapsed_seconds or 0 }} сек.
+            {% else %}
+            Ожидает worker {{ pending_elapsed_seconds or 0 }} сек.
+            {% endif %}
+        </p>
+        {% if pending_slow %}
+        <div class="alert alert-warning mb-2" role="alert">
+            запрос к Telegram занял слишком много времени, worker завершит его ошибкой.
+        </div>
+        {% endif %}
         <p class="text-muted small mb-0">Страница обновится автоматически, когда команда завершится.</p>
     </div>
 </div>

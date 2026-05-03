@@ -127,6 +127,7 @@ class TestResendCode:
     async def test_resend_code_calls_resend_request(self):
         auth = TelegramAuth(api_id=123, api_hash="abc")
         mock_client = AsyncMock()
+        mock_client.session = SimpleNamespace(save=lambda: "session_str_resend")
         auth._pending["+1234567890"] = (mock_client, "old_hash")
 
         fake_type = FakeSentCodeTypeSms()
@@ -142,6 +143,7 @@ class TestResendCode:
             info = await auth.resend_code("+1234567890")
 
         assert info["phone_code_hash"] == "new_hash"
+        assert info["session_str"] == "session_str_resend"
         assert info["code_type"] == "SMS"
         assert info["next_type"] is None
         assert info["timeout"] == 120

@@ -32,7 +32,7 @@ async def test_get_command_status_redacts_sensitive_payload(client, base_app):
         payload={"phone": "+123", "session_string": "SECRET_SESSION"},
         status=TelegramCommandStatus.SUCCEEDED,
         requested_by="test",
-        result_payload={"phone": "+123", "token": "xxx", "is_premium": True},
+        result_payload={"phone": "+123", "token": "xxx", "session_str": "SECRET_PENDING", "is_premium": True},
     )
     cid = await db.repos.telegram_commands.create_command(cmd)
 
@@ -42,6 +42,7 @@ async def test_get_command_status_redacts_sensitive_payload(client, base_app):
     assert body["payload"]["phone"] == "+123"
     assert body["payload"]["session_string"] == "[REDACTED]"
     assert body["result_payload"]["token"] == "[REDACTED]"
+    assert body["result_payload"]["session_str"] == "[REDACTED]"
     assert body["result_payload"]["is_premium"] is True
 
 

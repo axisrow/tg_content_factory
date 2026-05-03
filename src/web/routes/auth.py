@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -9,6 +10,8 @@ from src.web import deps
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+AUTH_PENDING_WARNING_SECONDS = 30
 
 
 def _render(request: Request, name: str, context: dict):
@@ -24,6 +27,16 @@ async def _auth_command(request: Request):
     if not raw.isdigit():
         return None
     return await deps.telegram_command_service(request).get(int(raw))
+
+
+def _elapsed_seconds(since: datetime | None) -> int:
+    if since is None:
+        return 0
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+    else:
+        since = since.astimezone(timezone.utc)
+    return max(0, int((datetime.now(timezone.utc) - since).total_seconds()))
 
 
 def _auth_redirect(request: Request, command_id: int, *, phone: str = "") -> RedirectResponse:
@@ -44,11 +57,15 @@ async def login_page(request: Request):
         result = command.result_payload or {}
         context["phone"] = payload.get("phone", request.query_params.get("phone", ""))
         if command.status in {TelegramCommandStatus.PENDING, TelegramCommandStatus.RUNNING}:
+            pending_elapsed_seconds = _elapsed_seconds(command.started_at or command.created_at)
             context.update(
                 {
                     "step": "pending",
                     "command_id": command.id,
                     "pending_action": command.command_type,
+                    "pending_status": command.status.value,
+                    "pending_elapsed_seconds": pending_elapsed_seconds,
+                    "pending_slow": pending_elapsed_seconds >= AUTH_PENDING_WARNING_SECONDS,
                 }
             )
         elif command.command_type in {"auth.send_code", "auth.resend_code"}:
