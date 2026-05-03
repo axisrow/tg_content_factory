@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.models import TelegramCommand, TelegramCommandStatus
+from src.services.telegram_command_dispatcher import TelegramCommandDispatcher
 
 
 @pytest.fixture
@@ -63,6 +66,18 @@ async def client_unconfigured(base_app):
     ) as c:
         yield c
 
+
+async def _run_dispatcher_once(db, pool, auth, monkeypatch):
+    dispatcher = TelegramCommandDispatcher(db, pool, auth=auth)
+    original_claim = db.repos.telegram_commands.claim_next_command
+
+    async def claim_once():
+        command = await original_claim()
+        dispatcher._stop_event.set()
+        return command
+
+    monkeypatch.setattr(db.repos.telegram_commands, "claim_next_command", claim_once)
+    await dispatcher._run_loop()
 
 
 @pytest.mark.anyio
@@ -401,6 +416,109 @@ async def test_send_code_returns_code_info(client):
     assert resp.status_code == 200
     text_lower = resp.text.lower()
     assert "code" in text_lower or "код" in text_lower
+
+
+@pytest.mark.anyio
+async def test_send_code_happy_path_dispatcher_result_shows_code_step(client, monkeypatch):
+    """Queued send-code result must persist phone_code_hash for the login page."""
+    app = client._transport.app
+    db = app.state.db
+    pool = app.state.pool
+    auth = app.state.auth
+    auth.send_code = AsyncMock(
+        return_value={
+            "phone_code_hash": "hash_dispatch",
+            "session_str": "session_pending",
+            "code_type": "SMS",
+            "next_type": "звонок",
+            "timeout": 60,
+        }
+    )
+
+    resp = await client.post(
+        "/auth/send-code",
+        data={"phone": "+1234567890"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    command_id = int(resp.headers["location"].split("command_id=", 1)[1].split("&", 1)[0])
+
+    await _run_dispatcher_once(db, pool, auth, monkeypatch)
+
+    command = await db.repos.telegram_commands.get_command(command_id)
+    assert command is not None
+    assert command.status == TelegramCommandStatus.SUCCEEDED
+    assert command.result_payload is not None
+    assert command.result_payload["phone_code_hash"] == "hash_dispatch"
+    assert command.result_payload["session_str"] == "session_pending"
+
+    page = await client.get(f"/auth/login?command_id={command_id}")
+    assert page.status_code == 200
+    assert "Код подтверждения" in page.text
+    assert 'value="hash_dispatch"' in page.text
+
+
+@pytest.mark.anyio
+async def test_send_code_connect_timeout_marks_failed_and_shows_error(client, monkeypatch):
+    """A hanging Telethon connect must fail the command with a visible timeout."""
+    app = client._transport.app
+    db = app.state.db
+    pool = app.state.pool
+    auth = app.state.auth
+    monkeypatch.setattr("src.telegram.auth.AUTH_CONNECT_TIMEOUT_SECONDS", 0.01)
+
+    async def hang_forever():
+        await asyncio.Event().wait()
+
+    mock_client = MagicMock()
+    mock_client.connect = AsyncMock(side_effect=hang_forever)
+    mock_client.disconnect = AsyncMock()
+    mock_client.send_code_request = AsyncMock()
+
+    with patch("src.telegram.auth.TelegramClient", return_value=mock_client):
+        resp = await client.post(
+            "/auth/send-code",
+            data={"phone": "+1234567890"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        command_id = int(resp.headers["location"].split("command_id=", 1)[1].split("&", 1)[0])
+
+        await _run_dispatcher_once(db, pool, auth, monkeypatch)
+
+    command = await db.repos.telegram_commands.get_command(command_id)
+    assert command is not None
+    assert command.status == TelegramCommandStatus.FAILED
+    assert command.error == "telegram_auth_timeout: connect timed out after 0.01s"
+    mock_client.send_code_request.assert_not_awaited()
+
+    page = await client.get(f"/auth/login?command_id={command_id}")
+    assert page.status_code == 200
+    assert "telegram_auth_timeout: connect timed out after 0.01s" in page.text
+
+
+@pytest.mark.anyio
+async def test_login_pending_shows_elapsed_and_slow_warning(client):
+    """Pending auth commands show elapsed time and a slow Telegram warning."""
+    db = client._transport.app.state.db
+    command_id = await db.repos.telegram_commands.create_command(
+        TelegramCommand(
+            command_type="auth.send_code",
+            payload={"phone": "+1234567890"},
+        )
+    )
+    started_at = (datetime.now(timezone.utc) - timedelta(seconds=45)).isoformat()
+    await db.execute(
+        "UPDATE telegram_commands SET status = ?, started_at = ? WHERE id = ?",
+        (TelegramCommandStatus.RUNNING.value, started_at, command_id),
+    )
+    assert db.db is not None
+    await db.db.commit()
+
+    resp = await client.get(f"/auth/login?command_id={command_id}")
+    assert resp.status_code == 200
+    assert "Выполняется" in resp.text
+    assert "запрос к Telegram занял слишком много времени, worker завершит его ошибкой" in resp.text
 
 
 @pytest.mark.anyio

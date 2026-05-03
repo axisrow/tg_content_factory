@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from collections.abc import Awaitable
+from typing import TypeVar
 
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
@@ -26,6 +30,34 @@ from telethon.tl.types.auth import (
 )
 
 logger = logging.getLogger(__name__)
+
+AUTH_CONNECT_TIMEOUT_SECONDS = 30
+AUTH_RPC_TIMEOUT_SECONDS = 60
+
+_T = TypeVar("_T")
+
+
+class TelegramAuthTimeoutError(TimeoutError):
+    """Raised when a Telegram auth operation exceeds its explicit timeout."""
+
+
+def _format_timeout(seconds: float) -> str:
+    if float(seconds).is_integer():
+        return f"{int(seconds)}s"
+    return f"{seconds:g}s"
+
+
+async def _with_auth_timeout(
+    awaitable: Awaitable[_T],
+    operation: str,
+    timeout_seconds: float,
+) -> _T:
+    try:
+        return await asyncio.wait_for(awaitable, timeout=timeout_seconds)
+    except TimeoutError as exc:
+        raise TelegramAuthTimeoutError(
+            f"telegram_auth_timeout: {operation} timed out after {_format_timeout(timeout_seconds)}"
+        ) from exc
 
 
 def _describe_code_type(sent_code_type: object) -> str:
@@ -100,21 +132,41 @@ class TelegramAuth:
 
     async def send_code(self, phone: str) -> dict:
         """Send auth code to phone. Returns dict with hash, type info, timeout."""
+        started_at = time.monotonic()
+        logger.info("auth.send_code start phone=%s", phone)
         await self._disconnect_pending_client(phone)
         client = TelegramClient(StringSession(), self._api_id, self._api_hash)
-        await client.connect()
         try:
-            result = await client.send_code_request(phone)
+            logger.info(
+                "auth.send_code connect start phone=%s timeout_s=%s",
+                phone,
+                AUTH_CONNECT_TIMEOUT_SECONDS,
+            )
+            await _with_auth_timeout(client.connect(), "connect", AUTH_CONNECT_TIMEOUT_SECONDS)
+            logger.info(
+                "auth.send_code rpc start phone=%s rpc=send_code_request timeout_s=%s",
+                phone,
+                AUTH_RPC_TIMEOUT_SECONDS,
+            )
+            result = await _with_auth_timeout(
+                client.send_code_request(phone),
+                "send_code_request",
+                AUTH_RPC_TIMEOUT_SECONDS,
+            )
         except Exception:
             try:
                 await client.disconnect()
             except Exception:
                 logger.warning("Failed to disconnect temporary auth client for %s", phone)
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            logger.exception("auth.send_code error phone=%s duration_ms=%d", phone, duration_ms)
             raise
         self._pending[phone] = (client, result.phone_code_hash)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
         logger.info(
-            "Auth code sent to %s: type=%s, next_type=%s, timeout=%s",
+            "auth.send_code success phone=%s duration_ms=%d code_type=%s next_type=%s timeout=%s",
             phone,
+            duration_ms,
             type(result.type).__name__,
             type(getattr(result, "next_type", None)).__name__,
             getattr(result, "timeout", None),
@@ -129,26 +181,45 @@ class TelegramAuth:
 
     async def resend_code(self, phone: str) -> dict:
         """Resend auth code via next delivery method. Returns same dict as send_code."""
+        started_at = time.monotonic()
+        logger.info("auth.resend_code start phone=%s", phone)
         if phone not in self._pending:
             raise ValueError(f"No pending auth for {phone}. Send code first.")
         client, phone_code_hash = self._pending[phone]
-        result = await client(
-            ResendCodeRequest(
-                phone_number=phone,
-                phone_code_hash=phone_code_hash,
+        try:
+            logger.info(
+                "auth.resend_code rpc start phone=%s rpc=resend_code timeout_s=%s",
+                phone,
+                AUTH_RPC_TIMEOUT_SECONDS,
             )
-        )
+            result = await _with_auth_timeout(
+                client(
+                    ResendCodeRequest(
+                        phone_number=phone,
+                        phone_code_hash=phone_code_hash,
+                    )
+                ),
+                "resend_code",
+                AUTH_RPC_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            logger.exception("auth.resend_code error phone=%s duration_ms=%d", phone, duration_ms)
+            raise
         new_hash = result.phone_code_hash
         self._pending[phone] = (client, new_hash)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
         logger.info(
-            "Auth code resent to %s: type=%s, next_type=%s, timeout=%s",
+            "auth.resend_code success phone=%s duration_ms=%d code_type=%s next_type=%s timeout=%s",
             phone,
+            duration_ms,
             type(result.type).__name__,
             type(getattr(result, "next_type", None)).__name__,
             getattr(result, "timeout", None),
         )
         return {
             "phone_code_hash": new_hash,
+            "session_str": client.session.save(),
             "code_type": _describe_code_type(result.type),
             "next_type": _describe_next_type(getattr(result, "next_type", None)),
             "timeout": getattr(result, "timeout", None),
@@ -162,6 +233,8 @@ class TelegramAuth:
         password_2fa: str | None = None,
     ) -> str:
         """Verify code and return session string."""
+        started_at = time.monotonic()
+        logger.info("auth.verify_code start phone=%s", phone)
         if phone not in self._pending:
             raise ValueError(f"No pending auth for {phone}. Send code first.")
 
@@ -172,13 +245,35 @@ class TelegramAuth:
         needs_2fa = False
         try:
             try:
-                await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+                logger.info(
+                    "auth.verify_code rpc start phone=%s rpc=sign_in timeout_s=%s",
+                    phone,
+                    AUTH_RPC_TIMEOUT_SECONDS,
+                )
+                await _with_auth_timeout(
+                    client.sign_in(phone, code, phone_code_hash=phone_code_hash),
+                    "sign_in",
+                    AUTH_RPC_TIMEOUT_SECONDS,
+                )
             except SessionPasswordNeededError:
                 if not password_2fa:
                     needs_2fa = True
                     raise ValueError("2FA password required")
-                await client.sign_in(password=password_2fa)
+                logger.info(
+                    "auth.verify_code rpc start phone=%s rpc=sign_in_2fa timeout_s=%s",
+                    phone,
+                    AUTH_RPC_TIMEOUT_SECONDS,
+                )
+                await _with_auth_timeout(
+                    client.sign_in(password=password_2fa),
+                    "sign_in",
+                    AUTH_RPC_TIMEOUT_SECONDS,
+                )
             session_string = client.session.save()
+        except Exception:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            logger.exception("auth.verify_code error phone=%s duration_ms=%d", phone, duration_ms)
+            raise
         finally:
             if not needs_2fa:
                 del self._pending[phone]
@@ -187,7 +282,8 @@ class TelegramAuth:
                 except Exception:
                     logger.warning("Failed to disconnect temporary auth client for %s", phone)
 
-        logger.info("Successfully authenticated %s", phone)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        logger.info("auth.verify_code success phone=%s duration_ms=%d", phone, duration_ms)
         return session_string
 
     async def sign_in_fresh(
@@ -204,27 +300,66 @@ class TelegramAuth:
         Pass session_str from the send_code result to reuse the same MTProto session —
         required because Telegram binds phone_code_hash to the session that sent the request.
         """
+        started_at = time.monotonic()
+        logger.info("auth.sign_in_fresh start phone=%s", phone)
         client = TelegramClient(StringSession(session_str), self._api_id, self._api_hash)
-        await client.connect()
         try:
+            logger.info(
+                "auth.sign_in_fresh connect start phone=%s timeout_s=%s",
+                phone,
+                AUTH_CONNECT_TIMEOUT_SECONDS,
+            )
+            await _with_auth_timeout(client.connect(), "connect", AUTH_CONNECT_TIMEOUT_SECONDS)
             if code_consumed:
                 if not password_2fa:
                     raise ValueError("2FA password required")
-                await client.sign_in(password=password_2fa)
+                logger.info(
+                    "auth.sign_in_fresh rpc start phone=%s rpc=sign_in_2fa timeout_s=%s",
+                    phone,
+                    AUTH_RPC_TIMEOUT_SECONDS,
+                )
+                await _with_auth_timeout(
+                    client.sign_in(password=password_2fa),
+                    "sign_in",
+                    AUTH_RPC_TIMEOUT_SECONDS,
+                )
             else:
                 try:
-                    await client.sign_in(phone, code, phone_code_hash=phone_code_hash)
+                    logger.info(
+                        "auth.sign_in_fresh rpc start phone=%s rpc=sign_in timeout_s=%s",
+                        phone,
+                        AUTH_RPC_TIMEOUT_SECONDS,
+                    )
+                    await _with_auth_timeout(
+                        client.sign_in(phone, code, phone_code_hash=phone_code_hash),
+                        "sign_in",
+                        AUTH_RPC_TIMEOUT_SECONDS,
+                    )
                 except SessionPasswordNeededError:
                     if not password_2fa:
                         raise ValueError("2FA password required")
-                    await client.sign_in(password=password_2fa)
+                    logger.info(
+                        "auth.sign_in_fresh rpc start phone=%s rpc=sign_in_2fa timeout_s=%s",
+                        phone,
+                        AUTH_RPC_TIMEOUT_SECONDS,
+                    )
+                    await _with_auth_timeout(
+                        client.sign_in(password=password_2fa),
+                        "sign_in",
+                        AUTH_RPC_TIMEOUT_SECONDS,
+                    )
             session_string = client.session.save()
+        except Exception:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            logger.exception("auth.sign_in_fresh error phone=%s duration_ms=%d", phone, duration_ms)
+            raise
         finally:
             try:
                 await client.disconnect()
             except Exception:
                 logger.warning("Failed to disconnect fresh auth client for %s", phone)
-        logger.info("Successfully authenticated %s", phone)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        logger.info("auth.sign_in_fresh success phone=%s duration_ms=%d", phone, duration_ms)
         return session_string
 
     async def create_client_from_session(self, session_string: str) -> TelegramClient:

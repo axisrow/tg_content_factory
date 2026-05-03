@@ -81,6 +81,9 @@ class AccountBundle:
     async def list_accounts(self, active_only: bool = False) -> list[Account]:
         return await self.accounts.get_accounts(active_only)
 
+    async def list_live_usable_accounts(self, active_only: bool = False) -> list[Account]:
+        return await self.accounts.get_live_usable_accounts(active_only)
+
     async def list_account_summaries(self, active_only: bool = False) -> list[AccountSummary]:
         return await self.accounts.get_account_summaries(active_only)
 

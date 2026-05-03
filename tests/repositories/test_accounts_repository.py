@@ -160,6 +160,56 @@ async def test_get_accounts_wrong_key_still_fails_for_live_use(repo_with_cipher)
         await wrong_key_repo.get_accounts()
 
 
+async def test_get_live_usable_accounts_skips_degraded_rows(repo_with_cipher):
+    runtime_cipher = SessionCipher("runtime-key")
+    bad_cipher = SessionCipher("other-key")
+    await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
+        ("+10000000001", bad_cipher.encrypt("bad-session")),
+    )
+    await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 1, 1)",
+        ("+10000000002", runtime_cipher.encrypt("good-session")),
+    )
+    await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
+        ("+10000000003", "enc:v999:unsupported"),
+    )
+    await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
+        ("+10000000004", "plaintext-session"),
+    )
+    await repo_with_cipher._db.commit()
+
+    runtime_repo = AccountsRepository(repo_with_cipher._db, session_cipher=runtime_cipher)
+
+    accounts = await runtime_repo.get_live_usable_accounts(active_only=True)
+
+    assert [account.phone for account in accounts] == ["+10000000002", "+10000000004"]
+    assert accounts[0].session_string == "good-session"
+    assert accounts[1].session_string == "plaintext-session"
+
+
+async def test_get_live_usable_accounts_returns_empty_when_all_degraded(repo_with_cipher):
+    bad_cipher = SessionCipher("other-key")
+    await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
+        ("+10000000001", bad_cipher.encrypt("bad-session")),
+    )
+    await repo_with_cipher._db.execute(
+        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
+        ("+10000000002", "enc:v999:unsupported"),
+    )
+    await repo_with_cipher._db.commit()
+
+    runtime_repo = AccountsRepository(
+        repo_with_cipher._db,
+        session_cipher=SessionCipher("runtime-key"),
+    )
+
+    assert await runtime_repo.get_live_usable_accounts(active_only=True) == []
+
+
 async def test_get_accounts_handles_plaintext_when_cipher_set(repo_with_cipher):
     """Test that plaintext sessions work when cipher is configured."""
     # Insert plaintext directly
