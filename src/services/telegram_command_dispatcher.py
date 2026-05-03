@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,16 @@ class TelegramCommandDispatcher:
             if command is None:
                 await asyncio.sleep(1.0)
                 continue
+            started_at = time.monotonic()
+            is_auth_command = command.command_type.startswith("auth.")
+            phone = str(command.payload.get("phone", "")).strip()
+            if is_auth_command:
+                logger.info(
+                    "telegram_auth_command start command_id=%s command_type=%s phone=%s",
+                    command.id,
+                    command.command_type,
+                    phone,
+                )
             try:
                 result = await self._dispatch(command.command_type, command.payload)
             except asyncio.CancelledError:
@@ -75,7 +86,18 @@ class TelegramCommandDispatcher:
                 )
                 raise
             except Exception as exc:
-                logger.exception("Telegram command failed: id=%s type=%s", command.id, command.command_type)
+                duration_ms = int((time.monotonic() - started_at) * 1000)
+                if is_auth_command:
+                    logger.exception(
+                        "telegram_auth_command error command_id=%s command_type=%s phone=%s duration_ms=%d error=%s",
+                        command.id,
+                        command.command_type,
+                        phone,
+                        duration_ms,
+                        str(exc),
+                    )
+                else:
+                    logger.exception("Telegram command failed: id=%s type=%s", command.id, command.command_type)
                 await self._db.repos.telegram_commands.update_command(
                     command.id,
                     status=TelegramCommandStatus.FAILED,
@@ -83,6 +105,15 @@ class TelegramCommandDispatcher:
                     payload=command.payload,
                 )
             else:
+                if is_auth_command:
+                    duration_ms = int((time.monotonic() - started_at) * 1000)
+                    logger.info(
+                        "telegram_auth_command success command_id=%s command_type=%s phone=%s duration_ms=%d",
+                        command.id,
+                        command.command_type,
+                        phone,
+                        duration_ms,
+                    )
                 await self._db.repos.telegram_commands.update_command(
                     command.id,
                     status=TelegramCommandStatus.SUCCEEDED,
