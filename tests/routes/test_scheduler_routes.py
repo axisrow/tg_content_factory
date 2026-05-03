@@ -239,6 +239,61 @@ async def test_scheduler_shows_collector_health_card_when_all_accounts_flooded(c
 
 
 @pytest.mark.anyio
+async def test_scheduler_overload_running_is_warning_not_flood_blocker(client):
+    db = client._transport.app.state.db
+    pool = client._transport.app.state.pool
+    collector = client._transport.app.state.collector
+    scheduler = client._transport.app.state.scheduler
+    pool.clients = {"+1234567890": MagicMock()}
+    collector._running = True
+    scheduler.update_interval(15)
+    for i in range(101, 317):
+        await db.add_channel(Channel(channel_id=i, title=f"Channel {i}"))
+    task_id = await db.create_collection_task(channel_id=100, channel_title="Running Channel")
+    await db.update_collection_task(task_id, CollectionTaskStatus.RUNNING, messages_collected=12)
+    old_note = "Flood Wait: account +1234567890 unavailable"
+    for i in range(2):
+        old_task_id = await db.create_collection_task(channel_id=200 + i, channel_title=f"Old {i}")
+        await db.update_collection_task(old_task_id, CollectionTaskStatus.COMPLETED, note=old_note)
+
+    resp = await client.get("/scheduler/")
+
+    assert resp.status_code == 200
+    assert "Риск перегрузки" in resp.text
+    assert "border-warning" in resp.text
+    assert "border-danger" not in resp.text
+    assert "Сейчас собирается:" in resp.text
+    assert "Running Channel" in resp.text
+    assert "собрано 12 сообщений" in resp.text
+    assert "Недавние события недоступности" in resp.text
+    assert "×2" in resp.text
+    active_flood_reason = (
+        "Почему сейчас не собираем:</strong> доступных аккаунтов нет или их недостаточно. Flood Wait активен"
+    )
+    assert active_flood_reason not in resp.text
+
+
+@pytest.mark.anyio
+async def test_scheduler_all_flooded_keeps_danger_current_reason(client):
+    db = client._transport.app.state.db
+    pool = client._transport.app.state.pool
+    pool.clients = {"+1234567890": MagicMock()}
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    for acc in await db.get_accounts(active_only=False):
+        await db.update_account_flood(acc.phone, future)
+
+    resp = await client.get("/scheduler/")
+
+    assert resp.status_code == 200
+    assert "border-danger" in resp.text
+    assert "Все аккаунты во Flood Wait" in resp.text
+    active_flood_reason = (
+        "Почему сейчас не собираем:</strong> доступных аккаунтов нет или их недостаточно. Flood Wait активен"
+    )
+    assert active_flood_reason in resp.text
+
+
+@pytest.mark.anyio
 async def test_scheduler_shows_interval(client):
     """Test scheduler page shows collection interval."""
     resp = await client.get("/scheduler/")

@@ -73,24 +73,12 @@
 </div>
 
 {% if collector_health.state != 'healthy' or collector_health.load_level != 'ok' %}
-<div class="card mb-4 border-{% if collector_health.state in ['worker_down', 'all_flooded', 'no_clients', 'session_degraded'] or collector_health.load_level == 'overload' %}danger{% else %}warning{% endif %}">
+<div class="card mb-4 border-{{ collector_health.health_border_severity }}">
     <div class="card-header fw-semibold">
         Здоровье коллектора
-        {% if collector_health.state == 'worker_down' %}
-        <span class="badge text-bg-danger ms-2">Telegram-воркер не запущен</span>
-        {% elif collector_health.state == 'all_flooded' %}
-        <span class="badge text-bg-danger ms-2">Все аккаунты во Flood Wait</span>
-        {% elif collector_health.state == 'no_clients' %}
-        <span class="badge text-bg-danger ms-2">Нет доступных клиентов</span>
-        {% elif collector_health.state == 'session_degraded' %}
-        <span class="badge text-bg-danger ms-2">SESSION_ENCRYPTION_KEY не подходит</span>
-        {% elif collector_health.state == 'degraded' %}
-        <span class="badge text-bg-warning ms-2">Частичная деградация</span>
-        {% endif %}
-        {% if collector_health.load_level == 'overload' %}
-        <span class="badge text-bg-danger ms-1">Перегрузка</span>
-        {% elif collector_health.load_level == 'high' %}
-        <span class="badge text-bg-warning ms-1">Высокая нагрузка</span>
+        <span class="badge text-bg-{{ collector_health.current_status_severity }} ms-2">{{ collector_health.current_status_label }}</span>
+        {% if collector_health.load_level != 'ok' %}
+        <span class="badge text-bg-{{ collector_health.load_severity }} ms-1">{{ collector_health.load_label }}</span>
         {% endif %}
     </div>
     <div class="card-body">
@@ -102,6 +90,16 @@
                 {% if collector_health.session_degraded_accounts %}
                 <div><strong>{{ collector_health.session_degraded_accounts }}</strong> требуют ключ</div>
                 {% endif %}
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="small text-muted">Очередь</div>
+                <div><strong>{{ collector_health.queue_pending_count }}</strong> ожидает</div>
+                <div class="small">{{ collector_health.current_status_detail }}</div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="small text-muted">Нагрузка</div>
+                <div><strong>{{ collector_health.active_unfiltered_channels }}</strong> активных каналов</div>
+                <div class="small">{{ collector_health.capacity_label }}</div>
             </div>
             <div class="col-6 col-md-3">
                 <div class="small text-muted">Flood Wait</div>
@@ -117,17 +115,11 @@
                 </div>
                 {% endif %}
             </div>
-            <div class="col-6 col-md-3">
-                <div class="small text-muted">Нагрузка</div>
-                <div><strong>{{ collector_health.active_unfiltered_channels }}</strong> активных каналов</div>
-                <div class="small">Интервал: {{ collector_health.collect_interval_minutes }} мин</div>
-            </div>
-            <div class="col-6 col-md-3">
-                <div class="small text-muted">Симптом</div>
-                <div><strong>{{ collector_health.recent_zero_collect_count }}</strong> недавних задач с нулевым результатом</div>
-                <div class="small">{% if collector_health.is_running %}Коллектор занят{% else %}Коллектор ждёт{% endif %}</div>
-            </div>
         </div>
+
+        {% if collector_health.is_running and collector_health.running_task_title %}
+        <p class="mb-2"><strong>Сейчас собирается:</strong> {{ collector_health.running_task_title }}, собрано {{ collector_health.running_task_messages_collected }} сообщений; остальные задачи ждут.</p>
+        {% endif %}
 
         {% if collector_health.state == 'worker_down' %}
         <p class="mb-2"><strong>Почему сейчас не собираем:</strong> веб-процесс принимает задачи и пишет их в БД, но Telegram-коннекты держит отдельный воркер-процесс — он сейчас не запущен (нет свежего heartbeat в <code>runtime_snapshots</code>). Задачи из <code>collection_tasks</code> копятся в статусе <em>pending</em>, но никто их не исполняет.</p>
@@ -142,7 +134,7 @@
         <p class="mb-2"><strong>Почему сейчас не собираем:</strong> активные Telegram-сессии сохранены, но не расшифровываются текущим <code>SESSION_ENCRYPTION_KEY</code>. Live-операции заблокированы до восстановления ключа или повторного входа.</p>
         {% endif %}
 
-        {% if collector_health.flooded_accounts %}
+        {% if collector_health.state == 'all_flooded' and collector_health.flooded_accounts %}
         <p class="mb-2"><strong>Почему сейчас не собираем:</strong> доступных аккаунтов нет или их недостаточно. Flood Wait активен для:
         {% for item in collector_health.flooded_accounts %}
             <code>{{ item.phone }}</code>{% if not loop.last %}, {% endif %}
@@ -160,10 +152,10 @@
         {% endif %}
 
         {% if collector_health.recent_unavailability_events %}
-        <p class="mb-1"><strong>Последние причины недоступности:</strong></p>
+        <p class="mb-1"><strong>Недавние события недоступности:</strong></p>
         <ul class="mb-0">
             {% for item in collector_health.recent_unavailability_events %}
-            <li><small>{{ item }}</small></li>
+            <li><small>{{ item["message"] }}{% if item["count"] > 1 %} ×{{ item["count"] }}{% endif %}</small></li>
             {% endfor %}
         </ul>
         {% endif %}
