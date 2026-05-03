@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from src.database import Database
 from src.database.bundles import ChannelBundle
@@ -23,9 +23,11 @@ class CollectionQueue:
     # How often the worker re-checks the DB for new PENDING channel-collect tasks
     # written by the web container in split / embedded-worker setups (#491 follow-up).
     DB_PULL_INTERVAL_SEC = 3.0
+    NO_CLIENTS_RETRY_DELAY_SEC = 120
     GRACEFUL_SHUTDOWN_TIMEOUT_SEC = 120.0
     FORCE_CANCEL_TIMEOUT_SEC = 10.0
     SHUTDOWN_REQUEUE_NOTE = "Остановка сервиса во время сбора; задача будет продолжена после запуска."
+    NO_CLIENTS_REQUEUE_NOTE = "Отложено: нет подключённых активных аккаунтов для сбора."
 
     def __init__(self, collector: Collector, channels: ChannelBundle | Database):
         self._collector = collector
@@ -227,6 +229,7 @@ class CollectionQueue:
                 self._queue.task_done()
                 continue
 
+            stop_after_no_clients = False
             try:
                 self._current_task_id = task_id
                 await self._channels.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
@@ -316,17 +319,27 @@ class CollectionQueue:
                     channel.channel_id,
                     run_after.isoformat(),
                 )
-            except NoActiveCollectionClientsError as exc:
-                self._retried_tasks.discard(task_id)
-                await self._channels.update_collection_task(
-                    task_id,
-                    CollectionTaskStatus.FAILED,
-                    error=str(exc)[:500],
-                    note="Нет подключённых активных аккаунтов для сбора.",
+            except NoActiveCollectionClientsError:
+                run_after = datetime.now(timezone.utc) + timedelta(
+                    seconds=self.NO_CLIENTS_RETRY_DELAY_SEC
                 )
-                logger.error(
-                    "Collection failed for channel %d: no active connected clients",
+                self._retried_tasks.discard(task_id)
+                await self._channels.reschedule_collection_task(
+                    task_id,
+                    run_after=run_after,
+                    note=self.NO_CLIENTS_REQUEUE_NOTE,
+                )
+                drained_task_ids = self._drain_memory_queue()
+                for drained_task_id in drained_task_ids:
+                    self._known_task_ids.discard(drained_task_id)
+                stop_after_no_clients = True
+                logger.warning(
+                    "Deferred collection task %d for channel %d until %s: no active connected clients; "
+                    "left %d queued task(s) pending in DB",
+                    task_id,
                     channel.channel_id,
+                    run_after.isoformat(),
+                    len(drained_task_ids),
                 )
             except ConnectionError as exc:
                 requeued = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
@@ -352,6 +365,8 @@ class CollectionQueue:
                 self._current_task_id = None
                 self._known_task_ids.discard(task_id)
                 self._queue.task_done()
+                if stop_after_no_clients:
+                    break
 
     async def _reset_task_to_pending_after_shutdown(self, task_id: int) -> None:
         reset = getattr(self._channels, "reset_collection_task_to_pending", None)
@@ -404,6 +419,17 @@ class CollectionQueue:
         `_known_task_ids` so tasks already sitting in the queue or scheduled
         for delayed requeue are not pushed twice.
         """
+        availability_getter = getattr(self._collector, "get_collection_availability", None)
+        if callable(availability_getter):
+            availability = availability_getter()
+            if asyncio.iscoroutine(availability):
+                availability = await availability
+            if getattr(availability, "state", None) == "no_connected_active":
+                logger.warning(
+                    "[collection-queue] Pending-task ingest throttled: no active connected clients"
+                )
+                return 0
+
         pending = await self._channels.get_pending_channel_tasks()
         count = 0
         for task in pending:
@@ -505,15 +531,15 @@ class CollectionQueue:
             except asyncio.TimeoutError:
                 continue
 
-    def _drain_memory_queue(self) -> int:
-        drained = 0
+    def _drain_memory_queue(self) -> set[int]:
+        drained: set[int] = set()
         while True:
             try:
-                self._queue.get_nowait()
+                queued_task_id, *_ = self._queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
             self._queue.task_done()
-            drained += 1
+            drained.add(queued_task_id)
         return drained
 
     async def _cancel_delayed_requeues(self) -> None:
@@ -576,7 +602,7 @@ class CollectionQueue:
         if drained:
             logger.info(
                 "Left %d queued collection task(s) pending in DB for the next worker start",
-                drained,
+                len(drained),
             )
         if self._current_task_id is not None:
             try:

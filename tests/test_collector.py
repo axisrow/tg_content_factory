@@ -1306,9 +1306,10 @@ async def test_collection_queue_fails_when_no_active_clients(db):
 
     task = await db.get_collection_task(task_id)
     assert task is not None
-    assert task.status == CollectionTaskStatus.FAILED
-    assert task.error == "No active connected clients"
-    assert task.note == "Нет подключённых активных аккаунтов для сбора."
+    assert task.status == CollectionTaskStatus.PENDING
+    assert task.error is None
+    assert task.note == "Отложено: нет подключённых активных аккаунтов для сбора."
+    assert task.run_after is not None
 
     await queue.shutdown()
 
@@ -1337,8 +1338,10 @@ async def test_requeue_startup_tasks(db):
     await asyncio.sleep(0.5)
 
     task = await db.get_collection_task(task_id)
-    # Task was picked up: either completed (0 messages) or failed
-    assert task.status in ("completed", "failed")
+    # Task was picked up but deferred because no client is currently connected.
+    assert task.status == CollectionTaskStatus.PENDING
+    assert task.note == "Отложено: нет подключённых активных аккаунтов для сбора."
+    assert task.run_after is not None
 
     await queue.shutdown()
 

@@ -67,6 +67,38 @@ def _compute_load_level(
     return "ok"
 
 
+def _current_status_presentation(state: str, *, is_running: bool) -> tuple[str, str, str]:
+    if state == "worker_down":
+        return "Telegram-воркер не запущен", "Задачи копятся в БД, но воркер их не исполняет.", "danger"
+    if state == "all_flooded":
+        return "Все аккаунты во Flood Wait", "Сбор заблокирован до ближайшего окна доступности.", "danger"
+    if state == "no_clients":
+        return "Нет доступных клиентов", "Нет подключенного активного Telegram-аккаунта для сбора.", "danger"
+    if state == "session_degraded":
+        return "SESSION_ENCRYPTION_KEY не подходит", "Активные сессии не расшифровываются текущим ключом.", "danger"
+    if state == "degraded":
+        return "Частичная деградация", "Часть аккаунтов временно ограничена, но сбор может продолжаться.", "warning"
+    if is_running:
+        return "Сбор идёт", "Коллектор выполняет текущую задачу.", "success"
+    return "Коллектор ждёт", "Блокеров сбора сейчас нет.", "success"
+
+
+def _load_presentation(load_level: str) -> tuple[str, str]:
+    if load_level == "overload":
+        return "Риск перегрузки", "warning"
+    if load_level == "high":
+        return "Высокая нагрузка", "warning"
+    return "Нагрузка в норме", "success"
+
+
+def _collector_health_border_severity(*, state: str, load_level: str) -> str:
+    if state in {"worker_down", "all_flooded", "no_clients", "session_degraded"}:
+        return "danger"
+    if state == "degraded" or load_level in {"high", "overload"}:
+        return "warning"
+    return "success"
+
+
 def _collector_health_recommendations(
     *,
     state: str,
@@ -74,6 +106,8 @@ def _collector_health_recommendations(
     interval_minutes: int,
     active_unfiltered_channels: int,
     available_accounts_now: int,
+    is_running: bool = False,
+    pending_count: int = 0,
 ) -> list[str]:
     recommendations: list[str] = []
     if state == "worker_down":
@@ -100,7 +134,46 @@ def _collector_health_recommendations(
         )
     if available_accounts_now <= 1:
         recommendations.append("Добавить ещё Telegram-аккаунты, чтобы распределить нагрузку по чтению.")
+    if is_running and pending_count > 0:
+        recommendations.append(
+            "Дождаться завершения текущего первичного сбора; "
+            "не запускать collect-all вручную, пока очередь не разгребётся."
+        )
     return recommendations
+
+
+def _dedupe_recent_unavailability_events(recent_tasks) -> list[dict[str, object]]:
+    events: dict[str, dict[str, object]] = {}
+    for task in recent_tasks:
+        message = ""
+        if task.note and "Flood Wait" in task.note:
+            message = task.note
+        elif task.note and "нет подключённых активных аккаунтов" in task.note:
+            message = task.note
+        elif task.error and "No active connected clients" in task.error:
+            message = task.error
+        if not message:
+            continue
+        item = events.setdefault(message, {"message": message, "count": 0, "latest_at": None})
+        item["count"] = int(item["count"]) + 1
+        occurred_at = _as_utc_datetime(task.completed_at or task.started_at or task.created_at)
+        if occurred_at is not None:
+            latest_at = item["latest_at"]
+            if latest_at is None or occurred_at > latest_at:
+                item["latest_at"] = occurred_at
+    return sorted(
+        events.values(),
+        key=lambda item: item["latest_at"] or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )[:5]
+
+
+def _as_utc_datetime(value) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 async def _worker_status(db) -> tuple[bool, str]:
@@ -190,11 +263,16 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         and task.status == "completed"
         and task.messages_collected == 0
     )
-    recent_unavailability_events = [
-        task.note or task.error or ""
-        for task in recent_tasks
-        if (task.note and "Flood Wait" in task.note) or (task.error and "No active connected clients" in task.error)
-    ][:5]
+    recent_unavailability_events = _dedupe_recent_unavailability_events(recent_tasks)
+    pending_channel_tasks = await db.get_pending_channel_tasks()
+    running_task = next(
+        (
+            task
+            for task in recent_tasks
+            if task.task_type.value == "channel_collect" and task.status.value == "running"
+        ),
+        None,
+    )
 
     state = "healthy"
     if not worker_alive:
@@ -216,6 +294,20 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         active_unfiltered_channels=active_unfiltered_channels,
         available_accounts_now=available_accounts_now,
         state=state,
+    )
+    current_status_label, current_status_detail, current_status_severity = _current_status_presentation(
+        state, is_running=collector.is_running
+    )
+    load_label, load_severity = _load_presentation(load_level)
+    capacity_accounts = max(1, available_accounts_now)
+    channels_per_account = active_unfiltered_channels // capacity_accounts
+    capacity_label = (
+        f"{active_unfiltered_channels} каналов на {capacity_accounts} "
+        f"{'аккаунт' if capacity_accounts == 1 else 'аккаунта'}, интервал {interval_minutes} мин"
+    )
+    capacity_detail = (
+        f"Около {channels_per_account} каналов на доступный аккаунт; "
+        f"в очереди {len(pending_channel_tasks)} задач."
     )
     # Compute retry_after_sec from next_available_at if available
     computed_retry_after_sec = availability_retry_after
@@ -243,7 +335,20 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
             interval_minutes=interval_minutes,
             active_unfiltered_channels=active_unfiltered_channels,
             available_accounts_now=available_accounts_now,
+            is_running=collector.is_running,
+            pending_count=len(pending_channel_tasks),
         ),
+        "current_status_label": current_status_label,
+        "current_status_detail": current_status_detail,
+        "current_status_severity": current_status_severity,
+        "health_border_severity": _collector_health_border_severity(state=state, load_level=load_level),
+        "load_label": load_label,
+        "load_severity": load_severity,
+        "capacity_label": capacity_label,
+        "capacity_detail": capacity_detail,
+        "queue_pending_count": len(pending_channel_tasks),
+        "running_task_title": running_task.channel_title if running_task else "",
+        "running_task_messages_collected": running_task.messages_collected if running_task else 0,
         "recent_zero_collect_count": recent_zero_collect_count,
         "recent_unavailability_events": recent_unavailability_events,
         "is_running": collector.is_running,

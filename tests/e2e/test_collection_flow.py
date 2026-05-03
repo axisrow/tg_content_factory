@@ -21,6 +21,7 @@ import asyncio
 import base64
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -150,6 +151,9 @@ async def test_trigger_collection_persists_messages_via_embedded_worker(tmp_path
     with patch(
         "src.telegram.collector.Collector.collect_single_channel",
         new=_fake_collect_single_channel,
+    ), patch(
+        "src.telegram.collector.Collector.get_collection_availability",
+        return_value=SimpleNamespace(state="available"),
     ):
         async with _serve_app(tmp_path, embed_worker=True) as (client, config):
             resp = await client.post("/scheduler/trigger")
