@@ -22,7 +22,7 @@ from src.config import AppConfig
 from src.services.agent_provider_service import (
     MODEL_CACHE_SETTINGS_KEY,
     PROVIDER_SETTINGS_KEY,
-    AgentProviderService,
+    ProviderConfigService,
     ProviderModelCacheEntry,
     ProviderModelCompatibilityRecord,
 )
@@ -32,7 +32,7 @@ from src.services.agent_provider_service import (
 async def test_provider_configs_are_encrypted_in_settings(db):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     await service.save_provider_configs(
         [
@@ -60,7 +60,7 @@ async def test_provider_configs_are_encrypted_in_settings(db):
 async def test_load_provider_configs_tolerates_undecryptable_secrets(db):
     write_config = AppConfig()
     write_config.security.session_encryption_key = "provider-secret"
-    writer = AgentProviderService(db, write_config)
+    writer = ProviderConfigService(db, write_config)
     await writer.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -75,7 +75,7 @@ async def test_load_provider_configs_tolerates_undecryptable_secrets(db):
 
     read_config = AppConfig()
     read_config.security.session_encryption_key = "different-secret"
-    reader = AgentProviderService(db, read_config)
+    reader = ProviderConfigService(db, read_config)
 
     loaded = await reader.load_provider_configs()
 
@@ -90,7 +90,7 @@ async def test_load_provider_configs_tolerates_undecryptable_secrets(db):
 async def test_save_provider_configs_preserves_encrypted_secret_after_decrypt_failure(db, caplog):
     write_config = AppConfig()
     write_config.security.session_encryption_key = "provider-secret"
-    writer = AgentProviderService(db, write_config)
+    writer = ProviderConfigService(db, write_config)
     await writer.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -105,7 +105,7 @@ async def test_save_provider_configs_preserves_encrypted_secret_after_decrypt_fa
 
     read_config = AppConfig()
     read_config.security.session_encryption_key = "different-secret"
-    reader = AgentProviderService(db, read_config)
+    reader = ProviderConfigService(db, read_config)
     with caplog.at_level(logging.DEBUG, logger="src.services.agent_provider_service"):
         loaded = await reader.load_provider_configs()
     await reader.save_provider_configs(loaded)
@@ -126,7 +126,7 @@ async def test_save_provider_configs_preserves_encrypted_secret_after_decrypt_fa
 async def test_refresh_models_uses_static_cache_on_live_fetch_failure(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     async def _broken_fetch(spec, cfg):
         raise RuntimeError("upstream unavailable")
@@ -145,7 +145,7 @@ async def test_refresh_models_uses_static_cache_on_live_fetch_failure(db, monkey
 async def test_refresh_models_uses_live_source_on_success(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     async def _live_fetch(spec, cfg):
         return ["gpt-4.1", "gpt-4.1-mini"]
@@ -160,7 +160,7 @@ async def test_refresh_models_uses_live_source_on_success(db, monkeypatch):
 
 @pytest.mark.anyio
 async def test_fetch_google_genai_models_uses_api_key_header(db, monkeypatch):
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
     captured: dict[str, object] = {}
 
     async def _fake_fetch_json(url: str, headers: dict[str, str] | None = None):
@@ -181,7 +181,7 @@ async def test_fetch_google_genai_models_uses_api_key_header(db, monkeypatch):
 async def test_refresh_all_models_only_refreshes_configured_providers(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -211,7 +211,7 @@ async def test_refresh_all_models_only_refreshes_configured_providers(db, monkey
 
 
 def test_validate_provider_config_returns_error_for_unknown_provider(db):
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
     cfg = ProviderRuntimeConfig(
         provider="unknown",
         enabled=True,
@@ -237,7 +237,7 @@ async def test_load_model_cache_supports_legacy_entries_without_compatibility(db
             }
         ),
     )
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
 
     cache = await service.load_model_cache()
 
@@ -250,7 +250,7 @@ async def test_load_model_cache_supports_legacy_entries_without_compatibility(db
 async def test_ensure_model_compatibility_reuses_fresh_cached_result(db):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     cfg = ProviderRuntimeConfig(
         provider="openai",
         enabled=True,
@@ -291,7 +291,7 @@ async def test_ensure_model_compatibility_reuses_fresh_cached_result(db):
 async def test_ensure_model_compatibility_force_bypasses_cached_result(db):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     cfg = ProviderRuntimeConfig(
         provider="openai",
         enabled=True,
@@ -343,7 +343,7 @@ async def test_ensure_model_compatibility_force_bypasses_cached_result(db):
 
 
 def test_compatibility_error_ignores_stale_unsupported_result(db):
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
     cfg = ProviderRuntimeConfig(
         provider="openai",
         enabled=True,
@@ -372,7 +372,7 @@ def test_compatibility_error_ignores_stale_unsupported_result(db):
 
 
 def test_config_fingerprint_depends_on_routing_fields(db):
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
     cfg_local = ProviderRuntimeConfig(
         provider="ollama",
         enabled=True,
@@ -396,7 +396,7 @@ def test_config_fingerprint_depends_on_routing_fields(db):
 async def test_fetch_ollama_models_supports_cloud_api_key(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     captured: dict[str, object] = {}
 
     async def _fake_fetch_json(url: str, headers=None):
@@ -417,7 +417,7 @@ async def test_fetch_ollama_models_supports_cloud_api_key(db, monkeypatch):
 async def test_fetch_ollama_models_normalizes_cloud_api_base_url(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     captured: dict[str, object] = {}
 
     async def _fake_fetch_json(url: str, headers=None):
@@ -438,7 +438,7 @@ async def test_fetch_ollama_models_normalizes_cloud_api_base_url(db, monkeypatch
 async def test_fetch_ollama_models_normalizes_local_api_base_url(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     captured: dict[str, object] = {}
 
     async def _fake_fetch_json(url: str, headers=None):
@@ -462,7 +462,7 @@ async def test_agent_manager_prefers_db_provider_configs_over_legacy_env(db, mon
     config.agent.fallback_model = "anthropic:claude-sonnet-4-6"
     config.agent.fallback_api_key = "legacy-key"
 
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -509,7 +509,7 @@ async def test_agent_manager_falls_back_to_legacy_env_when_db_provider_is_unsupp
     config.agent.fallback_model = "anthropic:claude-sonnet-4-6"
     config.agent.fallback_api_key = "legacy-key"
 
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     openai_cfg = ProviderRuntimeConfig(
         provider="openai",
         enabled=True,
@@ -578,7 +578,7 @@ async def test_agent_manager_falls_back_to_legacy_env_when_db_provider_is_unsupp
 async def test_agent_manager_fails_over_to_next_provider_on_init_error(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -627,7 +627,7 @@ async def test_agent_manager_fails_over_to_next_provider_on_init_error(db, monke
 async def test_agent_manager_fails_over_to_next_provider_on_run_error(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -676,7 +676,7 @@ async def test_agent_manager_fails_over_to_next_provider_on_run_error(db, monkey
 async def test_ollama_cloud_provider_uses_bearer_headers(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -719,7 +719,7 @@ async def test_ollama_cloud_provider_uses_bearer_headers(db, monkeypatch):
 async def test_ollama_provider_normalizes_api_suffix_for_runtime(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -763,7 +763,7 @@ async def test_ollama_provider_normalizes_api_suffix_for_runtime(db, monkeypatch
 async def test_runtime_status_reports_db_provider_preflight_failure(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -796,7 +796,7 @@ async def test_runtime_status_reports_db_provider_preflight_failure(db, monkeypa
 async def test_agent_manager_skips_cached_unsupported_provider_and_fails_over(db, monkeypatch):
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     openai_cfg = ProviderRuntimeConfig(
         provider="openai",
         enabled=True,
@@ -873,7 +873,7 @@ async def test_fetch_live_models_http_error_fallback_to_static(db, monkeypatch):
 
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     # Create a config for OpenAI
     cfg = ProviderRuntimeConfig(
@@ -903,7 +903,7 @@ async def test_fetch_live_models_success_updates_cache(db, monkeypatch):
     """_fetch_live_models returns live models on success."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     cfg = ProviderRuntimeConfig(
         provider="openai",
@@ -932,7 +932,7 @@ async def test_fetch_live_models_zai_uses_bearer_auth(db, monkeypatch):
     """Z.AI live model fetch uses the configured general API endpoint with Bearer auth."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     cfg = ProviderRuntimeConfig(
         provider="zai",
@@ -966,7 +966,7 @@ async def test_fetch_live_models_zai_defaults_empty_base_url(db, monkeypatch):
     """Empty base_url uses the subscription/Coding Plan endpoint."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     cfg = ProviderRuntimeConfig(
         provider="zai",
@@ -999,7 +999,7 @@ async def test_fetch_live_models_zai_honors_configured_coding_base_url(db, monke
     """Z.AI live model fetch follows the configured base_url."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     cfg = ProviderRuntimeConfig(
         provider="zai",
@@ -1034,7 +1034,7 @@ async def test_fetch_live_models_zai_honors_configured_coding_base_url(db, monke
 @pytest.mark.anyio
 async def test_save_provider_configs_requires_encryption_key(db):
     """save_provider_configs requires encryption key."""
-    service = AgentProviderService(db, AppConfig())  # No encryption key
+    service = ProviderConfigService(db, AppConfig())  # No encryption key
 
     cfg = ProviderRuntimeConfig(
         provider="openai",
@@ -1052,7 +1052,7 @@ async def test_save_provider_configs_requires_encryption_key(db):
 
 def test_is_compatibility_record_fresh_with_recent_record(db):
     """is_compatibility_record_fresh returns True for recent records."""
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
 
     recent_record = ProviderModelCompatibilityRecord(
         model="gpt-4.1-mini",
@@ -1065,7 +1065,7 @@ def test_is_compatibility_record_fresh_with_recent_record(db):
 
 def test_is_compatibility_record_fresh_with_stale_record(db):
     """is_compatibility_record_fresh returns False for stale records."""
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
 
     stale_record = ProviderModelCompatibilityRecord(
         model="gpt-4.1-mini",
@@ -1078,7 +1078,7 @@ def test_is_compatibility_record_fresh_with_stale_record(db):
 
 def test_is_compatibility_record_fresh_with_invalid_date(db):
     """is_compatibility_record_fresh returns False for invalid date."""
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
 
     invalid_record = ProviderModelCompatibilityRecord(
         model="gpt-4.1-mini",
@@ -1096,7 +1096,7 @@ def test_parse_provider_form_handles_missing_fields(db):
     """parse_provider_form handles missing form fields gracefully."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     form = {}  # Empty form
 
@@ -1110,7 +1110,7 @@ def test_parse_provider_form_with_enabled_provider(db):
     """parse_provider_form parses enabled provider from form."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     form = {
         "provider_present__openai": "1",
@@ -1134,7 +1134,7 @@ def test_build_provider_views_includes_compatibility(db):
     """build_provider_views includes compatibility information."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     cfg = ProviderRuntimeConfig(
         provider="openai",
@@ -1173,7 +1173,7 @@ def test_build_provider_views_keeps_empty_plain_field_value(db):
     """build_provider_views keeps empty values separate from placeholders."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     cfg = ProviderRuntimeConfig(
         provider="ollama",
@@ -1206,7 +1206,7 @@ async def test_export_compatibility_catalog_creates_file(db, tmp_path):
     """export_compatibility_catalog creates catalog file."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     cfg = ProviderRuntimeConfig(
         provider="openai",
@@ -1253,7 +1253,7 @@ async def test_export_compatibility_catalog_creates_file(db, tmp_path):
 
 def test_canonical_endpoint_fingerprint_for_openai(db):
     """canonical_endpoint_fingerprint returns default URL for OpenAI."""
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
 
     cfg = ProviderRuntimeConfig(
         provider="openai",
@@ -1270,7 +1270,7 @@ def test_canonical_endpoint_fingerprint_for_openai(db):
 
 def test_canonical_endpoint_fingerprint_for_custom_url_returns_none(db):
     """canonical_endpoint_fingerprint returns None for custom URLs."""
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
 
     cfg = ProviderRuntimeConfig(
         provider="openai",
@@ -1287,7 +1287,7 @@ def test_canonical_endpoint_fingerprint_for_custom_url_returns_none(db):
 
 def test_canonical_endpoint_fingerprint_for_ollama_cloud(db):
     """canonical_endpoint_fingerprint returns 'ollama://cloud' for Ollama cloud."""
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
 
     cfg = ProviderRuntimeConfig(
         provider="ollama",
@@ -1305,7 +1305,7 @@ def test_canonical_endpoint_fingerprint_for_ollama_cloud(db):
 
 def test_canonical_endpoint_fingerprint_for_zai_default_and_coding_urls(db):
     """Known Z.AI OpenAI-compatible endpoints are canonicalized distinctly."""
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
 
     empty_cfg = ProviderRuntimeConfig(
         provider="zai",
@@ -1337,7 +1337,7 @@ def test_canonical_endpoint_fingerprint_for_zai_default_and_coding_urls(db):
 
 def test_zai_legacy_anthropic_url_is_validation_error_not_rewritten(db):
     """Z.AI Anthropic proxy URL is invalid for the OpenAI-compatible Z.AI provider."""
-    service = AgentProviderService(db, AppConfig())
+    service = ProviderConfigService(db, AppConfig())
     legacy_url = "https://api.z.ai/api/anthropic"
     cfg = ProviderRuntimeConfig(
         provider="zai",
@@ -1404,7 +1404,7 @@ async def test_zai_fetch_models_http_error_propagates(db, monkeypatch):
     """Z.AI model fetch propagates HTTP errors (caller handles fallback)."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     cfg = ProviderRuntimeConfig(
         provider="zai",
@@ -1430,7 +1430,7 @@ async def test_zai_fetch_models_empty_response(db, monkeypatch):
     """Z.AI model fetch handles empty response gracefully."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     cfg = ProviderRuntimeConfig(
         provider="zai",
@@ -1456,7 +1456,7 @@ async def test_zai_fetch_models_missing_api_key(db, monkeypatch):
     """Z.AI model fetch handles missing api_key gracefully."""
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
 
     cfg = ProviderRuntimeConfig(
         provider="zai",

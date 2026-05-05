@@ -5,15 +5,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from src.database import Database
+from src.utils.datetime import parse_required_utc_datetime
 
 logger = logging.getLogger(__name__)
 
 
 def _parse_db_datetime(value: str) -> datetime:
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    return parse_required_utc_datetime(value)
 
 
 @dataclass

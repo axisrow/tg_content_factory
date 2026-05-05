@@ -97,7 +97,7 @@ async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
         fake_generate,
     )
     monkeypatch.setattr(
-        "src.services.provider_service.AgentProviderService.has_providers",
+        "src.services.provider_service.RuntimeProviderRegistry.has_providers",
         lambda self: True,
     )
 

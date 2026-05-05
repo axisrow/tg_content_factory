@@ -20,7 +20,7 @@ from src.agent.provider_registry import PROVIDER_ORDER, ProviderRuntimeConfig
 from src.agent.provider_registry import provider_spec as deepagents_provider_spec
 from src.models import AccountSessionStatus
 from src.services.agent_provider_service import (
-    AgentProviderService,
+    ProviderConfigService,
     ProviderModelCacheEntry,
     ProviderModelCompatibilityRecord,
 )
@@ -43,6 +43,7 @@ from src.services.image_provider_service import (
     image_provider_spec,
 )
 from src.settings_utils import parse_int_setting
+from src.utils.datetime import parse_datetime
 from src.web import deps
 from src.web.settings.forms import (
     CREDENTIALS_MASK,
@@ -72,8 +73,8 @@ def _wants_json(request: Request) -> bool:
     return "application/json" in request.headers.get("accept", "")
 
 
-def _agent_provider_service(request: Request) -> AgentProviderService:
-    return AgentProviderService(deps.get_db(request), request.app.state.config)
+def _agent_provider_service(request: Request) -> ProviderConfigService:
+    return ProviderConfigService(deps.get_db(request), request.app.state.config)
 
 
 async def _notification_snapshot_payload(request: Request) -> dict[str, object]:
@@ -91,7 +92,7 @@ async def _notification_snapshot_bot(request: Request):
         bot_username=raw_bot.get("bot_username"),
         bot_id=raw_bot.get("bot_id"),
         created_at=(
-            datetime.fromisoformat(raw_bot["created_at"])
+            parse_datetime(raw_bot["created_at"])
             if isinstance(raw_bot.get("created_at"), str)
             else None
         ),
@@ -225,7 +226,7 @@ def _bulk_test_recent_event(status: dict[str, object], message: str) -> None:
 
 async def _provider_configs_from_bulk_form(
     form: ProviderConfigForm,
-    service: AgentProviderService,
+    service: ProviderConfigService,
 ) -> list[ProviderRuntimeConfig]:
     existing = await service.load_provider_configs()
     if any(str(key).startswith("provider_present__") for key in form.raw.keys()):
@@ -234,7 +235,7 @@ async def _provider_configs_from_bulk_form(
 
 
 async def _probe_provider_config(
-    service: AgentProviderService,
+    service: ProviderConfigService,
     manager: AgentManager,
     cfg: ProviderRuntimeConfig,
     *,

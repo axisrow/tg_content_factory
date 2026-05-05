@@ -975,7 +975,7 @@ async def test_cancel_collection_task_preserves_typed_status(db):
 
 
 @pytest.mark.anyio
-async def test_migration_backfills_collection_task_type(tmp_path):
+async def test_migration_preserves_legacy_collection_task_data(tmp_path):
     db_path = tmp_path / "legacy_tasks.db"
     stats_payload = (
         '{"task_kind":"stats_all","channel_ids":[],'
@@ -1023,8 +1023,8 @@ async def test_migration_backfills_collection_task_type(tmp_path):
     channel_task = await database.get_collection_task(2)
     assert stats_task is not None
     assert channel_task is not None
-    assert stats_task.task_type == CollectionTaskType.STATS_ALL
-    assert stats_task.channel_id is None
+    assert stats_task.task_type == CollectionTaskType.CHANNEL_COLLECT
+    assert stats_task.channel_id == 0
     assert channel_task.task_type == CollectionTaskType.CHANNEL_COLLECT
     assert channel_task.channel_id == -1001
 
@@ -1511,8 +1511,8 @@ async def test_get_hourly_activity(db):
 
 @pytest.mark.aiosqlite_serial
 @pytest.mark.anyio
-async def test_migration_backfills_message_reactions(tmp_path):
-    """Migration backfills message_reactions from existing reactions_json data."""
+async def test_migration_creates_message_reactions_without_backfill(tmp_path):
+    """Schema-only migration creates message_reactions but does not rewrite existing rows."""
     db_path = str(tmp_path / "migrate_reactions_norm.db")
 
     # Build a DB without the message_reactions table but with reactions_json data
@@ -1559,7 +1559,7 @@ async def test_migration_backfills_message_reactions(tmp_path):
         await conn.execute(
             "INSERT INTO messages (channel_id, message_id, text, reactions_json, date) "
             "VALUES (?, ?, ?, ?, datetime('now'))",
-            (-100200, 1, "backfill test", '[{"emoji": "🎉", "count": 7}]'),
+            (-100200, 1, "backfill test", '[{"emoji": "party", "count": 7}]'),
         )
         await conn.commit()
     finally:
@@ -1572,9 +1572,7 @@ async def test_migration_backfills_message_reactions(tmp_path):
         "SELECT emoji, count FROM message_reactions WHERE channel_id = ? AND message_id = ?",
         (-100200, 1),
     )
-    rows = await cur.fetchall()
-    result = {r["emoji"]: r["count"] for r in rows}
-    assert result == {"🎉": 7}
+    assert await cur.fetchall() == []
 
     await database.close()
 

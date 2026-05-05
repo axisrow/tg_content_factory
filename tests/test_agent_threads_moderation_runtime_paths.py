@@ -1294,7 +1294,7 @@ async def test_migrations_adds_missing_columns():
 
 
 @pytest.mark.anyio
-async def test_migrations_renames_legacy_dialog_search_permission_key():
+async def test_migrations_preserves_legacy_dialog_search_permission_key():
     import json
 
     import aiosqlite
@@ -1320,8 +1320,8 @@ async def test_migrations_renames_legacy_dialog_search_permission_key():
         )
         row = await cur.fetchone()
         data = json.loads(row["value"])
-        assert data["search_dialogs"] is True
-        assert legacy_key not in data
+        assert data[legacy_key] is True
+        assert "search_dialogs" not in data
 
 
 @pytest.mark.anyio

@@ -1,467 +1,189 @@
 from __future__ import annotations
 
 import json
-import struct
 
 import aiosqlite
 import pytest
 
 from src.database.migrations import (
+    _migrate_tool_permission_key,
     _migrate_vec_to_portable,
     _migrate_zai_empty_base_url_to_coding,
     _migrate_zai_legacy_base_url,
+    run_migrations,
 )
 
 
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_vec_to_portable_converts_json_to_blob(tmp_path):
-    db_path = str(tmp_path / "test.db")
-    conn = await aiosqlite.connect(db_path)
+async def _connect(path: str) -> aiosqlite.Connection:
+    conn = await aiosqlite.connect(path)
     conn.row_factory = aiosqlite.Row
-    try:
-        await conn.executescript("""
-            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE message_embeddings (message_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL);
-            CREATE TABLE vec_messages (message_id INTEGER PRIMARY KEY, embedding TEXT);
-        """)
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('semantic_embedding_dimensions', '3')"
-        )
-        vec = [0.1, 0.2, 0.3]
-        await conn.execute(
-            "INSERT INTO vec_messages (message_id, embedding) VALUES (?, ?)",
-            (1, json.dumps(vec)),
-        )
-        await conn.commit()
-
-        await _migrate_vec_to_portable(conn)
-
-        cur = await conn.execute("SELECT message_id, embedding FROM message_embeddings")
-        row = await cur.fetchone()
-        assert row is not None
-        assert row["message_id"] == 1
-        restored = list(struct.unpack("3f", row["embedding"]))
-        assert restored == pytest.approx(vec)
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_vec_skips_when_no_vec_table(tmp_path):
-    db_path = str(tmp_path / "test.db")
-    conn = await aiosqlite.connect(db_path)
-    conn.row_factory = aiosqlite.Row
-    try:
-        await conn.executescript("""
-            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE message_embeddings (message_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL);
-        """)
-        await conn.commit()
-
-        await _migrate_vec_to_portable(conn)
-
-        cur = await conn.execute("SELECT COUNT(*) AS cnt FROM message_embeddings")
-        row = await cur.fetchone()
-        assert row["cnt"] == 0
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_vec_is_idempotent_with_existing_data(tmp_path):
-    """Migration adds missing rows from vec_messages even if message_embeddings already has data."""
-    db_path = str(tmp_path / "test.db")
-    conn = await aiosqlite.connect(db_path)
-    conn.row_factory = aiosqlite.Row
-    try:
-        await conn.executescript("""
-            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE message_embeddings (message_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL);
-            CREATE TABLE vec_messages (message_id INTEGER PRIMARY KEY, embedding TEXT);
-        """)
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('semantic_embedding_dimensions', '2')"
-        )
-        existing_blob = struct.pack("2f", 1.0, 0.0)
-        await conn.execute(
-            "INSERT INTO message_embeddings (message_id, embedding) VALUES (?, ?)",
-            (99, existing_blob),
-        )
-        await conn.execute(
-            "INSERT INTO vec_messages (message_id, embedding) VALUES (?, ?)",
-            (1, json.dumps([0.5, 0.5])),
-        )
-        await conn.commit()
-
-        await _migrate_vec_to_portable(conn)
-
-        cur = await conn.execute("SELECT COUNT(*) AS cnt FROM message_embeddings")
-        row = await cur.fetchone()
-        assert row["cnt"] == 2  # pre-existing + migrated
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_vec_skips_empty_vec_table(tmp_path):
-    db_path = str(tmp_path / "test.db")
-    conn = await aiosqlite.connect(db_path)
-    conn.row_factory = aiosqlite.Row
-    try:
-        await conn.executescript("""
-            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE message_embeddings (message_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL);
-            CREATE TABLE vec_messages (message_id INTEGER PRIMARY KEY, embedding TEXT);
-        """)
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES ('semantic_embedding_dimensions', '2')"
-        )
-        await conn.commit()
-
-        await _migrate_vec_to_portable(conn)
-
-        cur = await conn.execute("SELECT COUNT(*) AS cnt FROM message_embeddings")
-        row = await cur.fetchone()
-        assert row["cnt"] == 0
-    finally:
-        await conn.close()
-
-
-_ZAI_PROVIDERS_KEY = "agent_deepagents_providers_v1"
-
-
-def _zai_payload(base_url: str, *, last_validation_error: str = "") -> str:
-    return json.dumps(
-        [
-            {
-                "provider": "zai",
-                "enabled": True,
-                "priority": 0,
-                "selected_model": "glm-5-turbo",
-                "plain_fields": {"base_url": base_url},
-                "secret_fields_enc": {},
-                "last_validation_error": last_validation_error,
-            }
-        ]
-    )
-
-
-async def _open_zai_db(tmp_path):
-    conn = await aiosqlite.connect(str(tmp_path / "zai.db"))
-    conn.row_factory = aiosqlite.Row
-    await conn.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-    await conn.commit()
     return conn
 
 
+async def _table_names(conn: aiosqlite.Connection) -> set[str]:
+    cur = await conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    return {row["name"] for row in await cur.fetchall()}
+
+
+async def _columns(conn: aiosqlite.Connection, table: str) -> set[str]:
+    cur = await conn.execute(f"PRAGMA table_info({table})")
+    return {row["name"] for row in await cur.fetchall()}
+
+
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
-@pytest.mark.parametrize(
-    "legacy_url",
-    ["https://api.z.ai/api/anthropic", "https://api.z.ai/api/anthropic/v1"],
-)
-async def test_migrate_zai_legacy_base_url_rewrites_legacy(tmp_path, legacy_url):
-    conn = await _open_zai_db(tmp_path)
+async def test_run_migrations_creates_missing_schema_tables(tmp_path):
+    conn = await _connect(str(tmp_path / "fresh.db"))
     try:
+        result = await run_migrations(conn)
+        assert isinstance(result, bool)
+
+        tables = await _table_names(conn)
+        for table in (
+            "generation_runs",
+            "notification_bots",
+            "agent_threads",
+            "agent_messages",
+            "message_embeddings_json",
+            "generated_images",
+            "pipeline_templates",
+        ):
+            assert table in tables
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_run_migrations_adds_missing_columns_and_indexes(tmp_path):
+    conn = await _connect(str(tmp_path / "legacy.db"))
+    try:
+        await conn.executescript("""
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                session_string TEXT NOT NULL
+            );
+            CREATE TABLE channels (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER UNIQUE NOT NULL,
+                title TEXT
+            );
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                text TEXT,
+                date TEXT NOT NULL,
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE collection_tasks (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER,
+                status TEXT DEFAULT 'pending'
+            );
+            CREATE TABLE search_queries (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                query TEXT NOT NULL
+            );
+            CREATE TABLE content_pipelines (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                prompt_template TEXT NOT NULL
+            );
+            CREATE TABLE pipeline_targets (
+                id INTEGER PRIMARY KEY,
+                pipeline_id INTEGER NOT NULL,
+                phone TEXT NOT NULL,
+                target_dialog_id INTEGER NOT NULL
+            );
+            CREATE TABLE generation_runs (
+                id INTEGER PRIMARY KEY,
+                pipeline_id INTEGER,
+                status TEXT NOT NULL DEFAULT 'pending'
+            );
+        """)
         await conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (
-                _ZAI_PROVIDERS_KEY,
-                _zai_payload(
-                    legacy_url,
-                    last_validation_error="Anthropic-compatible proxy ...",
-                ),
-            ),
+            "INSERT INTO messages (channel_id, message_id, date) VALUES (-1001, 1, '2025-01-01')"
+        )
+        await conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('agent_prompt_template', 'legacy')"
         )
         await conn.commit()
 
+        await run_migrations(conn)
+        await run_migrations(conn)
+
+        assert {"is_premium", "flood_wait_until"} <= await _columns(conn, "accounts")
+        assert {"preferred_phone", "channel_type", "is_filtered"} <= await _columns(conn, "channels")
+        assert {
+            "forward_from_channel_id",
+            "detected_lang",
+            "translation_en",
+            "translation_custom",
+        } <= await _columns(conn, "messages")
+        assert {"task_type", "run_after", "payload", "parent_task_id"} <= await _columns(
+            conn, "collection_tasks"
+        )
+        assert {"publish_times", "refinement_steps", "pipeline_json", "account_phone"} <= await _columns(
+            conn, "content_pipelines"
+        )
+        assert {"image_url", "moderation_status", "quality_score", "variants"} <= await _columns(
+            conn, "generation_runs"
+        )
+
+        cur = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+            ("idx_collection_tasks_type_status_run_after",),
+        )
+        assert await cur.fetchone() is not None
+
+        cur = await conn.execute("SELECT value FROM settings WHERE key = 'agent_prompt_template'")
+        row = await cur.fetchone()
+        assert row["value"] == "legacy"
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_deprecated_data_migration_helpers_are_noops(tmp_path):
+    conn = await _connect(str(tmp_path / "legacy_helpers.db"))
+    try:
+        provider_payload = json.dumps(
+            [{"provider": "zai", "plain_fields": {"base_url": "https://api.z.ai/api/anthropic"}}]
+        )
+        permissions_payload = json.dumps({"list_dialogs": True})
+        await conn.executescript("""
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE message_embeddings (message_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL);
+            CREATE TABLE vec_messages (message_id INTEGER PRIMARY KEY, embedding TEXT);
+        """)
+        await conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('agent_deepagents_providers_v1', ?)",
+            (provider_payload,),
+        )
+        await conn.execute(
+            "INSERT INTO settings (key, value) VALUES ('agent_tool_permissions', ?)",
+            (permissions_payload,),
+        )
+        await conn.execute(
+            "INSERT INTO vec_messages (message_id, embedding) VALUES (1, '[0.1, 0.2]')"
+        )
+        await conn.commit()
+
+        await _migrate_vec_to_portable(conn)
         await _migrate_zai_legacy_base_url(conn)
-
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        row = await cur.fetchone()
-        data = json.loads(row["value"])
-        assert data[0]["plain_fields"]["base_url"] == "https://api.z.ai/api/paas/v4"
-        assert data[0]["last_validation_error"] == ""
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_zai_legacy_base_url_leaves_valid_unchanged(tmp_path):
-    conn = await _open_zai_db(tmp_path)
-    try:
-        valid_payload = _zai_payload("https://api.z.ai/api/paas/v4")
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (_ZAI_PROVIDERS_KEY, valid_payload),
-        )
-        await conn.commit()
-
-        await _migrate_zai_legacy_base_url(conn)
-
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        row = await cur.fetchone()
-        assert json.loads(row["value"]) == json.loads(valid_payload)
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_zai_legacy_base_url_idempotent(tmp_path):
-    conn = await _open_zai_db(tmp_path)
-    try:
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (_ZAI_PROVIDERS_KEY, _zai_payload("https://api.z.ai/api/anthropic")),
-        )
-        await conn.commit()
-
-        await _migrate_zai_legacy_base_url(conn)
-        await _migrate_zai_legacy_base_url(conn)
-
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        row = await cur.fetchone()
-        data = json.loads(row["value"])
-        assert data[0]["plain_fields"]["base_url"] == "https://api.z.ai/api/paas/v4"
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_zai_legacy_base_url_handles_missing_setting(tmp_path):
-    conn = await _open_zai_db(tmp_path)
-    try:
-        await _migrate_zai_legacy_base_url(conn)
-
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        assert await cur.fetchone() is None
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_zai_legacy_base_url_handles_malformed_json(tmp_path):
-    conn = await _open_zai_db(tmp_path)
-    try:
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (_ZAI_PROVIDERS_KEY, "not-json{"),
-        )
-        await conn.commit()
-
-        await _migrate_zai_legacy_base_url(conn)
-
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        row = await cur.fetchone()
-        assert row["value"] == "not-json{"
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_zai_legacy_base_url_skips_other_providers(tmp_path):
-    conn = await _open_zai_db(tmp_path)
-    try:
-        payload = json.dumps(
-            [
-                {
-                    "provider": "openai",
-                    "enabled": True,
-                    "priority": 0,
-                    "selected_model": "gpt-4o-mini",
-                    "plain_fields": {"base_url": "https://api.z.ai/api/anthropic"},
-                    "secret_fields_enc": {},
-                    "last_validation_error": "",
-                }
-            ]
-        )
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (_ZAI_PROVIDERS_KEY, payload),
-        )
-        await conn.commit()
-
-        await _migrate_zai_legacy_base_url(conn)
-
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        row = await cur.fetchone()
-        assert json.loads(row["value"]) == json.loads(payload)
-    finally:
-        await conn.close()
-
-
-# === Migration v2: empty Z.AI base_url → coding ===
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_zai_empty_base_url_to_coding_leaves_general_url_untouched(tmp_path):
-    conn = await _open_zai_db(tmp_path)
-    try:
-        valid_payload = _zai_payload(
-            "https://api.z.ai/api/paas/v4",
-            last_validation_error="something stale",
-        )
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (_ZAI_PROVIDERS_KEY, valid_payload),
-        )
-        await conn.commit()
-
         await _migrate_zai_empty_base_url_to_coding(conn)
+        await _migrate_tool_permission_key(conn, "list_dialogs", "search_dialogs")
 
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        row = await cur.fetchone()
-        assert json.loads(row["value"]) == json.loads(valid_payload)
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_zai_empty_base_url_to_coding_backfills_empty_base_url(tmp_path):
-    conn = await _open_zai_db(tmp_path)
-    try:
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (
-                _ZAI_PROVIDERS_KEY,
-                _zai_payload(
-                    "",
-                    last_validation_error="Z.AI Base URL is required",
-                ),
-            ),
-        )
-        await conn.commit()
-
-        await _migrate_zai_empty_base_url_to_coding(conn)
-
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        row = await cur.fetchone()
-        data = json.loads(row["value"])
-        assert data[0]["plain_fields"]["base_url"] == "https://api.z.ai/api/coding/paas/v4"
-        assert data[0]["last_validation_error"] == ""
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_zai_empty_base_url_to_coding_leaves_coding_url_untouched(tmp_path):
-    conn = await _open_zai_db(tmp_path)
-    try:
-        valid_payload = _zai_payload("https://api.z.ai/api/coding/paas/v4")
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (_ZAI_PROVIDERS_KEY, valid_payload),
-        )
-        await conn.commit()
-
-        await _migrate_zai_empty_base_url_to_coding(conn)
-
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        row = await cur.fetchone()
-        assert json.loads(row["value"]) == json.loads(valid_payload)
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_zai_empty_base_url_to_coding_idempotent(tmp_path):
-    conn = await _open_zai_db(tmp_path)
-    try:
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (_ZAI_PROVIDERS_KEY, _zai_payload("")),
-        )
-        await conn.commit()
-
-        await _migrate_zai_empty_base_url_to_coding(conn)
-        await _migrate_zai_empty_base_url_to_coding(conn)
-
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        row = await cur.fetchone()
-        data = json.loads(row["value"])
-        assert data[0]["plain_fields"]["base_url"] == "https://api.z.ai/api/coding/paas/v4"
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_zai_empty_base_url_to_coding_handles_missing_setting(tmp_path):
-    conn = await _open_zai_db(tmp_path)
-    try:
-        await _migrate_zai_empty_base_url_to_coding(conn)
-
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        assert await cur.fetchone() is None
-    finally:
-        await conn.close()
-
-
-@pytest.mark.anyio
-@pytest.mark.aiosqlite_serial
-async def test_migrate_zai_empty_base_url_to_coding_skips_other_providers(tmp_path):
-    conn = await _open_zai_db(tmp_path)
-    try:
-        payload = json.dumps(
-            [
-                {
-                    "provider": "openai",
-                    "enabled": True,
-                    "priority": 0,
-                    "selected_model": "gpt-4o-mini",
-                    "plain_fields": {"base_url": "https://api.z.ai/api/paas/v4"},
-                    "secret_fields_enc": {},
-                    "last_validation_error": "",
-                }
-            ]
-        )
-        await conn.execute(
-            "INSERT INTO settings (key, value) VALUES (?, ?)",
-            (_ZAI_PROVIDERS_KEY, payload),
-        )
-        await conn.commit()
-
-        await _migrate_zai_empty_base_url_to_coding(conn)
-
-        cur = await conn.execute(
-            "SELECT value FROM settings WHERE key = ?", (_ZAI_PROVIDERS_KEY,)
-        )
-        row = await cur.fetchone()
-        assert json.loads(row["value"]) == json.loads(payload)
+        cur = await conn.execute("SELECT COUNT(*) AS cnt FROM message_embeddings")
+        assert (await cur.fetchone())["cnt"] == 0
+        cur = await conn.execute("SELECT value FROM settings WHERE key = 'agent_deepagents_providers_v1'")
+        assert (await cur.fetchone())["value"] == provider_payload
+        cur = await conn.execute("SELECT value FROM settings WHERE key = 'agent_tool_permissions'")
+        assert (await cur.fetchone())["value"] == permissions_payload
     finally:
         await conn.close()

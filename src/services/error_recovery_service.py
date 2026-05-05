@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Awaitable, Callable, TypeVar
 
+from tenacity import AsyncRetrying, RetryCallState, retry_if_exception, stop_after_attempt
+from tenacity.wait import wait_exponential, wait_exponential_jitter
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -181,6 +184,42 @@ class ErrorRecoveryService:
 
         return delay
 
+    def _wait_strategy(self):
+        if self._retry_policy.jitter:
+            return wait_exponential_jitter(
+                initial=self._retry_policy.base_delay,
+                max=self._retry_policy.max_delay,
+                exp_base=self._retry_policy.exponential_base,
+            )
+        return wait_exponential(
+            multiplier=self._retry_policy.base_delay,
+            max=self._retry_policy.max_delay,
+            exp_base=self._retry_policy.exponential_base,
+        )
+
+    @staticmethod
+    def _should_retry(error: BaseException) -> bool:
+        if not isinstance(error, Exception):
+            return False
+        return ErrorClassifier.classify(error) != ErrorCategory.FATAL
+
+    def _log_before_retry(self, retry_state: RetryCallState) -> None:
+        if retry_state.outcome is None or not retry_state.outcome.failed:
+            return
+        error = retry_state.outcome.exception()
+        if error is None:
+            return
+        category = ErrorClassifier.classify(error)
+        delay = retry_state.next_action.sleep if retry_state.next_action else 0.0
+        logger.warning(
+            "Attempt %d/%d failed (%s): %s. Retrying in %.1fs",
+            retry_state.attempt_number,
+            self._retry_policy.max_retries,
+            category.value,
+            str(error)[:100],
+            delay,
+        )
+
     def _record_error(self, error: Exception, category: ErrorCategory) -> None:
         """Record an error in history."""
         record = ErrorRecord(
@@ -220,46 +259,43 @@ class ErrorRecoveryService:
             Exception: If all retries fail and no fallback
         """
         last_error: Exception | None = None
+        retrying = AsyncRetrying(
+            stop=stop_after_attempt(self._retry_policy.max_retries + 1),
+            wait=self._wait_strategy(),
+            retry=retry_if_exception(self._should_retry),
+            before_sleep=self._log_before_retry,
+            reraise=True,
+        )
 
-        for attempt in range(self._retry_policy.max_retries + 1):
-            can_execute, _state = await self._circuit_breaker.can_execute()
+        try:
+            async for attempt in retrying:
+                with attempt:
+                    can_execute, _state = await self._circuit_breaker.can_execute()
 
-            if not can_execute:
-                logger.warning("Circuit breaker is open, using fallback")
-                if fallback:
-                    return await self._run_fallback(fallback)
-                raise RuntimeError("Circuit breaker is open")
+                    if not can_execute:
+                        logger.warning("Circuit breaker is open, using fallback")
+                        if fallback:
+                            return await self._run_fallback(fallback)
+                        raise RuntimeError("Circuit breaker is open")
 
-            try:
-                result = await func()
-                await self._circuit_breaker.record_success()
-                return result
+                    try:
+                        result = await func()
+                    except Exception as e:
+                        last_error = e
+                        category = ErrorClassifier.classify(e)
+                        self._record_error(e, category)
+                        await self._circuit_breaker.record_failure()
 
-            except Exception as e:
-                last_error = e
-                category = ErrorClassifier.classify(e)
-                self._record_error(e, category)
+                        if category == ErrorCategory.FATAL:
+                            logger.error("Fatal error: %s", str(e)[:100])
+                            if fallback:
+                                return await self._run_fallback(fallback)
+                        raise
 
-                if category == ErrorCategory.FATAL:
-                    logger.error("Fatal error: %s", str(e)[:100])
-                    await self._circuit_breaker.record_failure()
-                    if fallback:
-                        return await self._run_fallback(fallback)
-                    raise
-
-                await self._circuit_breaker.record_failure()
-
-                if attempt < self._retry_policy.max_retries:
-                    delay = self._calculate_delay(attempt)
-                    logger.warning(
-                        "Attempt %d/%d failed (%s): %s. Retrying in %.1fs",
-                        attempt + 1,
-                        self._retry_policy.max_retries,
-                        category.value,
-                        str(e)[:100],
-                        delay,
-                    )
-                    await asyncio.sleep(delay)
+                    await self._circuit_breaker.record_success()
+                    return result
+        except Exception as e:
+            last_error = e
 
         if fallback:
             logger.info("All retries failed, using fallback")

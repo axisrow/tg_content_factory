@@ -147,15 +147,15 @@ def _provider(text="GENERATED OUTPUT"):
 
 
 def _patch_provider(provider_fn):
-    """Patch AgentProviderService.get_provider_callable to return provider_fn."""
+    """Patch ProviderConfigService.get_provider_callable to return provider_fn."""
     from src.services import provider_service
 
-    original = getattr(provider_service.AgentProviderService, "get_provider_callable", None)
+    original = getattr(provider_service.RuntimeProviderRegistry, "get_provider_callable", None)
 
     def replacement(self, model):
         return provider_fn
 
-    provider_service.AgentProviderService.get_provider_callable = replacement
+    provider_service.RuntimeProviderRegistry.get_provider_callable = replacement
     return original
 
 
@@ -163,9 +163,9 @@ def _restore_provider(original):
     from src.services import provider_service
 
     if original:
-        provider_service.AgentProviderService.get_provider_callable = original
+        provider_service.RuntimeProviderRegistry.get_provider_callable = original
     else:
-        del provider_service.AgentProviderService.get_provider_callable
+        del provider_service.RuntimeProviderRegistry.get_provider_callable
 
 
 # ---------------------------------------------------------------------------

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 import aiosqlite
 
 from src.models import SearchQuery, SearchQueryDailyStat
+from src.utils.datetime import parse_datetime
 
 
 class SearchQueriesRepository:
@@ -164,5 +163,5 @@ class SearchQueriesRepository:
             interval_minutes=row["interval_minutes"],
             exclude_patterns=row["exclude_patterns"] or "",
             max_length=row["max_length"],
-            created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
+            created_at=parse_datetime(row["created_at"]),
         )

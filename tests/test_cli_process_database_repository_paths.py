@@ -1634,10 +1634,10 @@ async def test_photo_loader_json_loads_list_empty():
 
 
 @pytest.mark.anyio
-async def test_photo_loader_dt_helper():
-    from src.database.repositories.photo_loader import _dt
+async def test_photo_loader_uses_shared_datetime_parser():
+    from src.utils.datetime import parse_datetime
 
-    assert _dt(None) is None
-    dt = _dt("2025-01-15T10:00:00")
+    assert parse_datetime(None) is None
+    dt = parse_datetime("2025-01-15T10:00:00")
     assert dt is not None
     assert dt.year == 2025

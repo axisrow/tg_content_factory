@@ -10,6 +10,7 @@ import yaml
 from src.database.bundles import PhotoLoaderBundle
 from src.models import PhotoBatch, PhotoBatchItem, PhotoBatchStatus, PhotoSendMode
 from src.services.photo_publish_service import PhotoPublishService
+from src.utils.datetime import parse_required_schedule_datetime
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -338,7 +339,4 @@ class PhotoTaskService:
     def _parse_schedule_at(value: object) -> datetime:
         if not isinstance(value, str) or not value.strip():
             raise ValueError("Batch entry must include 'at'")
-        dt = datetime.fromisoformat(value)
-        if dt.tzinfo is None:
-            dt = dt.astimezone()
-        return dt.astimezone(timezone.utc)
+        return parse_required_schedule_datetime(value)

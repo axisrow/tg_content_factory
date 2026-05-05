@@ -8,6 +8,7 @@ import aiosqlite
 
 from src.database.repositories._transactions import begin_immediate
 from src.models import TelegramCommand, TelegramCommandStatus
+from src.utils.datetime import parse_datetime
 from src.utils.json import safe_json_dumps
 
 
@@ -33,9 +34,9 @@ class TelegramCommandsRepository:
             payload=_parse_json(row["payload"]) or {},
             status=TelegramCommandStatus(row["status"]),
             requested_by=row["requested_by"],
-            created_at=(datetime.fromisoformat(row["created_at"]) if row["created_at"] else None),
-            started_at=(datetime.fromisoformat(row["started_at"]) if row["started_at"] else None),
-            finished_at=(datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None),
+            created_at=parse_datetime(row["created_at"]),
+            started_at=parse_datetime(row["started_at"]),
+            finished_at=parse_datetime(row["finished_at"]),
             error=row["error"],
             result_payload=_parse_json(row["result_payload"]),
         )

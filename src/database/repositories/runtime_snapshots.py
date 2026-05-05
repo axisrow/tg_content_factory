@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any
 
 import aiosqlite
 
 from src.models import RuntimeSnapshot
+from src.utils.datetime import parse_datetime
 from src.utils.json import safe_json_dumps
 
 
@@ -30,7 +30,7 @@ class RuntimeSnapshotsRepository:
             snapshot_type=row["snapshot_type"],
             scope=row["scope"],
             payload=_parse_json(row["payload"]),
-            updated_at=(datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None),
+            updated_at=parse_datetime(row["updated_at"]),
         )
 
     async def upsert_snapshot(self, snapshot: RuntimeSnapshot) -> None:

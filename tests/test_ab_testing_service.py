@@ -99,7 +99,7 @@ async def test_ab_testing_service_generate_variants_includes_base_text(db, monke
         return f"variant::{kwargs['prompt'][:12]}"
 
     monkeypatch.setattr(
-        provider_service.AgentProviderService,
+        provider_service.RuntimeProviderRegistry,
         "get_provider_callable",
         lambda self, model: fake_provider,
     )

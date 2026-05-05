@@ -13,7 +13,7 @@ class GenerationService:
 
     This core focuses on retrieval assembly and prompt rendering. It intentionally
     keeps provider integration pluggable via `provider_callable` so that unit
-    tests can mock providers and later integration can wire AgentProviderService.
+    tests can mock providers and later integration can wire RuntimeProviderRegistry.
     """
 
     def __init__(

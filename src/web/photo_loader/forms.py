@@ -2,27 +2,30 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from fastapi import UploadFile
+from pydantic import BaseModel, ConfigDict
 
 from src.models import PhotoSendMode
 from src.services.photo_task_service import PhotoTarget
+from src.utils.datetime import parse_required_schedule_datetime
 
 UPLOAD_ROOT = Path("data/photo_uploads")
 FormMapping = Mapping[str, Any]
 
 
-@dataclass(frozen=True)
-class PhotoRefreshForm:
+class _FrozenForm(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
+
+class PhotoRefreshForm(_FrozenForm):
     phone: str
 
 
-@dataclass(frozen=True)
-class PhotoSendForm:
+class PhotoSendForm(_FrozenForm):
     phone: str
     target_dialog_id: str
     target_title: str
@@ -32,8 +35,7 @@ class PhotoSendForm:
     photos: list[UploadFile]
 
 
-@dataclass(frozen=True)
-class PhotoScheduleForm:
+class PhotoScheduleForm(_FrozenForm):
     phone: str
     target_dialog_id: str
     target_title: str
@@ -44,8 +46,7 @@ class PhotoScheduleForm:
     photos: list[UploadFile]
 
 
-@dataclass(frozen=True)
-class PhotoBatchForm:
+class PhotoBatchForm(_FrozenForm):
     phone: str
     target_dialog_id: str
     target_title: str
@@ -54,8 +55,7 @@ class PhotoBatchForm:
     manifest_text: str
 
 
-@dataclass(frozen=True)
-class PhotoAutoCreateForm:
+class PhotoAutoCreateForm(_FrozenForm):
     phone: str
     target_dialog_id: str
     target_title: str
@@ -66,13 +66,11 @@ class PhotoAutoCreateForm:
     interval_minutes: int | None
 
 
-@dataclass(frozen=True)
-class PhotoPhoneForm:
+class PhotoPhoneForm(_FrozenForm):
     phone: str
 
 
-@dataclass(frozen=True)
-class PhotoAutoUpdateForm:
+class PhotoAutoUpdateForm(_FrozenForm):
     phone: str
     values: dict[str, object]
 
@@ -108,10 +106,7 @@ def parse_target(form: FormMapping, dialogs: list[dict]) -> PhotoTarget:
 
 
 def parse_schedule_at(value: str) -> datetime:
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
-        dt = dt.astimezone()
-    return dt.astimezone(timezone.utc)
+    return parse_required_schedule_datetime(value)
 
 
 def parse_auto_update_form(form: FormMapping) -> PhotoAutoUpdateForm:
@@ -128,4 +123,3 @@ def parse_auto_update_form(form: FormMapping) -> PhotoAutoUpdateForm:
     if form.get("is_active"):
         values["is_active"] = form["is_active"] in ("1", "true", "on")
     return PhotoAutoUpdateForm(phone=str(form.get("phone", "")), values=values)
-

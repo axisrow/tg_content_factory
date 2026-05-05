@@ -7,6 +7,7 @@ import time
 from src.cli import runtime
 from src.services.channel_service import ChannelService
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.utils.datetime import parse_required_datetime
 
 
 def run_with_dependencies(
@@ -536,8 +537,6 @@ def run_with_dependencies(
                     return
                 client, _ = result
                 try:
-                    from datetime import datetime
-
                     entity = await client.get_entity(args.chat_id)
                     user = await client.get_entity(args.user_id)
                     if args.send_messages is None and args.send_media is None:
@@ -545,7 +544,7 @@ def run_with_dependencies(
                         return
                     until_date = None
                     if args.until_date:
-                        until_date = datetime.fromisoformat(args.until_date)
+                        until_date = parse_required_datetime(args.until_date)
                     kwargs = {"until_date": until_date}
                     if args.send_messages is not None:
                         kwargs["send_messages"] = args.send_messages.lower() in ("1", "true", "on")

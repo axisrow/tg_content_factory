@@ -10,56 +10,58 @@ if TYPE_CHECKING:
 
 
 class NumpySemanticIndex:
-    """In-memory cosine-similarity index using numpy.
+    """In-memory cosine-similarity index backed by scikit-learn.
 
     Fallback for environments where sqlite-vec is not available.
-    Embeddings are stored as numpy arrays keyed by message_id.
+    Embeddings are stored as numpy arrays keyed by message_id while nearest
+    neighbor search is delegated to sklearn.
     """
 
     def __init__(self) -> None:
         self._ids: list[int] = []
         self._matrix = None  # numpy ndarray, shape (N, dims), lazy import
+        self._index = None  # sklearn.neighbors.NearestNeighbors, lazy import
 
     def load(self, embeddings: list[tuple[int, list[float]]]) -> None:
         """Load pre-computed embeddings.  ``embeddings`` is a list of (message_id, vector)."""
         if not embeddings:
             self._ids = []
             self._matrix = None
+            self._index = None
             return
         try:
             import numpy as np
+            from sklearn.neighbors import NearestNeighbors
         except ImportError as exc:
             raise RuntimeError(
-                "numpy is required for the portable semantic fallback. "
-                "Install it with: pip install numpy"
+                "numpy and scikit-learn are required for the portable semantic fallback. "
+                "Install them with: pip install numpy scikit-learn"
             ) from exc
 
         self._ids = [mid for mid, _ in embeddings]
         self._matrix = np.array([vec for _, vec in embeddings], dtype=np.float32)
-        # pre-normalise rows so cosine similarity = dot product
-        norms = np.linalg.norm(self._matrix, axis=1, keepdims=True)
-        norms = np.where(norms == 0, 1.0, norms)
-        self._matrix = self._matrix / norms
+        self._index = NearestNeighbors(metric="cosine")
+        self._index.fit(self._matrix)
 
     def search(self, query_vec: list[float], k: int = 50) -> list[tuple[int, float]]:
         """Return (message_id, score) sorted descending by cosine similarity."""
-        if self._matrix is None or not self._ids:
+        if self._matrix is None or self._index is None or not self._ids:
             return []
         try:
             import numpy as np
         except ImportError:
             return []
 
-        q = np.array(query_vec, dtype=np.float32)
-        norm = np.linalg.norm(q)
-        if norm > 0:
-            q = q / norm
-
-        scores = self._matrix @ q  # shape (N,)
         k = min(k, len(self._ids))
-        top_indices = np.argpartition(scores, -k)[-k:]
-        top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
-        return [(self._ids[i], float(scores[i])) for i in top_indices]
+        if k <= 0:
+            return []
+
+        q = np.array([query_vec], dtype=np.float32)
+        distances, indices = self._index.kneighbors(q, n_neighbors=k)
+        return [
+            (self._ids[int(idx)], float(1.0 - distance))
+            for distance, idx in zip(distances[0], indices[0], strict=False)
+        ]
 
     @property
     def size(self) -> int:

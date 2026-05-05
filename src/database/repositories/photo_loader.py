@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 
 import aiosqlite
@@ -13,20 +12,12 @@ from src.models import (
     PhotoBatchStatus,
     PhotoSendMode,
 )
-
-
-def _dt(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+from src.utils.datetime import parse_datetime
+from src.utils.json import safe_json_dumps, safe_json_loads_list
 
 
 def _json_loads_list(raw: str | None) -> list:
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    return parsed if isinstance(parsed, list) else []
+    return safe_json_loads_list(raw)
 
 
 class PhotoLoaderRepository:
@@ -45,8 +36,8 @@ class PhotoLoaderRepository:
             caption=row["caption"],
             status=PhotoBatchStatus(row["status"]),
             error=row["error"],
-            created_at=_dt(row["created_at"]),
-            last_run_at=_dt(row["last_run_at"]),
+            created_at=parse_datetime(row["created_at"]),
+            last_run_at=parse_datetime(row["last_run_at"]),
         )
 
     @staticmethod
@@ -61,13 +52,13 @@ class PhotoLoaderRepository:
             file_paths=[str(x) for x in _json_loads_list(row["file_paths"])],
             send_mode=PhotoSendMode(row["send_mode"]),
             caption=row["caption"],
-            schedule_at=_dt(row["schedule_at"]),
+            schedule_at=parse_datetime(row["schedule_at"]),
             status=PhotoBatchStatus(row["status"]),
             error=row["error"],
             telegram_message_ids=[int(x) for x in _json_loads_list(row["telegram_message_ids"])],
-            created_at=_dt(row["created_at"]),
-            started_at=_dt(row["started_at"]),
-            completed_at=_dt(row["completed_at"]),
+            created_at=parse_datetime(row["created_at"]),
+            started_at=parse_datetime(row["started_at"]),
+            completed_at=parse_datetime(row["completed_at"]),
         )
 
     @staticmethod
@@ -84,9 +75,9 @@ class PhotoLoaderRepository:
             interval_minutes=row["interval_minutes"],
             is_active=bool(row["is_active"]),
             error=row["error"],
-            last_run_at=_dt(row["last_run_at"]),
+            last_run_at=parse_datetime(row["last_run_at"]),
             last_seen_marker=row["last_seen_marker"],
-            created_at=_dt(row["created_at"]),
+            created_at=parse_datetime(row["created_at"]),
         )
 
     async def create_batch(self, batch: PhotoBatch) -> int:
@@ -165,13 +156,13 @@ class PhotoLoaderRepository:
                 item.target_dialog_id,
                 item.target_title,
                 item.target_type,
-                json.dumps(item.file_paths),
+                safe_json_dumps(item.file_paths),
                 item.send_mode.value,
                 item.caption,
                 item.schedule_at.astimezone(timezone.utc).isoformat() if item.schedule_at else None,
                 item.status.value,
                 item.error,
-                json.dumps(item.telegram_message_ids),
+                safe_json_dumps(item.telegram_message_ids),
             ),
         )
         await self._db.commit()
@@ -218,7 +209,7 @@ class PhotoLoaderRepository:
             params.append(error)
         if telegram_message_ids is not None:
             sets.append("telegram_message_ids = ?")
-            params.append(json.dumps(telegram_message_ids))
+            params.append(safe_json_dumps(telegram_message_ids))
         if started_at is not None:
             sets.append("started_at = ?")
             params.append(started_at.astimezone(timezone.utc).isoformat())

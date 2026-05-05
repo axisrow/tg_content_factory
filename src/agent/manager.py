@@ -47,7 +47,7 @@ from src.agent.zai_errors import format_provider_error
 from src.config import AppConfig
 from src.database import Database
 from src.services.agent_provider_service import (
-    AgentProviderService,
+    ProviderConfigService,
     ProviderModelCacheEntry,
     ProviderModelCompatibilityRecord,
 )
@@ -971,7 +971,7 @@ class DeepagentsBackend:
             client_pool=client_pool,
             scheduler_manager=scheduler_manager,
         )
-        self._provider_service = AgentProviderService(db, config)
+        self._provider_service = ProviderConfigService(db, config)
         self._cached_db_configs: list[ProviderRuntimeConfig] = []
         self._cached_model_cache: dict[str, ProviderModelCacheEntry] = {}
         self._last_used_provider: str = ""

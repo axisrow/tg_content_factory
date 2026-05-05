@@ -4,12 +4,12 @@ import json
 import logging
 import re
 import struct
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import aiosqlite
-import numpy as np
 
 from src.models import Message, SearchQuery
+from src.utils.datetime import parse_datetime, parse_required_datetime
 
 logger = logging.getLogger(__name__)
 _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -587,27 +587,24 @@ class MessagesRepository:
             return []
 
         ids = [int(row["message_id"]) for row in rows]
-        matrix = np.array(
-            [np.frombuffer(row["embedding"], dtype=np.float32) for row in rows]
-        )
-        query_vec = np.array(query_embedding, dtype=np.float32)
+        try:
+            import numpy as np
+            from sklearn.neighbors import NearestNeighbors
+        except ImportError as exc:
+            raise RuntimeError(
+                "numpy and scikit-learn are required for semantic search fallback."
+            ) from exc
 
-        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
-        norms[norms == 0] = 1.0
-        matrix_normed = matrix / norms
-        q_norm = np.linalg.norm(query_vec)
-        query_normed = query_vec / q_norm if q_norm > 0 else query_vec
-
-        distances = 1.0 - (matrix_normed @ query_normed)
+        matrix = np.array([np.frombuffer(row["embedding"], dtype=np.float32) for row in rows])
+        query_vec = np.array([query_embedding], dtype=np.float32)
 
         k = min(limit, len(ids))
-        if k >= len(ids):
-            top_indices = np.argsort(distances)[:k]
-        else:
-            top_indices = np.argpartition(distances, k)[:k]
-            top_indices = top_indices[np.argsort(distances[top_indices])]
-
-        return [(ids[i], float(distances[i])) for i in top_indices]
+        if k <= 0:
+            return []
+        index = NearestNeighbors(metric="cosine", n_neighbors=k)
+        index.fit(matrix)
+        distances, indices = index.kneighbors(query_vec)
+        return [(ids[int(idx)], float(distance)) for distance, idx in zip(distances[0], indices[0], strict=False)]
 
     async def search_semantic_messages(
         self,
@@ -737,9 +734,9 @@ class MessagesRepository:
                 views=r["views"],
                 forwards=r["forwards"],
                 reply_count=r["reply_count"],
-                date=datetime.fromisoformat(r["date"]),
+                date=parse_required_datetime(r["date"]),
                 collected_at=(
-                    datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
+                    parse_datetime(r["collected_at"]) if r["collected_at"] else None
                 ),
                 detected_lang=r["detected_lang"] if "detected_lang" in r.keys() else None,
                 translation_en=r["translation_en"] if "translation_en" in r.keys() else None,

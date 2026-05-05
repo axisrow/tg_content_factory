@@ -11,6 +11,7 @@ from inspect import isawaitable
 from typing import Any
 
 from src.agent.runtime_context import AgentRuntimeContext
+from src.utils.datetime import try_parse_utc_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -189,20 +190,17 @@ def normalize_flood_wait_until(value: object) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        parsed = value
+        return try_parse_utc_datetime(value)
     elif isinstance(value, str):
         raw = value.strip()
         if not raw:
             return None
-        try:
-            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        except ValueError:
+        parsed = try_parse_utc_datetime(raw)
+        if parsed is None:
             return None
     else:
         return None
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+    return parsed
 
 
 def is_flood_wait_active(account: object, now: datetime | None = None) -> bool:

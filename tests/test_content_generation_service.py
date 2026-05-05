@@ -100,15 +100,15 @@ async def test_content_generation_service_rag():
     )
 
     from src.services import provider_service
-    original_get = getattr(provider_service.AgentProviderService, "get_provider_callable", None)
-    provider_service.AgentProviderService.get_provider_callable = lambda self, model: fake_provider
+    original_get = getattr(provider_service.RuntimeProviderRegistry, "get_provider_callable", None)
+    provider_service.RuntimeProviderRegistry.get_provider_callable = lambda self, model: fake_provider
     try:
         run = await service.generate(pipeline)
         assert run is not None
         assert "GENERATED:" in (run.generated_text or "")
     finally:
         if original_get:
-            provider_service.AgentProviderService.get_provider_callable = original_get
+            provider_service.RuntimeProviderRegistry.get_provider_callable = original_get
 
 
 async def test_content_generation_service_deep_agents_stub():
@@ -140,8 +140,8 @@ async def test_content_generation_service_deep_agents_stub():
     )
 
     from src.services import provider_service
-    original_get = getattr(provider_service.AgentProviderService, "get_provider_callable", None)
-    provider_service.AgentProviderService.get_provider_callable = lambda self, model: fake_provider
+    original_get = getattr(provider_service.RuntimeProviderRegistry, "get_provider_callable", None)
+    provider_service.RuntimeProviderRegistry.get_provider_callable = lambda self, model: fake_provider
     try:
         try:
             await service.generate(pipeline)
@@ -150,7 +150,7 @@ async def test_content_generation_service_deep_agents_stub():
             assert "AgentManager" in str(e) or "not configured" in str(e)
     finally:
         if original_get:
-            provider_service.AgentProviderService.get_provider_callable = original_get
+            provider_service.RuntimeProviderRegistry.get_provider_callable = original_get
 
 
 async def test_content_generation_service_skips_image_generation_without_service():
@@ -183,15 +183,15 @@ async def test_content_generation_service_skips_image_generation_without_service
 
     from src.services import provider_service
 
-    original_get = getattr(provider_service.AgentProviderService, "get_provider_callable", None)
-    provider_service.AgentProviderService.get_provider_callable = lambda self, model: fake_provider
+    original_get = getattr(provider_service.RuntimeProviderRegistry, "get_provider_callable", None)
+    provider_service.RuntimeProviderRegistry.get_provider_callable = lambda self, model: fake_provider
     try:
         run = await service.generate(pipeline)
         assert run is not None
         assert "GENERATED:" in (run.generated_text or "")
     finally:
         if original_get:
-            provider_service.AgentProviderService.get_provider_callable = original_get
+            provider_service.RuntimeProviderRegistry.get_provider_callable = original_get
 
 
 class FakeDraftNotificationService:
@@ -253,8 +253,8 @@ async def test_content_generation_service_notifies_for_moderated_drafts():
 
     from src.services import provider_service
 
-    original_get = getattr(provider_service.AgentProviderService, "get_provider_callable", None)
-    provider_service.AgentProviderService.get_provider_callable = lambda self, model: fake_provider
+    original_get = getattr(provider_service.RuntimeProviderRegistry, "get_provider_callable", None)
+    provider_service.RuntimeProviderRegistry.get_provider_callable = lambda self, model: fake_provider
     try:
         run = await service.generate(pipeline)
         assert run is not None
@@ -262,7 +262,7 @@ async def test_content_generation_service_notifies_for_moderated_drafts():
         assert notifications.calls[0][0].id == run.id
     finally:
         if original_get:
-            provider_service.AgentProviderService.get_provider_callable = original_get
+            provider_service.RuntimeProviderRegistry.get_provider_callable = original_get
 
 
 async def test_content_generation_service_skips_notification_for_auto_publish():
@@ -295,14 +295,14 @@ async def test_content_generation_service_skips_notification_for_auto_publish():
 
     from src.services import provider_service
 
-    original_get = getattr(provider_service.AgentProviderService, "get_provider_callable", None)
-    provider_service.AgentProviderService.get_provider_callable = lambda self, model: fake_provider
+    original_get = getattr(provider_service.RuntimeProviderRegistry, "get_provider_callable", None)
+    provider_service.RuntimeProviderRegistry.get_provider_callable = lambda self, model: fake_provider
     try:
         await service.generate(pipeline)
         assert notifications.calls == []
     finally:
         if original_get:
-            provider_service.AgentProviderService.get_provider_callable = original_get
+            provider_service.RuntimeProviderRegistry.get_provider_callable = original_get
 
 
 async def test_content_generation_service_records_quality_score():
@@ -335,8 +335,8 @@ async def test_content_generation_service_records_quality_score():
 
     from src.services import provider_service
 
-    original_get = getattr(provider_service.AgentProviderService, "get_provider_callable", None)
-    provider_service.AgentProviderService.get_provider_callable = lambda self, model: fake_provider
+    original_get = getattr(provider_service.RuntimeProviderRegistry, "get_provider_callable", None)
+    provider_service.RuntimeProviderRegistry.get_provider_callable = lambda self, model: fake_provider
     try:
         run = await service.generate(pipeline)
         assert run.quality_score == 0.91
@@ -344,7 +344,7 @@ async def test_content_generation_service_records_quality_score():
         assert quality.calls == [(run.generated_text, "test-model")]
     finally:
         if original_get:
-            provider_service.AgentProviderService.get_provider_callable = original_get
+            provider_service.RuntimeProviderRegistry.get_provider_callable = original_get
 
 
 # ── Issue #463: _build_metadata invariants ───────────────────────────────────
