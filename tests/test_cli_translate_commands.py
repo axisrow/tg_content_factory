@@ -82,7 +82,7 @@ def test_run_no_messages(capsys):
     mock_ts = MagicMock()
     mock_ts.translate_batch = AsyncMock(return_value=[])
     with _patches(db)[0], _patches(db)[1], \
-         patch("src.services.provider_service.AgentProviderService", return_value=mock_ps), \
+         patch("src.services.provider_service.RuntimeProviderRegistry", return_value=mock_ps), \
          patch("src.services.translation_service.TranslationService", return_value=mock_ts):
         run(_args(translate_action="run", target="en", source_filter="", limit=100))
     assert "No messages" in capsys.readouterr().out
@@ -98,7 +98,7 @@ def test_run_with_messages(capsys):
     mock_ts = MagicMock()
     mock_ts.translate_batch = AsyncMock(return_value=[(1, "translated text")])
     with _patches(db)[0], _patches(db)[1], \
-         patch("src.services.provider_service.AgentProviderService", return_value=mock_ps), \
+         patch("src.services.provider_service.RuntimeProviderRegistry", return_value=mock_ps), \
          patch("src.services.translation_service.TranslationService", return_value=mock_ts):
         run(_args(translate_action="run", target="en", source_filter="ru", limit=100))
     out = capsys.readouterr().out
@@ -138,7 +138,7 @@ def test_message_with_text(capsys):
     mock_ts = MagicMock()
     mock_ts.translate_batch = AsyncMock(return_value=[(1, "Hello world")])
     with _patches(db)[0], _patches(db)[1], \
-         patch("src.services.provider_service.AgentProviderService", return_value=mock_ps), \
+         patch("src.services.provider_service.RuntimeProviderRegistry", return_value=mock_ps), \
          patch("src.services.translation_service.TranslationService", return_value=mock_ts):
         run(_args(translate_action="message", message_id=1, target="en"))
     out = capsys.readouterr().out
@@ -155,7 +155,7 @@ def test_message_translation_failed(capsys):
     mock_ts = MagicMock()
     mock_ts.translate_batch = AsyncMock(return_value=[])
     with _patches(db)[0], _patches(db)[1], \
-         patch("src.services.provider_service.AgentProviderService", return_value=mock_ps), \
+         patch("src.services.provider_service.RuntimeProviderRegistry", return_value=mock_ps), \
          patch("src.services.translation_service.TranslationService", return_value=mock_ts):
         run(_args(translate_action="message", message_id=1, target="en"))
     assert "failed" in capsys.readouterr().out.lower()

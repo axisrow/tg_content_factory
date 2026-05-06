@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import File, Form, Request, UploadFile
+from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from src.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
@@ -25,6 +25,14 @@ from src.services.pipeline_service import (
 from src.utils.json import safe_json_dumps
 from src.web import deps
 from src.web.pipelines.forms import (
+    CreateWizardForm,
+    PipelineCreateForm,
+    PipelineEditForm,
+    PipelineGenerateForm,
+    PipelineImportForm,
+    PipelinePublishForm,
+    PipelineRunForm,
+    PipelineTemplateCreateForm,
     build_filter_config_from_form,
     get_filter_config,
     parse_target_refs,
@@ -197,24 +205,15 @@ async def create_wizard_page(request: Request):
 
 async def create_wizard_submit(
     request: Request,
-    name: str = Form(""),
-    pipeline_json: str = Form(""),
-    source_channel_ids: list[int] = Form(default=[]),
-    target_refs: list[str] = Form(default=[]),
-    generate_interval_minutes: int = Form(60),
-    is_active: str = Form(""),
-    run_after: str = Form(""),
-    since_value: int = Form(24),
-    since_unit: str = Form("h"),
-    account_phone: str = Form(""),
+    form: CreateWizardForm,
 ):
-    if not name or not pipeline_json:
+    if not form.name or not form.pipeline_json:
         return _pipeline_redirect("pipeline_invalid", error=True)
     import json as _json
 
     svc = deps.pipeline_service(request)
     try:
-        graph_data = _json.loads(pipeline_json)
+        graph_data = _json.loads(form.pipeline_json)
         # Extract llm_model from first LLM node config for pipeline-level setting
         llm_model = ""
         for node in graph_data.get("nodes", []):
@@ -222,14 +221,14 @@ async def create_wizard_submit(
                 llm_model = node.get("config", {}).get("model", "") or ""
                 break
         data = {
-            "name": name,
+            "name": form.name,
             "prompt_template": ".",
             "llm_model": llm_model or None,
-            "source_ids": source_channel_ids,
-            "target_refs": target_refs,
-            "generate_interval_minutes": generate_interval_minutes,
+            "source_ids": form.source_channel_ids,
+            "target_refs": form.target_refs,
+            "generate_interval_minutes": form.generate_interval_minutes,
             "pipeline_json": graph_data,
-            "account_phone": account_phone or None,
+            "account_phone": form.account_phone or None,
         }
         pipeline_id = await svc.import_json(data)
     except PipelineValidationError as exc:
@@ -237,15 +236,15 @@ async def create_wizard_submit(
     except Exception as exc:
         logger.warning("create-wizard failed: %s", exc, exc_info=True)
         return _pipeline_redirect(f"Ошибка: {exc}", error=True)
-    if is_active:
+    if form.is_active:
         await svc.toggle(pipeline_id)
     try:
         scheduler = deps.get_scheduler(request)
         await scheduler.sync_pipeline_jobs()
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
-    if run_after:
-        _since = _to_since_hours(since_value, since_unit)
+    if form.run_after:
+        _since = _to_since_hours(form.since_value, form.since_unit)
         enqueuer = deps.get_task_enqueuer(request)
         await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=_since)
         return _pipeline_redirect("pipeline_run_with_since")
@@ -254,32 +253,23 @@ async def create_wizard_submit(
 
 async def add_pipeline(
     request: Request,
-    name: str = Form(""),
-    prompt_template: str = Form(""),
-    source_channel_ids: list[int] = Form(default=[]),
-    target_refs: list[str] = Form(default=[]),
-    llm_model: str = Form(""),
-    image_model: str = Form(""),
-    publish_mode: str = Form(PipelinePublishMode.MODERATED.value),
-    generation_backend: str = Form(PipelineGenerationBackend.CHAIN.value),
-    generate_interval_minutes: int = Form(60),
-    is_active: bool = Form(False),
+    form: PipelineCreateForm,
 ):
-    if not name or not prompt_template:
+    if not form.name or not form.prompt_template:
         return _pipeline_redirect("pipeline_invalid", error=True)
     svc: PipelineService = deps.pipeline_service(request)
     try:
         new_pipeline_id = await svc.add(
-            name=name,
-            prompt_template=prompt_template,
-            source_channel_ids=source_channel_ids,
-            target_refs=_target_refs(target_refs),
-            llm_model=llm_model,
-            image_model=image_model,
-            publish_mode=publish_mode,
-            generation_backend=generation_backend,
-            generate_interval_minutes=generate_interval_minutes,
-            is_active=is_active,
+            name=form.name,
+            prompt_template=form.prompt_template,
+            source_channel_ids=form.source_channel_ids,
+            target_refs=_target_refs(form.target_refs),
+            llm_model=form.llm_model,
+            image_model=form.image_model,
+            publish_mode=form.publish_mode,
+            generation_backend=form.generation_backend,
+            generate_interval_minutes=form.generate_interval_minutes,
+            is_active=form.is_active,
         )
     except PipelineValidationError:
         return _pipeline_redirect("pipeline_invalid", error=True)
@@ -303,35 +293,17 @@ async def add_pipeline(
 async def edit_pipeline(
     request: Request,
     pipeline_id: int,
-    name: str = Form(""),
-    prompt_template: str = Form(""),
-    source_channel_ids: list[int] = Form(default=[]),
-    target_refs: list[str] = Form(default=[]),
-    llm_model: str = Form(""),
-    image_model: str = Form(""),
-    publish_mode: str = Form(PipelinePublishMode.MODERATED.value),
-    generation_backend: str = Form(PipelineGenerationBackend.CHAIN.value),
-    generate_interval_minutes: int = Form(60),
-    is_active: bool = Form(False),
-    react_emoji: str = Form(""),
-    filter_present: str = Form(""),
-    filter_message_kinds: list[str] = Form(default=[]),
-    filter_service_actions: list[str] = Form(default=[]),
-    filter_media_types: list[str] = Form(default=[]),
-    filter_sender_kinds: list[str] = Form(default=[]),
-    filter_keywords: str = Form(""),
-    filter_regex: str = Form(""),
-    filter_has_text: str = Form(""),
-    dag_source_channel_ids: list[int] = Form(default=[]),
-    account_phone: str = Form(""),
+    form: PipelineEditForm,
 ):
-    if not name:
+    if not form.name:
         return _pipeline_redirect("pipeline_invalid", error=True)
     svc: PipelineService = deps.pipeline_service(request)
     phone = request.query_params.get("phone")
     existing = await svc.get(pipeline_id)
     if existing is None:
         return _pipeline_redirect("pipeline_invalid", error=True, phone=phone)
+    prompt_template = form.prompt_template
+    generation_backend = form.generation_backend
     # For DAG pipelines, hidden form fields send defaults — preserve existing values
     if pipeline_is_dag(existing):
         if not prompt_template:
@@ -341,29 +313,29 @@ async def edit_pipeline(
     try:
         ok = await svc.update(
             pipeline_id,
-            name=name,
+            name=form.name,
             prompt_template=prompt_template,
-            source_channel_ids=source_channel_ids,
-            target_refs=_target_refs(target_refs),
-            llm_model=llm_model,
-            image_model=image_model,
-            publish_mode=publish_mode,
+            source_channel_ids=form.source_channel_ids,
+            target_refs=_target_refs(form.target_refs),
+            llm_model=form.llm_model,
+            image_model=form.image_model,
+            publish_mode=form.publish_mode,
             generation_backend=generation_backend,
-            generate_interval_minutes=generate_interval_minutes,
-            is_active=is_active,
-            react_emoji=react_emoji,
+            generate_interval_minutes=form.generate_interval_minutes,
+            is_active=form.is_active,
+            react_emoji=form.react_emoji,
             filter_config=_build_filter_config_from_form(
-                filter_present=filter_present,
-                filter_message_kinds=filter_message_kinds,
-                filter_service_actions=filter_service_actions,
-                filter_media_types=filter_media_types,
-                filter_sender_kinds=filter_sender_kinds,
-                filter_keywords=filter_keywords,
-                filter_regex=filter_regex,
-                filter_has_text=filter_has_text,
+                filter_present=form.filter_present,
+                filter_message_kinds=form.filter_message_kinds,
+                filter_service_actions=form.filter_service_actions,
+                filter_media_types=form.filter_media_types,
+                filter_sender_kinds=form.filter_sender_kinds,
+                filter_keywords=form.filter_keywords,
+                filter_regex=form.filter_regex,
+                filter_has_text=form.filter_has_text,
             ),
-            dag_source_channel_ids=dag_source_channel_ids,
-            account_phone=account_phone,
+            dag_source_channel_ids=form.dag_source_channel_ids,
+            account_phone=form.account_phone,
         )
     except PipelineValidationError as exc:
         return _pipeline_redirect(str(exc), error=True, phone=phone)
@@ -400,8 +372,7 @@ async def delete_pipeline(request: Request, pipeline_id: int):
     return _pipeline_redirect("pipeline_deleted")
 
 
-async def run_pipeline(request: Request, pipeline_id: int,
-                       since_value: int = Form(24), since_unit: str = Form("h")):
+async def run_pipeline(request: Request, pipeline_id: int, form: PipelineRunForm):
     svc = deps.pipeline_service(request)
     pipeline = await svc.get(pipeline_id)
     if pipeline is None:
@@ -410,7 +381,7 @@ async def run_pipeline(request: Request, pipeline_id: int,
     if pipeline_needs_llm(pipeline) and not deps.get_llm_provider_service(request).has_providers():
         return _pipeline_redirect("llm_not_configured", error=True)
     try:
-        since_hours = _to_since_hours(since_value, since_unit)
+        since_hours = _to_since_hours(form.since_value, form.since_unit)
         enqueuer = deps.get_task_enqueuer(request)
         await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=since_hours)
     except Exception:
@@ -563,9 +534,7 @@ async def generate_stream(
 async def generate_pipeline(
     request: Request,
     pipeline_id: int,
-    model: str = Form(""),
-    max_tokens: int = Form(256),
-    temperature: float = Form(0.0),
+    form: PipelineGenerateForm,
 ):
     svc = deps.pipeline_service(request)
     pipeline = await svc.get(pipeline_id)
@@ -596,9 +565,9 @@ async def generate_pipeline(
     try:
         run = await gen.generate(
             pipeline=pipeline,
-            model=(model or pipeline.llm_model),
-            max_tokens=max_tokens,
-            temperature=temperature,
+            model=(form.model or pipeline.llm_model),
+            max_tokens=form.max_tokens,
+            temperature=form.temperature,
         )
     except Exception:
         logger.exception("Generation failed for pipeline_id=%d", pipeline_id)
@@ -615,11 +584,11 @@ async def generate_pipeline(
     )
 
 
-async def publish_pipeline(request: Request, pipeline_id: int, run_id: int | None = Form(None)):
-    if run_id is None:
+async def publish_pipeline(request: Request, pipeline_id: int, form: PipelinePublishForm):
+    if form.run_id is None:
         return _pipeline_redirect("pipeline_invalid", error=True)
     db = deps.get_db(request)
-    run = await db.repos.generation_runs.get(run_id)
+    run = await db.repos.generation_runs.get(form.run_id)
     if run is None or run.pipeline_id != pipeline_id:
         return _pipeline_redirect("pipeline_invalid", error=True)
     # Mark as published (no external publishing performed here)
@@ -628,8 +597,8 @@ async def publish_pipeline(request: Request, pipeline_id: int, run_id: int | Non
 
     metadata["published"] = True
     metadata["published_at"] = datetime.now(timezone.utc).isoformat()
-    await db.repos.generation_runs.save_result(run_id, run.generated_text or "", metadata)
-    await db.repos.generation_runs.set_status(run_id, "published")
+    await db.repos.generation_runs.save_result(form.run_id, run.generated_text or "", metadata)
+    await db.repos.generation_runs.set_status(form.run_id, "published")
     return _pipeline_redirect("pipeline_published")
 
 
@@ -730,27 +699,21 @@ async def templates_json(request: Request):
 
 async def create_from_template(
     request: Request,
-    template_id: int | None = Form(None),
-    name: str = Form(""),
-    source_channel_ids: list[int] = Form(default=[]),
-    target_refs: list[str] = Form(default=[]),
-    llm_model: str = Form(""),
-    image_model: str = Form(""),
-    generate_interval_minutes: int = Form(60),
+    form: PipelineTemplateCreateForm,
 ):
-    if template_id is None or not name:
+    if form.template_id is None or not form.name:
         return _pipeline_redirect("pipeline_invalid", error=True)
     svc: PipelineService = deps.pipeline_service(request)
     try:
         pipeline_id = await svc.create_from_template(
-            template_id,
-            name=name,
-            source_ids=source_channel_ids,
-            target_refs=_target_refs(target_refs),
+            form.template_id,
+            name=form.name,
+            source_ids=form.source_channel_ids,
+            target_refs=_target_refs(form.target_refs),
             overrides={
-                "llm_model": llm_model or None,
-                "image_model": image_model or None,
-                "generate_interval_minutes": generate_interval_minutes,
+                "llm_model": form.llm_model or None,
+                "image_model": form.image_model or None,
+                "generate_interval_minutes": form.generate_interval_minutes,
             },
         )
     except PipelineValidationError as exc:
@@ -784,23 +747,24 @@ async def export_pipeline(request: Request, pipeline_id: int):
 
 async def import_pipeline(
     request: Request,
-    json_file: UploadFile | None = File(None),
-    json_text: str = Form(""),
-    name_override: str = Form(""),
+    form: PipelineImportForm,
 ):
     svc: PipelineService = deps.pipeline_service(request)
     import json as _json
 
     try:
-        if json_file and json_file.filename:
-            raw = await json_file.read()
+        if form.json_file and form.json_file.filename:
+            try:
+                raw = await form.json_file.read()
+            finally:
+                await form.json_file.close()
             data = _json.loads(raw)
-        elif json_text.strip():
-            data = _json.loads(json_text.strip())
+        elif form.json_text.strip():
+            data = _json.loads(form.json_text.strip())
         else:
             return _pipeline_redirect("Не передан JSON файл или текст.", error=True)
 
-        pipeline_id = await svc.import_json(data, name_override=name_override or None)
+        pipeline_id = await svc.import_json(data, name_override=form.name_override or None)
     except PipelineValidationError as exc:
         return _pipeline_redirect(str(exc), error=True)
     except Exception as exc:

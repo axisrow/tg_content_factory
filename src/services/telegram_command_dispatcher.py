@@ -20,6 +20,7 @@ from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.notifier import Notifier
+from src.utils.datetime import parse_required_datetime, parse_required_schedule_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -421,15 +422,13 @@ class TelegramCommandDispatcher:
             await self._pool.release_client(phone)
 
     async def _handle_dialogs_edit_permissions(self, payload: dict[str, Any]) -> dict[str, Any]:
-        from datetime import datetime
-
         client, phone = await self._get_client(str(payload["phone"]))
         try:
             entity = await client.get_entity(payload["chat_id"])
             user = await client.get_entity(payload["user_id"])
             kwargs: dict[str, Any] = {}
             if payload.get("until_date"):
-                kwargs["until_date"] = datetime.fromisoformat(str(payload["until_date"]))
+                kwargs["until_date"] = parse_required_datetime(str(payload["until_date"]))
             if "send_messages" in payload:
                 kwargs["send_messages"] = bool(payload["send_messages"])
             if "send_media" in payload:
@@ -764,8 +763,6 @@ class TelegramCommandDispatcher:
         return {"item_id": item.id, "batch_id": item.batch_id}
 
     async def _handle_photo_schedule_send(self, payload: dict[str, Any]) -> dict[str, Any]:
-        from datetime import datetime
-
         item = await self._photo_task_service().schedule_send(
             phone=str(payload["phone"]),
             target=PhotoTarget(
@@ -775,7 +772,7 @@ class TelegramCommandDispatcher:
             ),
             file_paths=[str(path) for path in payload.get("file_paths", [])],
             mode=str(payload.get("mode", "separate")),
-            schedule_at=datetime.fromisoformat(str(payload["schedule_at"])),
+            schedule_at=parse_required_schedule_datetime(str(payload["schedule_at"])),
             caption=payload.get("caption"),
         )
         return {"item_id": item.id, "batch_id": item.batch_id}

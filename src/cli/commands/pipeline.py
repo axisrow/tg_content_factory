@@ -9,6 +9,7 @@ from src.search.engine import SearchEngine
 from src.services.content_generation_service import ContentGenerationService
 from src.services.pipeline_filters import normalize_filter_config
 from src.services.pipeline_llm_requirements import pipeline_needs_llm
+from src.services.pipeline_refs import parse_pipeline_target_refs
 from src.services.pipeline_result import result_kind_label
 from src.services.pipeline_service import (
     PipelineService,
@@ -20,17 +21,11 @@ from src.services.publish_service import PublishService
 
 
 def _parse_target_refs(values: list[str]) -> list[PipelineTargetRef]:
-    refs: list[PipelineTargetRef] = []
-    for value in values:
-        phone, separator, raw_dialog_id = value.partition("|")
-        if not separator:
-            raise PipelineValidationError("Target must be in PHONE|DIALOG_ID format.")
-        try:
-            dialog_id = int(raw_dialog_id)
-        except ValueError as exc:
-            raise PipelineValidationError("Target dialog id must be numeric.") from exc
-        refs.append(PipelineTargetRef(phone=phone, dialog_id=dialog_id))
-    return refs
+    return parse_pipeline_target_refs(
+        values,
+        missing_separator_message="Target must be in PHONE|DIALOG_ID format.",
+        invalid_dialog_id_message="Target dialog id must be numeric.",
+    )
 
 
 def _preview_text(value: str | None, limit: int = 60) -> str:
@@ -391,10 +386,10 @@ def run(args: argparse.Namespace) -> None:
                     return
                 engine = SearchEngine(db)
 
-                from src.services.provider_service import AgentProviderService
+                from src.services.provider_service import RuntimeProviderRegistry
                 from src.services.quality_scoring_service import QualityScoringService
 
-                provider_service = AgentProviderService(db, config)
+                provider_service = RuntimeProviderRegistry(db, config)
                 await provider_service.load_db_providers()
                 if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
                     print(
@@ -443,10 +438,10 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Pipeline id={args.id} not found")
                     return
                 engine = SearchEngine(db)
-                from src.services.provider_service import AgentProviderService
+                from src.services.provider_service import RuntimeProviderRegistry
                 from src.services.quality_scoring_service import QualityScoringService
 
-                provider_svc = AgentProviderService(db, config)
+                provider_svc = RuntimeProviderRegistry(db, config)
                 await provider_svc.load_db_providers()
                 if pipeline_needs_llm(pipeline) and not provider_svc.has_providers():
                     print(

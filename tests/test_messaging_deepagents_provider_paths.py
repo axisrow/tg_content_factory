@@ -928,15 +928,15 @@ class TestDeepagentsBackendProperties:
 # ===========================================================================
 
 
-class TestAgentProviderService:
+class TestProviderConfigService:
     def _make_service(self):
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         db = MagicMock(spec=Database)
         db.get_setting = AsyncMock(return_value=None)
         db.set_setting = AsyncMock()
-        return AgentProviderService(db, AppConfig()), db
+        return ProviderConfigService(db, AppConfig()), db
 
     def _make_cfg(self, provider="openai", model="gpt-4o", **kwargs):
         from src.agent.provider_registry import ProviderRuntimeConfig

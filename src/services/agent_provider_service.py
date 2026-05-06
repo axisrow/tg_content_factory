@@ -32,6 +32,7 @@ from src.agent.provider_registry import (
 from src.config import AppConfig, resolve_session_encryption_secret
 from src.database import Database
 from src.security import SessionCipher, decrypt_failure_status, log_expected_decrypt_failure
+from src.utils.datetime import try_parse_datetime
 from src.utils.json import safe_json_dumps
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ class ProviderModelCacheEntry:
     compatibility: dict[str, ProviderModelCompatibilityRecord] = field(default_factory=dict)
 
 
-class AgentProviderService:
+class ProviderConfigService:
     def __init__(self, db: Database, config: AppConfig) -> None:
         self._db = db
         self._config = config
@@ -583,9 +584,8 @@ class AgentProviderService:
     ) -> bool:
         if not record.tested_at:
             return False
-        try:
-            tested_at = datetime.fromisoformat(record.tested_at)
-        except ValueError:
+        tested_at = try_parse_datetime(record.tested_at)
+        if tested_at is None:
             return False
         if tested_at.tzinfo is None:
             tested_at = tested_at.replace(tzinfo=UTC)

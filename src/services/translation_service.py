@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from src.database import Database
     from src.models import Message
-    from src.services.provider_service import AgentProviderService
+    from src.services.provider_service import RuntimeProviderRegistry
 
 # DB settings keys
 TRANSLATION_PROVIDER = "translation_provider"
@@ -25,7 +25,7 @@ class TranslationService:
     def __init__(
         self,
         db: Database,
-        provider_service: AgentProviderService | None = None,
+        provider_service: RuntimeProviderRegistry | None = None,
     ) -> None:
         self._db = db
         self._provider_service = provider_service

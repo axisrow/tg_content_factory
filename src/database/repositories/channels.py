@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 import aiosqlite
 
 from src.models import Channel
+from src.utils.datetime import parse_datetime
 
 
 class ChannelsRepository:
@@ -58,9 +57,9 @@ class ChannelsRepository:
             linked_chat_id=row["linked_chat_id"] if "linked_chat_id" in keys else None,
             has_comments=bool(row["has_comments"]) if "has_comments" in keys and row["has_comments"] else False,
             last_collected_id=row["last_collected_id"],
-            added_at=datetime.fromisoformat(row["added_at"]) if row["added_at"] else None,
+            added_at=parse_datetime(row["added_at"]),
             created_at=(
-                datetime.fromisoformat(row["created_at"])
+                parse_datetime(row["created_at"])
                 if "created_at" in keys and row["created_at"]
                 else None
             ),

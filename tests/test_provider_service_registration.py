@@ -3,12 +3,12 @@ from __future__ import annotations
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.services.provider_service import AgentProviderService
+from src.services.provider_service import RuntimeProviderRegistry
 
 
 def _make_service(**env_vars):
     with patch.dict(os.environ, env_vars, clear=False):
-        svc = AgentProviderService(db=None, config=None)
+        svc = RuntimeProviderRegistry(db=None, config=None)
     return svc
 
 
@@ -74,7 +74,8 @@ def test_get_provider_callable_gpt_model():
 
 
 def test_make_openai_compat_provider():
-    fn = AgentProviderService._make_openai_compat_provider("https://api.test.com/v1", "key123")
+    svc = RuntimeProviderRegistry()
+    fn = svc._make_openai_compat_provider("https://api.test.com/v1", "key123")
     assert callable(fn)
 
 
@@ -99,7 +100,7 @@ async def test_get_provider_status_list_no_db():
 async def test_build_provider_status_list():
     db = MagicMock()
     config = MagicMock()
-    svc = AgentProviderService(db=db, config=config)
+    svc = RuntimeProviderRegistry(db=db, config=config)
 
     mock_cfg = MagicMock()
     mock_cfg.provider = "openai"
@@ -109,7 +110,7 @@ async def test_build_provider_status_list():
     mock_cfg.last_validation_error = ""
 
     # The method creates a new APS internally, so we need to mock at module level
-    with patch("src.services.agent_provider_service.AgentProviderService") as mock_aps:
+    with patch("src.services.agent_provider_service.ProviderConfigService") as mock_aps:
         mock_instance = MagicMock()
         mock_instance.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_aps.return_value = mock_instance

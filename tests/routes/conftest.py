@@ -17,7 +17,7 @@ from src.models import Account, Channel, RuntimeSnapshot
 from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
-from src.services.provider_service import AgentProviderService
+from src.services.provider_service import RuntimeProviderRegistry
 from src.telegram.auth import TelegramAuth
 from src.telegram.collector import Collector
 from src.web.app import create_app
@@ -69,7 +69,7 @@ async def base_app(tmp_path):
     app.state.search_engine = SearchEngine(db)
     app.state.ai_search = AISearchEngine(config.llm, db)
     app.state.scheduler = SchedulerManager(config.scheduler)
-    app.state.llm_provider_service = AgentProviderService()
+    app.state.llm_provider_service = RuntimeProviderRegistry()
     app.state.session_secret = "test_secret_key"
     app.state.shutting_down = False
 

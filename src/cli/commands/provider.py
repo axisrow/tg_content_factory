@@ -5,13 +5,13 @@ import asyncio
 
 from src.agent.provider_registry import PROVIDER_SPECS, ProviderRuntimeConfig, provider_spec
 from src.cli import runtime
-from src.services.agent_provider_service import AgentProviderService
+from src.services.agent_provider_service import ProviderConfigService
 
 
 def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         config, db = await runtime.init_db(args.config)
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         try:
             if args.provider_action == "list":
                 configs = await svc.load_provider_configs()

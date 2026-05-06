@@ -30,7 +30,7 @@ from src.database.migrations import (
 )
 from src.models import Message
 from src.search.local_search import LocalSearch
-from src.services.provider_service import AgentProviderService, build_provider_service
+from src.services.provider_service import RuntimeProviderRegistry, build_provider_service
 
 # ============================================================================
 # 1. src/database/migrations.py -- edge-case paths
@@ -49,6 +49,7 @@ async def _init_minimal_schema(db):
     """Create the minimal set of tables required by run_migrations()."""
     await db.execute("""
         CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY,
             channel_id INTEGER NOT NULL,
             message_id INTEGER NOT NULL,
             sender_id INTEGER,
@@ -125,9 +126,7 @@ async def _init_minimal_schema(db):
     """)
     await db.execute("""
         CREATE TABLE IF NOT EXISTS messages_fts (
-            content TEXT,
-            channel_id INTEGER,
-            message_id INTEGER
+            text TEXT
         )
     """)
     await db.commit()
@@ -212,7 +211,7 @@ async def test_run_migrations_creates_channel_stats_index(fresh_db):
 
 @pytest.mark.anyio
 async def test_run_migrations_notification_search_cleanup(fresh_db):
-    """Covers updating notification_search tasks to failed."""
+    """Schema-only migrations do not rewrite legacy notification_search tasks."""
     await _init_minimal_schema(fresh_db)
     await run_migrations(fresh_db)
     # Insert a notification_search task
@@ -225,13 +224,13 @@ async def test_run_migrations_notification_search_cleanup(fresh_db):
         "SELECT status, error FROM collection_tasks WHERE task_type = 'notification_search'"
     )
     row = await cur.fetchone()
-    assert row["status"] == "failed"
-    assert "removed" in row["error"]
+    assert row["status"] == "pending"
+    assert row["error"] is None
 
 
 @pytest.mark.anyio
 async def test_run_migrations_channel_type_normalization(fresh_db):
-    """Covers channel_type normalization: supergroup->group, chat->group."""
+    """Schema-only migrations do not normalize existing channel_type values."""
     await _init_minimal_schema(fresh_db)
     # Add created_at column needed by migration
     cur = await fresh_db.execute("PRAGMA table_info(channels)")
@@ -251,15 +250,14 @@ async def test_run_migrations_channel_type_normalization(fresh_db):
     await run_migrations(fresh_db)
     cur = await fresh_db.execute("SELECT channel_id, channel_type FROM channels ORDER BY channel_id")
     rows = {row["channel_id"]: row["channel_type"] async for row in cur}
-    # Migration: 'group' -> 'supergroup', 'chat' -> 'group'
-    assert rows[1] == "supergroup"  # supergroup stays supergroup
-    assert rows[2] == "supergroup"  # 'group' becomes 'supergroup'
-    assert rows[3] == "group"  # 'chat' becomes 'group'
+    assert rows[1] == "supergroup"
+    assert rows[2] == "group"
+    assert rows[3] == "chat"
 
 
 @pytest.mark.anyio
 async def test_run_migrations_last_collected_id_fixup(fresh_db):
-    """Covers last_collected_id=0 fixup with existing messages."""
+    """Schema-only migrations do not backfill last_collected_id."""
     await _init_minimal_schema(fresh_db)
     await fresh_db.execute(
         "INSERT INTO channels (channel_id, title, last_collected_id) VALUES (100, 'ch', 0)"
@@ -274,7 +272,7 @@ async def test_run_migrations_last_collected_id_fixup(fresh_db):
     await run_migrations(fresh_db)
     cur = await fresh_db.execute("SELECT last_collected_id FROM channels WHERE channel_id=100")
     row = await cur.fetchone()
-    assert row["last_collected_id"] == 99
+    assert row["last_collected_id"] == 0
 
 
 @pytest.mark.anyio
@@ -338,7 +336,7 @@ async def test_run_migrations_adds_sender_identity_columns(fresh_db):
 
 @pytest.mark.anyio
 async def test_run_migrations_fwd_abs_normalization(fresh_db):
-    """Covers _migration_fwd_abs_v1: negative forward_from_channel_id abs normalization."""
+    """Schema-only migrations preserve existing forward_from_channel_id values."""
     await _init_minimal_schema(fresh_db)
     await run_migrations(fresh_db)
     # Add forward_from_channel_id column is now there; insert a negative value
@@ -347,14 +345,10 @@ async def test_run_migrations_fwd_abs_normalization(fresh_db):
         "VALUES (100, 1, '2024-01-01', -100123456)"
     )
     await fresh_db.commit()
-    # Run again -- migration should fix the negative value
-    # First remove the migration marker so it runs again
-    await fresh_db.execute("DELETE FROM settings WHERE key = '_migration_fwd_abs_v1'")
-    await fresh_db.commit()
     await run_migrations(fresh_db)
     cur = await fresh_db.execute("SELECT forward_from_channel_id FROM messages")
     row = await cur.fetchone()
-    assert row["forward_from_channel_id"] == 100123456
+    assert row["forward_from_channel_id"] == -100123456
 
 
 @pytest.mark.anyio
@@ -380,7 +374,7 @@ async def test_run_migrations_adds_message_translation_columns(fresh_db):
 
 @pytest.mark.anyio
 async def test_migrate_vec_to_portable_invalid_type_row(fresh_db):
-    """Covers the `else: continue` branch when embedding type is not str/bytes/bytearray."""
+    """Deprecated vector migration shim no longer copies legacy vec_messages rows."""
     await _init_minimal_schema(fresh_db)
     await fresh_db.execute("""
         CREATE TABLE vec_messages (
@@ -406,7 +400,7 @@ async def test_migrate_vec_to_portable_invalid_type_row(fresh_db):
     await _migrate_vec_to_portable(fresh_db)
     cur = await fresh_db.execute("SELECT COUNT(*) as cnt FROM message_embeddings")
     row = await cur.fetchone()
-    assert row["cnt"] == 1  # bytes blob should be migrated
+    assert row["cnt"] == 0
 
 
 @pytest.mark.anyio
@@ -740,7 +734,7 @@ def clean_provider_env():
 @pytest.mark.anyio
 async def test_load_db_providers_no_db():
     """Covers load_db_providers when db is None."""
-    svc = AgentProviderService(db=None, config=None)
+    svc = RuntimeProviderRegistry(db=None, config=None)
     result = await svc.load_db_providers()
     assert result == 0
 
@@ -750,15 +744,15 @@ async def test_load_db_providers_db_exception():
     """Covers load_db_providers exception path."""
     mock_db = MagicMock()
     mock_config = MagicMock()
-    svc = AgentProviderService(db=mock_db, config=mock_config)
+    svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
 
     with patch(
-        "src.services.provider_service.AgentProviderService._build_adapter_for_config",
+        "src.services.provider_service.RuntimeProviderRegistry._build_adapter_for_config",
         side_effect=Exception("err"),
     ):
         # The inner import will fail
         with patch(
-            "src.services.agent_provider_service.AgentProviderService.load_provider_configs",
+            "src.services.agent_provider_service.ProviderConfigService.load_provider_configs",
             side_effect=Exception("db err"),
         ):
             result = await svc.load_db_providers()
@@ -768,7 +762,7 @@ async def test_load_db_providers_db_exception():
 @pytest.mark.anyio
 async def test_reload_db_providers():
     """Covers reload_db_providers: removes stale providers."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
 
     async def fake_provider(**kw):
         return "test"
@@ -786,7 +780,7 @@ async def test_reload_db_providers():
 @pytest.mark.anyio
 async def test_get_provider_status_list_no_db():
     """Covers get_provider_status_list when db is None."""
-    svc = AgentProviderService(db=None, config=None)
+    svc = RuntimeProviderRegistry(db=None, config=None)
     result = await svc.get_provider_status_list()
     assert result == []
 
@@ -796,7 +790,7 @@ async def test_get_provider_status_list_with_configs():
     """Covers get_provider_status_list with active/disabled/invalid providers."""
     mock_db = MagicMock()
     mock_config = MagicMock()
-    svc = AgentProviderService(db=mock_db, config=mock_config)
+    svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
 
     active_cfg = MagicMock()
     active_cfg.provider = "openai"
@@ -807,7 +801,7 @@ async def test_get_provider_status_list_with_configs():
     disabled_cfg.enabled = False
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService",
+        "src.services.agent_provider_service.ProviderConfigService",
     ) as mock_db_provider_svc:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[active_cfg, disabled_cfg])
@@ -821,7 +815,7 @@ async def test_get_provider_status_list_with_configs():
 @pytest.mark.anyio
 async def test_has_providers_true_and_false():
     """Covers has_providers with and without real providers."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     assert svc.has_providers() is False
 
     async def dummy(**kw):
@@ -833,7 +827,7 @@ async def test_has_providers_true_and_false():
 
 def test_get_provider_callable_returns_first_non_default():
     """Covers get_provider_callable(None) returning first non-default."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
 
     async def custom(**kw):
         return "custom"
@@ -848,13 +842,13 @@ def test_get_provider_callable_returns_first_non_default():
 async def test_build_provider_service():
     """Covers build_provider_service factory function."""
     svc = await build_provider_service(db=None, config=None)
-    assert isinstance(svc, AgentProviderService)
+    assert isinstance(svc, RuntimeProviderRegistry)
     assert "default" in svc._registry
 
 
 def test_build_adapter_for_config_openai_style():
     """Covers _build_adapter_for_config for OpenAI-compatible providers."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "openai"
     cfg.secret_fields = {"api_key": "sk-test"}
@@ -866,7 +860,7 @@ def test_build_adapter_for_config_openai_style():
 
 def test_build_adapter_for_config_cohere():
     """Covers _build_adapter_for_config for cohere provider."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "cohere"
     cfg.secret_fields = {"api_key": "test-key"}
@@ -877,7 +871,7 @@ def test_build_adapter_for_config_cohere():
 
 def test_build_adapter_for_config_ollama():
     """Covers _build_adapter_for_config for ollama provider."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "ollama"
     cfg.secret_fields = {"api_key": ""}
@@ -888,7 +882,7 @@ def test_build_adapter_for_config_ollama():
 
 def test_build_adapter_for_config_anthropic():
     """Covers _build_adapter_for_config for anthropic provider."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "anthropic"
     cfg.secret_fields = {"api_key": "sk-ant-test"}
@@ -899,7 +893,7 @@ def test_build_adapter_for_config_anthropic():
 
 def test_build_adapter_for_config_huggingface():
     """Covers _build_adapter_for_config for huggingface provider."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "huggingface"
     cfg.secret_fields = {"api_key": "hf-test"}
@@ -910,7 +904,7 @@ def test_build_adapter_for_config_huggingface():
 
 def test_build_adapter_for_config_zai():
     """Covers _build_adapter_for_config for zai provider with explicit base_url."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "zai"
     cfg.secret_fields = {"api_key": "zai-test"}
@@ -921,7 +915,7 @@ def test_build_adapter_for_config_zai():
 
 def test_build_adapter_for_config_zai_defaults_when_base_url_empty():
     """Without base_url the zai adapter uses the subscription endpoint."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "zai"
     cfg.secret_fields = {"api_key": "zai-test"}
@@ -930,18 +924,22 @@ def test_build_adapter_for_config_zai_defaults_when_base_url_empty():
     assert adapter is not None
 
 
-def test_build_adapter_for_config_google_genai_returns_none():
-    """Covers _build_adapter_for_config returning None for google_genai."""
-    svc = AgentProviderService()
+def test_build_adapter_for_config_google_genai_uses_langchain_runtime():
+    """Covers _build_adapter_for_config for google_genai via LangChain runtime."""
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "google_genai"
+    cfg.secret_fields = {"api_key": "google-test"}
+    cfg.plain_fields = {}
+    cfg.selected_model = "gemini-2.5-flash"
     adapter = svc._build_adapter_for_config(cfg)
-    assert adapter is None
+    assert adapter is not None
+    assert callable(adapter)
 
 
 def test_build_adapter_for_config_unknown_returns_none():
     """Covers _build_adapter_for_config returning None for unknown provider."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "unknown_provider"
     adapter = svc._build_adapter_for_config(cfg)
@@ -950,7 +948,7 @@ def test_build_adapter_for_config_unknown_returns_none():
 
 def test_has_valid_secrets_with_empty_secrets():
     """Covers _has_valid_secrets with empty secret_fields."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.secret_fields = {"api_key": "  "}
     cfg.provider = "openai"

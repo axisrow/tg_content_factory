@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
 
 from fastapi import Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from src.utils.json import safe_json_dumps
 from src.web import deps
+from src.web.redirects import redirect_see_other
 
 
 @dataclass(frozen=True)
@@ -48,8 +48,7 @@ PipelineResult = PipelineRedirect | PipelineTemplate | PipelineJson | PipelineSt
 
 def pipeline_redirect_response(result: PipelineRedirect) -> RedirectResponse:
     key = "error" if result.error else "msg"
-    suffix = f"&phone={quote(result.phone, safe='')}" if result.phone else ""
-    return RedirectResponse(url=f"/pipelines?{key}={quote(result.code, safe='')}{suffix}", status_code=303)
+    return redirect_see_other("/pipelines", {key: result.code, "phone": result.phone})
 
 
 def pipeline_response(request: Request, result: PipelineResult):

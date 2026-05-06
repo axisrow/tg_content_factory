@@ -1,109 +1,159 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping
+from types import UnionType
+from typing import Any, TypeVar, Union, get_args, get_origin
 
-from fastapi import UploadFile
+from fastapi import Request
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from starlette.datastructures import UploadFile
 
 from src.services.pipeline_filters import normalize_filter_config
-from src.services.pipeline_service import PipelineTargetRef, PipelineValidationError
+from src.services.pipeline_refs import parse_pipeline_target_refs
+from src.services.pipeline_service import PipelineTargetRef
 
 
-@dataclass(frozen=True)
-class CreateWizardForm:
-    name: str
-    pipeline_json: str
-    source_channel_ids: list[int]
-    target_refs: list[str]
-    generate_interval_minutes: int
-    is_active: str
-    run_after: str
-    since_value: int
-    since_unit: str
-    account_phone: str
+class _FrozenForm(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True, str_strip_whitespace=True)
 
 
-@dataclass(frozen=True)
-class PipelineCreateForm:
-    name: str
-    prompt_template: str
-    source_channel_ids: list[int]
-    target_refs: list[str]
-    llm_model: str
-    image_model: str
-    publish_mode: str
-    generation_backend: str
-    generate_interval_minutes: int
-    is_active: bool
+TForm = TypeVar("TForm", bound=BaseModel)
 
 
-@dataclass(frozen=True)
-class PipelineEditForm:
-    name: str
-    prompt_template: str
-    source_channel_ids: list[int]
-    target_refs: list[str]
-    llm_model: str
-    image_model: str
-    publish_mode: str
-    generation_backend: str
-    generate_interval_minutes: int
-    is_active: bool
-    react_emoji: str
-    filter_present: str
-    filter_message_kinds: list[str]
-    filter_service_actions: list[str]
-    filter_media_types: list[str]
-    filter_sender_kinds: list[str]
-    filter_keywords: str
-    filter_regex: str
-    filter_has_text: str
-    dag_source_channel_ids: list[int]
-    account_phone: str
+def validate_form_model(model: type[TForm], data: Mapping[str, object]) -> TForm:
+    return TypeAdapter(model).validate_python(dict(data))
 
 
-@dataclass(frozen=True)
-class PipelineRunForm:
-    since_value: int
-    since_unit: str
+def _is_list_field(annotation: object) -> bool:
+    return get_origin(annotation) is list
 
 
-@dataclass(frozen=True)
-class PipelineGenerateForm:
-    model: str
-    max_tokens: int
-    temperature: float
+def _allows_none(annotation: object) -> bool:
+    if annotation is None:
+        return True
+    origin = get_origin(annotation)
+    if origin in {UnionType, Union}:
+        return type(None) in get_args(annotation)
+    return False
 
 
-@dataclass(frozen=True)
-class PipelineTemplateCreateForm:
-    template_id: int | None
-    name: str
-    source_channel_ids: list[int]
-    target_refs: list[str]
-    llm_model: str
-    image_model: str
-    generate_interval_minutes: int
+def _is_empty_upload(value: object) -> bool:
+    return isinstance(value, UploadFile) and not value.filename
 
 
-@dataclass(frozen=True)
-class PipelineImportForm:
-    json_file: UploadFile | None
-    json_text: str
-    name_override: str
+def _form_data_for_model(model: type[BaseModel], form: Mapping[str, Any]) -> dict[str, object]:
+    data: dict[str, object] = {}
+    getlist = getattr(form, "getlist", None)
+    for name, field in model.model_fields.items():
+        if name not in form:
+            continue
+        if _is_list_field(field.annotation):
+            values = list(getlist(name) if getlist else [form[name]])
+            data[name] = [value for value in values if not _is_empty_upload(value)]
+            continue
+        value = form[name]
+        if _allows_none(field.annotation) and _is_empty_upload(value):
+            data[name] = None
+        else:
+            data[name] = value
+    return data
+
+
+def form_model_dependency(model: type[TForm]) -> Callable[[Request], Awaitable[TForm]]:
+    async def dependency(request: Request) -> TForm:
+        form = await request.form()
+        return validate_form_model(model, _form_data_for_model(model, form))
+
+    return dependency
+
+
+class CreateWizardForm(_FrozenForm):
+    name: str = ""
+    pipeline_json: str = ""
+    source_channel_ids: list[int] = Field(default_factory=list)
+    target_refs: list[str] = Field(default_factory=list)
+    generate_interval_minutes: int = 60
+    is_active: str = ""
+    run_after: str = ""
+    since_value: int = 24
+    since_unit: str = "h"
+    account_phone: str = ""
+
+
+class PipelineCreateForm(_FrozenForm):
+    name: str = ""
+    prompt_template: str = ""
+    source_channel_ids: list[int] = Field(default_factory=list)
+    target_refs: list[str] = Field(default_factory=list)
+    llm_model: str = ""
+    image_model: str = ""
+    publish_mode: str = "moderated"
+    generation_backend: str = "chain"
+    generate_interval_minutes: int = 60
+    is_active: bool = False
+
+
+class PipelineEditForm(_FrozenForm):
+    name: str = ""
+    prompt_template: str = ""
+    source_channel_ids: list[int] = Field(default_factory=list)
+    target_refs: list[str] = Field(default_factory=list)
+    llm_model: str = ""
+    image_model: str = ""
+    publish_mode: str = "moderated"
+    generation_backend: str = "chain"
+    generate_interval_minutes: int = 60
+    is_active: bool = False
+    react_emoji: str = ""
+    filter_present: str = ""
+    filter_message_kinds: list[str] = Field(default_factory=list)
+    filter_service_actions: list[str] = Field(default_factory=list)
+    filter_media_types: list[str] = Field(default_factory=list)
+    filter_sender_kinds: list[str] = Field(default_factory=list)
+    filter_keywords: str = ""
+    filter_regex: str = ""
+    filter_has_text: str = ""
+    dag_source_channel_ids: list[int] = Field(default_factory=list)
+    account_phone: str = ""
+
+
+class PipelineRunForm(_FrozenForm):
+    since_value: int = 24
+    since_unit: str = "h"
+
+
+class PipelineGenerateForm(_FrozenForm):
+    model: str = ""
+    max_tokens: int = 256
+    temperature: float = 0.0
+
+
+class PipelinePublishForm(_FrozenForm):
+    run_id: int | None = None
+
+
+class PipelineTemplateCreateForm(_FrozenForm):
+    template_id: int | None = None
+    name: str = ""
+    source_channel_ids: list[int] = Field(default_factory=list)
+    target_refs: list[str] = Field(default_factory=list)
+    llm_model: str = ""
+    image_model: str = ""
+    generate_interval_minutes: int = 60
+
+
+class PipelineImportForm(_FrozenForm):
+    json_file: UploadFile | None = None
+    json_text: str = ""
+    name_override: str = ""
 
 
 def parse_target_refs(values: list[str]) -> list[PipelineTargetRef]:
-    refs: list[PipelineTargetRef] = []
-    for value in values:
-        phone, separator, raw_dialog_id = value.partition("|")
-        if not separator:
-            raise PipelineValidationError("Некорректный формат цели pipeline.")
-        try:
-            dialog_id = int(raw_dialog_id)
-        except ValueError as exc:
-            raise PipelineValidationError("Некорректный dialog id для pipeline target.") from exc
-        refs.append(PipelineTargetRef(phone=phone, dialog_id=dialog_id))
-    return refs
+    return parse_pipeline_target_refs(
+        values,
+        missing_separator_message="Некорректный формат цели pipeline.",
+        invalid_dialog_id_message="Некорректный dialog id для pipeline target.",
+    )
 
 
 def get_filter_config(pipeline) -> dict | None:

@@ -1118,32 +1118,32 @@ class TestSchedulerSyncJobState:
 # ===========================================================================
 
 
-class TestAgentProviderServiceExtended:
+class TestProviderConfigServiceExtended:
     async def test_normalize_urlish_empty(self, db):
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         assert svc._normalize_urlish("") == ""
 
     async def test_normalize_urlish_no_scheme(self, db):
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         result = svc._normalize_urlish("example.com/api")
         assert result == "example.com/api"
 
     async def test_normalize_urlish_with_scheme(self, db):
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         result = svc._normalize_urlish("https://example.com/api/")
         assert result.endswith("/api")
         assert not result.endswith("/")
 
     async def test_config_sort_key_unknown_provider(self, db):
-        from src.services.agent_provider_service import AgentProviderService, ProviderRuntimeConfig
+        from src.services.agent_provider_service import ProviderConfigService, ProviderRuntimeConfig
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         cfg = ProviderRuntimeConfig(
             provider="unknown_provider", enabled=True, priority=5,
             selected_model="m", plain_fields={}, secret_fields={},
@@ -1152,25 +1152,25 @@ class TestAgentProviderServiceExtended:
         assert key[0] == 5
 
     async def test_empty_model_cache_entry_unknown(self, db):
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         with pytest.raises(RuntimeError, match="Unknown provider"):
             svc._empty_model_cache_entry("totally_unknown")
 
     async def test_compatibility_view_none(self, db):
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         assert svc._compatibility_view(None) is None
 
     async def test_compatibility_view_with_record(self, db):
         from src.services.agent_provider_service import (
-            AgentProviderService,
+            ProviderConfigService,
             ProviderModelCompatibilityRecord,
         )
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         record = ProviderModelCompatibilityRecord(
             model="test", status="ok", reason="",
             config_fingerprint="fp", probe_kind="dev",
@@ -1182,9 +1182,9 @@ class TestAgentProviderServiceExtended:
     async def test_decrypt_no_cipher(self, db):
         import pytest
 
-        from src.services.agent_provider_service import AgentProviderService, provider_spec
+        from src.services.agent_provider_service import ProviderConfigService, provider_spec
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         svc._cipher = None
         spec = provider_spec("openai")
         if spec and spec.secret_fields:
@@ -1192,9 +1192,9 @@ class TestAgentProviderServiceExtended:
                 svc._decrypt_secret_fields({"api_key": "secret"}, spec)
 
     async def test_app_version(self, db):
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         version = svc._app_version()
         assert isinstance(version, str)
 
@@ -4101,7 +4101,7 @@ class TestQualityScoringServiceCoverage:
 
         mock_provider = AsyncMock(return_value="no json here")
         with patch(
-            "src.services.provider_service.AgentProviderService"
+            "src.services.provider_service.RuntimeProviderRegistry"
         ) as mock_aps:
             mock_aps.return_value.get_provider_callable.return_value = mock_provider
             score = await svc.score_content("test text", model="test")
@@ -4117,7 +4117,7 @@ class TestQualityScoringServiceCoverage:
 
         mock_provider = AsyncMock(side_effect=OSError("network"))
         with patch(
-            "src.services.provider_service.AgentProviderService"
+            "src.services.provider_service.RuntimeProviderRegistry"
         ) as mock_aps:
             mock_aps.return_value.get_provider_callable.return_value = mock_provider
             score = await svc.score_content("test text", model="test")
@@ -4132,7 +4132,7 @@ class TestQualityScoringServiceCoverage:
 
         mock_provider = AsyncMock(side_effect=RuntimeError("unexpected"))
         with patch(
-            "src.services.provider_service.AgentProviderService"
+            "src.services.provider_service.RuntimeProviderRegistry"
         ) as mock_aps:
             mock_aps.return_value.get_provider_callable.return_value = mock_provider
             score = await svc.score_content("test text", model="test")
@@ -4506,7 +4506,7 @@ class TestABTestingServiceCoverage:
         pipeline = ContentPipeline(id=1, name="p", prompt_template="t")
 
         with patch(
-            "src.services.provider_service.AgentProviderService"
+            "src.services.provider_service.RuntimeProviderRegistry"
         ) as mock_aps:
             mock_aps.return_value.get_provider_callable.side_effect = RuntimeError("no provider")
             variants = await svc.generate_variants(pipeline, "base text", num_variants=2)
@@ -4735,24 +4735,24 @@ class TestProviderServiceCoverage:
 
     def test_get_provider_callable_openai_model(self):
         """Lines 135-142: OpenAI model routing for GPT models."""
-        from src.services.provider_service import AgentProviderService
+        from src.services.provider_service import RuntimeProviderRegistry
 
         db = _make_mock_db()
         db.get_setting = AsyncMock(return_value=None)
 
         with patch.dict("os.environ", {"OPENAI_API_KEY": "test"}, clear=False):
-            svc = AgentProviderService(db)
+            svc = RuntimeProviderRegistry(db)
 
         func = svc.get_provider_callable("gpt-4")
         assert func is not None
 
     def test_get_provider_callable_unknown_fallback(self):
         """Lines 144-145: unknown provider fallback."""
-        from src.services.provider_service import AgentProviderService
+        from src.services.provider_service import RuntimeProviderRegistry
 
         db = _make_mock_db()
         db.get_setting = AsyncMock(return_value=None)
-        svc = AgentProviderService(db)
+        svc = RuntimeProviderRegistry(db)
 
         func = svc.get_provider_callable("nonexistent_provider")
         assert func is not None

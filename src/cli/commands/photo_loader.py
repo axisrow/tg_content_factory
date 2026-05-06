@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime
 
 from src.cli import runtime
 from src.database.bundles import PhotoLoaderBundle
@@ -11,6 +11,7 @@ from src.services.channel_service import ChannelService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTarget, PhotoTaskService
+from src.utils.datetime import parse_required_schedule_datetime
 
 
 async def _resolve_target(raw: str, pool) -> PhotoTarget:
@@ -28,10 +29,7 @@ async def _resolve_target(raw: str, pool) -> PhotoTarget:
 
 
 def _parse_schedule_at(value: str) -> datetime:
-    dt = datetime.fromisoformat(value)
-    if dt.tzinfo is None:
-        dt = dt.astimezone()
-    return dt.astimezone(timezone.utc)
+    return parse_required_schedule_datetime(value)
 
 
 def run(args: argparse.Namespace) -> None:

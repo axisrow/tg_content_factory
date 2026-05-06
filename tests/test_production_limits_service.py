@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -371,6 +372,26 @@ async def test_execute_with_retry_raises_after_max_retries():
                 max_retries=2,
                 base_delay=0.01,
             )
+
+
+@pytest.mark.anyio
+async def test_execute_with_retry_propagates_cancelled_error_without_retry():
+    service = ProductionLimitsService(
+        db=SimpleNamespace(),
+        rate_config=RateLimitConfig(requests_per_minute=100, tokens_per_minute=100000),
+        cost_config=CostConfig(daily_cost_cap=100.0),
+    )
+    call_count = 0
+
+    async def cancelled():
+        nonlocal call_count
+        call_count += 1
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.execute_with_retry(func=cancelled, tokens=10, max_retries=3, base_delay=0.01)
+
+    assert call_count == 1
 
 
 @pytest.mark.anyio

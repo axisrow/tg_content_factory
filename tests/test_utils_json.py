@@ -4,7 +4,7 @@ from datetime import date, datetime
 import pytest
 from pydantic import BaseModel
 
-from src.utils.json import safe_json_dumps
+from src.utils.json import safe_json_dumps, safe_json_loads, safe_json_loads_dict, safe_json_loads_list
 
 
 class _SampleModel(BaseModel):
@@ -73,3 +73,15 @@ def test_list_of_datetime():
     result = safe_json_dumps(items)
     assert "2026-01-01" in result
     assert "2026-06-15" in result
+
+
+def test_safe_json_loads_returns_default_on_bad_input():
+    assert safe_json_loads("not json", default={"fallback": True}) == {"fallback": True}
+    assert safe_json_loads(None, default=[]) == []
+
+
+def test_safe_json_loads_typed_helpers():
+    assert safe_json_loads_dict('{"a": 1}') == {"a": 1}
+    assert safe_json_loads_dict("[1]") is None
+    assert safe_json_loads_list("[1, 2]") == [1, 2]
+    assert safe_json_loads_list('{"a": 1}') == []

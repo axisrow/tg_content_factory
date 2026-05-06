@@ -98,7 +98,7 @@ class TestDetect:
 
 class TestRun:
     @patch("src.services.translation_service.TranslationService")
-    @patch("src.services.provider_service.AgentProviderService")
+    @patch("src.services.provider_service.RuntimeProviderRegistry")
     @patch("src.database.repositories.messages.MessagesRepository.get_untranslated_messages")
     def test_run_no_messages(self, mock_get, mock_prov_svc, mock_trans_svc, cli_env, capsys):
         _prep_prov_mock(mock_prov_svc)
@@ -110,7 +110,7 @@ class TestRun:
 
     @patch("src.database.repositories.messages.MessagesRepository.update_translation", new_callable=AsyncMock)
     @patch("src.services.translation_service.TranslationService")
-    @patch("src.services.provider_service.AgentProviderService")
+    @patch("src.services.provider_service.RuntimeProviderRegistry")
     @patch("src.database.repositories.messages.MessagesRepository.get_untranslated_messages")
     def test_run_translates_messages(self, mock_get, mock_prov_svc, mock_trans_svc, mock_update, cli_env, capsys):
         _prep_prov_mock(mock_prov_svc)
@@ -125,7 +125,7 @@ class TestRun:
         assert "Translated 2/2" in out
 
     @patch("src.services.translation_service.TranslationService")
-    @patch("src.services.provider_service.AgentProviderService")
+    @patch("src.services.provider_service.RuntimeProviderRegistry")
     @patch("src.database.repositories.messages.MessagesRepository.get_untranslated_messages")
     def test_run_with_source_filter(self, mock_get, mock_prov_svc, mock_trans_svc, cli_env, capsys):
         _prep_prov_mock(mock_prov_svc)
@@ -139,7 +139,7 @@ class TestRun:
         assert kwargs.get("source_langs") == ["ru", "de"] or mock_get.call_args[1].get("source_langs") == ["ru", "de"]
 
     @patch("src.services.translation_service.TranslationService")
-    @patch("src.services.provider_service.AgentProviderService")
+    @patch("src.services.provider_service.RuntimeProviderRegistry")
     @patch("src.database.repositories.messages.MessagesRepository.get_untranslated_messages")
     def test_run_with_limit(self, mock_get, mock_prov_svc, mock_trans_svc, cli_env, capsys):
         _prep_prov_mock(mock_prov_svc)
@@ -151,7 +151,7 @@ class TestRun:
 
     @patch("src.database.repositories.messages.MessagesRepository.update_translation", new_callable=AsyncMock)
     @patch("src.services.translation_service.TranslationService")
-    @patch("src.services.provider_service.AgentProviderService")
+    @patch("src.services.provider_service.RuntimeProviderRegistry")
     @patch("src.database.repositories.messages.MessagesRepository.get_untranslated_messages")
     def test_run_partial_failure(self, mock_get, mock_prov_svc, mock_trans_svc, mock_update, cli_env, capsys):
         _prep_prov_mock(mock_prov_svc)
@@ -184,7 +184,7 @@ class TestMessage:
 
     @patch("src.database.repositories.messages.MessagesRepository.update_translation", new_callable=AsyncMock)
     @patch("src.services.translation_service.TranslationService")
-    @patch("src.services.provider_service.AgentProviderService")
+    @patch("src.services.provider_service.RuntimeProviderRegistry")
     @patch("src.database.repositories.messages.MessagesRepository.get_by_id")
     def test_message_success(self, mock_get, mock_prov_svc, mock_trans_svc, mock_update, cli_env, capsys):
         _prep_prov_mock(mock_prov_svc)
@@ -198,7 +198,7 @@ class TestMessage:
         assert "Hello world" in out
 
     @patch("src.services.translation_service.TranslationService")
-    @patch("src.services.provider_service.AgentProviderService")
+    @patch("src.services.provider_service.RuntimeProviderRegistry")
     @patch("src.database.repositories.messages.MessagesRepository.get_by_id")
     def test_message_translation_failed(self, mock_get, mock_prov_svc, mock_trans_svc, cli_env, capsys):
         _prep_prov_mock(mock_prov_svc)
@@ -212,7 +212,7 @@ class TestMessage:
 
     @patch("src.database.repositories.messages.MessagesRepository.update_translation", new_callable=AsyncMock)
     @patch("src.services.translation_service.TranslationService")
-    @patch("src.services.provider_service.AgentProviderService")
+    @patch("src.services.provider_service.RuntimeProviderRegistry")
     @patch("src.database.repositories.messages.MessagesRepository.get_by_id")
     def test_message_with_custom_target(self, mock_get, mock_prov_svc, mock_trans_svc, mock_update, cli_env, capsys):
         _prep_prov_mock(mock_prov_svc)

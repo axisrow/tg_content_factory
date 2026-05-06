@@ -197,7 +197,7 @@ async def test_quality_scoring_no_provider():
     from src.services.quality_scoring_service import QualityScoringService
 
     svc = QualityScoringService(db=MagicMock())
-    with patch("src.services.quality_scoring_service.AgentProviderService", create=True):
+    with patch("src.services.quality_scoring_service.RuntimeProviderRegistry", create=True):
         # Provider raises exception
         mock_ps = MagicMock()
         mock_ps.get_provider_callable.return_value = AsyncMock(side_effect=OSError("fail"))

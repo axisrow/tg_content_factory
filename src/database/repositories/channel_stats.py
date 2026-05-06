@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 import aiosqlite
 
 from src.models import ChannelStats
+from src.utils.datetime import parse_datetime
 
 
 class ChannelStatsRepository:
@@ -42,9 +41,7 @@ class ChannelStatsRepository:
                 avg_views=r["avg_views"],
                 avg_reactions=r["avg_reactions"],
                 avg_forwards=r["avg_forwards"],
-                collected_at=(
-                    datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
-                ),
+                collected_at=parse_datetime(r["collected_at"]),
             )
             for r in rows
         ]
@@ -65,9 +62,7 @@ class ChannelStatsRepository:
                 avg_views=r["avg_views"],
                 avg_reactions=r["avg_reactions"],
                 avg_forwards=r["avg_forwards"],
-                collected_at=(
-                    datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
-                ),
+                collected_at=parse_datetime(r["collected_at"]),
             )
             for r in rows
         }
@@ -116,9 +111,7 @@ class ChannelStatsRepository:
                     avg_views=r["avg_views"],
                     avg_reactions=r["avg_reactions"],
                     avg_forwards=r["avg_forwards"],
-                    collected_at=(
-                        datetime.fromisoformat(r["collected_at"]) if r["collected_at"] else None
-                    ),
+                    collected_at=parse_datetime(r["collected_at"]),
                 )
             elif rn == 2:
                 previous[r["channel_id"]] = r["subscriber_count"]

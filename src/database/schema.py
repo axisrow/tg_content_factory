@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     is_primary INTEGER DEFAULT 0,
     is_active INTEGER DEFAULT 1,
     flood_wait_until TEXT,
+    is_premium INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -51,6 +52,9 @@ CREATE TABLE IF NOT EXISTS messages (
     date TEXT NOT NULL,
     collected_at TEXT DEFAULT (datetime('now')),
     forward_from_channel_id INTEGER,
+    detected_lang TEXT,
+    translation_en TEXT,
+    translation_custom TEXT,
     UNIQUE(channel_id, message_id)
 );
 
@@ -171,6 +175,16 @@ CREATE TABLE IF NOT EXISTS search_query_stats (
 CREATE INDEX IF NOT EXISTS idx_sqs_query_date
     ON search_query_stats(query_id, recorded_at);
 
+CREATE TABLE IF NOT EXISTS notification_bots (
+    id INTEGER PRIMARY KEY,
+    tg_user_id INTEGER NOT NULL UNIQUE,
+    tg_username TEXT,
+    bot_id INTEGER,
+    bot_username TEXT NOT NULL,
+    bot_token TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS forum_topics (
     id INTEGER PRIMARY KEY,
     channel_id INTEGER NOT NULL,
@@ -273,12 +287,33 @@ CREATE TABLE IF NOT EXISTS content_pipelines (
     is_active INTEGER NOT NULL DEFAULT 1,
     last_generated_id INTEGER NOT NULL DEFAULT 0,
     generate_interval_minutes INTEGER NOT NULL DEFAULT 60,
+    publish_times TEXT,
+    refinement_steps TEXT,
+    pipeline_json TEXT,
     account_phone TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_content_pipelines_active
     ON content_pipelines(is_active, id);
+
+CREATE TABLE IF NOT EXISTS generation_runs (
+    id INTEGER PRIMARY KEY,
+    pipeline_id INTEGER,
+    status TEXT NOT NULL DEFAULT 'pending',
+    prompt TEXT,
+    generated_text TEXT,
+    metadata TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT,
+    image_url TEXT,
+    moderation_status TEXT DEFAULT 'pending',
+    published_at TEXT,
+    quality_score REAL,
+    quality_issues TEXT,
+    variants TEXT,
+    selected_variant INTEGER
+);
 
 CREATE TABLE IF NOT EXISTS pipeline_sources (
     id INTEGER PRIMARY KEY,
@@ -343,6 +378,31 @@ CREATE TABLE IF NOT EXISTS message_embeddings (
     embedding  BLOB NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS message_embeddings_json (
+    message_id INTEGER PRIMARY KEY,
+    embedding  TEXT NOT NULL,
+    dims       INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS generated_images (
+    id INTEGER PRIMARY KEY,
+    prompt TEXT NOT NULL,
+    model TEXT,
+    image_url TEXT,
+    local_path TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS pipeline_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    description TEXT,
+    category TEXT,
+    template_json TEXT NOT NULL,
+    is_builtin INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS tags (
     id   INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT UNIQUE NOT NULL
@@ -368,4 +428,18 @@ CREATE TABLE IF NOT EXISTS channel_rename_events (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_rename_events_pending
     ON channel_rename_events(channel_id) WHERE decision IS NULL;
+
+CREATE TABLE IF NOT EXISTS agent_threads (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    title      TEXT NOT NULL DEFAULT 'Новый тред',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_messages (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_id  INTEGER NOT NULL REFERENCES agent_threads(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+    content    TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """

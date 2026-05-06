@@ -18,6 +18,7 @@ from src.models import (
     StatsAllTaskPayload,
     TranslateBatchTaskPayload,
 )
+from src.utils.datetime import parse_datetime
 from src.utils.json import safe_json_dumps
 
 _ALLOWED_PAYLOAD_FILTER_KEYS = frozenset({"sq_id", "pipeline_id"})
@@ -105,14 +106,12 @@ class CollectionTasksRepository:
             messages_collected=row["messages_collected"],
             error=row["error"],
             note=row["note"],
-            run_after=(datetime.fromisoformat(row["run_after"]) if row["run_after"] else None),
+            run_after=parse_datetime(row["run_after"]),
             payload=CollectionTasksRepository._deserialize_payload(row["payload"]),
             parent_task_id=row["parent_task_id"],
-            created_at=(datetime.fromisoformat(row["created_at"]) if row["created_at"] else None),
-            started_at=(datetime.fromisoformat(row["started_at"]) if row["started_at"] else None),
-            completed_at=(
-                datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
-            ),
+            created_at=parse_datetime(row["created_at"]),
+            started_at=parse_datetime(row["started_at"]),
+            completed_at=parse_datetime(row["completed_at"]),
         )
 
     async def create_collection_task(

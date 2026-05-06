@@ -155,7 +155,7 @@ async def test_run_pipeline_not_found(client):
     """Test run pipeline with invalid ID."""
     from unittest.mock import patch
 
-    with patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True):
+    with patch("src.services.provider_service.RuntimeProviderRegistry.has_providers", return_value=True):
         resp = await client.post("/pipelines/999999/run", follow_redirects=False)
     assert resp.status_code == 303
     assert "error=pipeline_invalid" in resp.headers["location"]
@@ -168,7 +168,7 @@ async def test_run_pipeline_enqueues(client):
 
     await client.post("/pipelines/add", data=_ADD_DATA)
 
-    with patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True):
+    with patch("src.services.provider_service.RuntimeProviderRegistry.has_providers", return_value=True):
         with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
             mock_svc.return_value.get = AsyncMock(
                 return_value=MagicMock(id=1, is_active=True)
@@ -184,7 +184,7 @@ async def test_run_pipeline_enqueues(client):
 async def test_run_pipeline_blocked_when_needs_llm_and_no_provider(client):
     """Default chain pipeline needs LLM: without provider, run is blocked."""
     await client.post("/pipelines/add", data=_ADD_DATA)
-    # base_app fixture sets up AgentProviderService() with no providers.
+    # base_app fixture sets up ProviderConfigService() with no providers.
     resp = await client.post("/pipelines/1/run", follow_redirects=False)
     assert resp.status_code == 303
     assert "error=llm_not_configured" in resp.headers["location"]
@@ -238,7 +238,7 @@ async def test_run_pipeline_failure(client):
 
     await client.post("/pipelines/add", data=_ADD_DATA)
 
-    with patch("src.services.provider_service.AgentProviderService.has_providers", return_value=True):
+    with patch("src.services.provider_service.RuntimeProviderRegistry.has_providers", return_value=True):
         with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
             mock_svc.return_value.get = AsyncMock(
                 return_value=MagicMock(id=1, is_active=True)

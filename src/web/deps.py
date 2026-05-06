@@ -33,7 +33,7 @@ from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTaskService
 from src.services.pipeline_service import PipelineService
-from src.services.provider_service import AgentProviderService
+from src.services.provider_service import RuntimeProviderRegistry
 from src.services.search_query_service import SearchQueryService
 from src.services.search_service import SearchService
 from src.services.task_enqueuer import TaskEnqueuer
@@ -308,11 +308,11 @@ def get_agent_manager(request: Request) -> AgentManager | None:
     return get_agent_runtime_state(request).manager
 
 
-def get_llm_provider_service(request: Request) -> AgentProviderService:
+def get_llm_provider_service(request: Request) -> RuntimeProviderRegistry:
     svc = getattr(request.app.state, "llm_provider_service", None)
     if svc is not None:
         return svc
-    return get_container(request).llm_provider_service or AgentProviderService()
+    return get_container(request).llm_provider_service or RuntimeProviderRegistry()
 
 
 def channel_service(request: Request) -> ChannelService:

@@ -6,12 +6,19 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Awaitable, Callable, TypeVar
 
+from tenacity import AsyncRetrying, RetryCallState, retry_if_exception, stop_after_attempt
+from tenacity.wait import wait_exponential_jitter
+
 if TYPE_CHECKING:
     from src.database import Database
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+class _AcquireLimitError(RuntimeError):
+    """Raised when rate or cost limits block an attempt before provider execution."""
 
 
 @dataclass
@@ -295,31 +302,42 @@ class ProductionLimitsService:
         Raises:
             Exception: After max retries exceeded
         """
-        last_error = None
-        for attempt in range(max_retries + 1):
-            allowed, error = await self.acquire(tokens, is_image)
-            if not allowed:
-                raise RuntimeError(error or "Rate limit exceeded")
+        def should_retry(error: BaseException) -> bool:
+            if not isinstance(error, Exception):
+                return False
+            return not isinstance(error, _AcquireLimitError)
 
-            try:
+        def log_before_retry(retry_state: RetryCallState) -> None:
+            if retry_state.outcome is None or not retry_state.outcome.failed:
+                return
+            error = retry_state.outcome.exception()
+            delay = retry_state.next_action.sleep if retry_state.next_action else 0.0
+            logger.warning(
+                "Attempt %d failed: %s. Retrying in %.1fs",
+                retry_state.attempt_number,
+                str(error)[:100],
+                delay,
+            )
+
+        retrying = AsyncRetrying(
+            stop=stop_after_attempt(max_retries + 1),
+            wait=wait_exponential_jitter(initial=base_delay, max=max_delay, jitter=base_delay),
+            retry=retry_if_exception(should_retry),
+            before_sleep=log_before_retry,
+            reraise=True,
+        )
+
+        async for attempt in retrying:
+            with attempt:
+                allowed, error = await self.acquire(tokens, is_image)
+                if not allowed:
+                    raise _AcquireLimitError(error or "Rate limit exceeded")
+
                 result = await func()
                 await self._cost_tracker.record_cost(tokens, is_image)
                 return result
-            except Exception as e:
-                last_error = e
-                if attempt < max_retries:
-                    delay = min(base_delay * (2 ** attempt), max_delay)
-                    logger.warning(
-                        "Attempt %d failed: %s. Retrying in %.1fs",
-                        attempt + 1,
-                        str(e)[:100],
-                        delay,
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    raise
 
-        raise last_error or RuntimeError("Unknown error")
+        raise RuntimeError("Unknown error")
 
     def get_stats(self) -> dict:
         """Get current usage statistics."""

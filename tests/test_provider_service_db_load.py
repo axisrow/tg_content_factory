@@ -1,4 +1,4 @@
-"""Tests for AgentProviderService.load_db_providers (env-only service)."""
+"""Tests for RuntimeProviderRegistry.load_db_providers (env-only service)."""
 from __future__ import annotations
 
 import os
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.provider_service import AgentProviderService, build_provider_service
+from src.services.provider_service import RuntimeProviderRegistry, build_provider_service
 
 
 @pytest.fixture
@@ -22,13 +22,13 @@ def mock_config():
 @pytest.mark.anyio
 async def test_load_db_providers_no_db_or_config():
     """Returns 0 when db or config is None."""
-    svc = AgentProviderService(db=None, config=None)
+    svc = RuntimeProviderRegistry(db=None, config=None)
     assert await svc.load_db_providers() == 0
 
-    svc2 = AgentProviderService(db=MagicMock(), config=None)
+    svc2 = RuntimeProviderRegistry(db=MagicMock(), config=None)
     assert await svc2.load_db_providers() == 0
 
-    svc3 = AgentProviderService(db=None, config=MagicMock())
+    svc3 = RuntimeProviderRegistry(db=None, config=MagicMock())
     assert await svc3.load_db_providers() == 0
 
 
@@ -42,13 +42,13 @@ async def test_load_db_providers_registers_openai(mock_db, mock_config):
     mock_cfg.plain_fields = {"base_url": ""}
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         added = await svc.load_db_providers()
 
     assert added == 1
@@ -66,13 +66,13 @@ async def test_load_db_providers_skips_empty_secrets(mock_db, mock_config):
     mock_cfg.plain_fields = {}
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         added = await svc.load_db_providers()
 
     assert added == 0
@@ -89,13 +89,13 @@ async def test_load_db_providers_skips_disabled(mock_db, mock_config):
     mock_cfg.plain_fields = {}
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         added = await svc.load_db_providers()
 
     assert added == 0
@@ -111,13 +111,13 @@ async def test_load_db_providers_skips_duplicate(mock_db, mock_config):
     mock_cfg.plain_fields = {}
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         # Pre-register 'openai' as if from env
         svc.register_provider("openai", svc._default_provider)
         added = await svc.load_db_providers()
@@ -135,13 +135,13 @@ async def test_reload_db_providers_clears_and_reloads(mock_db, mock_config):
     mock_cfg.plain_fields = {}
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         await svc.load_db_providers()
         assert "groq" in svc._registry
 
@@ -156,16 +156,16 @@ async def test_reload_db_providers_clears_and_reloads(mock_db, mock_config):
 @pytest.mark.anyio
 async def test_build_provider_service_loads_db_providers(mock_db, mock_config):
     """Async helper should eagerly load DB-backed providers when config is available."""
-    with patch("src.services.provider_service.AgentProviderService.load_db_providers", new=AsyncMock()) as mock_load:
+    with patch("src.services.provider_service.RuntimeProviderRegistry.load_db_providers", new=AsyncMock()) as mock_load:
         svc = await build_provider_service(mock_db, mock_config)
 
-    assert isinstance(svc, AgentProviderService)
+    assert isinstance(svc, RuntimeProviderRegistry)
     mock_load.assert_awaited_once()
 
 
 @pytest.mark.anyio
 async def test_load_db_providers_cohere_adapter(mock_db, mock_config):
-    """Cohere provider gets make_cohere_adapter."""
+    """Cohere provider gets a LangChain runtime adapter."""
     mock_cfg = MagicMock()
     mock_cfg.provider = "cohere"
     mock_cfg.enabled = True
@@ -173,13 +173,13 @@ async def test_load_db_providers_cohere_adapter(mock_db, mock_config):
     mock_cfg.plain_fields = {"base_url": ""}
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         added = await svc.load_db_providers()
 
     assert added == 1
@@ -196,13 +196,13 @@ async def test_load_db_providers_ollama_adapter_with_key(mock_db, mock_config):
     mock_cfg.plain_fields = {"base_url": "http://localhost:11434"}
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         added = await svc.load_db_providers()
 
     assert added == 1
@@ -219,13 +219,13 @@ async def test_load_db_providers_ollama_without_api_key(mock_db, mock_config):
     mock_cfg.plain_fields = {"base_url": "http://localhost:11434"}
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         added = await svc.load_db_providers()
 
     assert added == 1
@@ -237,13 +237,13 @@ async def test_load_db_providers_ollama_without_api_key(mock_db, mock_config):
 async def test_load_db_providers_handles_exception(mock_db, mock_config):
     """Exception during load_provider_configs returns 0 gracefully."""
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(side_effect=Exception("DB error"))
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         added = await svc.load_db_providers()
 
     assert added == 0
@@ -251,7 +251,7 @@ async def test_load_db_providers_handles_exception(mock_db, mock_config):
 
 def test_has_valid_secrets():
     """_has_valid_secrets checks non-empty secret values."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "openai"
     cfg.secret_fields = {"api_key": "valid-key"}
@@ -274,7 +274,7 @@ def test_has_valid_secrets():
 
 def test_has_valid_secrets_allows_all_optional():
     """Providers where all secret fields are optional (like Ollama) should be valid."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "ollama"
     cfg.secret_fields = {"api_key": ""}
@@ -283,7 +283,7 @@ def test_has_valid_secrets_allows_all_optional():
 
 def test_has_valid_secrets_huggingface_without_key():
     """HuggingFace api_key is also optional, should be valid without it."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "huggingface"
     cfg.secret_fields = {"api_key": ""}
@@ -292,7 +292,7 @@ def test_has_valid_secrets_huggingface_without_key():
 
 def test_has_valid_secrets_requires_secrets_for_required_providers():
     """Providers with required secret fields still need a non-empty value."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = "deepseek"
     cfg.secret_fields = {"api_key": ""}
@@ -308,18 +308,18 @@ def test_has_valid_secrets_requires_secrets_for_required_providers():
     ],
 )
 def test_build_adapter_for_config_uses_registry_default_base_url(provider, default_base_url):
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     cfg = MagicMock()
     cfg.provider = provider
     cfg.plain_fields = {"base_url": ""}
     cfg.secret_fields = {"api_key": f"{provider}-key"}
     sentinel = AsyncMock()
 
-    with patch.object(svc, "_make_openai_compat_provider", return_value=sentinel) as make_adapter:
+    with patch.object(svc, "_make_provider_for_runtime_config", return_value=sentinel) as make_adapter:
         adapter = svc._build_adapter_for_config(cfg)
 
     assert adapter is sentinel
-    make_adapter.assert_called_once_with(default_base_url, f"{provider}-key")
+    make_adapter.assert_called_once_with(cfg)
 
 
 @pytest.mark.anyio
@@ -333,13 +333,13 @@ async def test_get_provider_status_list_disabled(mock_db, mock_config):
     mock_cfg.last_validation_error = ""
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         statuses = await svc.get_provider_status_list()
 
     assert len(statuses) == 1
@@ -358,13 +358,13 @@ async def test_get_provider_status_list_invalid_secrets(mock_db, mock_config):
     mock_cfg.last_validation_error = "SESSION_ENCRYPTION_KEY is not configured"
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         statuses = await svc.get_provider_status_list()
 
     assert len(statuses) == 1
@@ -376,25 +376,25 @@ async def test_get_provider_status_list_invalid_secrets(mock_db, mock_config):
 async def test_get_provider_status_list_no_adapter(mock_db, mock_config):
     """get_provider_status_list returns no_adapter for unsupported providers."""
     mock_cfg = MagicMock()
-    mock_cfg.provider = "google_genai"
+    mock_cfg.provider = "unsupported_provider"
     mock_cfg.enabled = True
     mock_cfg.secret_fields = {"api_key": "test-key"}
     mock_cfg.plain_fields = {}
     mock_cfg.last_validation_error = ""
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         statuses = await svc.get_provider_status_list()
 
     assert len(statuses) == 1
     assert statuses[0]["status"] == "no_adapter"
-    assert "google_genai" in statuses[0]["reason"]
+    assert "unsupported_provider" in statuses[0]["reason"]
 
 
 @pytest.mark.anyio
@@ -408,13 +408,13 @@ async def test_get_provider_status_list_active(mock_db, mock_config):
     mock_cfg.last_validation_error = ""
 
     with patch(
-        "src.services.agent_provider_service.AgentProviderService"
+        "src.services.agent_provider_service.ProviderConfigService"
     ) as mock_db_svc_cls:
         mock_db_svc = MagicMock()
         mock_db_svc.load_provider_configs = AsyncMock(return_value=[mock_cfg])
         mock_db_svc_cls.return_value = mock_db_svc
 
-        svc = AgentProviderService(db=mock_db, config=mock_config)
+        svc = RuntimeProviderRegistry(db=mock_db, config=mock_config)
         await svc.load_db_providers()
         statuses = await svc.get_provider_status_list()
 
@@ -425,7 +425,7 @@ async def test_get_provider_status_list_active(mock_db, mock_config):
 @pytest.mark.anyio
 async def test_get_provider_status_list_no_db():
     """Returns empty list when no DB configured."""
-    svc = AgentProviderService(db=None, config=None)
+    svc = RuntimeProviderRegistry(db=None, config=None)
     assert await svc.get_provider_status_list() == []
 
 
@@ -435,7 +435,7 @@ def test_env_provider_makes_has_providers_true():
     original = os.environ.get(env_key)
     try:
         os.environ[env_key] = "test-key-for-banner-test"
-        svc = AgentProviderService(db=MagicMock(), config=MagicMock())
+        svc = RuntimeProviderRegistry(db=MagicMock(), config=MagicMock())
         assert svc.has_providers()
     finally:
         if original is None:

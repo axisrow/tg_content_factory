@@ -58,6 +58,8 @@ coverage.json
 .coverage
 .coverage.*
 htmlcov/
+output*
+*,cover
 
 # Tasks
 tasks/

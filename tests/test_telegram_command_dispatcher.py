@@ -1726,7 +1726,7 @@ async def test_download_media_message_not_found(tmp_path, monkeypatch):
 
         async def empty_iter(*a, **kw):
             return
-            yield  # make it an async generator  # noqa: unreachable
+            yield  # make it an async generator
 
         client.iter_messages = lambda entity, ids: empty_iter()
         client.get_entity = AsyncMock(return_value=MagicMock())

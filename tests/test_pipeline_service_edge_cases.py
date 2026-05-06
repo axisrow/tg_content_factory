@@ -817,7 +817,7 @@ async def test_edit_via_llm_success(svc, db, pipeline_id):
 
     mock_provider = AsyncMock(return_value=new_graph_json)
 
-    with patch("src.services.provider_service.AgentProviderService") as mock_aps:
+    with patch("src.services.provider_service.RuntimeProviderRegistry") as mock_aps:
         instance = mock_aps.return_value
         instance.get_provider_callable.return_value = mock_provider
 
@@ -837,7 +837,7 @@ async def test_edit_via_llm_with_markdown_fences(svc, db, pipeline_id):
 
     mock_provider = AsyncMock(return_value=wrapped)
 
-    with patch("src.services.provider_service.AgentProviderService") as mock_aps:
+    with patch("src.services.provider_service.RuntimeProviderRegistry") as mock_aps:
         instance = mock_aps.return_value
         instance.get_provider_callable.return_value = mock_provider
 
@@ -851,7 +851,7 @@ async def test_edit_via_llm_provider_failure(svc, db, pipeline_id):
     """edit_via_llm returns error when provider raises."""
     mock_provider = AsyncMock(side_effect=RuntimeError("API down"))
 
-    with patch("src.services.provider_service.AgentProviderService") as mock_aps:
+    with patch("src.services.provider_service.RuntimeProviderRegistry") as mock_aps:
         instance = mock_aps.return_value
         instance.get_provider_callable.return_value = mock_provider
 
@@ -869,7 +869,7 @@ async def test_edit_via_llm_dict_result(svc, db, pipeline_id):
 
     mock_provider = AsyncMock(return_value={"text": new_graph_json})
 
-    with patch("src.services.provider_service.AgentProviderService") as mock_aps:
+    with patch("src.services.provider_service.RuntimeProviderRegistry") as mock_aps:
         instance = mock_aps.return_value
         instance.get_provider_callable.return_value = mock_provider
 
@@ -887,7 +887,7 @@ async def test_edit_via_llm_pipeline_without_graph(svc, db, pipeline_id):
     new_graph = {"nodes": [], "edges": []}
     mock_provider = AsyncMock(return_value=json.dumps(new_graph))
 
-    with patch("src.services.provider_service.AgentProviderService") as mock_aps:
+    with patch("src.services.provider_service.RuntimeProviderRegistry") as mock_aps:
         instance = mock_aps.return_value
         instance.get_provider_callable.return_value = mock_provider
 

@@ -29,7 +29,6 @@ from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
 from src.database.repositories.telegram_commands import TelegramCommandsRepository
-from src.database.schema import SCHEMA_SQL
 from src.models import (
     Account,
     AccountSummary,
@@ -91,8 +90,6 @@ class Database:
 
     async def initialize(self) -> None:
         self._db = await self._connection.connect()
-        await self._db.executescript(SCHEMA_SQL)
-        await self._db.commit()
         self._fts_available = await run_migrations(self._db)
         if not self._fts_available:
             logger.warning(

@@ -5,10 +5,7 @@ from datetime import datetime, timezone
 import aiosqlite
 
 from src.database.repositories._transactions import begin_immediate
-
-
-def _dt(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+from src.utils.datetime import parse_datetime
 
 
 class DialogCacheRepository:
@@ -111,7 +108,7 @@ class DialogCacheRepository:
         row = await cur.fetchone()
         if not row:
             return None
-        return _dt(row["cached_at"])
+        return parse_datetime(row["cached_at"])
 
     async def get_all_phones(self) -> list[str]:
         """Return all distinct phone numbers that have entries in dialog_cache."""

@@ -1064,7 +1064,7 @@ class TestPipelinesToolGenerateDraft:
         }
         with patch("src.search.engine.SearchEngine"):
             with patch("src.services.generation_service.GenerationService") as mock_gen:
-                with patch("src.services.provider_service.AgentProviderService") as mock_ps:
+                with patch("src.services.provider_service.RuntimeProviderRegistry") as mock_ps:
                     mock_ps.return_value.get_provider_callable = MagicMock(return_value=None)
                     mock_gen.return_value.generate = AsyncMock(return_value=gen_result)
                     handlers = _get_tool_handlers(mock_db)
@@ -1084,7 +1084,7 @@ class TestPipelinesToolGenerateDraft:
             )
             with patch("src.search.engine.SearchEngine"):
                 with patch("src.services.generation_service.GenerationService") as mock_gen:
-                    with patch("src.services.provider_service.AgentProviderService") as mock_aps:
+                    with patch("src.services.provider_service.RuntimeProviderRegistry") as mock_aps:
                         mock_aps.return_value.get_provider_callable = MagicMock(return_value=None)
                         mock_gen.return_value.generate = AsyncMock(return_value=gen_result)
                         handlers = _get_tool_handlers(mock_db)
@@ -1165,24 +1165,24 @@ class TestPipelinesToolPublishPipelineRun:
 # ===========================================================================
 
 
-class TestAgentProviderServiceLoadConfigs:
+class TestProviderConfigServiceLoadConfigs:
     @pytest.mark.anyio
     async def test_returns_empty_on_no_setting(self, db):
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         result = await svc.load_provider_configs()
         assert result == []
 
     @pytest.mark.anyio
     async def test_returns_empty_on_invalid_json(self, db):
         from src.config import AppConfig
-        from src.services.agent_provider_service import PROVIDER_SETTINGS_KEY, AgentProviderService
+        from src.services.agent_provider_service import PROVIDER_SETTINGS_KEY, ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         await db.set_setting(PROVIDER_SETTINGS_KEY, "not-json{{{")
         result = await svc.load_provider_configs()
         assert result == []
@@ -1190,10 +1190,10 @@ class TestAgentProviderServiceLoadConfigs:
     @pytest.mark.anyio
     async def test_returns_empty_on_non_list_json(self, db):
         from src.config import AppConfig
-        from src.services.agent_provider_service import PROVIDER_SETTINGS_KEY, AgentProviderService
+        from src.services.agent_provider_service import PROVIDER_SETTINGS_KEY, ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         await db.set_setting(PROVIDER_SETTINGS_KEY, json.dumps({"key": "value"}))
         result = await svc.load_provider_configs()
         assert result == []
@@ -1201,10 +1201,10 @@ class TestAgentProviderServiceLoadConfigs:
     @pytest.mark.anyio
     async def test_skips_unknown_provider(self, db):
         from src.config import AppConfig
-        from src.services.agent_provider_service import PROVIDER_SETTINGS_KEY, AgentProviderService
+        from src.services.agent_provider_service import PROVIDER_SETTINGS_KEY, ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         payload = json.dumps([{"provider": "nonexistent_provider_xyz", "enabled": True}])
         await db.set_setting(PROVIDER_SETTINGS_KEY, payload)
         result = await svc.load_provider_configs()
@@ -1213,11 +1213,11 @@ class TestAgentProviderServiceLoadConfigs:
     @pytest.mark.anyio
     async def test_save_requires_cipher(self, db):
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
         # No session_encryption_key → writes_enabled is False
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         assert not svc.writes_enabled
         with pytest.raises(RuntimeError, match="SESSION_ENCRYPTION_KEY"):
             await svc.save_provider_configs([])
@@ -1228,24 +1228,24 @@ class TestAgentProviderServiceLoadConfigs:
 # ===========================================================================
 
 
-class TestAgentProviderServiceLoadModelCache:
+class TestProviderConfigServiceLoadModelCache:
     @pytest.mark.anyio
     async def test_empty_on_no_setting(self, db):
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         result = await svc.load_model_cache()
         assert result == {}
 
     @pytest.mark.anyio
     async def test_empty_on_invalid_json(self, db):
         from src.config import AppConfig
-        from src.services.agent_provider_service import MODEL_CACHE_SETTINGS_KEY, AgentProviderService
+        from src.services.agent_provider_service import MODEL_CACHE_SETTINGS_KEY, ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         await db.set_setting(MODEL_CACHE_SETTINGS_KEY, "invalid{{")
         result = await svc.load_model_cache()
         assert result == {}
@@ -1253,10 +1253,10 @@ class TestAgentProviderServiceLoadModelCache:
     @pytest.mark.anyio
     async def test_empty_on_non_dict_json(self, db):
         from src.config import AppConfig
-        from src.services.agent_provider_service import MODEL_CACHE_SETTINGS_KEY, AgentProviderService
+        from src.services.agent_provider_service import MODEL_CACHE_SETTINGS_KEY, ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         await db.set_setting(MODEL_CACHE_SETTINGS_KEY, json.dumps([1, 2, 3]))
         result = await svc.load_model_cache()
         assert result == {}
@@ -1264,10 +1264,10 @@ class TestAgentProviderServiceLoadModelCache:
     @pytest.mark.anyio
     async def test_save_and_load_model_cache(self, db):
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService, ProviderModelCacheEntry
+        from src.services.agent_provider_service import ProviderConfigService, ProviderModelCacheEntry
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         entry = ProviderModelCacheEntry(
             provider="openai",
             models=["gpt-4o", "gpt-4.1-mini"],
@@ -1285,15 +1285,15 @@ class TestAgentProviderServiceLoadModelCache:
 # ===========================================================================
 
 
-class TestAgentProviderServiceBuildProviderViews:
+class TestProviderConfigServiceBuildProviderViews:
     @pytest.mark.anyio
     async def test_builds_view_for_openai(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService, ProviderModelCacheEntry
+        from src.services.agent_provider_service import ProviderConfigService, ProviderModelCacheEntry
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         cfg = ProviderRuntimeConfig(
             provider="openai",
             enabled=True,
@@ -1320,10 +1320,10 @@ class TestAgentProviderServiceBuildProviderViews:
     async def test_builds_view_with_empty_cache(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         cfg = ProviderRuntimeConfig(
             provider="openai",
             enabled=False,
@@ -1340,14 +1340,14 @@ class TestAgentProviderServiceBuildProviderViews:
 # ===========================================================================
 
 
-class TestAgentProviderServiceValidateConfig:
+class TestProviderConfigServiceValidateConfig:
     def test_missing_api_key_for_openai(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         cfg = ProviderRuntimeConfig(
             provider="openai",
             enabled=True,
@@ -1361,10 +1361,10 @@ class TestAgentProviderServiceValidateConfig:
     def test_valid_config_with_api_key(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         cfg = ProviderRuntimeConfig(
             provider="openai",
             enabled=True,
@@ -1381,14 +1381,14 @@ class TestAgentProviderServiceValidateConfig:
 # ===========================================================================
 
 
-class TestAgentProviderServiceRefreshAllModels:
+class TestProviderConfigServiceRefreshAllModels:
     @pytest.mark.anyio
     async def test_refresh_all_empty_configs(self, db, monkeypatch):
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
 
         async def _broken_fetch(spec, cfg):
             raise RuntimeError("no network")
@@ -1401,10 +1401,10 @@ class TestAgentProviderServiceRefreshAllModels:
     async def test_refresh_all_with_config(self, db, monkeypatch):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
 
         async def _broken_fetch(spec, cfg):
             raise RuntimeError("no network")
@@ -1638,14 +1638,14 @@ async def _consume_stream(mgr, thread_id, msg):
 # ===========================================================================
 
 
-class TestAgentProviderServiceCompatibility:
+class TestProviderConfigServiceCompatibility:
     def test_build_compatibility_payload_empty_models(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService, ProviderModelCacheEntry
+        from src.services.agent_provider_service import ProviderConfigService, ProviderModelCacheEntry
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         cfg = ProviderRuntimeConfig(
             provider="openai",
             enabled=True,
@@ -1666,12 +1666,12 @@ class TestAgentProviderServiceCompatibility:
 
         from src.config import AppConfig
         from src.services.agent_provider_service import (
-            AgentProviderService,
+            ProviderConfigService,
             ProviderModelCompatibilityRecord,
         )
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         fresh_record = ProviderModelCompatibilityRecord(
             model="gpt-4o",
             status="ok",
@@ -1688,9 +1688,9 @@ class TestAgentProviderServiceCompatibility:
 
     def test_normalize_ollama_base_url(self, db):
         from src.config import AppConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         url = svc.normalize_ollama_base_url("http://localhost:11434", "")
         assert "v1" in url or "localhost" in url

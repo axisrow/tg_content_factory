@@ -12,7 +12,7 @@ from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeCon
 from src.cli.commands.agent import _test_escaping, _test_tools, run
 from src.config import AppConfig
 from src.database import Database
-from src.services.agent_provider_service import AgentProviderService
+from src.services.agent_provider_service import ProviderConfigService
 from tests.helpers import cli_ns, fake_asyncio_run, make_cli_config, make_cli_db
 
 # ---------------------------------------------------------------------------
@@ -711,7 +711,7 @@ def test_run_chat_prompt_real_manager_uses_db_deepagents_provider(cli_db, capsys
     config = AppConfig()
     config.security.session_encryption_key = "provider-agent-cli-secret"
     asyncio.run(
-        AgentProviderService(cli_db, config).save_provider_configs(
+        ProviderConfigService(cli_db, config).save_provider_configs(
             [
                 ProviderRuntimeConfig(
                     provider="zai",

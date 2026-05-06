@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 
 import aiosqlite
 
@@ -14,10 +13,7 @@ from src.models import (
     PipelineSource,
     PipelineTarget,
 )
-
-
-def _dt(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+from src.utils.datetime import parse_datetime
 
 
 class ContentPipelinesRepository:
@@ -53,7 +49,7 @@ class ContentPipelinesRepository:
             ),
             pipeline_json=pipeline_graph,
             account_phone=row["account_phone"] if "account_phone" in keys else None,
-            created_at=_dt(row["created_at"]),
+            created_at=parse_datetime(row["created_at"]),
         )
 
     @staticmethod
@@ -62,7 +58,7 @@ class ContentPipelinesRepository:
             id=row["id"],
             pipeline_id=row["pipeline_id"],
             channel_id=row["channel_id"],
-            created_at=_dt(row["created_at"]),
+            created_at=parse_datetime(row["created_at"]),
         )
 
     @staticmethod
@@ -74,7 +70,7 @@ class ContentPipelinesRepository:
             dialog_id=row["target_dialog_id"],
             title=row["target_title"],
             dialog_type=row["target_type"],
-            created_at=_dt(row["created_at"]),
+            created_at=parse_datetime(row["created_at"]),
         )
 
     async def add(

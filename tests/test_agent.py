@@ -20,7 +20,7 @@ from src.agent.provider_registry import ZAI_DEFAULT_BASE_URL, ProviderRuntimeCon
 from src.agent.tools import make_mcp_server
 from src.config import AppConfig
 from src.models import Message
-from src.services.agent_provider_service import AgentProviderService
+from src.services.agent_provider_service import ProviderConfigService
 
 
 @pytest.fixture(autouse=True)
@@ -915,7 +915,7 @@ async def test_runtime_status_prefers_db_backed_deepagents_over_claude(db, monke
     monkeypatch.setenv("ANTHROPIC_API_KEY", "claude-key")
     config = AppConfig()
     config.security.session_encryption_key = "provider-secret"
-    service = AgentProviderService(db, config)
+    service = ProviderConfigService(db, config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(

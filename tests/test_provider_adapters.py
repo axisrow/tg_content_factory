@@ -4,14 +4,8 @@ import pytest
 
 from src.services.provider_adapters import (
     _parse_json_for_text,
-    make_cohere,
-    make_cohere_adapter,
     make_context7_adapter,
     make_generic_http_adapter,
-    make_huggingface,
-    make_huggingface_adapter,
-    make_ollama,
-    make_ollama_adapter,
 )
 
 
@@ -184,128 +178,6 @@ async def test_parse_json_unknown_type():
     assert result == "42"
 
 
-# === Cohere adapter tests ===
-
-
-@pytest.mark.anyio
-async def test_cohere_adapter_parses_generations(monkeypatch):
-    resp = FakeResp(
-        status=200, json_data={"generations": [{"text": "Hello from Cohere"}]}, text_data="ok"
-    )
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_cohere_adapter("fakekey")
-    out = await adapter("my prompt")
-    assert "Hello from Cohere" in out
-
-
-@pytest.mark.anyio
-async def test_cohere_adapter_with_model(monkeypatch):
-    resp = FakeResp(status=200, json_data={"generations": [{"text": "Model response"}]})
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_cohere_adapter("fakekey")
-    out = await adapter("prompt", model="command")
-    assert "Model response" in out
-
-
-@pytest.mark.anyio
-async def test_cohere_adapter_error_status(monkeypatch):
-    resp = FakeResp(status=500, text_data="Internal error")
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_cohere_adapter("fakekey")
-    with pytest.raises(RuntimeError) as exc_info:
-        await adapter("prompt")
-    assert "500" in str(exc_info.value)
-
-
-@pytest.mark.anyio
-async def test_cohere_adapter_custom_base_url(monkeypatch):
-    resp = FakeResp(status=200, json_data={"generations": [{"text": "OK"}]})
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_cohere_adapter("fakekey", base_url="https://custom.api/endpoint")
-    out = await adapter("prompt")
-    assert "OK" in out
-
-
-@pytest.mark.anyio
-async def test_cohere_shim():
-    adapter = make_cohere("test_key")
-    assert callable(adapter)
-
-
-# === Ollama adapter tests ===
-
-
-@pytest.mark.anyio
-async def test_ollama_adapter_parses_results(monkeypatch):
-    resp = FakeResp(status=200, json_data={"results": [{"content": {"text": "Ollama says hi"}}]})
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_ollama_adapter("http://example.org", api_key=None)
-    out = await adapter("p")
-    assert "Ollama says hi" in out
-
-
-@pytest.mark.anyio
-async def test_ollama_adapter_with_api_key(monkeypatch):
-    resp = FakeResp(status=200, json_data={"results": [{"text": "Auth response"}]})
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_ollama_adapter("http://example.org", api_key="secret")
-    out = await adapter("prompt")
-    assert "Auth response" in out
-
-
-@pytest.mark.anyio
-async def test_ollama_adapter_error_status(monkeypatch):
-    resp = FakeResp(status=400, text_data="Bad request")
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_ollama_adapter("http://example.org")
-    with pytest.raises(RuntimeError) as exc_info:
-        await adapter("prompt")
-    assert "400" in str(exc_info.value)
-
-
-@pytest.mark.anyio
-async def test_ollama_shim():
-    adapter = make_ollama("http://localhost:11434")
-    assert callable(adapter)
-
-
-# === HuggingFace adapter tests ===
-
-
-@pytest.mark.anyio
-async def test_hf_adapter_parses_generated_text(monkeypatch):
-    resp = FakeResp(status=200, json_data={"generated_text": "HF reply"})
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_huggingface_adapter("fakehf")
-    out = await adapter("q", model="gpt-like")
-    assert "HF reply" in out
-
-
-@pytest.mark.anyio
-async def test_hf_adapter_without_model(monkeypatch):
-    resp = FakeResp(status=200, json_data={"generated_text": "No model response"})
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_huggingface_adapter("fakehf", base_url="https://custom.hf.api")
-    out = await adapter("q")
-    assert "No model response" in out
-
-
-@pytest.mark.anyio
-async def test_hf_adapter_error_status(monkeypatch):
-    resp = FakeResp(status=403, text_data="Forbidden")
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_huggingface_adapter("fakehf")
-    with pytest.raises(RuntimeError) as exc_info:
-        await adapter("prompt")
-    assert "403" in str(exc_info.value)
-
-
-@pytest.mark.anyio
-async def test_huggingface_shim():
-    adapter = make_huggingface("test_token")
-    assert callable(adapter)
-
-
 # === Generic HTTP adapter tests ===
 
 
@@ -378,61 +250,6 @@ async def test_context7_adapter_custom_base_url(monkeypatch):
     adapter = make_context7_adapter("test_key", base_url="https://custom.context7.api")
     out = await adapter("prompt")
     assert "Custom base" in out
-
-
-# === Anthropic adapter tests ===
-
-
-@pytest.mark.anyio
-async def test_anthropic_adapter_success(monkeypatch):
-    from src.services.provider_adapters import make_anthropic_adapter
-
-    resp = FakeResp(
-        status=200,
-        json_data={"content": [{"text": "Claude response"}]},
-    )
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_anthropic_adapter("fake-anthropic-key")
-    out = await adapter("hello")
-    assert "Claude response" in out
-
-
-@pytest.mark.anyio
-async def test_anthropic_adapter_error_status(monkeypatch):
-    from src.services.provider_adapters import make_anthropic_adapter
-
-    resp = FakeResp(status=401, text_data="Unauthorized")
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_anthropic_adapter("fake-key")
-    with pytest.raises(RuntimeError, match="401"):
-        await adapter("hello")
-
-
-@pytest.mark.anyio
-async def test_anthropic_adapter_custom_base_url(monkeypatch):
-    from src.services.provider_adapters import make_anthropic_adapter
-
-    resp = FakeResp(
-        status=200,
-        json_data={"content": [{"text": "ZAI response"}]},
-    )
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_anthropic_adapter("zai-key", base_url="https://zai.example.com/v1")
-    out = await adapter("hello", model="glm-4")
-    assert "ZAI response" in out
-
-
-@pytest.mark.anyio
-async def test_anthropic_adapter_malformed_response(monkeypatch):
-    """When response JSON lacks expected structure, falls back to str()."""
-    from src.services.provider_adapters import make_anthropic_adapter
-
-    resp = FakeResp(status=200, json_data={"unexpected": "data"})
-    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
-    adapter = make_anthropic_adapter("fake-key")
-    out = await adapter("hello")
-    # Falls back to str(data) when content[0].text fails
-    assert "unexpected" in out or "data" in out
 
 
 # === _parse_json_for_text edge cases (edge-case lines) ===

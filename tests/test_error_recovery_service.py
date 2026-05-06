@@ -137,6 +137,27 @@ async def test_execute_with_recovery_circuit_open_no_fallback():
 
 
 @pytest.mark.anyio
+async def test_execute_with_recovery_circuit_open_no_fallback_does_not_retry():
+    service = ErrorRecoveryService(
+        retry_policy=RetryPolicy(max_retries=3, base_delay=0.0, max_delay=0.0, jitter=False),
+        circuit_config=CircuitBreakerConfig(failure_threshold=1, recovery_timeout=10.0),
+    )
+    call_count = 0
+
+    async def can_execute():
+        nonlocal call_count
+        call_count += 1
+        return False, "open"
+
+    service._circuit_breaker.can_execute = can_execute
+
+    with pytest.raises(RuntimeError, match="Circuit breaker is open"):
+        await service.execute_with_recovery(lambda: None)
+
+    assert call_count == 1
+
+
+@pytest.mark.anyio
 async def test_error_stats():
     """Test get_error_stats returns statistics."""
     service = ErrorRecoveryService()

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, File, Form, Request, UploadFile
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from src.models import PipelineGenerationBackend, PipelinePublishMode
 from src.web.pipelines import handlers
 from src.web.pipelines.forms import (
     CreateWizardForm,
@@ -11,12 +12,26 @@ from src.web.pipelines.forms import (
     PipelineEditForm,
     PipelineGenerateForm,
     PipelineImportForm,
+    PipelinePublishForm,
     PipelineRunForm,
     PipelineTemplateCreateForm,
+    form_model_dependency,
 )
 from src.web.pipelines.responses import pipeline_response
 
 router = APIRouter()
+
+CreateWizardFormDep = Annotated[CreateWizardForm, Depends(form_model_dependency(CreateWizardForm))]
+PipelineCreateFormDep = Annotated[PipelineCreateForm, Depends(form_model_dependency(PipelineCreateForm))]
+PipelineEditFormDep = Annotated[PipelineEditForm, Depends(form_model_dependency(PipelineEditForm))]
+PipelineRunFormDep = Annotated[PipelineRunForm, Depends(form_model_dependency(PipelineRunForm))]
+PipelineGenerateFormDep = Annotated[PipelineGenerateForm, Depends(form_model_dependency(PipelineGenerateForm))]
+PipelinePublishFormDep = Annotated[PipelinePublishForm, Depends(form_model_dependency(PipelinePublishForm))]
+PipelineTemplateCreateFormDep = Annotated[
+    PipelineTemplateCreateForm,
+    Depends(form_model_dependency(PipelineTemplateCreateForm)),
+]
+PipelineImportFormDep = Annotated[PipelineImportForm, Depends(form_model_dependency(PipelineImportForm))]
 
 
 @router.get("/api/channels/search", response_class=JSONResponse)
@@ -37,84 +52,18 @@ async def create_wizard_page(request: Request):
 @router.post("/create-wizard")
 async def create_wizard_submit(
     request: Request,
-    name: str = Form(""),
-    pipeline_json: str = Form(""),
-    source_channel_ids: list[int] = Form(default=[]),
-    target_refs: list[str] = Form(default=[]),
-    generate_interval_minutes: int = Form(60),
-    is_active: str = Form(""),
-    run_after: str = Form(""),
-    since_value: int = Form(24),
-    since_unit: str = Form("h"),
-    account_phone: str = Form(""),
+    form: CreateWizardFormDep,
 ):
-    form = CreateWizardForm(
-        name=name,
-        pipeline_json=pipeline_json,
-        source_channel_ids=source_channel_ids,
-        target_refs=target_refs,
-        generate_interval_minutes=generate_interval_minutes,
-        is_active=is_active,
-        run_after=run_after,
-        since_value=since_value,
-        since_unit=since_unit,
-        account_phone=account_phone,
-    )
-    result = await handlers.create_wizard_submit(
-        request,
-        name=form.name,
-        pipeline_json=form.pipeline_json,
-        source_channel_ids=form.source_channel_ids,
-        target_refs=form.target_refs,
-        generate_interval_minutes=form.generate_interval_minutes,
-        is_active=form.is_active,
-        run_after=form.run_after,
-        since_value=form.since_value,
-        since_unit=form.since_unit,
-        account_phone=form.account_phone,
-    )
+    result = await handlers.create_wizard_submit(request, form)
     return pipeline_response(request, result)
 
 
 @router.post("/add")
 async def add_pipeline(
     request: Request,
-    name: str = Form(""),
-    prompt_template: str = Form(""),
-    source_channel_ids: list[int] = Form(default=[]),
-    target_refs: list[str] = Form(default=[]),
-    llm_model: str = Form(""),
-    image_model: str = Form(""),
-    publish_mode: str = Form(PipelinePublishMode.MODERATED.value),
-    generation_backend: str = Form(PipelineGenerationBackend.CHAIN.value),
-    generate_interval_minutes: int = Form(60),
-    is_active: bool = Form(False),
+    form: PipelineCreateFormDep,
 ):
-    form = PipelineCreateForm(
-        name=name,
-        prompt_template=prompt_template,
-        source_channel_ids=source_channel_ids,
-        target_refs=target_refs,
-        llm_model=llm_model,
-        image_model=image_model,
-        publish_mode=publish_mode,
-        generation_backend=generation_backend,
-        generate_interval_minutes=generate_interval_minutes,
-        is_active=is_active,
-    )
-    result = await handlers.add_pipeline(
-        request,
-        name=form.name,
-        prompt_template=form.prompt_template,
-        source_channel_ids=form.source_channel_ids,
-        target_refs=form.target_refs,
-        llm_model=form.llm_model,
-        image_model=form.image_model,
-        publish_mode=form.publish_mode,
-        generation_backend=form.generation_backend,
-        generate_interval_minutes=form.generate_interval_minutes,
-        is_active=form.is_active,
-    )
+    result = await handlers.add_pipeline(request, form)
     return pipeline_response(request, result)
 
 
@@ -122,52 +71,9 @@ async def add_pipeline(
 async def edit_pipeline(
     request: Request,
     pipeline_id: int,
-    name: str = Form(""),
-    prompt_template: str = Form(""),
-    source_channel_ids: list[int] = Form(default=[]),
-    target_refs: list[str] = Form(default=[]),
-    llm_model: str = Form(""),
-    image_model: str = Form(""),
-    publish_mode: str = Form(PipelinePublishMode.MODERATED.value),
-    generation_backend: str = Form(PipelineGenerationBackend.CHAIN.value),
-    generate_interval_minutes: int = Form(60),
-    is_active: bool = Form(False),
-    react_emoji: str = Form(""),
-    filter_present: str = Form(""),
-    filter_message_kinds: list[str] = Form(default=[]),
-    filter_service_actions: list[str] = Form(default=[]),
-    filter_media_types: list[str] = Form(default=[]),
-    filter_sender_kinds: list[str] = Form(default=[]),
-    filter_keywords: str = Form(""),
-    filter_regex: str = Form(""),
-    filter_has_text: str = Form(""),
-    dag_source_channel_ids: list[int] = Form(default=[]),
-    account_phone: str = Form(""),
+    form: PipelineEditFormDep,
 ):
-    form = PipelineEditForm(
-        name=name,
-        prompt_template=prompt_template,
-        source_channel_ids=source_channel_ids,
-        target_refs=target_refs,
-        llm_model=llm_model,
-        image_model=image_model,
-        publish_mode=publish_mode,
-        generation_backend=generation_backend,
-        generate_interval_minutes=generate_interval_minutes,
-        is_active=is_active,
-        react_emoji=react_emoji,
-        filter_present=filter_present,
-        filter_message_kinds=filter_message_kinds,
-        filter_service_actions=filter_service_actions,
-        filter_media_types=filter_media_types,
-        filter_sender_kinds=filter_sender_kinds,
-        filter_keywords=filter_keywords,
-        filter_regex=filter_regex,
-        filter_has_text=filter_has_text,
-        dag_source_channel_ids=dag_source_channel_ids,
-        account_phone=account_phone,
-    )
-    result = await handlers.edit_pipeline(request, pipeline_id, **form.__dict__)
+    result = await handlers.edit_pipeline(request, pipeline_id, form)
     return pipeline_response(request, result)
 
 
@@ -182,15 +88,8 @@ async def delete_pipeline(request: Request, pipeline_id: int):
 
 
 @router.post("/{pipeline_id}/run")
-async def run_pipeline(request: Request, pipeline_id: int,
-                       since_value: int = Form(24), since_unit: str = Form("h")):
-    form = PipelineRunForm(since_value=since_value, since_unit=since_unit)
-    result = await handlers.run_pipeline(
-        request,
-        pipeline_id,
-        since_value=form.since_value,
-        since_unit=form.since_unit,
-    )
+async def run_pipeline(request: Request, pipeline_id: int, form: PipelineRunFormDep):
+    result = await handlers.run_pipeline(request, pipeline_id, form)
     return pipeline_response(request, result)
 
 
@@ -231,24 +130,15 @@ async def generate_stream(
 async def generate_pipeline(
     request: Request,
     pipeline_id: int,
-    model: str = Form(""),
-    max_tokens: int = Form(256),
-    temperature: float = Form(0.0),
+    form: PipelineGenerateFormDep,
 ):
-    form = PipelineGenerateForm(model=model, max_tokens=max_tokens, temperature=temperature)
-    result = await handlers.generate_pipeline(
-        request,
-        pipeline_id,
-        model=form.model,
-        max_tokens=form.max_tokens,
-        temperature=form.temperature,
-    )
+    result = await handlers.generate_pipeline(request, pipeline_id, form)
     return pipeline_response(request, result)
 
 
 @router.post("/{pipeline_id}/publish")
-async def publish_pipeline(request: Request, pipeline_id: int, run_id: int | None = Form(None)):
-    return pipeline_response(request, await handlers.publish_pipeline(request, pipeline_id, run_id=run_id))
+async def publish_pipeline(request: Request, pipeline_id: int, form: PipelinePublishFormDep):
+    return pipeline_response(request, await handlers.publish_pipeline(request, pipeline_id, form))
 
 
 @router.get("/{pipeline_id}/refinement-steps")
@@ -293,24 +183,9 @@ async def templates_json(request: Request):
 @router.post("/from-template")
 async def create_from_template(
     request: Request,
-    template_id: int | None = Form(None),
-    name: str = Form(""),
-    source_channel_ids: list[int] = Form(default=[]),
-    target_refs: list[str] = Form(default=[]),
-    llm_model: str = Form(""),
-    image_model: str = Form(""),
-    generate_interval_minutes: int = Form(60),
+    form: PipelineTemplateCreateFormDep,
 ):
-    form = PipelineTemplateCreateForm(
-        template_id=template_id,
-        name=name,
-        source_channel_ids=source_channel_ids,
-        target_refs=target_refs,
-        llm_model=llm_model,
-        image_model=image_model,
-        generate_interval_minutes=generate_interval_minutes,
-    )
-    result = await handlers.create_from_template(request, **form.__dict__)
+    result = await handlers.create_from_template(request, form)
     return pipeline_response(request, result)
 
 
@@ -322,17 +197,9 @@ async def export_pipeline(request: Request, pipeline_id: int):
 @router.post("/import")
 async def import_pipeline(
     request: Request,
-    json_file: UploadFile | None = File(None),
-    json_text: str = Form(""),
-    name_override: str = Form(""),
+    form: PipelineImportFormDep,
 ):
-    form = PipelineImportForm(json_file=json_file, json_text=json_text, name_override=name_override)
-    result = await handlers.import_pipeline(
-        request,
-        json_file=form.json_file,
-        json_text=form.json_text,
-        name_override=form.name_override,
-    )
+    result = await handlers.import_pipeline(request, form)
     return pipeline_response(request, result)
 
 

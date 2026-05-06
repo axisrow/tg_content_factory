@@ -1156,7 +1156,7 @@ class TestGenerateDraftTool:
             patch("src.search.engine.SearchEngine") as mock_se,
             patch("src.services.generation_service.GenerationService") as mock_gen_cls,
             patch("src.services.pipeline_service.PipelineService"),
-            patch("src.services.provider_service.AgentProviderService") as mock_prov_svc,
+            patch("src.services.provider_service.RuntimeProviderRegistry") as mock_prov_svc,
         ):
             mock_se.return_value = MagicMock()
             mock_prov_svc.return_value.get_provider_callable = MagicMock(
@@ -1178,7 +1178,7 @@ class TestGenerateDraftTool:
             patch("src.search.engine.SearchEngine") as mock_se,
             patch("src.services.generation_service.GenerationService") as mock_gen_cls,
             patch("src.services.pipeline_service.PipelineService"),
-            patch("src.services.provider_service.AgentProviderService") as mock_prov_svc,
+            patch("src.services.provider_service.RuntimeProviderRegistry") as mock_prov_svc,
         ):
             mock_se.return_value = MagicMock()
             mock_prov_svc.return_value.get_provider_callable = MagicMock(
@@ -1205,7 +1205,7 @@ class TestGenerateDraftTool:
             patch("src.search.engine.SearchEngine") as mock_se,
             patch("src.services.generation_service.GenerationService") as mock_gen_cls,
             patch("src.services.pipeline_service.PipelineService") as mock_pipe_svc,
-            patch("src.services.provider_service.AgentProviderService") as mock_prov_svc,
+            patch("src.services.provider_service.RuntimeProviderRegistry") as mock_prov_svc,
         ):
             mock_se.return_value = MagicMock()
             mock_pipe_svc.return_value.get = AsyncMock(return_value=pipeline)

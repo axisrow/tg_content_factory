@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-import json
-from datetime import datetime
-
 import aiosqlite
 
 from src.models import GenerationRun
-from src.utils.json import safe_json_dumps
-
-
-def _dt(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+from src.utils.datetime import parse_datetime
+from src.utils.json import safe_json_dumps, safe_json_loads
 
 
 class GenerationRunsRepository:
@@ -19,26 +13,9 @@ class GenerationRunsRepository:
 
     @staticmethod
     def _to_generation_run(row: aiosqlite.Row) -> GenerationRun:
-        metadata = None
-        if row["metadata"]:
-            try:
-                metadata = json.loads(row["metadata"])
-            except Exception:
-                metadata = None
-
-        quality_issues = None
-        if "quality_issues" in row.keys() and row["quality_issues"]:
-            try:
-                quality_issues = json.loads(row["quality_issues"])
-            except Exception:
-                quality_issues = None
-
-        variants = None
-        if "variants" in row.keys() and row["variants"]:
-            try:
-                variants = json.loads(row["variants"])
-            except Exception:
-                variants = None
+        metadata = safe_json_loads(row["metadata"])
+        quality_issues = safe_json_loads(row["quality_issues"]) if "quality_issues" in row.keys() else None
+        variants = safe_json_loads(row["variants"]) if "variants" in row.keys() else None
 
         return GenerationRun(
             id=row["id"],
@@ -56,9 +33,9 @@ class GenerationRunsRepository:
             quality_issues=quality_issues,
             variants=variants,
             selected_variant=row["selected_variant"] if "selected_variant" in row.keys() else None,
-            published_at=_dt(row["published_at"] if "published_at" in row.keys() else None),
-            created_at=_dt(row["created_at"]),
-            updated_at=_dt(row["updated_at"]),
+            published_at=parse_datetime(row["published_at"] if "published_at" in row.keys() else None),
+            created_at=parse_datetime(row["created_at"]),
+            updated_at=parse_datetime(row["updated_at"]),
         )
 
     async def create_run(self, pipeline_id: int | None, prompt: str) -> int:

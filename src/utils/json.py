@@ -2,6 +2,7 @@
 
 import json
 from datetime import date, datetime
+from typing import Any
 
 
 def safe_json_dumps(obj, **kwargs) -> str:
@@ -27,3 +28,22 @@ def safe_json_dumps(obj, **kwargs) -> str:
         raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
 
     return json.dumps(obj, default=_default, **kwargs)
+
+
+def safe_json_loads(raw: str | bytes | bytearray | None, default: Any = None) -> Any:
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (TypeError, json.JSONDecodeError):
+        return default
+
+
+def safe_json_loads_dict(raw: str | bytes | bytearray | None) -> dict | None:
+    parsed = safe_json_loads(raw)
+    return parsed if isinstance(parsed, dict) else None
+
+
+def safe_json_loads_list(raw: str | bytes | bytearray | None) -> list:
+    parsed = safe_json_loads(raw)
+    return parsed if isinstance(parsed, list) else []

@@ -95,7 +95,7 @@ async def test_translate_batch_full_flow_with_chaining():
     payload = TranslateBatchTaskPayload(target_lang="en", batch_size=10)
 
     with (
-        patch("src.services.provider_service.AgentProviderService") as mock_aps,
+        patch("src.services.provider_service.RuntimeProviderRegistry") as mock_aps,
         patch("src.services.translation_service.TranslationService") as mock_ts,
     ):
         aps_instance = mock_aps.return_value
@@ -140,7 +140,7 @@ async def test_translate_batch_no_remaining_no_chain():
     mock_provider_fn = AsyncMock(return_value="translated")
 
     with (
-        patch("src.services.provider_service.AgentProviderService") as mock_aps,
+        patch("src.services.provider_service.RuntimeProviderRegistry") as mock_aps,
         patch("src.services.translation_service.TranslationService") as mock_ts,
     ):
         aps_instance = mock_aps.return_value
@@ -169,7 +169,7 @@ async def test_translate_batch_no_messages():
     mock_provider_fn = AsyncMock(return_value="translated")
 
     with (
-        patch("src.services.provider_service.AgentProviderService") as mock_aps,
+        patch("src.services.provider_service.RuntimeProviderRegistry") as mock_aps,
     ):
         aps_instance = mock_aps.return_value
         aps_instance._registry = {"default": object(), "real": mock_provider_fn}
@@ -194,7 +194,7 @@ async def test_translate_batch_only_stub_provider():
 
     default_stub = AsyncMock(return_value="stub")
 
-    with patch("src.services.provider_service.AgentProviderService") as mock_aps:
+    with patch("src.services.provider_service.RuntimeProviderRegistry") as mock_aps:
         aps_instance = mock_aps.return_value
         aps_instance._registry = {"default": default_stub}
         aps_instance.get_provider_callable.return_value = default_stub
@@ -215,7 +215,7 @@ async def test_translate_batch_exception():
     d = _make_dispatcher(db=mock_db)
     payload = TranslateBatchTaskPayload(target_lang="en")
 
-    with patch("src.services.provider_service.AgentProviderService") as mock_aps:
+    with patch("src.services.provider_service.RuntimeProviderRegistry") as mock_aps:
         mock_aps.return_value.get_provider_callable.return_value = AsyncMock()
 
         await d._handle_translate_batch(_task(CollectionTaskType.TRANSLATE_BATCH, payload=payload))

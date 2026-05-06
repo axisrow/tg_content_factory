@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 import aiosqlite
 
 from src.models import NotificationBot
+from src.utils.datetime import try_parse_datetime
 
 
 class NotificationBotsRepository:
@@ -51,12 +50,6 @@ class NotificationBotsRepository:
 
     @staticmethod
     def _row_to_model(row) -> NotificationBot:
-        created_at = None
-        if row["created_at"]:
-            try:
-                created_at = datetime.fromisoformat(row["created_at"])
-            except ValueError:
-                pass
         return NotificationBot(
             id=row["id"],
             tg_user_id=row["tg_user_id"],
@@ -64,5 +57,5 @@ class NotificationBotsRepository:
             bot_id=row["bot_id"],
             bot_username=row["bot_username"],
             bot_token=row["bot_token"],
-            created_at=created_at,
+            created_at=try_parse_datetime(row["created_at"]),
         )
