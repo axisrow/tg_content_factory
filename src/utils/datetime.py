@@ -49,7 +49,7 @@ def parse_required_utc_datetime(value: str | datetime) -> datetime:
 def parse_required_schedule_datetime(value: str | datetime) -> datetime:
     parsed = parse_required_datetime(value)
     if parsed.tzinfo is None:
-        parsed = parsed.astimezone()
+        parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.astimezone(timezone.utc)
 
 

@@ -149,13 +149,57 @@ async def test_run_migrations_adds_missing_columns_and_indexes(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
-async def test_deprecated_data_migration_helpers_are_noops(tmp_path):
+async def test_run_migrations_rebuilds_legacy_collection_tasks_channel_id_notnull(tmp_path):
+    conn = await _connect(str(tmp_path / "legacy_collection_tasks.db"))
+    try:
+        await conn.executescript("""
+            CREATE TABLE collection_tasks (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                channel_title TEXT,
+                status TEXT DEFAULT 'pending',
+                messages_collected INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+        """)
+        await conn.execute(
+            "INSERT INTO collection_tasks (id, channel_id, channel_title) VALUES (1, 0, 'All')"
+        )
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        cur = await conn.execute("PRAGMA table_info(collection_tasks)")
+        columns = {row["name"]: row for row in await cur.fetchall()}
+        assert bool(columns["channel_id"]["notnull"]) is False
+        assert "task_type" in columns
+
+        cur = await conn.execute("SELECT channel_id, task_type FROM collection_tasks WHERE id = 1")
+        row = await cur.fetchone()
+        assert row["channel_id"] is None
+        assert row["task_type"] == "stats_all"
+
+        await conn.execute(
+            "INSERT INTO collection_tasks (channel_id, channel_title, task_type) "
+            "VALUES (NULL, 'Stats', 'stats_all')"
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_legacy_data_migration_helpers_preserve_upgrade_contracts(tmp_path):
     conn = await _connect(str(tmp_path / "legacy_helpers.db"))
     try:
         provider_payload = json.dumps(
-            [{"provider": "zai", "plain_fields": {"base_url": "https://api.z.ai/api/anthropic"}}]
+            [
+                {"provider": "zai", "plain_fields": {"base_url": "https://api.z.ai/api/anthropic"}},
+                {"provider": "zai", "plain_fields": {"base_url": ""}},
+            ]
         )
-        permissions_payload = json.dumps({"list_dialogs": True})
+        permissions_payload = json.dumps({"list_dialogs": False})
         await conn.executescript("""
             CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
             CREATE TABLE message_embeddings (message_id INTEGER PRIMARY KEY, embedding BLOB NOT NULL);
@@ -182,8 +226,11 @@ async def test_deprecated_data_migration_helpers_are_noops(tmp_path):
         cur = await conn.execute("SELECT COUNT(*) AS cnt FROM message_embeddings")
         assert (await cur.fetchone())["cnt"] == 0
         cur = await conn.execute("SELECT value FROM settings WHERE key = 'agent_deepagents_providers_v1'")
-        assert (await cur.fetchone())["value"] == provider_payload
+        provider_rows = json.loads((await cur.fetchone())["value"])
+        assert provider_rows[0]["plain_fields"]["base_url"] == "https://api.z.ai/api/paas/v4"
+        assert provider_rows[1]["plain_fields"]["base_url"] == "https://api.z.ai/api/coding/paas/v4"
         cur = await conn.execute("SELECT value FROM settings WHERE key = 'agent_tool_permissions'")
-        assert (await cur.fetchone())["value"] == permissions_payload
+        permissions = json.loads((await cur.fetchone())["value"])
+        assert permissions == {"search_dialogs": False}
     finally:
         await conn.close()

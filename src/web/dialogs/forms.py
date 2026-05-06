@@ -4,7 +4,7 @@ from types import UnionType
 from typing import Any, TypeVar, get_args, get_origin
 
 from fastapi import Request
-from pydantic import BaseModel, ConfigDict, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from starlette.datastructures import FormData
 
 T = TypeVar("T", bound=BaseModel)
@@ -24,7 +24,7 @@ class CacheClearForm(_FrozenForm):
 
 class LeaveDialogsForm(_FrozenForm):
     phone: str = ""
-    channel_ids: list[str] = []
+    channel_ids: list[str] = Field(default_factory=list)
 
     @property
     def dialogs(self) -> list[tuple[int, str]]:

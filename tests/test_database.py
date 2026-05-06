@@ -1023,8 +1023,8 @@ async def test_migration_preserves_legacy_collection_task_data(tmp_path):
     channel_task = await database.get_collection_task(2)
     assert stats_task is not None
     assert channel_task is not None
-    assert stats_task.task_type == CollectionTaskType.CHANNEL_COLLECT
-    assert stats_task.channel_id == 0
+    assert stats_task.task_type == CollectionTaskType.STATS_ALL
+    assert stats_task.channel_id is None
     assert channel_task.task_type == CollectionTaskType.CHANNEL_COLLECT
     assert channel_task.channel_id == -1001
 

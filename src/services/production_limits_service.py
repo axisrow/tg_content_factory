@@ -303,6 +303,8 @@ class ProductionLimitsService:
             Exception: After max retries exceeded
         """
         def should_retry(error: BaseException) -> bool:
+            if not isinstance(error, Exception):
+                return False
             return not isinstance(error, _AcquireLimitError)
 
         def log_before_retry(retry_state: RetryCallState) -> None:

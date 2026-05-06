@@ -55,6 +55,10 @@ class CircuitBreakerConfig:
     half_open_max_calls: int = 3
 
 
+class _CircuitOpenError(RuntimeError):
+    pass
+
+
 class ErrorClassifier:
     """Classifies errors for appropriate handling."""
 
@@ -199,6 +203,8 @@ class ErrorRecoveryService:
 
     @staticmethod
     def _should_retry(error: BaseException) -> bool:
+        if isinstance(error, _CircuitOpenError):
+            return False
         if not isinstance(error, Exception):
             return False
         return ErrorClassifier.classify(error) != ErrorCategory.FATAL
@@ -276,7 +282,7 @@ class ErrorRecoveryService:
                         logger.warning("Circuit breaker is open, using fallback")
                         if fallback:
                             return await self._run_fallback(fallback)
-                        raise RuntimeError("Circuit breaker is open")
+                        raise _CircuitOpenError("Circuit breaker is open")
 
                     try:
                         result = await func()

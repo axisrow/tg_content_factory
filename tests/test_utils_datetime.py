@@ -31,9 +31,9 @@ def test_parse_required_schedule_datetime_returns_utc():
     assert result == datetime(2026, 5, 5, 12, 0, tzinfo=timezone.utc)
 
 
-def test_parse_required_schedule_datetime_treats_naive_as_local():
+def test_parse_required_schedule_datetime_treats_naive_as_utc():
     source = datetime(2026, 5, 5, 12, 0)
-    assert parse_required_schedule_datetime(source) == source.astimezone(timezone.utc)
+    assert parse_required_schedule_datetime(source) == source.replace(tzinfo=timezone.utc)
 
 
 def test_try_parse_datetime_returns_none_for_invalid_values():

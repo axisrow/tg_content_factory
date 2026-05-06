@@ -185,6 +185,90 @@ async def ensure_indexes(db: aiosqlite.Connection, index_statements: Sequence[st
         await db.execute(statement)
 
 
+async def _rebuild_collection_tasks_if_channel_id_notnull(db: aiosqlite.Connection) -> None:
+    if not await table_exists(db, "collection_tasks"):
+        return
+
+    cur = await db.execute("PRAGMA table_info(collection_tasks)")
+    rows = await cur.fetchall()
+    columns = {row["name"]: row for row in rows}
+    channel_id_row = columns.get("channel_id")
+    if channel_id_row is None or not bool(channel_id_row["notnull"]):
+        return
+
+    def expr(column: str, fallback: str = "NULL") -> str:
+        return column if column in columns else fallback
+
+    channel_id_expr = "CASE WHEN channel_id = 0 THEN NULL ELSE channel_id END"
+    task_type_expr = (
+        "task_type"
+        if "task_type" in columns
+        else "CASE WHEN channel_id = 0 THEN 'stats_all' ELSE 'channel_collect' END"
+    )
+
+    await db.execute("DROP TABLE IF EXISTS collection_tasks_tmp")
+    await db.execute("""
+        CREATE TABLE collection_tasks_tmp (
+            id INTEGER PRIMARY KEY,
+            channel_id INTEGER,
+            channel_title TEXT,
+            channel_username TEXT,
+            task_type TEXT NOT NULL DEFAULT 'channel_collect',
+            status TEXT DEFAULT 'pending',
+            messages_collected INTEGER DEFAULT 0,
+            error TEXT,
+            note TEXT,
+            run_after TEXT,
+            payload TEXT,
+            parent_task_id INTEGER,
+            created_at TEXT DEFAULT (datetime('now')),
+            started_at TEXT,
+            completed_at TEXT
+        )
+        """)
+    await db.execute(
+        f"""
+        INSERT INTO collection_tasks_tmp (
+            id,
+            channel_id,
+            channel_title,
+            channel_username,
+            task_type,
+            status,
+            messages_collected,
+            error,
+            note,
+            run_after,
+            payload,
+            parent_task_id,
+            created_at,
+            started_at,
+            completed_at
+        )
+        SELECT
+            {expr("id")},
+            {channel_id_expr},
+            {expr("channel_title")},
+            {expr("channel_username")},
+            {task_type_expr},
+            {expr("status", "'pending'")},
+            {expr("messages_collected", "0")},
+            {expr("error")},
+            {expr("note")},
+            {expr("run_after")},
+            {expr("payload")},
+            {expr("parent_task_id")},
+            {expr("created_at", "datetime('now')")},
+            {expr("started_at")},
+            {expr("completed_at")}
+        FROM collection_tasks
+        """
+    )
+    await db.execute("DROP TABLE collection_tasks")
+    await db.execute("ALTER TABLE collection_tasks_tmp RENAME TO collection_tasks")
+    logger.info("Migrated collection_tasks: removed NOT NULL from channel_id")
+
+
 async def _ensure_fts5_available(db: aiosqlite.Connection) -> bool:
     try:
         await db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS temp._fts5_probe USING fts5(content)")
@@ -201,9 +285,11 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     SQLite's ``CREATE TABLE IF NOT EXISTS`` does not add columns to existing
     tables. This function keeps the app bootable on older local databases by
     creating missing tables from the canonical schema and adding missing columns
-    that SQLite can add in place. Legacy data backfills and table rebuilds are
-    intentionally out of scope.
+    that SQLite can add in place. A small set of legacy upgrade migrations is
+    retained where additive repair cannot preserve existing runtime contracts.
     """
+    await _rebuild_collection_tasks_if_channel_id_notnull(db)
+
     for table, columns in SCHEMA_REPAIR_COLUMNS.items():
         await ensure_columns(db, table, columns)
 
@@ -214,6 +300,29 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
 
     await ensure_indexes(db, SCHEMA_REPAIR_INDEXES)
     fts_available = await _ensure_fts5_available(db)
+
+    legacy_dialog_search_key = "_".join(("search", "my", "telegram"))
+    await _migrate_tool_permission_key(db, "list_dialogs", legacy_dialog_search_key)
+    await _migrate_tool_permission_key(db, legacy_dialog_search_key, "search_dialogs")
+
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_zai_base_url_v1' LIMIT 1"
+    )
+    if not await cur.fetchone():
+        await _migrate_zai_legacy_base_url(db)
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_zai_base_url_v1', '1')"
+        )
+
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_zai_base_url_v2' LIMIT 1"
+    )
+    if not await cur.fetchone():
+        await _migrate_zai_empty_base_url_to_coding(db)
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_zai_base_url_v2', '1')"
+        )
+
     await db.commit()
     return fts_available
 
@@ -224,13 +333,90 @@ async def _migrate_vec_to_portable(db: aiosqlite.Connection) -> None:
 
 
 async def _migrate_zai_legacy_base_url(db: aiosqlite.Connection) -> None:
-    """Deprecated compatibility shim; provider settings are no longer rewritten."""
-    _ = db
+    """Rewrite legacy Z.AI Anthropic-compatible base_url to the OpenAI-compatible default."""
+    import json
+
+    from src.agent.provider_registry import (
+        ZAI_GENERAL_BASE_URL,
+        is_zai_legacy_anthropic_base_url,
+    )
+
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = 'agent_deepagents_providers_v1' LIMIT 1"
+    )
+    row = await cur.fetchone()
+    if not row or not row["value"]:
+        return
+    try:
+        data = json.loads(row["value"])
+    except (json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, list):
+        return
+
+    changed = False
+    for item in data:
+        if not isinstance(item, dict) or item.get("provider") != "zai":
+            continue
+        plain = item.get("plain_fields")
+        if not isinstance(plain, dict):
+            continue
+        current = str(plain.get("base_url", "") or "")
+        if is_zai_legacy_anthropic_base_url(current):
+            plain["base_url"] = ZAI_GENERAL_BASE_URL
+            item["last_validation_error"] = ""
+            changed = True
+
+    if not changed:
+        return
+
+    await db.execute(
+        "UPDATE settings SET value = ? WHERE key = 'agent_deepagents_providers_v1'",
+        (json.dumps(data, ensure_ascii=False),),
+    )
+    logger.info("Migrated legacy Z.AI Anthropic-compatible base_url to %s", ZAI_GENERAL_BASE_URL)
 
 
 async def _migrate_zai_empty_base_url_to_coding(db: aiosqlite.Connection) -> None:
-    """Deprecated compatibility shim; provider settings are no longer rewritten."""
-    _ = db
+    """Backfill empty Z.AI base_url values to the Coding Plan endpoint."""
+    import json
+
+    from src.agent.provider_registry import ZAI_CODING_BASE_URL
+
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = 'agent_deepagents_providers_v1' LIMIT 1"
+    )
+    row = await cur.fetchone()
+    if not row or not row["value"]:
+        return
+    try:
+        data = json.loads(row["value"])
+    except (json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, list):
+        return
+
+    changed = False
+    for item in data:
+        if not isinstance(item, dict) or item.get("provider") != "zai":
+            continue
+        plain = item.get("plain_fields")
+        if not isinstance(plain, dict):
+            continue
+        current = (str(plain.get("base_url", "") or "")).strip().rstrip("/")
+        if current == "":
+            plain["base_url"] = ZAI_CODING_BASE_URL
+            item["last_validation_error"] = ""
+            changed = True
+
+    if not changed:
+        return
+
+    await db.execute(
+        "UPDATE settings SET value = ? WHERE key = 'agent_deepagents_providers_v1'",
+        (json.dumps(data, ensure_ascii=False),),
+    )
+    logger.info("Migrated empty Z.AI base_url to %s", ZAI_CODING_BASE_URL)
 
 
 async def _migrate_tool_permission_key(
@@ -238,5 +424,36 @@ async def _migrate_tool_permission_key(
     old_key: str,
     new_key: str,
 ) -> None:
-    """Deprecated compatibility shim; agent tool permission settings are no longer rewritten."""
-    _ = (db, old_key, new_key)
+    """Rename a tool key inside the agent_tool_permissions JSON setting."""
+    import json
+
+    cur = await db.execute("SELECT value FROM settings WHERE key = 'agent_tool_permissions' LIMIT 1")
+    row = await cur.fetchone()
+    if not row or not row["value"]:
+        return
+    try:
+        data = json.loads(row["value"])
+    except (json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(data, dict):
+        return
+
+    changed = False
+    first_val = next(iter(data.values()), None) if data else None
+    if isinstance(first_val, dict):
+        for perms in data.values():
+            if isinstance(perms, dict) and old_key in perms:
+                perms[new_key] = perms.pop(old_key)
+                changed = True
+    elif old_key in data:
+        data[new_key] = data.pop(old_key)
+        changed = True
+
+    if not changed:
+        return
+
+    await db.execute(
+        "UPDATE settings SET value = ? WHERE key = 'agent_tool_permissions'",
+        (json.dumps(data, ensure_ascii=False),),
+    )
+    logger.info("Migrated tool permission key %r -> %r in agent_tool_permissions", old_key, new_key)
