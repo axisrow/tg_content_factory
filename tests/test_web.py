@@ -28,7 +28,7 @@ from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.services.agent_provider_service import (
-    AgentProviderService,
+    ProviderConfigService,
     ProviderModelCacheEntry,
     ProviderModelCompatibilityRecord,
 )
@@ -143,6 +143,17 @@ def test_templates_have_actual_app_version():
     ]["version"]
     assert app.state.templates.env.globals["app_version"] == expected_version
     assert get_app_version() == expected_version
+
+
+def test_pipelines_routes_are_registered_once():
+    app = create_app(AppConfig())
+    route_keys = [
+        (route.path, tuple(sorted(route.methods or ())))
+        for route in app.routes
+        if getattr(route, "path", "").startswith("/pipelines")
+    ]
+
+    assert len(route_keys) == len(set(route_keys))
 
 
 def test_agent_available_uses_embedded_worker_manager(monkeypatch):
@@ -803,7 +814,7 @@ async def test_settings_save_agent_providers_skips_probe_for_disabled_provider(c
 
     assert resp.status_code == 303
     probe_mock.assert_not_awaited()
-    service = AgentProviderService(db, client._transport.app.state.config)
+    service = ProviderConfigService(db, client._transport.app.state.config)
     configs = await service.load_provider_configs()
     assert configs[0].enabled is False
     assert configs[0].last_validation_error == ""
@@ -821,7 +832,7 @@ async def test_settings_refresh_agent_provider_models_returns_json(client, monke
         return ["gpt-4.1", "gpt-4.1-mini"]
 
     monkeypatch.setattr(
-        "src.services.agent_provider_service.AgentProviderService._fetch_live_models",
+        "src.services.agent_provider_service.ProviderConfigService._fetch_live_models",
         _live_fetch,
     )
 
@@ -851,7 +862,7 @@ async def test_settings_refresh_agent_provider_models_uses_unsaved_form_values(c
         return ["gpt-4.1-mini"]
 
     monkeypatch.setattr(
-        "src.services.agent_provider_service.AgentProviderService._fetch_live_models",
+        "src.services.agent_provider_service.ProviderConfigService._fetch_live_models",
         _live_fetch,
     )
 
@@ -895,7 +906,7 @@ async def test_settings_refresh_agent_provider_models_preserves_saved_values_whe
 ):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
-    service = AgentProviderService(db, client._transport.app.state.config)
+    service = ProviderConfigService(db, client._transport.app.state.config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -917,7 +928,7 @@ async def test_settings_refresh_agent_provider_models_preserves_saved_values_whe
         return ["gpt-4.1-mini"]
 
     monkeypatch.setattr(
-        "src.services.agent_provider_service.AgentProviderService._fetch_live_models",
+        "src.services.agent_provider_service.ProviderConfigService._fetch_live_models",
         _live_fetch,
     )
 
@@ -947,7 +958,7 @@ async def test_settings_refresh_all_agent_provider_models_uses_unsaved_form_valu
 ):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
-    service = AgentProviderService(db, client._transport.app.state.config)
+    service = ProviderConfigService(db, client._transport.app.state.config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -974,7 +985,7 @@ async def test_settings_refresh_all_agent_provider_models_uses_unsaved_form_valu
             fetched_at="2026-03-12T00:00:00+00:00",
         )
 
-    monkeypatch.setattr(AgentProviderService, "refresh_models_for_provider", _fake_refresh)
+    monkeypatch.setattr(ProviderConfigService, "refresh_models_for_provider", _fake_refresh)
 
     resp = await client.post(
         "/settings/agent-providers/refresh-all",
@@ -998,7 +1009,7 @@ async def test_settings_refresh_all_agent_provider_models_uses_unsaved_form_valu
 async def test_settings_page_renders_selected_model_compatibility(client):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
-    service = AgentProviderService(db, client._transport.app.state.config)
+    service = ProviderConfigService(db, client._transport.app.state.config)
     cfg = ProviderRuntimeConfig(
         provider="openai",
         enabled=True,
@@ -1073,7 +1084,7 @@ async def test_settings_probe_agent_provider_model_returns_cached_json(client, m
     payload = resp.json()
     assert payload["ok"] is True
     assert payload["status"] == "supported"
-    service = AgentProviderService(db, client._transport.app.state.config)
+    service = ProviderConfigService(db, client._transport.app.state.config)
     cache = await service.load_model_cache()
     assert any(record.status == "supported" for record in cache["openai"].compatibility.values())
 
@@ -1119,7 +1130,7 @@ async def test_settings_save_agent_providers_keeps_unsupported_probe_in_cache_on
     )
 
     assert resp.status_code == 303
-    service = AgentProviderService(db, client._transport.app.state.config)
+    service = ProviderConfigService(db, client._transport.app.state.config)
     configs = await service.load_provider_configs()
     assert configs[0].last_validation_error == ""
     cache = await service.load_model_cache()
@@ -1138,7 +1149,7 @@ async def test_settings_bulk_test_requires_dev_mode(client):
 async def test_settings_bulk_test_uses_unsaved_form_values(client, monkeypatch):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
-    service = AgentProviderService(db, client._transport.app.state.config)
+    service = ProviderConfigService(db, client._transport.app.state.config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -1207,7 +1218,7 @@ async def test_settings_bulk_test_clears_running_status_when_startup_raises(clie
 async def test_settings_bulk_test_refreshes_each_provider_once(client, monkeypatch, tmp_path):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
-    service = AgentProviderService(db, client._transport.app.state.config)
+    service = ProviderConfigService(db, client._transport.app.state.config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(
@@ -1250,13 +1261,13 @@ async def test_settings_bulk_test_refreshes_each_provider_once(client, monkeypat
         return export_path
 
     monkeypatch.setattr(
-        AgentProviderService,
+        ProviderConfigService,
         "refresh_models_for_provider",
         _fake_refresh_models_for_provider,
     )
     monkeypatch.setattr(settings_handlers, "_probe_provider_config", probe_mock)
     monkeypatch.setattr(
-        AgentProviderService,
+        ProviderConfigService,
         "export_compatibility_catalog",
         _fake_export_catalog,
     )
@@ -1276,7 +1287,7 @@ async def test_settings_bulk_test_refreshes_each_provider_once(client, monkeypat
 async def test_settings_bulk_test_exports_catalog(client, monkeypatch, tmp_path):
     db = client._transport.app.state.db
     await db.set_setting("agent_dev_mode_enabled", "1")
-    service = AgentProviderService(db, client._transport.app.state.config)
+    service = ProviderConfigService(db, client._transport.app.state.config)
     await service.save_provider_configs(
         [
             ProviderRuntimeConfig(

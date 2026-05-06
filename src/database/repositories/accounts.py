@@ -8,6 +8,7 @@ import aiosqlite
 from src.database.repositories._transactions import begin_immediate
 from src.models import Account, AccountSessionStatus, AccountSummary
 from src.security import SessionCipher, decrypt_failure_status, log_expected_decrypt_failure
+from src.utils.datetime import parse_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +99,6 @@ class AccountsRepository:
 
         return migrated
 
-    def _parse_dt(self, raw: str | None) -> datetime | None:
-        return datetime.fromisoformat(raw) if raw else None
-
     def _row_to_summary(
         self,
         row: aiosqlite.Row,
@@ -113,8 +111,8 @@ class AccountsRepository:
             is_primary=bool(row["is_primary"]),
             is_active=bool(row["is_active"]),
             is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
-            flood_wait_until=self._parse_dt(row["flood_wait_until"]),
-            created_at=self._parse_dt(row["created_at"]),
+            flood_wait_until=parse_datetime(row["flood_wait_until"]),
+            created_at=parse_datetime(row["created_at"]),
             session_status=session_status,
         )
 
@@ -259,8 +257,8 @@ class AccountsRepository:
                     is_primary=bool(row["is_primary"]),
                     is_active=bool(row["is_active"]),
                     is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
-                    flood_wait_until=self._parse_dt(row["flood_wait_until"]),
-                    created_at=self._parse_dt(row["created_at"]),
+                    flood_wait_until=parse_datetime(row["flood_wait_until"]),
+                    created_at=parse_datetime(row["created_at"]),
                 )
             )
 
@@ -297,8 +295,8 @@ class AccountsRepository:
                     is_primary=bool(row["is_primary"]),
                     is_active=bool(row["is_active"]),
                     is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
-                    flood_wait_until=self._parse_dt(row["flood_wait_until"]),
-                    created_at=self._parse_dt(row["created_at"]),
+                    flood_wait_until=parse_datetime(row["flood_wait_until"]),
+                    created_at=parse_datetime(row["created_at"]),
                 )
             )
 

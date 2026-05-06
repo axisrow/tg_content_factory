@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
-
 import aiosqlite
 
 from src.models import PipelineGraph, PipelineTemplate
-
-
-def _dt(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
+from src.utils.datetime import parse_datetime
 
 
 class PipelineTemplatesRepository:
@@ -24,7 +19,7 @@ class PipelineTemplatesRepository:
             category=row["category"] or "",
             template_json=PipelineGraph.from_json(row["template_json"]),
             is_builtin=bool(row["is_builtin"]),
-            created_at=_dt(row["created_at"]),
+            created_at=parse_datetime(row["created_at"]),
         )
 
     async def list_all(self, category: str | None = None) -> list[PipelineTemplate]:

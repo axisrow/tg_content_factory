@@ -502,11 +502,11 @@ class TestCLIAgentDbProviders:
     ):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.cli.commands.agent import run
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
         config.security.session_encryption_key = "provider-secret"
-        service = AgentProviderService(cli_env, config)
+        service = ProviderConfigService(cli_env, config)
         asyncio.run(
             service.save_provider_configs(
                 [
@@ -1230,11 +1230,11 @@ class TestCLIAgent:
     ):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.cli.commands.agent import run
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
         config.security.session_encryption_key = "provider-secret"
-        service = AgentProviderService(cli_db, config)
+        service = ProviderConfigService(cli_db, config)
         asyncio.run(
             service.save_provider_configs(
                 [

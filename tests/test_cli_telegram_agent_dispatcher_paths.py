@@ -929,13 +929,13 @@ class TestCollectorAutoDelete:
 # ===========================================================================
 
 
-class TestAgentProviderServiceRefresh:
+class TestProviderConfigServiceRefresh:
     @pytest.mark.anyio
     async def test_refresh_models_for_provider_live_fail(self, db):
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         # openai is a known provider
         with patch.object(svc, "_fetch_live_models", AsyncMock(side_effect=RuntimeError("network"))):
             entry = await svc.refresh_models_for_provider("openai")
@@ -945,10 +945,10 @@ class TestAgentProviderServiceRefresh:
     @pytest.mark.anyio
     async def test_refresh_all_models(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         cfg = ProviderRuntimeConfig(
             provider="openai", enabled=True, priority=0,
             selected_model="gpt-4", plain_fields={}, secret_fields={},
@@ -959,15 +959,15 @@ class TestAgentProviderServiceRefresh:
         assert "gpt-4" in results["openai"].models
 
 
-class TestAgentProviderServiceSaveLoad:
+class TestProviderConfigServiceSaveLoad:
     @pytest.mark.anyio
     async def test_save_and_load_round_trip(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.security import SessionCipher
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         config = AppConfig()
-        svc = AgentProviderService(db, config)
+        svc = ProviderConfigService(db, config)
         svc._cipher = SessionCipher("test-secret-key-123456")
 
         cfg = ProviderRuntimeConfig(
@@ -982,12 +982,12 @@ class TestAgentProviderServiceSaveLoad:
         assert loaded[0].secret_fields["api_key"] == "sk-test"
 
 
-class TestAgentProviderServiceValidation:
+class TestProviderConfigServiceValidation:
     def test_validate_missing_model(self):
         from src.agent.provider_registry import ProviderRuntimeConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
-        svc = AgentProviderService(MagicMock(), AppConfig())
+        svc = ProviderConfigService(MagicMock(), AppConfig())
         cfg = ProviderRuntimeConfig(
             provider="openai", enabled=True, priority=0,
             selected_model="", plain_fields={}, secret_fields={"api_key": "x"},
@@ -996,9 +996,9 @@ class TestAgentProviderServiceValidation:
 
     def test_validate_unknown_provider(self):
         from src.agent.provider_registry import ProviderRuntimeConfig
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
-        svc = AgentProviderService(MagicMock(), AppConfig())
+        svc = ProviderConfigService(MagicMock(), AppConfig())
         cfg = ProviderRuntimeConfig(
             provider="unknown_xyz", enabled=True, priority=0,
             selected_model="m", plain_fields={}, secret_fields={},
@@ -1006,23 +1006,23 @@ class TestAgentProviderServiceValidation:
         assert "Unknown provider" in svc.validate_provider_config(cfg)
 
     def test_create_empty_config_unknown_provider(self):
-        from src.services.agent_provider_service import AgentProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
-        svc = AgentProviderService(MagicMock(), AppConfig())
+        svc = ProviderConfigService(MagicMock(), AppConfig())
         with pytest.raises(RuntimeError, match="Unknown provider"):
             svc.create_empty_config("zzz_unknown", 0)
 
 
-class TestAgentProviderServiceCompat:
+class TestProviderConfigServiceCompat:
     def test_compatibility_error_unsupported(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.services.agent_provider_service import (
-            AgentProviderService,
+            ProviderConfigService,
             ProviderModelCacheEntry,
             ProviderModelCompatibilityRecord,
         )
 
-        svc = AgentProviderService(db, AppConfig())
+        svc = ProviderConfigService(db, AppConfig())
         cfg = ProviderRuntimeConfig(
             provider="openai", enabled=True, priority=0,
             selected_model="gpt-4", plain_fields={}, secret_fields={"api_key": "x"},
@@ -1045,12 +1045,12 @@ class TestAgentProviderServiceCompat:
     def test_compatibility_warning_unknown(self, db):
         from src.agent.provider_registry import ProviderRuntimeConfig
         from src.services.agent_provider_service import (
-            AgentProviderService,
+            ProviderConfigService,
             ProviderModelCacheEntry,
             ProviderModelCompatibilityRecord,
         )
 
-        svc = AgentProviderService(db, AppConfig())
+        svc = ProviderConfigService(db, AppConfig())
         cfg = ProviderRuntimeConfig(
             provider="openai", enabled=True, priority=0,
             selected_model="gpt-4", plain_fields={}, secret_fields={"api_key": "x"},

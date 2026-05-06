@@ -5,7 +5,7 @@
             <label for="translation_provider" class="form-label">LLM Provider</label>
             <input type="text" class="form-control" id="translation_provider" name="translation_provider"
                    value="{{ translation_provider or '' }}" placeholder="openai, ollama, cohere...">
-            <div class="form-text">Имя провайдера из AgentProviderService</div>
+            <div class="form-text">Имя провайдера из RuntimeProviderRegistry</div>
         </div>
         <div class="col-md-6">
             <label for="translation_model" class="form-label">Модель</label>

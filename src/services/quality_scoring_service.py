@@ -81,13 +81,13 @@ class QualityScoringService:
             issues=["Scoring failed"],
         )
         try:
-            from src.services.provider_service import AgentProviderService
+            from src.services.provider_service import RuntimeProviderRegistry
         except ImportError:
             logger.warning("Provider service not available for quality scoring")
             return _default_score
 
         try:
-            provider_service = self._provider_service or AgentProviderService(self._db)
+            provider_service = self._provider_service or RuntimeProviderRegistry(self._db)
             provider_callable = provider_service.get_provider_callable(model)
 
             prompt = f"{QUALITY_RUBRIC}\n\nКонтент для оценки:\n{text}"

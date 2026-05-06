@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.services.provider_service import AgentProviderService
+from src.services.provider_service import RuntimeProviderRegistry
 
 
 @pytest.fixture(autouse=True)
@@ -39,18 +40,18 @@ def test_zai_registration_failure_path(clean_env):
     os.environ["ZAI_API_KEY"] = "zai-test-key"
     os.environ["ZAI_BASE_URL"] = "https://api.z.ai/api/coding/paas/v4"
     with patch.object(
-        AgentProviderService,
+        RuntimeProviderRegistry,
         "_make_openai_compat_provider",
         side_effect=RuntimeError("no openai"),
     ):
-        svc = AgentProviderService()
+        svc = RuntimeProviderRegistry()
     assert "zai" not in svc._registry
 
 
 def test_zai_env_registration_defaults_without_base_url(clean_env):
     """ZAI_API_KEY without ZAI_BASE_URL uses the subscription endpoint."""
     os.environ["ZAI_API_KEY"] = "zai-test-key"
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     assert "zai" in svc._registry
 
 
@@ -61,47 +62,41 @@ def test_context7_registration_failure_path(clean_env):
     """Context7 adapter registration failure is caught gracefully."""
     os.environ["CONTEXT7_API_KEY"] = "ctx7-test-key"
     with patch("src.services.provider_adapters.make_context7_adapter", side_effect=ImportError("no ctx7")):
-        svc = AgentProviderService()
+        svc = RuntimeProviderRegistry()
     assert "context7" not in svc._registry
 
 
-# === Import failure for HTTP adapters ===
+# === Env LangChain adapters ===
 
 
-def test_http_adapter_import_failure(clean_env):
-    """When provider_adapters import fails, adapters are skipped."""
+def test_env_langchain_adapter_registration_does_not_depend_on_provider_adapters(clean_env):
+    """LLM env adapters no longer depend on custom provider_adapters."""
     os.environ["COHERE_API_KEY"] = "cohere-test"
-    # Simulate ImportError by patching the import
     with patch.dict("sys.modules", {"src.services.provider_adapters": None}):
-        svc = AgentProviderService()
-    assert "cohere" not in svc._registry
+        svc = RuntimeProviderRegistry()
+    assert "cohere" in svc._registry
 
 
-# === Exception during individual HTTP adapter registration ===
+# === Exception during individual env adapter registration ===
 
 
-def test_http_adapter_registration_exception(clean_env):
+def test_env_adapter_registration_exception(clean_env):
     """Single adapter failure doesn't prevent others from registering."""
     os.environ["COHERE_API_KEY"] = "cohere-key"
     os.environ["OLLAMA_BASE"] = "http://localhost:11434"
 
-    call_count = 0
+    async def fallback_provider(**kwargs):
+        return "ok"
 
-    def mock_cohere(key):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            raise ValueError("bad adapter")
-        return AsyncMock()
+    with patch.object(
+        RuntimeProviderRegistry,
+        "_make_provider_for_runtime_config",
+        side_effect=[ValueError("bad adapter"), fallback_provider],
+    ):
+        svc = RuntimeProviderRegistry()
 
-    with patch("src.services.provider_adapters.make_cohere_adapter", mock_cohere):
-        with patch("src.services.provider_adapters.make_ollama_adapter", return_value=AsyncMock()):
-            with patch("src.services.provider_adapters.make_huggingface_adapter"):
-                with patch("src.services.provider_adapters.make_generic_http_adapter"):
-                    svc = AgentProviderService()
-
-    # cohere failed but ollama may have registered
     assert "cohere" not in svc._registry
+    assert "ollama" in svc._registry
 
 
 # === get_provider_status_list exception ===
@@ -110,13 +105,13 @@ def test_http_adapter_registration_exception(clean_env):
 @pytest.mark.anyio
 async def test_get_provider_status_list_db_exception():
     """Returns empty list when DB load fails."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     mock_db = MagicMock()
     mock_config = MagicMock()
     svc.db = mock_db
     svc._config = mock_config
 
-    with patch("src.services.agent_provider_service.AgentProviderService") as mock_cls:
+    with patch("src.services.agent_provider_service.ProviderConfigService") as mock_cls:
         mock_instance = MagicMock()
         mock_instance.load_provider_configs = AsyncMock(side_effect=Exception("DB error"))
         mock_cls.return_value = mock_instance
@@ -131,96 +126,76 @@ async def test_get_provider_status_list_db_exception():
 @pytest.mark.anyio
 async def test_get_provider_gpt_fallback_without_openai():
     """When OpenAI not registered but gpt model requested, falls back to default."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
     provider = svc.get_provider_callable("gpt-4")
     result = await provider(prompt="test")
     assert "DRAFT" in result
 
 
-# === _make_openai_compat_provider: non-200 status ===
+# === _make_openai_compat_provider: LangChain error ===
 
 
 @pytest.mark.anyio
-async def test_openai_compat_provider_non_200():
-    """Provider raises RuntimeError on non-200 status."""
-    svc = AgentProviderService()
+async def test_openai_compat_provider_langchain_error():
+    """Provider propagates LangChain runtime errors."""
+    svc = RuntimeProviderRegistry()
     provider_fn = svc._make_openai_compat_provider("http://localhost:1234", "test-key")
 
-    mock_resp = MagicMock()
-    mock_resp.status = 429
-    mock_resp.text = AsyncMock(return_value="rate limited")
-    mock_resp.json = AsyncMock(return_value={})
-
-    mock_cm = MagicMock()
-    mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_cm.__aexit__ = AsyncMock(return_value=False)
-
-    mock_session = MagicMock()
-    mock_session.post.return_value = mock_cm
-    mock_session_cm = MagicMock()
-    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
-
-    with patch("src.services.provider_service.aiohttp.ClientSession", return_value=mock_session_cm):
+    with patch("langchain.chat_models.init_chat_model", side_effect=RuntimeError("Provider error 429")):
         with pytest.raises(RuntimeError, match="Provider error 429"):
             await provider_fn(prompt="test")
 
 
-# === _make_openai_compat_provider: malformed response ===
+# === _make_openai_compat_provider: response extraction ===
 
 
 @pytest.mark.anyio
-async def test_openai_compat_provider_malformed_response():
-    """Provider returns stringified response when choices not found."""
-    svc = AgentProviderService()
+async def test_openai_compat_provider_extracts_langchain_content_blocks():
+    """Provider extracts text from LangChain content blocks."""
+    svc = RuntimeProviderRegistry()
     provider_fn = svc._make_openai_compat_provider("http://localhost:1234", "test-key")
+    captured = {}
 
-    mock_resp = MagicMock()
-    mock_resp.status = 200
-    mock_resp.text = AsyncMock(return_value="ok")
-    mock_resp.json = AsyncMock(return_value={"error": "no choices"})
+    class FakeChatModel:
+        async def ainvoke(self, prompt):
+            captured["prompt"] = prompt
+            return SimpleNamespace(content=[{"text": "hello"}, {"content": "world"}])
 
-    mock_cm = MagicMock()
-    mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_cm.__aexit__ = AsyncMock(return_value=False)
+    def fake_init_chat_model(**kwargs):
+        captured["kwargs"] = kwargs
+        return FakeChatModel()
 
-    mock_session = MagicMock()
-    mock_session.post.return_value = mock_cm
-    mock_session_cm = MagicMock()
-    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+    with patch("langchain.chat_models.init_chat_model", fake_init_chat_model):
+        result = await provider_fn(prompt="test", model="gpt-test", max_tokens=17, temperature=0.3)
 
-    with patch("src.services.provider_service.aiohttp.ClientSession", return_value=mock_session_cm):
-        result = await provider_fn(prompt="test")
-    # Falls back to str(data) since choices[0].message.content fails
-    assert "no choices" in result
+    assert result == "hello\nworld"
+    assert captured["prompt"] == "test"
+    assert captured["kwargs"]["model"] == "gpt-test"
+    assert captured["kwargs"]["model_provider"] == "openai"
+    assert captured["kwargs"]["base_url"] == "http://localhost:1234"
+    assert captured["kwargs"]["api_key"] == "test-key"
+    assert captured["kwargs"]["max_tokens"] == 17
+    assert captured["kwargs"]["temperature"] == 0.3
 
 
-# === _make_openai_provider: malformed response fallback ===
+# === _make_openai_provider: unknown response fallback ===
 
 
 @pytest.mark.anyio
-async def test_openai_provider_malformed_response_fallback(clean_env):
-    """OpenAI provider returns stringified response when choices not found."""
+async def test_openai_provider_unknown_response_fallback(clean_env):
+    """OpenAI provider returns stringified response when no text/content is exposed."""
     os.environ["OPENAI_API_KEY"] = "test-key"
 
-    mock_resp = MagicMock()
-    mock_resp.status = 200
-    mock_resp.text = AsyncMock(return_value="ok")
-    mock_resp.json = AsyncMock(return_value={"unexpected": "format"})
+    class WeirdResponse:
+        def __str__(self):
+            return "{'unexpected': 'format'}"
 
-    mock_cm = MagicMock()
-    mock_cm.__aenter__ = AsyncMock(return_value=mock_resp)
-    mock_cm.__aexit__ = AsyncMock(return_value=False)
+    class FakeChatModel:
+        async def ainvoke(self, prompt):
+            return WeirdResponse()
 
-    mock_session = MagicMock()
-    mock_session.post.return_value = mock_cm
-    mock_session_cm = MagicMock()
-    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
-
-    with patch("src.services.provider_service.aiohttp.ClientSession", return_value=mock_session_cm):
-        svc = AgentProviderService()
+    with patch("langchain.chat_models.init_chat_model", return_value=FakeChatModel()):
+        svc = RuntimeProviderRegistry()
         provider = svc.get_provider_callable("openai")
         result = await provider(prompt="test")
     assert "unexpected" in result
@@ -232,7 +207,7 @@ async def test_openai_provider_malformed_response_fallback(clean_env):
 @pytest.mark.anyio
 async def test_get_provider_status_list_with_configs():
     """Returns status list for configured providers."""
-    svc = AgentProviderService()
+    svc = RuntimeProviderRegistry()
 
     async def fake_provider(**kwargs):
         return "test"
@@ -255,7 +230,7 @@ async def test_get_provider_status_list_with_configs():
     cfg3.provider = "no_secrets"
     cfg3.enabled = True
 
-    with patch("src.services.agent_provider_service.AgentProviderService") as mock_cls:
+    with patch("src.services.agent_provider_service.ProviderConfigService") as mock_cls:
         mock_instance = MagicMock()
         mock_instance.load_provider_configs = AsyncMock(return_value=[cfg1, cfg2, cfg3])
         mock_cls.return_value = mock_instance

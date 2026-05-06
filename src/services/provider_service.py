@@ -4,9 +4,8 @@ import logging
 import os
 from typing import Any, Awaitable, Callable, Dict, Optional
 
-import aiohttp
-
 from src.agent.provider_registry import (
+    ProviderRuntimeConfig,
     is_zai_legacy_anthropic_base_url,
     normalize_ollama_base_url,
     normalize_zai_base_url,
@@ -18,15 +17,15 @@ logger = logging.getLogger(__name__)
 async def build_provider_service(
     db: object | None = None,
     config: object | None = None,
-) -> "AgentProviderService":
-    """Create AgentProviderService and eagerly load DB-backed providers when possible."""
-    svc = AgentProviderService(db, config)
+) -> "RuntimeProviderRegistry":
+    """Create RuntimeProviderRegistry and eagerly load DB-backed providers when possible."""
+    svc = RuntimeProviderRegistry(db, config)
     if db is not None and config is not None:
         await svc.load_db_providers()
     return svc
 
 
-class AgentProviderService:
+class RuntimeProviderRegistry:
     """Simple provider registry for generation providers.
 
     Provider callable signature (async):
@@ -58,7 +57,8 @@ class AgentProviderService:
 
     def _register_env_providers(self) -> None:
         """Register providers from environment variables (original behaviour)."""
-        # optional OpenAI provider (HTTP REST, minimal)
+        # Optional OpenAI provider. Runtime calls go through LangChain so the
+        # app uses the same model integration path as DeepAgents.
         openai_key = os.environ.get("OPENAI_API_KEY")
         if openai_key:
             self.register_provider("openai", self._make_openai_provider(openai_key))
@@ -70,7 +70,13 @@ class AgentProviderService:
         if zai_key and "zai" not in self._registry:
             try:
                 self.register_provider(
-                    "zai", self._make_openai_compat_provider(zai_base, zai_key)
+                    "zai",
+                    self._make_openai_compat_provider(
+                        zai_base,
+                        zai_key,
+                        provider_name="zai",
+                        default_model="glm-5-turbo",
+                    ),
                 )
             except Exception:
                 logger.debug("Failed to register zai adapter", exc_info=True)
@@ -85,72 +91,87 @@ class AgentProviderService:
             except Exception:
                 logger.debug("Failed to register context7 adapter", exc_info=True)
 
-        # Register lightweight HTTP adapters when env vars are present
-        try:
-            from src.services.provider_adapters import (
-                make_cohere_adapter,
-                make_generic_http_adapter,
-                make_huggingface_adapter,
-                make_ollama_adapter,
+        # Register LangChain-backed adapters when env vars are present. Each
+        # provider is isolated so one bad env config does not block the rest.
+        env_adapters: list[tuple[str, Callable[[], Callable[..., Awaitable[str]]]]] = []
+        cohere_key = os.environ.get("COHERE_API_KEY")
+        if cohere_key and "cohere" not in self._registry:
+            env_adapters.append(
+                (
+                    "cohere",
+                    lambda: self._make_provider_for_runtime_config(
+                        self._env_runtime_config("cohere", secret_fields={"api_key": cohere_key})
+                    ),
+                )
             )
-        except ImportError:
-            logger.debug("provider_adapters not available, skipping HTTP adapters")
-            make_cohere_adapter = make_generic_http_adapter = None
-            make_huggingface_adapter = make_ollama_adapter = None
 
-        # Each provider in its own try so one failure doesn't block the rest
-        _http_adapters: list[tuple[str, Any]] = []
-        if make_cohere_adapter is not None:
-            cohere_key = os.environ.get("COHERE_API_KEY")
-            if cohere_key and "cohere" not in self._registry:
-                _http_adapters.append(("cohere", lambda: make_cohere_adapter(cohere_key)))
-
-            ollama_base = os.environ.get("OLLAMA_BASE") or os.environ.get("OLLAMA_URL")
-            if ollama_base and "ollama" not in self._registry:
-                normalized_ollama_base = normalize_ollama_base_url(
-                    ollama_base,
-                    os.environ.get("OLLAMA_API_KEY", ""),
+        ollama_base = os.environ.get("OLLAMA_BASE") or os.environ.get("OLLAMA_URL")
+        ollama_key = os.environ.get("OLLAMA_API_KEY", "")
+        if (ollama_base or ollama_key) and "ollama" not in self._registry:
+            env_adapters.append(
+                (
+                    "ollama",
+                    lambda: self._make_provider_for_runtime_config(
+                        self._env_runtime_config(
+                            "ollama",
+                            plain_fields={"base_url": normalize_ollama_base_url(ollama_base or "", ollama_key)},
+                            secret_fields={"api_key": ollama_key},
+                        )
+                    ),
                 )
-                _http_adapters.append(
-                    ("ollama", lambda: make_ollama_adapter(
-                        normalized_ollama_base, os.environ.get("OLLAMA_API_KEY")
-                    ))
-                )
-
-            hf_key = os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HUGGINGFACE_TOKEN")
-            if hf_key and "huggingface" not in self._registry:
-                _http_adapters.append(
-                    ("huggingface", lambda: make_huggingface_adapter(hf_key))
-                )
-
-            fireworks_base = os.environ.get("FIREWORKS_BASE") or os.environ.get(
-                "FIREWORKS_API_BASE"
             )
-            fireworks_key = os.environ.get("FIREWORKS_API_KEY")
-            if fireworks_base and "fireworks" not in self._registry:
-                _http_adapters.append(
-                    ("fireworks", lambda: make_generic_http_adapter(fireworks_base, fireworks_key))
-                )
 
-            deepseek_base = os.environ.get("DEEPSEEK_BASE") or os.environ.get(
-                "DEEPSEEK_API_BASE"
+        hf_key = os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HUGGINGFACE_TOKEN")
+        if hf_key and "huggingface" not in self._registry:
+            env_adapters.append(
+                (
+                    "huggingface",
+                    lambda: self._make_provider_for_runtime_config(
+                        self._env_runtime_config("huggingface", secret_fields={"api_key": hf_key})
+                    ),
+                )
             )
-            deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
-            if deepseek_base and "deepseek" not in self._registry:
-                _http_adapters.append(
-                    ("deepseek", lambda: make_generic_http_adapter(deepseek_base, deepseek_key))
+
+        openai_compatible_env = (
+            (
+                "fireworks",
+                os.environ.get("FIREWORKS_BASE") or os.environ.get("FIREWORKS_API_BASE"),
+                os.environ.get("FIREWORKS_API_KEY"),
+            ),
+            (
+                "deepseek",
+                os.environ.get("DEEPSEEK_BASE") or os.environ.get("DEEPSEEK_API_BASE"),
+                os.environ.get("DEEPSEEK_API_KEY"),
+            ),
+            (
+                "together",
+                os.environ.get("TOGETHER_BASE") or os.environ.get("TOGETHER_API_BASE"),
+                os.environ.get("TOGETHER_API_KEY"),
+            ),
+        )
+        for provider_name, base_env, key_env in openai_compatible_env:
+            if (base_env or key_env) and provider_name not in self._registry:
+                def _factory(
+                    provider_name: str = provider_name,
+                    base_env: str | None = base_env,
+                    key_env: str | None = key_env,
+                ) -> Callable[..., Awaitable[str]]:
+                    return self._make_provider_for_runtime_config(
+                        self._env_runtime_config(
+                            provider_name,
+                            plain_fields={"base_url": base_env or ""},
+                            secret_fields={"api_key": key_env or ""},
+                        )
+                    )
+
+                env_adapters.append(
+                    (
+                        provider_name,
+                        _factory,
+                    )
                 )
 
-            together_base = os.environ.get("TOGETHER_BASE") or os.environ.get(
-                "TOGETHER_API_BASE"
-            )
-            together_key = os.environ.get("TOGETHER_API_KEY")
-            if together_base and "together" not in self._registry:
-                _http_adapters.append(
-                    ("together", lambda: make_generic_http_adapter(together_base, together_key))
-                )
-
-        for adapter_name, adapter_factory in _http_adapters:
+        for adapter_name, adapter_factory in env_adapters:
             try:
                 self.register_provider(adapter_name, adapter_factory())
             except Exception:
@@ -168,10 +189,10 @@ class AgentProviderService:
         if self.db is None or self._config is None:
             return 0
         # Lazy import to avoid circular dependency
-        from src.services.agent_provider_service import AgentProviderService as DbProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         try:
-            db_svc = DbProviderService(self.db, self._config)
+            db_svc = ProviderConfigService(self.db, self._config)
             configs = await db_svc.load_provider_configs()
         except Exception:
             logger.debug("Failed to load db provider configs", exc_info=True)
@@ -231,15 +252,7 @@ class AgentProviderService:
 
     def _build_adapter_for_config(self, cfg: Any) -> Callable[..., Awaitable[str]] | None:
         """Map a ProviderRuntimeConfig to a provider adapter callable."""
-        from src.services.provider_adapters import (
-            make_anthropic_adapter,
-            make_cohere_adapter,
-            make_huggingface_adapter,
-            make_ollama_adapter,
-        )
-
         provider = cfg.provider
-        api_key = (cfg.secret_fields.get("api_key", "") or "").strip()
 
         spec = provider_spec(provider)
         if spec is None:
@@ -253,46 +266,103 @@ class AgentProviderService:
                     provider,
                 )
                 return None
-            base_url = normalize_zai_base_url(raw_base_url)
-            return self._make_openai_compat_provider(base_url, api_key)
 
-        # OpenAI-compatible providers
-        if spec.openai_compatible and spec.default_base_url:
-            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
-            if not base_url:
-                base_url = spec.default_base_url
-            return self._make_openai_compat_provider(base_url, api_key)
+        return self._make_provider_for_runtime_config(cfg)
 
-        if provider == "cohere":
-            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
-            return make_cohere_adapter(api_key, base_url=base_url or None)
-
-        if provider == "ollama":
-            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
-            base_url = normalize_ollama_base_url(base_url, api_key)
-            return make_ollama_adapter(base_url=base_url or None, api_key=api_key or None)
-
-        if provider == "huggingface":
-            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
-            return make_huggingface_adapter(api_key, base_url=base_url or None)
-
-        if provider == "anthropic":
-            base_url = (cfg.plain_fields.get("base_url", "") or "").strip()
-            return make_anthropic_adapter(api_key, base_url=base_url or None)
-
-        if provider == "google_genai":
-            # Google GenAI also needs a different request schema.
-            logger.debug("Skipping db provider %s: incompatible request schema", provider)
-            return None
-
-        return None
+    def _env_runtime_config(
+        self,
+        provider: str,
+        *,
+        plain_fields: dict[str, str] | None = None,
+        secret_fields: dict[str, str] | None = None,
+        selected_model: str | None = None,
+    ) -> ProviderRuntimeConfig:
+        spec = provider_spec(provider)
+        default_model = selected_model or (spec.static_models[0] if spec and spec.static_models else "")
+        return ProviderRuntimeConfig(
+            provider=provider,
+            enabled=True,
+            priority=0,
+            selected_model=default_model,
+            plain_fields=plain_fields or {},
+            secret_fields=secret_fields or {},
+        )
 
     @staticmethod
-    def _make_openai_compat_provider(
-        base_url: str, api_key: str
-    ) -> Callable[..., Awaitable[str]]:
-        """Create an OpenAI-compatible chat completion provider."""
-        endpoint = f"{base_url.rstrip('/')}/chat/completions"
+    def _runtime_options_for_config(cfg: Any) -> tuple[str, dict[str, object]]:
+        spec = provider_spec(cfg.provider)
+        if spec is None:
+            raise RuntimeError(f"Unknown provider: {cfg.provider}")
+
+        model_provider = spec.resolved_runtime_provider
+        extra: dict[str, object] = {
+            key: value for key, value in cfg.plain_fields.items() if value.strip()
+        }
+        if cfg.provider == "ollama":
+            api_key = cfg.secret_fields.get("api_key", "").strip()
+            extra["base_url"] = normalize_ollama_base_url(
+                str(extra.get("base_url", "")),
+                api_key,
+            )
+            if api_key:
+                extra["client_kwargs"] = {"headers": {"Authorization": f"Bearer {api_key}"}}
+            return model_provider, extra
+
+        extra.update({key: value for key, value in cfg.secret_fields.items() if value.strip()})
+        if cfg.provider == "zai":
+            raw_base_url = cfg.plain_fields.get("base_url", "")
+            if is_zai_legacy_anthropic_base_url(raw_base_url):
+                raise RuntimeError(
+                    "This URL is the Z.AI Anthropic-compatible proxy. Configure the "
+                    "anthropic provider with this URL instead, or use the OpenAI-compatible "
+                    "endpoint."
+                )
+            extra["base_url"] = normalize_zai_base_url(raw_base_url)
+        return model_provider, extra
+
+    @staticmethod
+    def _response_text(response: Any) -> str:
+        if response is None:
+            return ""
+        if isinstance(response, str):
+            return response
+        text_attr = getattr(response, "text", None)
+        if callable(text_attr):
+            try:
+                text = text_attr()
+                if isinstance(text, str):
+                    return text
+            except TypeError:
+                pass
+        content = getattr(response, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    value = item.get("text") or item.get("content")
+                    if value is not None:
+                        parts.append(str(value))
+                else:
+                    parts.append(str(item))
+            return "\n".join(part for part in parts if part)
+        return str(response)
+
+    @staticmethod
+    def _strip_matching_provider_prefix(provider: str, model: str) -> str:
+        configured_provider, sep, bare_model_name = model.partition(":")
+        if sep and configured_provider == provider and bare_model_name:
+            return bare_model_name
+        return model
+
+    def _make_provider_for_runtime_config(self, cfg: Any) -> Callable[..., Awaitable[str]]:
+        provider_name = str(getattr(cfg, "provider", "") or "")
+        raw_default_model = getattr(cfg, "selected_model", "")
+        default_model = raw_default_model.strip() if isinstance(raw_default_model, str) else ""
+        model_provider, base_extra = self._runtime_options_for_config(cfg)
 
         async def _provider(
             prompt: str = "",
@@ -302,30 +372,48 @@ class AgentProviderService:
             stream: bool = False,
             **kwargs: Any,
         ) -> str:
-            headers = {"Content-Type": "application/json"}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
-            payload = {
-                "model": model or "gpt-3.5-turbo",
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": int(max_tokens or 256),
-                "temperature": float(temperature or 0.0),
-            }
-            timeout = aiohttp.ClientTimeout(total=60)
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    endpoint, json=payload, headers=headers, timeout=timeout
-                ) as resp:
-                    text = await resp.text()
-                    if resp.status != 200:
-                        raise RuntimeError(f"Provider error {resp.status}: {text}")
-                    data = await resp.json()
-                    try:
-                        return data["choices"][0]["message"]["content"]
-                    except Exception:
-                        return str(data)
+            del stream
+            from langchain.chat_models import init_chat_model
+
+            selected_model = str(model or default_model or "").strip()
+            if not selected_model:
+                spec = provider_spec(provider_name)
+                selected_model = spec.static_models[0] if spec and spec.static_models else ""
+            resolved_model = self._strip_matching_provider_prefix(provider_name, selected_model)
+            extra = dict(base_extra)
+            extra.update({key: value for key, value in kwargs.items() if value is not None})
+            if max_tokens is not None:
+                extra["max_tokens"] = int(max_tokens)
+            if temperature is not None:
+                extra["temperature"] = float(temperature)
+            chat_model = init_chat_model(
+                model=resolved_model,
+                model_provider=model_provider,
+                **extra,
+            )
+            response = await chat_model.ainvoke(prompt)
+            return self._response_text(response)
 
         return _provider
+
+    def _make_openai_compat_provider(
+        self,
+        base_url: str,
+        api_key: str,
+        *,
+        provider_name: str = "openai",
+        default_model: str = "gpt-3.5-turbo",
+    ) -> Callable[..., Awaitable[str]]:
+        """Create an OpenAI-compatible chat provider through LangChain."""
+        cfg = ProviderRuntimeConfig(
+            provider=provider_name,
+            enabled=True,
+            priority=0,
+            selected_model=default_model,
+            plain_fields={"base_url": base_url},
+            secret_fields={"api_key": api_key},
+        )
+        return self._make_provider_for_runtime_config(cfg)
 
     def has_providers(self) -> bool:
         """Return True if any real (non-default) provider is registered."""
@@ -339,10 +427,10 @@ class AgentProviderService:
         """
         if self.db is None or self._config is None:
             return []
-        from src.services.agent_provider_service import AgentProviderService as DbProviderService
+        from src.services.agent_provider_service import ProviderConfigService
 
         try:
-            db_svc = DbProviderService(self.db, self._config)
+            db_svc = ProviderConfigService(self.db, self._config)
             configs = await db_svc.load_provider_configs()
         except Exception:
             logger.warning("Failed to load provider statuses from DB", exc_info=True)
@@ -401,43 +489,12 @@ class AgentProviderService:
         return self._registry["default"]
 
     def _make_openai_provider(self, api_key: str) -> Callable[..., Awaitable[str]]:
-        async def _openai_provider(
-            prompt: str = "",
-            model: Optional[str] = None,
-            max_tokens: int = 256,
-            temperature: float = 0.0,
-            stream: bool = False,
-            **kwargs: Any,
-        ) -> str:
-            model_to_use = model or os.environ.get("OPENAI_DEFAULT_MODEL", "gpt-3.5-turbo")
-            base_url = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
-            url = f"{base_url}/chat/completions"
-            headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-            payload = {
-                "model": model_to_use,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": int(max_tokens or 256),
-                "temperature": float(temperature or 0.0),
-            }
-            timeout = aiohttp.ClientTimeout(
-                total=int(os.environ.get("OPENAI_TIMEOUT_SECONDS", "60"))
-            )
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    url, json=payload, headers=headers, timeout=timeout
-                ) as resp:
-                    text = await resp.text()
-                    if resp.status != 200:
-                        raise RuntimeError(f"OpenAI error {resp.status}: {text}")
-                    data = await resp.json()
-                    # Support chat completion response
-                    try:
-                        return data["choices"][0]["message"]["content"]
-                    except Exception:
-                        # Fallback to stringified response
-                        return str(data)
-
-        return _openai_provider
+        return self._make_openai_compat_provider(
+            os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1"),
+            api_key,
+            provider_name="openai",
+            default_model=os.environ.get("OPENAI_DEFAULT_MODEL", "gpt-3.5-turbo"),
+        )
 
     async def _default_provider(self, **kwargs: Any) -> str:
         prompt = kwargs.get("prompt", "") or ""

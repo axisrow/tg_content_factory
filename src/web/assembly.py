@@ -184,7 +184,6 @@ def register_routes(app: FastAPI) -> None:
     app.include_router(photo_loader_router, prefix="/dialogs/photos")
     app.include_router(debug_router, prefix="/debug")
     app.include_router(images_router, prefix="/images")
-    app.include_router(pipelines_router, prefix="/pipelines")
     app.include_router(rss_router)
 
 

@@ -13,7 +13,7 @@ from src.agent.provider_registry import (
 )
 from src.config import AppConfig
 from src.database import Database
-from src.services.agent_provider_service import AgentProviderService, ProviderModelCacheEntry
+from src.services.agent_provider_service import ProviderConfigService, ProviderModelCacheEntry
 from tests.helpers import cli_ns as _ns
 
 
@@ -52,7 +52,7 @@ def _make_entry(provider="openai", models=None, source="api", error=""):
 
 
 class TestList:
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_list_no_providers(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.load_provider_configs = AsyncMock(return_value=[])
@@ -63,7 +63,7 @@ class TestList:
         assert "No providers configured" in out
         assert "Available providers" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_list_with_providers(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         cfg = _make_cfg("openai", selected_model="gpt-4")
@@ -76,7 +76,7 @@ class TestList:
         assert "gpt-4" in out
         assert "Yes" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_list_disabled_provider(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         cfg = _make_cfg("openai", enabled=False)
@@ -87,7 +87,7 @@ class TestList:
         out = capsys.readouterr().out
         assert "No" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_list_with_error(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         cfg = _make_cfg("openai", error="connection timed out unexpectedly")
@@ -100,7 +100,7 @@ class TestList:
 
 
 class TestAdd:
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_add_unknown_provider(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.writes_enabled = True
@@ -109,7 +109,7 @@ class TestAdd:
         out = capsys.readouterr().out
         assert "Unknown provider" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_add_requires_encryption(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.writes_enabled = False
@@ -118,7 +118,7 @@ class TestAdd:
         out = capsys.readouterr().out
         assert "SESSION_ENCRYPTION_KEY" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_add_new_provider(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.writes_enabled = True
@@ -130,7 +130,7 @@ class TestAdd:
         assert "Added provider: openai" in out
         svc.save_provider_configs.assert_awaited_once()
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_add_existing_updates(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.writes_enabled = True
@@ -142,7 +142,7 @@ class TestAdd:
         out = capsys.readouterr().out
         assert "Updated provider: openai" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_add_with_base_url(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.writes_enabled = True
@@ -155,7 +155,7 @@ class TestAdd:
 
 
 class TestDelete:
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_delete_requires_encryption(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.writes_enabled = False
@@ -164,7 +164,7 @@ class TestDelete:
         out = capsys.readouterr().out
         assert "SESSION_ENCRYPTION_KEY" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_delete_not_found(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.writes_enabled = True
@@ -174,7 +174,7 @@ class TestDelete:
         out = capsys.readouterr().out
         assert "not found" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_delete_existing(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.writes_enabled = True
@@ -190,7 +190,7 @@ class TestDelete:
 
 
 class TestProbe:
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_probe_not_configured(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.load_provider_configs = AsyncMock(return_value=[])
@@ -199,7 +199,7 @@ class TestProbe:
         out = capsys.readouterr().out
         assert "not configured" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_probe_success(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         cfg = _make_cfg("openai")
@@ -212,7 +212,7 @@ class TestProbe:
         assert "OK" in out
         assert "3 models" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_probe_with_error(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         cfg = _make_cfg("openai")
@@ -225,7 +225,7 @@ class TestProbe:
         assert "WARN" in out
         assert "rate limited" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_probe_failure(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         cfg = _make_cfg("openai")
@@ -236,7 +236,7 @@ class TestProbe:
         out = capsys.readouterr().out
         assert "FAIL" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_probe_many_models_truncates(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         cfg = _make_cfg("openai")
@@ -251,7 +251,7 @@ class TestProbe:
 
 
 class TestRefresh:
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_refresh_single(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         entry = _make_entry("openai", models=["gpt-4"])
@@ -262,7 +262,7 @@ class TestRefresh:
         assert "OK" in out
         assert "1 models" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_refresh_single_failure(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.refresh_models_for_provider = AsyncMock(side_effect=Exception("network"))
@@ -271,7 +271,7 @@ class TestRefresh:
         out = capsys.readouterr().out
         assert "FAIL" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_refresh_all(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         results = {
@@ -288,7 +288,7 @@ class TestRefresh:
 
 
 class TestTestAll:
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_test_all_no_providers(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         svc.load_provider_configs = AsyncMock(return_value=[])
@@ -297,7 +297,7 @@ class TestTestAll:
         out = capsys.readouterr().out
         assert "No providers configured" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_test_all_success(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         cfg1 = _make_cfg("openai")
@@ -312,7 +312,7 @@ class TestTestAll:
         assert "OK" in out
         assert "WARN" in out
 
-    @patch("src.cli.commands.provider.AgentProviderService")
+    @patch("src.cli.commands.provider.ProviderConfigService")
     def test_test_all_failure(self, mock_svc, cli_env, capsys):
         svc = mock_svc.return_value
         cfg = _make_cfg("openai")
@@ -325,7 +325,7 @@ class TestTestAll:
 
 
 def _save_real_cli_provider_config(cli_db, config: AppConfig, cfg: ProviderRuntimeConfig) -> None:
-    asyncio.run(AgentProviderService(cli_db, config).save_provider_configs([cfg]))
+    asyncio.run(ProviderConfigService(cli_db, config).save_provider_configs([cfg]))
 
 
 def test_probe_zai_real_service_reads_db_and_refreshes_models(cli_db, capsys, monkeypatch):
@@ -354,7 +354,7 @@ def test_probe_zai_real_service_reads_db_and_refreshes_models(cli_db, capsys, mo
         await cmd_db.initialize()
         return config, cmd_db
 
-    monkeypatch.setattr(AgentProviderService, "_fetch_json", fake_fetch_json)
+    monkeypatch.setattr(ProviderConfigService, "_fetch_json", fake_fetch_json)
     with patch("src.cli.commands.provider.runtime.init_db", side_effect=fake_init_db):
         from src.cli.commands.provider import run
 
@@ -394,7 +394,7 @@ def test_test_all_real_service_reads_db_and_refreshes_zai_models(cli_db, capsys,
         await cmd_db.initialize()
         return config, cmd_db
 
-    monkeypatch.setattr(AgentProviderService, "_fetch_json", fake_fetch_json)
+    monkeypatch.setattr(ProviderConfigService, "_fetch_json", fake_fetch_json)
     with patch("src.cli.commands.provider.runtime.init_db", side_effect=fake_init_db):
         from src.cli.commands.provider import run
 

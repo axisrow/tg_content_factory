@@ -1,262 +1,52 @@
 {
-  "generated_at": "2026-04-03T12:00:02.078497+00:00",
-  "generated_by": "tg-agent 0.2.0",
+  "generated_at": "2026-05-04T10:36:24.636725+00:00",
+  "generated_by": "tg-agent 0.2.2",
   "providers": [
     {
-      "provider": "ollama",
-      "endpoint_fingerprint": "ollama://cloud",
-      "models": [
-        {
-          "model": "cogito-2.1:671b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:50:48.571097+00:00"
-        },
-        {
-          "model": "deepseek-v3.1:671b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:50:57.268635+00:00"
-        },
-        {
-          "model": "deepseek-v3.2",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:51:03.974407+00:00"
-        },
-        {
-          "model": "devstral-2:123b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:51:22.150466+00:00"
-        },
-        {
-          "model": "devstral-small-2:24b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:51:27.620735+00:00"
-        },
-        {
-          "model": "gemini-3-flash-preview",
-          "status": "unsupported",
-          "reason": "Function call is missing a thought_signature in functionCall parts. (status code: 400)",
-          "tested_at": "2026-04-03T11:51:35.172634+00:00"
-        },
-        {
-          "model": "gemma3:12b",
-          "status": "unsupported",
-          "reason": "Compatibility probe finished without a required get_channels tool call.",
-          "tested_at": "2026-04-03T11:51:40.533019+00:00"
-        },
-        {
-          "model": "gemma3:27b",
-          "status": "unsupported",
-          "reason": "Compatibility probe finished without a required get_channels tool call.",
-          "tested_at": "2026-04-03T11:51:42.701217+00:00"
-        },
-        {
-          "model": "gemma3:4b",
-          "status": "unsupported",
-          "reason": "Compatibility probe finished without a required get_channels tool call.",
-          "tested_at": "2026-04-03T11:51:47.705486+00:00"
-        },
-        {
-          "model": "glm-4.6",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:51:50.577300+00:00"
-        },
-        {
-          "model": "glm-4.7",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:51:58.327926+00:00"
-        },
-        {
-          "model": "glm-5",
-          "status": "unsupported",
-          "reason": "Server disconnected without sending a response.",
-          "tested_at": "2026-04-03T11:52:35.873484+00:00"
-        },
-        {
-          "model": "gpt-oss:120b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:52:47.431344+00:00"
-        },
-        {
-          "model": "gpt-oss:20b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:52:59.093031+00:00"
-        },
-        {
-          "model": "kimi-k2-thinking",
-          "status": "unsupported",
-          "reason": "Internal Server Error (ref: 6ad5ad41-b357-41ee-be08-613c366851a1) (status code: 500)",
-          "tested_at": "2026-04-03T11:53:04.576692+00:00"
-        },
-        {
-          "model": "kimi-k2.5",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:53:17.497637+00:00"
-        },
-        {
-          "model": "kimi-k2:1t",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:53:56.507122+00:00"
-        },
-        {
-          "model": "minimax-m2",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:54:02.939778+00:00"
-        },
-        {
-          "model": "minimax-m2.1",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:54:12.140581+00:00"
-        },
-        {
-          "model": "minimax-m2.5",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:54:17.858841+00:00"
-        },
-        {
-          "model": "minimax-m2.7",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:54:24.617282+00:00"
-        },
-        {
-          "model": "ministral-3:14b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:54:36.206443+00:00"
-        },
-        {
-          "model": "ministral-3:3b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:54:43.312743+00:00"
-        },
-        {
-          "model": "ministral-3:8b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:54:48.209759+00:00"
-        },
-        {
-          "model": "mistral-large-3:675b",
-          "status": "unknown",
-          "reason": "Compatibility probe timed out before the tool loop completed.",
-          "tested_at": "2026-04-03T11:54:53.084217+00:00"
-        },
-        {
-          "model": "nemotron-3-nano:30b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:55:38.085402+00:00"
-        },
-        {
-          "model": "nemotron-3-super",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:55:44.466550+00:00"
-        },
-        {
-          "model": "qwen3-coder-next",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:55:57.204030+00:00"
-        },
-        {
-          "model": "qwen3-coder:480b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:56:03.471869+00:00"
-        },
-        {
-          "model": "qwen3-next:80b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:56:11.508205+00:00"
-        },
-        {
-          "model": "qwen3-vl:235b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:56:25.292861+00:00"
-        },
-        {
-          "model": "qwen3-vl:235b-instruct",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:56:56.661096+00:00"
-        },
-        {
-          "model": "qwen3.5:397b",
-          "status": "supported",
-          "reason": "",
-          "tested_at": "2026-04-03T11:57:09.357978+00:00"
-        },
-        {
-          "model": "rnj-1:8b",
-          "status": "unsupported",
-          "reason": "Internal Server Error (ref: 68b1dde2-d3b4-4b3f-b394-2bf1bf6f5958) (status code: -1)",
-          "tested_at": "2026-04-03T11:57:25.805338+00:00"
-        }
-      ]
-    },
-    {
       "provider": "zai",
-      "endpoint_fingerprint": "https://api.z.ai/api/anthropic",
+      "endpoint_fingerprint": "https://api.z.ai/api/coding/paas/v4",
       "models": [
         {
           "model": "glm-4.5",
           "status": "supported",
           "reason": "",
-          "tested_at": "2026-04-03T11:57:29.116709+00:00"
+          "tested_at": "2026-05-04T10:35:26.643488+00:00"
         },
         {
           "model": "glm-4.5-air",
           "status": "supported",
           "reason": "",
-          "tested_at": "2026-04-03T11:57:35.808969+00:00"
+          "tested_at": "2026-05-04T10:35:38.105925+00:00"
         },
         {
           "model": "glm-4.6",
-          "status": "unknown",
-          "reason": "Compatibility probe timed out before the tool loop completed.",
-          "tested_at": "2026-04-03T11:57:50.329750+00:00"
+          "status": "supported",
+          "reason": "",
+          "tested_at": "2026-05-04T10:35:46.215256+00:00"
         },
         {
           "model": "glm-4.7",
           "status": "supported",
           "reason": "",
-          "tested_at": "2026-04-03T11:58:35.338428+00:00"
+          "tested_at": "2026-05-04T10:35:51.897461+00:00"
         },
         {
           "model": "glm-5",
           "status": "supported",
           "reason": "",
-          "tested_at": "2026-04-03T11:59:00.351952+00:00"
+          "tested_at": "2026-05-04T10:36:07.506777+00:00"
         },
         {
           "model": "glm-5-turbo",
           "status": "supported",
           "reason": "",
-          "tested_at": "2026-04-03T11:59:44.630927+00:00"
+          "tested_at": "2026-05-04T10:36:14.599696+00:00"
         },
         {
           "model": "glm-5.1",
           "status": "supported",
           "reason": "",
-          "tested_at": "2026-04-03T11:59:52.328422+00:00"
+          "tested_at": "2026-05-04T10:36:19.514020+00:00"
         }
       ]
     }

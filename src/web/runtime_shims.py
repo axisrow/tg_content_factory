@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime
 from types import SimpleNamespace
 
 from src.database import Database
+from src.utils.datetime import try_parse_datetime
 
 
 class SnapshotClientPool:
@@ -72,10 +72,7 @@ class SnapshotCollector:
         next_available_raw = payload.get("next_available_at_utc")
         next_available = None
         if isinstance(next_available_raw, str):
-            try:
-                next_available = datetime.fromisoformat(next_available_raw)
-            except ValueError:
-                next_available = None
+            next_available = try_parse_datetime(next_available_raw)
         return SimpleNamespace(
             state=payload.get("state", "no_connected_active"),
             retry_after_sec=payload.get("retry_after_sec"),

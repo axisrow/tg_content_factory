@@ -261,9 +261,9 @@ async def build_container_with_templates(
     collection_service = CollectionService(channel_bundle, collector, collection_queue)
     task_enqueuer = TaskEnqueuer(db, collection_service)
 
-    from src.services.provider_service import AgentProviderService
+    from src.services.provider_service import RuntimeProviderRegistry
 
-    llm_provider_service = AgentProviderService(db, config)
+    llm_provider_service = RuntimeProviderRegistry(db, config)
     await llm_provider_service.load_db_providers()
 
     if runtime_mode == "worker":

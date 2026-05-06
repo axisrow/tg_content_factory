@@ -1048,12 +1048,12 @@ async def test_channels_refresh_meta_success(_route_client_b3):
 
 @pytest.fixture
 def _settings_patch():
-    """Patch AgentProviderService methods to avoid needing config."""
+    """Patch ProviderConfigService methods to avoid needing config."""
     with patch(
-        "src.web.settings.handlers.AgentProviderService.load_provider_configs",
+        "src.web.settings.handlers.ProviderConfigService.load_provider_configs",
         AsyncMock(return_value=[]),
     ), patch(
-        "src.web.settings.handlers.AgentProviderService.load_model_cache",
+        "src.web.settings.handlers.ProviderConfigService.load_model_cache",
         AsyncMock(return_value={}),
     ), patch(
         "src.web.settings.handlers.ImageProviderService.load_provider_configs",
