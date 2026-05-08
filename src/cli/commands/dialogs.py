@@ -6,7 +6,13 @@ import time
 
 from src.cli import runtime
 from src.services.channel_service import ChannelService
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.services.telegram_actions import (
+    TelegramActionClientUnavailableError,
+    TelegramActionMessageNotFoundError,
+    TelegramActionNoMediaError,
+    TelegramActionService,
+)
+from src.telegram.flood_wait import HandledFloodWaitError
 from src.utils.datetime import parse_required_datetime
 
 
@@ -124,12 +130,12 @@ def run_with_dependencies(
                         print("Aborted.")
                         return
 
-                results = await svc.leave_dialogs(phone, dialogs)
-                for channel_id, ok in results.items():
+                result = await TelegramActionService(pool).leave_dialogs(phone=phone, dialogs=dialogs)
+                for channel_id, ok in result.results.items():
                     status = "left" if ok else "failed"
                     print(f"  {channel_id}: {status}")
-                left = sum(1 for value in results.values() if value)
-                failed = len(results) - left
+                left = result.success_count
+                failed = result.failed_count
                 print(f"\nDone: {left} left, {failed} failed.")
 
             elif args.dialogs_action == "topics":
@@ -176,15 +182,15 @@ def run_with_dependencies(
                         print("Aborted.")
                         return
 
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(recipient)
-                    await client.send_message(entity, text)
+                    await TelegramActionService(pool).send_message(
+                        phone=phone,
+                        recipient=recipient,
+                        text=text,
+                    )
                     print(f"Message sent to {recipient}.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
                 except Exception as exc:
                     print(f"Error sending message: {exc}")
 
@@ -210,16 +216,16 @@ def run_with_dependencies(
                     if answer != "y":
                         print("Aborted.")
                         return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
-                    return
-                client, _ = result
                 try:
-                    from_entity = await client.get_entity(args.from_chat)
-                    to_entity = await client.get_entity(args.to_chat)
-                    await client.forward_messages(to_entity, ids, from_entity)
+                    await TelegramActionService(pool).forward_messages(
+                        phone=phone,
+                        from_chat=args.from_chat,
+                        to_chat=args.to_chat,
+                        message_ids=ids,
+                    )
                     print(f"Forwarded {len(ids)} message(s) from {args.from_chat} to {args.to_chat}.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
                 except Exception as exc:
                     print(f"Error forwarding messages: {exc}")
 
@@ -240,15 +246,16 @@ def run_with_dependencies(
                     if answer != "y":
                         print("Aborted.")
                         return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    await client.edit_message(entity, args.message_id, args.text)
+                    await TelegramActionService(pool).edit_message(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        message_id=args.message_id,
+                        text=args.text,
+                    )
                     print(f"Message #{args.message_id} edited.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
                 except Exception as exc:
                     print(f"Error editing message: {exc}")
 
@@ -274,15 +281,15 @@ def run_with_dependencies(
                     if answer != "y":
                         print("Aborted.")
                         return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    await client.delete_messages(entity, ids)
+                    await TelegramActionService(pool).delete_messages(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        message_ids=ids,
+                    )
                     print(f"Deleted {len(ids)} message(s).")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
                 except Exception as exc:
                     print(f"Error deleting messages: {exc}")
 
@@ -308,31 +315,23 @@ def run_with_dependencies(
                             f"{acc.flood_wait_until.isoformat()}."
                         )
                         return
-                native_result = await pool.get_native_client_by_phone(phone)
-                if native_result is None:
-                    print(f"Client for {phone} unavailable (no lease could be acquired).")
-                    return
-                client, acquired_phone = native_result
                 try:
-                    from telethon.tl.functions.messages import SendReactionRequest
-                    from telethon.tl.types import ReactionEmoji
-
-                    entity = await client.get_entity(args.chat_id)
-                    await client(
-                        SendReactionRequest(
-                            peer=entity,
-                            msg_id=args.message_id,
-                            reaction=[ReactionEmoji(emoticon=args.emoji)],
-                        )
+                    result = await TelegramActionService(pool).send_reaction(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        message_id=args.message_id,
+                        emoji=args.emoji,
+                        native=True,
+                        resolve_entity=True,
                     )
                     print(
                         f"Reaction {args.emoji!r} sent to message #{args.message_id} "
-                        f"in {args.chat_id} (account {acquired_phone})"
+                        f"in {args.chat_id} (account {result.phone})"
                     )
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable (no lease could be acquired).")
                 except Exception as exc:
                     print(f"Error sending reaction: {type(exc).__name__}: {exc}")
-                finally:
-                    await pool.release_client(acquired_phone)
 
             elif args.dialogs_action == "pin-message":
                 accounts = sorted(pool.clients.keys())
@@ -349,15 +348,16 @@ def run_with_dependencies(
                     if answer != "y":
                         print("Aborted.")
                         return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable.")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    await client.pin_message(entity, args.message_id, notify=args.notify)
+                    await TelegramActionService(pool).pin_message(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        message_id=args.message_id,
+                        notify=args.notify,
+                    )
                     print(f"Message #{args.message_id} pinned.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
                 except Exception as exc:
                     print(f"Error pinning message: {exc}")
 
@@ -377,15 +377,15 @@ def run_with_dependencies(
                     if answer != "y":
                         print("Aborted.")
                         return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable.")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    await client.unpin_message(entity, args.message_id)
+                    await TelegramActionService(pool).unpin_message(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        message_id=args.message_id,
+                    )
                     print("Message(s) unpinned.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
                 except Exception as exc:
                     print(f"Error unpinning message: {exc}")
 
@@ -398,50 +398,23 @@ def run_with_dependencies(
                 if phone not in pool.clients:
                     print(f"Account {phone} not connected.")
                     return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable.")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    message = None
-
-                    async def _lookup_message() -> None:
-                        nonlocal message
-                        async for current_message in client.iter_messages(
-                            entity, ids=args.message_id
-                        ):
-                            message = current_message
-                            break
-
-                    try:
-                        await run_with_flood_wait(
-                            _lookup_message(),
-                            operation="cli_dialogs_download_media_lookup",
-                            phone=phone,
-                            pool=pool,
-                        )
-                    except HandledFloodWaitError as exc:
-                        print(f"Flood wait: {exc.info.detail}")
-                        return
-                    if message is None:
-                        print(f"Message #{args.message_id} not found.")
-                        return
-                    try:
-                        path = await run_with_flood_wait(
-                            client.download_media(message, file=args.output_dir),
-                            operation="cli_dialogs_download_media",
-                            phone=phone,
-                            pool=pool,
-                        )
-                    except HandledFloodWaitError as exc:
-                        print(f"Flood wait: {exc.info.detail}")
-                        return
-                    if path:
-                        print(f"Downloaded: {path}")
-                    else:
-                        print("No media in this message.")
+                    result = await TelegramActionService(pool).download_media(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        message_id=args.message_id,
+                        output_dir=args.output_dir,
+                        operation_prefix="cli_dialogs_download_media",
+                    )
+                    print(f"Downloaded: {result.path}")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
+                except TelegramActionMessageNotFoundError:
+                    print(f"Message #{args.message_id} not found.")
+                except TelegramActionNoMediaError:
+                    print("No media in this message.")
+                except HandledFloodWaitError as exc:
+                    print(f"Flood wait: {exc.info.detail}")
                 except Exception as exc:
                     print(f"Error downloading media: {exc}")
 
@@ -454,18 +427,14 @@ def run_with_dependencies(
                 if phone not in pool.clients:
                     print(f"Account {phone} not connected.")
                     return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable.")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    participants = await client.get_participants(
-                        entity,
+                    result = await TelegramActionService(pool).get_participants(
+                        phone=phone,
+                        chat_id=args.chat_id,
                         limit=args.limit,
                         search=args.search,
                     )
+                    participants = result.participants
                     if not participants:
                         print("No participants found.")
                         return
@@ -482,6 +451,8 @@ def run_with_dependencies(
                             )
                         )
                     print(f"\nTotal: {len(participants)}")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
                 except Exception as exc:
                     print(f"Error fetching participants: {exc}")
 
@@ -500,19 +471,17 @@ def run_with_dependencies(
                     if answer != "y":
                         print("Aborted.")
                         return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable.")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    user = await client.get_entity(args.user_id)
-                    kwargs = {"is_admin": args.is_admin}
-                    if args.title:
-                        kwargs["title"] = args.title
-                    await client.edit_admin(entity, user, **kwargs)
+                    await TelegramActionService(pool).edit_admin(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        user_id=args.user_id,
+                        is_admin=args.is_admin,
+                        title=args.title or None,
+                    )
                     print(f"Admin rights updated for {args.user_id}.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
                 except Exception as exc:
                     print(f"Error editing admin: {exc}")
 
@@ -531,27 +500,32 @@ def run_with_dependencies(
                     if answer != "y":
                         print("Aborted.")
                         return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable.")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    user = await client.get_entity(args.user_id)
                     if args.send_messages is None and args.send_media is None:
                         print("Error: specify at least one flag (--send-messages or --send-media).")
                         return
                     until_date = None
                     if args.until_date:
                         until_date = parse_required_datetime(args.until_date)
-                    kwargs = {"until_date": until_date}
-                    if args.send_messages is not None:
-                        kwargs["send_messages"] = args.send_messages.lower() in ("1", "true", "on")
-                    if args.send_media is not None:
-                        kwargs["send_media"] = args.send_media.lower() in ("1", "true", "on")
-                    await client.edit_permissions(entity, user, **kwargs)
+                    await TelegramActionService(pool).edit_permissions(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        user_id=args.user_id,
+                        until_date=until_date,
+                        send_messages=(
+                            args.send_messages.lower() in ("1", "true", "on")
+                            if args.send_messages is not None
+                            else None
+                        ),
+                        send_media=(
+                            args.send_media.lower() in ("1", "true", "on")
+                            if args.send_media is not None
+                            else None
+                        ),
+                    )
                     print(f"Permissions updated for {args.user_id}.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
                 except Exception as exc:
                     print(f"Error editing permissions: {exc}")
 
@@ -570,16 +544,15 @@ def run_with_dependencies(
                     if answer != "y":
                         print("Aborted.")
                         return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable.")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    user = await client.get_entity(args.user_id)
-                    await client.kick_participant(entity, user)
+                    await TelegramActionService(pool).kick_participant(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        user_id=args.user_id,
+                    )
                     print(f"{args.user_id} kicked from {args.chat_id}.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
                 except Exception as exc:
                     print(f"Error kicking participant: {exc}")
 
@@ -592,14 +565,12 @@ def run_with_dependencies(
                 if phone not in pool.clients:
                     print(f"Account {phone} not connected.")
                     return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable.")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    stats = await client.get_broadcast_stats(entity)
+                    result = await TelegramActionService(pool).get_broadcast_stats(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                    )
+                    stats = result.stats
                     print(f"Broadcast stats for {args.chat_id}:")
                     for attr in (
                         "followers",
@@ -624,6 +595,8 @@ def run_with_dependencies(
                     enabled_notifications = getattr(stats, "enabled_notifications", None)
                     if enabled_notifications is not None:
                         print(f"  enabled_notifications: {enabled_notifications}")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
                 except Exception as exc:
                     print(f"Error fetching broadcast stats: {exc}")
 
@@ -636,15 +609,15 @@ def run_with_dependencies(
                 if phone not in pool.clients:
                     print(f"Account {phone} not connected.")
                     return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable.")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    await client.edit_folder(entity, 1)
+                    await TelegramActionService(pool).set_dialog_folder(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        folder_id=1,
+                    )
                     print(f"{args.chat_id} archived.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
                 except Exception as exc:
                     print(f"Error archiving: {exc}")
 
@@ -657,15 +630,15 @@ def run_with_dependencies(
                 if phone not in pool.clients:
                     print(f"Account {phone} not connected.")
                     return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable.")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    await client.edit_folder(entity, 0)
+                    await TelegramActionService(pool).set_dialog_folder(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        folder_id=0,
+                    )
                     print(f"{args.chat_id} unarchived.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
                 except Exception as exc:
                     print(f"Error unarchiving: {exc}")
 
@@ -678,15 +651,15 @@ def run_with_dependencies(
                 if phone not in pool.clients:
                     print(f"Account {phone} not connected.")
                     return
-                result = await pool.get_native_client_by_phone(phone)
-                if result is None:
-                    print(f"Client for {phone} unavailable.")
-                    return
-                client, _ = result
                 try:
-                    entity = await client.get_entity(args.chat_id)
-                    await client.send_read_acknowledge(entity, max_id=args.max_id)
+                    await TelegramActionService(pool).mark_read(
+                        phone=phone,
+                        chat_id=args.chat_id,
+                        max_id=args.max_id,
+                    )
                     print(f"Messages marked as read in {args.chat_id}.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
                 except Exception as exc:
                     print(f"Error marking messages as read: {exc}")
 
@@ -710,35 +683,28 @@ def run_with_dependencies(
                 if phone not in pool.clients:
                     print(f"Account {phone} not connected.")
                     return
-                client = pool.clients[phone]
-                from telethon.tl.functions.channels import CreateChannelRequest
-
-                result = await client(
-                    CreateChannelRequest(
+                try:
+                    result = await TelegramActionService(pool).create_channel(
+                        phone=phone,
                         title=args.title,
                         about=args.about or "",
-                        broadcast=True,
-                        megagroup=False,
+                        username=args.username or "",
                     )
-                )
-                channel = result.chats[0] if result.chats else None
-                if channel is None:
-                    print("Error: Telegram returned empty response — channel may not have been created.")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable.")
                     return
-                channel_id = channel.id
-                channel_username = getattr(channel, "username", None) or ""
-                print(f"Created channel id={channel_id} title={args.title!r}")
-                if args.username and channel_id:
-                    try:
-                        from telethon.tl.functions.channels import UpdateUsernameRequest
-
-                        await client(UpdateUsernameRequest(channel, args.username))
-                        channel_username = args.username
-                        print(f"Username set: @{channel_username}")
-                    except Exception as exc:
-                        print(f"Could not set username: {exc}")
-                if channel_username:
-                    print(f"Channel link: https://t.me/{channel_username}")
+                except RuntimeError as exc:
+                    if "Telegram returned empty response" in str(exc):
+                        print("Error: Telegram returned empty response — channel may not have been created.")
+                        return
+                    raise
+                print(f"Created channel id={result.channel_id} title={args.title!r}")
+                if args.username and result.channel_username == args.username:
+                    print(f"Username set: @{result.channel_username}")
+                elif args.username and result.username_error:
+                    print(f"Could not set username: {result.username_error}")
+                if result.channel_username:
+                    print(f"Channel link: {result.invite_link}")
 
             elif args.dialogs_action == "cache-status":
                 phones = await db.repos.dialog_cache.get_all_phones()

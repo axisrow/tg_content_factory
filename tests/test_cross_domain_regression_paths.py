@@ -2065,13 +2065,12 @@ class TestMyTelegramToolErrors:
         assert "ошибка" in _text(result).lower()
 
     async def test_leave_dialogs_exception(self, mytg_setup):
-        handlers, _, _ = mytg_setup
-        with patch("src.services.channel_service.ChannelService.leave_dialogs",
-                    new_callable=AsyncMock, side_effect=RuntimeError("fail")):
-            result = await handlers["leave_dialogs"]({
-                "phone": "+1111", "dialog_ids": "1,2", "confirm": True,
-            })
-            assert "ошибка" in _text(result).lower()
+        handlers, _, pool = mytg_setup
+        pool.leave_channels = AsyncMock(side_effect=RuntimeError("fail"))
+        result = await handlers["leave_dialogs"]({
+            "phone": "+1111", "dialog_ids": "1,2", "confirm": True,
+        })
+        assert "ошибка" in _text(result).lower()
 
     async def test_get_forum_topics_exception(self, mytg_setup):
         handlers, mock_db, _ = mytg_setup

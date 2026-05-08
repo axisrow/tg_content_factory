@@ -15,10 +15,16 @@ from src.services.notification_service import NotificationService
 from src.services.notification_target_service import NotificationTargetService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_task_service import PhotoTarget, PhotoTaskService
+from src.services.telegram_actions import (
+    TelegramActionMessageNotFoundError,
+    TelegramActionNoMediaError,
+    TelegramActionPathEscapeError,
+    TelegramActionService,
+)
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.telegram.flood_wait import HandledFloodWaitError
 from src.telegram.notifier import Notifier
 from src.utils.datetime import parse_required_datetime, parse_required_schedule_datetime
 
@@ -242,146 +248,133 @@ class TelegramCommandDispatcher:
     async def _handle_dialogs_leave(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])
         dialogs = [(int(item["dialog_id"]), str(item["title"])) for item in payload.get("dialogs", [])]
-        results = await self._pool.leave_channels(phone, dialogs)
-        left = sum(1 for ok in results.values() if ok)
-        failed = len(results) - left
-        return {"left": left, "failed": failed}
+        result = await TelegramActionService(self._pool).leave_dialogs(phone=phone, dialogs=dialogs)
+        return {"left": result.success_count, "failed": result.failed_count}
 
     async def _handle_dialogs_send(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["recipient"])
-            message = await client.send_message(entity, payload["text"])
-            return {"phone": phone, "message_id": getattr(message, "id", None)}
-        finally:
-            await self._pool.release_client(phone)
+        result = await TelegramActionService(self._pool).send_message(
+            phone=str(payload["phone"]),
+            recipient=payload["recipient"],
+            text=payload["text"],
+        )
+        return {"phone": result.phone, "message_id": result.message_id}
 
     async def _handle_dialogs_edit_message(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["chat_id"])
-            await client.edit_message(entity, int(payload["message_id"]), payload["text"])
-            return {"phone": phone}
-        finally:
-            await self._pool.release_client(phone)
+        result = await TelegramActionService(self._pool).edit_message(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            message_id=int(payload["message_id"]),
+            text=payload["text"],
+        )
+        return {"phone": result.phone}
 
     async def _handle_dialogs_delete_message(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["chat_id"])
-            ids = [int(value) for value in payload["message_ids"]]
-            await client.delete_messages(entity, ids)
-            return {"phone": phone, "deleted": len(ids)}
-        finally:
-            await self._pool.release_client(phone)
+        result = await TelegramActionService(self._pool).delete_messages(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            message_ids=[int(value) for value in payload["message_ids"]],
+        )
+        return {"phone": result.phone, "deleted": result.count}
 
     async def _handle_dialogs_forward_messages(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            from_entity = await client.get_entity(payload["from_chat"])
-            to_entity = await client.get_entity(payload["to_chat"])
-            ids = [int(value) for value in payload["message_ids"]]
-            await client.forward_messages(to_entity, ids, from_entity)
-            return {"phone": phone, "forwarded": len(ids)}
-        finally:
-            await self._pool.release_client(phone)
+        result = await TelegramActionService(self._pool).forward_messages(
+            phone=str(payload["phone"]),
+            from_chat=payload["from_chat"],
+            to_chat=payload["to_chat"],
+            message_ids=[int(value) for value in payload["message_ids"]],
+        )
+        return {"phone": result.phone, "forwarded": result.count}
 
     async def _handle_dialogs_pin_message(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["chat_id"])
-            await client.pin_message(entity, int(payload["message_id"]), notify=bool(payload.get("notify", False)))
-            return {"phone": phone}
-        finally:
-            await self._pool.release_client(phone)
+        result = await TelegramActionService(self._pool).pin_message(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            message_id=int(payload["message_id"]),
+            notify=bool(payload.get("notify", False)),
+        )
+        return {"phone": result.phone}
 
     async def _handle_dialogs_unpin_message(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["chat_id"])
-            message_id = payload.get("message_id")
-            await client.unpin_message(entity, int(message_id) if message_id is not None else None)
-            return {"phone": phone}
-        finally:
-            await self._pool.release_client(phone)
+        message_id = payload.get("message_id")
+        result = await TelegramActionService(self._pool).unpin_message(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            message_id=int(message_id) if message_id is not None else None,
+        )
+        return {"phone": result.phone}
 
     async def _handle_dialogs_participants(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["chat_id"])
-            participants = await client.get_participants(
-                entity,
-                limit=int(payload.get("limit", 200)),
-                search=str(payload.get("search", "")),
-            )
-            data = [
-                {
-                    "id": p.id,
-                    "first_name": getattr(p, "first_name", None) or "",
-                    "last_name": getattr(p, "last_name", None) or "",
-                    "username": getattr(p, "username", None) or "",
-                }
-                for p in participants
-            ]
-            scope = f"dialogs_participants:{phone}:{payload['chat_id']}"
-            search_value = str(payload.get("search", ""))
-            # Only cache unfiltered (full) participant lists. A search-filtered
-            # result would otherwise overwrite the shared snapshot, so later
-            # no-search GETs would return only the filtered subset.
-            if not search_value:
-                await self._db.repos.runtime_snapshots.upsert_snapshot(
-                    RuntimeSnapshot(
-                        snapshot_type="dialogs_participants",
-                        scope=scope,
-                        payload={"participants": data, "total": len(data)},
-                    )
-                )
-            result = {"phone": phone, "scope": scope, "total": len(data)}
-            if search_value:
-                # Search results are intentionally not cached; return them
-                # inline so the client can read them via GET /telegram-commands/{id}.
-                result["participants"] = data
-            return result
-        finally:
-            await self._pool.release_client(phone)
-
-    async def _handle_dialogs_broadcast_stats(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["chat_id"])
-            stats = await client.get_broadcast_stats(entity)
-            fields: dict[str, Any] = {}
-            for attr in ("followers", "views_per_post", "shares_per_post", "reactions_per_post", "forwards_per_post"):
-                val = getattr(stats, attr, None)
-                if val is not None:
-                    current = getattr(val, "current", None)
-                    previous = getattr(val, "previous", None)
-                    if current is not None:
-                        fields[attr] = {"current": current, "previous": previous}
-                    else:
-                        fields[attr] = str(val)
-            period = getattr(stats, "period", None)
-            if period is not None:
-                fields["period"] = {
-                    "min_date": period.min_date.isoformat() if getattr(period, "min_date", None) else None,
-                    "max_date": period.max_date.isoformat() if getattr(period, "max_date", None) else None,
-                }
-            enabled_notifications = getattr(stats, "enabled_notifications", None)
-            if enabled_notifications is not None:
-                fields["enabled_notifications"] = enabled_notifications
-            if not fields:
-                fields["raw"] = str(stats)
-            scope = f"dialogs_broadcast_stats:{phone}:{payload['chat_id']}"
+        action_result = await TelegramActionService(self._pool).get_participants(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            limit=int(payload.get("limit", 200)),
+            search=str(payload.get("search", "")),
+        )
+        data = [
+            {
+                "id": p.id,
+                "first_name": getattr(p, "first_name", None) or "",
+                "last_name": getattr(p, "last_name", None) or "",
+                "username": getattr(p, "username", None) or "",
+            }
+            for p in action_result.participants
+        ]
+        scope = f"dialogs_participants:{action_result.phone}:{payload['chat_id']}"
+        search_value = str(payload.get("search", ""))
+        # Only cache unfiltered (full) participant lists. A search-filtered
+        # result would otherwise overwrite the shared snapshot, so later
+        # no-search GETs would return only the filtered subset.
+        if not search_value:
             await self._db.repos.runtime_snapshots.upsert_snapshot(
                 RuntimeSnapshot(
-                    snapshot_type="dialogs_broadcast_stats",
+                    snapshot_type="dialogs_participants",
                     scope=scope,
-                    payload={"stats": fields},
+                    payload={"participants": data, "total": len(data)},
                 )
             )
-            return {"phone": phone, "scope": scope}
-        finally:
-            await self._pool.release_client(phone)
+        result = {"phone": action_result.phone, "scope": scope, "total": len(data)}
+        if search_value:
+            # Search results are intentionally not cached; return them
+            # inline so the client can read them via GET /telegram-commands/{id}.
+            result["participants"] = data
+        return result
+
+    async def _handle_dialogs_broadcast_stats(self, payload: dict[str, Any]) -> dict[str, Any]:
+        action_result = await TelegramActionService(self._pool).get_broadcast_stats(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+        )
+        stats = action_result.stats
+        fields: dict[str, Any] = {}
+        for attr in ("followers", "views_per_post", "shares_per_post", "reactions_per_post", "forwards_per_post"):
+            val = getattr(stats, attr, None)
+            if val is not None:
+                current = getattr(val, "current", None)
+                previous = getattr(val, "previous", None)
+                if current is not None:
+                    fields[attr] = {"current": current, "previous": previous}
+                else:
+                    fields[attr] = str(val)
+        period = getattr(stats, "period", None)
+        if period is not None:
+            fields["period"] = {
+                "min_date": period.min_date.isoformat() if getattr(period, "min_date", None) else None,
+                "max_date": period.max_date.isoformat() if getattr(period, "max_date", None) else None,
+            }
+        enabled_notifications = getattr(stats, "enabled_notifications", None)
+        if enabled_notifications is not None:
+            fields["enabled_notifications"] = enabled_notifications
+        if not fields:
+            fields["raw"] = str(stats)
+        scope = f"dialogs_broadcast_stats:{action_result.phone}:{payload['chat_id']}"
+        await self._db.repos.runtime_snapshots.upsert_snapshot(
+            RuntimeSnapshot(
+                snapshot_type="dialogs_broadcast_stats",
+                scope=scope,
+                payload={"stats": fields},
+            )
+        )
+        return {"phone": action_result.phone, "scope": scope}
 
     async def _handle_dialogs_archive(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._set_dialog_folder(payload, folder_id=1)
@@ -390,98 +383,65 @@ class TelegramCommandDispatcher:
         return await self._set_dialog_folder(payload, folder_id=0)
 
     async def _set_dialog_folder(self, payload: dict[str, Any], *, folder_id: int) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["chat_id"])
-            await client.edit_folder(entity, folder_id)
-            return {"phone": phone, "folder_id": folder_id}
-        finally:
-            await self._pool.release_client(phone)
+        result = await TelegramActionService(self._pool).set_dialog_folder(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            folder_id=folder_id,
+        )
+        return {"phone": result.phone, "folder_id": folder_id}
 
     async def _handle_dialogs_mark_read(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["chat_id"])
-            max_id = payload.get("max_id")
-            await client.send_read_acknowledge(entity, max_id=int(max_id) if max_id is not None else None)
-            return {"phone": phone}
-        finally:
-            await self._pool.release_client(phone)
+        max_id = payload.get("max_id")
+        result = await TelegramActionService(self._pool).mark_read(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            max_id=int(max_id) if max_id is not None else None,
+        )
+        return {"phone": result.phone}
 
     async def _handle_dialogs_edit_admin(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["chat_id"])
-            user = await client.get_entity(payload["user_id"])
-            kwargs = {"is_admin": bool(payload.get("is_admin", False))}
-            if payload.get("title"):
-                kwargs["title"] = payload["title"]
-            await client.edit_admin(entity, user, **kwargs)
-            return {"phone": phone}
-        finally:
-            await self._pool.release_client(phone)
+        result = await TelegramActionService(self._pool).edit_admin(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            user_id=payload["user_id"],
+            is_admin=bool(payload.get("is_admin", False)),
+            title=payload.get("title") or None,
+        )
+        return {"phone": result.phone}
 
     async def _handle_dialogs_edit_permissions(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["chat_id"])
-            user = await client.get_entity(payload["user_id"])
-            kwargs: dict[str, Any] = {}
-            if payload.get("until_date"):
-                kwargs["until_date"] = parse_required_datetime(str(payload["until_date"]))
-            if "send_messages" in payload:
-                kwargs["send_messages"] = bool(payload["send_messages"])
-            if "send_media" in payload:
-                kwargs["send_media"] = bool(payload["send_media"])
-            await client.edit_permissions(entity, user, **kwargs)
-            return {"phone": phone}
-        finally:
-            await self._pool.release_client(phone)
+        result = await TelegramActionService(self._pool).edit_permissions(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            user_id=payload["user_id"],
+            until_date=parse_required_datetime(str(payload["until_date"])) if payload.get("until_date") else None,
+            send_messages=bool(payload["send_messages"]) if "send_messages" in payload else None,
+            send_media=bool(payload["send_media"]) if "send_media" in payload else None,
+        )
+        return {"phone": result.phone}
 
     async def _handle_dialogs_kick(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            entity = await client.get_entity(payload["chat_id"])
-            user = await client.get_entity(payload["user_id"])
-            await client.kick_participant(entity, user)
-            return {"phone": phone}
-        finally:
-            await self._pool.release_client(phone)
+        result = await TelegramActionService(self._pool).kick_participant(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            user_id=payload["user_id"],
+        )
+        return {"phone": result.phone}
 
     async def _handle_dialogs_create_channel(self, payload: dict[str, Any]) -> dict[str, Any]:
-        from telethon.tl.functions.channels import CreateChannelRequest, UpdateUsernameRequest
-
-        client, phone = await self._get_client(str(payload["phone"]))
-        try:
-            result = await client(
-                CreateChannelRequest(
-                    title=str(payload["title"]).strip(),
-                    about=str(payload.get("about", "")).strip(),
-                    broadcast=True,
-                    megagroup=False,
-                )
-            )
-            channel = result.chats[0] if result.chats else None
-            if channel is None:
-                raise RuntimeError("Telegram returned empty response")
-            channel_id = getattr(channel, "id", None)
-            channel_username = getattr(channel, "username", None) or ""
-            requested_username = str(payload.get("username", "")).strip()
-            if requested_username and channel_id:
-                try:
-                    await client(UpdateUsernameRequest(channel, requested_username))
-                    channel_username = requested_username
-                except Exception:
-                    logger.warning("Could not set username %r for new channel id=%s", requested_username, channel_id)
-            return {
-                "phone": phone,
-                "channel_id": channel_id,
-                "channel_title": payload["title"],
-                "channel_username": channel_username,
-                "invite_link": f"https://t.me/{channel_username}" if channel_username else "",
-            }
-        finally:
-            await self._pool.release_client(phone)
+        result = await TelegramActionService(self._pool).create_channel(
+            phone=str(payload["phone"]),
+            title=str(payload["title"]).strip(),
+            about=str(payload.get("about", "")).strip(),
+            username=str(payload.get("username", "")).strip(),
+        )
+        return {
+            "phone": result.phone,
+            "channel_id": result.channel_id,
+            "channel_title": payload["title"],
+            "channel_username": result.channel_username,
+            "invite_link": result.invite_link,
+        }
 
     async def _handle_agent_forum_topics_refresh(self, payload: dict[str, Any]) -> dict[str, Any]:
         channel_id = int(payload["channel_id"])
@@ -606,50 +566,25 @@ class TelegramCommandDispatcher:
         return {"added": added, "skipped": skipped, "failed": failed, "details": details}
 
     async def _handle_dialogs_download_media(self, payload: dict[str, Any]) -> dict[str, Any]:
-        client, phone = await self._get_client(str(payload["phone"]))
+        phone = str(payload["phone"])
         try:
-            entity = await client.get_entity(payload["chat_id"])
-            msg = None
-
-            async def _lookup_message() -> None:
-                nonlocal msg
-                async for item in client.iter_messages(
-                    entity, ids=int(payload["message_id"])
-                ):
-                    msg = item
-                    break
-
-            try:
-                await run_with_flood_wait(
-                    _lookup_message(),
-                    operation="dispatcher_dialogs_download_media_lookup",
-                    phone=phone,
-                    pool=self._pool,
-                )
-            except HandledFloodWaitError as exc:
-                raise RuntimeError(f"flood_wait:{exc.info.wait_seconds}") from exc
-            if msg is None:
-                raise RuntimeError("message_not_found")
             output_dir = Path(__file__).resolve().parents[2] / "data" / "downloads"
-            output_dir.mkdir(parents=True, exist_ok=True)
-            output_dir_resolved = output_dir.resolve()
-            try:
-                path = await run_with_flood_wait(
-                    client.download_media(msg, file=str(output_dir_resolved)),
-                    operation="dispatcher_dialogs_download_media",
-                    phone=phone,
-                    pool=self._pool,
-                )
-            except HandledFloodWaitError as exc:
-                raise RuntimeError(f"flood_wait:{exc.info.wait_seconds}") from exc
-            if not path:
-                raise RuntimeError("no_media")
-            resolved = Path(path).resolve()
-            if output_dir_resolved not in resolved.parents:
-                raise RuntimeError("path_escape")
-            return {"phone": phone, "path": str(resolved)}
-        finally:
-            await self._pool.release_client(phone)
+            result = await TelegramActionService(self._pool).download_media(
+                phone=phone,
+                chat_id=payload["chat_id"],
+                message_id=int(payload["message_id"]),
+                output_dir=output_dir,
+                operation_prefix="dispatcher_dialogs_download_media",
+            )
+            return {"phone": result.phone, "path": result.path}
+        except HandledFloodWaitError as exc:
+            raise RuntimeError(f"flood_wait:{exc.info.wait_seconds}") from exc
+        except TelegramActionMessageNotFoundError as exc:
+            raise RuntimeError("message_not_found") from exc
+        except TelegramActionNoMediaError as exc:
+            raise RuntimeError("no_media") from exc
+        except TelegramActionPathEscapeError as exc:
+            raise RuntimeError("path_escape") from exc
 
     async def _handle_accounts_connect(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])

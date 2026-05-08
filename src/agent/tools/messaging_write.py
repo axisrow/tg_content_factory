@@ -11,7 +11,6 @@ from src.agent.tools._registry import (
     arg_csv_ints,
     arg_str,
     require_confirmation,
-    resolve_entity,
 )
 from src.agent.tools._telegram_runtime import prepare_telegram_tool
 from src.agent.tools.messaging_schemas import (
@@ -20,6 +19,7 @@ from src.agent.tools.messaging_schemas import (
     FORWARD_MESSAGES_SCHEMA,
     SEND_MESSAGE_SCHEMA,
 )
+from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
 
 
 def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
@@ -45,11 +45,14 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, recipient)
-            if err:
-                return err
-            await client.send_message(entity, text)
+            await TelegramActionService(client_pool).send_message(
+                phone=phone,
+                recipient=recipient,
+                text=text,
+            )
             return _text_response(f"Сообщение отправлено: {recipient}")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка отправки сообщения: {e}")
 
@@ -81,11 +84,15 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            await client.edit_message(entity, int(message_id), text)
+            await TelegramActionService(client_pool).edit_message(
+                phone=phone,
+                chat_id=chat_id,
+                message_id=int(message_id),
+                text=text,
+            )
             return _text_response(f"Сообщение #{message_id} отредактировано.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка редактирования сообщения: {e}")
 
@@ -116,11 +123,14 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            await client.delete_messages(entity, ids)
+            await TelegramActionService(client_pool).delete_messages(
+                phone=phone,
+                chat_id=chat_id,
+                message_ids=ids,
+            )
             return _text_response(f"Удалено {len(ids)} сообщений из чата {chat_id}.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка удаления сообщений: {e}")
 
@@ -150,14 +160,15 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            client, from_entity, err = await resolve_entity(client_pool, phone, from_chat)
-            if err:
-                return err
-            _, to_entity, err = await resolve_entity(client_pool, phone, to_chat)
-            if err:
-                return err
-            await client.forward_messages(to_entity, ids, from_entity)
+            await TelegramActionService(client_pool).forward_messages(
+                phone=phone,
+                from_chat=from_chat,
+                to_chat=to_chat,
+                message_ids=ids,
+            )
             return _text_response(f"Переслано {len(ids)} сообщений из {from_chat} в {to_chat}.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка пересылки сообщений: {e}")
 

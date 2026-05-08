@@ -528,14 +528,13 @@ class TestEndToEndPermissionFlow:
     async def test_allowed_and_confirmed(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value=None)
         pool = MagicMock()
-        with patch("src.services.channel_service.ChannelService") as mock_svc_cls:
-            mock_svc_cls.return_value.leave_dialogs = AsyncMock(return_value={123: True})
-            handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["leave_dialogs"]({
-                "phone": "+79990001111",
-                "dialog_ids": "123",
-                "confirm": True,
-            })
+        pool.leave_channels = AsyncMock(return_value={123: True})
+        handlers = _get_tool_handlers(mock_db, client_pool=pool)
+        result = await handlers["leave_dialogs"]({
+            "phone": "+79990001111",
+            "dialog_ids": "123",
+            "confirm": True,
+        })
         assert "покинут" in _text(result)
 
     async def test_no_confirm_returns_warning(self, mock_db):
@@ -556,13 +555,12 @@ class TestEndToEndPermissionFlow:
         r1 = await handlers["leave_dialogs"]({"phone": "+79990001111", "dialog_ids": "123"})
         assert "Подтвердите" in _text(r1)
         # Retry with confirm
-        with patch("src.services.channel_service.ChannelService") as mock_svc_cls:
-            mock_svc_cls.return_value.leave_dialogs = AsyncMock(return_value={123: True})
-            r2 = await handlers["leave_dialogs"]({
-                "phone": "+79990001111",
-                "dialog_ids": "123",
-                "confirm": True,
-            })
+        pool.leave_channels = AsyncMock(return_value={123: True})
+        r2 = await handlers["leave_dialogs"]({
+            "phone": "+79990001111",
+            "dialog_ids": "123",
+            "confirm": True,
+        })
         assert "покинут" in _text(r2)
 
     async def test_phone_not_allowed(self, mock_db):

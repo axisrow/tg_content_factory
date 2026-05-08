@@ -5,7 +5,7 @@ from typing import Any
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
-from src.agent.tools._registry import _text_response, arg_str, require_confirmation, resolve_entity
+from src.agent.tools._registry import _text_response, arg_str, require_confirmation
 from src.agent.tools._telegram_runtime import prepare_telegram_tool
 from src.agent.tools.messaging_schemas import (
     EDIT_ADMIN_SCHEMA,
@@ -13,6 +13,7 @@ from src.agent.tools.messaging_schemas import (
     GET_PARTICIPANTS_SCHEMA,
     KICK_PARTICIPANT_SCHEMA,
 )
+from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
 from src.utils.datetime import parse_datetime
 
 
@@ -41,10 +42,13 @@ def register_admin_moderation_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if not chat_id:
             return _text_response("Ошибка: chat_id обязателен.")
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            participants = await client.get_participants(entity, limit=limit, search=search)
+            result = await TelegramActionService(client_pool).get_participants(
+                phone=phone,
+                chat_id=chat_id,
+                limit=limit,
+                search=search,
+            )
+            participants = result.participants
             if not participants:
                 return _text_response("Участники не найдены.")
             lines = [f"Участники {chat_id} ({len(participants)}):"]
@@ -61,6 +65,8 @@ def register_admin_moderation_tools(ctx: Any, client_pool: Any) -> list[Any]:
                 username = f" (@{p.username})" if getattr(p, "username", None) else ""
                 lines.append(f"  {p.id}: {name}{username}")
             return _text_response("\n".join(lines))
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка получения участников: {e}")
 
@@ -93,17 +99,16 @@ def register_admin_moderation_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            _, user, err = await resolve_entity(client_pool, phone, user_id, is_user=True)
-            if err:
-                return err
-            kwargs = {"is_admin": is_admin}
-            if title:
-                kwargs["title"] = title
-            await client.edit_admin(entity, user, **kwargs)
+            await TelegramActionService(client_pool).edit_admin(
+                phone=phone,
+                chat_id=chat_id,
+                user_id=user_id,
+                is_admin=is_admin,
+                title=title,
+            )
             return _text_response(f"Права администратора обновлены для {user_id} в {chat_id}.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка изменения прав администратора: {e}")
 
@@ -138,19 +143,17 @@ def register_admin_moderation_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            _, user, err = await resolve_entity(client_pool, phone, user_id, is_user=True)
-            if err:
-                return err
-            kwargs = {"until_date": parse_datetime(until_date_str)}
-            if send_messages is not None:
-                kwargs["send_messages"] = send_messages
-            if send_media is not None:
-                kwargs["send_media"] = send_media
-            await client.edit_permissions(entity, user, **kwargs)
+            await TelegramActionService(client_pool).edit_permissions(
+                phone=phone,
+                chat_id=chat_id,
+                user_id=user_id,
+                until_date=parse_datetime(until_date_str),
+                send_messages=send_messages,
+                send_media=send_media,
+            )
             return _text_response(f"Ограничения обновлены для {user_id} в {chat_id}.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка изменения ограничений: {e}")
 
@@ -180,14 +183,14 @@ def register_admin_moderation_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            _, user, err = await resolve_entity(client_pool, phone, user_id, is_user=True)
-            if err:
-                return err
-            await client.kick_participant(entity, user)
+            await TelegramActionService(client_pool).kick_participant(
+                phone=phone,
+                chat_id=chat_id,
+                user_id=user_id,
+            )
             return _text_response(f"{user_id} исключён из {chat_id}.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка исключения участника: {e}")
 
