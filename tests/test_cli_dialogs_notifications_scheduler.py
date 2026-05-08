@@ -202,16 +202,11 @@ class TestMyTelegramCommand:
                 "username": None,
             },
         ]
+        fake_pool.leave_channels = AsyncMock(return_value={-100123456: True})
 
         with (
             patch.object(
                 ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=dialogs_info
-            ),
-            patch.object(
-                ChannelService,
-                "leave_dialogs",
-                new_callable=AsyncMock,
-                return_value={-100123456: True},
             ),
         ):
             from src.cli.commands.dialogs import run
@@ -235,15 +230,10 @@ class TestMyTelegramCommand:
         fake_pool.clients = {"+10001112233": AsyncMock()}
 
         from src.services.channel_service import ChannelService
+        fake_pool.leave_channels = AsyncMock(return_value={-100111: True, -100222: False})
 
         with (
             patch.object(ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]),
-            patch.object(
-                ChannelService,
-                "leave_dialogs",
-                new_callable=AsyncMock,
-                return_value={-100111: True, -100222: False},
-            ) as mock_leave,
         ):
             from src.cli.commands.dialogs import run
 
@@ -256,7 +246,7 @@ class TestMyTelegramCommand:
                 )
             )
 
-        called_dialogs = mock_leave.call_args[0][1]
+        called_dialogs = fake_pool.leave_channels.call_args[0][1]
         assert (-100111, "channel") in called_dialogs
         assert (-100222, "channel") in called_dialogs
 
@@ -311,16 +301,11 @@ class TestMyTelegramCommand:
                 "username": None,
             },
         ]
+        fake_pool.leave_channels = AsyncMock(return_value={-100123456: True})
 
         with (
             patch.object(
                 ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=dialogs_info
-            ),
-            patch.object(
-                ChannelService,
-                "leave_dialogs",
-                new_callable=AsyncMock,
-                return_value={-100123456: True},
             ),
             patch("builtins.input", return_value="y"),
         ):
@@ -347,23 +332,18 @@ class TestMyTelegramCommand:
         }
 
         from src.services.channel_service import ChannelService
+        fake_pool.leave_channels = AsyncMock(return_value={-100123456: True})
 
         with (
             patch.object(ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]),
-            patch.object(
-                ChannelService,
-                "leave_dialogs",
-                new_callable=AsyncMock,
-                return_value={-100123456: True},
-            ) as mock_leave,
         ):
             from src.cli.commands.dialogs import run
 
             run(_ns(dialogs_action="leave", phone=None, dialog_ids=["-100123456"], yes=True))
 
         # First account alphabetically should be used
-        mock_leave.assert_awaited_once()
-        called_phone = mock_leave.call_args[0][0]
+        fake_pool.leave_channels.assert_awaited_once()
+        called_phone = fake_pool.leave_channels.call_args[0][0]
         assert called_phone == "+10001112233"
 
     def test_leave_dm_uses_dm_type(self, cli_env_with_pool, capsys):
@@ -372,15 +352,10 @@ class TestMyTelegramCommand:
         fake_pool.clients = {"+10001112233": AsyncMock()}
 
         from src.services.channel_service import ChannelService
+        fake_pool.leave_channels = AsyncMock(return_value={123456: True})
 
         with (
             patch.object(ChannelService, "get_my_dialogs", new_callable=AsyncMock, return_value=[]),
-            patch.object(
-                ChannelService,
-                "leave_dialogs",
-                new_callable=AsyncMock,
-                return_value={123456: True},
-            ) as mock_leave,
         ):
             from src.cli.commands.dialogs import run
 
@@ -393,7 +368,7 @@ class TestMyTelegramCommand:
                 )
             )
 
-        called_dialogs = mock_leave.call_args[0][1]
+        called_dialogs = fake_pool.leave_channels.call_args[0][1]
         assert (123456, "dm") in called_dialogs
 
     def test_cache_clear_all(self, cli_env_with_pool, capsys):

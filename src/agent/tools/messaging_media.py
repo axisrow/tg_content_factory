@@ -4,9 +4,16 @@ from typing import Any
 
 from claude_agent_sdk import tool
 
-from src.agent.tools._registry import _text_response, require_confirmation, resolve_entity
+from src.agent.tools._registry import _text_response, require_confirmation
 from src.agent.tools.messaging_schemas import DOWNLOAD_MEDIA_SCHEMA, PIN_MESSAGE_SCHEMA, UNPIN_MESSAGE_SCHEMA
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.services.telegram_actions import (
+    TelegramActionClientUnavailableError,
+    TelegramActionMessageNotFoundError,
+    TelegramActionNoMediaError,
+    TelegramActionPathEscapeError,
+    TelegramActionService,
+)
+from src.telegram.flood_wait import HandledFloodWaitError
 
 
 def register_pin_media_tools(ctx: Any, client_pool: Any) -> list[Any]:
@@ -37,11 +44,15 @@ def register_pin_media_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            await client.pin_message(entity, int(message_id), notify=notify)
+            await TelegramActionService(client_pool).pin_message(
+                phone=phone,
+                chat_id=chat_id,
+                message_id=int(message_id),
+                notify=notify,
+            )
             return _text_response(f"Сообщение #{message_id} закреплено в {chat_id}.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка закрепления сообщения: {e}")
 
@@ -72,11 +83,14 @@ def register_pin_media_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            await client.unpin_message(entity, message_id)
+            await TelegramActionService(client_pool).unpin_message(
+                phone=phone,
+                chat_id=chat_id,
+                message_id=int(message_id) if message_id is not None else None,
+            )
             return _text_response(f"Сообщение(я) откреплено в {chat_id}.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка открепления сообщения: {e}")
 
@@ -105,44 +119,25 @@ def register_pin_media_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if not chat_id or not message_id:
             return _text_response("Ошибка: chat_id и message_id обязательны.")
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            msg = None
-
-            async def _lookup_message() -> None:
-                nonlocal msg
-                async for m in client.iter_messages(entity, ids=int(message_id)):
-                    msg = m
-                    break
-
-            try:
-                await run_with_flood_wait(
-                    _lookup_message(),
-                    operation="agent_download_media_lookup",
-                    phone=phone,
-                    pool=client_pool,
-                )
-            except HandledFloodWaitError as exc:
-                return _text_response(f"Flood wait: {exc.info.detail}")
-            if msg is None:
-                return _text_response(f"Сообщение #{message_id} не найдено.")
             output_dir = pathlib.Path(__file__).resolve().parents[3] / "data" / "downloads"
-            try:
-                path = await run_with_flood_wait(
-                    client.download_media(msg, file=str(output_dir)),
-                    operation="agent_download_media",
-                    phone=phone,
-                    pool=client_pool,
-                )
-            except HandledFloodWaitError as exc:
-                return _text_response(f"Flood wait: {exc.info.detail}")
-            if not path:
-                return _text_response("В сообщении нет медиа.")
-            resolved = pathlib.Path(path).resolve()
-            if not resolved.is_relative_to(output_dir.resolve()):
-                return _text_response("Ошибка: путь загрузки вне допустимой директории.")
-            return _text_response(f"Медиа загружено: {path}")
+            result = await TelegramActionService(client_pool).download_media(
+                phone=phone,
+                chat_id=chat_id,
+                message_id=int(message_id),
+                output_dir=output_dir,
+                operation_prefix="agent_download_media",
+            )
+            return _text_response(f"Медиа загружено: {result.path}")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+        except TelegramActionMessageNotFoundError:
+            return _text_response(f"Сообщение #{message_id} не найдено.")
+        except TelegramActionNoMediaError:
+            return _text_response("В сообщении нет медиа.")
+        except TelegramActionPathEscapeError:
+            return _text_response("Ошибка: путь загрузки вне допустимой директории.")
+        except HandledFloodWaitError as exc:
+            return _text_response(f"Flood wait: {exc.info.detail}")
         except Exception as e:
             return _text_response(f"Ошибка загрузки медиа: {e}")
 

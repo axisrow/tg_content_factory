@@ -586,12 +586,11 @@ class TestLeaveDialogs:
         mock_db.get_accounts = AsyncMock(
             return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
         )
-        with patch("src.services.channel_service.ChannelService") as mock_svc:
-            mock_svc.return_value.leave_dialogs = AsyncMock(return_value={100: True, 200: True})
-            handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["leave_dialogs"](
-                {"phone": "+79001234567", "dialog_ids": "100,200", "confirm": True}
-            )
+        pool.leave_channels = AsyncMock(return_value={100: True, 200: True})
+        handlers = _get_tool_handlers(mock_db, client_pool=pool)
+        result = await handlers["leave_dialogs"](
+            {"phone": "+79001234567", "dialog_ids": "100,200", "confirm": True}
+        )
         assert "2/2" in _text(result)
 
     @pytest.mark.anyio
@@ -600,12 +599,11 @@ class TestLeaveDialogs:
         mock_db.get_accounts = AsyncMock(
             return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
         )
-        with patch("src.services.channel_service.ChannelService") as mock_svc:
-            mock_svc.return_value.leave_dialogs = AsyncMock(side_effect=Exception("net"))
-            handlers = _get_tool_handlers(mock_db, client_pool=pool)
-            result = await handlers["leave_dialogs"](
-                {"phone": "+79001234567", "dialog_ids": "100", "confirm": True}
-            )
+        pool.leave_channels = AsyncMock(side_effect=Exception("net"))
+        handlers = _get_tool_handlers(mock_db, client_pool=pool)
+        result = await handlers["leave_dialogs"](
+            {"phone": "+79001234567", "dialog_ids": "100", "confirm": True}
+        )
         assert "Ошибка выхода" in _text(result)
 
 

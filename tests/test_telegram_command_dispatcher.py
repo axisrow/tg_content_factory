@@ -56,10 +56,10 @@ async def test_download_media_creates_output_dir(tmp_path, monkeypatch):
 
         pool = MagicMock()
         pool.release_client = AsyncMock()
-        dispatcher = TelegramCommandDispatcher(db, pool)
-        dispatcher._get_client = AsyncMock(
+        pool.get_native_client_by_phone = AsyncMock(
             return_value=(_FakeClient(download_return=str(expected_file)), "+123")
         )
+        dispatcher = TelegramCommandDispatcher(db, pool)
 
         result = await dispatcher._handle_dialogs_download_media(
             {"phone": "+123", "chat_id": 1, "message_id": 42}
@@ -87,10 +87,10 @@ async def test_download_media_rejects_path_escape(tmp_path, monkeypatch):
 
         pool = MagicMock()
         pool.release_client = AsyncMock()
-        dispatcher = TelegramCommandDispatcher(db, pool)
-        dispatcher._get_client = AsyncMock(
+        pool.get_native_client_by_phone = AsyncMock(
             return_value=(_FakeClient(download_return=str(escape_file)), "+123")
         )
+        dispatcher = TelegramCommandDispatcher(db, pool)
 
         with pytest.raises(RuntimeError, match="path_escape"):
             await dispatcher._handle_dialogs_download_media(
@@ -728,14 +728,11 @@ async def test_dialogs_create_channel():
     channel_obj.username = ""
     result_mock = MagicMock()
     result_mock.chats = [channel_obj]
-    c.return_value = result_mock
-    c.get_entity = AsyncMock(return_value="entity")
+    c.create_channel = AsyncMock(return_value=result_mock)
+    c.update_channel_username = AsyncMock()
     pool.get_native_client_by_phone.return_value = (c, "+1")
     d = _dispatcher(pool=pool)
-    with patch("telethon.tl.functions.channels.CreateChannelRequest") as mock_req, \
-         patch("telethon.tl.functions.channels.UpdateUsernameRequest"):
-        mock_req.return_value = "req"
-        r = await d._handle_dialogs_create_channel({"phone": "+1", "title": "Test Channel", "about": "desc"})
+    r = await d._handle_dialogs_create_channel({"phone": "+1", "title": "Test Channel", "about": "desc"})
     assert r["phone"] == "+1"
 
 
@@ -1272,16 +1269,13 @@ async def test_dialogs_create_channel_with_username():
     channel_obj.username = ""
     result_mock = MagicMock()
     result_mock.chats = [channel_obj]
-    c.return_value = result_mock
-    c.get_entity = AsyncMock(return_value="entity")
+    c.create_channel = AsyncMock(return_value=result_mock)
+    c.update_channel_username = AsyncMock()
     pool.get_native_client_by_phone.return_value = (c, "+1")
     d = _dispatcher(pool=pool)
-    with patch("telethon.tl.functions.channels.CreateChannelRequest") as mock_req, \
-         patch("telethon.tl.functions.channels.UpdateUsernameRequest"):
-        mock_req.return_value = "req"
-        r = await d._handle_dialogs_create_channel({
-            "phone": "+1", "title": "Test Channel", "about": "desc", "username": "my_channel",
-        })
+    r = await d._handle_dialogs_create_channel({
+        "phone": "+1", "title": "Test Channel", "about": "desc", "username": "my_channel",
+    })
     assert r["channel_username"] == "my_channel"
     assert "t.me/my_channel" in r["invite_link"]
 
@@ -1298,17 +1292,13 @@ async def test_dialogs_create_channel_username_fails():
     result_mock = MagicMock()
     result_mock.chats = [channel_obj]
 
-    # First call = CreateChannelRequest, second call = UpdateUsernameRequest (fails)
-    c.side_effect = [result_mock, Exception("username taken")]
-    c.get_entity = AsyncMock(return_value="entity")
+    c.create_channel = AsyncMock(return_value=result_mock)
+    c.update_channel_username = AsyncMock(side_effect=Exception("username taken"))
     pool.get_native_client_by_phone.return_value = (c, "+1")
     d = _dispatcher(pool=pool)
-    with patch("telethon.tl.functions.channels.CreateChannelRequest") as mock_req, \
-         patch("telethon.tl.functions.channels.UpdateUsernameRequest"):
-        mock_req.return_value = "req"
-        r = await d._handle_dialogs_create_channel({
-            "phone": "+1", "title": "Test Channel", "username": "taken_name",
-        })
+    r = await d._handle_dialogs_create_channel({
+        "phone": "+1", "title": "Test Channel", "username": "taken_name",
+    })
     # Username remains empty since update failed
     assert r["channel_username"] == ""
     assert r["invite_link"] == ""
@@ -1322,14 +1312,12 @@ async def test_dialogs_create_channel_no_chats():
     c = AsyncMock()
     result_mock = MagicMock()
     result_mock.chats = []
-    c.return_value = result_mock
-    c.get_entity = AsyncMock(return_value="entity")
+    c.create_channel = AsyncMock(return_value=result_mock)
+    c.update_channel_username = AsyncMock()
     pool.get_native_client_by_phone.return_value = (c, "+1")
     d = _dispatcher(pool=pool)
-    with patch("telethon.tl.functions.channels.CreateChannelRequest") as mock_req:
-        mock_req.return_value = "req"
-        with pytest.raises(RuntimeError, match="Telegram returned empty response"):
-            await d._handle_dialogs_create_channel({"phone": "+1", "title": "Test"})
+    with pytest.raises(RuntimeError, match="Telegram returned empty response"):
+        await d._handle_dialogs_create_channel({"phone": "+1", "title": "Test"})
 
 
 # --- _handle_dialogs_edit_admin: with title ---
@@ -1730,9 +1718,9 @@ async def test_download_media_message_not_found(tmp_path, monkeypatch):
 
         client.iter_messages = lambda entity, ids: empty_iter()
         client.get_entity = AsyncMock(return_value=MagicMock())
+        pool.get_native_client_by_phone = AsyncMock(return_value=(client, "+123"))
 
         dispatcher = TelegramCommandDispatcher(db, pool)
-        dispatcher._get_client = AsyncMock(return_value=(client, "+123"))
 
         with pytest.raises(RuntimeError, match="message_not_found"):
             await dispatcher._handle_dialogs_download_media(
@@ -1768,9 +1756,9 @@ async def test_download_media_no_media(tmp_path, monkeypatch):
         client.iter_messages = lambda entity, ids: single_msg()
         client.download_media = AsyncMock(return_value=None)
         client.get_entity = AsyncMock(return_value=MagicMock())
+        pool.get_native_client_by_phone = AsyncMock(return_value=(client, "+123"))
 
         dispatcher = TelegramCommandDispatcher(db, pool)
-        dispatcher._get_client = AsyncMock(return_value=(client, "+123"))
 
         with pytest.raises(RuntimeError, match="no_media"):
             await dispatcher._handle_dialogs_download_media(

@@ -9,6 +9,7 @@ import re
 from src.services.pipeline_filters import filter_messages
 from src.services.pipeline_nodes.base import BaseNodeHandler, NodeContext
 from src.services.pipeline_result import increment_action_count
+from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
 
 try:  # telethon is an optional dependency at test-time
     from telethon.errors import (
@@ -330,29 +331,32 @@ class ReactHandler(BaseNodeHandler):
         emoji = node_config.get("emoji") or "👍"
         random_emoji_list = node_config.get("random_emojis", [])
         resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
+        action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
 
         for message in messages:
-            acquired_phone: str | None = None
             try:
-                if resolved_phone:
-                    result = await client_pool.get_client_by_phone(resolved_phone)
-                else:
-                    result = await client_pool.get_available_client()
-                if result is None:
-                    context.record_error(
-                        node_id=node_id,
-                        code="no_available_client",
-                        detail=(
-                            f"no client_pool slot available for phone={resolved_phone}"
-                            if resolved_phone
-                            else "all accounts are flood-waited or disconnected"
-                        ),
-                    )
-                    break
-                session, acquired_phone = result
                 chosen_emoji = random.choice(random_emoji_list) if random_emoji_list else emoji
-                await session.send_reaction(message.channel_id, message.message_id, chosen_emoji)
+                await action_service.send_reaction(
+                    phone=resolved_phone,
+                    chat_id=message.channel_id,
+                    message_id=message.message_id,
+                    emoji=chosen_emoji,
+                    native=False,
+                    allow_any=resolved_phone is None,
+                    resolve_entity=False,
+                )
                 increment_action_count(context, "react")
+            except TelegramActionClientUnavailableError:
+                context.record_error(
+                    node_id=node_id,
+                    code="no_available_client",
+                    detail=(
+                        f"no client_pool slot available for phone={resolved_phone}"
+                        if resolved_phone
+                        else "all accounts are flood-waited or disconnected"
+                    ),
+                )
+                break
             except FloodWaitError as exc:
                 context.record_error(
                     node_id=node_id,
@@ -386,9 +390,6 @@ class ReactHandler(BaseNodeHandler):
                     message.message_id,
                     exc_info=True,
                 )
-            finally:
-                if acquired_phone is not None:
-                    await client_pool.release_client(acquired_phone)
 
 
 class ForwardHandler(BaseNodeHandler):
@@ -408,28 +409,35 @@ class ForwardHandler(BaseNodeHandler):
 
         messages = context.get_global("context_messages", [])
         targets = node_config.get("targets", [])
+        action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
 
         for target in targets:
             phone = target.get("phone", "")
             dialog_id = target.get("dialog_id")
             if not phone or not dialog_id:
                 continue
-            acquired_phone: str | None = None
             try:
-                result = await client_pool.get_client_by_phone(phone)
-                if result is None:
-                    context.record_error(
-                        node_id=node_id,
-                        code="no_available_client",
-                        detail=(
-                            f"no client_pool slot available for phone={phone}"
-                        ),
-                    )
+                if not messages:
+                    await action_service.ensure_client(phone=phone, native=False)
                     continue
-                session, acquired_phone = result
                 for message in messages:
-                    await session.forward_messages(dialog_id, message.message_id, message.channel_id)
+                    await action_service.forward_messages(
+                        phone=phone,
+                        from_chat=message.channel_id,
+                        to_chat=dialog_id,
+                        message_ids=[message.message_id],
+                        native=False,
+                        resolve_entities=False,
+                        collapse_single_message_id=True,
+                    )
                     increment_action_count(context, "forward")
+            except TelegramActionClientUnavailableError:
+                context.record_error(
+                    node_id=node_id,
+                    code="no_available_client",
+                    detail=f"no client_pool slot available for phone={phone}",
+                )
+                continue
             except FloodWaitError as exc:
                 context.record_error(
                     node_id=node_id,
@@ -455,9 +463,6 @@ class ForwardHandler(BaseNodeHandler):
                     dialog_id,
                     exc_info=True,
                 )
-            finally:
-                if acquired_phone is not None:
-                    await client_pool.release_client(acquired_phone)
 
 
 class DeleteMessageHandler(BaseNodeHandler):
@@ -477,28 +482,30 @@ class DeleteMessageHandler(BaseNodeHandler):
 
         messages = context.get_global("context_messages", [])
         resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
+        action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
 
         for message in messages:
-            acquired_phone: str | None = None
             try:
-                if resolved_phone:
-                    result = await client_pool.get_client_by_phone(resolved_phone)
-                else:
-                    result = await client_pool.get_available_client()
-                if result is None:
-                    context.record_error(
-                        node_id=node_id,
-                        code="no_available_client",
-                        detail=(
-                            f"no client_pool slot available for phone={resolved_phone}"
-                            if resolved_phone
-                            else "all accounts are flood-waited or disconnected"
-                        ),
-                    )
-                    break
-                session, acquired_phone = result
-                await session.delete_messages(message.channel_id, [message.message_id])
+                await action_service.delete_messages(
+                    phone=resolved_phone,
+                    chat_id=message.channel_id,
+                    message_ids=[message.message_id],
+                    native=False,
+                    allow_any=resolved_phone is None,
+                    resolve_entity=False,
+                )
                 increment_action_count(context, "delete_message")
+            except TelegramActionClientUnavailableError:
+                context.record_error(
+                    node_id=node_id,
+                    code="no_available_client",
+                    detail=(
+                        f"no client_pool slot available for phone={resolved_phone}"
+                        if resolved_phone
+                        else "all accounts are flood-waited or disconnected"
+                    ),
+                )
+                break
             except FloodWaitError as exc:
                 context.record_error(
                     node_id=node_id,
@@ -526,9 +533,6 @@ class DeleteMessageHandler(BaseNodeHandler):
                     message.message_id,
                     exc_info=True,
                 )
-            finally:
-                if acquired_phone is not None:
-                    await client_pool.release_client(acquired_phone)
 
 
 class ConditionHandler(BaseNodeHandler):

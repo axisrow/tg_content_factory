@@ -15,6 +15,7 @@ from src.agent.tools.messaging_schemas import (
     READ_MESSAGES_SCHEMA,
     UNARCHIVE_CHAT_SCHEMA,
 )
+from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.identity import extract_message_sender_identity
 
@@ -42,10 +43,11 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
         if not chat_id:
             return _text_response("Ошибка: chat_id обязателен.")
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            stats = await client.get_broadcast_stats(entity)
+            result = await TelegramActionService(client_pool).get_broadcast_stats(
+                phone=phone,
+                chat_id=chat_id,
+            )
+            stats = result.stats
             fields = {}
             for attr in ("followers", "views_per_post", "shares_per_post", "reactions_per_post", "forwards_per_post"):
                 val = getattr(stats, attr, None)
@@ -70,6 +72,8 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
             for k, v in fields.items():
                 lines.append(f"  {k}: {v}")
             return _text_response("\n".join(lines))
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка получения статистики: {e}")
 
@@ -98,11 +102,14 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
         if gate:
             return gate
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            await client.edit_folder(entity, 1)
+            await TelegramActionService(client_pool).set_dialog_folder(
+                phone=phone,
+                chat_id=chat_id,
+                folder_id=1,
+            )
             return _text_response(f"Чат {chat_id} архивирован.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка архивирования: {e}")
 
@@ -131,11 +138,14 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
         if gate:
             return gate
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            await client.edit_folder(entity, 0)
+            await TelegramActionService(client_pool).set_dialog_folder(
+                phone=phone,
+                chat_id=chat_id,
+                folder_id=0,
+            )
             return _text_response(f"Чат {chat_id} разархивирован.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка разархивирования: {e}")
 
@@ -162,11 +172,14 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
         if not chat_id:
             return _text_response("Ошибка: chat_id обязателен.")
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
-            if err:
-                return err
-            await client.send_read_acknowledge(entity, max_id=max_id)
+            await TelegramActionService(client_pool).mark_read(
+                phone=phone,
+                chat_id=chat_id,
+                max_id=max_id,
+            )
             return _text_response(f"Сообщения отмечены как прочитанные в {chat_id}.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка отметки сообщений: {e}")
 
