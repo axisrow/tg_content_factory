@@ -63,6 +63,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+dev = [
+    "import-linter>=2.0",
+]
 docs = ["mkdocs-material>=9.5"]
 
 [project.urls]

@@ -44,6 +44,9 @@ jobs:
       - name: Ruff
         run: ruff check src tests conftest.py
 
+      - name: Import architecture contracts
+        run: lint-imports --config .importlinter
+
       - name: Enforce pytest warnings as errors
         run: |
           python - <<'PY'

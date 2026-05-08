@@ -21,6 +21,7 @@ from src.agent.tools._registry import (
     resolve_phone,
 )
 from src.parsers import normalize_identifier
+from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
 
 logger = logging.getLogger(__name__)
 
@@ -211,13 +212,14 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            from src.services.channel_service import ChannelService
-
-            svc = ChannelService(db, client_pool, None)
             dialog_ids = [(int(x.strip()), "") for x in dialog_ids_str.split(",") if x.strip()]
-            results = await svc.leave_dialogs(phone, dialog_ids)
-            success = sum(1 for v in results.values() if v)
-            return _text_response(f"Выход завершён: {success}/{len(results)} диалогов покинуты.")
+            result = await TelegramActionService(client_pool).leave_dialogs(
+                phone=phone,
+                dialogs=dialog_ids,
+            )
+            return _text_response(
+                f"Выход завершён: {result.success_count}/{len(result.results)} диалогов покинуты."
+            )
         except Exception as e:
             return _text_response(f"Ошибка выхода из диалогов: {e}")
 
@@ -254,30 +256,23 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             about = args.get("about", "")
             username = args.get("username", "")
-            result = await client_pool.get_native_client_by_phone(phone)
-            if result is None:
-                return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
-            client, _ = result
-            from telethon.tl.functions.channels import CreateChannelRequest
-
-            result = await client(CreateChannelRequest(
+            result = await TelegramActionService(client_pool).create_channel(
+                phone=phone,
                 title=title,
                 about=about,
-                broadcast=True,
-            ))
-            channel = result.chats[0]
+                username=username,
+            )
             username_note = ""
             if username:
-                try:
-                    from telethon.tl.functions.channels import UpdateUsernameRequest
-
-                    await client(UpdateUsernameRequest(channel, username))
+                if result.channel_username == username:
                     username_note = f"\n- Username: @{username}"
-                except Exception as ue:
-                    username_note = f"\n- Username: не удалось установить ({ue})"
+                elif result.username_error:
+                    username_note = f"\n- Username: не удалось установить ({result.username_error})"
             return _text_response(
-                f"Канал создан!\n- ID: {channel.id}\n- Title: {title}{username_note}"
+                f"Канал создан!\n- ID: {result.channel_id}\n- Title: {title}{username_note}"
             )
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
         except Exception as e:
             return _text_response(f"Ошибка создания канала: {e}")
 

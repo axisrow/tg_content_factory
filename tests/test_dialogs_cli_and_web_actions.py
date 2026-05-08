@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,7 +18,6 @@ from tests.helpers import build_web_app, cli_ns, make_auth_client
 
 _PHONE = "+79001234567"
 _SVC_DIALOGS = "src.services.channel_service.ChannelService.get_my_dialogs"
-_SVC_LEAVE = "src.services.channel_service.ChannelService.leave_dialogs"
 
 _FAKE_DIALOGS = [
     {
@@ -48,6 +48,7 @@ def _mock_pool(*, clients=None, native_result=None, get_forum_topics=None):
         return_value=(mock_client, _PHONE) if native_result is None else native_result,
     )
     pool.invalidate_dialogs_cache = MagicMock()
+    pool.leave_channels = AsyncMock(return_value={})
     pool.get_forum_topics = AsyncMock(
         return_value=get_forum_topics if get_forum_topics is not None else [],
     )
@@ -696,7 +697,8 @@ class TestCliDownloadMedia:
         _run_cli("download-media", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "message_id": 1, "output_dir": "/tmp",
         })
-        assert "Downloaded: /tmp/photo.jpg" in capsys.readouterr().out
+        expected_path = str(Path("/tmp/photo.jpg").resolve())
+        assert f"Downloaded: {expected_path}" in capsys.readouterr().out
 
     def test_download_media_no_media(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -781,9 +783,9 @@ class TestCliLeave:
 
     def test_leave_ok(self, cli_db, capsys):
         pool, _ = _mock_pool()
+        pool.leave_channels = AsyncMock(return_value={-100111: True})
         with (
             patch(_SVC_DIALOGS, new_callable=AsyncMock, return_value=_FAKE_DIALOGS),
-            patch(_SVC_LEAVE, new_callable=AsyncMock, return_value={-100111: True}),
         ):
             _run_cli("leave", pool, cli_db, {
                 "phone": _PHONE, "dialog_ids": ["-100111"], "yes": True,
@@ -812,9 +814,9 @@ class TestCliLeave:
 
     def test_leave_partial_invalid_ids(self, cli_db, capsys):
         pool, _ = _mock_pool()
+        pool.leave_channels = AsyncMock(return_value={-100111: True})
         with (
             patch(_SVC_DIALOGS, new_callable=AsyncMock, return_value=_FAKE_DIALOGS),
-            patch(_SVC_LEAVE, new_callable=AsyncMock, return_value={-100111: True}),
         ):
             _run_cli("leave", pool, cli_db, {
                 "phone": _PHONE, "dialog_ids": ["-100111,abc"], "yes": True,
@@ -835,18 +837,11 @@ class TestCliCreateChannel:
     """CLI dialogs create-channel."""
 
     def test_create_channel_ok(self, cli_db, capsys):
-        pool, _ = _mock_pool()
-        mock_client = MagicMock()
+        pool, client = _mock_pool()
         channel = SimpleNamespace(id=12345, username="newchan")
         mock_result = SimpleNamespace(chats=[channel])
-        mock_client.__call__ = AsyncMock(return_value=mock_result)
-        pool.clients = {_PHONE: mock_client}
-
-        # Replace the client's __call__ to handle CreateChannelRequest
-        async def fake_call(req):
-            return mock_result
-
-        mock_client.side_effect = fake_call
+        client.create_channel = AsyncMock(return_value=mock_result)
+        client.update_channel_username = AsyncMock()
 
         with patch("src.cli.commands.dialogs.pool", pool, create=True):
             _run_cli("create-channel", pool, cli_db, {

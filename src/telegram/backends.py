@@ -249,6 +249,32 @@ class TelegramTransportSession:
             # Telethon not available (e.g. test env with stub backend)
             return None
 
+    async def create_channel(
+        self,
+        *,
+        title: str,
+        about: str = "",
+        broadcast: bool = True,
+        megagroup: bool = False,
+    ) -> Any:
+        """Create a Telegram channel/chat using the Telethon raw API."""
+        from telethon.tl.functions.channels import CreateChannelRequest
+
+        return await self.invoke_request(
+            CreateChannelRequest(
+                title=title,
+                about=about,
+                broadcast=broadcast,
+                megagroup=megagroup,
+            )
+        )
+
+    async def update_channel_username(self, channel: Any, username: str) -> Any:
+        """Set a public username for a channel using the Telethon raw API."""
+        from telethon.tl.functions.channels import UpdateUsernameRequest
+
+        return await self.invoke_request(UpdateUsernameRequest(channel, username))
+
     async def download_media(self, message: Any, *, file: Any = None) -> Any:
         return await self._run(
             "telegram_download_media",
