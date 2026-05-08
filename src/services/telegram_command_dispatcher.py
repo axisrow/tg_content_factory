@@ -438,7 +438,7 @@ class TelegramCommandDispatcher:
         return {
             "phone": result.phone,
             "channel_id": result.channel_id,
-            "channel_title": payload["title"],
+            "channel_title": result.channel_title,
             "channel_username": result.channel_username,
             "invite_link": result.invite_link,
         }

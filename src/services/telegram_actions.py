@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from src.telegram.client_pool import ClientPool
-from src.telegram.flood_wait import run_with_flood_wait
+from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 
 logger = logging.getLogger(__name__)
 
@@ -181,32 +181,31 @@ class TelegramActionService:
         if self._looks_numeric_identifier(identifier) and self._has_explicit_pool_operation(
             self._pool, "resolve_dialog_entity"
         ):
-            get_client_by_phone = getattr(self._pool, "get_client_by_phone", None)
-            if callable(get_client_by_phone):
-                session_result = await get_client_by_phone(phone)
-                if session_result is not None:
-                    session, _ = session_result
-                    dialog_id = int(str(identifier).strip())
-                    target_types = ("dm",) if is_user else (None, "dm")
-                    for target_type in target_types:
-                        try:
-                            entity = await self._pool.resolve_dialog_entity(
-                                session,
-                                phone,
-                                dialog_id,
-                                target_type,
-                            )
-                        except (ValueError, TypeError, KeyError):
-                            continue
-                        except Exception as exc:
-                            raise TelegramActionEntityResolutionError(
-                                f"Ошибка: не удалось получить entity для {identifier}: {exc}"
-                            ) from exc
-                        if entity is not None:
-                            return entity
+            dialog_id = int(str(identifier).strip())
+            target_types = ("dm",) if is_user else (None, "dm")
+            for target_type in target_types:
+                try:
+                    entity = await self._pool.resolve_dialog_entity(
+                        client,
+                        phone,
+                        dialog_id,
+                        target_type,
+                    )
+                except HandledFloodWaitError:
+                    raise
+                except (ValueError, TypeError, KeyError):
+                    continue
+                except Exception as exc:
+                    raise TelegramActionEntityResolutionError(
+                        f"Ошибка: не удалось получить entity для {identifier}: {exc}"
+                    ) from exc
+                if entity is not None:
+                    return entity
 
         try:
             return await client.get_entity(identifier)
+        except HandledFloodWaitError:
+            raise
         except Exception as exc:
             raise TelegramActionEntityResolutionError(
                 f"Ошибка: не удалось найти чат/пользователя '{identifier}': {exc}"
@@ -481,7 +480,7 @@ class TelegramActionService:
             resolved = Path(path).resolve()
             if resolved != output_resolved and output_resolved not in resolved.parents:
                 raise TelegramActionPathEscapeError("path_escape")
-            return DownloadMediaResult(phone=acquired_phone, path=str(path))
+            return DownloadMediaResult(phone=acquired_phone, path=str(resolved))
 
     async def leave_dialogs(
         self,
@@ -489,7 +488,11 @@ class TelegramActionService:
         phone: str,
         dialogs: list[tuple[int, str]],
     ) -> LeaveDialogsResult:
-        leave_channels = getattr(self._pool, "leave_channels")
+        leave_channels = getattr(self._pool, "leave_channels", None)
+        if leave_channels is None:
+            raise TelegramActionClientUnavailableError(
+                "client pool does not implement leave_channels"
+            )
         results = leave_channels(phone, dialogs)
         if inspect.isawaitable(results):
             results = await results

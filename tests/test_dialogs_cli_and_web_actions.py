@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -696,7 +697,8 @@ class TestCliDownloadMedia:
         _run_cli("download-media", pool, cli_db, {
             "phone": _PHONE, "chat_id": "@ch", "message_id": 1, "output_dir": "/tmp",
         })
-        assert "Downloaded: /tmp/photo.jpg" in capsys.readouterr().out
+        expected_path = str(Path("/tmp/photo.jpg").resolve())
+        assert f"Downloaded: {expected_path}" in capsys.readouterr().out
 
     def test_download_media_no_media(self, cli_db, capsys):
         pool, client = _mock_pool()
