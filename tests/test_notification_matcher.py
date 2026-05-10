@@ -36,6 +36,7 @@ def make_query(
     is_fts: bool = False,
     exclude_patterns: str = "",
     max_length: int | None = None,
+    chat_filter: str = "",
 ) -> SearchQuery:
     return SearchQuery(
         id=sq_id,
@@ -44,6 +45,7 @@ def make_query(
         is_fts=is_fts,
         exclude_patterns=exclude_patterns,
         max_length=max_length,
+        chat_filter=chat_filter,
     )
 
 
@@ -207,6 +209,37 @@ async def test_match_and_notify_max_length_filter():
 
     # Only short message should match
     assert result == {1: 1}
+
+
+@pytest.mark.anyio
+async def test_match_and_notify_respects_chat_filter():
+    """Chat filters limit live notification matches."""
+    notifier = AsyncMock()
+    matcher = NotificationMatcher(notifier)
+
+    messages = [
+        make_message("hello one", channel_id=1, message_id=1),
+        make_message("hello two", channel_id=2, message_id=2),
+    ]
+    queries = [make_query("hello", chat_filter="2")]
+
+    result = await matcher.match_and_notify(messages, queries)
+
+    assert result == {1: 1}
+
+
+@pytest.mark.anyio
+async def test_match_and_notify_unknown_chat_filter_matches_nothing():
+    """A non-empty unknown chat filter must not fall back to all chats."""
+    notifier = AsyncMock()
+    matcher = NotificationMatcher(notifier)
+
+    messages = [make_message("hello one", channel_id=1, message_id=1)]
+    queries = [make_query("hello", chat_filter="missing_chat")]
+
+    result = await matcher.match_and_notify(messages, queries)
+
+    assert result == {}
 
 
 @pytest.mark.anyio

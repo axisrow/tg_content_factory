@@ -288,6 +288,7 @@ async def test_run_migrations_adds_search_query_columns(fresh_db):
     assert "is_fts" in cols
     assert "exclude_patterns" in cols
     assert "max_length" in cols
+    assert "chat_filter" in cols
 
 
 @pytest.mark.anyio

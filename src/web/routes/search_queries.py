@@ -28,6 +28,7 @@ async def add_search_query(
     track_stats: bool = Form(False),
     exclude_patterns: str = Form(""),
     max_length: int | None = Form(None),
+    chat_filter: str = Form(""),
 ):
     if not query.strip():
         return flash_redirect("/search-queries", error="invalid_value")
@@ -42,13 +43,19 @@ async def add_search_query(
             track_stats=track_stats,
             exclude_patterns=exclude_patterns,
             max_length=max_length,
+            chat_filter=chat_filter,
         )
     except ValidationError:
         return flash_redirect("/search-queries", error="invalid_value")
+    chat_validation = await svc.validate_chat_filter(chat_filter)
     scheduler = deps.get_scheduler(request)
     if scheduler.is_running:
         await scheduler.sync_search_query_jobs()
-    return flash_redirect("/search-queries", msg="sq_added")
+    return flash_redirect(
+        "/search-queries",
+        msg="sq_added",
+        extra={"warning": chat_validation.warning_text() or None},
+    )
 
 
 @router.post("/{sq_id}/toggle")
@@ -73,6 +80,7 @@ async def edit_search_query(
     track_stats: bool = Form(False),
     exclude_patterns: str = Form(""),
     max_length: int | None = Form(None),
+    chat_filter: str = Form(""),
 ):
     if not query.strip():
         return flash_redirect("/search-queries", error="invalid_value")
@@ -88,13 +96,19 @@ async def edit_search_query(
             track_stats=track_stats,
             exclude_patterns=exclude_patterns,
             max_length=max_length,
+            chat_filter=chat_filter,
         )
     except ValidationError:
         return flash_redirect("/search-queries", error="invalid_value")
+    chat_validation = await svc.validate_chat_filter(chat_filter)
     scheduler = deps.get_scheduler(request)
     if scheduler.is_running:
         await scheduler.sync_search_query_jobs()
-    return flash_redirect("/search-queries", msg="sq_edited")
+    return flash_redirect(
+        "/search-queries",
+        msg="sq_edited",
+        extra={"warning": chat_validation.warning_text() or None},
+    )
 
 
 @router.post("/{sq_id}/delete")

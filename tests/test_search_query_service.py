@@ -98,6 +98,7 @@ async def test_add_creates_search_query(service, bundle):
         track_stats=True,
         exclude_patterns="spam",
         max_length=500,
+        chat_filter="@chat_one",
     )
 
     assert sq_id == 1
@@ -109,6 +110,7 @@ async def test_add_creates_search_query(service, bundle):
     assert stored.notify_on_collect is True
     assert stored.exclude_patterns == "spam"
     assert stored.max_length == 500
+    assert stored.chat_filter == "@chat_one"
 
 
 @pytest.mark.anyio
@@ -195,6 +197,7 @@ async def test_update_modifies_query(service, bundle):
         track_stats=False,
         exclude_patterns="",
         max_length=None,
+        chat_filter="@chat_two",
     )
 
     assert result is True
@@ -203,6 +206,7 @@ async def test_update_modifies_query(service, bundle):
     assert stored.query == "new query"
     assert stored.interval_minutes == 120
     assert stored.is_active is False  # Preserved
+    assert stored.chat_filter == "@chat_two"
 
 
 @pytest.mark.anyio

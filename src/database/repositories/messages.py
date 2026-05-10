@@ -10,6 +10,7 @@ import aiosqlite
 
 from src.models import Message, SearchQuery
 from src.utils.datetime import parse_datetime, parse_required_datetime
+from src.utils.search_query_chat_filter import parse_chat_filter
 
 logger = logging.getLogger(__name__)
 _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -767,6 +768,23 @@ class MessagesRepository:
                 continue
             conditions.append("m.text NOT LIKE ?")
             params.append(f"%{stripped}%")
+        chat_filter = parse_chat_filter(sq.chat_filter)
+        if chat_filter.has_filter:
+            chat_parts = []
+            if chat_filter.numeric_values:
+                placeholders = ", ".join("?" for _ in chat_filter.numeric_values)
+                chat_parts.append(f"m.channel_id IN ({placeholders})")
+                params.extend(chat_filter.numeric_values)
+                chat_parts.append(f"c.id IN ({placeholders})")
+                params.extend(chat_filter.numeric_values)
+            if chat_filter.usernames:
+                placeholders = ", ".join("?" for _ in chat_filter.usernames)
+                chat_parts.append(f"LOWER(c.username) IN ({placeholders})")
+                params.extend(chat_filter.usernames)
+            if chat_parts:
+                conditions.append("(" + " OR ".join(chat_parts) + ")")
+            else:
+                conditions.append("0 = 1")
         return conditions, params
 
     def _build_sq_parts(self, sq: SearchQuery) -> tuple[str, list[str], list]:

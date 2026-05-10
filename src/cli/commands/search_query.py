@@ -2,12 +2,27 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 
 from pydantic import ValidationError
 
 from src.cli import runtime
 from src.database.bundles import SearchQueryBundle
 from src.services.search_query_service import SearchQueryService
+
+
+async def _chat_filter_warning(svc: SearchQueryService, chat_filter: str) -> str:
+    validator = getattr(svc, "validate_chat_filter", None)
+    if validator is None:
+        return ""
+    try:
+        result = validator(chat_filter)
+        validation = await result if inspect.isawaitable(result) else result
+        warning_text = getattr(validation, "warning_text", None)
+        text = warning_text() if callable(warning_text) else ""
+        return text if isinstance(text, str) else ""
+    except Exception:
+        return ""
 
 
 def run(args: argparse.Namespace) -> None:
@@ -35,6 +50,11 @@ def run(args: argparse.Namespace) -> None:
                             (item["last_run"] or "—")[:20],
                         )
                     )
+                    chat_filter = getattr(sq, "chat_filter", "")
+                    if chat_filter:
+                        print(f"      chats: {chat_filter}")
+                        if item.get("chat_filter_warnings"):
+                            print(f"      warning: {item['chat_filter_warnings']}")
 
             elif args.search_query_action == "get":
                 sq = await svc.get(args.id)
@@ -51,6 +71,11 @@ def run(args: argparse.Namespace) -> None:
                 print(f"Track stats: {sq.track_stats}")
                 print(f"Max length: {sq.max_length if sq.max_length is not None else '—'}")
                 print(f"Exclude patterns: {sq.exclude_patterns or '—'}")
+                chat_filter = getattr(sq, "chat_filter", "")
+                print(f"Chats: {chat_filter or 'all'}")
+                warning = await _chat_filter_warning(svc, chat_filter)
+                if warning:
+                    print(f"Warning: {warning}")
 
             elif args.search_query_action == "add":
                 exclude = (
@@ -66,11 +91,15 @@ def run(args: argparse.Namespace) -> None:
                         track_stats=args.track_stats,
                         exclude_patterns=exclude,
                         max_length=args.max_length,
+                        chat_filter=getattr(args, "chats", ""),
                     )
                 except ValidationError as e:
                     print(f"Error: {e.errors()[0]['msg']}")
                     return
                 print(f"Added search query id={sq_id}: {args.query}")
+                warning = await _chat_filter_warning(svc, getattr(args, "chats", ""))
+                if warning:
+                    print(f"Warning: {warning}")
 
             elif args.search_query_action == "edit":
                 sq = await svc.get(args.id)
@@ -101,11 +130,24 @@ def run(args: argparse.Namespace) -> None:
                         track_stats=tstats,
                         exclude_patterns=exclude,
                         max_length=max_len,
+                        chat_filter=(
+                            args.chats
+                            if getattr(args, "chats", None) is not None
+                            else getattr(sq, "chat_filter", "")
+                        ),
                     )
                 except ValidationError as e:
                     print(f"Error: {e.errors()[0]['msg']}")
                     return
                 print(f"Updated search query id={args.id}")
+                warning = await _chat_filter_warning(
+                    svc,
+                    args.chats
+                    if getattr(args, "chats", None) is not None
+                    else getattr(sq, "chat_filter", ""),
+                )
+                if warning:
+                    print(f"Warning: {warning}")
 
             elif args.search_query_action == "delete":
                 await svc.delete(args.id)

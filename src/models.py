@@ -363,6 +363,7 @@ class SearchQuery(BaseModel):
     interval_minutes: int = Field(60, ge=1)
     exclude_patterns: str = ""
     max_length: int | None = None
+    chat_filter: str = ""
     created_at: datetime | None = None
 
     @model_validator(mode="after")

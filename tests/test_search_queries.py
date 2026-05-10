@@ -243,6 +243,31 @@ async def test_max_length_filter(bundle, db):
 
 
 @pytest.mark.anyio
+async def test_chat_filter_limits_fts_stats(bundle, db):
+    await _insert_messages(db, ["target in one"], channel_id=401)
+    await _insert_messages(db, ["target in two"], channel_id=402)
+
+    sq = SearchQuery(query="target", chat_filter="401")
+    sq_id = await bundle.add(sq)
+    sq = await bundle.get_by_id(sq_id)
+    stats = await bundle.get_fts_daily_stats_for_query(sq, days=30)
+
+    assert sum(s.count for s in stats) == 1
+
+
+@pytest.mark.anyio
+async def test_unknown_chat_filter_matches_nothing(bundle, db):
+    await _insert_messages(db, ["target in one"], channel_id=411)
+
+    sq = SearchQuery(query="target", chat_filter="definitely_unknown")
+    sq_id = await bundle.add(sq)
+    sq = await bundle.get_by_id(sq_id)
+    stats = await bundle.get_fts_daily_stats_for_query(sq, days=30)
+
+    assert sum(s.count for s in stats) == 0
+
+
+@pytest.mark.anyio
 async def test_fts_collector_matching():
     """Test the _fts_query_matches function."""
     from src.services.notification_matcher import _fts_query_matches
