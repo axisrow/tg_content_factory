@@ -19,11 +19,11 @@ def svc(bundle):
     return SearchQueryService(bundle)
 
 
-async def _insert_messages(db, texts, channel_id=100, base_date=None):
+async def _insert_messages(db, texts, channel_id=100, base_date=None, username=None):
     """Helper: add a channel and insert messages with given texts."""
     if base_date is None:
         base_date = datetime.now()
-    ch = Channel(channel_id=channel_id, title="test")
+    ch = Channel(channel_id=channel_id, title="test", username=username)
     await db.repos.channels.add_channel(ch)
     for i, text in enumerate(texts):
         msg = Message(
@@ -253,6 +253,30 @@ async def test_chat_filter_limits_fts_stats(bundle, db):
     stats = await bundle.get_fts_daily_stats_for_query(sq, days=30)
 
     assert sum(s.count for s in stats) == 1
+
+
+@pytest.mark.anyio
+async def test_chat_filter_tme_s_link_limits_fts_stats(bundle, db):
+    await _insert_messages(db, ["target in public"], channel_id=405, username="public_chat")
+    await _insert_messages(db, ["target in other"], channel_id=406, username="other_chat")
+
+    sq = SearchQuery(query="target", chat_filter="https://t.me/s/public_chat/123")
+    sq_id = await bundle.add(sq)
+    sq = await bundle.get_by_id(sq_id)
+    stats = await bundle.get_fts_daily_stats_for_query(sq, days=30)
+
+    assert sum(s.count for s in stats) == 1
+
+
+@pytest.mark.anyio
+async def test_validate_chat_filter_tme_s_link_resolves_channel(svc, db):
+    await db.repos.channels.add_channel(Channel(channel_id=407, title="Public", username="public_chat"))
+
+    validation = await svc.validate_chat_filter("https://t.me/s/public_chat/123")
+
+    assert validation.invalid_tokens == ()
+    assert validation.unknown_tokens == ()
+    assert validation.matched_channel_ids == (407,)
 
 
 @pytest.mark.anyio

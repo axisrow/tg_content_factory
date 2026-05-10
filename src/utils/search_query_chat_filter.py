@@ -190,6 +190,10 @@ def _normalize_token(token: str) -> str | None:
         parts = [part for part in parsed.path.split("/") if part]
         if not parts:
             return None
+        if parts[0] == "s":
+            parts = parts[1:]
+            if not parts:
+                return None
         if parts[0] == "c" and len(parts) > 1 and parts[1].isdigit():
             return f"-100{parts[1]}"
         return parts[0].strip().lstrip("@")

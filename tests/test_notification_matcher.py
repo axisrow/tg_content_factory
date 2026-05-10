@@ -229,6 +229,23 @@ async def test_match_and_notify_respects_chat_filter():
 
 
 @pytest.mark.anyio
+async def test_match_and_notify_tme_s_link_chat_filter():
+    """t.me/s/{username} chat filters match the referenced channel."""
+    notifier = AsyncMock()
+    matcher = NotificationMatcher(notifier)
+
+    messages = [
+        make_message("hello one", channel_id=1, message_id=1, channel_username="public_chat"),
+        make_message("hello two", channel_id=2, message_id=2, channel_username="other_chat"),
+    ]
+    queries = [make_query("hello", chat_filter="https://t.me/s/public_chat/123")]
+
+    result = await matcher.match_and_notify(messages, queries)
+
+    assert result == {1: 1}
+
+
+@pytest.mark.anyio
 async def test_match_and_notify_unknown_chat_filter_matches_nothing():
     """A non-empty unknown chat filter must not fall back to all chats."""
     notifier = AsyncMock()
