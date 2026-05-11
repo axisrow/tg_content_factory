@@ -22,6 +22,7 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         "--exclude-patterns", default="", help="Exclude patterns, one per line (use \\n)"
     )
     sq_add.add_argument("--max-length", type=int, default=None, help="Max message text length")
+    sq_add.add_argument("--chats", default="", help="Chat filter: IDs, usernames or t.me links")
 
     sq_edit = sq_sub.add_parser("edit", help="Edit search query")
     sq_edit.add_argument("id", type=int, help="Search query id")
@@ -38,6 +39,8 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     sq_edit.add_argument("--exclude-patterns", default=None, help="Exclude patterns (use \\n)")
     sq_edit.add_argument("--max-length", type=int, default=None, help="Max message text length")
     sq_edit.add_argument("--no-max-length", dest="max_length", action="store_const", const=-1)
+    sq_edit.add_argument("--chats", default=None, help="Chat filter: IDs, usernames or t.me links")
+    sq_edit.add_argument("--clear-chats", dest="chats", action="store_const", const="")
 
     sq_del = sq_sub.add_parser("delete", help="Delete search query")
     sq_del.add_argument("id", type=int, help="Search query id")

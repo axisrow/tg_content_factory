@@ -1136,7 +1136,16 @@ class Collector:
 
         from src.services.notification_matcher import NotificationMatcher
 
-        matcher = NotificationMatcher(self._notifier)
+        get_channels = getattr(self._db, "get_channels", None)
+        channels = []
+        if get_channels:
+            import inspect
+
+            maybe_channels = get_channels()
+            channels = await maybe_channels if inspect.isawaitable(maybe_channels) else maybe_channels
+            if not isinstance(channels, list):
+                channels = []
+        matcher = NotificationMatcher(self._notifier, channels=channels)
         await matcher.match_and_notify(messages, queries)
 
     async def _channel_still_exists(self, channel_id: int) -> bool:

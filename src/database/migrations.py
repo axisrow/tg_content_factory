@@ -64,6 +64,7 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "track_stats": "track_stats INTEGER DEFAULT 1",
         "exclude_patterns": "exclude_patterns TEXT DEFAULT ''",
         "max_length": "max_length INTEGER DEFAULT NULL",
+        "chat_filter": "chat_filter TEXT DEFAULT ''",
     },
     "notification_bots": {
         "tg_username": "tg_username TEXT",

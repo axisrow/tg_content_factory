@@ -525,6 +525,21 @@ async def test_count_fts_matches_for_query_with_exclude_patterns(messages_repo):
     assert count == 1
 
 
+async def test_count_fts_matches_for_query_with_chat_filter(messages_repo):
+    """Test counting FTS matches restricted to selected chats."""
+    sq = SearchQuery(query="hello", is_fts=True, chat_filter="1")
+
+    await messages_repo.insert_messages_batch(
+        [
+            make_message(1, 100, "Hello world"),
+            make_message(2, 101, "Hello there"),
+        ]
+    )
+
+    count = await messages_repo.count_fts_matches_for_query(sq)
+    assert count == 1
+
+
 # get_fts_daily_stats_for_query tests
 
 
@@ -567,6 +582,24 @@ async def test_get_fts_daily_stats_batch(messages_repo):
 
     assert 1 in result
     assert 2 in result
+
+
+async def test_get_fts_daily_stats_batch_with_chat_filter(messages_repo):
+    """Test batch FTS daily stats respects chat filters per query."""
+    sq1 = SearchQuery(id=1, query="hello", is_fts=True, chat_filter="10")
+    sq2 = SearchQuery(id=2, query="hello", is_fts=True, chat_filter="20")
+
+    await messages_repo.insert_messages_batch(
+        [
+            make_message(10, 100, "Hello one"),
+            make_message(20, 101, "Hello two"),
+        ]
+    )
+
+    result = await messages_repo.get_fts_daily_stats_batch([sq1, sq2], days=7)
+
+    assert sum(s.count for s in result[1]) == 1
+    assert sum(s.count for s in result[2]) == 1
 
 
 async def test_get_fts_daily_stats_batch_empty(messages_repo):

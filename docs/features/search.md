@@ -42,11 +42,14 @@ python -m src.main agent chat "найди сообщения про блокче
     ```bash
     python -m src.main search-query list
     python -m src.main search-query add "ключевое слово"
+    python -m src.main search-query add "ключевое слово" --chats "@chat1, -1001234567890"
     python -m src.main search-query run 1         # разовый запуск
     python -m src.main search-query stats 1       # статистика совпадений
     ```
 
 === "Web"
     `GET /search-queries/` · `POST /search-queries/add`
+
+Поле `Чаты` у сохранённого запроса необязательно. Пустое значение ищет по всем чатам; непустое ограничивает поиск списком `channel_id`, `@username`, `username` или ссылок `t.me`, разделённых пробелами или запятыми.
 
 Уведомления содержат ссылку на оригинальное сообщение (`t.me/channel/message_id`).

@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS search_queries (
     interval_minutes INTEGER NOT NULL DEFAULT 60,
     exclude_patterns TEXT DEFAULT '',
     max_length       INTEGER DEFAULT NULL,
+    chat_filter      TEXT DEFAULT '',
     created_at       TEXT DEFAULT (datetime('now'))
 );
 

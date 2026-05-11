@@ -77,6 +77,7 @@ class TestGetSearchQueryTool:
         assert f"id: {sq_id}" in text
         assert "is_active" in text
         assert "interval_minutes" in text
+        assert "chat_filter" in text
 
 
 class TestAddSearchQueryTool:
@@ -103,6 +104,15 @@ class TestAddSearchQueryTool:
             {"query": "custom interval", "interval_minutes": 120, "confirm": True}
         )
         assert "создан" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_chat_filter_creates_and_warns(self, sq_handlers):
+        result = await sq_handlers["add_search_query"](
+            {"query": "chat scoped", "chat_filter": "@missing_chat", "confirm": True}
+        )
+        text = _text(result)
+        assert "создан" in text
+        assert "Предупреждение" in text
 
 
 class TestEditSearchQueryTool:
@@ -136,6 +146,16 @@ class TestEditSearchQueryTool:
             {"sq_id": sq_id, "interval_minutes": 90, "confirm": True}
         )
         assert "обновлён" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_updates_chat_filter(self, db, sq_handlers):
+        sq_id = await _add_query(db, "some query")
+        result = await sq_handlers["edit_search_query"](
+            {"sq_id": sq_id, "chat_filter": "@missing_chat", "confirm": True}
+        )
+        text = _text(result)
+        assert "обновлён" in text
+        assert "Предупреждение" in text
 
 
 class TestDeleteSearchQueryTool:

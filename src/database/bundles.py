@@ -757,11 +757,12 @@ class SchedulerBundle:
 class SearchQueryBundle:
     search_queries: SearchQueriesRepository
     messages: MessagesRepository
+    channels: ChannelsRepository | None = None
 
     @classmethod
     def from_database(cls, db: "Database") -> "SearchQueryBundle":
         repos = db.repos
-        return cls(repos.search_queries, repos.messages)
+        return cls(repos.search_queries, repos.messages, repos.channels)
 
     async def add(self, sq: SearchQuery) -> int:
         return await self.search_queries.add(sq)
@@ -808,6 +809,11 @@ class SearchQueryBundle:
 
     async def get_last_recorded_at_all(self) -> dict[int, str]:
         return await self.search_queries.get_last_recorded_at_all()
+
+    async def get_channels(self) -> list[Channel]:
+        if self.channels is None:
+            return []
+        return await self.channels.get_channels()
 
 
 @dataclass(frozen=True)

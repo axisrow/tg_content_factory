@@ -3,8 +3,9 @@ from __future__ import annotations
 import logging
 import re
 
-from src.models import Message, SearchQuery
+from src.models import Channel, Message, SearchQuery
 from src.telegram.notifier import Notifier
+from src.utils.search_query_chat_filter import chat_filter_matches_message
 
 logger = logging.getLogger(__name__)
 
@@ -12,8 +13,9 @@ logger = logging.getLogger(__name__)
 class NotificationMatcher:
     """Match messages against notification queries and send batched notifications."""
 
-    def __init__(self, notifier: Notifier):
+    def __init__(self, notifier: Notifier, *, channels: list[Channel] | None = None):
         self._notifier = notifier
+        self._channels = channels or []
 
     async def match_and_notify(
         self,
@@ -30,6 +32,8 @@ class NotificationMatcher:
             if not msg.text:
                 continue
             for sq in queries:
+                if not chat_filter_matches_message(sq.chat_filter, msg, channels=self._channels):
+                    continue
                 if sq.max_length is not None and len(msg.text) >= sq.max_length:
                     continue
                 if any(p.lower() in msg.text.lower() for p in sq.exclude_patterns_list):

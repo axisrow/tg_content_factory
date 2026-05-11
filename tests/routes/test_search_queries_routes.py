@@ -67,6 +67,22 @@ async def test_add_search_query_with_all_fields(route_client):
 
 
 @pytest.mark.anyio
+async def test_add_search_query_with_chat_filter_saves_and_warns(route_client, db):
+    """Chat filter is saved even when it cannot be resolved locally."""
+    resp = await route_client.post(
+        "/search-queries/add",
+        data={"query": "scoped query", "interval_minutes": "60", "chat_filter": "@missing_chat"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "msg=sq_added" in resp.headers["location"]
+    assert "warning=" in resp.headers["location"]
+    queries = await db.repos.search_queries.get_all()
+    assert queries[0].chat_filter == "@missing_chat"
+
+
+@pytest.mark.anyio
 async def test_toggle_search_query(route_client):
     """Test toggle search query."""
     await route_client.post(
