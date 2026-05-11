@@ -42,9 +42,10 @@ def register(db, client_pool, embedding_service, **kwargs):
                 if getattr(sq, "notify_on_collect", False):
                     flags.append("notify")
                 flags_str = f" [{', '.join(flags)}]" if flags else ""
+                chats_str = f" chats={sq.chat_filter}" if getattr(sq, "chat_filter", "") else " chats=all"
                 lines.append(
                     f"- id={sq.id}: '{sq.query}' interval={sq.interval_minutes}m "
-                    f"{status}{flags_str}"
+                    f"{status}{flags_str}{chats_str}"
                 )
             return _text_response("\n".join(lines))
         except Exception as e:
@@ -76,7 +77,11 @@ def register(db, client_pool, embedding_service, **kwargs):
                 f"is_regex: {sq.is_regex}",
                 f"is_fts: {sq.is_fts}",
                 f"notify_on_collect: {sq.notify_on_collect}",
+                f"chat_filter: {sq.chat_filter or 'all'}",
             ]
+            warning = (await svc.validate_chat_filter(sq.chat_filter)).warning_text()
+            if warning:
+                lines.append(f"warning: {warning}")
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка получения поискового запроса: {e}")
@@ -101,6 +106,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             "track_stats": Annotated[bool, "Записывать ежедневную статистику совпадений"],
             "exclude_patterns": Annotated[str, "Паттерны исключения через запятую"],
             "max_length": Annotated[int, "Максимальная длина сообщения для совпадения"],
+            "chat_filter": Annotated[str, "Список чатов через запятую или пробел"],
             "confirm": Annotated[bool, "Установите true для подтверждения действия"],
         },
     )
@@ -122,6 +128,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             track_stats = bool(args.get("track_stats", True))
             exclude_patterns = args.get("exclude_patterns", "")
             max_length = args.get("max_length")
+            chat_filter = args.get("chat_filter", args.get("chats", ""))
             sq_id = await svc.add(
                 query,
                 interval_minutes=interval,
@@ -131,8 +138,13 @@ def register(db, client_pool, embedding_service, **kwargs):
                 track_stats=track_stats,
                 exclude_patterns=exclude_patterns or "",
                 max_length=int(max_length) if max_length is not None else None,
+                chat_filter=chat_filter or "",
             )
-            return _text_response(f"Поисковый запрос создан (id={sq_id}).")
+            warning = (await svc.validate_chat_filter(chat_filter or "")).warning_text()
+            text = f"Поисковый запрос создан (id={sq_id})."
+            if warning:
+                text += f"\nПредупреждение: {warning}"
+            return _text_response(text)
         except Exception as e:
             return _text_response(f"Ошибка добавления поискового запроса: {e}")
 
@@ -151,6 +163,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             "track_stats": Annotated[bool, "Записывать ежедневную статистику совпадений"],
             "exclude_patterns": Annotated[str, "Паттерны исключения через запятую"],
             "max_length": Annotated[int, "Максимальная длина сообщения для совпадения"],
+            "chat_filter": Annotated[str, "Список чатов через запятую или пробел"],
             "confirm": Annotated[bool, "Установите true для подтверждения действия"],
         },
     )
@@ -176,6 +189,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             track_stats = bool(args.get("track_stats", getattr(existing, "track_stats", True)))
             exclude_patterns = args.get("exclude_patterns", getattr(existing, "exclude_patterns", ""))
             max_length_raw = args.get("max_length", getattr(existing, "max_length", None))
+            chat_filter = args.get("chat_filter", args.get("chats", getattr(existing, "chat_filter", "")))
             ok = await svc.update(
                 int(sq_id),
                 query,
@@ -186,9 +200,14 @@ def register(db, client_pool, embedding_service, **kwargs):
                 track_stats=track_stats,
                 exclude_patterns=exclude_patterns or "",
                 max_length=int(max_length_raw) if max_length_raw is not None else None,
+                chat_filter=chat_filter or "",
             )
             if ok:
-                return _text_response(f"Поисковый запрос id={sq_id} обновлён.")
+                warning = (await svc.validate_chat_filter(chat_filter or "")).warning_text()
+                text = f"Поисковый запрос id={sq_id} обновлён."
+                if warning:
+                    text += f"\nПредупреждение: {warning}"
+                return _text_response(text)
             return _text_response(f"Не удалось обновить запрос id={sq_id}.")
         except Exception as e:
             return _text_response(f"Ошибка редактирования поискового запроса: {e}")

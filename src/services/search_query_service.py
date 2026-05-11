@@ -7,6 +7,11 @@ from datetime import timedelta
 from src.database import Database
 from src.database.bundles import SearchQueryBundle
 from src.models import SearchQuery, SearchQueryDailyStat
+from src.utils.search_query_chat_filter import (
+    ChatFilterValidation,
+    single_resolved_channel_id,
+    validate_chat_filter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +33,7 @@ class SearchQueryService:
         track_stats: bool = True,
         exclude_patterns: str = "",
         max_length: int | None = None,
+        chat_filter: str = "",
     ) -> int:
         sq = SearchQuery(
             query=query,
@@ -38,6 +44,7 @@ class SearchQueryService:
             track_stats=track_stats,
             exclude_patterns=exclude_patterns,
             max_length=max_length,
+            chat_filter=chat_filter,
         )
         return await self._bundle.add(sq)
 
@@ -64,6 +71,7 @@ class SearchQueryService:
         track_stats: bool = True,
         exclude_patterns: str = "",
         max_length: int | None = None,
+        chat_filter: str | None = None,
     ) -> bool:
         existing = await self._bundle.get_by_id(sq_id)
         if not existing:
@@ -78,6 +86,7 @@ class SearchQueryService:
             track_stats=track_stats,
             exclude_patterns=exclude_patterns,
             max_length=max_length,
+            chat_filter=chat_filter if chat_filter is not None else existing.chat_filter,
         )
         await self._bundle.update(sq_id, sq)
         return True
@@ -103,9 +112,14 @@ class SearchQueryService:
     async def get_daily_stats(self, sq_id: int, days: int = 30) -> list[SearchQueryDailyStat]:
         return await self._bundle.get_daily_stats(sq_id, days)
 
+    async def validate_chat_filter(self, chat_filter: str) -> ChatFilterValidation:
+        channels = await self._get_channels()
+        return validate_chat_filter(chat_filter, channels)
+
     async def get_with_stats(self, days: int = 30) -> list[dict]:
         queries = await self._bundle.get_all()
         last_runs = await self._bundle.get_last_recorded_at_all()
+        channels = await self._get_channels()
         # Regex queries can't be counted via FTS5; exclude them from FTS stats batch
         tracked = [sq for sq in queries if sq.track_stats and not sq.is_regex]
         tracked_ids = {sq.id for sq in tracked}
@@ -116,12 +130,15 @@ class SearchQueryService:
             raw = stats_map.get(sq.id, []) if sq.id in tracked_ids else None
             daily = self._fill_missing_days(raw, days)
             total = sum(s.count for s in daily)
+            chat_validation = validate_chat_filter(sq.chat_filter, channels)
             result.append(
                 {
                     "query": sq,
                     "total_30d": total,
                     "last_run": last_runs.get(sq.id),
                     "daily_stats": daily,
+                    "chat_filter_warnings": chat_validation.warning_text(),
+                    "chat_filter_channel_id": single_resolved_channel_id(sq.chat_filter, channels),
                 }
             )
         return result
@@ -147,3 +164,9 @@ class SearchQueryService:
         day_str = today.isoformat()
         filled.append(existing.get(day_str, SearchQueryDailyStat(day=day_str, count=0)))
         return filled
+
+    async def _get_channels(self):
+        get_channels = getattr(self._bundle, "get_channels", None)
+        if get_channels is None:
+            return []
+        return await get_channels()

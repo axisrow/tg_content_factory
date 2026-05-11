@@ -14,8 +14,8 @@ class SearchQueriesRepository:
         cur = await self._db.execute(
             "INSERT INTO search_queries "
             "(name, query, is_regex, is_fts, is_active, notify_on_collect, "
-            "track_stats, interval_minutes, exclude_patterns, max_length) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "track_stats, interval_minutes, exclude_patterns, max_length, chat_filter) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 sq.name,
                 sq.query,
@@ -27,6 +27,7 @@ class SearchQueriesRepository:
                 sq.interval_minutes,
                 sq.exclude_patterns,
                 sq.max_length,
+                sq.chat_filter,
             ),
         )
         await self._db.commit()
@@ -56,7 +57,7 @@ class SearchQueriesRepository:
         await self._db.execute(
             "UPDATE search_queries SET name = ?, query = ?, is_regex = ?, is_fts = ?, "
             "notify_on_collect = ?, track_stats = ?, interval_minutes = ?, "
-            "exclude_patterns = ?, max_length = ? "
+            "exclude_patterns = ?, max_length = ?, chat_filter = ? "
             "WHERE id = ?",
             (
                 sq.name,
@@ -68,6 +69,7 @@ class SearchQueriesRepository:
                 sq.interval_minutes,
                 sq.exclude_patterns,
                 sq.max_length,
+                sq.chat_filter,
                 sq_id,
             ),
         )
@@ -163,5 +165,6 @@ class SearchQueriesRepository:
             interval_minutes=row["interval_minutes"],
             exclude_patterns=row["exclude_patterns"] or "",
             max_length=row["max_length"],
+            chat_filter=row["chat_filter"] if "chat_filter" in row.keys() and row["chat_filter"] else "",
             created_at=parse_datetime(row["created_at"]),
         )

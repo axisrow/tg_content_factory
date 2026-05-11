@@ -47,6 +47,7 @@ async def test_add_with_all_fields(search_queries_repo):
         interval_minutes=30,
         exclude_patterns="spam\njunk",
         max_length=500,
+        chat_filter="@chat_one, -1001",
     )
     pk = await search_queries_repo.add(sq)
 
@@ -58,6 +59,7 @@ async def test_add_with_all_fields(search_queries_repo):
     assert result.interval_minutes == 30
     assert result.exclude_patterns == "spam\njunk"
     assert result.max_length == 500
+    assert result.chat_filter == "@chat_one, -1001"
 
 
 # get_all tests
@@ -151,13 +153,14 @@ async def test_update_query(search_queries_repo):
     """Test updating a query."""
     pk = await search_queries_repo.add(make_query("old query"))
 
-    updated = make_query("new query", is_regex=True, interval_minutes=120)
+    updated = make_query("new query", is_regex=True, interval_minutes=120, chat_filter="@updated")
     await search_queries_repo.update(pk, updated)
 
     result = await search_queries_repo.get_by_id(pk)
     assert result.query == "new query"
     assert result.is_regex is True
     assert result.interval_minutes == 120
+    assert result.chat_filter == "@updated"
 
 
 async def test_update_preserves_id(search_queries_repo):

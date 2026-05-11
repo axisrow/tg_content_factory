@@ -1117,6 +1117,7 @@ async def test_migrations_search_queries_columns():
         assert "is_regex" in cols
         assert "notify_on_collect" in cols
         assert "is_fts" in cols
+        assert "chat_filter" in cols
 
 
 @pytest.mark.anyio

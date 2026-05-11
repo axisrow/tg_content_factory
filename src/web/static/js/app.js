@@ -4,6 +4,7 @@
     var params = new URLSearchParams(window.location.search);
     var code = params.get("msg");
     var errCode = params.get("error");
+    var warningText = params.get("warning");
     if (code) window.__flashMsg = code;
     if (errCode) window.__flashError = errCode;
     var container = document.getElementById("flash-container");
@@ -22,9 +23,17 @@
             }
             container.appendChild(errDiv);
         }
-        if (code || errCode) {
+        if (warningText) {
+            var warnDiv = document.createElement("div");
+            warnDiv.className = "alert alert-warning";
+            warnDiv.setAttribute("role", "alert");
+            warnDiv.textContent = warningText;
+            container.appendChild(warnDiv);
+        }
+        if (code || errCode || warningText) {
             params.delete("msg");
             params.delete("error");
+            params.delete("warning");
             var qs = params.toString();
             var url = window.location.pathname + (qs ? "?" + qs : "") + window.location.hash;
             window.history.replaceState(null, "", url);
