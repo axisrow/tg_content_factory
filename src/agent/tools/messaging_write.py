@@ -9,6 +9,7 @@ from src.agent.tools._registry import (
     ToolInputError,
     _text_response,
     arg_csv_ints,
+    arg_int,
     arg_str,
     require_confirmation,
 )
@@ -18,6 +19,7 @@ from src.agent.tools.messaging_schemas import (
     EDIT_MESSAGE_SCHEMA,
     FORWARD_MESSAGES_SCHEMA,
     SEND_MESSAGE_SCHEMA,
+    SEND_REACTION_SCHEMA,
 )
 from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
 
@@ -57,6 +59,43 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
             return _text_response(f"Ошибка отправки сообщения: {e}")
 
     tools.append(send_message)
+
+    @tool(
+        "send_reaction",
+        "Set an emoji reaction on a Telegram message. "
+        "chat_id accepts @username, t.me link, numeric ID, or 'me'. Ask user for confirmation first.",
+        SEND_REACTION_SCHEMA,
+    )
+    async def send_reaction(args):
+        phone, err = await prepare_telegram_tool(ctx, args, tool_name="send_reaction", action="Реакция на сообщение")
+        if err:
+            return err
+        try:
+            chat_id = arg_str(args, "chat_id", required=True)
+            message_id = arg_int(args, "message_id", required=True)
+            emoji = arg_str(args, "emoji", required=True)
+        except ToolInputError:
+            return _text_response("Ошибка: chat_id, message_id и emoji обязательны.")
+        gate = require_confirmation(
+            f"поставит реакцию {emoji} на сообщение #{message_id} в чате {chat_id} от аккаунта {phone}",
+            args,
+        )
+        if gate:
+            return gate
+        try:
+            await TelegramActionService(client_pool).send_reaction(
+                phone=phone,
+                chat_id=chat_id,
+                message_id=int(message_id),
+                emoji=emoji,
+            )
+            return _text_response(f"Реакция {emoji} поставлена на сообщение #{message_id} в чате {chat_id}.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+        except Exception as e:
+            return _text_response(f"Ошибка установки реакции: {e}")
+
+    tools.append(send_reaction)
 
     @tool(
         "edit_message",

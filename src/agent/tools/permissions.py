@@ -171,8 +171,10 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "get_forum_topics": ToolCategory.READ,
     "clear_dialog_cache": ToolCategory.WRITE,
     "get_cache_status": ToolCategory.READ,
+    "resolve_entity": ToolCategory.READ,
     # Messaging
     "send_message": ToolCategory.WRITE,
+    "send_reaction": ToolCategory.WRITE,
     "forward_messages": ToolCategory.WRITE,
     "edit_message": ToolCategory.WRITE,
     "delete_message": ToolCategory.DELETE,
@@ -276,10 +278,10 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ]),
     ("Диалоги", [
         "search_dialogs", "refresh_dialogs", "leave_dialogs", "create_telegram_channel",
-        "get_forum_topics", "clear_dialog_cache", "get_cache_status",
+        "get_forum_topics", "clear_dialog_cache", "get_cache_status", "resolve_entity",
     ]),
     ("Сообщения", [
-        "send_message", "forward_messages", "edit_message", "delete_message",
+        "send_message", "send_reaction", "forward_messages", "edit_message", "delete_message",
         "pin_message", "unpin_message", "download_media", "read_messages",
     ]),
     ("Управление чатом", [

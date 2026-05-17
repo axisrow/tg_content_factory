@@ -26,6 +26,10 @@
 | `import_channels` | WRITE | Массовый импорт |
 | `refresh_channel_types` | WRITE | Обновить типы каналов |
 | `refresh_channel_meta` | WRITE | Обновить метаданные (about, linked_chat_id, has_comments) |
+| `list_tags` | READ | Список тегов |
+| `create_tag` | WRITE | Создать тег |
+| `delete_tag` | DELETE | Удалить тег |
+| `set_channel_tags` | WRITE | Обновить теги канала |
 
 ## Сбор
 
@@ -52,6 +56,13 @@
 | `get_pipeline_run` | READ | Детали запуска |
 | `publish_pipeline_run` | WRITE | Опубликовать |
 | `get_pipeline_queue` | READ | Очередь модерации |
+| `get_refinement_steps` | READ | Шаги refinement |
+| `set_refinement_steps` | WRITE | Сохранить шаги refinement |
+| `export_pipeline_json` | READ | Экспорт JSON |
+| `import_pipeline_json` | WRITE | Импорт JSON |
+| `list_pipeline_templates` | READ | Список шаблонов |
+| `create_pipeline_from_template` | WRITE | Создать pipeline из шаблона |
+| `ai_edit_pipeline` | WRITE | AI-редактирование pipeline |
 
 ## Модерация
 
@@ -169,12 +180,16 @@
 | `get_forum_topics` | READ | Топики форума |
 | `clear_dialog_cache` | WRITE | Очистить кеш |
 | `get_cache_status` | READ | Статус кеша |
+| `resolve_entity` | READ | Resolve @username, t.me ссылку или numeric ID |
 
 ## Сообщения
 
 | Tool | Категория | Описание |
 |------|-----------|----------|
+| `read_messages` | READ | Читать сообщения из чата |
 | `send_message` | WRITE | Отправить сообщение |
+| `send_reaction` | WRITE | Поставить emoji-реакцию на сообщение |
+| `forward_messages` | WRITE | Переслать сообщения |
 | `edit_message` | WRITE | Редактировать |
 | `delete_message` | DELETE | Удалить (⚠️ destructive) |
 | `pin_message` | WRITE | Закрепить сообщение |
@@ -201,6 +216,7 @@
 | `list_image_models` | READ | Поиск моделей |
 | `list_image_providers` | READ | Список провайдеров |
 | `generate_image` | WRITE | Генерация изображения |
+| `list_generated_images` | READ | История сгенерированных изображений |
 
 ## Настройки
 

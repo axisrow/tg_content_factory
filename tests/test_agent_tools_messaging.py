@@ -24,6 +24,7 @@ def _make_mock_pool():
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=MagicMock(id=123456))
     mock_client.send_message = AsyncMock()
+    mock_client.send_reaction = AsyncMock()
     mock_client.edit_message = AsyncMock()
     mock_client.delete_messages = AsyncMock(return_value=[MagicMock(pts_count=1)])
     mock_client.forward_messages = AsyncMock(return_value=[MagicMock()])
@@ -82,6 +83,47 @@ class TestSendMessage:
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         await assert_tool_text(handlers["send_message"], {"phone": "+79001234567"}, "обязательны")
+
+
+class TestSendReaction:
+    @pytest.mark.anyio
+    async def test_no_pool_returns_gate(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["send_reaction"](
+            {"phone": "+79001234567", "chat_id": "@chat", "message_id": 1, "emoji": "👍"}
+        )
+        assert "CLI-режиме" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_missing_args_returns_error(self, mock_db):
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["send_reaction"]({"phone": "+79001234567", "chat_id": "@chat"})
+        assert "обязательны" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_no_confirm_returns_gate(self, mock_db):
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["send_reaction"](
+            {"phone": "+79001234567", "chat_id": "@chat", "message_id": 5, "emoji": "🔥"}
+        )
+        assert "confirm=true" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_confirm_success(self, mock_db):
+        mock_pool, mock_client = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["send_reaction"](
+            {"phone": "+79001234567", "chat_id": "@chat", "message_id": 5, "emoji": "🔥", "confirm": True}
+        )
+
+        assert "Реакция 🔥 поставлена" in _text(result)
+        mock_client.get_entity.assert_awaited_with("@chat")
+        mock_client.send_reaction.assert_awaited_once()
 
 
 class TestEditMessage:
