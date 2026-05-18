@@ -281,6 +281,12 @@ class Database:
         self._require()
         return await self._channels.reset_all_filters(commit=commit)
 
+    async def reset_channel_filters_for_pks(
+        self, pks: list[int], *, commit: bool = True
+    ) -> int:
+        self._require()
+        return await self._channels.reset_filters_for_pks(pks, commit=commit)
+
     async def set_channel_type(self, channel_id: int, channel_type: str) -> None:
         self._require()
         await self._channels.set_channel_type(channel_id, channel_type)

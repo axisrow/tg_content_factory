@@ -177,6 +177,20 @@ class ChannelsRepository:
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         return rowcount if rowcount > 0 else 0
 
+    async def reset_filters_for_pks(self, pks: list[int], *, commit: bool = True) -> int:
+        if not pks:
+            return 0
+        placeholders = ",".join("?" * len(pks))
+        cur = await self._db.execute(
+            f"UPDATE channels SET is_filtered = 0, filter_flags = '' "
+            f"WHERE is_filtered = 1 AND id IN ({placeholders})",
+            tuple(pks),
+        )
+        if commit:
+            await self._db.commit()
+        rowcount = cur.rowcount if cur.rowcount is not None else 0
+        return rowcount if rowcount > 0 else 0
+
     async def set_channel_type(self, channel_id: int, channel_type: str) -> None:
         await self._db.execute(
             "UPDATE channels SET channel_type=? WHERE channel_id=?",

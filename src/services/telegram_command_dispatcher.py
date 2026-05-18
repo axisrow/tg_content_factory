@@ -303,7 +303,7 @@ class TelegramCommandDispatcher:
             native=True,
             resolve_entity=True,
         )
-        return {"phone": result.phone, "message_id": int(payload["message_id"]), "emoji": str(payload["emoji"])}
+        return {"phone": result.phone}
 
     async def _handle_dialogs_unpin_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         message_id = payload.get("message_id")
