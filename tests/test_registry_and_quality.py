@@ -160,12 +160,20 @@ async def test_phone_permission_exception():
     assert result is not None
 
 
-async def test_phone_permission_phone_not_in_perms():
+async def test_phone_permission_phone_not_in_perms_read():
     db = MagicMock()
-    db.get_setting = AsyncMock(return_value=json.dumps({"+1": {"test_tool": True}}))
-    # +3 is not in perms at all → defaults to allowed
-    result = await require_phone_permission(db, "+3", "test_tool")
+    db.get_setting = AsyncMock(return_value=json.dumps({"+1": {"search_messages": True}}))
+    # +3 is not in perms, but READ tools fall through to permissive defaults.
+    result = await require_phone_permission(db, "+3", "search_messages")
     assert result is None
+
+
+async def test_phone_permission_phone_not_in_perms_write_denied():
+    db = MagicMock()
+    db.get_setting = AsyncMock(return_value=json.dumps({"+1": {"send_message": True}}))
+    # WRITE tools deny phones outside the saved ACL once any ACL exists.
+    result = await require_phone_permission(db, "+3", "send_message")
+    assert result is not None
 
 
 # --- QualityScoringService ---

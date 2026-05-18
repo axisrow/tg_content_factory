@@ -165,13 +165,20 @@ class TestRequirePhonePermission:
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
         assert await require_phone_permission(mock_db, "+79990001111", "leave_dialogs") is None
 
-    async def test_phone_not_in_allowed(self, mock_db):
-        # A phone absent from the perms dict entirely gets defaults (all enabled).
-        # Only phones that ARE in perms but with tool=False are denied.
+    async def test_phone_not_in_allowed_read_falls_through(self, mock_db):
+        # A phone absent from the perms dict still gets READ tools by default.
+        perms = {"+79990002222": {"search_messages": True}}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        result = await require_phone_permission(mock_db, "+79990001111", "search_messages")
+        assert result is None  # READ → permissive fallback
+
+    async def test_phone_not_in_allowed_write_denied(self, mock_db):
+        # WRITE/DELETE: phone outside the saved ACL must be denied once any ACL exists.
         perms = {"+79990002222": {"leave_dialogs": True}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
         result = await require_phone_permission(mock_db, "+79990001111", "leave_dialogs")
-        assert result is None  # not in perms → defaults (all enabled)
+        assert result is not None
+        assert "не разрешён" in _text(result)
 
     async def test_phone_explicitly_denied(self, mock_db):
         perms = {
@@ -184,10 +191,28 @@ class TestRequirePhonePermission:
         assert "не разрешён" in text
         assert "+79990002222" in text
 
-    async def test_tool_not_restricted_allows(self, mock_db):
+    async def test_read_tool_not_restricted_allows(self, mock_db):
+        # READ tool missing from saved ACL still works for any phone — permissive defaults.
         perms = {"+79990001111": {"some_other_tool": True}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
-        assert await require_phone_permission(mock_db, "+79990001111", "leave_dialogs") is None
+        assert await require_phone_permission(mock_db, "+79990001111", "search_messages") is None
+
+    async def test_write_tool_not_in_saved_denies(self, mock_db):
+        # WRITE/DELETE missing from saved ACL must deny — closes the new-tool bypass.
+        perms = {"+79990001111": {"some_other_tool": True}}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        result = await require_phone_permission(mock_db, "+79990001111", "leave_dialogs")
+        assert result is not None
+        assert "не разрешён" in _text(result)
+
+    async def test_send_reaction_blocked_for_restrictive_legacy_acl(self, mock_db):
+        # Regression for PR #568 + #562 audit: previously saved restrictive ACL must not
+        # implicitly grant a newly-introduced WRITE action like send_reaction.
+        perms = {"+79990001111": {"search_messages": True, "pin_message": True}}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        result = await require_phone_permission(mock_db, "+79990001111", "send_reaction")
+        assert result is not None
+        assert "не разрешён" in _text(result)
 
     async def test_tool_missing_from_saved_denies(self, mock_db):
         """Tool not explicitly saved for a phone defaults to denied."""
@@ -208,11 +233,19 @@ class TestRequirePhonePermission:
         assert "укажи параметр phone" in text
         assert "+79990001111" in text
 
-    async def test_legacy_flat_format_allows(self, mock_db):
-        """Legacy flat format (values are bools, not dicts) must not crash."""
+    async def test_legacy_flat_format_known_tool_allows(self, mock_db):
+        """Legacy flat format must not crash; explicitly listed tool stays allowed."""
         perms = {"leave_dialogs": True, "search_messages": False}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
         assert await require_phone_permission(mock_db, "+79990001111", "leave_dialogs") is None
+
+    async def test_legacy_flat_missing_write_key_denies(self, mock_db):
+        """Legacy flat format with no entry for a WRITE tool must deny (fail-closed)."""
+        perms = {"search_messages": True}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        result = await require_phone_permission(mock_db, "+79990001111", "leave_dialogs")
+        assert result is not None
+        assert "не разрешён" in _text(result)
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +302,16 @@ class TestLoadToolPermissions:
         result = await load_tool_permissions(mock_db, phone=None)
         assert all(v is True for v in result.values())
 
+    async def test_per_phone_missing_write_key_returns_false(self, mock_db):
+        # WRITE/DELETE tools missing from a saved per-phone entry must come back as False.
+        saved = {"+79990001111": {"search_messages": True}}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_permissions(mock_db, phone="+79990001111")
+        assert result["search_messages"] is True
+        assert result["send_reaction"] is False  # WRITE missing → False
+        assert result["leave_dialogs"] is False  # DELETE missing → False
+        assert result["list_channels"] is True  # READ missing → True
+
 
 # ---------------------------------------------------------------------------
 # permissions.load_tool_permissions_all_phones
@@ -284,13 +327,17 @@ class TestLoadToolPermissionsAllPhones:
         assert all(v is True for v in result["+7111"].values())
 
     async def test_per_phone_format(self, mock_db):
+        # READ tools missing from a per-phone ACL still default to enabled;
+        # WRITE/DELETE tools missing from a per-phone ACL default to disabled.
         saved = {"+7111": {"search_messages": False}, "+7222": {"leave_dialogs": False}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
         accounts = [SimpleNamespace(phone="+7111"), SimpleNamespace(phone="+7222")]
         result = await load_tool_permissions_all_phones(mock_db, accounts)
         assert result["+7111"]["search_messages"] is False
-        assert result["+7111"]["leave_dialogs"] is True
+        assert result["+7111"]["list_channels"] is True  # READ missing → default True
+        assert result["+7111"]["leave_dialogs"] is False  # DELETE missing → default False
         assert result["+7222"]["leave_dialogs"] is False
+        assert result["+7222"]["list_channels"] is True
 
     async def test_legacy_flat_applies_to_all(self, mock_db):
         saved = {"search_messages": False}
@@ -338,6 +385,30 @@ class TestLoadToolPermissionsUnion:
         result = await load_tool_permissions_union(mock_db)
         assert result["send_photos_now"] is False
 
+    async def test_missing_write_key_in_per_phone_union_false(self, mock_db):
+        # If no phone explicitly enables a WRITE/DELETE tool, union must report False
+        # (no implicit grant when any ACL exists). READ stays True via permissive default.
+        saved = {
+            "+7111": {"search_messages": True},
+            "+7222": {"pin_message": True},
+        }
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_permissions_union(mock_db)
+        assert result["pin_message"] is True  # explicitly allowed by +7222
+        assert result["send_reaction"] is False  # WRITE missing everywhere
+        assert result["leave_dialogs"] is False  # DELETE missing everywhere
+        assert result["list_channels"] is True  # READ default
+
+    async def test_missing_write_key_in_legacy_flat_false(self, mock_db):
+        # Same fail-closed semantics for legacy flat ACL.
+        saved = {"search_messages": True}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_permissions_union(mock_db)
+        assert result["search_messages"] is True
+        assert result["send_reaction"] is False
+        assert result["leave_dialogs"] is False
+        assert result["list_channels"] is True
+
 
 # ---------------------------------------------------------------------------
 # permissions.save_tool_permissions
@@ -373,7 +444,7 @@ class TestSaveToolPermissions:
         assert saved["+7111"] == {"a": False}
 
     async def test_per_phone_seeds_unsaved_accounts(self, mock_db):
-        """Saving for one phone seeds other accounts with all-enabled defaults."""
+        """Saving for one phone seeds others fail-closed: READ enabled, WRITE/DELETE disabled."""
         mock_db.get_setting = AsyncMock(return_value=None)
         mock_db.get_accounts = AsyncMock(return_value=[
             SimpleNamespace(phone="+7111"), SimpleNamespace(phone="+7222"),
@@ -382,9 +453,11 @@ class TestSaveToolPermissions:
         await save_tool_permissions(mock_db, {"send_photos_now": False}, phone="+7111")
         saved = json.loads(mock_db.set_setting.await_args[0][1])
         assert saved["+7111"]["send_photos_now"] is False
-        # +7222 was seeded with defaults (all True)
+        # +7222 is seeded with READ-only defaults to keep WRITE/DELETE fail-closed.
         assert "+7222" in saved
-        assert all(v is True for v in saved["+7222"].values())
+        assert saved["+7222"]["search_messages"] is True  # READ → enabled
+        assert saved["+7222"]["send_photos_now"] is False  # WRITE → disabled
+        assert saved["+7222"]["leave_dialogs"] is False  # DELETE → disabled
 
     async def test_per_phone_migrates_legacy_flat(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value=json.dumps({"search_messages": True}))
