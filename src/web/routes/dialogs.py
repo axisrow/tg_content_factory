@@ -26,6 +26,7 @@ from src.web.dialogs.forms import (
     MarkReadForm,
     MessageIdsForm,
     PinMessageForm,
+    ReactionForm,
     RefreshDialogsForm,
     SendMessageForm,
     UnpinMessageForm,
@@ -249,6 +250,26 @@ async def pin_message(request: Request, command_service: TelegramCommandServiceD
         command_service,
         "dialogs.pin_message",
         payload={"phone": form.phone, "chat_id": form.chat_id, "message_id": form.message_id, "notify": form.notify},
+        phone=form.phone,
+    )
+
+
+@router.post("/react")
+async def react_message(request: Request, command_service: TelegramCommandServiceDep):
+    form = await parse_dialog_form(request, ReactionForm)
+    if not form.phone or not form.chat_id or not form.message_id or not form.emoji:
+        return dialogs_redirect(form.phone, error="missing_fields")
+    if not form.message_id.isdigit():
+        return dialogs_redirect(form.phone, error="invalid_message_id")
+    return await _enqueue_dialog_command(
+        command_service,
+        "dialogs.react",
+        payload={
+            "phone": form.phone,
+            "chat_id": form.chat_id,
+            "message_id": int(form.message_id),
+            "emoji": form.emoji,
+        },
         phone=form.phone,
     )
 

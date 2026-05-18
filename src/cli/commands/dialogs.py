@@ -315,6 +315,12 @@ def run_with_dependencies(
                             f"{acc.flood_wait_until.isoformat()}."
                         )
                         return
+                if not args.yes:
+                    print(f"Send reaction {args.emoji!r} to message #{args.message_id} in {args.chat_id}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
                 try:
                     result = await TelegramActionService(pool).send_reaction(
                         phone=phone,
