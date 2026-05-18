@@ -131,8 +131,10 @@ class TestLoadToolPermissions:
         perms = await load_tool_permissions(db, phone="+7900")
         assert perms["search_messages"] is False
         assert perms["list_channels"] is False
-        # Non-specified tools for this phone default to True
-        assert perms["send_message"] is True
+        # Missing READ tools default to True; missing WRITE/DELETE default to False (fail-closed).
+        assert perms["get_channel_stats"] is True  # READ missing → True
+        assert perms["send_message"] is False  # WRITE missing → False
+        assert perms["leave_dialogs"] is False  # DELETE missing → False
 
     @pytest.mark.anyio
     async def test_per_phone_phone_not_in_saved(self):

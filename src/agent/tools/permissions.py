@@ -307,8 +307,19 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
 # ---------------------------------------------------------------------------
 
 
-def _default_permissions() -> dict[str, bool]:
-    """Default permissions: all tools enabled."""
+def _default_permissions(*, for_missing_in_saved: bool = False) -> dict[str, bool]:
+    """Default permissions.
+
+    Without flags: all tools enabled — used for clean installs (no saved ACL)
+    and when seeding new accounts that have never had explicit permissions.
+
+    With ``for_missing_in_saved=True``: READ tools default enabled, WRITE/DELETE
+    default disabled.  Used to fill in tools missing from a saved ACL so newly
+    introduced WRITE/DELETE actions cannot bypass an existing restrictive
+    configuration.
+    """
+    if for_missing_in_saved:
+        return {name: (cat == ToolCategory.READ) for name, cat in TOOL_CATEGORIES.items()}
     return {name: True for name in TOOL_CATEGORIES}
 
 
@@ -340,6 +351,7 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
     Missing setting → all-enabled defaults.
     """
     defaults = _default_permissions()
+    missing_defaults = _default_permissions(for_missing_in_saved=True)
     saved = await _load_raw_permissions(db)
     if not saved:
         logger.debug("Tool permissions: no DB setting, using defaults (all enabled)")
@@ -369,10 +381,10 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
         if not phone_perms:
             logger.debug("Tool permissions: phone=%s not in saved, using defaults", phone_used)
             return defaults
-        result = {name: phone_perms.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+        result = {name: phone_perms.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
     else:
         phone_used = "(flat/legacy)"
-        result = {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+        result = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
 
     enabled = sum(1 for v in result.values() if v)
     disabled = sum(1 for v in result.values() if not v)
@@ -383,16 +395,17 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
 async def load_tool_permissions_all_phones(db, accounts) -> dict[str, dict[str, bool]]:
     """Load permissions for every account phone.  Returns ``{phone: {tool: bool}}``."""
     defaults = _default_permissions()
+    missing_defaults = _default_permissions(for_missing_in_saved=True)
     saved = await _load_raw_permissions(db)
 
     result = {}
     for acc in accounts:
         if _is_per_phone_format(saved) and acc.phone in saved:
             phone_perms = saved[acc.phone]
-            result[acc.phone] = {name: phone_perms.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+            result[acc.phone] = {name: phone_perms.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
         elif not _is_per_phone_format(saved) and saved:
             # Legacy flat → apply to all phones
-            result[acc.phone] = {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+            result[acc.phone] = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
         else:
             result[acc.phone] = dict(defaults)
     return result
@@ -415,13 +428,15 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
     if saved and not _is_per_phone_format(saved):
         # Migrate legacy flat → per-phone: existing flat becomes the phone's entry
         saved = {}
-    # Seed unsaved accounts with all-enabled defaults so they are not implicitly denied
-    defaults = _default_permissions()
+    # Seed unsaved accounts: READ tools enabled, WRITE/DELETE disabled.
+    # Admin must explicitly opt-in WRITE/DELETE per phone — keeps fail-closed
+    # semantics symmetric with how missing keys are treated at read time.
+    seed_defaults = _default_permissions(for_missing_in_saved=True)
     try:
         accounts = await _load_account_records(db)
         for acc in accounts:
             if acc.phone not in saved:
-                saved[acc.phone] = dict(defaults)
+                saved[acc.phone] = dict(seed_defaults)
     except Exception:
         pass  # DB error — proceed with what we have
     saved[phone] = permissions
@@ -444,17 +459,21 @@ async def load_tool_permissions_union(db, *, use_cache: bool = False) -> dict[st
             return cached_value
 
     defaults = _default_permissions()
+    missing_defaults = _default_permissions(for_missing_in_saved=True)
     saved = await _load_raw_permissions(db)
     if not saved:
         result = defaults
     elif not _is_per_phone_format(saved):
-        result = {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+        result = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
     else:
         phone_dicts = [v for v in saved.values() if isinstance(v, dict)]
         if not phone_dicts:
             result = defaults
         else:
-            result = {name: any(pd.get(name, defaults[name]) for pd in phone_dicts) for name in TOOL_CATEGORIES}
+            result = {
+                name: any(pd.get(name, missing_defaults[name]) for pd in phone_dicts)
+                for name in TOOL_CATEGORIES
+            }
 
     _permissions_cache = (result, time.monotonic() + _PERMISSIONS_CACHE_TTL)
     return result
