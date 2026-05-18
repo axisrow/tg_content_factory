@@ -294,6 +294,17 @@ class TelegramCommandDispatcher:
         )
         return {"phone": result.phone}
 
+    async def _handle_dialogs_react(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await TelegramActionService(self._pool).send_reaction(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            message_id=int(payload["message_id"]),
+            emoji=str(payload["emoji"]),
+            native=True,
+            resolve_entity=True,
+        )
+        return {"phone": result.phone, "message_id": int(payload["message_id"]), "emoji": str(payload["emoji"])}
+
     async def _handle_dialogs_unpin_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         message_id = payload.get("message_id")
         result = await TelegramActionService(self._pool).unpin_message(

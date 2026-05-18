@@ -823,7 +823,7 @@ class TestFilterPurge:
 
         with patch("src.cli.commands.filter.runtime.init_db", side_effect=_make_coro((None, db))), \
              patch("src.cli.commands.filter._build_deletion_service", return_value=svc):
-            run(cli_ns(filter_action="purge", pks="1,2"))
+            run(cli_ns(filter_action="purge", pks="1,2", yes=True))
 
         out = capsys.readouterr().out
         assert "2 channels" in out
@@ -854,7 +854,7 @@ class TestFilterPurge:
 
         with patch("src.cli.commands.filter.runtime.init_db", side_effect=_make_coro((None, db))), \
              patch("src.cli.commands.filter._build_deletion_service", return_value=svc):
-            run(cli_ns(filter_action="purge"))
+            run(cli_ns(filter_action="purge", yes=True))
 
         out = capsys.readouterr().out
         assert "3 channels" in out

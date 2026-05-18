@@ -120,6 +120,29 @@ async def hard_delete_selected(request: Request):
     )
 
 
+@router.post("/filter/hard-delete-all")
+async def hard_delete_all(request: Request):
+    if not await _dev_mode_enabled(request):
+        return RedirectResponse(
+            url="/channels/filter/manage?error=dev_mode_required_for_hard_delete",
+            status_code=303,
+        )
+    db = deps.get_db(request)
+    channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
+    pks = [ch.id for ch in channels if ch.is_filtered and ch.id is not None]
+    if not pks:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=no_filtered_channels",
+            status_code=303,
+        )
+    svc = deps.filter_deletion_service(request)
+    result = await svc.hard_delete_channels_by_pks(pks)
+    return RedirectResponse(
+        url=(f"/channels/filter/manage?msg=deleted_filtered" f"&count={result.purged_count}"),
+        status_code=303,
+    )
+
+
 @router.post("/filter/analyze")
 async def analyze_channels(request: Request):
     db = deps.get_db(request)
@@ -200,6 +223,24 @@ async def reset_filters(request: Request):
     analyzer = ChannelAnalyzer(db)
     await analyzer.reset_filters()
     return RedirectResponse(url="/channels/filter/manage?msg=filter_reset", status_code=303)
+
+
+@router.post("/filter/reset-selected")
+async def reset_filters_selected(request: Request):
+    db = deps.get_db(request)
+    form = await request.form()
+    pks = _parse_pks(form)
+    if not pks:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=no_filtered_channels",
+            status_code=303,
+        )
+    analyzer = ChannelAnalyzer(db)
+    count = await analyzer.reset_filters_for_pks(pks)
+    return RedirectResponse(
+        url=f"/channels/filter/manage?msg=filter_reset_selected&count={count}",
+        status_code=303,
+    )
 
 
 @router.post("/{channel_id}/purge-messages")

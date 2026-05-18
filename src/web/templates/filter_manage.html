@@ -27,6 +27,12 @@
           data-confirm="Очистить сообщения у ВСЕХ {{ total }} отфильтрованных каналов?">
         <button type="submit" class="btn btn-warning btn-sm">Очистить все сообщения</button>
     </form>
+    {% if dev_mode %}
+    <form method="post" action="/channels/filter/hard-delete-all" class="d-inline" data-busy
+          data-confirm="ПОЛНОСТЬЮ удалить ВСЕ {{ total }} отфильтрованных каналов из базы? Действие необратимо.">
+        <button type="submit" class="btn btn-danger btn-sm">Удалить все из БД</button>
+    </form>
+    {% endif %}
     {% endif %}
 </div>
 
@@ -70,6 +76,11 @@
             Очистить сообщения (<span class="selected-count">0</span>)
         </button>
     </form>
+    <form method="post" action="/channels/filter/reset-selected" id="reset-selected-form" class="d-inline" data-busy>
+        <button type="submit" class="btn btn-outline-secondary action-btn" disabled>
+            Сбросить выбранные (<span class="selected-count">0</span>)
+        </button>
+    </form>
     {% if dev_mode %}
     <form method="post" action="/channels/filter/hard-delete-selected" id="hard-delete-form" class="d-inline" data-busy>
         <button type="submit" class="btn btn-danger action-btn" disabled>
@@ -100,7 +111,7 @@
     function syncHiddenInputs() {
         document.querySelectorAll('.synced-pk').forEach(function(el) { el.remove(); });
         var pks = getCheckedPks();
-        document.querySelectorAll('#purge-form, #hard-delete-form').forEach(function(form) {
+        document.querySelectorAll('#purge-form, #hard-delete-form, #reset-selected-form').forEach(function(form) {
             pks.forEach(function(pk) {
                 var input = document.createElement('input');
                 input.type = 'hidden';
@@ -158,6 +169,9 @@
     });
     attachDynamicConfirm('hard-delete-form', function(n) {
         return 'ПОЛНОСТЬЮ удалить ' + n + ' канал(ов) из базы данных? Это действие необратимо.';
+    });
+    attachDynamicConfirm('reset-selected-form', function(n) {
+        return 'Сбросить флаг отфильтрованности у ' + n + ' канал(ов)?';
     });
 })();
 

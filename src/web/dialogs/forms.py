@@ -77,6 +77,13 @@ class PinMessageForm(_FrozenForm):
     notify: bool = False
 
 
+class ReactionForm(_FrozenForm):
+    phone: str = ""
+    chat_id: str = ""
+    message_id: str = ""
+    emoji: str = ""
+
+
 class UnpinMessageForm(_FrozenForm):
     phone: str = ""
     chat_id: str = ""

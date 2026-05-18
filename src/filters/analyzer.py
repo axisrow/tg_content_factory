@@ -247,3 +247,13 @@ class ChannelAnalyzer:
 
     async def reset_filters(self) -> int:
         return await self._database.reset_all_channel_filters()
+
+    async def reset_filters_for_pks(self, pks: list[int]) -> int:
+        count = 0
+        for pk in pks:
+            channel = await self._database.get_channel_by_pk(pk)
+            if channel is None or not channel.is_filtered:
+                continue
+            await self._database.set_channel_filtered(pk, False)
+            count += 1
+        return count
