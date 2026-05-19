@@ -30,6 +30,8 @@
     {% if dev_mode %}
     <form method="post" action="/channels/filter/hard-delete-all" class="d-inline" data-busy
           data-confirm="ПОЛНОСТЬЮ удалить ВСЕ {{ total }} отфильтрованных каналов из базы? Действие необратимо.">
+        <input type="hidden" name="confirm" value="DELETE_ALL_FILTERED">
+        <input type="hidden" name="expected_count" value="{{ total }}">
         <button type="submit" class="btn btn-danger btn-sm">Удалить все из БД</button>
     </form>
     {% endif %}

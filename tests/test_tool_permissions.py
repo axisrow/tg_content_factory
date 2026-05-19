@@ -436,19 +436,29 @@ class TestLoadToolPermissionsUnion:
         result = await load_tool_permissions_union(mock_db)
         assert result["send_photos_now"] is False
 
-    async def test_missing_write_key_in_per_phone_union_false(self, mock_db):
-        # If no phone explicitly enables a WRITE/DELETE tool, union must report False
-        # (no implicit grant when any ACL exists). READ stays True via permissive default.
+    async def test_per_phone_union_phone_binded_missing_keys_false(self, mock_db):
+        # Phone-bound tools must follow require_phone_permission's "explicit
+        # True only" semantics in the union (Codex round 5). Otherwise the
+        # agent advertises tools the runtime gate will deny — e.g. resolve_entity
+        # added after the ACL was saved would appear available but every call
+        # would be blocked.
         saved = {
             "+7111": {"search_messages": True},
             "+7222": {"pin_message": True},
         }
         mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
         result = await load_tool_permissions_union(mock_db)
-        assert result["pin_message"] is True  # explicitly allowed by +7222
-        assert result["send_reaction"] is False  # WRITE missing everywhere
-        assert result["leave_dialogs"] is False  # DELETE missing everywhere
-        assert result["list_channels"] is True  # READ default
+        # Explicit grants pass through
+        assert result["pin_message"] is True  # phone-bound, explicit
+        # Phone-bound tools without an explicit True anywhere are hidden
+        assert result["send_reaction"] is False  # phone-bound WRITE
+        assert result["leave_dialogs"] is False  # phone-bound DELETE
+        assert result["resolve_entity"] is False  # phone-bound READ (Codex round 5)
+        assert result["read_messages"] is False  # phone-bound READ
+        # Non-phone-bound tools keep permissive defaults under per-phone ACLs:
+        # DB-only READ has no phone-gate to deny it.
+        assert result["list_channels"] is True  # not phone-bound
+        assert result["get_analytics_summary"] is True  # not phone-bound
 
     async def test_missing_write_key_in_legacy_flat_false(self, mock_db):
         # Same fail-closed semantics for legacy flat ACL.
@@ -459,6 +469,22 @@ class TestLoadToolPermissionsUnion:
         assert result["send_reaction"] is False
         assert result["leave_dialogs"] is False
         assert result["list_channels"] is True
+
+    async def test_resolve_entity_hidden_for_legacy_per_phone_acl_without_it(self, mock_db):
+        # Codex round 5 regression: an ACL saved before resolve_entity was
+        # registered must NOT advertise resolve_entity through the union — the
+        # phone-gate would deny every call. visibility tracks execution.
+        saved = {
+            "+7111": {"pin_message": True, "search_messages": True},
+            "+7222": {"send_message": True},
+        }
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_permissions_union(mock_db)
+        assert result["resolve_entity"] is False
+        # Other phone-bound READs missing from saved are also hidden
+        assert result["read_messages"] is False
+        assert result["download_media"] is False
+        assert result["get_participants"] is False
 
 
 # ---------------------------------------------------------------------------
@@ -789,4 +815,27 @@ def test_every_phone_binded_tool_is_registered_in_tool_categories():
     assert not missing, (
         f"These phone-binded tools are missing from TOOL_CATEGORIES "
         f"(add them with the right ToolCategory + a MODULE_GROUPS entry): {sorted(missing)}"
+    )
+
+
+def test_phone_binded_tools_constant_matches_static_scan():
+    """The PHONE_BINDED_TOOLS constant in permissions.py drives the union
+    visibility logic and MUST match what the static scan finds in
+    src/agent/tools.  If they drift, the agent will either advertise tools
+    that the runtime phone-gate denies (Codex round 5 finding) or hide
+    callable ones from the agent.
+    """
+    from src.agent.tools.permissions import PHONE_BINDED_TOOLS
+
+    scanned = _collect_phone_binded_tool_names()
+    extra_in_constant = set(PHONE_BINDED_TOOLS) - scanned
+    missing_from_constant = scanned - set(PHONE_BINDED_TOOLS)
+    assert not extra_in_constant, (
+        f"PHONE_BINDED_TOOLS lists tools no longer phone-bound in source: "
+        f"{sorted(extra_in_constant)}"
+    )
+    assert not missing_from_constant, (
+        f"PHONE_BINDED_TOOLS is missing newly phone-bound tools: "
+        f"{sorted(missing_from_constant)}. Add them to the constant in "
+        f"src/agent/tools/permissions.py so the union visibility matches the gate."
     )
