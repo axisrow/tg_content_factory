@@ -380,6 +380,87 @@ async def test_hard_delete_all_success_with_matching_snapshot(route_client, db):
 
 
 @pytest.mark.anyio
+async def test_hard_delete_all_rejects_empty_confirm(route_client, db):
+    """Codex round 8 regression: confirm must be explicit, not pre-satisfied.
+
+    The template no longer ships a hidden DELETE_ALL_FILTERED — admin must
+    physically type the phrase. An empty (or whitespace-only) confirm field,
+    which is the default when the text input is untouched, must be rejected
+    so a stray submit does not perform the irreversible delete.
+    """
+    pk = await _add_filtered_channel(db, channel_id=980, title="Empty Confirm")
+    await _enable_dev_mode(db)
+    cases = ["", "   ", "\t", "\n"]
+    for raw in cases:
+        with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
+            mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(
+                return_value=PurgeResult(purged_count=1)
+            )
+            resp = await route_client.post(
+                "/channels/filter/hard-delete-all",
+                data={"confirm": raw, "confirm_pks": f"{pk}:980"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 303, f"failed for confirm={raw!r}"
+            assert "error=hard_delete_confirm_required" in resp.headers["location"]
+            mock_svc.return_value.hard_delete_channels_by_pks.assert_not_called()
+    remaining = await db.get_channel_by_pk(pk)
+    assert remaining is not None
+
+
+@pytest.mark.anyio
+async def test_hard_delete_all_partial_failure_reports_error(route_client, db):
+    """Codex round 8 regression: when the deletion service skips one or more
+    channels (DB constraint, queue cancellation, transient error), the route
+    must surface that as an error redirect — earlier rows are already gone
+    irreversibly and the admin needs to know.
+    """
+    pk1 = await _add_filtered_channel(db, channel_id=981, title="ChDelOK")
+    pk2 = await _add_filtered_channel(db, channel_id=982, title="ChDelFail")
+    await _enable_dev_mode(db)
+    with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
+        # Service deleted pk1 but skipped pk2.
+        mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=1, skipped_count=1)
+        )
+        resp = await route_client.post(
+            "/channels/filter/hard-delete-all",
+            data={
+                "confirm": "DELETE_ALL_FILTERED",
+                "confirm_pks": f"{pk1}:981,{pk2}:982",
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        loc = resp.headers["location"]
+        assert "error=hard_delete_partial" in loc
+        assert "purged=1" in loc
+        assert "skipped=1" in loc
+        assert "expected=2" in loc
+
+
+@pytest.mark.anyio
+async def test_hard_delete_all_purge_count_mismatch_reports_error(route_client, db):
+    """If the service returns fewer purges than the confirmed snapshot
+    requested without an explicit skipped tally (e.g. an unusual error path),
+    the route still surfaces it as an error rather than a silent partial."""
+    pk = await _add_filtered_channel(db, channel_id=983, title="Mismatch")
+    await _enable_dev_mode(db)
+    with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
+        # purged=0, skipped=0 — count mismatches expected (1).
+        mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=0, skipped_count=0)
+        )
+        resp = await route_client.post(
+            "/channels/filter/hard-delete-all",
+            data={"confirm": "DELETE_ALL_FILTERED", "confirm_pks": f"{pk}:983"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "error=hard_delete_partial" in resp.headers["location"]
+
+
+@pytest.mark.anyio
 async def test_hard_delete_all_no_filtered_channels(route_client, db):
     """No filtered channels → no_filtered_channels error even with a
     well-formed (empty) confirm_pks."""
