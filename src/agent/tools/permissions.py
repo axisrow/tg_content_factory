@@ -356,12 +356,26 @@ def _default_permissions(*, for_missing_in_saved: bool = False) -> dict[str, boo
     and when seeding new accounts that have never had explicit permissions.
 
     With ``for_missing_in_saved=True``: READ tools default enabled, WRITE/DELETE
-    default disabled.  Used to fill in tools missing from a saved ACL so newly
-    introduced WRITE/DELETE actions cannot bypass an existing restrictive
-    configuration.
+    default disabled, AND phone-bound tools (regardless of category) default
+    disabled.  Used to fill in tools missing from a saved ACL so:
+
+    * newly introduced WRITE/DELETE actions cannot bypass an existing
+      restrictive configuration (Codex round 4);
+    * phone-bound READ actions (read_messages, download_media,
+      get_participants, resolve_entity, …) cannot be granted by default
+      when an admin opens and saves an existing per-phone tab — they all
+      touch the live Telegram client and must require explicit per-phone
+      opt-in (Codex round 10).
+
+    Non-phone-bound DB-only READ tools (list_channels, search_messages,
+    analytics, settings) keep the permissive True default so opening
+    settings does not lock admins out of read-only DB work they already had.
     """
     if for_missing_in_saved:
-        return {name: (cat == ToolCategory.READ) for name, cat in TOOL_CATEGORIES.items()}
+        return {
+            name: (cat == ToolCategory.READ and name not in PHONE_BINDED_TOOLS)
+            for name, cat in TOOL_CATEGORIES.items()
+        }
     return {name: True for name in TOOL_CATEGORIES}
 
 

@@ -16,11 +16,21 @@
             var errDiv = document.createElement("div");
             errDiv.className = "alert alert-danger";
             errDiv.setAttribute("role", "alert");
-            if (errors[errCode]) {
-                errDiv.textContent = errors[errCode];
-            } else {
-                errDiv.textContent = errCode;
+            var errText = errors[errCode] || errCode;
+            // Partial hard-delete carries irreversible-failure breakdown in
+            // the query string — surface it next to the error message so the
+            // admin sees exactly what survived (Codex round 10).
+            if (errCode === "hard_delete_partial") {
+                var purged = params.get("purged");
+                var skipped = params.get("skipped");
+                var expected = params.get("expected");
+                if (purged !== null || skipped !== null || expected !== null) {
+                    errText += " (удалено: " + (purged || "0") +
+                        ", пропущено: " + (skipped || "0") +
+                        ", из " + (expected || "?") + ")";
+                }
             }
+            errDiv.textContent = errText;
             container.appendChild(errDiv);
         }
         if (warningText) {
@@ -34,6 +44,12 @@
             params.delete("msg");
             params.delete("error");
             params.delete("warning");
+            // hard_delete_partial carries breakdown counts in the URL — drop
+            // them after rendering so they don't linger as stale state.
+            params.delete("purged");
+            params.delete("skipped");
+            params.delete("expected");
+            params.delete("count");
             var qs = params.toString();
             var url = window.location.pathname + (qs ? "?" + qs : "") + window.location.hash;
             window.history.replaceState(null, "", url);
