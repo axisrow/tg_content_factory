@@ -28,12 +28,15 @@
         <button type="submit" class="btn btn-warning btn-sm">Очистить все сообщения</button>
     </form>
     {% if dev_mode %}
-    <form method="post" action="/channels/filter/hard-delete-all" class="d-inline" data-busy
-          data-confirm="ПОЛНОСТЬЮ удалить ВСЕ {{ total }} отфильтрованных каналов из базы? Действие необратимо.">
-        <input type="hidden" name="confirm" value="DELETE_ALL_FILTERED">
+    <form method="post" action="/channels/filter/hard-delete-all"
+          class="d-inline-flex align-items-center gap-2" data-busy>
+        <input type="text" name="confirm" required autocomplete="off" spellcheck="false"
+               placeholder="Введите DELETE_ALL_FILTERED" class="form-control form-control-sm"
+               style="width: 14rem;"
+               aria-label="Подтверждение удаления">
         <input type="hidden" name="confirm_pks"
                value="{% for ch in channels %}{% if ch.id is not none and ch.channel_id is not none %}{{ ch.id }}:{{ ch.channel_id }}{% if not loop.last %},{% endif %}{% endif %}{% endfor %}">
-        <button type="submit" class="btn btn-danger btn-sm">Удалить все из БД</button>
+        <button type="submit" class="btn btn-danger btn-sm">Удалить все {{ total }} из БД</button>
     </form>
     {% endif %}
     {% endif %}

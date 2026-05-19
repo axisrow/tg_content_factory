@@ -218,6 +218,21 @@ async def hard_delete_all(request: Request):
     # matches the current filtered row, so the PK list is canonical.
     confirmed_pks = [pk for pk, _ in confirmed_pairs]
     result = await svc.hard_delete_channels_by_pks(confirmed_pks)
+    # Partial-failure surfacing (Codex round 8): the deletion service catches
+    # per-channel exceptions and increments skipped_count, but commits are
+    # per-channel. A partial result means rows are already gone irreversibly
+    # while others remain — admin needs to see the discrepancy instead of a
+    # blanket "deleted" message.
+    if result.skipped_count or result.purged_count != len(confirmed_pks):
+        return RedirectResponse(
+            url=(
+                "/channels/filter/manage?error=hard_delete_partial"
+                f"&purged={result.purged_count}"
+                f"&skipped={result.skipped_count}"
+                f"&expected={len(confirmed_pks)}"
+            ),
+            status_code=303,
+        )
     return RedirectResponse(
         url=(f"/channels/filter/manage?msg=deleted_filtered" f"&count={result.purged_count}"),
         status_code=303,
