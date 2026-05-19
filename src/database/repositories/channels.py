@@ -262,14 +262,28 @@ class ChannelsRepository:
         await self._db.commit()
 
     async def delete_channel(self, pk: int) -> None:
-        cur = await self._db.execute("SELECT channel_id FROM channels WHERE id = ?", (pk,))
-        row = await cur.fetchone()
-        if row:
-            channel_id = row["channel_id"]
-            await self._db.execute("DELETE FROM messages WHERE channel_id = ?", (channel_id,))
-            await self._db.execute("DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,))
-            await self._db.execute("DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,))
-        await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
+        # Atomic delete (Codex round 9): the connection runs in autocommit
+        # (isolation_level=None) and `pipeline_sources.channel_id` has
+        # ON DELETE RESTRICT.  Without a savepoint, the messages/stats/topics
+        # rows would be committed before the final `DELETE FROM channels`
+        # raises an FK violation — leaving the parent row alive but the
+        # child data gone.  Wrapping the whole sequence in a SAVEPOINT lets
+        # us roll the child deletes back when the parent cannot be removed.
+        await self._db.execute("SAVEPOINT delete_channel")
+        try:
+            cur = await self._db.execute("SELECT channel_id FROM channels WHERE id = ?", (pk,))
+            row = await cur.fetchone()
+            if row:
+                channel_id = row["channel_id"]
+                await self._db.execute("DELETE FROM messages WHERE channel_id = ?", (channel_id,))
+                await self._db.execute("DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,))
+                await self._db.execute("DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,))
+            await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
+        except Exception:
+            await self._db.execute("ROLLBACK TO SAVEPOINT delete_channel")
+            await self._db.execute("RELEASE SAVEPOINT delete_channel")
+            raise
+        await self._db.execute("RELEASE SAVEPOINT delete_channel")
         await self._db.commit()
 
     # ── Tag helpers ──────────────────────────────────────────────────────────

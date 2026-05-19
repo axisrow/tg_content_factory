@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from src.database.bundles import (
     AccountBundle,
     ChannelBundle,
@@ -126,6 +128,60 @@ class TestChannelBundle:
         await b.delete_channel(pk)
         ch = await b.get_by_pk(pk)
         assert ch is None
+
+    async def test_delete_channel_rolls_back_when_referenced_by_pipeline(self, db):
+        """Codex round 9 regression: pipeline_sources.channel_id has
+        ON DELETE RESTRICT, and the DB connection runs in autocommit mode.
+        delete_channel deletes messages/channel_stats/forum_topics *before*
+        the channels row.  Without a savepoint the FK violation on the
+        final DELETE would leave the parent row alive but its child data
+        gone.  The atomic wrapper must roll the child deletes back so a
+        "skipped" hard-delete is truly a no-op."""
+        import aiosqlite
+
+        b = ChannelBundle.from_database(db)
+        # Channel that will be referenced by a pipeline_source.
+        pk = await b.add_channel(_channel(channel_id=710, title="Referenced"))
+        # Insert a row in each child table to verify they survive the rollback.
+        await db._db.execute(
+            "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, ?)",
+            (710, 1, "payload", "2025-01-01T00:00:00"),
+        )
+        await db._db.execute(
+            "INSERT INTO channel_stats (channel_id, subscriber_count) VALUES (?, ?)",
+            (710, 500),
+        )
+        # Create a pipeline + pipeline_source pointing at this channel.
+        await db._db.execute(
+            "INSERT INTO content_pipelines (name, prompt_template) VALUES (?, ?)",
+            ("p", "t"),
+        )
+        cur = await db._db.execute("SELECT id FROM content_pipelines WHERE name = 'p'")
+        pipeline_row = await cur.fetchone()
+        await db._db.execute(
+            "INSERT INTO pipeline_sources (pipeline_id, channel_id) VALUES (?, ?)",
+            (pipeline_row["id"], 710),
+        )
+
+        # The hard-delete must raise (FK RESTRICT). The route layer translates
+        # that into skipped_count via the deletion service's try/except.
+        with pytest.raises(aiosqlite.IntegrityError):
+            await b.delete_channel(pk)
+
+        # Channel row must still exist.
+        ch = await b.get_by_pk(pk)
+        assert ch is not None
+        # Child rows must NOT have been deleted by the failed transaction.
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM messages WHERE channel_id = 710"
+        )
+        row = await cur.fetchone()
+        assert row["n"] == 1, "messages were deleted despite channel delete failure"
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM channel_stats WHERE channel_id = 710"
+        )
+        row = await cur.fetchone()
+        assert row["n"] == 1, "channel_stats were deleted despite channel delete failure"
 
     async def test_save_and_get_stats(self, db):
         b = ChannelBundle.from_database(db)
