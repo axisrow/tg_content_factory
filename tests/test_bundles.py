@@ -129,6 +129,92 @@ class TestChannelBundle:
         ch = await b.get_by_pk(pk)
         assert ch is None
 
+    async def test_concurrent_delete_channel_keeps_atomicity_per_call(self, db):
+        """Codex round 12 regression: aiosqlite shares one connection across
+        coroutines, and named SAVEPOINTs use LIFO release semantics. Two
+        overlapping `delete_channel()` calls with the same savepoint name
+        could otherwise let one delete's RELEASE/ROLLBACK target a sibling's
+        frame — defeating the round-9 atomicity guarantee.
+
+        Set up two filtered channels:
+          * `restricted_pk` is referenced by pipeline_sources (FK RESTRICT)
+            and must NOT have its child rows lost.
+          * `free_pk` has no references and must be fully deleted.
+
+        Run both deletes concurrently via asyncio.gather. The lock on the
+        repository must keep them serial; assertions cover both outcomes.
+        """
+        import asyncio
+
+        import aiosqlite
+
+        b = ChannelBundle.from_database(db)
+        restricted_pk = await b.add_channel(_channel(channel_id=720, title="Restricted"))
+        free_pk = await b.add_channel(_channel(channel_id=721, title="Free"))
+
+        # Child rows for both channels.
+        for chid in (720, 721):
+            await db._db.execute(
+                "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, ?)",
+                (chid, 1, f"msg-{chid}", "2025-01-01T00:00:00"),
+            )
+            await db._db.execute(
+                "INSERT INTO channel_stats (channel_id, subscriber_count) VALUES (?, ?)",
+                (chid, 100 + chid),
+            )
+
+        # Restricted: insert a pipeline_source pointing at channel_id=720.
+        await db._db.execute(
+            "INSERT INTO content_pipelines (name, prompt_template) VALUES (?, ?)",
+            ("p-conc", "t"),
+        )
+        cur = await db._db.execute(
+            "SELECT id FROM content_pipelines WHERE name = 'p-conc'"
+        )
+        pipeline_row = await cur.fetchone()
+        await db._db.execute(
+            "INSERT INTO pipeline_sources (pipeline_id, channel_id) VALUES (?, ?)",
+            (pipeline_row["id"], 720),
+        )
+
+        # Fire both deletes concurrently.
+        results = await asyncio.gather(
+            b.delete_channel(restricted_pk),
+            b.delete_channel(free_pk),
+            return_exceptions=True,
+        )
+        # Restricted must have raised (FK violation propagated).
+        assert isinstance(results[0], aiosqlite.IntegrityError), (
+            f"expected IntegrityError for restricted delete, got: {results[0]!r}"
+        )
+        # Free must have completed cleanly.
+        assert results[1] is None
+
+        # Restricted channel: parent + child rows all survive.
+        assert await b.get_by_pk(restricted_pk) is not None
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM messages WHERE channel_id = 720"
+        )
+        assert (await cur.fetchone())["n"] == 1, (
+            "messages for restricted channel were deleted by a concurrent "
+            "delete's RELEASE — the per-repo lock did not serialize correctly"
+        )
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM channel_stats WHERE channel_id = 720"
+        )
+        assert (await cur.fetchone())["n"] == 1
+
+        # Free channel: parent + child rows all gone.
+        assert await b.get_by_pk(free_pk) is None
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM messages WHERE channel_id = 721"
+        )
+        assert (await cur.fetchone())["n"] == 0
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM channel_stats WHERE channel_id = 721"
+        )
+        assert (await cur.fetchone())["n"] == 0
+
     async def test_delete_channel_rolls_back_when_referenced_by_pipeline(self, db):
         """Codex round 9 regression: pipeline_sources.channel_id has
         ON DELETE RESTRICT, and the DB connection runs in autocommit mode.
