@@ -32,7 +32,7 @@
           data-confirm="ПОЛНОСТЬЮ удалить ВСЕ {{ total }} отфильтрованных каналов из базы? Действие необратимо.">
         <input type="hidden" name="confirm" value="DELETE_ALL_FILTERED">
         <input type="hidden" name="confirm_pks"
-               value="{% for ch in channels %}{% if ch.id is not none %}{{ ch.id }}{% if not loop.last %},{% endif %}{% endif %}{% endfor %}">
+               value="{% for ch in channels %}{% if ch.id is not none and ch.channel_id is not none %}{{ ch.id }}:{{ ch.channel_id }}{% if not loop.last %},{% endif %}{% endif %}{% endfor %}">
         <button type="submit" class="btn btn-danger btn-sm">Удалить все из БД</button>
     </form>
     {% endif %}
