@@ -160,12 +160,15 @@ async def test_phone_permission_exception():
     assert result is not None
 
 
-async def test_phone_permission_phone_not_in_perms_read():
+async def test_phone_permission_phone_not_in_perms_read_denied():
+    # require_phone_permission is only invoked from phone-binded tools that
+    # touch the live Telegram client. A phone absent from a per-phone ACL
+    # must be denied even for READ tools — read_messages / download_media /
+    # get_participants would otherwise leak live data.
     db = MagicMock()
-    db.get_setting = AsyncMock(return_value=json.dumps({"+1": {"search_messages": True}}))
-    # +3 is not in perms, but READ tools fall through to permissive defaults.
-    result = await require_phone_permission(db, "+3", "search_messages")
-    assert result is None
+    db.get_setting = AsyncMock(return_value=json.dumps({"+1": {"read_messages": True}}))
+    result = await require_phone_permission(db, "+3", "read_messages")
+    assert result is not None
 
 
 async def test_phone_permission_phone_not_in_perms_write_denied():

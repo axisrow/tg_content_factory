@@ -563,20 +563,19 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
         return _text_response(
             f"❌ ACL для '{tool_name}' повреждён. Действие заблокировано до исправления настроек."
         )
-    # READ tools keep the legacy permissive fallbacks; WRITE/DELETE must be
-    # explicitly allowed once any ACL exists. Unknown tool names are treated as
-    # WRITE so new actions cannot bypass a restrictive setup.
+    # Legacy flat ACL has no per-phone segmentation, so for READ tools the
+    # historical permissive default still applies (no DB action ties to a
+    # specific phone). WRITE/DELETE missing from a flat ACL must deny.
+    # Unknown tool names are treated as WRITE so new actions cannot bypass
+    # a restrictive setup.
     category = TOOL_CATEGORIES.get(tool_name, ToolCategory.WRITE)
     is_protected = category in (ToolCategory.WRITE, ToolCategory.DELETE)
-    # Legacy flat ACL (values are bools, not per-phone dicts): apply the same
-    # entry to every phone. Explicit True still allows; missing key for a
-    # WRITE/DELETE falls through to the deny path below.
     is_legacy_flat = perms and all(not isinstance(v, dict) for v in perms.values())
     if is_legacy_flat:
         if perms.get(tool_name) is True:
             return None
         if not is_protected:
-            return None  # READ: legacy permissive default
+            return None  # READ in legacy flat → permissive default
         # WRITE/DELETE missing in legacy flat → deny via gate or text error
         from src.agent.permission_gate import get_gate, get_request_context
 
@@ -587,36 +586,35 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
             f"❌ Инструмент '{tool_name}' не разрешён в текущем ACL. "
             f"Включите его в настройках агента."
         )
-    # Collect phones allowed for this tool
+    # Per-phone ACL path. Reaching here means a tool that calls
+    # require_phone_permission with a concrete phone — a phone-binded
+    # action (live Telegram client). Treat absent phones as fail-closed for
+    # ALL categories: a missing READ entry on read_messages / download_media /
+    # get_participants would otherwise leak live data from an unauthorized
+    # account. The category split above only governs the legacy-flat branch.
     allowed_phones = [p for p, tools in perms.items() if isinstance(tools, dict) and tools.get(tool_name, False)]
     if not allowed_phones:
-        if is_protected:
-            from src.agent.permission_gate import get_gate, get_request_context
+        from src.agent.permission_gate import get_gate, get_request_context
 
-            gate = get_gate()
-            if gate is not None and get_request_context() is not None:
-                return await gate.check(tool_name, phone)
-            msg = (
-                f"❌ Инструмент '{tool_name}' не разрешён ни для одного телефона. "
-                f"Включите его в настройках агента."
-            )
-            return _text_response(msg)
-        return None  # READ tool not restricted for any phone → allow all
-    # Phone not in perms at all: for READ tools fall through to legacy defaults
-    # (all enabled), for WRITE/DELETE require explicit entry in saved ACL.
+        gate = get_gate()
+        if gate is not None and get_request_context() is not None:
+            return await gate.check(tool_name, phone)
+        msg = (
+            f"❌ Инструмент '{tool_name}' не разрешён ни для одного телефона. "
+            f"Включите его в настройках агента."
+        )
+        return _text_response(msg)
     if phone and phone not in perms:
-        if is_protected:
-            from src.agent.permission_gate import get_gate, get_request_context
+        from src.agent.permission_gate import get_gate, get_request_context
 
-            gate = get_gate()
-            if gate is not None and get_request_context() is not None:
-                return await gate.check(tool_name, phone)
-            phones_str = ", ".join(allowed_phones)
-            return _text_response(
-                f"❌ Телефон {phone} не разрешён для '{tool_name}'. "
-                f"Разрешённые телефоны: {phones_str}"
-            )
-        return None
+        gate = get_gate()
+        if gate is not None and get_request_context() is not None:
+            return await gate.check(tool_name, phone)
+        phones_str = ", ".join(allowed_phones)
+        return _text_response(
+            f"❌ Телефон {phone} не разрешён для '{tool_name}'. "
+            f"Разрешённые телефоны: {phones_str}"
+        )
     if phone in allowed_phones:
         return None  # phone is allowed
     # Phone not allowed — try permission gate first
