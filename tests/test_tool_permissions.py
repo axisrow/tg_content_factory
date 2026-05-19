@@ -280,11 +280,19 @@ class TestLoadToolPermissions:
         assert result["leave_dialogs"] is False
         assert result["list_channels"] is True  # default
 
-    async def test_per_phone_not_matching_returns_defaults(self, mock_db):
+    async def test_per_phone_not_matching_uses_missing_defaults(self, mock_db):
+        # When a per-phone ACL exists but the requested phone is absent,
+        # fail-closed: WRITE/DELETE default disabled, READ default enabled.
+        # Previously this returned all-True defaults — that's the bug
+        # Codex flagged in the second adversarial review of #568.
         saved = {"+79990001111": {"search_messages": False}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
         result = await load_tool_permissions(mock_db, phone="+79990009999")
-        assert all(v is True for v in result.values())
+        assert result["list_channels"] is True  # READ default
+        assert result["send_message"] is False  # WRITE missing → denied
+        assert result["send_reaction"] is False  # WRITE missing → denied
+        assert result["leave_dialogs"] is False  # DELETE missing → denied
+        assert result["delete_channel"] is False  # DELETE missing → denied
 
     async def test_per_phone_no_phone_uses_primary(self, mock_db):
         saved = {"+79990001111": {"search_messages": False}}
@@ -295,12 +303,16 @@ class TestLoadToolPermissions:
         result = await load_tool_permissions(mock_db, phone=None)
         assert result["search_messages"] is False
 
-    async def test_per_phone_no_accounts_returns_defaults(self, mock_db):
+    async def test_per_phone_no_accounts_returns_missing_defaults(self, mock_db):
+        # Per-phone ACL exists but no primary account to resolve → no phone
+        # matches saved entries.  Fail-closed for WRITE/DELETE.
         saved = {"+79990001111": {"search_messages": False}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
         mock_db.get_accounts = AsyncMock(return_value=[])
         result = await load_tool_permissions(mock_db, phone=None)
-        assert all(v is True for v in result.values())
+        assert result["list_channels"] is True  # READ default
+        assert result["send_message"] is False  # WRITE missing → denied
+        assert result["leave_dialogs"] is False  # DELETE missing → denied
 
     async def test_per_phone_missing_write_key_returns_false(self, mock_db):
         # WRITE/DELETE tools missing from a saved per-phone entry must come back as False.
@@ -346,6 +358,28 @@ class TestLoadToolPermissionsAllPhones:
         result = await load_tool_permissions_all_phones(mock_db, accounts)
         assert result["+7111"]["search_messages"] is False
         assert result["+7222"]["search_messages"] is False
+
+    async def test_per_phone_unsaved_account_gets_missing_defaults(self, mock_db):
+        # An account absent from a per-phone ACL must render with READ-only
+        # missing defaults so saving the settings tab can't silently grant
+        # WRITE/DELETE powers to a newly added account.  Regression test for
+        # the second Codex adversarial review of #568.
+        saved = {"+7111": {"send_message": True, "leave_dialogs": True}}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        accounts = [
+            SimpleNamespace(phone="+7111"),
+            SimpleNamespace(phone="+7999"),  # not in saved ACL
+        ]
+        result = await load_tool_permissions_all_phones(mock_db, accounts)
+        # Existing account keeps its explicit grants
+        assert result["+7111"]["send_message"] is True
+        assert result["+7111"]["leave_dialogs"] is True
+        # Unsaved account: READ enabled, WRITE/DELETE disabled
+        assert result["+7999"]["list_channels"] is True  # READ default
+        assert result["+7999"]["send_message"] is False  # WRITE missing
+        assert result["+7999"]["send_reaction"] is False  # WRITE missing
+        assert result["+7999"]["leave_dialogs"] is False  # DELETE missing
+        assert result["+7999"]["delete_channel"] is False  # DELETE missing
 
 
 # ---------------------------------------------------------------------------

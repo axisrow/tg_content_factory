@@ -365,22 +365,34 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
 
     if is_per_phone:
         phone_used = phone
+        phone_known = False
         if phone and phone in saved:
             phone_perms = saved[phone]
+            phone_known = True
         else:
             if phone is None:
                 accounts = await _load_account_records(db)
                 if accounts:
                     primary = next((a for a in accounts if a.is_primary), accounts[0])
                     phone_used = primary.phone
-                    phone_perms = saved.get(primary.phone, {})
+                    if primary.phone in saved:
+                        phone_perms = saved[primary.phone]
+                        phone_known = True
+                    else:
+                        phone_perms = {}
                 else:
                     phone_perms = {}
             else:
                 phone_perms = {}
-        if not phone_perms:
-            logger.debug("Tool permissions: phone=%s not in saved, using defaults", phone_used)
-            return defaults
+        if not phone_known:
+            # Per-phone ACL exists but this phone is absent — fail-closed for
+            # WRITE/DELETE so newly added accounts don't silently inherit
+            # all-enabled defaults in a restrictive installation.
+            logger.debug(
+                "Tool permissions: phone=%s not in saved per-phone ACL, using READ-only defaults",
+                phone_used,
+            )
+            return dict(missing_defaults)
         result = {name: phone_perms.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
     else:
         phone_used = "(flat/legacy)"
@@ -399,11 +411,17 @@ async def load_tool_permissions_all_phones(db, accounts) -> dict[str, dict[str, 
     saved = await _load_raw_permissions(db)
 
     result = {}
+    saved_is_per_phone = _is_per_phone_format(saved)
     for acc in accounts:
-        if _is_per_phone_format(saved) and acc.phone in saved:
+        if saved_is_per_phone and acc.phone in saved:
             phone_perms = saved[acc.phone]
             result[acc.phone] = {name: phone_perms.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
-        elif not _is_per_phone_format(saved) and saved:
+        elif saved_is_per_phone:
+            # Per-phone ACL exists but this account is absent — render the
+            # settings UI fail-closed for WRITE/DELETE so an admin saving this
+            # account tab does not silently grant write/delete powers.
+            result[acc.phone] = dict(missing_defaults)
+        elif saved:
             # Legacy flat → apply to all phones
             result[acc.phone] = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
         else:

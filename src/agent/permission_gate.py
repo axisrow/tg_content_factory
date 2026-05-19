@@ -85,17 +85,21 @@ class PermissionGate:
     """Manages runtime permission overrides for agent tool access.
 
     Session overrides are in-memory only, never persisted to DB.
-    Each session_id (UUID) has its own set of approved tools.
+    Each session_id (UUID) has its own set of approved (tool, phone) pairs.
+
+    Phone scoping: a session grant is keyed on ``(tool_name, phone)`` so a
+    "session" allow on one phone does not leak into a phone-level ACL check
+    for a different phone.  Session-level (global) prompts use ``phone=""``.
     """
 
-    # session_id → set of tool bare names approved for the session
-    _session_overrides: dict[str, set[str]] = field(default_factory=dict)
+    # session_id → set of (tool_name, phone) approved for the session
+    _session_overrides: dict[str, set[tuple[str, str]]] = field(default_factory=dict)
     # request_id (UUID str) → Future that resolves with "once"|"session"|"deny"
     _pending: dict[str, asyncio.Future] = field(default_factory=dict)
 
-    def is_session_approved(self, tool_name: str, session_id: str) -> bool:
-        """True if tool was previously approved for this session_id."""
-        return tool_name in self._session_overrides.get(session_id, set())
+    def is_session_approved(self, tool_name: str, session_id: str, phone: str = "") -> bool:
+        """True if (tool, phone) was previously approved for this session_id."""
+        return (tool_name, phone) in self._session_overrides.get(session_id, set())
 
     async def check(self, tool_name: str, phone: str) -> dict | None:
         """Check if tool/phone is allowed; show permission dialog if not.
@@ -112,8 +116,8 @@ class PermissionGate:
             # No context set (e.g. one-shot CLI mode) — fall through to caller
             return None
 
-        # Already approved for this session?
-        if self.is_session_approved(tool_name, ctx.session_id):
+        # Already approved for this (session, tool, phone)?
+        if self.is_session_approved(tool_name, ctx.session_id, phone):
             return None
 
         # Ask user
@@ -151,8 +155,11 @@ class PermissionGate:
             self._pending.pop(request_id, None)
 
         if choice == "session":
-            self._session_overrides.setdefault(ctx.session_id, set()).add(tool_name)
-            logger.info("Session permission granted: %s for session %s", tool_name, ctx.session_id)
+            self._session_overrides.setdefault(ctx.session_id, set()).add((tool_name, phone))
+            logger.info(
+                "Session permission granted: %s (phone=%s) for session %s",
+                tool_name, phone or "(none)", ctx.session_id,
+            )
             return None
         elif choice == "once":
             logger.info("One-time permission granted: %s", tool_name)
