@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 import aiosqlite
 
 from src.models import Channel
@@ -11,12 +9,6 @@ from src.utils.datetime import parse_datetime
 class ChannelsRepository:
     def __init__(self, db: aiosqlite.Connection):
         self._db = db
-        # Serializes delete_channel's SAVEPOINT block. The web app holds a
-        # single shared aiosqlite connection (app.state.db), so two
-        # overlapping deletes would otherwise nest savepoints with the same
-        # name and SQLite's LIFO release semantics could let one delete's
-        # RELEASE/ROLLBACK target a sibling's frame (Codex round 12).
-        self._delete_channel_lock = asyncio.Lock()
 
     async def add_channel(self, channel: Channel) -> int:
         cur = await self._db.execute(
@@ -270,45 +262,49 @@ class ChannelsRepository:
         await self._db.commit()
 
     async def delete_channel(self, pk: int) -> None:
-        # Atomic delete (Codex round 9): the connection runs in autocommit
-        # (isolation_level=None) and `pipeline_sources.channel_id` has
-        # ON DELETE RESTRICT.  Without a savepoint, the messages/stats/topics
-        # rows would be committed before the final `DELETE FROM channels`
-        # raises an FK violation — leaving the parent row alive but the
-        # child data gone.  Wrapping the whole sequence in a SAVEPOINT lets
-        # us roll the child deletes back when the parent cannot be removed.
-        #
-        # The whole sequence is serialized by an async lock (Codex round 12).
-        # aiosqlite shares one connection across coroutines, and SQLite's
-        # named savepoints use LIFO semantics for RELEASE/ROLLBACK — two
-        # overlapping deletes with the same savepoint name could otherwise
-        # release each other's frame and let the FK-restricted delete commit
-        # the partial child deletes it was supposed to roll back.
-        async with self._delete_channel_lock:
-            await self._db.execute("SAVEPOINT delete_channel")
-            try:
-                cur = await self._db.execute(
-                    "SELECT channel_id FROM channels WHERE id = ?", (pk,),
-                )
-                row = await cur.fetchone()
-                if row:
-                    channel_id = row["channel_id"]
-                    await self._db.execute(
-                        "DELETE FROM messages WHERE channel_id = ?", (channel_id,),
-                    )
-                    await self._db.execute(
-                        "DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,),
-                    )
-                    await self._db.execute(
-                        "DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,),
-                    )
-                await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
-            except Exception:
-                await self._db.execute("ROLLBACK TO SAVEPOINT delete_channel")
-                await self._db.execute("RELEASE SAVEPOINT delete_channel")
-                raise
-            await self._db.execute("RELEASE SAVEPOINT delete_channel")
-            await self._db.commit()
+        # Preflight-then-delete (final answer to Codex rounds 9–13): the
+        # shared aiosqlite connection runs in autocommit mode, so a
+        # SAVEPOINT-based rollback can be released by any concurrent commit
+        # on the same connection — there is no way to truly bind the
+        # SAVEPOINT to this coroutine without serializing every writer in
+        # the codebase (105+ call sites). We instead check every RESTRICT
+        # foreign-key reference up front and refuse the delete before
+        # touching child rows. The only RESTRICT FK on `channels` is
+        # `pipeline_sources.channel_id` (src/database/schema.py:326); if a
+        # new RESTRICT FK is added later, this preflight must grow with it.
+        # Tests/test_bundles.py::TestChannelBundle::
+        # test_delete_channel_rolls_back_when_referenced_by_pipeline guards
+        # against silently regressing to the post-delete FK-violation
+        # behaviour.
+        cur = await self._db.execute(
+            "SELECT channel_id FROM channels WHERE id = ?", (pk,),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return
+        channel_id = row["channel_id"]
+        # RESTRICT check.
+        cur = await self._db.execute(
+            "SELECT 1 FROM pipeline_sources WHERE channel_id = ? LIMIT 1",
+            (channel_id,),
+        )
+        if await cur.fetchone() is not None:
+            # Raise the same IntegrityError the FK would have raised, so the
+            # FilterDeletionService translates it into skipped_count.
+            raise aiosqlite.IntegrityError(
+                f"FOREIGN KEY constraint failed: pipeline_sources references channel_id={channel_id}"
+            )
+        await self._db.execute(
+            "DELETE FROM messages WHERE channel_id = ?", (channel_id,),
+        )
+        await self._db.execute(
+            "DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,),
+        )
+        await self._db.execute(
+            "DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,),
+        )
+        await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
+        await self._db.commit()
 
     # ── Tag helpers ──────────────────────────────────────────────────────────
 
