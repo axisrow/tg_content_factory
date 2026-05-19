@@ -136,16 +136,25 @@ class ChannelService:
         await self._channels.set_active(pk, not channel.is_active)
 
     async def delete(self, pk: int) -> None:
+        # Collect active tasks before the delete so we know what to cancel,
+        # but only actually cancel them AFTER delete_channel succeeds (Codex
+        # round 11). Cancelling first leaves a surviving channel with its
+        # collection work silently disabled when the DB delete fails (e.g.
+        # pipeline_sources.channel_id FK RESTRICT).
         channel = await self._channels.get_by_pk(pk)
+        tasks_to_cancel: list = []
         if channel is not None:
-            tasks = await self._channels.get_active_collection_tasks_for_channel(channel.channel_id)
-            for task in tasks:
-                if task.id is not None and self._queue is not None:
-                    await self._queue.cancel_task(
-                        task.id,
-                        note="Канал удалён пользователем.",
-                    )
+            tasks_to_cancel = await self._channels.get_active_collection_tasks_for_channel(
+                channel.channel_id
+            )
         await self._channels.delete_channel(pk)
+        # Delete succeeded — now safely cancel the orphaned tasks.
+        for task in tasks_to_cancel:
+            if task.id is not None and self._queue is not None:
+                await self._queue.cancel_task(
+                    task.id,
+                    note="Канал удалён пользователем.",
+                )
 
     async def leave_dialogs(self, phone: str, dialogs: list[tuple[int, str]]) -> dict[int, bool]:
         from src.services.telegram_actions import TelegramActionService

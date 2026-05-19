@@ -264,6 +264,29 @@ class TestRequirePhonePermission:
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
         assert await require_phone_permission(mock_db, "+79990001111", "leave_dialogs") is None
 
+    @pytest.mark.parametrize(
+        "phone_bound_read_tool",
+        ["read_messages", "download_media", "get_participants", "get_broadcast_stats", "resolve_entity"],
+    )
+    async def test_legacy_flat_missing_phone_bound_read_denies(self, mock_db, phone_bound_read_tool):
+        """Codex round 11 regression: a legacy flat ACL that does not list
+        the phone-bound READ tool must NOT fall through to the historical
+        READ-permissive default. Otherwise existing flat ACLs from older
+        installs allow live Telegram reads on any phone with no per-tool
+        grant — a hard auth-boundary bypass."""
+        perms = {"search_messages": True}  # flat, no phone-bound READ entries
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        result = await require_phone_permission(mock_db, "+79990001111", phone_bound_read_tool)
+        assert result is not None, f"flat ACL leaked {phone_bound_read_tool}"
+        assert "не разрешён" in _text(result)
+
+    async def test_legacy_flat_phone_bound_read_explicit_true_allows(self, mock_db):
+        """Legacy flat ACL must still honour an explicit True grant for a
+        phone-bound READ tool — admin opted in for everyone."""
+        perms = {"read_messages": True}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        assert await require_phone_permission(mock_db, "+79990001111", "read_messages") is None
+
     async def test_legacy_flat_missing_write_key_denies(self, mock_db):
         """Legacy flat format with no entry for a WRITE tool must deny (fail-closed)."""
         perms = {"search_messages": True}

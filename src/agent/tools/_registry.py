@@ -541,7 +541,12 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
     permission dialog instead of a plain error.  Falls back to text error if no gate.
     """
     try:
-        from src.agent.tools.permissions import TOOL_CATEGORIES, TOOL_PERMISSIONS_SETTING, ToolCategory
+        from src.agent.tools.permissions import (
+            PHONE_BINDED_TOOLS,
+            TOOL_CATEGORIES,
+            TOOL_PERMISSIONS_SETTING,
+            ToolCategory,
+        )
 
         raw = await db.get_setting(TOOL_PERMISSIONS_SETTING)
     except Exception:
@@ -563,20 +568,26 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
         return _text_response(
             f"❌ ACL для '{tool_name}' повреждён. Действие заблокировано до исправления настроек."
         )
-    # Legacy flat ACL has no per-phone segmentation, so for READ tools the
-    # historical permissive default still applies (no DB action ties to a
-    # specific phone). WRITE/DELETE missing from a flat ACL must deny.
-    # Unknown tool names are treated as WRITE so new actions cannot bypass
-    # a restrictive setup.
+    # Legacy flat ACL has no per-phone segmentation. For non-phone-bound READ
+    # tools (DB search, analytics) the historical permissive default still
+    # applies. For WRITE/DELETE and for phone-bound tools (including READ
+    # like read_messages, download_media, get_participants, resolve_entity)
+    # the entry must be explicit True — otherwise a legacy flat ACL from an
+    # older install would grant live Telegram reads to any phone without an
+    # explicit per-tool grant (Codex round 11).  Unknown tool names are
+    # treated as WRITE so new actions cannot bypass a restrictive setup.
     category = TOOL_CATEGORIES.get(tool_name, ToolCategory.WRITE)
-    is_protected = category in (ToolCategory.WRITE, ToolCategory.DELETE)
+    is_protected = (
+        category in (ToolCategory.WRITE, ToolCategory.DELETE)
+        or tool_name in PHONE_BINDED_TOOLS
+    )
     is_legacy_flat = perms and all(not isinstance(v, dict) for v in perms.values())
     if is_legacy_flat:
         if perms.get(tool_name) is True:
             return None
         if not is_protected:
-            return None  # READ in legacy flat → permissive default
-        # WRITE/DELETE missing in legacy flat → deny via gate or text error
+            return None  # non-phone-bound READ in legacy flat → permissive default
+        # Phone-bound or WRITE/DELETE missing in legacy flat → deny via gate or text error
         from src.agent.permission_gate import get_gate, get_request_context
 
         gate = get_gate()
