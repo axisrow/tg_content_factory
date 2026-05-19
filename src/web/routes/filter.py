@@ -123,6 +123,23 @@ async def hard_delete_selected(request: Request):
 HARD_DELETE_ALL_CONFIRM_PHRASE = "DELETE_ALL_FILTERED"
 
 
+def _parse_confirm_pks(raw: str) -> list[int] | None:
+    """Parse a comma-separated PK snapshot from the hard-delete-all form.
+
+    Returns the list of ints, or ``None`` if any token is not a valid int.
+    Empty/whitespace-only input is treated as a valid empty snapshot to keep
+    the no_filtered_channels branch reachable through the normal form flow.
+    """
+    tokens = [tok.strip() for tok in (raw or "").split(",") if tok.strip()]
+    pks: list[int] = []
+    for tok in tokens:
+        try:
+            pks.append(int(tok))
+        except ValueError:
+            return None
+    return pks
+
+
 @router.post("/filter/hard-delete-all")
 async def hard_delete_all(request: Request):
     if not await _dev_mode_enabled(request):
@@ -133,39 +150,50 @@ async def hard_delete_all(request: Request):
     form = await request.form()
     # Server-side confirmation: a stale browser page, a re-posted form, a
     # direct POST or an accidental resubmit must not reach the deletion call.
-    # Require an explicit confirm phrase plus an expected_count that matches
-    # the current filtered-channel total (so changes after the page rendered
-    # bounce the operation back to the user instead of silently wiping more
-    # rows than they saw).
+    # Two interlocking checks:
+    #   1. confirm phrase — defeats blind direct POSTs.
+    #   2. confirm_pks snapshot — exact set of PKs the admin saw rendered.
+    #      The route compares the snapshot against the current filtered set
+    #      and rejects on any difference (Codex round 6): a same-count swap
+    #      between render and submit would otherwise delete channels the
+    #      admin never confirmed. The delete then runs on the confirmed PKs
+    #      only, not "whatever is filtered now".
     confirm = (form.get("confirm") or "").strip()
     if confirm != HARD_DELETE_ALL_CONFIRM_PHRASE:
         return RedirectResponse(
             url="/channels/filter/manage?error=hard_delete_confirm_required",
             status_code=303,
         )
-    expected_raw = (form.get("expected_count") or "").strip()
-    try:
-        expected_count = int(expected_raw)
-    except ValueError:
+    confirm_pks_raw = form.get("confirm_pks")
+    if confirm_pks_raw is None:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=hard_delete_confirm_required",
+            status_code=303,
+        )
+    confirmed = _parse_confirm_pks(str(confirm_pks_raw))
+    if confirmed is None:
         return RedirectResponse(
             url="/channels/filter/manage?error=hard_delete_confirm_required",
             status_code=303,
         )
     db = deps.get_db(request)
     channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
-    pks = [ch.id for ch in channels if ch.is_filtered and ch.id is not None]
-    if not pks:
+    current_pks = [ch.id for ch in channels if ch.is_filtered and ch.id is not None]
+    if not current_pks:
         return RedirectResponse(
             url="/channels/filter/manage?error=no_filtered_channels",
             status_code=303,
         )
-    if expected_count != len(pks):
+    if set(confirmed) != set(current_pks):
         return RedirectResponse(
-            url="/channels/filter/manage?error=hard_delete_count_changed",
+            url="/channels/filter/manage?error=hard_delete_set_changed",
             status_code=303,
         )
     svc = deps.filter_deletion_service(request)
-    result = await svc.hard_delete_channels_by_pks(pks)
+    # Delete the confirmed snapshot, not the "current" list — bounds the
+    # blast radius even if a race adds new filtered rows between the
+    # comparison above and the deletion call.
+    result = await svc.hard_delete_channels_by_pks(confirmed)
     return RedirectResponse(
         url=(f"/channels/filter/manage?msg=deleted_filtered" f"&count={result.purged_count}"),
         status_code=303,

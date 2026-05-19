@@ -148,10 +148,10 @@ async def test_hard_delete_success(route_client, db):
 @pytest.mark.anyio
 async def test_hard_delete_all_blocked_without_dev_mode(route_client, db):
     """Direct POST without dev mode bounces with the dev-mode error."""
-    await _add_filtered_channel(db, channel_id=900, title="No DevMode")
+    pk = await _add_filtered_channel(db, channel_id=900, title="No DevMode")
     resp = await route_client.post(
         "/channels/filter/hard-delete-all",
-        data={"confirm": "DELETE_ALL_FILTERED", "expected_count": "1"},
+        data={"confirm": "DELETE_ALL_FILTERED", "confirm_pks": str(pk)},
         follow_redirects=False,
     )
     assert resp.status_code == 303
@@ -170,14 +170,12 @@ async def test_hard_delete_all_rejects_without_confirm_phrase(route_client, db):
         )
         resp = await route_client.post(
             "/channels/filter/hard-delete-all",
-            data={"expected_count": "1"},  # confirm missing
+            data={"confirm_pks": str(pk)},  # confirm missing
             follow_redirects=False,
         )
         assert resp.status_code == 303
         assert "error=hard_delete_confirm_required" in resp.headers["location"]
-        # The deletion service must NOT be called.
         mock_svc.return_value.hard_delete_channels_by_pks.assert_not_called()
-    # The filtered channel must still exist after the rejected attempt.
     remaining = await db.get_channel_by_pk(pk)
     assert remaining is not None
 
@@ -185,7 +183,7 @@ async def test_hard_delete_all_rejects_without_confirm_phrase(route_client, db):
 @pytest.mark.anyio
 async def test_hard_delete_all_rejects_wrong_confirm_phrase(route_client, db):
     """A non-matching confirm value must be rejected (no fuzzy match)."""
-    await _add_filtered_channel(db, channel_id=902, title="Wrong Confirm")
+    pk = await _add_filtered_channel(db, channel_id=902, title="Wrong Confirm")
     await _enable_dev_mode(db)
     with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
         mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(
@@ -193,7 +191,7 @@ async def test_hard_delete_all_rejects_wrong_confirm_phrase(route_client, db):
         )
         resp = await route_client.post(
             "/channels/filter/hard-delete-all",
-            data={"confirm": "yes", "expected_count": "1"},
+            data={"confirm": "yes", "confirm_pks": str(pk)},
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -202,34 +200,9 @@ async def test_hard_delete_all_rejects_wrong_confirm_phrase(route_client, db):
 
 
 @pytest.mark.anyio
-async def test_hard_delete_all_rejects_count_mismatch(route_client, db):
-    """A stale page sends an expected_count that no longer matches reality.
-    Bounce the operation so the admin re-confirms instead of wiping more than
-    they saw on screen."""
-    # Three filtered channels exist, but the form claims only one.
-    await _add_filtered_channel(db, channel_id=910, title="ChA")
-    await _add_filtered_channel(db, channel_id=911, title="ChB")
-    await _add_filtered_channel(db, channel_id=912, title="ChC")
-    await _enable_dev_mode(db)
-    with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
-        mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(
-            return_value=PurgeResult(purged_count=3)
-        )
-        resp = await route_client.post(
-            "/channels/filter/hard-delete-all",
-            data={"confirm": "DELETE_ALL_FILTERED", "expected_count": "1"},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        assert "error=hard_delete_count_changed" in resp.headers["location"]
-        mock_svc.return_value.hard_delete_channels_by_pks.assert_not_called()
-
-
-@pytest.mark.anyio
-async def test_hard_delete_all_success_with_matching_confirm(route_client, db):
-    """With dev mode, correct confirm phrase, and matching expected_count,
-    the deletion is allowed."""
-    await _add_filtered_channel(db, channel_id=920, title="Will Delete")
+async def test_hard_delete_all_rejects_missing_confirm_pks(route_client, db):
+    """confirm_pks is required: a request without it cannot reach the delete."""
+    await _add_filtered_channel(db, channel_id=903, title="No PKs")
     await _enable_dev_mode(db)
     with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
         mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(
@@ -237,23 +210,120 @@ async def test_hard_delete_all_success_with_matching_confirm(route_client, db):
         )
         resp = await route_client.post(
             "/channels/filter/hard-delete-all",
-            data={"confirm": "DELETE_ALL_FILTERED", "expected_count": "1"},
+            data={"confirm": "DELETE_ALL_FILTERED"},  # confirm_pks missing
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "error=hard_delete_confirm_required" in resp.headers["location"]
+        mock_svc.return_value.hard_delete_channels_by_pks.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_hard_delete_all_rejects_malformed_confirm_pks(route_client, db):
+    """confirm_pks with non-integer tokens must be rejected before delete."""
+    await _add_filtered_channel(db, channel_id=904, title="Bad PKs")
+    await _enable_dev_mode(db)
+    with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
+        mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=1)
+        )
+        resp = await route_client.post(
+            "/channels/filter/hard-delete-all",
+            data={"confirm": "DELETE_ALL_FILTERED", "confirm_pks": "1,abc,3"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "error=hard_delete_confirm_required" in resp.headers["location"]
+        mock_svc.return_value.hard_delete_channels_by_pks.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_hard_delete_all_rejects_set_mismatch(route_client, db):
+    """Stale page snapshots a different filtered set — bounce."""
+    # Page rendered {910, 911, 912}, but admin then re-fetched and only {920} is filtered now.
+    pk = await _add_filtered_channel(db, channel_id=920, title="OnlyMe")
+    await _enable_dev_mode(db)
+    with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
+        mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=1)
+        )
+        resp = await route_client.post(
+            "/channels/filter/hard-delete-all",
+            data={"confirm": "DELETE_ALL_FILTERED", "confirm_pks": "910,911,912"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "error=hard_delete_set_changed" in resp.headers["location"]
+        mock_svc.return_value.hard_delete_channels_by_pks.assert_not_called()
+    remaining = await db.get_channel_by_pk(pk)
+    assert remaining is not None
+
+
+@pytest.mark.anyio
+async def test_hard_delete_all_rejects_same_count_stale_swap(route_client, db):
+    """Codex round 6 regression: same len(pks), different PKs must not delete.
+
+    Page rendered filtered=[A]. Between render and submit, A becomes unfiltered
+    and B becomes filtered. len(filtered) is still 1, so a count-only check
+    would let the delete fire on B — a channel the admin never confirmed.
+    The PK-snapshot check must catch this and bounce.
+    """
+    # Page admin saw: only A was filtered
+    a_pk = await _add_filtered_channel(db, channel_id=940, title="ChA")
+    # State changed before the form submitted: A is no longer filtered, B is
+    await db.set_channel_filtered(a_pk, False)
+    b_pk = await _add_filtered_channel(db, channel_id=941, title="ChB")
+    await _enable_dev_mode(db)
+    with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
+        mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=1)
+        )
+        resp = await route_client.post(
+            "/channels/filter/hard-delete-all",
+            data={
+                "confirm": "DELETE_ALL_FILTERED",
+                "confirm_pks": str(a_pk),  # stale: confirmed A, but A no longer filtered
+            },
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        assert "error=hard_delete_set_changed" in resp.headers["location"]
+        mock_svc.return_value.hard_delete_channels_by_pks.assert_not_called()
+    # B must still exist — the admin never confirmed deleting it.
+    remaining = await db.get_channel_by_pk(b_pk)
+    assert remaining is not None
+
+
+@pytest.mark.anyio
+async def test_hard_delete_all_success_with_matching_snapshot(route_client, db):
+    """Correct confirm phrase + matching PK snapshot allows the delete, and
+    the service is called with exactly the confirmed PKs."""
+    pk = await _add_filtered_channel(db, channel_id=950, title="Will Delete")
+    await _enable_dev_mode(db)
+    with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
+        mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=1)
+        )
+        resp = await route_client.post(
+            "/channels/filter/hard-delete-all",
+            data={"confirm": "DELETE_ALL_FILTERED", "confirm_pks": str(pk)},
             follow_redirects=False,
         )
         assert resp.status_code == 303
         assert "msg=deleted_filtered" in resp.headers["location"]
-        mock_svc.return_value.hard_delete_channels_by_pks.assert_awaited_once()
+        mock_svc.return_value.hard_delete_channels_by_pks.assert_awaited_once_with([pk])
 
 
 @pytest.mark.anyio
 async def test_hard_delete_all_no_filtered_channels(route_client, db):
-    """If there is nothing to delete the route bounces with no_filtered_channels
-    even when all confirmation fields are correctly supplied."""
-    await _add_channel(db, channel_id=930, title="NotFiltered")
+    """No filtered channels → no_filtered_channels error even with a
+    well-formed (empty) confirm_pks. Reachable through the normal form path
+    when the page rendered before all rows were unfiltered."""
+    await _add_channel(db, channel_id=960, title="NotFiltered")
     await _enable_dev_mode(db)
     resp = await route_client.post(
         "/channels/filter/hard-delete-all",
-        data={"confirm": "DELETE_ALL_FILTERED", "expected_count": "0"},
+        data={"confirm": "DELETE_ALL_FILTERED", "confirm_pks": ""},
         follow_redirects=False,
     )
     assert resp.status_code == 303
