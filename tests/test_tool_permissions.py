@@ -341,7 +341,29 @@ class TestLoadToolPermissions:
         assert result["search_messages"] is True
         assert result["send_reaction"] is False  # WRITE missing → False
         assert result["leave_dialogs"] is False  # DELETE missing → False
-        assert result["list_channels"] is True  # READ missing → True
+        assert result["list_channels"] is True  # non-phone-bound READ → True
+
+    async def test_per_phone_missing_phone_bound_read_returns_false(self, mock_db):
+        # Codex round 10 regression: phone-bound READ tools (read_messages,
+        # download_media, get_participants, resolve_entity, …) missing from a
+        # saved per-phone entry must default to False, not True. Otherwise
+        # the settings UI renders them pre-checked for an existing phone and
+        # saving the tab silently persists explicit grants — bypassing the
+        # phone-gate's "explicit True only" execution semantics.
+        saved = {"+79990001111": {"pin_message": True}}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_permissions(mock_db, phone="+79990001111")
+        # phone-bound READ — must NOT default to True
+        assert result["read_messages"] is False
+        assert result["download_media"] is False
+        assert result["get_participants"] is False
+        assert result["get_broadcast_stats"] is False
+        assert result["resolve_entity"] is False
+        # non-phone-bound READ — keeps permissive default (DB-only, no
+        # phone-gate, so the existing admin's DB work is not blocked)
+        assert result["list_channels"] is True
+        assert result["search_messages"] is True
+        assert result["get_analytics_summary"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +399,26 @@ class TestLoadToolPermissionsAllPhones:
         result = await load_tool_permissions_all_phones(mock_db, accounts)
         assert result["+7111"]["search_messages"] is False
         assert result["+7222"]["search_messages"] is False
+
+    async def test_per_phone_existing_account_phone_bound_read_disabled(self, mock_db):
+        # Codex round 10 regression for the all-phones loader: an existing
+        # phone with a sparse ACL must render phone-bound READ as disabled,
+        # so opening + saving the settings tab cannot silently grant live
+        # Telegram READ access (read_messages, download_media, …).
+        saved = {"+7111": {"pin_message": True}}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        accounts = [SimpleNamespace(phone="+7111")]
+        result = await load_tool_permissions_all_phones(mock_db, accounts)
+        # phone-bound READ tools for +7111 — render fail-closed
+        assert result["+7111"]["read_messages"] is False
+        assert result["+7111"]["download_media"] is False
+        assert result["+7111"]["get_participants"] is False
+        assert result["+7111"]["resolve_entity"] is False
+        # phone-bound WRITE explicitly granted
+        assert result["+7111"]["pin_message"] is True
+        # non-phone-bound READ stays permissive (DB-only)
+        assert result["+7111"]["list_channels"] is True
+        assert result["+7111"]["get_analytics_summary"] is True
 
     async def test_per_phone_unsaved_account_fully_fail_closed(self, mock_db):
         # An account absent from a per-phone ACL renders fully fail-closed
