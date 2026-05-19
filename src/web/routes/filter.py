@@ -123,21 +123,40 @@ async def hard_delete_selected(request: Request):
 HARD_DELETE_ALL_CONFIRM_PHRASE = "DELETE_ALL_FILTERED"
 
 
-def _parse_confirm_pks(raw: str) -> list[int] | None:
-    """Parse a comma-separated PK snapshot from the hard-delete-all form.
+def _parse_confirm_pairs(raw: str) -> list[tuple[int, int]] | None:
+    """Parse the hard-delete-all snapshot as ``pk:channel_id`` pairs.
 
-    Returns the list of ints, or ``None`` if any token is not a valid int.
-    Empty/whitespace-only input is treated as a valid empty snapshot to keep
-    the no_filtered_channels branch reachable through the normal form flow.
+    Each token must be ``<pk>:<channel_id>`` where both are integers.
+    Duplicate ``pk`` values (or duplicate ``channel_id`` values) are rejected
+    so a crafted ``"1:1001,1:1001"`` cannot smuggle a delete past the set
+    comparison. Empty/whitespace input is treated as an empty snapshot so
+    the no_filtered_channels branch stays reachable through the normal form
+    flow. Returns ``None`` when any token is malformed.
+
+    Binding to ``channel_id`` (the Telegram-assigned identifier, not the
+    SQLite rowid) guards against PK reuse: if the rendered row is deleted
+    and a new row is inserted between render and submit, the new row will
+    likely have a different ``channel_id`` and the comparison will reject.
     """
     tokens = [tok.strip() for tok in (raw or "").split(",") if tok.strip()]
-    pks: list[int] = []
+    pairs: list[tuple[int, int]] = []
+    seen_pks: set[int] = set()
+    seen_chids: set[int] = set()
     for tok in tokens:
+        parts = tok.split(":")
+        if len(parts) != 2:
+            return None
         try:
-            pks.append(int(tok))
+            pk = int(parts[0])
+            chid = int(parts[1])
         except ValueError:
             return None
-    return pks
+        if pk in seen_pks or chid in seen_chids:
+            return None
+        seen_pks.add(pk)
+        seen_chids.add(chid)
+        pairs.append((pk, chid))
+    return pairs
 
 
 @router.post("/filter/hard-delete-all")
@@ -148,16 +167,16 @@ async def hard_delete_all(request: Request):
             status_code=303,
         )
     form = await request.form()
-    # Server-side confirmation: a stale browser page, a re-posted form, a
-    # direct POST or an accidental resubmit must not reach the deletion call.
-    # Two interlocking checks:
+    # Server-side confirmation defends against direct POSTs, stale pages,
+    # resubmits, and same-count stale swaps. Two interlocking checks:
     #   1. confirm phrase — defeats blind direct POSTs.
-    #   2. confirm_pks snapshot — exact set of PKs the admin saw rendered.
-    #      The route compares the snapshot against the current filtered set
-    #      and rejects on any difference (Codex round 6): a same-count swap
-    #      between render and submit would otherwise delete channels the
-    #      admin never confirmed. The delete then runs on the confirmed PKs
-    #      only, not "whatever is filtered now".
+    #   2. confirm_pks snapshot of (pk, channel_id) pairs — exact rendered
+    #      set with stable identities (Codex round 7). channel_id is the
+    #      Telegram-assigned ID, not the SQLite rowid, so a PK reused after
+    #      a delete+insert race resolves to a different channel_id and the
+    #      comparison rejects. Duplicates are rejected at parse time.
+    #      Delete then runs on the unique PK list extracted from the
+    #      validated snapshot.
     confirm = (form.get("confirm") or "").strip()
     if confirm != HARD_DELETE_ALL_CONFIRM_PHRASE:
         return RedirectResponse(
@@ -170,30 +189,35 @@ async def hard_delete_all(request: Request):
             url="/channels/filter/manage?error=hard_delete_confirm_required",
             status_code=303,
         )
-    confirmed = _parse_confirm_pks(str(confirm_pks_raw))
-    if confirmed is None:
+    confirmed_pairs = _parse_confirm_pairs(str(confirm_pks_raw))
+    if confirmed_pairs is None:
         return RedirectResponse(
             url="/channels/filter/manage?error=hard_delete_confirm_required",
             status_code=303,
         )
     db = deps.get_db(request)
     channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
-    current_pks = [ch.id for ch in channels if ch.is_filtered and ch.id is not None]
-    if not current_pks:
+    current_pairs = {
+        (ch.id, ch.channel_id)
+        for ch in channels
+        if ch.is_filtered and ch.id is not None and ch.channel_id is not None
+    }
+    if not current_pairs:
         return RedirectResponse(
             url="/channels/filter/manage?error=no_filtered_channels",
             status_code=303,
         )
-    if set(confirmed) != set(current_pks):
+    if set(confirmed_pairs) != current_pairs:
         return RedirectResponse(
             url="/channels/filter/manage?error=hard_delete_set_changed",
             status_code=303,
         )
     svc = deps.filter_deletion_service(request)
-    # Delete the confirmed snapshot, not the "current" list — bounds the
-    # blast radius even if a race adds new filtered rows between the
-    # comparison above and the deletion call.
-    result = await svc.hard_delete_channels_by_pks(confirmed)
+    # Pass only the unique PKs from the validated snapshot to the service.
+    # The set comparison above already proved each (pk, channel_id) pair
+    # matches the current filtered row, so the PK list is canonical.
+    confirmed_pks = [pk for pk, _ in confirmed_pairs]
+    result = await svc.hard_delete_channels_by_pks(confirmed_pks)
     return RedirectResponse(
         url=(f"/channels/filter/manage?msg=deleted_filtered" f"&count={result.purged_count}"),
         status_code=303,
