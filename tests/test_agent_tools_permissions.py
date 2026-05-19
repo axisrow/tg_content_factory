@@ -137,13 +137,20 @@ class TestLoadToolPermissions:
         assert perms["leave_dialogs"] is False  # DELETE missing → False
 
     @pytest.mark.anyio
-    async def test_per_phone_phone_not_in_saved(self):
+    async def test_per_phone_phone_not_in_saved_fail_closed(self):
+        # Per-phone ACL exists but the requested phone is absent — fail-closed
+        # for WRITE/DELETE so newly added accounts cannot bypass a restrictive
+        # installation.  READ tools still default to enabled.
         db = MagicMock()
         raw = json.dumps({"+7900": {"search_messages": False}})
         db.get_setting = AsyncMock(return_value=raw)
         perms = await load_tool_permissions(db, phone="+7800")
-        # Phone not in saved → defaults (all enabled)
-        assert all(perms.values())
+        assert perms["search_messages"] is True  # READ default
+        assert perms["list_channels"] is True  # READ default
+        assert perms["send_message"] is False  # WRITE missing → denied
+        assert perms["send_reaction"] is False  # WRITE missing → denied
+        assert perms["leave_dialogs"] is False  # DELETE missing → denied
+        assert perms["delete_channel"] is False  # DELETE missing → denied
 
     @pytest.mark.anyio
     async def test_per_phone_none_defaults_to_primary(self):
@@ -202,14 +209,22 @@ class TestLoadToolPermissionsAllPhones:
         assert result["+7800"]["search_messages"] is True
 
     @pytest.mark.anyio
-    async def test_phone_not_in_saved_gets_defaults(self):
+    async def test_phone_not_in_saved_gets_missing_defaults(self):
+        # When per-phone ACL exists but an account is absent, the settings UI
+        # must render fail-closed for WRITE/DELETE — otherwise saving that tab
+        # silently grants all-enabled to a newly added account.
         db = MagicMock()
         raw = json.dumps({"+7900": {"search_messages": False}})
         db.get_setting = AsyncMock(return_value=raw)
         acc1 = SimpleNamespace(phone="+7900")
         acc2 = SimpleNamespace(phone="+7800")
         result = await load_tool_permissions_all_phones(db, [acc1, acc2])
-        assert result["+7800"]["search_messages"] is True
+        # +7800 is not in saved → READ-only defaults
+        assert result["+7800"]["search_messages"] is True  # READ default
+        assert result["+7800"]["list_channels"] is True  # READ default
+        assert result["+7800"]["send_message"] is False  # WRITE missing
+        assert result["+7800"]["send_reaction"] is False  # WRITE missing
+        assert result["+7800"]["leave_dialogs"] is False  # DELETE missing
 
 
 # ── save_tool_permissions ─────────────────────────────────────────────────────
