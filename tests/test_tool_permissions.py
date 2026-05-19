@@ -165,12 +165,17 @@ class TestRequirePhonePermission:
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
         assert await require_phone_permission(mock_db, "+79990001111", "leave_dialogs") is None
 
-    async def test_phone_not_in_allowed_read_falls_through(self, mock_db):
-        # A phone absent from the perms dict still gets READ tools by default.
+    async def test_phone_not_in_allowed_read_denied(self, mock_db):
+        # When a per-phone ACL exists, a phone absent from the dict must be
+        # denied even for READ tools. require_phone_permission is only called
+        # from phone-binded tools that touch the live Telegram client, so a
+        # missing READ entry on read_messages / download_media / get_participants
+        # would otherwise leak live data from an unauthorized account.
         perms = {"+79990002222": {"search_messages": True}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
         result = await require_phone_permission(mock_db, "+79990001111", "search_messages")
-        assert result is None  # READ → permissive fallback
+        assert result is not None
+        assert "не разрешён" in _text(result)
 
     async def test_phone_not_in_allowed_write_denied(self, mock_db):
         # WRITE/DELETE: phone outside the saved ACL must be denied once any ACL exists.
@@ -191,11 +196,15 @@ class TestRequirePhonePermission:
         assert "не разрешён" in text
         assert "+79990002222" in text
 
-    async def test_read_tool_not_restricted_allows(self, mock_db):
-        # READ tool missing from saved ACL still works for any phone — permissive defaults.
+    async def test_read_tool_missing_from_per_phone_acl_denies(self, mock_db):
+        # When per-phone ACL exists but no phone allows a given READ tool,
+        # deny — this prevents the absent-phone READ bypass for live Telegram
+        # tools (read_messages, download_media, get_participants…).
         perms = {"+79990001111": {"some_other_tool": True}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
-        assert await require_phone_permission(mock_db, "+79990001111", "search_messages") is None
+        result = await require_phone_permission(mock_db, "+79990001111", "read_messages")
+        assert result is not None
+        assert "не разрешён" in _text(result)
 
     async def test_write_tool_not_in_saved_denies(self, mock_db):
         # WRITE/DELETE missing from saved ACL must deny — closes the new-tool bypass.
@@ -211,6 +220,22 @@ class TestRequirePhonePermission:
         perms = {"+79990001111": {"search_messages": True, "pin_message": True}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
         result = await require_phone_permission(mock_db, "+79990001111", "send_reaction")
+        assert result is not None
+        assert "не разрешён" in _text(result)
+
+    @pytest.mark.parametrize(
+        "live_read_tool",
+        ["read_messages", "download_media", "get_participants", "get_broadcast_stats"],
+    )
+    async def test_absent_phone_denied_for_live_telegram_read(self, mock_db, live_read_tool):
+        # Round-3 Codex finding: phone-binded READ tools (read_messages,
+        # download_media, get_participants, get_broadcast_stats) all hit the
+        # live Telegram client. A newly added account absent from the per-phone
+        # ACL must NOT inherit live-read access.
+        perms = {"+79990001111": {live_read_tool: True}}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        # +79990002222 is absent → must deny
+        result = await require_phone_permission(mock_db, "+79990002222", live_read_tool)
         assert result is not None
         assert "не разрешён" in _text(result)
 

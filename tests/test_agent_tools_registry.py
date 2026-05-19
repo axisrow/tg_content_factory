@@ -332,15 +332,16 @@ class TestRequirePhonePermission:
         assert "+7900" in text
 
     @pytest.mark.anyio
-    async def test_phone_not_in_perms_defaults_allowed(self):
-        """Phone not in perms dict at all → defaults to allowed."""
+    async def test_phone_not_in_perms_denied(self):
+        """Phone absent from per-phone ACL is denied — even for READ tools, since
+        require_phone_permission is only used for phone-binded live actions."""
         db = MagicMock()
         perms = {"+7900": {"search_messages": True}}
         db.get_setting = AsyncMock(return_value=__import__("json").dumps(perms))
         with patch("src.agent.permission_gate.get_gate", return_value=None):
             result = await require_phone_permission(db, "+7800", "search_messages")
-        # Phone not in perms dict → allowed (returns None)
-        assert result is None
+        assert result is not None
+        assert "не разрешён" in result["content"][0]["text"]
 
     @pytest.mark.anyio
     async def test_no_phone_shows_phone_list(self):
@@ -354,10 +355,13 @@ class TestRequirePhonePermission:
         assert "укажи параметр phone" in text or "Разрешённые" in text
 
     @pytest.mark.anyio
-    async def test_tool_not_restricted_for_any_phone(self):
-        """If no phone has this tool enabled, tool is not restricted → allow."""
+    async def test_tool_not_explicitly_allowed_for_any_phone_denied(self):
+        """If no phone has this tool enabled in a per-phone ACL, deny — even for
+        READ tools, since require_phone_permission only guards live actions."""
         db = MagicMock()
         perms = {"+7900": {"other_tool": True}}
         db.get_setting = AsyncMock(return_value=__import__("json").dumps(perms))
-        result = await require_phone_permission(db, "+7900", "search_messages")
-        assert result is None
+        with patch("src.agent.permission_gate.get_gate", return_value=None):
+            result = await require_phone_permission(db, "+7900", "search_messages")
+        assert result is not None
+        assert "не разрешён" in result["content"][0]["text"]
