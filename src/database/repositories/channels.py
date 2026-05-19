@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 import aiosqlite
 
 from src.models import Channel
@@ -9,6 +11,12 @@ from src.utils.datetime import parse_datetime
 class ChannelsRepository:
     def __init__(self, db: aiosqlite.Connection):
         self._db = db
+        # Serializes the BEGIN IMMEDIATE block in delete_channel against
+        # other delete_channel callers on the same connection. SQLite
+        # itself rejects nested BEGINs ("cannot start a transaction within
+        # a transaction"), so without this lock concurrent deletes would
+        # crash one of them instead of queueing politely.
+        self._delete_channel_lock = asyncio.Lock()
 
     async def add_channel(self, channel: Channel) -> int:
         cur = await self._db.execute(
@@ -262,49 +270,66 @@ class ChannelsRepository:
         await self._db.commit()
 
     async def delete_channel(self, pk: int) -> None:
-        # Preflight-then-delete (final answer to Codex rounds 9–13): the
-        # shared aiosqlite connection runs in autocommit mode, so a
-        # SAVEPOINT-based rollback can be released by any concurrent commit
-        # on the same connection — there is no way to truly bind the
-        # SAVEPOINT to this coroutine without serializing every writer in
-        # the codebase (105+ call sites). We instead check every RESTRICT
-        # foreign-key reference up front and refuse the delete before
-        # touching child rows. The only RESTRICT FK on `channels` is
-        # `pipeline_sources.channel_id` (src/database/schema.py:326); if a
-        # new RESTRICT FK is added later, this preflight must grow with it.
-        # Tests/test_bundles.py::TestChannelBundle::
-        # test_delete_channel_rolls_back_when_referenced_by_pipeline guards
-        # against silently regressing to the post-delete FK-violation
-        # behaviour.
-        cur = await self._db.execute(
-            "SELECT channel_id FROM channels WHERE id = ?", (pk,),
-        )
-        row = await cur.fetchone()
-        if not row:
-            return
-        channel_id = row["channel_id"]
-        # RESTRICT check.
-        cur = await self._db.execute(
-            "SELECT 1 FROM pipeline_sources WHERE channel_id = ? LIMIT 1",
-            (channel_id,),
-        )
-        if await cur.fetchone() is not None:
-            # Raise the same IntegrityError the FK would have raised, so the
-            # FilterDeletionService translates it into skipped_count.
-            raise aiosqlite.IntegrityError(
-                f"FOREIGN KEY constraint failed: pipeline_sources references channel_id={channel_id}"
-            )
-        await self._db.execute(
-            "DELETE FROM messages WHERE channel_id = ?", (channel_id,),
-        )
-        await self._db.execute(
-            "DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,),
-        )
-        await self._db.execute(
-            "DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,),
-        )
-        await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
-        await self._db.commit()
+        # Atomic delete (Codex rounds 9–14): the only RESTRICT FK on
+        # `channels` is `pipeline_sources.channel_id`
+        # (src/database/schema.py:326). To guarantee the preflight check
+        # and the child/parent deletes form one atomic critical section
+        # — even against a concurrent INSERT INTO pipeline_sources — we
+        # explicitly open a transaction with `BEGIN IMMEDIATE`. That
+        # takes SQLite's RESERVED lock on the database file, so any other
+        # writer on this or any other connection blocks until we COMMIT
+        # or ROLLBACK. The preflight then runs *inside* that lock,
+        # eliminating the race window where a pipeline could attach a
+        # new source after the check but before the parent delete.
+        #
+        # If a new RESTRICT FK on `channels` is added later, the
+        # preflight check below must grow with it.
+        async with self._delete_channel_lock:
+            await self._db.execute("BEGIN IMMEDIATE")
+            try:
+                cur = await self._db.execute(
+                    "SELECT channel_id FROM channels WHERE id = ?", (pk,),
+                )
+                row = await cur.fetchone()
+                if not row:
+                    await self._db.execute("COMMIT")
+                    return
+                channel_id = row["channel_id"]
+                # RESTRICT check inside the transaction — no concurrent INSERT
+                # can sneak a new pipeline_source row in before we delete.
+                cur = await self._db.execute(
+                    "SELECT 1 FROM pipeline_sources WHERE channel_id = ? LIMIT 1",
+                    (channel_id,),
+                )
+                if await cur.fetchone() is not None:
+                    await self._db.execute("ROLLBACK")
+                    raise aiosqlite.IntegrityError(
+                        "FOREIGN KEY constraint failed: pipeline_sources references "
+                        f"channel_id={channel_id}"
+                    )
+                await self._db.execute(
+                    "DELETE FROM messages WHERE channel_id = ?", (channel_id,),
+                )
+                await self._db.execute(
+                    "DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,),
+                )
+                await self._db.execute(
+                    "DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,),
+                )
+                await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
+                await self._db.execute("COMMIT")
+            except aiosqlite.IntegrityError:
+                # Already rolled back above (or the COMMIT itself raised).
+                # Let the deletion service translate it into skipped_count.
+                raise
+            except Exception:
+                try:
+                    await self._db.execute("ROLLBACK")
+                except aiosqlite.OperationalError:
+                    # No transaction left to roll back (e.g. COMMIT already
+                    # ran). Surface the original exception unchanged.
+                    pass
+                raise
 
     # ── Tag helpers ──────────────────────────────────────────────────────────
 

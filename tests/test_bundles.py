@@ -215,6 +215,84 @@ class TestChannelBundle:
         )
         assert (await cur.fetchone())["n"] == 0
 
+    async def test_delete_channel_safe_against_concurrent_pipeline_source_insert(self, db):
+        """Codex round 14 regression: a concurrent INSERT INTO
+        pipeline_sources between the preflight check and the parent
+        delete must NOT cause child-row loss. The BEGIN IMMEDIATE
+        transaction in delete_channel holds SQLite's RESERVED lock on
+        the DB file, so any concurrent INSERT serializes behind the
+        delete (or the delete behind the INSERT). Either way the only
+        possible outcomes are:
+          (a) delete wins — channel + child rows gone, INSERT raises FK.
+          (b) insert wins — channel survives intact; preflight detects
+              the new reference and raises IntegrityError; child rows
+              are untouched.
+        The forbidden outcome is "channel survives, child rows gone".
+        """
+        import asyncio
+
+        b = ChannelBundle.from_database(db)
+        pk = await b.add_channel(_channel(channel_id=730, title="RaceTarget"))
+
+        # Seed child rows we will inspect.
+        await db._db.execute(
+            "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, ?)",
+            (730, 1, "payload", "2025-01-01T00:00:00"),
+        )
+        await db._db.execute(
+            "INSERT INTO channel_stats (channel_id, subscriber_count) VALUES (?, ?)",
+            (730, 999),
+        )
+
+        # Pre-create a pipeline (parent table for pipeline_sources).
+        await db._db.execute(
+            "INSERT INTO content_pipelines (name, prompt_template) VALUES (?, ?)",
+            ("p-race", "t"),
+        )
+        cur = await db._db.execute(
+            "SELECT id FROM content_pipelines WHERE name = 'p-race'"
+        )
+        pipeline_row = await cur.fetchone()
+        pipeline_id = pipeline_row["id"]
+
+        async def insert_pipeline_source():
+            try:
+                await db._db.execute(
+                    "INSERT INTO pipeline_sources (pipeline_id, channel_id) VALUES (?, ?)",
+                    (pipeline_id, 730),
+                )
+                await db._db.commit()
+            except Exception as e:
+                return e
+            return None
+
+        # Fire delete + insert concurrently. BEGIN IMMEDIATE in delete_channel
+        # forces serialization; only one of (a) or (b) can happen.
+        results = await asyncio.gather(
+            b.delete_channel(pk),
+            insert_pipeline_source(),
+            return_exceptions=True,
+        )
+
+        # Inspect outcome.
+        channel_still_there = await b.get_by_pk(pk) is not None
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM messages WHERE channel_id = 730"
+        )
+        messages_remaining = (await cur.fetchone())["n"]
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM channel_stats WHERE channel_id = 730"
+        )
+        stats_remaining = (await cur.fetchone())["n"]
+
+        # The forbidden state: channel survives but child rows are gone.
+        forbidden = channel_still_there and (messages_remaining == 0 or stats_remaining == 0)
+        assert not forbidden, (
+            f"Concurrent INSERT INTO pipeline_sources broke atomicity: "
+            f"channel={channel_still_there}, messages={messages_remaining}, "
+            f"stats={stats_remaining}, gather_results={results!r}"
+        )
+
     async def test_delete_channel_rolls_back_when_referenced_by_pipeline(self, db):
         """Codex round 9 regression: pipeline_sources.channel_id has
         ON DELETE RESTRICT, and the DB connection runs in autocommit mode.
