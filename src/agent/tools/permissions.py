@@ -171,6 +171,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "get_forum_topics": ToolCategory.READ,
     "clear_dialog_cache": ToolCategory.WRITE,
     "get_cache_status": ToolCategory.READ,
+    "resolve_entity": ToolCategory.READ,
     # Messaging
     "send_message": ToolCategory.WRITE,
     "forward_messages": ToolCategory.WRITE,
@@ -277,7 +278,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ]),
     ("Диалоги", [
         "search_dialogs", "refresh_dialogs", "leave_dialogs", "create_telegram_channel",
-        "get_forum_topics", "clear_dialog_cache", "get_cache_status",
+        "get_forum_topics", "clear_dialog_cache", "get_cache_status", "resolve_entity",
     ]),
     ("Сообщения", [
         "send_message", "forward_messages", "edit_message", "delete_message",
@@ -385,14 +386,15 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
             else:
                 phone_perms = {}
         if not phone_known:
-            # Per-phone ACL exists but this phone is absent — fail-closed for
-            # WRITE/DELETE so newly added accounts don't silently inherit
-            # all-enabled defaults in a restrictive installation.
+            # Per-phone ACL exists but this phone is absent — fully fail-closed.
+            # Matches require_phone_permission's deny-for-absent semantics and
+            # avoids exposing live Telegram READ tools through an unauthorized
+            # account.
             logger.debug(
-                "Tool permissions: phone=%s not in saved per-phone ACL, using READ-only defaults",
+                "Tool permissions: phone=%s not in saved per-phone ACL, denying everything",
                 phone_used,
             )
-            return dict(missing_defaults)
+            return {name: False for name in TOOL_CATEGORIES}
         result = {name: phone_perms.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
     else:
         phone_used = "(flat/legacy)"
@@ -408,6 +410,11 @@ async def load_tool_permissions_all_phones(db, accounts) -> dict[str, dict[str, 
     """Load permissions for every account phone.  Returns ``{phone: {tool: bool}}``."""
     defaults = _default_permissions()
     missing_defaults = _default_permissions(for_missing_in_saved=True)
+    # All-False template for accounts absent from a per-phone ACL.  Matches the
+    # behaviour of require_phone_permission (deny for absent phones) so the
+    # settings UI never shows pre-checked grants for an account the admin has
+    # not explicitly authorized.
+    all_denied = {name: False for name in TOOL_CATEGORIES}
     saved = await _load_raw_permissions(db)
 
     result = {}
@@ -418,9 +425,10 @@ async def load_tool_permissions_all_phones(db, accounts) -> dict[str, dict[str, 
             result[acc.phone] = {name: phone_perms.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
         elif saved_is_per_phone:
             # Per-phone ACL exists but this account is absent — render the
-            # settings UI fail-closed for WRITE/DELETE so an admin saving this
-            # account tab does not silently grant write/delete powers.
-            result[acc.phone] = dict(missing_defaults)
+            # settings UI fully fail-closed.  Admin must explicitly opt-in
+            # any tool per account; otherwise saving this tab would silently
+            # grant pre-checked READ defaults.
+            result[acc.phone] = dict(all_denied)
         elif saved:
             # Legacy flat → apply to all phones
             result[acc.phone] = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
@@ -434,6 +442,13 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
 
     If *phone* is given, saves under the per-phone key without touching other phones.
     If *phone* is ``None``, saves in legacy flat format (backward compat).
+
+    Phones absent from the saved ACL are NOT materialized when another phone is
+    saved.  Materializing them would re-open the absent-phone leak through the
+    save path: a previously-denied phone would become present in saved with the
+    seeded READ defaults, which then short-circuits require_phone_permission's
+    absent-phone deny.  Admin must explicitly open each account's tab in the
+    settings UI and save it to grant any access.
     """
     global _permissions_cache  # noqa: PLW0603
     _permissions_cache = None  # invalidate cache on save
@@ -446,17 +461,6 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
     if saved and not _is_per_phone_format(saved):
         # Migrate legacy flat → per-phone: existing flat becomes the phone's entry
         saved = {}
-    # Seed unsaved accounts: READ tools enabled, WRITE/DELETE disabled.
-    # Admin must explicitly opt-in WRITE/DELETE per phone — keeps fail-closed
-    # semantics symmetric with how missing keys are treated at read time.
-    seed_defaults = _default_permissions(for_missing_in_saved=True)
-    try:
-        accounts = await _load_account_records(db)
-        for acc in accounts:
-            if acc.phone not in saved:
-                saved[acc.phone] = dict(seed_defaults)
-    except Exception:
-        pass  # DB error — proceed with what we have
     saved[phone] = permissions
     await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(saved, ensure_ascii=False))
 
