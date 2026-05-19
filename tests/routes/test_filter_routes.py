@@ -126,6 +126,33 @@ async def test_hard_delete_no_pks(route_client, db):
 
 
 @pytest.mark.anyio
+async def test_hard_delete_selected_partial_failure_reports_error(route_client, db):
+    """Codex round 9 follow-up: the selected hard-delete route used to
+    always redirect with msg=deleted_filtered even when the service
+    reported skipped rows.  After the round-9 fix the route must
+    surface skipped_count and any purged/expected mismatch the same way
+    /hard-delete-all does."""
+    pk1 = await _add_filtered_channel(db, channel_id=810, title="Sel OK")
+    pk2 = await _add_filtered_channel(db, channel_id=811, title="Sel Skip")
+    await _enable_dev_mode(db)
+    with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
+        mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=1, skipped_count=1)
+        )
+        resp = await route_client.post(
+            "/channels/filter/hard-delete-selected",
+            data={"pks": [str(pk1), str(pk2)]},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+        loc = resp.headers["location"]
+        assert "error=hard_delete_partial" in loc
+        assert "purged=1" in loc
+        assert "skipped=1" in loc
+        assert "expected=2" in loc
+
+
+@pytest.mark.anyio
 async def test_hard_delete_success(route_client, db):
     """Test hard delete channels."""
     pk = await _add_filtered_channel(db, channel_id=800, title="Hard Delete OK")

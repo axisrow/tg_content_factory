@@ -114,6 +114,22 @@ async def hard_delete_selected(request: Request):
         )
     svc = deps.filter_deletion_service(request)
     result = await svc.hard_delete_channels_by_pks(pks)
+    # Codex round 9 follow-up: surface partial failures on the selected path
+    # too. hard_delete_channels_by_pks catches per-channel exceptions into
+    # skipped_count, and child-data rollback (introduced in the round-9
+    # atomicity fix on delete_channel) means a "skipped" row keeps its data
+    # — but only when the FK violation lets us roll back. Either way the
+    # admin needs to see the exact count breakdown.
+    if result.skipped_count or result.purged_count != len(pks):
+        return RedirectResponse(
+            url=(
+                "/channels/filter/manage?error=hard_delete_partial"
+                f"&purged={result.purged_count}"
+                f"&skipped={result.skipped_count}"
+                f"&expected={len(pks)}"
+            ),
+            status_code=303,
+        )
     return RedirectResponse(
         url=(f"/channels/filter/manage?msg=deleted_filtered" f"&count={result.purged_count}"),
         status_code=303,
