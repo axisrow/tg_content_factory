@@ -18,6 +18,47 @@ TOOL_PERMISSIONS_SETTING = "agent_tool_permissions"
 MCP_PREFIX = "mcp__telegram_db__"
 BUILTIN_TOOLS = ["WebSearch", "WebFetch"]
 
+# Tools that bind to a specific Telegram account and route through
+# require_phone_permission (directly or via prepare_telegram_tool). For these
+# tools `load_tool_permissions_union` reports visibility based on explicit
+# per-phone grants only — so the agent never advertises a phone-bound tool
+# that the runtime phone-gate would deny. Non-phone-bound tools (DB search,
+# analytics, settings, …) keep permissive defaults for missing keys.
+#
+# Kept in sync with the static scan in
+# `tests/test_tool_permissions.py::test_every_phone_binded_tool_is_registered_in_tool_categories`.
+PHONE_BINDED_TOOLS: frozenset[str] = frozenset({
+    "archive_chat",
+    "clear_dialog_cache",
+    "create_auto_upload",
+    "create_photo_batch",
+    "create_telegram_channel",
+    "delete_message",
+    "download_media",
+    "edit_admin",
+    "edit_message",
+    "edit_permissions",
+    "forward_messages",
+    "get_broadcast_stats",
+    "get_participants",
+    "kick_participant",
+    "leave_dialogs",
+    "list_photo_dialogs",
+    "mark_read",
+    "pin_message",
+    "read_messages",
+    "refresh_dialogs",
+    "refresh_photo_dialogs",
+    "resolve_entity",
+    "schedule_photos",
+    "search_dialogs",
+    "send_message",
+    "send_photos_now",
+    "send_reaction",
+    "unarchive_chat",
+    "unpin_message",
+})
+
 
 async def _load_account_records(db) -> list[object]:
     for getter_name in ("get_account_summaries", "get_accounts"):
@@ -486,14 +527,26 @@ async def load_tool_permissions_union(db, *, use_cache: bool = False) -> dict[st
     if not saved:
         result = defaults
     elif not _is_per_phone_format(saved):
+        # Legacy flat: missing READ defaults to True, missing WRITE/DELETE to False.
         result = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
     else:
         phone_dicts = [v for v in saved.values() if isinstance(v, dict)]
         if not phone_dicts:
             result = defaults
         else:
+            # Per-phone: a *phone-bound* tool is advertised only when at least
+            # one phone has an explicit True entry — visibility must track
+            # require_phone_permission, which only honours explicit True
+            # (Codex round 5). Non-phone-bound tools keep permissive defaults
+            # so DB-only READ stays available under any per-phone ACL.
             result = {
-                name: any(pd.get(name, missing_defaults[name]) for pd in phone_dicts)
+                name: any(
+                    pd.get(
+                        name,
+                        False if name in PHONE_BINDED_TOOLS else missing_defaults[name],
+                    )
+                    for pd in phone_dicts
+                )
                 for name in TOOL_CATEGORIES
             }
 

@@ -120,11 +120,35 @@ async def hard_delete_selected(request: Request):
     )
 
 
+HARD_DELETE_ALL_CONFIRM_PHRASE = "DELETE_ALL_FILTERED"
+
+
 @router.post("/filter/hard-delete-all")
 async def hard_delete_all(request: Request):
     if not await _dev_mode_enabled(request):
         return RedirectResponse(
             url="/channels/filter/manage?error=dev_mode_required_for_hard_delete",
+            status_code=303,
+        )
+    form = await request.form()
+    # Server-side confirmation: a stale browser page, a re-posted form, a
+    # direct POST or an accidental resubmit must not reach the deletion call.
+    # Require an explicit confirm phrase plus an expected_count that matches
+    # the current filtered-channel total (so changes after the page rendered
+    # bounce the operation back to the user instead of silently wiping more
+    # rows than they saw).
+    confirm = (form.get("confirm") or "").strip()
+    if confirm != HARD_DELETE_ALL_CONFIRM_PHRASE:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=hard_delete_confirm_required",
+            status_code=303,
+        )
+    expected_raw = (form.get("expected_count") or "").strip()
+    try:
+        expected_count = int(expected_raw)
+    except ValueError:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=hard_delete_confirm_required",
             status_code=303,
         )
     db = deps.get_db(request)
@@ -133,6 +157,11 @@ async def hard_delete_all(request: Request):
     if not pks:
         return RedirectResponse(
             url="/channels/filter/manage?error=no_filtered_channels",
+            status_code=303,
+        )
+    if expected_count != len(pks):
+        return RedirectResponse(
+            url="/channels/filter/manage?error=hard_delete_count_changed",
             status_code=303,
         )
     svc = deps.filter_deletion_service(request)
