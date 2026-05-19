@@ -305,19 +305,15 @@ class TestLoadToolPermissions:
         assert result["leave_dialogs"] is False
         assert result["list_channels"] is True  # default
 
-    async def test_per_phone_not_matching_uses_missing_defaults(self, mock_db):
+    async def test_per_phone_not_matching_fully_fail_closed(self, mock_db):
         # When a per-phone ACL exists but the requested phone is absent,
-        # fail-closed: WRITE/DELETE default disabled, READ default enabled.
-        # Previously this returned all-True defaults — that's the bug
-        # Codex flagged in the second adversarial review of #568.
+        # everything is denied (Codex round 4): allowing READ here used to
+        # reopen the absent-phone live-READ leak through the settings save
+        # path. Admin must explicitly opt-in each account.
         saved = {"+79990001111": {"search_messages": False}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
         result = await load_tool_permissions(mock_db, phone="+79990009999")
-        assert result["list_channels"] is True  # READ default
-        assert result["send_message"] is False  # WRITE missing → denied
-        assert result["send_reaction"] is False  # WRITE missing → denied
-        assert result["leave_dialogs"] is False  # DELETE missing → denied
-        assert result["delete_channel"] is False  # DELETE missing → denied
+        assert all(v is False for v in result.values())
 
     async def test_per_phone_no_phone_uses_primary(self, mock_db):
         saved = {"+79990001111": {"search_messages": False}}
@@ -328,16 +324,14 @@ class TestLoadToolPermissions:
         result = await load_tool_permissions(mock_db, phone=None)
         assert result["search_messages"] is False
 
-    async def test_per_phone_no_accounts_returns_missing_defaults(self, mock_db):
+    async def test_per_phone_no_accounts_fully_fail_closed(self, mock_db):
         # Per-phone ACL exists but no primary account to resolve → no phone
-        # matches saved entries.  Fail-closed for WRITE/DELETE.
+        # matches saved entries.  Fully fail-closed (Codex round 4).
         saved = {"+79990001111": {"search_messages": False}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
         mock_db.get_accounts = AsyncMock(return_value=[])
         result = await load_tool_permissions(mock_db, phone=None)
-        assert result["list_channels"] is True  # READ default
-        assert result["send_message"] is False  # WRITE missing → denied
-        assert result["leave_dialogs"] is False  # DELETE missing → denied
+        assert all(v is False for v in result.values())
 
     async def test_per_phone_missing_write_key_returns_false(self, mock_db):
         # WRITE/DELETE tools missing from a saved per-phone entry must come back as False.
@@ -384,11 +378,13 @@ class TestLoadToolPermissionsAllPhones:
         assert result["+7111"]["search_messages"] is False
         assert result["+7222"]["search_messages"] is False
 
-    async def test_per_phone_unsaved_account_gets_missing_defaults(self, mock_db):
-        # An account absent from a per-phone ACL must render with READ-only
-        # missing defaults so saving the settings tab can't silently grant
-        # WRITE/DELETE powers to a newly added account.  Regression test for
-        # the second Codex adversarial review of #568.
+    async def test_per_phone_unsaved_account_fully_fail_closed(self, mock_db):
+        # An account absent from a per-phone ACL renders fully fail-closed
+        # in the settings UI (Codex round 4). Showing READ pre-checked here
+        # used to reopen the absent-phone live-READ leak: admin saving the
+        # tab persisted READ=true and bypassed require_phone_permission's
+        # absent-deny path. Admin must explicitly opt-in each tool per
+        # account.
         saved = {"+7111": {"send_message": True, "leave_dialogs": True}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
         accounts = [
@@ -399,12 +395,8 @@ class TestLoadToolPermissionsAllPhones:
         # Existing account keeps its explicit grants
         assert result["+7111"]["send_message"] is True
         assert result["+7111"]["leave_dialogs"] is True
-        # Unsaved account: READ enabled, WRITE/DELETE disabled
-        assert result["+7999"]["list_channels"] is True  # READ default
-        assert result["+7999"]["send_message"] is False  # WRITE missing
-        assert result["+7999"]["send_reaction"] is False  # WRITE missing
-        assert result["+7999"]["leave_dialogs"] is False  # DELETE missing
-        assert result["+7999"]["delete_channel"] is False  # DELETE missing
+        # Unsaved account: every tool denied — no pre-checked surprises in UI
+        assert all(v is False for v in result["+7999"].values())
 
 
 # ---------------------------------------------------------------------------
@@ -502,8 +494,15 @@ class TestSaveToolPermissions:
         saved = json.loads(mock_db.set_setting.await_args[0][1])
         assert saved["+7111"] == {"a": False}
 
-    async def test_per_phone_seeds_unsaved_accounts(self, mock_db):
-        """Saving for one phone seeds others fail-closed: READ enabled, WRITE/DELETE disabled."""
+    async def test_per_phone_does_not_materialize_unsaved_accounts(self, mock_db):
+        """Saving for one phone must NOT seed entries for other accounts.
+
+        Materializing absent phones at save time used to reopen the
+        absent-phone leak (Codex round 4): a previously-denied phone would
+        become present in saved with READ=true and bypass the per-phone
+        absent-deny path in require_phone_permission. Admin must explicitly
+        open each account's tab and save it to grant any access.
+        """
         mock_db.get_setting = AsyncMock(return_value=None)
         mock_db.get_accounts = AsyncMock(return_value=[
             SimpleNamespace(phone="+7111"), SimpleNamespace(phone="+7222"),
@@ -511,12 +510,9 @@ class TestSaveToolPermissions:
         mock_db.set_setting = AsyncMock()
         await save_tool_permissions(mock_db, {"send_photos_now": False}, phone="+7111")
         saved = json.loads(mock_db.set_setting.await_args[0][1])
-        assert saved["+7111"]["send_photos_now"] is False
-        # +7222 is seeded with READ-only defaults to keep WRITE/DELETE fail-closed.
-        assert "+7222" in saved
-        assert saved["+7222"]["search_messages"] is True  # READ → enabled
-        assert saved["+7222"]["send_photos_now"] is False  # WRITE → disabled
-        assert saved["+7222"]["leave_dialogs"] is False  # DELETE → disabled
+        # Only +7111 was materialized; +7222 stays absent → require_phone_permission denies it.
+        assert list(saved.keys()) == ["+7111"]
+        assert saved["+7111"] == {"send_photos_now": False}
 
     async def test_per_phone_migrates_legacy_flat(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value=json.dumps({"search_messages": True}))
@@ -527,6 +523,40 @@ class TestSaveToolPermissions:
         # Legacy flat discarded, only per-phone entry remains
         assert "+7111" in saved
         assert "search_messages" not in saved
+
+    async def test_save_does_not_grant_live_read_to_absent_phone(self, mock_db):
+        """End-to-end regression for Codex round 4: saving permissions for
+        phone A must NOT silently grant live-READ access to phone B.
+
+        Before this fix, save_tool_permissions seeded every account absent
+        from saved with READ=true defaults, so an admin saving a restrictive
+        ACL for phone A would inadvertently materialize phone B with
+        read_messages=true, defeating require_phone_permission's
+        absent-phone deny path.
+        """
+        # Start with empty ACL (no saved setting)
+        stored: dict[str, str] = {}
+
+        async def fake_get_setting(key: str) -> str | None:
+            return stored.get(key)
+
+        async def fake_set_setting(key: str, value: str) -> None:
+            stored[key] = value
+
+        mock_db.get_setting = AsyncMock(side_effect=fake_get_setting)
+        mock_db.set_setting = AsyncMock(side_effect=fake_set_setting)
+        mock_db.get_accounts = AsyncMock(return_value=[
+            SimpleNamespace(phone="+7111"), SimpleNamespace(phone="+7222"),
+        ])
+        # Admin saves a restrictive ACL for +7111
+        await save_tool_permissions(mock_db, {"pin_message": True}, phone="+7111")
+        # +7222 was NOT touched — it must still be denied for live READ
+        result = await require_phone_permission(mock_db, "+7222", "read_messages")
+        assert result is not None
+        assert "не разрешён" in _text(result)
+        result_dl = await require_phone_permission(mock_db, "+7222", "download_media")
+        assert result_dl is not None
+        assert "не разрешён" in _text(result_dl)
 
 
 # ---------------------------------------------------------------------------
@@ -719,3 +749,44 @@ class TestEndToEndPermissionFlow:
             "confirm": True,
         })
         assert "требует Telegram-клиент" in _text(result)
+
+
+# ---------------------------------------------------------------------------
+# Static registry completeness: every tool that calls require_phone_permission
+# (directly or via prepare_telegram_tool) must be classified in
+# TOOL_CATEGORIES, otherwise it cannot be enabled through the settings UI and
+# the fail-closed deny path locks admins out (Codex round 4 finding).
+# ---------------------------------------------------------------------------
+
+
+def _collect_phone_binded_tool_names() -> set[str]:
+    """Scan src/agent/tools for tool names passed to phone-binded gates."""
+    import re as _re
+    from pathlib import Path as _Path
+
+    root = _Path(__file__).resolve().parent.parent / "src" / "agent" / "tools"
+    patterns = [
+        _re.compile(r'require_phone_permission\([^)]*?["\']([a-zA-Z_]+)["\']', _re.DOTALL),
+        _re.compile(r'prepare_telegram_tool\([^)]*?tool_name=["\']([a-zA-Z_]+)["\']', _re.DOTALL),
+    ]
+    found: set[str] = set()
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for pat in patterns:
+            for match in pat.finditer(text):
+                found.add(match.group(1))
+    return found
+
+
+def test_every_phone_binded_tool_is_registered_in_tool_categories():
+    """Each tool that calls require_phone_permission / prepare_telegram_tool
+    must appear in TOOL_CATEGORIES.  Otherwise the absent-from-ACL deny path
+    locks it out and the settings UI offers no toggle to re-enable it.
+    Codex round 4 caught resolve_entity in exactly this state.
+    """
+    binded = _collect_phone_binded_tool_names()
+    missing = binded - set(TOOL_CATEGORIES.keys())
+    assert not missing, (
+        f"These phone-binded tools are missing from TOOL_CATEGORIES "
+        f"(add them with the right ToolCategory + a MODULE_GROUPS entry): {sorted(missing)}"
+    )
