@@ -1,25 +1,28 @@
 from __future__ import annotations
 
-import asyncio
+from typing import TYPE_CHECKING
 
 import aiosqlite
 
 from src.models import Channel
 from src.utils.datetime import parse_datetime
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
 
 class ChannelsRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
-        # Serializes the BEGIN IMMEDIATE block in delete_channel against
-        # other delete_channel callers on the same connection. SQLite
-        # itself rejects nested BEGINs ("cannot start a transaction within
-        # a transaction"), so without this lock concurrent deletes would
-        # crash one of them instead of queueing politely.
-        self._delete_channel_lock = asyncio.Lock()
+        self._database = database
 
     async def add_channel(self, channel: Channel) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """INSERT INTO channels (channel_id, title, username, channel_type, is_active,
                                      about, linked_chat_id, has_comments, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -44,7 +47,6 @@ class ChannelsRepository:
                 channel.created_at.isoformat() if channel.created_at else None,
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     @staticmethod
@@ -137,15 +139,13 @@ class ChannelsRepository:
         return [self._map_channel(r) for r in rows]
 
     async def update_channel_last_id(self, channel_id: int, last_id: int) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE channels SET last_collected_id = ? WHERE channel_id = ?",
             (last_id, channel_id),
         )
-        await self._db.commit()
 
     async def set_channel_active(self, pk: int, active: bool) -> None:
-        await self._db.execute("UPDATE channels SET is_active = ? WHERE id = ?", (int(active), pk))
-        await self._db.commit()
+        await self._database.execute_write("UPDATE channels SET is_active = ? WHERE id = ?", (int(active), pk))
 
     async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
         if filtered:
@@ -200,39 +200,35 @@ class ChannelsRepository:
         return rowcount if rowcount > 0 else 0
 
     async def set_channel_type(self, channel_id: int, channel_type: str) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE channels SET channel_type=? WHERE channel_id=?",
             (channel_type, channel_id),
         )
-        await self._db.commit()
 
     async def update_channel_meta(
         self, channel_id: int, *, username: str | None, title: str | None
     ) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE channels SET username = ?, title = ? WHERE channel_id = ?",
             (username, title, channel_id),
         )
-        await self._db.commit()
 
     async def update_channel_full_meta(
         self, channel_id: int, *, about: str | None, linked_chat_id: int | None, has_comments: bool
     ) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE channels SET about = ?, linked_chat_id = ?, has_comments = ? WHERE channel_id = ?",
             (about, linked_chat_id, int(has_comments), channel_id),
         )
-        await self._db.commit()
 
     async def update_channel_preferred_phone(
         self, channel_id: int, phone: str | None
     ) -> None:
         """Set or clear the preferred Telegram account phone for collecting this channel."""
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE channels SET preferred_phone = ? WHERE channel_id = ?",
             (phone, channel_id),
         )
-        await self._db.commit()
 
     async def get_preferred_phone(self, channel_id: int) -> str | None:
         """Return the preferred phone for a channel, or None if not set."""
@@ -245,11 +241,10 @@ class ChannelsRepository:
     async def update_channel_created_at(self, channel_id: int, created_at) -> None:
         """Set created_at only if currently NULL (backfill from entity.date)."""
         iso = created_at.isoformat() if hasattr(created_at, "isoformat") else created_at
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE channels SET created_at = ? WHERE channel_id = ? AND created_at IS NULL",
             (iso, channel_id),
         )
-        await self._db.commit()
 
     async def get_forum_topics(self, channel_id: int) -> list[dict]:
         cur = await self._db.execute(
@@ -270,82 +265,48 @@ class ChannelsRepository:
         await self._db.commit()
 
     async def delete_channel(self, pk: int) -> None:
-        # Atomic delete (Codex rounds 9–14): the only RESTRICT FK on
-        # `channels` is `pipeline_sources.channel_id`
-        # (src/database/schema.py:326). The preflight check and the
-        # child/parent deletes run inside an explicit
-        # ``BEGIN IMMEDIATE ... COMMIT/ROLLBACK`` transaction so any
-        # concurrent writer on a *different* connection blocks behind
-        # SQLite's RESERVED lock, and the per-repo asyncio.Lock keeps
-        # our own ``BEGIN IMMEDIATE`` calls from colliding.
-        #
-        # Known limitation (Codex round 15, follow-up issue):
-        # ``BEGIN IMMEDIATE`` cannot block writes from other coroutines
-        # on the *same* aiosqlite connection. The web app shares one
-        # ``app.state.db`` connection, so a same-process write (e.g. a
-        # pipeline service inserting into ``pipeline_sources``) that
-        # interleaves with this delete on the same connection can still
-        # produce an FK violation between the preflight and the parent
-        # delete. Truly closing that window requires a connection-wide
-        # write lock acquired by every commit in the codebase (100+
-        # call sites) and is tracked as a separate refactor. The
-        # unconditional ROLLBACK in the exception handler below makes
-        # sure the connection is never left in a dirty transaction
-        # when that race fires.
+        # Atomic delete via the connection-wide write lock + BEGIN
+        # IMMEDIATE (issue #569). The only RESTRICT FK on `channels` is
+        # `pipeline_sources.channel_id` (src/database/schema.py:326);
+        # the preflight check and the child/parent deletes run inside
+        # Database.transaction(), which holds Database._write_lock for
+        # the whole block — no other coroutine on this aiosqlite
+        # connection can interleave a DML statement and commit our open
+        # transaction prematurely. BEGIN IMMEDIATE itself blocks
+        # writers on *other* connections behind SQLite's RESERVED lock.
         #
         # If a new RESTRICT FK on `channels` is added later, the
         # preflight check below must grow with it.
-        async with self._delete_channel_lock:
-            await self._db.execute("BEGIN IMMEDIATE")
-            committed = False
-            try:
-                cur = await self._db.execute(
-                    "SELECT channel_id FROM channels WHERE id = ?", (pk,),
+        assert self._database is not None, (
+            "ChannelsRepository.delete_channel requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            cur = await conn.execute(
+                "SELECT channel_id FROM channels WHERE id = ?", (pk,),
+            )
+            row = await cur.fetchone()
+            if not row:
+                return
+            channel_id = row["channel_id"]
+            cur = await conn.execute(
+                "SELECT 1 FROM pipeline_sources WHERE channel_id = ? LIMIT 1",
+                (channel_id,),
+            )
+            if await cur.fetchone() is not None:
+                raise aiosqlite.IntegrityError(
+                    "FOREIGN KEY constraint failed: pipeline_sources references "
+                    f"channel_id={channel_id}"
                 )
-                row = await cur.fetchone()
-                if not row:
-                    await self._db.execute("COMMIT")
-                    committed = True
-                    return
-                channel_id = row["channel_id"]
-                # RESTRICT check inside the transaction — no writer on
-                # this or any other connection can sneak a new
-                # pipeline_source row in before our parent delete in the
-                # cross-connection case, and the same-connection race is
-                # the known limitation documented above.
-                cur = await self._db.execute(
-                    "SELECT 1 FROM pipeline_sources WHERE channel_id = ? LIMIT 1",
-                    (channel_id,),
-                )
-                if await cur.fetchone() is not None:
-                    raise aiosqlite.IntegrityError(
-                        "FOREIGN KEY constraint failed: pipeline_sources references "
-                        f"channel_id={channel_id}"
-                    )
-                await self._db.execute(
-                    "DELETE FROM messages WHERE channel_id = ?", (channel_id,),
-                )
-                await self._db.execute(
-                    "DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,),
-                )
-                await self._db.execute(
-                    "DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,),
-                )
-                await self._db.execute("DELETE FROM channels WHERE id = ?", (pk,))
-                await self._db.execute("COMMIT")
-                committed = True
-            finally:
-                if not committed:
-                    # Unconditional ROLLBACK on any failure path
-                    # (Codex round 15) — never leave the shared
-                    # connection in a dirty transaction.
-                    try:
-                        await self._db.execute("ROLLBACK")
-                    except aiosqlite.OperationalError:
-                        # No transaction left to roll back (e.g. SQLite
-                        # already auto-rolled back after a fatal error
-                        # such as the FK violation we just raised).
-                        pass
+            await conn.execute(
+                "DELETE FROM messages WHERE channel_id = ?", (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM channel_stats WHERE channel_id = ?", (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,),
+            )
+            await conn.execute("DELETE FROM channels WHERE id = ?", (pk,))
 
     # ── Tag helpers ──────────────────────────────────────────────────────────
 
@@ -357,12 +318,10 @@ class ChannelsRepository:
         name = name.strip()
         if not name:
             return
-        await self._db.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
-        await self._db.commit()
+        await self._database.execute_write("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
 
     async def delete_tag(self, name: str) -> None:
-        await self._db.execute("DELETE FROM tags WHERE name = ?", (name,))
-        await self._db.commit()
+        await self._database.execute_write("DELETE FROM tags WHERE name = ?", (name,))
 
     async def get_channel_tags(self, channel_pk: int) -> list[str]:
         cur = await self._db.execute(

@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import aiosqlite
+
+if TYPE_CHECKING:
+    from src.database.facade import Database
 
 
 class SettingsRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     async def get_setting(self, key: str) -> str | None:
         cur = await self._db.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -27,9 +38,8 @@ class SettingsRepository:
         return {r["key"]: r["value"] for r in rows}
 
     async def set_setting(self, key: str, value: str) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "INSERT INTO settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
-        await self._db.commit()

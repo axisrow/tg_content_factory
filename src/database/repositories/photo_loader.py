@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import aiosqlite
 
-from src.database.repositories._transactions import begin_immediate
 from src.models import (
     PhotoAutoUploadJob,
     PhotoBatch,
@@ -20,9 +20,19 @@ def _json_loads_list(raw: str | None) -> list:
     return safe_json_loads_list(raw)
 
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
+
 class PhotoLoaderRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     @staticmethod
     def _to_batch(row: aiosqlite.Row) -> PhotoBatch:
@@ -81,7 +91,7 @@ class PhotoLoaderRepository:
         )
 
     async def create_batch(self, batch: PhotoBatch) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """
             INSERT INTO photo_batches (
                 phone, target_dialog_id, target_title, target_type,
@@ -99,7 +109,6 @@ class PhotoLoaderRepository:
                 batch.error,
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def update_batch(
@@ -124,11 +133,10 @@ class PhotoLoaderRepository:
         if not sets:
             return
         params.append(batch_id)
-        await self._db.execute(
+        await self._database.execute_write(
             f"UPDATE photo_batches SET {', '.join(sets)} WHERE id = ?",
             tuple(params),
         )
-        await self._db.commit()
 
     async def get_batch(self, batch_id: int) -> PhotoBatch | None:
         cur = await self._db.execute("SELECT * FROM photo_batches WHERE id = ?", (batch_id,))
@@ -143,7 +151,7 @@ class PhotoLoaderRepository:
         return [self._to_batch(row) for row in await cur.fetchall()]
 
     async def create_item(self, item: PhotoBatchItem) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """
             INSERT INTO photo_batch_items (
                 batch_id, phone, target_dialog_id, target_title, target_type,
@@ -165,7 +173,6 @@ class PhotoLoaderRepository:
                 safe_json_dumps(item.telegram_message_ids),
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def get_item(self, item_id: int) -> PhotoBatchItem | None:
@@ -219,14 +226,13 @@ class PhotoLoaderRepository:
         if not sets:
             return
         params.append(item_id)
-        await self._db.execute(
+        await self._database.execute_write(
             f"UPDATE photo_batch_items SET {', '.join(sets)} WHERE id = ?",
             tuple(params),
         )
-        await self._db.commit()
 
     async def cancel_item(self, item_id: int) -> bool:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """
             UPDATE photo_batch_items
             SET status = ?, completed_at = ?
@@ -241,14 +247,15 @@ class PhotoLoaderRepository:
                 PhotoBatchStatus.RUNNING.value,
             ),
         )
-        await self._db.commit()
         return (cur.rowcount or 0) > 0
 
     async def claim_next_due_item(self, now: datetime) -> PhotoBatchItem | None:
+        assert self._database is not None, (
+            "PhotoLoaderRepository.claim_next_due_item requires a Database reference"
+        )
         now_iso = now.astimezone(timezone.utc).isoformat()
-        try:
-            await begin_immediate(self._db)
-            cur = await self._db.execute(
+        async with self._database.transaction() as conn:
+            cur = await conn.execute(
                 """
                 SELECT id FROM photo_batch_items
                 WHERE status = ? AND (schedule_at IS NULL OR schedule_at <= ?)
@@ -259,10 +266,9 @@ class PhotoLoaderRepository:
             )
             row = await cur.fetchone()
             if row is None:
-                await self._db.commit()
                 return None
             item_id = row["id"]
-            updated = await self._db.execute(
+            updated = await conn.execute(
                 """
                 UPDATE photo_batch_items
                 SET status = ?, started_at = ?, completed_at = NULL, error = NULL
@@ -276,18 +282,13 @@ class PhotoLoaderRepository:
                 ),
             )
             if (updated.rowcount or 0) == 0:
-                await self._db.commit()
                 return None
-            cur = await self._db.execute("SELECT * FROM photo_batch_items WHERE id = ?", (item_id,))
+            cur = await conn.execute("SELECT * FROM photo_batch_items WHERE id = ?", (item_id,))
             claimed = await cur.fetchone()
-            await self._db.commit()
-            return self._to_item(claimed) if claimed else None
-        except Exception:
-            await self._db.rollback()
-            raise
+        return self._to_item(claimed) if claimed else None
 
     async def requeue_running_items_on_startup(self, now: datetime) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """
             UPDATE photo_batch_items
             SET status = ?, started_at = NULL, completed_at = NULL, error = ?
@@ -299,11 +300,10 @@ class PhotoLoaderRepository:
                 PhotoBatchStatus.RUNNING.value,
             ),
         )
-        await self._db.commit()
         return cur.rowcount or 0
 
     async def create_auto_job(self, job: PhotoAutoUploadJob) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """
             INSERT INTO photo_auto_upload_jobs (
                 phone, target_dialog_id, target_title, target_type, folder_path,
@@ -326,7 +326,6 @@ class PhotoLoaderRepository:
                 job.last_seen_marker,
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def update_auto_job(
@@ -371,11 +370,10 @@ class PhotoLoaderRepository:
         if not sets:
             return
         params.append(job_id)
-        await self._db.execute(
+        await self._database.execute_write(
             f"UPDATE photo_auto_upload_jobs SET {', '.join(sets)} WHERE id = ?",
             tuple(params),
         )
-        await self._db.commit()
 
     async def get_auto_job(self, job_id: int) -> PhotoAutoUploadJob | None:
         cur = await self._db.execute("SELECT * FROM photo_auto_upload_jobs WHERE id = ?", (job_id,))
@@ -393,8 +391,7 @@ class PhotoLoaderRepository:
 
     async def delete_auto_job(self, job_id: int) -> None:
         await self._db.execute("DELETE FROM photo_auto_upload_jobs WHERE id = ?", (job_id,))
-        await self._db.execute("DELETE FROM photo_auto_upload_files WHERE job_id = ?", (job_id,))
-        await self._db.commit()
+        await self._database.execute_write("DELETE FROM photo_auto_upload_files WHERE job_id = ?", (job_id,))
 
     async def has_sent_auto_file(self, job_id: int, file_path: str) -> bool:
         cur = await self._db.execute(
@@ -404,11 +401,10 @@ class PhotoLoaderRepository:
         return bool(await cur.fetchone())
 
     async def mark_auto_file_sent(self, job_id: int, file_path: str) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             """
             INSERT OR IGNORE INTO photo_auto_upload_files (job_id, file_path, sent_at)
             VALUES (?, ?, ?)
             """,
             (job_id, file_path, datetime.now(timezone.utc).isoformat()),
         )
-        await self._db.commit()
