@@ -1,17 +1,28 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import aiosqlite
 
 from src.models import SearchQuery, SearchQueryDailyStat
 from src.utils.datetime import parse_datetime
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
 
 class SearchQueriesRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     async def add(self, sq: SearchQuery) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             "INSERT INTO search_queries "
             "(name, query, is_regex, is_fts, is_active, notify_on_collect, "
             "track_stats, interval_minutes, exclude_patterns, max_length, chat_filter) "
@@ -30,7 +41,6 @@ class SearchQueriesRepository:
                 sq.chat_filter,
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def get_all(self, active_only: bool = False) -> list[SearchQuery]:
@@ -48,13 +58,12 @@ class SearchQueriesRepository:
         return self._row_to_model(row) if row else None
 
     async def set_active(self, sq_id: int, active: bool) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE search_queries SET is_active = ? WHERE id = ?", (int(active), sq_id)
         )
-        await self._db.commit()
 
     async def update(self, sq_id: int, sq: SearchQuery) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE search_queries SET name = ?, query = ?, is_regex = ?, is_fts = ?, "
             "notify_on_collect = ?, track_stats = ?, interval_minutes = ?, "
             "exclude_patterns = ?, max_length = ?, chat_filter = ? "
@@ -73,25 +82,30 @@ class SearchQueriesRepository:
                 sq_id,
             ),
         )
-        await self._db.commit()
 
     async def delete(self, sq_id: int) -> None:
-        await self._db.execute("DELETE FROM search_query_stats WHERE query_id = ?", (sq_id,))
-        await self._db.execute("DELETE FROM search_queries WHERE id = ?", (sq_id,))
-        await self._db.commit()
+        assert self._database is not None, (
+            "SearchQueriesRepository.delete requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            await conn.execute("DELETE FROM search_query_stats WHERE query_id = ?", (sq_id,))
+            await conn.execute("DELETE FROM search_queries WHERE id = ?", (sq_id,))
 
     async def record_stat(self, query_id: int, match_count: int) -> None:
         # One stat per query per day: delete existing entry for today, then insert
-        await self._db.execute(
-            "DELETE FROM search_query_stats "
-            "WHERE query_id = ? AND date(recorded_at) = date('now')",
-            (query_id,),
+        assert self._database is not None, (
+            "SearchQueriesRepository.record_stat requires a Database reference"
         )
-        await self._db.execute(
-            "INSERT INTO search_query_stats (query_id, match_count) VALUES (?, ?)",
-            (query_id, match_count),
-        )
-        await self._db.commit()
+        async with self._database.transaction() as conn:
+            await conn.execute(
+                "DELETE FROM search_query_stats "
+                "WHERE query_id = ? AND date(recorded_at) = date('now')",
+                (query_id,),
+            )
+            await conn.execute(
+                "INSERT INTO search_query_stats (query_id, match_count) VALUES (?, ?)",
+                (query_id, match_count),
+            )
 
     async def get_daily_stats(self, query_id: int, days: int = 30) -> list[SearchQueryDailyStat]:
         cur = await self._db.execute(

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
-from src.database.repositories._transactions import begin_immediate
 from src.models import TelegramCommand, TelegramCommandStatus
 from src.utils.datetime import parse_datetime
 from src.utils.json import safe_json_dumps
@@ -22,9 +21,19 @@ def _parse_json(raw: str | None) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
+
 class TelegramCommandsRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     @staticmethod
     def _to_command(row: aiosqlite.Row) -> TelegramCommand:
@@ -42,7 +51,7 @@ class TelegramCommandsRepository:
         )
 
     async def create_command(self, command: TelegramCommand) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """
             INSERT INTO telegram_commands (
                 command_type, payload, status, requested_by, result_payload
@@ -56,7 +65,6 @@ class TelegramCommandsRepository:
                 safe_json_dumps(command.result_payload) if command.result_payload is not None else None,
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def get_command(self, command_id: int) -> TelegramCommand | None:
@@ -110,7 +118,7 @@ class TelegramCommandsRepository:
         they would stay claimed forever, since claim_next_command only picks
         PENDING rows.
         """
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """
             UPDATE telegram_commands
             SET status = ?, started_at = NULL
@@ -118,14 +126,16 @@ class TelegramCommandsRepository:
             """,
             (TelegramCommandStatus.PENDING.value, TelegramCommandStatus.RUNNING.value),
         )
-        await self._db.commit()
         return cur.rowcount or 0
 
     async def claim_next_command(self) -> TelegramCommand | None:
+        assert self._database is not None, (
+            "TelegramCommandsRepository.claim_next_command requires a Database reference"
+        )
         now = datetime.now(timezone.utc).isoformat()
-        await begin_immediate(self._db)
-        try:
-            cur = await self._db.execute(
+        claimed_id: int | None = None
+        async with self._database.transaction() as conn:
+            cur = await conn.execute(
                 """
                 SELECT * FROM telegram_commands
                 WHERE status = ?
@@ -136,9 +146,8 @@ class TelegramCommandsRepository:
             )
             row = await cur.fetchone()
             if row is None:
-                await self._db.commit()
                 return None
-            await self._db.execute(
+            await conn.execute(
                 """
                 UPDATE telegram_commands
                 SET status = ?, started_at = ?
@@ -151,14 +160,8 @@ class TelegramCommandsRepository:
                     TelegramCommandStatus.PENDING.value,
                 ),
             )
-            await self._db.commit()
-            return await self.get_command(row["id"])
-        except BaseException:
-            try:
-                await self._db.rollback()
-            except Exception:
-                pass
-            raise
+            claimed_id = row["id"]
+        return await self.get_command(claimed_id) if claimed_id is not None else None
 
     async def update_command(
         self,
@@ -186,14 +189,6 @@ class TelegramCommandsRepository:
                 error,
                 safe_json_dumps(result_payload) if result_payload is not None else None,
             ]
-            if payload_json is not None:
-                sets.append("payload = ?")
-                params.append(payload_json)
-            params.append(command_id)
-            await self._db.execute(
-                f"UPDATE telegram_commands SET {', '.join(sets)} WHERE id = ?",
-                tuple(params),
-            )
         else:
             sets = ["status = ?", "error = ?", "result_payload = ?", "finished_at = COALESCE(?, finished_at)"]
             params = [
@@ -202,12 +197,11 @@ class TelegramCommandsRepository:
                 safe_json_dumps(result_payload) if result_payload is not None else None,
                 finished_at,
             ]
-            if payload_json is not None:
-                sets.append("payload = ?")
-                params.append(payload_json)
-            params.append(command_id)
-            await self._db.execute(
-                f"UPDATE telegram_commands SET {', '.join(sets)} WHERE id = ?",
-                tuple(params),
-            )
-        await self._db.commit()
+        if payload_json is not None:
+            sets.append("payload = ?")
+            params.append(payload_json)
+        params.append(command_id)
+        await self._database.execute_write(
+            f"UPDATE telegram_commands SET {', '.join(sets)} WHERE id = ?",
+            tuple(params),
+        )

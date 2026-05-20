@@ -1,18 +1,28 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import aiosqlite
+
+if TYPE_CHECKING:
+    from src.database.facade import Database
 
 
 class SearchLogRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     async def log_search(self, phone: str, query: str, results_count: int) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "INSERT INTO search_log (phone, query, results_count) VALUES (?, ?, ?)",
             (phone, query, results_count),
         )
-        await self._db.commit()
 
     async def get_recent_searches(self, limit: int = 20) -> list[dict]:
         cur = await self._db.execute("SELECT * FROM search_log ORDER BY id DESC LIMIT ?", (limit,))

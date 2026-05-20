@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import aiosqlite
 
-from src.database.repositories._transactions import begin_immediate
 from src.models import Account, AccountSessionStatus, AccountSummary
 from src.security import SessionCipher, decrypt_failure_status, log_expected_decrypt_failure
 from src.utils.datetime import parse_datetime
+
+if TYPE_CHECKING:
+    from src.database.facade import Database
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +32,23 @@ class AccountSessionDecryptError(RuntimeError):
 
 
 class AccountsRepository:
-    def __init__(self, db: aiosqlite.Connection, session_cipher: SessionCipher | None = None):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        session_cipher: SessionCipher | None = None,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
         self._session_cipher = session_cipher
+        self._database = database
 
     async def add_account(self, account: Account) -> int:
         session_string = account.session_string
         if self._session_cipher:
             session_string = self._session_cipher.encrypt(session_string)
 
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """INSERT INTO accounts (phone, session_string, is_primary, is_active, is_premium)
                VALUES (?, ?, ?, ?, ?)
                ON CONFLICT(phone) DO UPDATE SET
@@ -53,7 +63,6 @@ class AccountsRepository:
                 int(account.is_premium),
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def migrate_sessions(self) -> int:
@@ -66,10 +75,12 @@ class AccountsRepository:
         if not rows:
             return 0
 
-        migrated = 0
+        assert self._database is not None, (
+            "AccountsRepository.migrate_sessions requires a Database reference"
+        )
 
-        try:
-            await self._db.execute("BEGIN")
+        migrated = 0
+        async with self._database.transaction() as conn:
             for row in rows:
                 raw_session = row["session_string"]
                 try:
@@ -86,16 +97,12 @@ class AccountsRepository:
                     continue
 
                 if migrated_value != raw_session:
-                    await self._db.execute(
+                    await conn.execute(
                         "UPDATE accounts SET session_string = ? WHERE id = ?",
                         (migrated_value, row["id"]),
                     )
                     migrated += 1
                     logger.info("Migrated session format for phone=%s", row["phone"])
-            await self._db.commit()
-        except Exception:
-            await self._db.rollback()
-            raise
 
         return migrated
 
@@ -303,31 +310,30 @@ class AccountsRepository:
         return accounts
 
     async def update_account_flood(self, phone: str, until: datetime | None) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE accounts SET flood_wait_until = ? WHERE phone = ?",
             (until.isoformat() if until else None, phone),
         )
-        await self._db.commit()
 
     async def update_account_premium(self, phone: str, is_premium: bool) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE accounts SET is_premium = ? WHERE phone = ?",
             (int(is_premium), phone),
         )
-        await self._db.commit()
 
     async def set_account_active(self, account_id: int, active: bool) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE accounts SET is_active = ? WHERE id = ?", (int(active), account_id)
         )
-        await self._db.commit()
 
     async def delete_account(self, account_id: int) -> None:
-        try:
-            await begin_immediate(self._db)
-            cur = await self._db.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+        assert self._database is not None, (
+            "AccountsRepository.delete_account requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            cur = await conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
             if (cur.rowcount or 0) > 0:
-                await self._db.execute(
+                await conn.execute(
                     """
                     UPDATE accounts
                     SET is_primary = 1
@@ -344,7 +350,3 @@ class AccountsRepository:
                     )
                     """
                 )
-            await self._db.commit()
-        except Exception:
-            await self._db.rollback()
-            raise

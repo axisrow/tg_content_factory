@@ -1,15 +1,26 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import aiosqlite
 
 from src.models import GenerationRun
 from src.utils.datetime import parse_datetime
 from src.utils.json import safe_json_dumps, safe_json_loads
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
 
 class GenerationRunsRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     @staticmethod
     def _to_generation_run(row: aiosqlite.Row) -> GenerationRun:
@@ -39,78 +50,70 @@ class GenerationRunsRepository:
         )
 
     async def create_run(self, pipeline_id: int | None, prompt: str) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             ("INSERT INTO generation_runs (pipeline_id, status, prompt, created_at) "
              "VALUES (?, 'pending', ?, datetime('now'))"),
             (pipeline_id, prompt),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def set_status(self, run_id: int, status: str, metadata: dict | None = None) -> None:
         if metadata is not None:
-            await self._db.execute(
+            await self._database.execute_write(
                 ("UPDATE generation_runs SET status = ?, metadata = ?, "
                  "updated_at = datetime('now') WHERE id = ?"),
                 (status, safe_json_dumps(metadata, ensure_ascii=False), run_id),
             )
         else:
-            await self._db.execute(
+            await self._database.execute_write(
                 "UPDATE generation_runs SET status = ?, updated_at = datetime('now') WHERE id = ?",
                 (status, run_id),
             )
-        await self._db.commit()
 
     async def save_result(
         self, run_id: int, generated_text: str, metadata: dict | None = None
     ) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             ("UPDATE generation_runs SET generated_text = ?, metadata = ?, status = 'completed', "
              "updated_at = datetime('now') WHERE id = ?"),
             (generated_text, safe_json_dumps(metadata or {}, ensure_ascii=False), run_id),
         )
-        await self._db.commit()
 
     async def set_moderation_status(self, run_id: int, status: str) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') WHERE id = ?",
             (status, run_id),
         )
-        await self._db.commit()
 
     async def set_published_at(self, run_id: int) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             ("UPDATE generation_runs SET published_at = datetime('now'), "
              "moderation_status = 'published', updated_at = datetime('now') WHERE id = ?"),
             (run_id,),
         )
-        await self._db.commit()
 
     async def set_quality_score(
         self, run_id: int, score: float, issues: list[str] | None = None
     ) -> None:
         issues_json = safe_json_dumps(issues, ensure_ascii=False) if issues else None
-        await self._db.execute(
+        await self._database.execute_write(
             ("UPDATE generation_runs SET quality_score = ?, quality_issues = ?, "
              "updated_at = datetime('now') WHERE id = ?"),
             (score, issues_json, run_id),
         )
-        await self._db.commit()
 
     async def set_variants(self, run_id: int, variants: list[str]) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE generation_runs SET variants = ?, updated_at = datetime('now') WHERE id = ?",
             (safe_json_dumps(variants, ensure_ascii=False), run_id),
         )
-        await self._db.commit()
 
     async def select_variant(self, run_id: int, variant_index: int, generated_text: str) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             ("UPDATE generation_runs SET generated_text = ?, selected_variant = ?, "
              "updated_at = datetime('now') WHERE id = ?"),
             (generated_text, variant_index, run_id),
         )
-        await self._db.commit()
 
     async def list_pending_moderation(
         self,
@@ -135,10 +138,9 @@ class GenerationRunsRepository:
 
     async def reset_running_on_startup(self) -> int:
         """Reset generation_runs stuck in 'running' state to 'failed' on server startup."""
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             "UPDATE generation_runs SET status = 'failed', updated_at = datetime('now') WHERE status = 'running'",
         )
-        await self._db.commit()
         return cur.rowcount or 0
 
     async def get(self, run_id: int) -> GenerationRun | None:

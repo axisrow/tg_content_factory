@@ -21,7 +21,7 @@ def cipher():
 @pytest.fixture
 async def repo_with_cipher(db, cipher):
     """Create repository instance with cipher."""
-    return AccountsRepository(db.db, session_cipher=cipher)
+    return AccountsRepository(db.db, session_cipher=cipher, database=db)
 
 
 def make_account(phone: str, session: str = "session_string_123", **kwargs) -> Account:
@@ -385,6 +385,7 @@ async def test_delete_primary_promotes_with_wrong_session_key(repo_with_cipher):
     wrong_key_repo = AccountsRepository(
         repo_with_cipher._db,
         session_cipher=SessionCipher("wrong-key"),
+        database=repo_with_cipher._database,
     )
 
     await wrong_key_repo.delete_account(primary_cur.lastrowid)

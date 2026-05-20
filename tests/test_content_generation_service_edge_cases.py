@@ -98,6 +98,12 @@ class FakeDB:
     async def execute(self, sql, params=()):
         return None
 
+    async def execute_write(self, sql, params=()):
+        # Stub for Database.execute_write — matches the production
+        # facade contract (issue #569). Tests that need to track
+        # calls override this in their TrackingDB subclass.
+        return None
+
     async def get_setting(self, key):
         return self._settings.get(key)
 
@@ -270,6 +276,10 @@ async def test_generate_image_url_from_graph_executor():
             self.executed.append((sql, params))
             return None
 
+        async def execute_write(self, sql, params=()):
+            self.executed.append((sql, params))
+            return None
+
     db = TrackingDB()
     service = ContentGenerationService(db, engine)
 
@@ -322,6 +332,10 @@ async def test_generate_legacy_image_with_image_service():
             self.executed = []
 
         async def execute(self, sql, params=()):
+            self.executed.append((sql, params))
+            return None
+
+        async def execute_write(self, sql, params=()):
             self.executed.append((sql, params))
             return None
 

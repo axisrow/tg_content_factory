@@ -14,7 +14,7 @@ from src.models import Message, SearchQuery
 @pytest.fixture
 async def channels_repo(db):
     """Create channels repository instance."""
-    return ChannelsRepository(db.db)
+    return ChannelsRepository(db.db, database=db)
 
 
 def make_message(
@@ -643,8 +643,8 @@ async def test_get_stats(messages_repo, channels_repo):
     from src.database.repositories.search_queries import SearchQueriesRepository
     from src.models import Account, Channel
 
-    accounts_repo = AccountsRepository(messages_repo._db)
-    queries_repo = SearchQueriesRepository(messages_repo._db)
+    accounts_repo = AccountsRepository(messages_repo._db, database=messages_repo._database)
+    queries_repo = SearchQueriesRepository(messages_repo._db, database=messages_repo._database)
 
     # Add some data
     await accounts_repo.add_account(Account(phone="+123", session_string="s1"))

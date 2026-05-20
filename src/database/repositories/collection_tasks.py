@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
-from src.database.repositories._transactions import begin_immediate
 from src.models import (
     CollectionTask,
     CollectionTaskStatus,
@@ -31,9 +30,19 @@ def _safe_task_type(raw: str) -> CollectionTaskType:
         return CollectionTaskType.CHANNEL_COLLECT
 
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
+
 class CollectionTasksRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     @staticmethod
     def _deserialize_payload(
@@ -126,7 +135,7 @@ class CollectionTasksRepository:
     ) -> int:
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
         payload_json = self._serialize_payload(payload)
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, task_type,"
             " run_after, payload, parent_task_id) "
@@ -141,7 +150,6 @@ class CollectionTasksRepository:
                 parent_task_id,
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def create_collection_task_if_not_active(
@@ -160,7 +168,7 @@ class CollectionTasksRepository:
         """
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
         payload_json = self._serialize_payload(payload)
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, task_type,"
             " run_after, payload, parent_task_id) "
@@ -183,7 +191,6 @@ class CollectionTasksRepository:
                 CollectionTaskStatus.RUNNING.value,
             ),
         )
-        await self._db.commit()
         if cur.rowcount == 1:
             return cur.lastrowid or 0
         return None
@@ -196,7 +203,7 @@ class CollectionTasksRepository:
         parent_task_id: int | None = None,
     ) -> int:
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, task_type,"
             " run_after, payload, parent_task_id) "
@@ -211,15 +218,13 @@ class CollectionTasksRepository:
                 parent_task_id,
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def update_collection_task_progress(self, task_id: int, messages_collected: int) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE collection_tasks SET messages_collected = ? WHERE id = ?",
             (messages_collected, task_id),
         )
-        await self._db.commit()
 
     async def persist_stats_progress(
         self,
@@ -229,11 +234,10 @@ class CollectionTasksRepository:
         messages_collected: int,
     ) -> None:
         """Persist current cursor/counters into the DB row for crash-safe resume."""
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE collection_tasks SET messages_collected = ?, payload = ? WHERE id = ?",
             (messages_collected, self._serialize_payload(payload), task_id),
         )
-        await self._db.commit()
 
     async def update_collection_task(
         self,
@@ -268,11 +272,10 @@ class CollectionTasksRepository:
             sets.append("run_after = ?")
             params.append(run_after.astimezone(timezone.utc).isoformat())
         params.append(task_id)
-        await self._db.execute(
+        await self._database.execute_write(
             f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",
             tuple(params),
         )
-        await self._db.commit()
 
     async def reschedule_collection_task(
         self,
@@ -299,11 +302,10 @@ class CollectionTasksRepository:
             sets.append("note = ?")
             params.append(note)
         params.append(task_id)
-        await self._db.execute(
+        await self._database.execute_write(
             f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",
             tuple(params),
         )
-        await self._db.commit()
 
     async def reset_collection_task_to_pending(
         self,
@@ -322,11 +324,10 @@ class CollectionTasksRepository:
             sets.append("note = ?")
             params.append(note)
         params.append(task_id)
-        await self._db.execute(
+        await self._database.execute_write(
             f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",
             tuple(params),
         )
-        await self._db.commit()
 
     async def get_collection_task(self, task_id: int) -> CollectionTask | None:
         cur = await self._db.execute("SELECT * FROM collection_tasks WHERE id = ?", (task_id,))
@@ -444,7 +445,7 @@ class CollectionTasksRepository:
         messages_collected: int,
     ) -> None:
         """Return an in-progress stats task to PENDING with updated payload/run_after."""
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE collection_tasks "
             "SET status = ?, payload = ?, run_after = ?, messages_collected = ?, "
             "    started_at = NULL, completed_at = NULL, error = NULL "
@@ -457,7 +458,6 @@ class CollectionTasksRepository:
                 task_id,
             ),
         )
-        await self._db.commit()
 
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:
         cur = await self._db.execute(
@@ -473,7 +473,7 @@ class CollectionTasksRepository:
         return [self._to_task(r) for r in rows]
 
     async def delete_pending_channel_tasks(self) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             "DELETE FROM collection_tasks "
             "WHERE task_type = ? AND status = ?",
             (
@@ -481,12 +481,11 @@ class CollectionTasksRepository:
                 CollectionTaskStatus.PENDING.value,
             ),
         )
-        await self._db.commit()
         return cur.rowcount or 0
 
     async def fail_running_collection_tasks_on_startup(self) -> int:
         now = datetime.now(tz=timezone.utc).isoformat()
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             "UPDATE collection_tasks "
             "SET status = 'failed', completed_at = ? "
             "WHERE task_type = ? AND status = ?",
@@ -496,7 +495,6 @@ class CollectionTasksRepository:
                 CollectionTaskStatus.RUNNING.value,
             ),
         )
-        await self._db.commit()
         return cur.rowcount or 0
 
     async def reset_orphaned_running_tasks(self) -> int:
@@ -505,7 +503,7 @@ class CollectionTasksRepository:
         Called on startup to recover from ungraceful shutdowns where RUNNING
         tasks were not properly completed or failed.
         """
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             "UPDATE collection_tasks "
             "SET status = ?, started_at = NULL, completed_at = NULL, error = NULL "
             "WHERE task_type = ? AND status = ?",
@@ -515,7 +513,6 @@ class CollectionTasksRepository:
                 CollectionTaskStatus.RUNNING.value,
             ),
         )
-        await self._db.commit()
         return cur.rowcount or 0
 
     async def create_generic_task(
@@ -539,7 +536,7 @@ class CollectionTasksRepository:
         tt = task_type
         task_type_value = tt.value if isinstance(tt, CollectionTaskType) else tt
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, task_type,"
             " run_after, payload, parent_task_id) "
@@ -554,7 +551,6 @@ class CollectionTasksRepository:
                 parent_task_id,
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def claim_next_due_generic_task(
@@ -579,30 +575,28 @@ class CollectionTasksRepository:
             return None
 
         # Phase 2: acquire write lock only when there is work to claim
-        try:
-            await begin_immediate(self._db)
+        assert self._database is not None, (
+            "CollectionTasksRepository.claim requires a Database reference"
+        )
+        claimed = None
+        async with self._database.transaction() as conn:
             selected_id = peek["id"]
-            updated = await self._db.execute(
+            updated = await conn.execute(
                 "UPDATE collection_tasks "
                 "SET status = 'running', started_at = ?, completed_at = NULL "
                 "WHERE id = ? AND status = ?",
                 (now_iso, selected_id, CollectionTaskStatus.PENDING.value),
             )
             if (updated.rowcount or 0) == 0:
-                await self._db.commit()
                 return None
-            cur = await self._db.execute(
+            cur = await conn.execute(
                 "SELECT * FROM collection_tasks WHERE id = ?",
                 (selected_id,),
             )
             claimed = await cur.fetchone()
-            await self._db.commit()
-            if claimed is None:
-                return None
-            return self._to_task(claimed)
-        except Exception:
-            await self._db.rollback()
-            raise
+        if claimed is None:
+            return None
+        return self._to_task(claimed)
 
     async def requeue_running_generic_tasks_on_startup(
         self, now: datetime, handled_types: list[str]
@@ -611,13 +605,12 @@ class CollectionTasksRepository:
             return 0
         now_iso = now.astimezone(timezone.utc).isoformat()
         placeholders = ", ".join("?" for _ in handled_types)
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             f"UPDATE collection_tasks "
             "SET status = 'pending', started_at = NULL, run_after = COALESCE(run_after, ?) "
             f"WHERE task_type IN ({placeholders}) AND status = ?",
             (now_iso, *handled_types, CollectionTaskStatus.RUNNING.value),
         )
-        await self._db.commit()
         return cur.rowcount or 0
 
     async def has_active_task(
@@ -655,7 +648,7 @@ class CollectionTasksRepository:
             sets.append("note = ?")
             params.append(note)
         params.append(task_id)
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             f"UPDATE collection_tasks SET {', '.join(sets)} " "WHERE id = ? AND status IN (?, ?)",
             (
                 *params,
@@ -663,7 +656,6 @@ class CollectionTasksRepository:
                 CollectionTaskStatus.RUNNING.value,
             ),
         )
-        await self._db.commit()
         return cur.rowcount > 0
 
     async def get_last_completed_collect_task(self) -> CollectionTask | None:

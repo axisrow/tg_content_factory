@@ -31,7 +31,7 @@ _INSERT_STATS_NULL = (
 @pytest.fixture
 async def channels_repo(db):
     """Create channels repository instance."""
-    return ChannelsRepository(db.db)
+    return ChannelsRepository(db.db, database=db)
 
 
 # _has_cyrillic_udf tests

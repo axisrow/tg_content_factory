@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
@@ -20,9 +20,19 @@ def _parse_json(raw: str | None) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
+
 class RuntimeSnapshotsRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     @staticmethod
     def _to_snapshot(row: aiosqlite.Row) -> RuntimeSnapshot:
@@ -34,7 +44,7 @@ class RuntimeSnapshotsRepository:
         )
 
     async def upsert_snapshot(self, snapshot: RuntimeSnapshot) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             """
             INSERT INTO runtime_snapshots (snapshot_type, scope, payload, updated_at)
             VALUES (?, ?, ?, COALESCE(?, datetime('now')))
@@ -49,7 +59,6 @@ class RuntimeSnapshotsRepository:
                 snapshot.updated_at.isoformat() if snapshot.updated_at is not None else None,
             ),
         )
-        await self._db.commit()
 
     async def get_snapshot(self, snapshot_type: str, scope: str = "global") -> RuntimeSnapshot | None:
         cur = await self._db.execute(
