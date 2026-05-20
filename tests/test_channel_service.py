@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from src.models import Channel, CollectionTask
 from src.services.channel_service import ChannelService
 
@@ -299,6 +301,30 @@ class TestDelete:
         await service.delete(3)
 
         bundle.delete_channel.assert_awaited_once_with(3)
+
+    async def test_failed_delete_leaves_collection_tasks_alone(self):
+        """Codex round 11 regression: when delete_channel() raises (e.g.
+        pipeline_sources.channel_id FK RESTRICT), the channel survives —
+        so its active collection tasks must also survive. Cancelling them
+        before the delete would leave a live channel with its collection
+        work silently disabled, which is harder to detect than the FK error.
+        """
+        ch = _make_channel(pk=3, channel_id=-555)
+        task = CollectionTask(id=10, channel_id=-555)
+        queue = MagicMock()
+        queue.cancel_task = AsyncMock()
+
+        bundle = _make_bundle()
+        bundle.get_by_pk = AsyncMock(return_value=ch)
+        bundle.get_active_collection_tasks_for_channel = AsyncMock(return_value=[task])
+        bundle.delete_channel = AsyncMock(side_effect=RuntimeError("FK RESTRICT"))
+
+        service = _make_service(bundle=bundle, queue=queue)
+        with pytest.raises(RuntimeError, match="FK RESTRICT"):
+            await service.delete(3)
+
+        # delete_channel raised — task cancellation must NOT have happened.
+        queue.cancel_task.assert_not_awaited()
 
     async def test_deletes_even_if_channel_not_found(self):
         bundle = _make_bundle()

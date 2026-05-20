@@ -131,17 +131,21 @@ class TestLoadToolPermissions:
         perms = await load_tool_permissions(db, phone="+7900")
         assert perms["search_messages"] is False
         assert perms["list_channels"] is False
-        # Non-specified tools for this phone default to True
-        assert perms["send_message"] is True
+        # Missing READ tools default to True; missing WRITE/DELETE default to False (fail-closed).
+        assert perms["get_channel_stats"] is True  # READ missing → True
+        assert perms["send_message"] is False  # WRITE missing → False
+        assert perms["leave_dialogs"] is False  # DELETE missing → False
 
     @pytest.mark.anyio
-    async def test_per_phone_phone_not_in_saved(self):
+    async def test_per_phone_phone_not_in_saved_fully_fail_closed(self):
+        # Per-phone ACL exists but the requested phone is absent — fully
+        # fail-closed (Codex round 4). Allowing READ here used to reopen the
+        # absent-phone live-READ leak through the save path.
         db = MagicMock()
         raw = json.dumps({"+7900": {"search_messages": False}})
         db.get_setting = AsyncMock(return_value=raw)
         perms = await load_tool_permissions(db, phone="+7800")
-        # Phone not in saved → defaults (all enabled)
-        assert all(perms.values())
+        assert all(v is False for v in perms.values())
 
     @pytest.mark.anyio
     async def test_per_phone_none_defaults_to_primary(self):
@@ -200,14 +204,19 @@ class TestLoadToolPermissionsAllPhones:
         assert result["+7800"]["search_messages"] is True
 
     @pytest.mark.anyio
-    async def test_phone_not_in_saved_gets_defaults(self):
+    async def test_phone_not_in_saved_renders_fully_fail_closed(self):
+        # When per-phone ACL exists but an account is absent, the settings UI
+        # must render every tool denied (Codex round 4). Showing READ
+        # pre-checked here used to reopen the absent-phone leak through save:
+        # admin clicking save persisted READ=true and bypassed the absent-deny
+        # path in require_phone_permission.
         db = MagicMock()
         raw = json.dumps({"+7900": {"search_messages": False}})
         db.get_setting = AsyncMock(return_value=raw)
         acc1 = SimpleNamespace(phone="+7900")
         acc2 = SimpleNamespace(phone="+7800")
         result = await load_tool_permissions_all_phones(db, [acc1, acc2])
-        assert result["+7800"]["search_messages"] is True
+        assert all(v is False for v in result["+7800"].values())
 
 
 # ── save_tool_permissions ─────────────────────────────────────────────────────

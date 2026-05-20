@@ -9,7 +9,6 @@ from src.agent.tools._registry import (
     ToolInputError,
     _text_response,
     arg_csv_ints,
-    arg_int,
     arg_str,
     require_confirmation,
 )
@@ -59,43 +58,6 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
             return _text_response(f"Ошибка отправки сообщения: {e}")
 
     tools.append(send_message)
-
-    @tool(
-        "send_reaction",
-        "Set an emoji reaction on a Telegram message. "
-        "chat_id accepts @username, t.me link, numeric ID, or 'me'. Ask user for confirmation first.",
-        SEND_REACTION_SCHEMA,
-    )
-    async def send_reaction(args):
-        phone, err = await prepare_telegram_tool(ctx, args, tool_name="send_reaction", action="Реакция на сообщение")
-        if err:
-            return err
-        try:
-            chat_id = arg_str(args, "chat_id", required=True)
-            message_id = arg_int(args, "message_id", required=True)
-            emoji = arg_str(args, "emoji", required=True)
-        except ToolInputError:
-            return _text_response("Ошибка: chat_id, message_id и emoji обязательны.")
-        gate = require_confirmation(
-            f"поставит реакцию {emoji} на сообщение #{message_id} в чате {chat_id} от аккаунта {phone}",
-            args,
-        )
-        if gate:
-            return gate
-        try:
-            await TelegramActionService(client_pool).send_reaction(
-                phone=phone,
-                chat_id=chat_id,
-                message_id=int(message_id),
-                emoji=emoji,
-            )
-            return _text_response(f"Реакция {emoji} поставлена на сообщение #{message_id} в чате {chat_id}.")
-        except TelegramActionClientUnavailableError:
-            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
-        except Exception as e:
-            return _text_response(f"Ошибка установки реакции: {e}")
-
-    tools.append(send_reaction)
 
     @tool(
         "edit_message",
@@ -212,4 +174,49 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
             return _text_response(f"Ошибка пересылки сообщений: {e}")
 
     tools.append(forward_messages)
+
+    @tool(
+        "send_reaction",
+        "Set an emoji reaction on a Telegram message. "
+        "chat_id accepts @username, t.me link, numeric ID, or 'me'. Ask user for confirmation first.",
+        SEND_REACTION_SCHEMA,
+    )
+    async def send_reaction(args):
+        phone, err = await prepare_telegram_tool(ctx, args, tool_name="send_reaction", action="Реакция на сообщение")
+        if err:
+            return err
+        try:
+            chat_id = arg_str(args, "chat_id", required=True)
+            emoji = arg_str(args, "emoji", required=True)
+        except ToolInputError:
+            return _text_response("Ошибка: chat_id и emoji обязательны.")
+        message_id = args.get("message_id")
+        if not message_id:
+            return _text_response("Ошибка: message_id обязателен.")
+        try:
+            message_id_int = int(message_id)
+        except (TypeError, ValueError):
+            return _text_response("Ошибка: message_id должен быть целым числом.")
+        gate = require_confirmation(
+            f"поставит реакцию {emoji!r} на сообщение #{message_id_int} в чате {chat_id}",
+            args,
+        )
+        if gate:
+            return gate
+        try:
+            await TelegramActionService(client_pool).send_reaction(
+                phone=phone,
+                chat_id=chat_id,
+                message_id=message_id_int,
+                emoji=emoji,
+                native=True,
+                resolve_entity=True,
+            )
+            return _text_response(f"Реакция {emoji!r} поставлена на сообщение #{message_id_int} в {chat_id}.")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+        except Exception as e:
+            return _text_response(f"Ошибка отправки реакции: {e}")
+
+    tools.append(send_reaction)
     return tools

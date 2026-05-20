@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from src.database.bundles import (
     AccountBundle,
     ChannelBundle,
@@ -126,6 +128,224 @@ class TestChannelBundle:
         await b.delete_channel(pk)
         ch = await b.get_by_pk(pk)
         assert ch is None
+
+    async def test_concurrent_delete_channel_keeps_atomicity_per_call(self, db):
+        """Codex round 12 regression: aiosqlite shares one connection across
+        coroutines, and named SAVEPOINTs use LIFO release semantics. Two
+        overlapping `delete_channel()` calls with the same savepoint name
+        could otherwise let one delete's RELEASE/ROLLBACK target a sibling's
+        frame — defeating the round-9 atomicity guarantee.
+
+        Set up two filtered channels:
+          * `restricted_pk` is referenced by pipeline_sources (FK RESTRICT)
+            and must NOT have its child rows lost.
+          * `free_pk` has no references and must be fully deleted.
+
+        Run both deletes concurrently via asyncio.gather. The lock on the
+        repository must keep them serial; assertions cover both outcomes.
+        """
+        import asyncio
+
+        import aiosqlite
+
+        b = ChannelBundle.from_database(db)
+        restricted_pk = await b.add_channel(_channel(channel_id=720, title="Restricted"))
+        free_pk = await b.add_channel(_channel(channel_id=721, title="Free"))
+
+        # Child rows for both channels.
+        for chid in (720, 721):
+            await db._db.execute(
+                "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, ?)",
+                (chid, 1, f"msg-{chid}", "2025-01-01T00:00:00"),
+            )
+            await db._db.execute(
+                "INSERT INTO channel_stats (channel_id, subscriber_count) VALUES (?, ?)",
+                (chid, 100 + chid),
+            )
+
+        # Restricted: insert a pipeline_source pointing at channel_id=720.
+        await db._db.execute(
+            "INSERT INTO content_pipelines (name, prompt_template) VALUES (?, ?)",
+            ("p-conc", "t"),
+        )
+        cur = await db._db.execute(
+            "SELECT id FROM content_pipelines WHERE name = 'p-conc'"
+        )
+        pipeline_row = await cur.fetchone()
+        await db._db.execute(
+            "INSERT INTO pipeline_sources (pipeline_id, channel_id) VALUES (?, ?)",
+            (pipeline_row["id"], 720),
+        )
+
+        # Fire both deletes concurrently.
+        results = await asyncio.gather(
+            b.delete_channel(restricted_pk),
+            b.delete_channel(free_pk),
+            return_exceptions=True,
+        )
+        # Restricted must have raised (FK violation propagated).
+        assert isinstance(results[0], aiosqlite.IntegrityError), (
+            f"expected IntegrityError for restricted delete, got: {results[0]!r}"
+        )
+        # Free must have completed cleanly.
+        assert results[1] is None
+
+        # Restricted channel: parent + child rows all survive.
+        assert await b.get_by_pk(restricted_pk) is not None
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM messages WHERE channel_id = 720"
+        )
+        assert (await cur.fetchone())["n"] == 1, (
+            "messages for restricted channel were deleted by a concurrent "
+            "delete's RELEASE — the per-repo lock did not serialize correctly"
+        )
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM channel_stats WHERE channel_id = 720"
+        )
+        assert (await cur.fetchone())["n"] == 1
+
+        # Free channel: parent + child rows all gone.
+        assert await b.get_by_pk(free_pk) is None
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM messages WHERE channel_id = 721"
+        )
+        assert (await cur.fetchone())["n"] == 0
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM channel_stats WHERE channel_id = 721"
+        )
+        assert (await cur.fetchone())["n"] == 0
+
+    async def test_delete_channel_safe_against_concurrent_pipeline_source_insert(self, db):
+        """Codex round 14 regression: a concurrent INSERT INTO
+        pipeline_sources between the preflight check and the parent
+        delete must NOT cause child-row loss. The BEGIN IMMEDIATE
+        transaction in delete_channel holds SQLite's RESERVED lock on
+        the DB file, so any concurrent INSERT serializes behind the
+        delete (or the delete behind the INSERT). Either way the only
+        possible outcomes are:
+          (a) delete wins — channel + child rows gone, INSERT raises FK.
+          (b) insert wins — channel survives intact; preflight detects
+              the new reference and raises IntegrityError; child rows
+              are untouched.
+        The forbidden outcome is "channel survives, child rows gone".
+        """
+        import asyncio
+
+        b = ChannelBundle.from_database(db)
+        pk = await b.add_channel(_channel(channel_id=730, title="RaceTarget"))
+
+        # Seed child rows we will inspect.
+        await db._db.execute(
+            "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, ?)",
+            (730, 1, "payload", "2025-01-01T00:00:00"),
+        )
+        await db._db.execute(
+            "INSERT INTO channel_stats (channel_id, subscriber_count) VALUES (?, ?)",
+            (730, 999),
+        )
+
+        # Pre-create a pipeline (parent table for pipeline_sources).
+        await db._db.execute(
+            "INSERT INTO content_pipelines (name, prompt_template) VALUES (?, ?)",
+            ("p-race", "t"),
+        )
+        cur = await db._db.execute(
+            "SELECT id FROM content_pipelines WHERE name = 'p-race'"
+        )
+        pipeline_row = await cur.fetchone()
+        pipeline_id = pipeline_row["id"]
+
+        async def insert_pipeline_source():
+            try:
+                await db._db.execute(
+                    "INSERT INTO pipeline_sources (pipeline_id, channel_id) VALUES (?, ?)",
+                    (pipeline_id, 730),
+                )
+                await db._db.commit()
+            except Exception as e:
+                return e
+            return None
+
+        # Fire delete + insert concurrently. BEGIN IMMEDIATE in delete_channel
+        # forces serialization; only one of (a) or (b) can happen.
+        results = await asyncio.gather(
+            b.delete_channel(pk),
+            insert_pipeline_source(),
+            return_exceptions=True,
+        )
+
+        # Inspect outcome.
+        channel_still_there = await b.get_by_pk(pk) is not None
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM messages WHERE channel_id = 730"
+        )
+        messages_remaining = (await cur.fetchone())["n"]
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM channel_stats WHERE channel_id = 730"
+        )
+        stats_remaining = (await cur.fetchone())["n"]
+
+        # The forbidden state: channel survives but child rows are gone.
+        forbidden = channel_still_there and (messages_remaining == 0 or stats_remaining == 0)
+        assert not forbidden, (
+            f"Concurrent INSERT INTO pipeline_sources broke atomicity: "
+            f"channel={channel_still_there}, messages={messages_remaining}, "
+            f"stats={stats_remaining}, gather_results={results!r}"
+        )
+
+    async def test_delete_channel_rolls_back_when_referenced_by_pipeline(self, db):
+        """Codex round 9 regression: pipeline_sources.channel_id has
+        ON DELETE RESTRICT, and the DB connection runs in autocommit mode.
+        delete_channel deletes messages/channel_stats/forum_topics *before*
+        the channels row.  Without a savepoint the FK violation on the
+        final DELETE would leave the parent row alive but its child data
+        gone.  The atomic wrapper must roll the child deletes back so a
+        "skipped" hard-delete is truly a no-op."""
+        import aiosqlite
+
+        b = ChannelBundle.from_database(db)
+        # Channel that will be referenced by a pipeline_source.
+        pk = await b.add_channel(_channel(channel_id=710, title="Referenced"))
+        # Insert a row in each child table to verify they survive the rollback.
+        await db._db.execute(
+            "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, ?)",
+            (710, 1, "payload", "2025-01-01T00:00:00"),
+        )
+        await db._db.execute(
+            "INSERT INTO channel_stats (channel_id, subscriber_count) VALUES (?, ?)",
+            (710, 500),
+        )
+        # Create a pipeline + pipeline_source pointing at this channel.
+        await db._db.execute(
+            "INSERT INTO content_pipelines (name, prompt_template) VALUES (?, ?)",
+            ("p", "t"),
+        )
+        cur = await db._db.execute("SELECT id FROM content_pipelines WHERE name = 'p'")
+        pipeline_row = await cur.fetchone()
+        await db._db.execute(
+            "INSERT INTO pipeline_sources (pipeline_id, channel_id) VALUES (?, ?)",
+            (pipeline_row["id"], 710),
+        )
+
+        # The hard-delete must raise (FK RESTRICT). The route layer translates
+        # that into skipped_count via the deletion service's try/except.
+        with pytest.raises(aiosqlite.IntegrityError):
+            await b.delete_channel(pk)
+
+        # Channel row must still exist.
+        ch = await b.get_by_pk(pk)
+        assert ch is not None
+        # Child rows must NOT have been deleted by the failed transaction.
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM messages WHERE channel_id = 710"
+        )
+        row = await cur.fetchone()
+        assert row["n"] == 1, "messages were deleted despite channel delete failure"
+        cur = await db._db.execute(
+            "SELECT COUNT(*) AS n FROM channel_stats WHERE channel_id = 710"
+        )
+        row = await cur.fetchone()
+        assert row["n"] == 1, "channel_stats were deleted despite channel delete failure"
 
     async def test_save_and_get_stats(self, db):
         b = ChannelBundle.from_database(db)
