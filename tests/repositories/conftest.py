@@ -18,56 +18,56 @@ from src.models import Channel
 
 @pytest.fixture
 async def accounts_repo(db):
-    return AccountsRepository(db.db)
+    return AccountsRepository(db.db, database=db)
 
 
 @pytest.fixture
 async def channel_stats_repo(db):
-    return ChannelStatsRepository(db.db)
+    return ChannelStatsRepository(db.db, database=db)
 
 
 @pytest.fixture
 async def channels_repo(db):
-    return ChannelsRepository(db.db)
+    return ChannelsRepository(db.db, database=db)
 
 
 @pytest.fixture
 async def collection_tasks_repo(db):
-    return CollectionTasksRepository(db.db)
+    return CollectionTasksRepository(db.db, database=db)
 
 
 @pytest.fixture
 async def content_pipelines_repo(db):
     await db.add_channel(Channel(channel_id=1001, title="Source A"))
     await db.add_channel(Channel(channel_id=1002, title="Source B"))
-    return ContentPipelinesRepository(db.db)
+    return ContentPipelinesRepository(db.db, database=db)
 
 
 @pytest.fixture
 async def filters_repo(db):
-    return FilterRepository(db.db)
+    return FilterRepository(db.db, database=db)
 
 
 @pytest.fixture
 async def messages_repo(db):
-    return MessagesRepository(db.db)
+    return MessagesRepository(db.db, database=db)
 
 
 @pytest.fixture
 async def notification_bots_repo(db):
-    return NotificationBotsRepository(db.db)
+    return NotificationBotsRepository(db.db, database=db)
 
 
 @pytest.fixture
 async def search_log_repo(db):
-    return SearchLogRepository(db.db)
+    return SearchLogRepository(db.db, database=db)
 
 
 @pytest.fixture
 async def search_queries_repo(db):
-    return SearchQueriesRepository(db.db)
+    return SearchQueriesRepository(db.db, database=db)
 
 
 @pytest.fixture
 async def settings_repo(db):
-    return SettingsRepository(db.db)
+    return SettingsRepository(db.db, database=db)

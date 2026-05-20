@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import aiosqlite
 
 from src.models import NotificationBot
 from src.utils.datetime import try_parse_datetime
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
 
 class NotificationBotsRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     async def get_bot(self, tg_user_id: int) -> NotificationBot | None:
         cur = await self._db.execute(
@@ -21,7 +32,7 @@ class NotificationBotsRepository:
         return self._row_to_model(row)
 
     async def save_bot(self, bot: NotificationBot) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """
             INSERT INTO notification_bots (tg_user_id, tg_username, bot_id, bot_username, bot_token)
             VALUES (?, ?, ?, ?, ?)
@@ -33,7 +44,6 @@ class NotificationBotsRepository:
             """,
             (bot.tg_user_id, bot.tg_username, bot.bot_id, bot.bot_username, bot.bot_token),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def count(self) -> int:
@@ -42,11 +52,10 @@ class NotificationBotsRepository:
         return row[0] if row else 0
 
     async def delete_bot(self, tg_user_id: int) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "DELETE FROM notification_bots WHERE tg_user_id = ?",
             (tg_user_id,),
         )
-        await self._db.commit()
 
     @staticmethod
     def _row_to_model(row) -> NotificationBot:

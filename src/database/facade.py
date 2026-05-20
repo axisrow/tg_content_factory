@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import AsyncIterator, Iterable
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -11,6 +13,7 @@ import aiosqlite
 from src.database.bundles import DatabaseRepositories
 from src.database.connection import DBConnection
 from src.database.migrations import run_migrations
+from src.database.repositories._transactions import begin_immediate
 from src.database.repositories.accounts import AccountsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
@@ -57,6 +60,13 @@ class Database:
         self._connection = DBConnection(db_path)
         self._db: aiosqlite.Connection | None = None
         self._fts_available: bool = True
+        # Connection-wide write lock (issue #569). All multi-statement
+        # transactions and autocommit writes acquire this lock so that
+        # coroutines sharing one aiosqlite connection cannot interleave
+        # an autocommit INSERT/UPDATE/DELETE between awaits of an open
+        # BEGIN IMMEDIATE block (which would otherwise commit our open
+        # transaction prematurely under isolation_level=None).
+        self._write_lock: asyncio.Lock = asyncio.Lock()
         self._accounts: AccountsRepository | None = None
         self._channels: ChannelsRepository | None = None
         self._messages: MessagesRepository | None = None
@@ -100,27 +110,30 @@ class Database:
         if self._session_encryption_secret:
             session_cipher = SessionCipher(self._session_encryption_secret)
 
-        self._accounts = AccountsRepository(self._db, session_cipher=session_cipher)
-        self._channels = ChannelsRepository(self._db)
+        self._accounts = AccountsRepository(
+            self._db, session_cipher=session_cipher, database=self
+        )
+        self._channels = ChannelsRepository(self._db, database=self)
         self._messages = MessagesRepository(
             self._db,
             fts_available=self._fts_available,
+            database=self,
         )
-        self._tasks = CollectionTasksRepository(self._db)
-        self._search_log = SearchLogRepository(self._db)
-        self._channel_stats = ChannelStatsRepository(self._db)
-        self._settings = SettingsRepository(self._db)
-        self._filters = FilterRepository(self._db)
-        self._notification_bots = NotificationBotsRepository(self._db)
-        self._search_queries = SearchQueriesRepository(self._db)
-        self._photo_loader = PhotoLoaderRepository(self._db)
-        self._dialog_cache = DialogCacheRepository(self._db)
-        self._content_pipelines = ContentPipelinesRepository(self._db)
-        self._telegram_commands = TelegramCommandsRepository(self._db)
-        self._runtime_snapshots = RuntimeSnapshotsRepository(self._db)
-        self._generation_runs = GenerationRunsRepository(self._db)
-        self._generated_images = GeneratedImagesRepository(self._db)
-        self._pipeline_templates = PipelineTemplatesRepository(self._db)
+        self._tasks = CollectionTasksRepository(self._db, database=self)
+        self._search_log = SearchLogRepository(self._db, database=self)
+        self._channel_stats = ChannelStatsRepository(self._db, database=self)
+        self._settings = SettingsRepository(self._db, database=self)
+        self._filters = FilterRepository(self._db, database=self)
+        self._notification_bots = NotificationBotsRepository(self._db, database=self)
+        self._search_queries = SearchQueriesRepository(self._db, database=self)
+        self._photo_loader = PhotoLoaderRepository(self._db, database=self)
+        self._dialog_cache = DialogCacheRepository(self._db, database=self)
+        self._content_pipelines = ContentPipelinesRepository(self._db, database=self)
+        self._telegram_commands = TelegramCommandsRepository(self._db, database=self)
+        self._runtime_snapshots = RuntimeSnapshotsRepository(self._db, database=self)
+        self._generation_runs = GenerationRunsRepository(self._db, database=self)
+        self._generated_images = GeneratedImagesRepository(self._db, database=self)
+        self._pipeline_templates = PipelineTemplatesRepository(self._db, database=self)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -159,6 +172,61 @@ class Database:
 
     async def execute_fetchall(self, sql: str, params: tuple = ()) -> list:
         return await self._connection.execute_fetchall(sql, params)
+
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Acquire the connection-wide write lock and run BEGIN IMMEDIATE.
+
+        All writes inside the block run on the locked connection — no
+        other coroutine on the same aiosqlite connection can interleave
+        a DML statement that would commit our open transaction
+        prematurely (issue #569).
+
+        Always commits on clean exit, always rolls back on exception.
+        Not reentrant — nesting would deadlock asyncio.Lock.
+        """
+        assert self._db is not None
+        async with self._write_lock:
+            await begin_immediate(self._db)
+            committed = False
+            try:
+                yield self._db
+                await self._db.execute("COMMIT")
+                committed = True
+            finally:
+                if not committed:
+                    try:
+                        await self._db.execute("ROLLBACK")
+                    except aiosqlite.OperationalError:
+                        pass
+
+    async def execute_write(
+        self, sql: str, params: tuple = ()
+    ) -> aiosqlite.Cursor:
+        """Locked single-statement write (INSERT/UPDATE/DELETE/REPLACE).
+
+        Holds Database._write_lock for execute()+commit() so that this
+        autocommit write cannot interleave with another coroutine's
+        open BEGIN IMMEDIATE block on the same connection (issue #569).
+        """
+        assert self._db is not None
+        async with self._write_lock:
+            cur = await self._db.execute(sql, params)
+            await self._db.commit()
+            return cur
+
+    async def executemany_write(
+        self, sql: str, seq: Iterable[Any]
+    ) -> aiosqlite.Cursor:
+        """Locked single-statement batch write (issue #569).
+
+        Returns the cursor (callers may read ``rowcount``).
+        """
+        assert self._db is not None
+        async with self._write_lock:
+            cur = await self._db.executemany(sql, seq)
+            await self._db.commit()
+            return cur
 
     @property
     def db(self) -> aiosqlite.Connection | None:
@@ -326,7 +394,7 @@ class Database:
         if existing:
             return existing["id"]
         try:
-            cur = await self._db.execute(
+            cur = await self.execute_write(
                 """
                 INSERT INTO channel_rename_events
                     (channel_id, old_title, new_title, old_username, new_username)
@@ -334,7 +402,6 @@ class Database:
                 """,
                 (channel_id, old_title, new_title, old_username, new_username),
             )
-            await self._db.commit()
             return cur.lastrowid or 0
         except sqlite3.IntegrityError:
             # Concurrent INSERT won the race; re-select the existing row
@@ -381,7 +448,7 @@ class Database:
         """
         self._require()
         assert self._db is not None
-        await self._db.execute(
+        await self.execute_write(
             """
             UPDATE channel_rename_events
             SET decision = ?, decided_at = datetime('now')
@@ -389,7 +456,6 @@ class Database:
             """,
             (decision, event_id),
         )
-        await self._db.commit()
 
     async def get_rename_event(self, event_id: int) -> dict | None:
         """Return a single rename event by id (including its decision), or None."""
@@ -816,8 +882,7 @@ class Database:
     async def create_agent_thread(self, title: str = "Новый тред") -> int:
         self._require()
         assert self._db is not None
-        cur = await self._db.execute("INSERT INTO agent_threads (title) VALUES (?)", (title,))
-        await self._db.commit()
+        cur = await self.execute_write("INSERT INTO agent_threads (title) VALUES (?)", (title,))
         assert cur.lastrowid is not None
         return cur.lastrowid
 
@@ -842,16 +907,14 @@ class Database:
     async def rename_agent_thread(self, thread_id: int, title: str) -> None:
         self._require()
         assert self._db is not None
-        await self._db.execute(
+        await self.execute_write(
             "UPDATE agent_threads SET title = ? WHERE id = ?", (title, thread_id)
         )
-        await self._db.commit()
 
     async def delete_agent_thread(self, thread_id: int) -> None:
         self._require()
         assert self._db is not None
-        await self._db.execute("DELETE FROM agent_threads WHERE id = ?", (thread_id,))
-        await self._db.commit()
+        await self.execute_write("DELETE FROM agent_threads WHERE id = ?", (thread_id,))
 
     async def get_agent_messages(self, thread_id: int) -> list[dict]:
         self._require()
@@ -867,11 +930,10 @@ class Database:
     async def save_agent_message(self, thread_id: int, role: str, content: str) -> None:
         self._require()
         assert self._db is not None
-        await self._db.execute(
+        await self.execute_write(
             "INSERT INTO agent_messages (thread_id, role, content) VALUES (?, ?, ?)",
             (thread_id, role, content),
         )
-        await self._db.commit()
 
     async def delete_last_agent_exchange(self, thread_id: int) -> None:
         """Delete the last user message and any assistant reply from a thread."""
@@ -889,8 +951,7 @@ class Database:
             return
         last_user_id = row["id"]
         # Delete that user message and any messages after it (assistant reply)
-        await self._db.execute(
+        await self.execute_write(
             "DELETE FROM agent_messages WHERE thread_id = ? AND id >= ?",
             (thread_id, last_user_id),
         )
-        await self._db.commit()

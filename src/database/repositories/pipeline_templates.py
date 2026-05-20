@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import aiosqlite
 
 from src.models import PipelineGraph, PipelineTemplate
 from src.utils.datetime import parse_datetime
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
 
 class PipelineTemplatesRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     @staticmethod
     def _to_template(row: aiosqlite.Row) -> PipelineTemplate:
@@ -49,7 +60,7 @@ class PipelineTemplatesRepository:
         return self._to_template(row) if row else None
 
     async def add(self, template: PipelineTemplate) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """
             INSERT INTO pipeline_templates (name, description, category, template_json, is_builtin)
             VALUES (?, ?, ?, ?, ?)
@@ -62,25 +73,26 @@ class PipelineTemplatesRepository:
                 int(template.is_builtin),
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def delete(self, template_id: int) -> None:
-        await self._db.execute("DELETE FROM pipeline_templates WHERE id = ?", (template_id,))
-        await self._db.commit()
+        await self._database.execute_write("DELETE FROM pipeline_templates WHERE id = ?", (template_id,))
 
     async def ensure_builtins(self, builtins: list[PipelineTemplate]) -> None:
         """Insert builtin templates that don't exist yet (by name)."""
-        for tpl in builtins:
-            cur = await self._db.execute(
-                "SELECT id FROM pipeline_templates WHERE name = ? AND is_builtin = 1", (tpl.name,)
-            )
-            if not await cur.fetchone():
-                await self._db.execute(
-                    """
-                    INSERT INTO pipeline_templates (name, description, category, template_json, is_builtin)
-                    VALUES (?, ?, ?, ?, 1)
-                    """,
-                    (tpl.name, tpl.description, tpl.category, tpl.template_json.to_json()),
+        assert self._database is not None, (
+            "PipelineTemplatesRepository.ensure_builtins requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            for tpl in builtins:
+                cur = await conn.execute(
+                    "SELECT id FROM pipeline_templates WHERE name = ? AND is_builtin = 1", (tpl.name,)
                 )
-        await self._db.commit()
+                if not await cur.fetchone():
+                    await conn.execute(
+                        """
+                        INSERT INTO pipeline_templates (name, description, category, template_json, is_builtin)
+                        VALUES (?, ?, ?, ?, 1)
+                        """,
+                        (tpl.name, tpl.description, tpl.category, tpl.template_json.to_json()),
+                    )

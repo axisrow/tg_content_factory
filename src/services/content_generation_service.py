@@ -138,7 +138,7 @@ class ContentGenerationService:
             if not dry_run:
                 image_url_from_graph = result.get("image_url")
                 if image_url_from_graph:
-                    await self._db.execute(
+                    await self._db.execute_write(
                         "UPDATE generation_runs SET image_url = ? WHERE id = ?",
                         (image_url_from_graph, run_id),
                     )
@@ -149,7 +149,7 @@ class ContentGenerationService:
                     if image_model and pipeline.pipeline_json is None:
                         image_url = await self._generate_image(pipeline, generated_text, model=image_model)
                         if image_url:
-                            await self._db.execute(
+                            await self._db.execute_write(
                                 "UPDATE generation_runs SET image_url = ? WHERE id = ?",
                                 (image_url, run_id),
                             )

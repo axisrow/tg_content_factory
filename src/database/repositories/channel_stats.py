@@ -1,17 +1,28 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import aiosqlite
 
 from src.models import ChannelStats
 from src.utils.datetime import parse_datetime
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
 
 class ChannelStatsRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     async def save_channel_stats(self, stats: ChannelStats) -> int:
-        cur = await self._db.execute(
+        cur = await self._database.execute_write(
             """INSERT INTO channel_stats
                (channel_id, subscriber_count, avg_views, avg_reactions, avg_forwards)
                VALUES (?, ?, ?, ?, ?)""",
@@ -23,7 +34,6 @@ class ChannelStatsRepository:
                 stats.avg_forwards,
             ),
         )
-        await self._db.commit()
         return cur.lastrowid or 0
 
     async def get_channel_stats(self, channel_id: int, limit: int = 1) -> list[ChannelStats]:

@@ -5,12 +5,16 @@ import logging
 import re
 import struct
 from datetime import date, timedelta
+from typing import TYPE_CHECKING
 
 import aiosqlite
 
 from src.models import Message, SearchQuery
 from src.utils.datetime import parse_datetime, parse_required_datetime
 from src.utils.search_query_chat_filter import parse_chat_filter
+
+if TYPE_CHECKING:
+    from src.database.facade import Database
 
 logger = logging.getLogger(__name__)
 _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -48,9 +52,11 @@ class MessagesRepository:
         db: aiosqlite.Connection,
         *,
         fts_available: bool = True,
+        database: "Database | None" = None,
     ):
         self._db = db
         self._fts_available = fts_available
+        self._database = database
 
     @staticmethod
     def _normalize_date_from(value: str | None) -> str | None:
@@ -73,7 +79,7 @@ class MessagesRepository:
         return row["value"] if row else None
 
     async def _set_setting(self, key: str, value: str) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             """
             INSERT INTO settings (key, value)
             VALUES (?, ?)
@@ -81,7 +87,6 @@ class MessagesRepository:
             """,
             (key, value),
         )
-        await self._db.commit()
 
     async def get_embedding_dimensions(self) -> int | None:
         raw_value = await self._get_setting(_EMBEDDING_DIMENSIONS_SETTING)
@@ -102,17 +107,24 @@ class MessagesRepository:
         return int(row["cnt"]) if row else 0
 
     async def reset_embeddings_index(self) -> None:
-        await self._db.execute("DROP TABLE IF EXISTS vec_messages")
-        await self._db.execute("DELETE FROM message_embeddings_json")
-        await self._db.execute(
-            "DELETE FROM settings WHERE key IN (?, ?)",
-            (_EMBEDDING_DIMENSIONS_SETTING, "semantic_last_embedded_id"),
+        assert self._database is not None, (
+            "MessagesRepository.reset_embeddings_index requires a Database reference"
         )
-        await self._db.commit()
+        # DROP TABLE is DDL — under SQLite it causes an implicit COMMIT of
+        # any open transaction on the connection. Wrap all three statements
+        # in a single transaction() so the DDL holds _write_lock and cannot
+        # commit a concurrent BEGIN IMMEDIATE block prematurely.
+        async with self._database.transaction() as conn:
+            await conn.execute("DROP TABLE IF EXISTS vec_messages")
+            await conn.execute("DELETE FROM message_embeddings_json")
+            await conn.execute(
+                "DELETE FROM settings WHERE key IN (?, ?)",
+                (_EMBEDDING_DIMENSIONS_SETTING, "semantic_last_embedded_id"),
+            )
 
     async def insert_message(self, msg: Message) -> bool:
         try:
-            cur = await self._db.execute(
+            cur = await self._database.execute_write(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
                     sender_first_name, sender_last_name, sender_username,
@@ -147,7 +159,6 @@ class MessagesRepository:
                     getattr(msg, "forward_from_channel_id", None),
                 ),
             )
-            await self._db.commit()
             inserted = cur.rowcount > 0
             if msg.reactions_json:
                 await self._upsert_reactions(msg.channel_id, msg.message_id, msg.reactions_json)
@@ -169,12 +180,11 @@ class MessagesRepository:
             return
         data = [(channel_id, message_id, r["emoji"], r.get("count", 0)) for r in items]
         try:
-            await self._db.executemany(
+            await self._database.executemany_write(
                 """INSERT OR REPLACE INTO message_reactions
                    (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)""",
                 data,
             )
-            await self._db.commit()
         except Exception:
             logger.exception(
                 "Failed to upsert reactions for channel_id=%s message_id=%s",
@@ -213,7 +223,7 @@ class MessagesRepository:
             for m in messages
         ]
         try:
-            cur = await self._db.executemany(
+            cur = await self._database.executemany_write(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
                     sender_first_name, sender_last_name, sender_username,
@@ -225,7 +235,6 @@ class MessagesRepository:
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 data,
             )
-            await self._db.commit()
             count = cur.rowcount if cur.rowcount >= 0 else len(messages)
         except Exception as exc:
             logger.error("Failed to insert batch of %d messages: %s", len(messages), exc)
@@ -239,12 +248,11 @@ class MessagesRepository:
         ]
         if reactions_data:
             try:
-                await self._db.executemany(
+                await self._database.executemany_write(
                     """INSERT OR REPLACE INTO message_reactions
                        (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)""",
                     reactions_data,
                 )
-                await self._db.commit()
             except Exception as exc:
                 logger.error("Failed to upsert reactions for batch: %s", exc)
 
@@ -295,11 +303,10 @@ class MessagesRepository:
             (message_id, struct.pack(f"{dimensions}f", *vector))
             for message_id, vector in embeddings
         ]
-        cur = await self._db.executemany(
+        cur = await self._database.executemany_write(
             "INSERT OR REPLACE INTO message_embeddings(message_id, embedding) VALUES (?, ?)",
             payload,
         )
-        await self._db.commit()
         return cur.rowcount if cur.rowcount >= 0 else len(payload)
 
     async def upsert_message_embedding_json(
@@ -314,12 +321,11 @@ class MessagesRepository:
             (message_id, json.dumps(vector, separators=(",", ":")), dimensions)
             for message_id, vector in embeddings
         ]
-        cur = await self._db.executemany(
+        cur = await self._database.executemany_write(
             "INSERT OR REPLACE INTO message_embeddings_json (message_id, embedding, dims) "
             "VALUES (?, ?, ?)",
             payload,
         )
-        await self._db.commit()
         return cur.rowcount if cur.rowcount >= 0 else len(payload)
 
     async def load_all_embeddings_json(self) -> list[tuple[int, list[float]]]:
@@ -960,14 +966,20 @@ class MessagesRepository:
         return result
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
-        await self._db.execute(
-            "DELETE FROM message_embeddings_json WHERE message_id IN "
-            "(SELECT id FROM messages WHERE channel_id = ?)",
-            (channel_id,),
+        assert self._database is not None, (
+            "MessagesRepository.delete_messages_for_channel requires a Database reference"
         )
-        cur = await self._db.execute("DELETE FROM messages WHERE channel_id = ?", (channel_id,))
-        await self._db.commit()
-        return cur.rowcount or 0
+        async with self._database.transaction() as conn:
+            await conn.execute(
+                "DELETE FROM message_embeddings_json WHERE message_id IN "
+                "(SELECT id FROM messages WHERE channel_id = ?)",
+                (channel_id,),
+            )
+            cur = await conn.execute(
+                "DELETE FROM messages WHERE channel_id = ?", (channel_id,)
+            )
+            rowcount = cur.rowcount or 0
+        return rowcount
 
     async def get_stats(self) -> dict:
         cur = await self._db.execute(
@@ -1214,8 +1226,7 @@ class MessagesRepository:
 
     async def update_detected_lang(self, message_db_id: int, lang: str) -> None:
         """Update detected_lang for a message."""
-        await self._db.execute("UPDATE messages SET detected_lang = ? WHERE id = ?", (lang, message_db_id))
-        await self._db.commit()
+        await self._database.execute_write("UPDATE messages SET detected_lang = ? WHERE id = ?", (lang, message_db_id))
 
     # ── translation helpers ──────────────────────────────────────────
 
@@ -1253,8 +1264,10 @@ class MessagesRepository:
     async def update_translation(self, message_db_id: int, target: str, translated_text: str) -> None:
         """Update translation_en or translation_custom for a message."""
         col = "translation_en" if target == "en" else "translation_custom"
-        await self._db.execute(f"UPDATE messages SET {col} = ? WHERE id = ?", (translated_text, message_db_id))
-        await self._db.commit()
+        await self._database.execute_write(
+            f"UPDATE messages SET {col} = ? WHERE id = ?",
+            (translated_text, message_db_id),
+        )
 
     async def get_language_stats(self) -> list[tuple[str, int]]:
         """Return (lang_code, count) pairs for detected languages."""
@@ -1283,13 +1296,20 @@ class MessagesRepository:
         detect_results = await asyncio.to_thread(
             lambda: [(row["id"], TranslationService.detect_language(row["text"])) for row in rows]
         )
+        if not detect_results:
+            return 0
+        assert self._database is not None, (
+            "MessagesRepository.backfill_language_detection requires a Database reference"
+        )
         updated = 0
-        for row_id, lang in detect_results:
-            if lang:
-                await self._db.execute("UPDATE messages SET detected_lang = ? WHERE id = ?", (lang, row_id))
-                updated += 1
-        if updated:
-            await self._db.commit()
+        async with self._database.transaction() as conn:
+            for row_id, lang in detect_results:
+                if lang:
+                    await conn.execute(
+                        "UPDATE messages SET detected_lang = ? WHERE id = ?",
+                        (lang, row_id),
+                    )
+                    updated += 1
         return updated
 
     async def get_views_timeseries(

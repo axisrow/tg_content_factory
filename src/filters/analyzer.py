@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 
 from src.database import Database
 from src.filters.criteria import (
@@ -186,25 +185,17 @@ class ChannelAnalyzer:
 
         updates = [(cid, ",".join(sorted(flags))) for cid, flags in deduped.items()]
 
-        # Rollback any stale transaction left by a prior interrupted operation
-        # (isolation_level=None means autocommit, so rollback is a no-op when clean).
-        try:
-            await conn.execute("BEGIN")
-        except sqlite3.OperationalError as e:
-            if "cannot start a transaction within a transaction" not in str(e):
-                raise
-            await conn.rollback()
-            await conn.execute("BEGIN")
-        try:
+        # Run the reset + bulk-apply inside Database.transaction() so they are
+        # atomic AND hold _write_lock — preventing any concurrent
+        # execute_write() from prematurely committing this transaction
+        # (issue #569). The previous manual BEGIN/commit block bypassed the
+        # lock and reinstated the exact race the lock was added to close.
+        count = 0
+        async with self._database.transaction():
             await self._database.reset_all_channel_filters(commit=False)
-            count = 0
             if updates:
                 count = await self._database.set_channels_filtered_bulk(updates, commit=False)
-            await conn.commit()
-            return count
-        except Exception:
-            await conn.rollback()
-            raise
+        return count
 
     async def precheck_subscriber_ratio(self) -> int:
         """Filter channels by subscriber_count/message_count without Telegram.

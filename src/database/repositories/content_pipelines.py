@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
+from typing import TYPE_CHECKING
 
 import aiosqlite
 
-from src.database.repositories._transactions import begin_immediate
 from src.models import (
     ContentPipeline,
     PipelineGenerationBackend,
@@ -15,10 +15,19 @@ from src.models import (
 )
 from src.utils.datetime import parse_datetime
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
 
 class ContentPipelinesRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     @staticmethod
     def _to_pipeline(row: aiosqlite.Row) -> ContentPipeline:
@@ -79,10 +88,12 @@ class ContentPipelinesRepository:
         source_channel_ids: list[int],
         targets: list[PipelineTarget],
     ) -> int:
-        await begin_immediate(self._db)
-        try:
+        assert self._database is not None, (
+            "ContentPipelinesRepository.add requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
             pipeline_json_str = pipeline.pipeline_json.to_json() if pipeline.pipeline_json else None
-            cur = await self._db.execute(
+            cur = await conn.execute(
                 """
                 INSERT INTO content_pipelines (
                     name, prompt_template, llm_model, image_model, publish_mode,
@@ -108,11 +119,7 @@ class ContentPipelinesRepository:
             pipeline_id = cur.lastrowid or 0
             await self._replace_sources_no_commit(pipeline_id, source_channel_ids)
             await self._replace_targets_no_commit(pipeline_id, targets)
-            await self._db.commit()
             return pipeline_id
-        except Exception:
-            await self._db.rollback()
-            raise
 
     async def get_all(self, active_only: bool = False) -> list[ContentPipeline]:
         sql = "SELECT * FROM content_pipelines"
@@ -132,11 +139,10 @@ class ContentPipelinesRepository:
         return self._to_pipeline(row) if row else None
 
     async def update_generate_interval(self, pipeline_id: int, minutes: int) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE content_pipelines SET generate_interval_minutes = ? WHERE id = ?",
             (minutes, pipeline_id),
         )
-        await self._db.commit()
 
     async def update(
         self,
@@ -145,76 +151,75 @@ class ContentPipelinesRepository:
         source_channel_ids: list[int],
         targets: list[PipelineTarget],
     ) -> bool:
-        await begin_immediate(self._db)
+        assert self._database is not None, (
+            "ContentPipelinesRepository.update requires a Database reference"
+        )
+
+        class _NotFoundError(Exception):
+            pass
+
         try:
-            pipeline_json_str = pipeline.pipeline_json.to_json() if pipeline.pipeline_json else None
-            cur = await self._db.execute(
-                """
-                UPDATE content_pipelines
-                SET name = ?, prompt_template = ?, llm_model = ?, image_model = ?,
-                    publish_mode = ?, generation_backend = ?, is_active = ?,
-                    generate_interval_minutes = ?, publish_times = ?, pipeline_json = ?,
-                    account_phone = ?
-                WHERE id = ?
-                """,
-                (
-                    pipeline.name,
-                    pipeline.prompt_template,
-                    pipeline.llm_model,
-                    pipeline.image_model,
-                    pipeline.publish_mode.value,
-                    pipeline.generation_backend.value,
-                    int(pipeline.is_active),
-                    pipeline.generate_interval_minutes,
-                    pipeline.publish_times,
-                    pipeline_json_str,
-                    pipeline.account_phone,
-                    pipeline_id,
-                ),
-            )
-            if not cur.rowcount:
-                await self._db.rollback()
-                return False
-            await self._replace_sources_no_commit(pipeline_id, source_channel_ids)
-            await self._replace_targets_no_commit(pipeline_id, targets)
-            await self._db.commit()
-            return True
-        except Exception:
-            await self._db.rollback()
-            raise
+            async with self._database.transaction() as conn:
+                pipeline_json_str = pipeline.pipeline_json.to_json() if pipeline.pipeline_json else None
+                cur = await conn.execute(
+                    """
+                    UPDATE content_pipelines
+                    SET name = ?, prompt_template = ?, llm_model = ?, image_model = ?,
+                        publish_mode = ?, generation_backend = ?, is_active = ?,
+                        generate_interval_minutes = ?, publish_times = ?, pipeline_json = ?,
+                        account_phone = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        pipeline.name,
+                        pipeline.prompt_template,
+                        pipeline.llm_model,
+                        pipeline.image_model,
+                        pipeline.publish_mode.value,
+                        pipeline.generation_backend.value,
+                        int(pipeline.is_active),
+                        pipeline.generate_interval_minutes,
+                        pipeline.publish_times,
+                        pipeline_json_str,
+                        pipeline.account_phone,
+                        pipeline_id,
+                    ),
+                )
+                if not cur.rowcount:
+                    raise _NotFoundError
+                await self._replace_sources_no_commit(pipeline_id, source_channel_ids)
+                await self._replace_targets_no_commit(pipeline_id, targets)
+        except _NotFoundError:
+            return False
+        return True
 
     async def set_refinement_steps(self, pipeline_id: int, steps: list[dict]) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE content_pipelines SET refinement_steps = ? WHERE id = ?",
             (json.dumps(steps, ensure_ascii=False), pipeline_id),
         )
-        await self._db.commit()
 
     async def set_pipeline_json(self, pipeline_id: int, graph: PipelineGraph | None) -> None:
         value = graph.to_json() if graph else None
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE content_pipelines SET pipeline_json = ? WHERE id = ?",
             (value, pipeline_id),
         )
-        await self._db.commit()
 
     async def set_active(self, pipeline_id: int, active: bool) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE content_pipelines SET is_active = ? WHERE id = ?",
             (int(active), pipeline_id),
         )
-        await self._db.commit()
 
     async def set_last_generated_id(self, pipeline_id: int, value: int) -> None:
-        await self._db.execute(
+        await self._database.execute_write(
             "UPDATE content_pipelines SET last_generated_id = ? WHERE id = ?",
             (value, pipeline_id),
         )
-        await self._db.commit()
 
     async def delete(self, pipeline_id: int) -> None:
-        await self._db.execute("DELETE FROM content_pipelines WHERE id = ?", (pipeline_id,))
-        await self._db.commit()
+        await self._database.execute_write("DELETE FROM content_pipelines WHERE id = ?", (pipeline_id,))
 
     async def list_sources(self, pipeline_id: int) -> list[PipelineSource]:
         cur = await self._db.execute(

@@ -106,6 +106,13 @@ db.repos.settings.get("key")
 
 Each repository has a `_to_<model>(row)` static helper that maps `aiosqlite.Row` → Pydantic model, including safe `.keys()` checks for nullable/optional columns added by migrations.
 
+**Connection-wide write lock (issue #569).** The web app shares one `aiosqlite.Connection` (autocommit + WAL). All DML must go through one of two locked helpers on `Database` so coroutines on the same connection cannot interleave writes and commit each other's open transactions prematurely:
+
+- `async with db.transaction() as conn` — multi-statement writes; runs `BEGIN IMMEDIATE`, holds `Database._write_lock` for the whole block, commits on clean exit and rolls back on exception.
+- `await db.execute_write(sql, params)` / `await db.executemany_write(sql, seq)` — single-statement autocommit writes; acquires the same lock for the duration of execute+commit.
+
+Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None = None` and call `self._database.transaction()` / `self._database.execute_write()`. Direct `await self._db.commit()` in repositories is a regression — use the helpers.
+
 ### Web app wiring
 
 - `src/web/assembly.py` — `register_routes()` imports and mounts all routers; `configure_app()` binds the `AppContainer` to `app.state.*`

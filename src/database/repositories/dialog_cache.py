@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import aiosqlite
 
-from src.database.repositories._transactions import begin_immediate
 from src.utils.datetime import parse_datetime
+
+if TYPE_CHECKING:
+    from src.database.facade import Database
 
 
 class DialogCacheRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
 
     async def get_dialog(self, phone: str, dialog_id: int) -> dict | None:
         cur = await self._db.execute(
@@ -58,12 +67,14 @@ class DialogCacheRepository:
         ]
 
     async def replace_dialogs(self, phone: str, dialogs: list[dict]) -> None:
-        await begin_immediate(self._db)
-        try:
-            await self._db.execute("DELETE FROM dialog_cache WHERE phone = ?", (phone,))
+        assert self._database is not None, (
+            "DialogCacheRepository.replace_dialogs requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            await conn.execute("DELETE FROM dialog_cache WHERE phone = ?", (phone,))
             if dialogs:
                 cached_at = datetime.now(timezone.utc).isoformat()
-                await self._db.executemany(
+                await conn.executemany(
                     """
                     INSERT INTO dialog_cache (
                         phone, dialog_id, title, username, channel_type,
@@ -84,14 +95,9 @@ class DialogCacheRepository:
                         for dialog in dialogs
                     ],
                 )
-            await self._db.commit()
-        except Exception:
-            await self._db.rollback()
-            raise
 
     async def clear_dialogs(self, phone: str) -> None:
-        await self._db.execute("DELETE FROM dialog_cache WHERE phone = ?", (phone,))
-        await self._db.commit()
+        await self._database.execute_write("DELETE FROM dialog_cache WHERE phone = ?", (phone,))
 
     async def has_dialogs(self, phone: str) -> bool:
         cur = await self._db.execute(
@@ -127,5 +133,4 @@ class DialogCacheRepository:
 
     async def clear_all_dialogs(self) -> None:
         """Delete all entries from dialog_cache regardless of phone."""
-        await self._db.execute("DELETE FROM dialog_cache")
-        await self._db.commit()
+        await self._database.execute_write("DELETE FROM dialog_cache")

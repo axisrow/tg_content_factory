@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 import aiosqlite
 
@@ -15,9 +16,19 @@ def _has_cyrillic_udf(text: str | None) -> int:
     return 1 if _CYRILLIC_RE.search(text) else 0
 
 
+if TYPE_CHECKING:
+    from src.database.facade import Database
+
+
 class FilterRepository:
-    def __init__(self, db: aiosqlite.Connection):
+    def __init__(
+        self,
+        db: aiosqlite.Connection,
+        *,
+        database: "Database | None" = None,
+    ):
         self._db = db
+        self._database = database
         self._udf_registered = False
 
     async def _ensure_udf(self) -> None:
