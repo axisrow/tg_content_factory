@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from unittest.mock import MagicMock
 
+from src.agent.tools import build_agent_tool_registry
 from src.services.telegram_action_inventory import TELEGRAM_ACTION_INVENTORY
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -38,6 +40,7 @@ ENTRYPOINT_FORBIDDEN_ACTION_CALLS = {
     "edit_folder",
     "download_media",
     "leave_channels",
+    "send_reaction",
 }
 
 
@@ -51,6 +54,18 @@ def test_telegram_action_inventory_has_unique_complete_actions():
     for item in TELEGRAM_ACTION_INVENTORY:
         assert item.backend_method, item.action
         assert any((item.cli, item.web_command, item.agent_tool, item.pipeline_node)), item.action
+
+
+def test_telegram_action_inventory_agent_tools_are_registered():
+    registered = {
+        tool.name for tool in build_agent_tool_registry(MagicMock(), client_pool=MagicMock(), wrap_session_gate=False)
+    }
+    missing = [
+        f"{item.action}:{item.agent_tool}"
+        for item in TELEGRAM_ACTION_INVENTORY
+        if item.agent_tool and item.agent_tool not in registered
+    ]
+    assert missing == []
 
 
 def _is_entrypoint_path(relative: Path) -> bool:

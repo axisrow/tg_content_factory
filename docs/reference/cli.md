@@ -157,6 +157,7 @@ python -m src.main dialogs topics --channel-id ID [--phone PHONE]
 python -m src.main dialogs cache-status
 python -m src.main dialogs cache-clear [--phone PHONE]
 python -m src.main dialogs send RECIPIENT TEXT [--phone PHONE] [--yes]
+python -m src.main dialogs react CHAT_ID MESSAGE_ID EMOJI [--phone PHONE]
 python -m src.main dialogs forward FROM_CHAT TO_CHAT MESSAGE_ID [MESSAGE_ID ...] [--phone PHONE] [--yes]
 python -m src.main dialogs edit-message CHAT_ID MESSAGE_ID TEXT [--phone PHONE] [--yes]
 python -m src.main dialogs delete-message CHAT_ID MESSAGE_ID [MESSAGE_ID ...] [--phone PHONE] [--yes]
