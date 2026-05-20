@@ -148,23 +148,48 @@ class ChannelsRepository:
         await self._database.execute_write("UPDATE channels SET is_active = ? WHERE id = ?", (int(active), pk))
 
     async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
+        assert self._database is not None, (
+            "ChannelsRepository.set_channel_filtered requires a Database reference"
+        )
         if filtered:
-            await self._db.execute(
+            await self._database.execute_write(
                 "UPDATE channels SET is_filtered = 1, filter_flags = 'manual' WHERE id = ?",
                 (pk,),
             )
         else:
-            await self._db.execute(
+            await self._database.execute_write(
                 "UPDATE channels SET is_filtered = 0, filter_flags = '' WHERE id = ?",
                 (pk,),
             )
-        await self._db.commit()
 
     async def set_filtered_bulk(
         self, updates: list[tuple[int, str]], *, commit: bool = True
     ) -> int:
         if not updates:
             return 0
+        # When commit=False, the caller already holds a Database.transaction()
+        # block on the shared connection and is responsible for the commit —
+        # we MUST keep using self._db here so our writes land in that open
+        # transaction. When commit=True (standalone use, e.g. from
+        # ensure_channel_filtered) we take Database._write_lock ourselves so
+        # the bulk write is atomic against concurrent transactions on the
+        # same connection (issue #569).
+        if commit:
+            assert self._database is not None, (
+                "ChannelsRepository.set_filtered_bulk requires a Database reference "
+                "when commit=True"
+            )
+            updated_rows = 0
+            async with self._database.transaction() as conn:
+                for channel_id, flags_csv in updates:
+                    cur = await conn.execute(
+                        "UPDATE channels SET is_filtered = 1, filter_flags = ? WHERE channel_id = ?",
+                        (flags_csv, channel_id),
+                    )
+                    rowcount = cur.rowcount if cur.rowcount is not None else 0
+                    if rowcount > 0:
+                        updated_rows += rowcount
+            return updated_rows
         updated_rows = 0
         for channel_id, flags_csv in updates:
             cur = await self._db.execute(
@@ -174,14 +199,20 @@ class ChannelsRepository:
             rowcount = cur.rowcount if cur.rowcount is not None else 0
             if rowcount > 0:
                 updated_rows += rowcount
-        if commit:
-            await self._db.commit()
         return updated_rows
 
     async def reset_all_filters(self, *, commit: bool = True) -> int:
-        cur = await self._db.execute("UPDATE channels SET is_filtered = 0, filter_flags = ''")
         if commit:
-            await self._db.commit()
+            assert self._database is not None, (
+                "ChannelsRepository.reset_all_filters requires a Database reference "
+                "when commit=True"
+            )
+            cur = await self._database.execute_write(
+                "UPDATE channels SET is_filtered = 0, filter_flags = ''"
+            )
+            rowcount = cur.rowcount if cur.rowcount is not None else 0
+            return rowcount if rowcount > 0 else 0
+        cur = await self._db.execute("UPDATE channels SET is_filtered = 0, filter_flags = ''")
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         return rowcount if rowcount > 0 else 0
 
@@ -189,13 +220,19 @@ class ChannelsRepository:
         if not pks:
             return 0
         placeholders = ",".join("?" * len(pks))
-        cur = await self._db.execute(
+        sql = (
             f"UPDATE channels SET is_filtered = 0, filter_flags = '' "
-            f"WHERE is_filtered = 1 AND id IN ({placeholders})",
-            tuple(pks),
+            f"WHERE is_filtered = 1 AND id IN ({placeholders})"
         )
         if commit:
-            await self._db.commit()
+            assert self._database is not None, (
+                "ChannelsRepository.reset_filters_for_pks requires a Database reference "
+                "when commit=True"
+            )
+            cur = await self._database.execute_write(sql, tuple(pks))
+            rowcount = cur.rowcount if cur.rowcount is not None else 0
+            return rowcount if rowcount > 0 else 0
+        cur = await self._db.execute(sql, tuple(pks))
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         return rowcount if rowcount > 0 else 0
 
