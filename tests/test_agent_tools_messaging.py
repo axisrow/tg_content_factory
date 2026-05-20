@@ -124,6 +124,12 @@ class TestSendReaction:
         assert "Реакция 🔥 поставлена" in _text(result)
         mock_client.get_entity.assert_awaited_with("@chat")
         mock_client.send_reaction.assert_awaited_once()
+        # Verify call arguments — guards against accidental positional swap
+        # (e.g. emoji ↔ message_id) that assert_awaited_once would miss.
+        call_args = mock_client.send_reaction.await_args
+        assert call_args.args[1] == 5
+        assert call_args.args[2] == "🔥"
+        assert call_args.args[0] is mock_client.get_entity.return_value
 
 
 class TestEditMessage:
