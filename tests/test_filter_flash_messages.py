@@ -11,7 +11,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from src.web.template_globals import FLASH_ERRORS
+from src.web.template_globals import FLASH_ERRORS, FLASH_MESSAGES
+
+
+def test_filter_success_codes_registered():
+    """Every success code emitted by the filter routes must be in
+    FLASH_MESSAGES so the alert banner renders a human-readable message
+    instead of silently swallowing the redirect (review feedback on #568)."""
+    required = {
+        "filter_reset",
+        "filter_reset_selected",
+        "filter_applied",
+        "filter_toggled",
+    }
+    missing = required - set(FLASH_MESSAGES.keys())
+    assert not missing, f"FLASH_MESSAGES is missing: {sorted(missing)}"
 
 
 def test_hard_delete_error_codes_registered():
