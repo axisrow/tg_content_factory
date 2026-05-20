@@ -107,12 +107,20 @@ class MessagesRepository:
         return int(row["cnt"]) if row else 0
 
     async def reset_embeddings_index(self) -> None:
-        await self._db.execute("DROP TABLE IF EXISTS vec_messages")
-        await self._db.execute("DELETE FROM message_embeddings_json")
-        await self._database.execute_write(
-            "DELETE FROM settings WHERE key IN (?, ?)",
-            (_EMBEDDING_DIMENSIONS_SETTING, "semantic_last_embedded_id"),
+        assert self._database is not None, (
+            "MessagesRepository.reset_embeddings_index requires a Database reference"
         )
+        # DROP TABLE is DDL — under SQLite it causes an implicit COMMIT of
+        # any open transaction on the connection. Wrap all three statements
+        # in a single transaction() so the DDL holds _write_lock and cannot
+        # commit a concurrent BEGIN IMMEDIATE block prematurely.
+        async with self._database.transaction() as conn:
+            await conn.execute("DROP TABLE IF EXISTS vec_messages")
+            await conn.execute("DELETE FROM message_embeddings_json")
+            await conn.execute(
+                "DELETE FROM settings WHERE key IN (?, ?)",
+                (_EMBEDDING_DIMENSIONS_SETTING, "semantic_last_embedded_id"),
+            )
 
     async def insert_message(self, msg: Message) -> bool:
         try:
@@ -958,13 +966,20 @@ class MessagesRepository:
         return result
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
-        await self._db.execute(
-            "DELETE FROM message_embeddings_json WHERE message_id IN "
-            "(SELECT id FROM messages WHERE channel_id = ?)",
-            (channel_id,),
+        assert self._database is not None, (
+            "MessagesRepository.delete_messages_for_channel requires a Database reference"
         )
-        cur = await self._database.execute_write("DELETE FROM messages WHERE channel_id = ?", (channel_id,))
-        return cur.rowcount or 0
+        async with self._database.transaction() as conn:
+            await conn.execute(
+                "DELETE FROM message_embeddings_json WHERE message_id IN "
+                "(SELECT id FROM messages WHERE channel_id = ?)",
+                (channel_id,),
+            )
+            cur = await conn.execute(
+                "DELETE FROM messages WHERE channel_id = ?", (channel_id,)
+            )
+            rowcount = cur.rowcount or 0
+        return rowcount
 
     async def get_stats(self) -> dict:
         cur = await self._db.execute(

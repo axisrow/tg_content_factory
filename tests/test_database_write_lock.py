@@ -58,9 +58,9 @@ async def test_execute_write_acquires_lock(db: Database):
     finally:
         db._db.execute = original  # type: ignore[union-attr,assignment]
 
-    # Two execute calls per execute_write (DML + commit). We care
-    # only that the two write critical sections do not overlap.
-    # Each "interval" group of 2 belongs to one execute_write.
+    # One execute call per execute_write (commit is await self._db.commit(),
+    # not execute("COMMIT")). We only care that the two write critical
+    # sections do not overlap.
     assert len(intervals) >= 2
     # The first write must finish before the second starts.
     intervals.sort()

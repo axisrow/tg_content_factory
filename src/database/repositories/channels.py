@@ -255,14 +255,17 @@ class ChannelsRepository:
         return [{"id": row["topic_id"], "title": row["title"]} for row in rows]
 
     async def upsert_forum_topics(self, channel_id: int, topics: list[dict]) -> None:
-        await self._db.execute("DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,))
-        if topics:
-            await self._db.executemany(
-                "INSERT INTO forum_topics (channel_id, topic_id, title, updated_at)"
-                " VALUES (?, ?, ?, datetime('now'))",
-                [(channel_id, t["id"], t["title"]) for t in topics],
-            )
-        await self._db.commit()
+        assert self._database is not None, (
+            "ChannelsRepository.upsert_forum_topics requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            await conn.execute("DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,))
+            if topics:
+                await conn.executemany(
+                    "INSERT INTO forum_topics (channel_id, topic_id, title, updated_at)"
+                    " VALUES (?, ?, ?, datetime('now'))",
+                    [(channel_id, t["id"], t["title"]) for t in topics],
+                )
 
     async def delete_channel(self, pk: int) -> None:
         # Atomic delete via the connection-wide write lock + BEGIN
@@ -334,16 +337,19 @@ class ChannelsRepository:
         return [row["name"] for row in await cur.fetchall()]
 
     async def set_channel_tags(self, channel_pk: int, tag_names: list[str]) -> None:
+        assert self._database is not None, (
+            "ChannelsRepository.set_channel_tags requires a Database reference"
+        )
         tag_names = [n.strip() for n in tag_names if n.strip()]
-        await self._db.execute("DELETE FROM channel_tags WHERE channel_pk = ?", (channel_pk,))
-        for name in tag_names:
-            await self._db.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
-            await self._db.execute(
-                """INSERT OR IGNORE INTO channel_tags (channel_pk, tag_id)
-                   SELECT ?, id FROM tags WHERE name = ?""",
-                (channel_pk, name),
-            )
-        await self._db.commit()
+        async with self._database.transaction() as conn:
+            await conn.execute("DELETE FROM channel_tags WHERE channel_pk = ?", (channel_pk,))
+            for name in tag_names:
+                await conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
+                await conn.execute(
+                    """INSERT OR IGNORE INTO channel_tags (channel_pk, tag_id)
+                       SELECT ?, id FROM tags WHERE name = ?""",
+                    (channel_pk, name),
+                )
 
     async def get_channels_by_tag(self, tag: str) -> list[Channel]:
         cur = await self._db.execute(

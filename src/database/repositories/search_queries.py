@@ -84,20 +84,28 @@ class SearchQueriesRepository:
         )
 
     async def delete(self, sq_id: int) -> None:
-        await self._db.execute("DELETE FROM search_query_stats WHERE query_id = ?", (sq_id,))
-        await self._database.execute_write("DELETE FROM search_queries WHERE id = ?", (sq_id,))
+        assert self._database is not None, (
+            "SearchQueriesRepository.delete requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            await conn.execute("DELETE FROM search_query_stats WHERE query_id = ?", (sq_id,))
+            await conn.execute("DELETE FROM search_queries WHERE id = ?", (sq_id,))
 
     async def record_stat(self, query_id: int, match_count: int) -> None:
         # One stat per query per day: delete existing entry for today, then insert
-        await self._db.execute(
-            "DELETE FROM search_query_stats "
-            "WHERE query_id = ? AND date(recorded_at) = date('now')",
-            (query_id,),
+        assert self._database is not None, (
+            "SearchQueriesRepository.record_stat requires a Database reference"
         )
-        await self._database.execute_write(
-            "INSERT INTO search_query_stats (query_id, match_count) VALUES (?, ?)",
-            (query_id, match_count),
-        )
+        async with self._database.transaction() as conn:
+            await conn.execute(
+                "DELETE FROM search_query_stats "
+                "WHERE query_id = ? AND date(recorded_at) = date('now')",
+                (query_id,),
+            )
+            await conn.execute(
+                "INSERT INTO search_query_stats (query_id, match_count) VALUES (?, ?)",
+                (query_id, match_count),
+            )
 
     async def get_daily_stats(self, query_id: int, days: int = 30) -> list[SearchQueryDailyStat]:
         cur = await self._db.execute(

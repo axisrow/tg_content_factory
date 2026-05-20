@@ -390,8 +390,12 @@ class PhotoLoaderRepository:
         return [self._to_auto_job(row) for row in await cur.fetchall()]
 
     async def delete_auto_job(self, job_id: int) -> None:
-        await self._db.execute("DELETE FROM photo_auto_upload_jobs WHERE id = ?", (job_id,))
-        await self._database.execute_write("DELETE FROM photo_auto_upload_files WHERE job_id = ?", (job_id,))
+        assert self._database is not None, (
+            "PhotoLoaderRepository.delete_auto_job requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            await conn.execute("DELETE FROM photo_auto_upload_jobs WHERE id = ?", (job_id,))
+            await conn.execute("DELETE FROM photo_auto_upload_files WHERE job_id = ?", (job_id,))
 
     async def has_sent_auto_file(self, job_id: int, file_path: str) -> bool:
         cur = await self._db.execute(
