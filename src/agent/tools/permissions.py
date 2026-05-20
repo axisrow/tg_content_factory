@@ -215,12 +215,12 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "resolve_entity": ToolCategory.READ,
     # Messaging
     "send_message": ToolCategory.WRITE,
+    "send_reaction": ToolCategory.WRITE,
     "forward_messages": ToolCategory.WRITE,
     "edit_message": ToolCategory.WRITE,
     "delete_message": ToolCategory.DELETE,
     "pin_message": ToolCategory.WRITE,
     "unpin_message": ToolCategory.WRITE,
-    "send_reaction": ToolCategory.WRITE,
     "download_media": ToolCategory.READ,
     "get_participants": ToolCategory.READ,
     "edit_admin": ToolCategory.WRITE,
@@ -322,8 +322,8 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "get_forum_topics", "clear_dialog_cache", "get_cache_status", "resolve_entity",
     ]),
     ("Сообщения", [
-        "send_message", "forward_messages", "edit_message", "delete_message",
-        "pin_message", "unpin_message", "send_reaction", "download_media", "read_messages",
+        "send_message", "send_reaction", "forward_messages", "edit_message", "delete_message",
+        "pin_message", "unpin_message", "download_media", "read_messages",
     ]),
     ("Управление чатом", [
         "get_participants", "edit_admin", "edit_permissions", "kick_participant",
