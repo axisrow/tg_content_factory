@@ -27,6 +27,18 @@
           data-confirm="Очистить сообщения у ВСЕХ {{ total }} отфильтрованных каналов?">
         <button type="submit" class="btn btn-warning btn-sm">Очистить все сообщения</button>
     </form>
+    {% if dev_mode %}
+    <form method="post" action="/channels/filter/hard-delete-all"
+          class="d-inline-flex align-items-center gap-2" data-busy>
+        <input type="text" name="confirm" required autocomplete="off" spellcheck="false"
+               placeholder="Введите DELETE_ALL_FILTERED" class="form-control form-control-sm"
+               style="width: 14rem;"
+               aria-label="Подтверждение удаления">
+        <input type="hidden" name="confirm_pks"
+               value="{% for ch in channels %}{% if ch.id is not none and ch.channel_id is not none %}{{ ch.id }}:{{ ch.channel_id }}{% if not loop.last %},{% endif %}{% endif %}{% endfor %}">
+        <button type="submit" class="btn btn-danger btn-sm">Удалить все {{ total }} из БД</button>
+    </form>
+    {% endif %}
     {% endif %}
 </div>
 
@@ -70,6 +82,11 @@
             Очистить сообщения (<span class="selected-count">0</span>)
         </button>
     </form>
+    <form method="post" action="/channels/filter/reset-selected" id="reset-selected-form" class="d-inline" data-busy>
+        <button type="submit" class="btn btn-outline-secondary action-btn" disabled>
+            Сбросить выбранные (<span class="selected-count">0</span>)
+        </button>
+    </form>
     {% if dev_mode %}
     <form method="post" action="/channels/filter/hard-delete-selected" id="hard-delete-form" class="d-inline" data-busy>
         <button type="submit" class="btn btn-danger action-btn" disabled>
@@ -100,7 +117,7 @@
     function syncHiddenInputs() {
         document.querySelectorAll('.synced-pk').forEach(function(el) { el.remove(); });
         var pks = getCheckedPks();
-        document.querySelectorAll('#purge-form, #hard-delete-form').forEach(function(form) {
+        document.querySelectorAll('#purge-form, #hard-delete-form, #reset-selected-form').forEach(function(form) {
             pks.forEach(function(pk) {
                 var input = document.createElement('input');
                 input.type = 'hidden';
@@ -158,6 +175,9 @@
     });
     attachDynamicConfirm('hard-delete-form', function(n) {
         return 'ПОЛНОСТЬЮ удалить ' + n + ' канал(ов) из базы данных? Это действие необратимо.';
+    });
+    attachDynamicConfirm('reset-selected-form', function(n) {
+        return 'Сбросить флаг отфильтрованности у ' + n + ' канал(ов)?';
     });
 })();
 

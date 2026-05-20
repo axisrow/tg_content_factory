@@ -327,7 +327,7 @@ class TestCLIFilter:
     def test_purge_no_filtered(self, cli_env, capsys):
         from src.cli.commands.filter import run
 
-        run(_ns(filter_action="purge", pks=None))
+        run(_ns(filter_action="purge", pks=None, yes=True))
         assert "No filtered channels affected." in capsys.readouterr().out
 
     def test_purge_filtered_channel(self, cli_env, capsys):
@@ -337,7 +337,7 @@ class TestCLIFilter:
 
         from src.cli.commands.filter import run
 
-        run(_ns(filter_action="purge", pks=None))
+        run(_ns(filter_action="purge", pks=None, yes=True))
         out = capsys.readouterr().out
         assert "1 channels" in out
         assert "FilteredCh" in out
@@ -358,7 +358,7 @@ class TestCLIFilter:
 
         from src.cli.commands.filter import run
 
-        run(_ns(filter_action="purge", pks=str(ch1_pk)))
+        run(_ns(filter_action="purge", pks=str(ch1_pk), yes=True))
         out = capsys.readouterr().out
         assert "PurgeCh1" in out
         assert "PurgeCh2" not in out

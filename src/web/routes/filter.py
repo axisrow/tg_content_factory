@@ -114,6 +114,141 @@ async def hard_delete_selected(request: Request):
         )
     svc = deps.filter_deletion_service(request)
     result = await svc.hard_delete_channels_by_pks(pks)
+    # Codex round 9 follow-up: surface partial failures on the selected path
+    # too. hard_delete_channels_by_pks catches per-channel exceptions into
+    # skipped_count, and child-data rollback (introduced in the round-9
+    # atomicity fix on delete_channel) means a "skipped" row keeps its data
+    # — but only when the FK violation lets us roll back. Either way the
+    # admin needs to see the exact count breakdown.
+    if result.skipped_count or result.purged_count != len(pks):
+        return RedirectResponse(
+            url=(
+                "/channels/filter/manage?error=hard_delete_partial"
+                f"&purged={result.purged_count}"
+                f"&skipped={result.skipped_count}"
+                f"&expected={len(pks)}"
+            ),
+            status_code=303,
+        )
+    return RedirectResponse(
+        url=(f"/channels/filter/manage?msg=deleted_filtered" f"&count={result.purged_count}"),
+        status_code=303,
+    )
+
+
+HARD_DELETE_ALL_CONFIRM_PHRASE = "DELETE_ALL_FILTERED"
+
+
+def _parse_confirm_pairs(raw: str) -> list[tuple[int, int]] | None:
+    """Parse the hard-delete-all snapshot as ``pk:channel_id`` pairs.
+
+    Each token must be ``<pk>:<channel_id>`` where both are integers.
+    Duplicate ``pk`` values (or duplicate ``channel_id`` values) are rejected
+    so a crafted ``"1:1001,1:1001"`` cannot smuggle a delete past the set
+    comparison. Empty/whitespace input is treated as an empty snapshot so
+    the no_filtered_channels branch stays reachable through the normal form
+    flow. Returns ``None`` when any token is malformed.
+
+    Binding to ``channel_id`` (the Telegram-assigned identifier, not the
+    SQLite rowid) guards against PK reuse: if the rendered row is deleted
+    and a new row is inserted between render and submit, the new row will
+    likely have a different ``channel_id`` and the comparison will reject.
+    """
+    tokens = [tok.strip() for tok in (raw or "").split(",") if tok.strip()]
+    pairs: list[tuple[int, int]] = []
+    seen_pks: set[int] = set()
+    seen_chids: set[int] = set()
+    for tok in tokens:
+        parts = tok.split(":")
+        if len(parts) != 2:
+            return None
+        try:
+            pk = int(parts[0])
+            chid = int(parts[1])
+        except ValueError:
+            return None
+        if pk in seen_pks or chid in seen_chids:
+            return None
+        seen_pks.add(pk)
+        seen_chids.add(chid)
+        pairs.append((pk, chid))
+    return pairs
+
+
+@router.post("/filter/hard-delete-all")
+async def hard_delete_all(request: Request):
+    if not await _dev_mode_enabled(request):
+        return RedirectResponse(
+            url="/channels/filter/manage?error=dev_mode_required_for_hard_delete",
+            status_code=303,
+        )
+    form = await request.form()
+    # Server-side confirmation defends against direct POSTs, stale pages,
+    # resubmits, and same-count stale swaps. Two interlocking checks:
+    #   1. confirm phrase — defeats blind direct POSTs.
+    #   2. confirm_pks snapshot of (pk, channel_id) pairs — exact rendered
+    #      set with stable identities (Codex round 7). channel_id is the
+    #      Telegram-assigned ID, not the SQLite rowid, so a PK reused after
+    #      a delete+insert race resolves to a different channel_id and the
+    #      comparison rejects. Duplicates are rejected at parse time.
+    #      Delete then runs on the unique PK list extracted from the
+    #      validated snapshot.
+    confirm = (form.get("confirm") or "").strip()
+    if confirm != HARD_DELETE_ALL_CONFIRM_PHRASE:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=hard_delete_confirm_required",
+            status_code=303,
+        )
+    confirm_pks_raw = form.get("confirm_pks")
+    if confirm_pks_raw is None:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=hard_delete_confirm_required",
+            status_code=303,
+        )
+    confirmed_pairs = _parse_confirm_pairs(str(confirm_pks_raw))
+    if confirmed_pairs is None:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=hard_delete_confirm_required",
+            status_code=303,
+        )
+    db = deps.get_db(request)
+    channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
+    current_pairs = {
+        (ch.id, ch.channel_id)
+        for ch in channels
+        if ch.is_filtered and ch.id is not None and ch.channel_id is not None
+    }
+    if not current_pairs:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=no_filtered_channels",
+            status_code=303,
+        )
+    if set(confirmed_pairs) != current_pairs:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=hard_delete_set_changed",
+            status_code=303,
+        )
+    svc = deps.filter_deletion_service(request)
+    # Pass only the unique PKs from the validated snapshot to the service.
+    # The set comparison above already proved each (pk, channel_id) pair
+    # matches the current filtered row, so the PK list is canonical.
+    confirmed_pks = [pk for pk, _ in confirmed_pairs]
+    result = await svc.hard_delete_channels_by_pks(confirmed_pks)
+    # Partial-failure surfacing (Codex round 8): the deletion service catches
+    # per-channel exceptions and increments skipped_count, but commits are
+    # per-channel. A partial result means rows are already gone irreversibly
+    # while others remain — admin needs to see the discrepancy instead of a
+    # blanket "deleted" message.
+    if result.skipped_count or result.purged_count != len(confirmed_pks):
+        return RedirectResponse(
+            url=(
+                "/channels/filter/manage?error=hard_delete_partial"
+                f"&purged={result.purged_count}"
+                f"&skipped={result.skipped_count}"
+                f"&expected={len(confirmed_pks)}"
+            ),
+            status_code=303,
+        )
     return RedirectResponse(
         url=(f"/channels/filter/manage?msg=deleted_filtered" f"&count={result.purged_count}"),
         status_code=303,
@@ -200,6 +335,24 @@ async def reset_filters(request: Request):
     analyzer = ChannelAnalyzer(db)
     await analyzer.reset_filters()
     return RedirectResponse(url="/channels/filter/manage?msg=filter_reset", status_code=303)
+
+
+@router.post("/filter/reset-selected")
+async def reset_filters_selected(request: Request):
+    db = deps.get_db(request)
+    form = await request.form()
+    pks = _parse_pks(form)
+    if not pks:
+        return RedirectResponse(
+            url="/channels/filter/manage?error=no_filtered_channels",
+            status_code=303,
+        )
+    analyzer = ChannelAnalyzer(db)
+    count = await analyzer.reset_filters_for_pks(pks)
+    return RedirectResponse(
+        url=f"/channels/filter/manage?msg=filter_reset_selected&count={count}",
+        status_code=303,
+    )
 
 
 @router.post("/{channel_id}/purge-messages")

@@ -121,7 +121,9 @@ class TestSendReaction:
             {"phone": "+79001234567", "chat_id": "@chat", "message_id": 5, "emoji": "🔥", "confirm": True}
         )
 
-        assert "Реакция 🔥 поставлена" in _text(result)
+        # The producer formats the emoji via {emoji!r}, so the literal
+        # representation in the output is "'🔥'", not the bare glyph.
+        assert "Реакция '🔥' поставлена" in _text(result)
         mock_client.get_entity.assert_awaited_with("@chat")
         mock_client.send_reaction.assert_awaited_once()
         # Verify call arguments — guards against accidental positional swap

@@ -18,6 +18,47 @@ TOOL_PERMISSIONS_SETTING = "agent_tool_permissions"
 MCP_PREFIX = "mcp__telegram_db__"
 BUILTIN_TOOLS = ["WebSearch", "WebFetch"]
 
+# Tools that bind to a specific Telegram account and route through
+# require_phone_permission (directly or via prepare_telegram_tool). For these
+# tools `load_tool_permissions_union` reports visibility based on explicit
+# per-phone grants only — so the agent never advertises a phone-bound tool
+# that the runtime phone-gate would deny. Non-phone-bound tools (DB search,
+# analytics, settings, …) keep permissive defaults for missing keys.
+#
+# Kept in sync with the static scan in
+# `tests/test_tool_permissions.py::test_every_phone_binded_tool_is_registered_in_tool_categories`.
+PHONE_BINDED_TOOLS: frozenset[str] = frozenset({
+    "archive_chat",
+    "clear_dialog_cache",
+    "create_auto_upload",
+    "create_photo_batch",
+    "create_telegram_channel",
+    "delete_message",
+    "download_media",
+    "edit_admin",
+    "edit_message",
+    "edit_permissions",
+    "forward_messages",
+    "get_broadcast_stats",
+    "get_participants",
+    "kick_participant",
+    "leave_dialogs",
+    "list_photo_dialogs",
+    "mark_read",
+    "pin_message",
+    "read_messages",
+    "refresh_dialogs",
+    "refresh_photo_dialogs",
+    "resolve_entity",
+    "schedule_photos",
+    "search_dialogs",
+    "send_message",
+    "send_photos_now",
+    "send_reaction",
+    "unarchive_chat",
+    "unpin_message",
+})
+
 
 async def _load_account_records(db) -> list[object]:
     for getter_name in ("get_account_summaries", "get_accounts"):
@@ -308,8 +349,33 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
 # ---------------------------------------------------------------------------
 
 
-def _default_permissions() -> dict[str, bool]:
-    """Default permissions: all tools enabled."""
+def _default_permissions(*, for_missing_in_saved: bool = False) -> dict[str, bool]:
+    """Default permissions.
+
+    Without flags: all tools enabled — used for clean installs (no saved ACL)
+    and when seeding new accounts that have never had explicit permissions.
+
+    With ``for_missing_in_saved=True``: READ tools default enabled, WRITE/DELETE
+    default disabled, AND phone-bound tools (regardless of category) default
+    disabled.  Used to fill in tools missing from a saved ACL so:
+
+    * newly introduced WRITE/DELETE actions cannot bypass an existing
+      restrictive configuration (Codex round 4);
+    * phone-bound READ actions (read_messages, download_media,
+      get_participants, resolve_entity, …) cannot be granted by default
+      when an admin opens and saves an existing per-phone tab — they all
+      touch the live Telegram client and must require explicit per-phone
+      opt-in (Codex round 10).
+
+    Non-phone-bound DB-only READ tools (list_channels, search_messages,
+    analytics, settings) keep the permissive True default so opening
+    settings does not lock admins out of read-only DB work they already had.
+    """
+    if for_missing_in_saved:
+        return {
+            name: (cat == ToolCategory.READ and name not in PHONE_BINDED_TOOLS)
+            for name, cat in TOOL_CATEGORIES.items()
+        }
     return {name: True for name in TOOL_CATEGORIES}
 
 
@@ -341,6 +407,7 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
     Missing setting → all-enabled defaults.
     """
     defaults = _default_permissions()
+    missing_defaults = _default_permissions(for_missing_in_saved=True)
     saved = await _load_raw_permissions(db)
     if not saved:
         logger.debug("Tool permissions: no DB setting, using defaults (all enabled)")
@@ -354,26 +421,39 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
 
     if is_per_phone:
         phone_used = phone
+        phone_known = False
         if phone and phone in saved:
             phone_perms = saved[phone]
+            phone_known = True
         else:
             if phone is None:
                 accounts = await _load_account_records(db)
                 if accounts:
                     primary = next((a for a in accounts if a.is_primary), accounts[0])
                     phone_used = primary.phone
-                    phone_perms = saved.get(primary.phone, {})
+                    if primary.phone in saved:
+                        phone_perms = saved[primary.phone]
+                        phone_known = True
+                    else:
+                        phone_perms = {}
                 else:
                     phone_perms = {}
             else:
                 phone_perms = {}
-        if not phone_perms:
-            logger.debug("Tool permissions: phone=%s not in saved, using defaults", phone_used)
-            return defaults
-        result = {name: phone_perms.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+        if not phone_known:
+            # Per-phone ACL exists but this phone is absent — fully fail-closed.
+            # Matches require_phone_permission's deny-for-absent semantics and
+            # avoids exposing live Telegram READ tools through an unauthorized
+            # account.
+            logger.debug(
+                "Tool permissions: phone=%s not in saved per-phone ACL, denying everything",
+                phone_used,
+            )
+            return {name: False for name in TOOL_CATEGORIES}
+        result = {name: phone_perms.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
     else:
         phone_used = "(flat/legacy)"
-        result = {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+        result = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
 
     enabled = sum(1 for v in result.values() if v)
     disabled = sum(1 for v in result.values() if not v)
@@ -384,16 +464,29 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
 async def load_tool_permissions_all_phones(db, accounts) -> dict[str, dict[str, bool]]:
     """Load permissions for every account phone.  Returns ``{phone: {tool: bool}}``."""
     defaults = _default_permissions()
+    missing_defaults = _default_permissions(for_missing_in_saved=True)
+    # All-False template for accounts absent from a per-phone ACL.  Matches the
+    # behaviour of require_phone_permission (deny for absent phones) so the
+    # settings UI never shows pre-checked grants for an account the admin has
+    # not explicitly authorized.
+    all_denied = {name: False for name in TOOL_CATEGORIES}
     saved = await _load_raw_permissions(db)
 
     result = {}
+    saved_is_per_phone = _is_per_phone_format(saved)
     for acc in accounts:
-        if _is_per_phone_format(saved) and acc.phone in saved:
+        if saved_is_per_phone and acc.phone in saved:
             phone_perms = saved[acc.phone]
-            result[acc.phone] = {name: phone_perms.get(name, defaults[name]) for name in TOOL_CATEGORIES}
-        elif not _is_per_phone_format(saved) and saved:
+            result[acc.phone] = {name: phone_perms.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
+        elif saved_is_per_phone:
+            # Per-phone ACL exists but this account is absent — render the
+            # settings UI fully fail-closed.  Admin must explicitly opt-in
+            # any tool per account; otherwise saving this tab would silently
+            # grant pre-checked READ defaults.
+            result[acc.phone] = dict(all_denied)
+        elif saved:
             # Legacy flat → apply to all phones
-            result[acc.phone] = {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+            result[acc.phone] = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
         else:
             result[acc.phone] = dict(defaults)
     return result
@@ -404,6 +497,13 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
 
     If *phone* is given, saves under the per-phone key without touching other phones.
     If *phone* is ``None``, saves in legacy flat format (backward compat).
+
+    Phones absent from the saved ACL are NOT materialized when another phone is
+    saved.  Materializing them would re-open the absent-phone leak through the
+    save path: a previously-denied phone would become present in saved with the
+    seeded READ defaults, which then short-circuits require_phone_permission's
+    absent-phone deny.  Admin must explicitly open each account's tab in the
+    settings UI and save it to grant any access.
     """
     global _permissions_cache  # noqa: PLW0603
     _permissions_cache = None  # invalidate cache on save
@@ -414,17 +514,13 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
 
     saved = await _load_raw_permissions(db)
     if saved and not _is_per_phone_format(saved):
-        # Migrate legacy flat → per-phone: existing flat becomes the phone's entry
+        # Discard the legacy flat ACL on the first per-phone save: every
+        # phone starts fail-closed (load_tool_permissions returns all-False
+        # for absent phones), so an admin upgrading from flat to per-phone
+        # must explicitly grant each phone via the Settings UI. The old
+        # flat overrides are NOT carried over to the current phone — that
+        # would silently retain broader access than the admin saw on screen.
         saved = {}
-    # Seed unsaved accounts with all-enabled defaults so they are not implicitly denied
-    defaults = _default_permissions()
-    try:
-        accounts = await _load_account_records(db)
-        for acc in accounts:
-            if acc.phone not in saved:
-                saved[acc.phone] = dict(defaults)
-    except Exception:
-        pass  # DB error — proceed with what we have
     saved[phone] = permissions
     await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(saved, ensure_ascii=False))
 
@@ -445,17 +541,33 @@ async def load_tool_permissions_union(db, *, use_cache: bool = False) -> dict[st
             return cached_value
 
     defaults = _default_permissions()
+    missing_defaults = _default_permissions(for_missing_in_saved=True)
     saved = await _load_raw_permissions(db)
     if not saved:
         result = defaults
     elif not _is_per_phone_format(saved):
-        result = {name: saved.get(name, defaults[name]) for name in TOOL_CATEGORIES}
+        # Legacy flat: missing READ defaults to True, missing WRITE/DELETE to False.
+        result = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
     else:
         phone_dicts = [v for v in saved.values() if isinstance(v, dict)]
         if not phone_dicts:
             result = defaults
         else:
-            result = {name: any(pd.get(name, defaults[name]) for pd in phone_dicts) for name in TOOL_CATEGORIES}
+            # Per-phone: a *phone-bound* tool is advertised only when at least
+            # one phone has an explicit True entry — visibility must track
+            # require_phone_permission, which only honours explicit True
+            # (Codex round 5). Non-phone-bound tools keep permissive defaults
+            # so DB-only READ stays available under any per-phone ACL.
+            result = {
+                name: any(
+                    pd.get(
+                        name,
+                        False if name in PHONE_BINDED_TOOLS else missing_defaults[name],
+                    )
+                    for pd in phone_dicts
+                )
+                for name in TOOL_CATEGORIES
+            }
 
     _permissions_cache = (result, time.monotonic() + _PERMISSIONS_CACHE_TTL)
     return result

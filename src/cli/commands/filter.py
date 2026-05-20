@@ -111,16 +111,37 @@ def run(args: argparse.Namespace) -> None:
                 print(f"Channel pk={args.pk} ({channel.title}) marked as {status}.")
 
             elif args.filter_action == "reset":
-                await analyzer.reset_filters()
-                print("All channel filters have been reset.")
-
-            elif args.filter_action == "purge":
-                svc = _build_deletion_service(db)
                 if hasattr(args, "pks") and args.pks:
                     pks = _parse_pks(args.pks)
                     if not pks:
                         print("No valid PKs provided.")
                         return
+                    count = await analyzer.reset_filters_for_pks(pks)
+                    print(f"Reset filter flag for {count} channel(s).")
+                else:
+                    await analyzer.reset_filters()
+                    print("All channel filters have been reset.")
+
+            elif args.filter_action == "purge":
+                svc = _build_deletion_service(db)
+                pks: list[int] | None
+                if hasattr(args, "pks") and args.pks:
+                    pks = _parse_pks(args.pks)
+                    if not pks:
+                        print("No valid PKs provided.")
+                        return
+                    scope = f"{len(pks)} selected channel(s)"
+                else:
+                    pks = None
+                    scope = "all filtered channels"
+                if not getattr(args, "yes", False):
+                    confirm = input(
+                        f"Purge messages from {scope}? This deletes stored messages. [y/N] "
+                    ).strip().lower()
+                    if confirm != "y":
+                        print("Aborted.")
+                        return
+                if pks is not None:
                     result = await svc.purge_channels_by_pks(pks)
                 else:
                     result = await svc.purge_all_filtered()

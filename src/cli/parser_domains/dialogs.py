@@ -94,6 +94,7 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     my_tg_react.add_argument("message_id", type=int, help="Message ID to react on")
     my_tg_react.add_argument("emoji", help="Reaction emoji (e.g. 👍)")
     my_tg_react.add_argument("--phone", default=None, help="Account phone (default: first connected)")
+    my_tg_react.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
     my_tg_unpin = dialogs_sub.add_parser("unpin-message", help="Unpin a message in a chat")
     my_tg_unpin.add_argument("chat_id", help="Chat ID or @username")

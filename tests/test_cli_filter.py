@@ -174,7 +174,7 @@ def test_filter_purge_all(tmp_path, cli_init_patch, capsys):
             mock_svc.purge_all_filtered = AsyncMock(return_value=mock_result)
             mock_build.return_value = mock_svc
 
-            run(_ns(filter_action="purge", pks=None))
+            run(_ns(filter_action="purge", pks=None, yes=True))
 
     out = capsys.readouterr().out
     assert "Purged messages from 2 channels" in out
@@ -197,7 +197,7 @@ def test_filter_purge_by_pks(tmp_path, cli_init_patch, capsys):
             mock_svc.purge_channels_by_pks = AsyncMock(return_value=mock_result)
             mock_build.return_value = mock_svc
 
-            run(_ns(filter_action="purge", pks="1,2,3"))
+            run(_ns(filter_action="purge", pks="1,2,3", yes=True))
 
     out = capsys.readouterr().out
     assert "Purged messages from 1 channel" in out

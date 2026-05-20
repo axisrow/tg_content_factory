@@ -247,3 +247,6 @@ class ChannelAnalyzer:
 
     async def reset_filters(self) -> int:
         return await self._database.reset_all_channel_filters()
+
+    async def reset_filters_for_pks(self, pks: list[int]) -> int:
+        return await self._database.reset_channel_filters_for_pks(pks)

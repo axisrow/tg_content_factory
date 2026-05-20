@@ -59,6 +59,14 @@ UNPIN_MESSAGE_SCHEMA = {
     "confirm": CONFIRM_ARG,
 }
 
+SEND_REACTION_SCHEMA = {
+    "phone": PHONE_ARG,
+    "chat_id": CHAT_ID_ARG,
+    "message_id": Annotated[int, "ID сообщения в Telegram"],
+    "emoji": Annotated[str, "Эмодзи реакции (например 👍)"],
+    "confirm": CONFIRM_ARG,
+}
+
 DOWNLOAD_MEDIA_SCHEMA = {
     "phone": PHONE_ARG,
     "chat_id": CHAT_ID_ARG,

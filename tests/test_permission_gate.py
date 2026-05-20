@@ -36,14 +36,32 @@ def test_is_session_approved_empty():
 
 def test_is_session_approved_after_manual_set():
     gate = PermissionGate()
-    gate._session_overrides["session-1"] = {"tool_a"}
-    assert gate.is_session_approved("tool_a", "session-1") is True
-    assert gate.is_session_approved("tool_b", "session-1") is False
+    gate._session_overrides["session-1"] = {("tool_a", "+111")}
+    assert gate.is_session_approved("tool_a", "session-1", "+111") is True
+    assert gate.is_session_approved("tool_a", "session-1", "+222") is False
+    assert gate.is_session_approved("tool_b", "session-1", "+111") is False
 
 
 def test_is_session_approved_missing_session():
     gate = PermissionGate()
     assert gate.is_session_approved("tool_a", "nonexistent") is False
+
+
+def test_is_session_approved_global_grant_does_not_leak_to_phone():
+    """A session-level (phone="") grant must not satisfy a phone-specific check."""
+    gate = PermissionGate()
+    gate._session_overrides["session-1"] = {("send_reaction", "")}
+    # The global grant exists, but a phone-specific check must still be denied.
+    assert gate.is_session_approved("send_reaction", "session-1", "+1") is False
+    assert gate.is_session_approved("send_reaction", "session-1", "") is True
+
+
+def test_is_session_approved_phone_specific_grant_isolated():
+    """Granting a tool for one phone must not allow it for another phone."""
+    gate = PermissionGate()
+    gate._session_overrides["session-1"] = {("send_reaction", "+111")}
+    assert gate.is_session_approved("send_reaction", "session-1", "+111") is True
+    assert gate.is_session_approved("send_reaction", "session-1", "+222") is False
 
 
 # ── resolve() ───────────────────────────────────────────────────────
@@ -84,7 +102,7 @@ async def test_resolve_already_done_future_still_returns_true():
 
 def test_clear_session():
     gate = PermissionGate()
-    gate._session_overrides["session-1"] = {"tool_a", "tool_b"}
+    gate._session_overrides["session-1"] = {("tool_a", "+1"), ("tool_b", "")}
     gate.clear_session("session-1")
     assert "session-1" not in gate._session_overrides
 
@@ -111,7 +129,7 @@ async def test_check_returns_none_without_context():
 @pytest.mark.anyio
 async def test_check_returns_none_when_session_approved():
     gate = PermissionGate()
-    gate._session_overrides["session-1"] = {"my_tool"}
+    gate._session_overrides["session-1"] = {("my_tool", "+1234567890")}
 
     ctx = AgentRequestContext(
         session_id="session-1",
@@ -159,7 +177,7 @@ async def test_check_user_grants_once():
         result = await asyncio.wait_for(task, timeout=2.0)
         assert result is None
         # "once" should NOT store in session overrides
-        assert not gate.is_session_approved("my_tool", "session-2")
+        assert not gate.is_session_approved("my_tool", "session-2", "+1234567890")
     finally:
         reset_request_context(token)
 
@@ -189,8 +207,10 @@ async def test_check_user_grants_session():
 
         result = await asyncio.wait_for(task, timeout=2.0)
         assert result is None
-        # "session" should store in session overrides
-        assert gate.is_session_approved("my_tool", "session-3")
+        # "session" should store in session overrides keyed on (tool, phone="")
+        assert gate.is_session_approved("my_tool", "session-3", "")
+        # A phone-specific check for the same tool must NOT inherit the global grant
+        assert not gate.is_session_approved("my_tool", "session-3", "+999")
     finally:
         reset_request_context(token)
 
