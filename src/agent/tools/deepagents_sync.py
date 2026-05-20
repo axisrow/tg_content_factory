@@ -84,6 +84,7 @@ _REQUIRED_ARGS_BY_TOOL: dict[str, frozenset[str]] = {
     "get_forum_topics": frozenset({"channel_id"}),
     "resolve_entity": frozenset({"identifier"}),
     "send_message": frozenset({"recipient", "text"}),
+    "send_reaction": frozenset({"chat_id", "message_id", "emoji"}),
     "edit_message": frozenset({"chat_id", "message_id", "text"}),
     "delete_message": frozenset({"chat_id", "message_ids"}),
     "forward_messages": frozenset({"from_chat", "to_chat", "message_ids"}),

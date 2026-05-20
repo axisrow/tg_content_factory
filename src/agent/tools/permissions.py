@@ -215,12 +215,12 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "resolve_entity": ToolCategory.READ,
     # Messaging
     "send_message": ToolCategory.WRITE,
+    "send_reaction": ToolCategory.WRITE,
     "forward_messages": ToolCategory.WRITE,
     "edit_message": ToolCategory.WRITE,
     "delete_message": ToolCategory.DELETE,
     "pin_message": ToolCategory.WRITE,
     "unpin_message": ToolCategory.WRITE,
-    "send_reaction": ToolCategory.WRITE,
     "download_media": ToolCategory.READ,
     "get_participants": ToolCategory.READ,
     "edit_admin": ToolCategory.WRITE,
@@ -322,8 +322,8 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "get_forum_topics", "clear_dialog_cache", "get_cache_status", "resolve_entity",
     ]),
     ("Сообщения", [
-        "send_message", "forward_messages", "edit_message", "delete_message",
-        "pin_message", "unpin_message", "send_reaction", "download_media", "read_messages",
+        "send_message", "send_reaction", "forward_messages", "edit_message", "delete_message",
+        "pin_message", "unpin_message", "download_media", "read_messages",
     ]),
     ("Управление чатом", [
         "get_participants", "edit_admin", "edit_permissions", "kick_participant",
@@ -514,7 +514,12 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
 
     saved = await _load_raw_permissions(db)
     if saved and not _is_per_phone_format(saved):
-        # Migrate legacy flat → per-phone: existing flat becomes the phone's entry
+        # Discard the legacy flat ACL on the first per-phone save: every
+        # phone starts fail-closed (load_tool_permissions returns all-False
+        # for absent phones), so an admin upgrading from flat to per-phone
+        # must explicitly grant each phone via the Settings UI. The old
+        # flat overrides are NOT carried over to the current phone — that
+        # would silently retain broader access than the admin saw on screen.
         saved = {}
     saved[phone] = permissions
     await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(saved, ensure_ascii=False))

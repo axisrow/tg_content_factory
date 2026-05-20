@@ -337,7 +337,7 @@ class PipelineService:
         self,
         active_only: bool = False,
     ) -> dict[str, list[dict]]:
-        accounts = await self._bundle.list_accounts(active_only=active_only)
+        accounts = await self._bundle.list_account_summaries(active_only=active_only)
         dialogs = await asyncio.gather(
             *[self._bundle.list_cached_dialogs(account.phone) for account in accounts]
         )
