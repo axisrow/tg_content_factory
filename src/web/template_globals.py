@@ -67,6 +67,7 @@ FLASH_MESSAGES = {
     "filter_toggled": "Фильтр канала изменён.",
     "filter_applied": "Фильтры применены.",
     "filter_reset": "Фильтры сброшены.",
+    "filter_reset_selected": "Фильтры выбранных каналов сброшены.",
     "channel_not_found": "Канал не найден.",
     "stats_collection_started": "Сбор статистики запущен в фоне.",
     "stats_collection_queued": "Сбор статистики поставлен в очередь.",
