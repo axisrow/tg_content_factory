@@ -216,20 +216,29 @@ class TestChannelBundle:
         assert (await cur.fetchone())["n"] == 0
 
     async def test_delete_channel_safe_against_concurrent_pipeline_source_insert(self, db):
-        """Codex round 14 regression: a concurrent INSERT INTO
-        pipeline_sources between the preflight check and the parent
-        delete must NOT cause child-row loss. The BEGIN IMMEDIATE
-        transaction in delete_channel holds SQLite's RESERVED lock on
-        the DB file, so any concurrent INSERT serializes behind the
-        delete (or the delete behind the INSERT). Either way the only
-        possible outcomes are:
-          (a) delete wins — channel + child rows gone, INSERT raises FK.
-          (b) insert wins — channel survives intact; preflight detects
-              the new reference and raises IntegrityError; child rows
-              are untouched.
+        """Codex round 14 + issue #569 regression: a concurrent
+        production INSERT into ``pipeline_sources`` between the
+        preflight check and the parent delete must NOT cause
+        child-row loss.
+
+        Both ``ChannelsRepository.delete_channel`` and
+        ``ContentPipelinesRepository.add`` now run inside
+        ``Database.transaction()`` which holds the connection-wide
+        ``Database._write_lock``. The two coroutines therefore
+        serialise on the same connection — neither can interleave a
+        DML statement that would commit the other's open transaction
+        prematurely. The only legal outcomes are:
+          (a) delete wins — channel + child rows gone; the
+              follow-up ``add()`` then raises FK violation on the
+              orphan ``channel_id``.
+          (b) add wins — channel survives intact; the delete's
+              preflight detects the new ``pipeline_sources`` row
+              and raises IntegrityError; child rows are untouched.
         The forbidden outcome is "channel survives, child rows gone".
         """
         import asyncio
+
+        from src.models import ContentPipeline, PipelineGenerationBackend, PipelinePublishMode
 
         b = ChannelBundle.from_database(db)
         pk = await b.add_channel(_channel(channel_id=730, title="RaceTarget"))
@@ -244,37 +253,33 @@ class TestChannelBundle:
             (730, 999),
         )
 
-        # Pre-create a pipeline (parent table for pipeline_sources).
-        await db._db.execute(
-            "INSERT INTO content_pipelines (name, prompt_template) VALUES (?, ?)",
-            ("p-race", "t"),
+        pipeline = ContentPipeline(
+            name="p-race",
+            prompt_template="t",
+            publish_mode=PipelinePublishMode.MODERATED,
+            generation_backend=PipelineGenerationBackend.CHAIN,
         )
-        cur = await db._db.execute(
-            "SELECT id FROM content_pipelines WHERE name = 'p-race'"
-        )
-        pipeline_row = await cur.fetchone()
-        pipeline_id = pipeline_row["id"]
 
         async def insert_pipeline_source():
             try:
-                await db._db.execute(
-                    "INSERT INTO pipeline_sources (pipeline_id, channel_id) VALUES (?, ?)",
-                    (pipeline_id, 730),
+                await db.repos.content_pipelines.add(
+                    pipeline,
+                    source_channel_ids=[730],
+                    targets=[],
                 )
-                await db._db.commit()
             except Exception as e:
                 return e
             return None
 
-        # Fire delete + insert concurrently. BEGIN IMMEDIATE in delete_channel
-        # forces serialization; only one of (a) or (b) can happen.
+        # Fire delete + production insert concurrently. Both paths
+        # acquire Database._write_lock — only one of (a) or (b)
+        # can happen, and the forbidden state below never appears.
         results = await asyncio.gather(
             b.delete_channel(pk),
             insert_pipeline_source(),
             return_exceptions=True,
         )
 
-        # Inspect outcome.
         channel_still_there = await b.get_by_pk(pk) is not None
         cur = await db._db.execute(
             "SELECT COUNT(*) AS n FROM messages WHERE channel_id = 730"
@@ -285,10 +290,9 @@ class TestChannelBundle:
         )
         stats_remaining = (await cur.fetchone())["n"]
 
-        # The forbidden state: channel survives but child rows are gone.
         forbidden = channel_still_there and (messages_remaining == 0 or stats_remaining == 0)
         assert not forbidden, (
-            f"Concurrent INSERT INTO pipeline_sources broke atomicity: "
+            f"Concurrent ContentPipelinesRepository.add broke atomicity: "
             f"channel={channel_still_there}, messages={messages_remaining}, "
             f"stats={stats_remaining}, gather_results={results!r}"
         )
