@@ -19,6 +19,7 @@
 === "CLI"
     ```bash
     python -m src.main dialogs send @username "текст" --yes
+    python -m src.main dialogs react @chat 42 👍 --phone +79001234567
     python -m src.main dialogs edit-message @chat 42 "новый текст" --yes
     python -m src.main dialogs delete-message @chat 42 43 44 --yes
     python -m src.main dialogs pin-message @chat 42 --notify

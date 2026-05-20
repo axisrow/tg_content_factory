@@ -121,7 +121,7 @@ async def api_channels_search(request: Request, q: str = ""):
 async def _page_context(request: Request) -> dict:
     svc = deps.pipeline_service(request)
     channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
-    accounts = await deps.get_account_bundle(request).list_accounts()
+    accounts = await deps.get_account_bundle(request).list_account_summaries()
     selected_phone = request.query_params.get("phone") or (accounts[0].phone if accounts else "")
     if selected_phone:
         refresh = request.query_params.get("refresh") == "1"
@@ -188,7 +188,7 @@ async def pipelines_page(request: Request):
 
 async def create_wizard_page(request: Request):
     svc = deps.pipeline_service(request)
-    accounts = await deps.get_account_bundle(request).list_accounts()
+    accounts = await deps.get_account_bundle(request).list_account_summaries()
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
     llm_provider_svc = deps.get_llm_provider_service(request)
     llm_configured = llm_provider_svc.has_providers()
@@ -413,7 +413,7 @@ async def edit_page(request: Request, pipeline_id: int):
         return _pipeline_redirect("pipeline_invalid", error=True)
     db = deps.get_db(request)
     channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
-    accounts = await deps.get_account_bundle(request).list_accounts()
+    accounts = await deps.get_account_bundle(request).list_account_summaries()
     selected_phone = request.query_params.get("phone") or (accounts[0].phone if accounts else "")
     if selected_phone and request.query_params.get("refresh") == "1":
         try:
@@ -665,7 +665,7 @@ async def templates_page(request: Request):
     svc: PipelineService = deps.pipeline_service(request)
     templates = await svc.list_templates()
     channels = await deps.get_channel_bundle(request).list_channels(include_filtered=True)
-    accounts = await deps.get_account_bundle(request).list_accounts()
+    accounts = await deps.get_account_bundle(request).list_account_summaries()
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
     llm_configured = deps.get_llm_provider_service(request).has_providers()
     return deps.get_templates(request).TemplateResponse(

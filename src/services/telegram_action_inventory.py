@@ -20,6 +20,7 @@ TELEGRAM_ACTION_INVENTORY: tuple[TelegramActionInventoryItem, ...] = (
     TelegramActionInventoryItem(
         action="send_reaction",
         cli="dialogs react",
+        agent_tool="send_reaction",
         pipeline_node="react",
         backend_method="send_reaction",
     ),

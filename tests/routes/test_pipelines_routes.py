@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.models import Account
+
 _ADD_DATA = {
     "name": "Test Pipeline",
     "prompt_template": "Write a summary",
@@ -137,6 +139,26 @@ async def test_pipeline_edit_page_loads(client):
     resp = await client.get("/pipelines/1/edit")
     assert resp.status_code == 200
     assert "Редактировать" in resp.text
+
+
+@pytest.mark.anyio
+async def test_pipeline_pages_render_with_encrypted_account_missing_key(client):
+    """Read-only pipeline pages must not decrypt account sessions to render."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    app = client._transport.app  # type: ignore[attr-defined]
+    await app.state.db.add_account(
+        Account(
+            phone="+19999999999",
+            session_string="enc:v1:not-a-valid-token",
+            is_active=True,
+        )
+    )
+
+    for path in ("/pipelines/", "/pipelines/create", "/pipelines/templates", "/pipelines/1/edit"):
+        resp = await client.get(path)
+        assert resp.status_code == 200, path
+        assert "Ошибка сервера" not in resp.text
 
 
 @pytest.mark.anyio

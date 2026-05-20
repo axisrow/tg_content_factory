@@ -176,6 +176,7 @@
 | Топики форума | `dialogs topics` | `GET /agent/forum-topics` | `get_forum_topics` |
 | Создать канал | `dialogs create-channel` | `POST /dialogs/create-channel` | `create_telegram_channel` |
 | Отправить сообщение | `dialogs send` | `POST /dialogs/send` | `send_message` |
+| Поставить реакцию | `dialogs react` | — | `send_reaction` |
 | Переслать сообщение | `dialogs forward` | `POST /dialogs/forward` | `forward_messages` |
 | Редактировать | `dialogs edit-message` | `POST /dialogs/edit-message` | `edit_message` |
 | Удалить | `dialogs delete-message` | `POST /dialogs/delete-message` | `delete_message` |

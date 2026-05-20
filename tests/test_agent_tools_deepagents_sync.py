@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,6 +30,20 @@ def test_deepagents_read_messages_is_registered_and_uses_runtime_gate(mock_db):
     assert "read_messages" in tool_map
     result = tool_map["read_messages"](chat_id="@test", limit=5)
 
+    assert "требует Telegram-клиент" in result
+
+
+def test_deepagents_send_reaction_signature_and_runtime_gate(mock_db):
+    from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+    tool_map = {tool.__name__: tool for tool in build_deepagents_tools(mock_db)}
+
+    assert "send_reaction" in tool_map
+    signature = inspect.signature(tool_map["send_reaction"])
+    for name in ("chat_id", "message_id", "emoji"):
+        assert signature.parameters[name].default is inspect.Parameter.empty
+
+    result = tool_map["send_reaction"](chat_id="@chat", message_id=1, emoji="👍")
     assert "требует Telegram-клиент" in result
 
 

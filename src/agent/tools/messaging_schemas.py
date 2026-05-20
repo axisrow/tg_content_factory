@@ -13,6 +13,14 @@ SEND_MESSAGE_SCHEMA = {
     "confirm": CONFIRM_ARG,
 }
 
+SEND_REACTION_SCHEMA = {
+    "phone": PHONE_ARG,
+    "chat_id": CHAT_ID_ARG,
+    "message_id": Annotated[int, "ID сообщения в Telegram"],
+    "emoji": Annotated[str, "Emoji-реакция"],
+    "confirm": CONFIRM_ARG,
+}
+
 EDIT_MESSAGE_SCHEMA = {
     "phone": PHONE_ARG,
     "chat_id": CHAT_ID_ARG,

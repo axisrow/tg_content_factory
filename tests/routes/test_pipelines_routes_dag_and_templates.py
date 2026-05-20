@@ -1203,7 +1203,7 @@ async def test_templates_page_renders(route_client, base_app):
         mock_svc.return_value.list_templates = AsyncMock(return_value=[])
         mock_svc.return_value.list_cached_dialogs_by_phone = AsyncMock(return_value={})
         mock_ch.return_value.list_channels = AsyncMock(return_value=[])
-        mock_acct.return_value.list_accounts = AsyncMock(return_value=[])
+        mock_acct.return_value.list_account_summaries = AsyncMock(return_value=[])
         resp = await route_client.get("/pipelines/templates")
     assert resp.status_code == 200
 
