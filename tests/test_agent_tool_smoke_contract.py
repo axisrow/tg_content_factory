@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -19,6 +21,48 @@ def _assert_no_formatter_contract_error(tool_name: str, text: str) -> None:
     assert "has no attribute" not in lowered, tool_name
     assert "keyerror" not in lowered, tool_name
     assert "required positional" not in lowered, tool_name
+
+
+def _minimal_deepagents_kwargs(tool_name: str) -> dict[str, object]:
+    from src.agent.tools.deepagents_sync import _REQUIRED_ARGS_BY_TOOL
+
+    samples: dict[str, object] = {
+        "account_id": 1,
+        "channel_id": 1001,
+        "chat_id": "@contract_chat",
+        "dialog_ids": "1001",
+        "emoji": "👍",
+        "file_paths": "/tmp/contract-smoke.jpg",
+        "folder_path": "/tmp",
+        "from_chat": "@from_chat",
+        "identifier": "@contract_channel",
+        "instruction": "noop",
+        "item_id": 1,
+        "job_id": "collect",
+        "json_text": "{}",
+        "message_id": 1,
+        "message_ids": "1",
+        "minutes": 5,
+        "name": "contract",
+        "pipeline_id": 1,
+        "pk": 1,
+        "prompt": "contract smoke",
+        "provider": "stub",
+        "query": "contract",
+        "recipient": "@recipient",
+        "run_id": 1,
+        "schedule_at": "2030-01-01T00:00:00",
+        "sq_id": 1,
+        "source_channel_ids": "1001",
+        "steps_json": "[]",
+        "target": "1001",
+        "target_refs": "+79001234567|1001",
+        "text": "contract smoke",
+        "thread_id": 1,
+        "to_chat": "@to_chat",
+        "user_id": "@user",
+    }
+    return {name: samples.get(name, "contract") for name in _REQUIRED_ARGS_BY_TOOL.get(tool_name, frozenset())}
 
 
 async def _seed_read_only_contract_data(db) -> None:
@@ -39,6 +83,41 @@ async def _seed_read_only_contract_data(db) -> None:
             Message(channel_id=1002, message_id=1, text="quantum рынок after before", date=now - timedelta(minutes=2)),
         ]
     )
+
+
+def test_agent_registry_matches_permission_contract(mock_db):
+    from src.agent.tools import build_agent_tool_registry
+    from src.agent.tools.permissions import BUILTIN_TOOLS, TOOL_CATEGORIES
+
+    registry_names = {
+        tool.name for tool in build_agent_tool_registry(mock_db, client_pool=MagicMock(), wrap_session_gate=False)
+    }
+    permission_names = set(TOOL_CATEGORIES) - set(BUILTIN_TOOLS)
+
+    assert registry_names - permission_names == set()
+    assert permission_names - registry_names == set()
+
+
+def test_agent_tools_reference_docs_cover_registry(mock_db):
+    from src.agent.tools import build_agent_tool_registry
+
+    doc = Path("docs/reference/agent-tools.md").read_text(encoding="utf-8")
+    missing = [
+        tool.name
+        for tool in build_agent_tool_registry(mock_db, client_pool=MagicMock(), wrap_session_gate=False)
+        if f"`{tool.name}`" not in doc
+    ]
+
+    assert missing == []
+
+
+def test_deepagents_all_tools_smoke_with_minimal_contract_args(cli_db):
+    tool_map: dict[str, Callable] = {tool.__name__: tool for tool in build_deepagents_tools(cli_db)}
+
+    for tool_name, tool in sorted(tool_map.items()):
+        result = tool(**_minimal_deepagents_kwargs(tool_name))
+        assert isinstance(result, str), tool_name
+        _assert_no_formatter_contract_error(tool_name, result)
 
 
 @pytest.mark.anyio
