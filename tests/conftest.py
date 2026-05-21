@@ -168,6 +168,7 @@ def _evaluate_real_tg_policy(
     mode: str | None,
     fixturenames: Collection[str],
     environ: Mapping[str, str],
+    is_cli_integration: bool = False,
 ) -> tuple[str | None, str | None]:
     uses_live_fixture = REAL_TG_LIVE_FIXTURE in fixturenames
 
@@ -177,7 +178,15 @@ def _evaluate_real_tg_policy(
             f"{REAL_TG_LIVE_FIXTURE} requires @{REAL_TG_SAFE_MARK} or @{REAL_TG_MANUAL_MARK}.",
         )
 
-    if mode in {REAL_TG_SAFE_MARK, REAL_TG_MANUAL_MARK} and not uses_live_fixture:
+    # Only safe-mode CLI-integration tests are allowed to skip the live fixture
+    # (they bring their own pool via the live CLI subprocess). Manual-mode is
+    # always sandbox-required because manual tests are the mutating category.
+    safe_bypass = is_cli_integration and mode == REAL_TG_SAFE_MARK
+    if (
+        mode in {REAL_TG_SAFE_MARK, REAL_TG_MANUAL_MARK}
+        and not uses_live_fixture
+        and not safe_bypass
+    ):
         return (
             "fail",
             f"@{mode} tests must use the {REAL_TG_LIVE_FIXTURE} fixture.",
@@ -324,12 +333,21 @@ async def real_telegram_sandbox():
         await client.disconnect()
 
 
+CLI_REAL_TG_INTEGRATION_DIR = "cli_real_tg_integration"
+
+
+def _is_cli_real_tg_integration(item) -> bool:
+    path = Path(str(item.fspath))
+    return CLI_REAL_TG_INTEGRATION_DIR in path.parts
+
+
 def pytest_runtest_setup(item):
     mode = _resolve_real_tg_mode(item)
     action, message = _evaluate_real_tg_policy(
         mode=mode,
         fixturenames=item.fixturenames,
         environ=os.environ,
+        is_cli_integration=_is_cli_real_tg_integration(item),
     )
     if action == "skip":
         pytest.skip(message)
