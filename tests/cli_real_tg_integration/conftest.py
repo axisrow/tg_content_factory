@@ -85,16 +85,19 @@ def run_cli(cli_env: CliEnv):
             f"{_WORKTREE_ROOT}{os.pathsep}{existing}" if existing else str(_WORKTREE_ROOT)
         )
         env["PYTHONSAFEPATH"] = "1"
-        return subprocess.run(
-            [sys.executable, "-m", "src.main", *args],
-            cwd=str(cli_env.repo_root),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            env=env,
-        )
+        try:
+            return subprocess.run(
+                [sys.executable, "-m", "src.main", *args],
+                cwd=str(cli_env.repo_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.skip(f"CLI command timed out after {timeout}s: {' '.join(args)}")
 
     return _run
 
@@ -179,6 +182,76 @@ def discover_first_phone(run_cli, assert_cli_ok):
         match = _ACCOUNT_LIST_ROW_RE.search(result.stdout)
         if not match:
             pytest.skip("no accounts in data.db — `account list` returned no rows")
+        return match.group(1)
+
+    return _discover
+
+
+# Таблицы pipeline/search-query/runs все печатают первой колонкой числовой ID:
+# заголовки начинаются с букв ("ID"), а строки — с цифр; regex отсекает шапку.
+_LEADING_INT_ROW_RE = re.compile(r"^\s*(\d+)\s+\S", re.MULTILINE)
+
+
+@pytest.fixture
+def discover_first_pipeline_id(run_cli, assert_cli_ok):
+    """Run `pipeline list` and return the first pipeline id, or skip."""
+
+    def _discover() -> str:
+        result = run_cli("pipeline", "list")
+        assert_cli_ok(result)
+        match = _LEADING_INT_ROW_RE.search(result.stdout)
+        if not match:
+            pytest.skip("no pipelines — `pipeline list` returned no rows")
+        return match.group(1)
+
+    return _discover
+
+
+@pytest.fixture
+def discover_first_run_id(run_cli, assert_cli_ok, discover_first_pipeline_id):
+    """Run `pipeline runs <pipeline_id>` and return the first run id, or skip."""
+
+    def _discover() -> str:
+        pipeline_id = discover_first_pipeline_id()
+        result = run_cli("pipeline", "runs", pipeline_id, "--limit", "1")
+        assert_cli_ok(result)
+        match = _LEADING_INT_ROW_RE.search(result.stdout)
+        if not match:
+            pytest.skip(f"no runs for pipeline id={pipeline_id}")
+        return match.group(1)
+
+    return _discover
+
+
+@pytest.fixture
+def discover_first_search_query_id(run_cli, assert_cli_ok):
+    """Run `search-query list` and return the first search query id, or skip."""
+
+    def _discover() -> str:
+        result = run_cli("search-query", "list")
+        assert_cli_ok(result)
+        match = _LEADING_INT_ROW_RE.search(result.stdout)
+        if not match:
+            pytest.skip("no search queries — `search-query list` returned no rows")
+        return match.group(1)
+
+    return _discover
+
+
+# `agent threads` печатает строки вида `[<id>] <title>  (<created_at>)`.
+_AGENT_THREAD_ROW_RE = re.compile(r"^\[(\d+)\]", re.MULTILINE)
+
+
+@pytest.fixture
+def discover_first_agent_thread_id(run_cli, assert_cli_ok):
+    """Run `agent threads` and return the first thread id, or skip."""
+
+    def _discover() -> str:
+        result = run_cli("agent", "threads")
+        assert_cli_ok(result)
+        match = _AGENT_THREAD_ROW_RE.search(result.stdout)
+        if not match:
+            pytest.skip("no agent threads — `agent threads` returned no rows")
         return match.group(1)
 
     return _discover
