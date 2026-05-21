@@ -58,18 +58,28 @@ def _close_db(db: Database) -> None:
 
 
 def _seed_minimal_pipeline(db_path: str, *, name: str = "P1") -> int:
-    """Seed a minimal pipeline at db_path. Opens+closes its own Database."""
+    """Seed a minimal pipeline at db_path. Opens+closes its own Database.
+
+    Uses import_json with empty source_ids/target_refs because PipelineService.add
+    unconditionally validates channel/account existence (pipeline_service.py:138),
+    whereas import_json has explicit `if source_ids else []` guards (lines 515-516)
+    that bypass validation when the lists are empty — perfect for tests that only
+    need a pipeline row to manipulate (approve/reject/toggle/edit/refinement).
+    """
     from src.services.pipeline_service import PipelineService
 
     db = _open_db(db_path)
     try:
         svc = PipelineService(db)
         return asyncio.run(
-            svc.add(
-                name=name,
-                prompt_template="generate something",
-                source_channel_ids=[100_001],
-                target_refs=[PipelineTargetRef(phone="+70000000001", dialog_id=1)],
+            svc.import_json(
+                {
+                    "name": name,
+                    "prompt_template": "generate something",
+                    "source_ids": [],
+                    "target_refs": [],
+                    "generate_interval_minutes": 60,
+                }
             )
         )
     finally:
@@ -110,8 +120,11 @@ def _seed_pipeline_with_graph(db_path: str, *, name: str = "DAG1") -> int:
                 {
                     "name": name,
                     "prompt_template": "ignored for DAG",
-                    "source_ids": [100_001],
-                    "target_refs": [{"phone": "+70000000001", "dialog_id": 1}],
+                    # Empty sources/targets avoid PipelineService._normalize_sources
+                    # validation against an empty Channel/Account table (see the
+                    # `if source_ids else []` guards at pipeline_service.py:515-516).
+                    "source_ids": [],
+                    "target_refs": [],
                     "pipeline_json": graph_dict,
                     "generate_interval_minutes": 60,
                 }
@@ -491,10 +504,25 @@ def _pipeline_cli_run(db_path: str, cli_init_patch, ns):
 
 
 class TestPipelineAddRW:
-    def test_add_minimal_legacy(self, tmp_path, cli_init_patch, capsys):
+    def test_add_minimal_dag(self, tmp_path, cli_init_patch, capsys):
+        """Use DAG mode (--node) so the CLI takes the import_json branch and
+        passes an empty source_ids list — avoids _normalize_sources validation
+        on a fresh DB without seeded channels/accounts.
+        """
         db_path = _empty_db_path(tmp_path, "pipeline_add.db")
 
-        _pipeline_cli_run(db_path, cli_init_patch, _pipeline_ns("add", name="happy"))
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "add",
+                name="happy",
+                node_specs=["source", "llm_generate:prompt_template=x", "publish"],
+                source=None,
+                target=None,
+                prompt_template=None,
+            ),
+        )
 
         assert _count_pipelines(db_path) == 1
         out = capsys.readouterr().out
@@ -583,8 +611,11 @@ class TestPipelineImportRW:
                 {
                     "name": "FromFile",
                     "prompt_template": "from file",
-                    "source_ids": [100_001],
-                    "target_refs": [{"phone": "+70000000001", "dialog_id": 1}],
+                    # Empty source_ids/target_refs bypass _normalize_sources/_targets
+                    # validation; the test only verifies that import wires a pipeline
+                    # row into content_pipelines, not the relation tables.
+                    "source_ids": [],
+                    "target_refs": [],
                     "generate_interval_minutes": 60,
                 }
             )
