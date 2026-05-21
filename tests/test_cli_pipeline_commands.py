@@ -63,8 +63,13 @@ def _seed_minimal_pipeline(db_path: str, *, name: str = "P1") -> int:
     Uses import_json with empty source_ids/target_refs because PipelineService.add
     unconditionally validates channel/account existence (pipeline_service.py:138),
     whereas import_json has explicit `if source_ids else []` guards (lines 515-516)
-    that bypass validation when the lists are empty — perfect for tests that only
-    need a pipeline row to manipulate (approve/reject/toggle/edit/refinement).
+    that bypass validation when the lists are empty.
+
+    `pipeline_json={}` marks the pipeline as DAG (PipelineGraph(nodes=[], edges=[]))
+    so svc.update() takes the `is_dag` branch (pipeline_service.py:210-212) and
+    skips _normalize_sources entirely — needed for test_edit_renames_pipeline
+    because _pipeline_ns defaults pass source=[100_001] which would otherwise be
+    re-validated and rejected on the empty test DB.
     """
     from src.services.pipeline_service import PipelineService
 
@@ -78,6 +83,7 @@ def _seed_minimal_pipeline(db_path: str, *, name: str = "P1") -> int:
                     "prompt_template": "generate something",
                     "source_ids": [],
                     "target_refs": [],
+                    "pipeline_json": {},
                     "generate_interval_minutes": 60,
                 }
             )
