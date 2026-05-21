@@ -67,6 +67,18 @@ def test_real_tg_policy_requires_live_fixture_for_safe_mode():
     assert REAL_TG_LIVE_FIXTURE in message
 
 
+def test_real_tg_policy_allows_safe_mode_without_fixture_for_cli_integration():
+    action, message = _evaluate_real_tg_policy(
+        mode=REAL_TG_SAFE_MARK,
+        fixturenames=(),
+        environ={REAL_TG_SAFE_GATE_ENV: "1"},
+        is_cli_integration=True,
+    )
+
+    assert action is None
+    assert message is None
+
+
 def test_real_tg_policy_skips_safe_mode_without_gate():
     action, message = _evaluate_real_tg_policy(
         mode=REAL_TG_SAFE_MARK,
