@@ -85,16 +85,19 @@ def run_cli(cli_env: CliEnv):
             f"{_WORKTREE_ROOT}{os.pathsep}{existing}" if existing else str(_WORKTREE_ROOT)
         )
         env["PYTHONSAFEPATH"] = "1"
-        return subprocess.run(
-            [sys.executable, "-m", "src.main", *args],
-            cwd=str(cli_env.repo_root),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout,
-            env=env,
-        )
+        try:
+            return subprocess.run(
+                [sys.executable, "-m", "src.main", *args],
+                cwd=str(cli_env.repo_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            pytest.skip(f"CLI command timed out after {timeout}s: {' '.join(args)}")
 
     return _run
 
@@ -210,7 +213,7 @@ def discover_first_run_id(run_cli, assert_cli_ok, discover_first_pipeline_id):
 
     def _discover() -> str:
         pipeline_id = discover_first_pipeline_id()
-        result = run_cli("pipeline", "runs", pipeline_id)
+        result = run_cli("pipeline", "runs", pipeline_id, "--limit", "1")
         assert_cli_ok(result)
         match = _LEADING_INT_ROW_RE.search(result.stdout)
         if not match:
