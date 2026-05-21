@@ -2,11 +2,141 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+import sqlite3
+
 import pytest
 
 from src.cli.commands.pipeline import _parse_target_refs, _preview_text, run
+from src.database import Database
 from src.services.pipeline_service import PipelineTargetRef, PipelineValidationError
 from tests.helpers import cli_ns as _ns
+
+_PIPELINE_INIT_DB_TARGET = "src.cli.commands.pipeline.runtime.init_db"
+
+
+def _read_pipeline_row(db_path: str, pipeline_id: int) -> dict | None:
+    """Read pipeline row using a fresh sqlite3 connection (handler closes aiosqlite)."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        cur = conn.execute("SELECT * FROM content_pipelines WHERE id = ?", (pipeline_id,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def _read_run_moderation(db_path: str, run_id: int) -> str | None:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.execute("SELECT moderation_status FROM generation_runs WHERE id = ?", (run_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def _count_pipelines(db_path: str) -> int:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.execute("SELECT COUNT(*) FROM content_pipelines")
+        return cur.fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _open_db(db_path: str) -> Database:
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    return db
+
+
+def _close_db(db: Database) -> None:
+    asyncio.run(db.close())
+
+
+def _seed_minimal_pipeline(db_path: str, *, name: str = "P1") -> int:
+    """Seed a minimal pipeline at db_path. Opens+closes its own Database."""
+    from src.services.pipeline_service import PipelineService
+
+    db = _open_db(db_path)
+    try:
+        svc = PipelineService(db)
+        return asyncio.run(
+            svc.add(
+                name=name,
+                prompt_template="generate something",
+                source_channel_ids=[100_001],
+                target_refs=[PipelineTargetRef(phone="+70000000001", dialog_id=1)],
+            )
+        )
+    finally:
+        _close_db(db)
+
+
+def _seed_pipeline_with_graph(db_path: str, *, name: str = "DAG1") -> int:
+    """Seed a pipeline with a minimal DAG (source → generator → output)."""
+    from src.services.pipeline_service import PipelineService
+
+    graph_dict = {
+        "nodes": [
+            {"id": "src_0", "type": "source", "name": "src", "config": {}},
+            {"id": "gen_0", "type": "generator", "name": "gen", "config": {"prompt_template": "x"}},
+            {"id": "out_0", "type": "output", "name": "out", "config": {}},
+        ],
+        "edges": [
+            {"from_node": "src_0", "to_node": "gen_0"},
+            {"from_node": "gen_0", "to_node": "out_0"},
+        ],
+    }
+    db = _open_db(db_path)
+    try:
+        svc = PipelineService(db)
+        return asyncio.run(
+            svc.import_json(
+                {
+                    "name": name,
+                    "prompt_template": "ignored for DAG",
+                    "source_ids": [100_001],
+                    "target_refs": [{"phone": "+70000000001", "dialog_id": 1}],
+                    "pipeline_json": graph_dict,
+                    "generate_interval_minutes": 60,
+                }
+            )
+        )
+    finally:
+        _close_db(db)
+
+
+def _seed_generation_run(db_path: str, pipeline_id: int) -> int:
+    db = _open_db(db_path)
+    try:
+        return asyncio.run(db.repos.generation_runs.create_run(pipeline_id, "test prompt"))
+    finally:
+        _close_db(db)
+
+
+def _list_template_id(db_path: str) -> int | None:
+    """Return the first built-in pipeline template id."""
+    from src.services.pipeline_service import PipelineService
+
+    db = _open_db(db_path)
+    try:
+        svc = PipelineService(db)
+        templates = asyncio.run(svc.list_templates())
+        return templates[0].id if templates else None
+    finally:
+        _close_db(db)
+
+
+def _empty_db_path(tmp_path, name: str) -> str:
+    """Create and initialize a fresh DB file, then close the connection."""
+    db_path = str(tmp_path / name)
+    db = _open_db(db_path)
+    _close_db(db)
+    return db_path
 
 # ---------------------------------------------------------------------------
 # _parse_target_refs — pure logic
@@ -282,3 +412,389 @@ class TestPipelineGraph:
 
         run(_ns(pipeline_action="graph", id=999))
         assert "not found" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# RW-DB happy-path tests (gap-filling for issue #577)
+# ---------------------------------------------------------------------------
+
+
+def _pipeline_ns(action, **overrides):
+    """Build a pipeline-action Namespace prefilled with the most common defaults."""
+    defaults = {
+        "pipeline_action": action,
+        # `add` defaults
+        "name": "P-test",
+        "json_file": None,
+        "node_specs": None,
+        "prompt_template": "do a thing",
+        "source": [100_001],
+        "target": ["+70000000001|1"],
+        "llm_model": None,
+        "image_model": None,
+        "interval": 60,
+        "publish_mode": "moderated",
+        "generation_backend": "chain",
+        "inactive": False,
+        "run_after": False,
+        "since_value": 24,
+        "since_unit": "h",
+        "edge": None,
+        "node_configs": None,
+        # `edit` defaults (id resolved per test)
+        "active": None,
+        # `refinement-steps`
+        "steps_json": None,
+        # `filter` defaults
+        "filter_action": None,
+        "message_kinds": None,
+        "service_actions": None,
+        "media_types": None,
+        "sender_kinds": None,
+        "keywords": None,
+        "regex": None,
+        "forwarded": None,
+        "has_text": None,
+        # `node`/`edge`
+        "node_action": None,
+        "edge_action": None,
+    }
+    defaults.update(overrides)
+    return _ns(**defaults)
+
+
+def _pipeline_cli_run(db_path: str, cli_init_patch, ns):
+    """Open a fresh Database at db_path, run pipeline command, then close.
+
+    cli_init_patch with fresh_database=True asks the handler to open its own
+    Database internally and closes it on exit, but it still needs a Database
+    object to derive the file path from. So we open one here, hand it over,
+    and close it after the handler returns.
+    """
+    db = _open_db(db_path)
+    try:
+        with cli_init_patch(db, _PIPELINE_INIT_DB_TARGET, fresh_database=True):
+            run(ns)
+    finally:
+        _close_db(db)
+
+
+class TestPipelineAddRW:
+    def test_add_minimal_legacy(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_add.db")
+
+        _pipeline_cli_run(db_path, cli_init_patch, _pipeline_ns("add", name="happy"))
+
+        assert _count_pipelines(db_path) == 1
+        out = capsys.readouterr().out
+        assert "Added pipeline" in out and "happy" in out
+
+
+class TestPipelineEditRW:
+    def test_edit_renames_pipeline(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_edit.db")
+        pid = _seed_minimal_pipeline(db_path, name="OldName")
+
+        _pipeline_cli_run(
+            db_path, cli_init_patch, _pipeline_ns("edit", id=pid, name="NewName")
+        )
+
+        row = _read_pipeline_row(db_path, pid)
+        assert row is not None and row["name"] == "NewName"
+        assert "Updated pipeline" in capsys.readouterr().out
+
+
+class TestPipelineToggleRW:
+    def test_toggle_flips_active(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_toggle.db")
+        pid = _seed_minimal_pipeline(db_path)
+        original = _read_pipeline_row(db_path, pid)["is_active"]
+
+        _pipeline_cli_run(db_path, cli_init_patch, _pipeline_ns("toggle", id=pid))
+
+        after = _read_pipeline_row(db_path, pid)["is_active"]
+        assert after != original
+        assert "Toggled pipeline" in capsys.readouterr().out
+
+
+class TestPipelineApproveRW:
+    def test_approve_marks_run_approved(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_approve.db")
+        pid = _seed_minimal_pipeline(db_path)
+        run_id = _seed_generation_run(db_path, pid)
+
+        _pipeline_cli_run(
+            db_path, cli_init_patch, _pipeline_ns("approve", run_id=run_id)
+        )
+
+        assert _read_run_moderation(db_path, run_id) == "approved"
+        assert f"Approved run id={run_id}" in capsys.readouterr().out
+
+
+class TestPipelineRejectRW:
+    def test_reject_marks_run_rejected(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_reject.db")
+        pid = _seed_minimal_pipeline(db_path)
+        run_id = _seed_generation_run(db_path, pid)
+
+        _pipeline_cli_run(db_path, cli_init_patch, _pipeline_ns("reject", run_id=run_id))
+
+        assert _read_run_moderation(db_path, run_id) == "rejected"
+        assert f"Rejected run id={run_id}" in capsys.readouterr().out
+
+
+class TestPipelineRefinementStepsRW:
+    def test_set_steps_persists_json(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_refine.db")
+        pid = _seed_minimal_pipeline(db_path)
+
+        steps = [{"instruction": "polish"}, {"instruction": "translate"}]
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns("refinement-steps", id=pid, steps_json=json.dumps(steps)),
+        )
+
+        row = _read_pipeline_row(db_path, pid)
+        assert row is not None
+        assert json.loads(row["refinement_steps"]) == steps
+        out = capsys.readouterr().out
+        assert f"Set 2 refinement step(s) for pipeline id={pid}" in out
+
+
+class TestPipelineImportRW:
+    def test_import_creates_pipeline(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_import.db")
+
+        payload_path = tmp_path / "pipeline.json"
+        payload_path.write_text(
+            json.dumps(
+                {
+                    "name": "FromFile",
+                    "prompt_template": "from file",
+                    "source_ids": [100_001],
+                    "target_refs": [{"phone": "+70000000001", "dialog_id": 1}],
+                    "generate_interval_minutes": 60,
+                }
+            )
+        )
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns("import", file=str(payload_path), name=None),
+        )
+
+        assert _count_pipelines(db_path) == 1
+        assert "Imported pipeline" in capsys.readouterr().out
+
+
+class TestPipelineFromTemplateRW:
+    def test_creates_pipeline_from_template(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_from_tpl.db")
+        tpl_id = _list_template_id(db_path)
+        assert tpl_id is not None, "No builtin pipeline templates available"
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "from-template",
+                template_id=tpl_id,
+                name="FromTpl",
+                source_ids="",
+                target_refs="",
+            ),
+        )
+
+        assert _count_pipelines(db_path) == 1
+        out = capsys.readouterr().out
+        assert "Created pipeline from template" in out
+
+
+class TestPipelineFilterRW:
+    def test_filter_set_adds_filter_node(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_filter_set.db")
+        pid = _seed_pipeline_with_graph(db_path)
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "filter", id=pid, filter_action="set", keywords=["hello"]
+            ),
+        )
+
+        row = _read_pipeline_row(db_path, pid)
+        graph = json.loads(row["pipeline_json"])
+        types = [node["type"] for node in graph["nodes"]]
+        assert "filter" in types
+        assert "Updated filter" in capsys.readouterr().out
+
+    def test_filter_clear_removes_filter_node(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_filter_clear.db")
+        pid = _seed_pipeline_with_graph(db_path)
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns("filter", id=pid, filter_action="set", keywords=["a"]),
+        )
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns("filter", id=pid, filter_action="clear"),
+        )
+
+        row = _read_pipeline_row(db_path, pid)
+        graph = json.loads(row["pipeline_json"])
+        types = [node["type"] for node in graph["nodes"]]
+        assert "filter" not in types
+        out = capsys.readouterr().out
+        assert "Cleared filter" in out
+
+
+class TestPipelineNodeRW:
+    def test_node_add_appends(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_node_add.db")
+        pid = _seed_pipeline_with_graph(db_path)
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "node",
+                pipeline_id=pid,
+                node_action="add",
+                node_spec="image_generator",
+            ),
+        )
+
+        row = _read_pipeline_row(db_path, pid)
+        graph = json.loads(row["pipeline_json"])
+        types = [node["type"] for node in graph["nodes"]]
+        assert "image_generator" in types
+        assert "Added node" in capsys.readouterr().out
+
+    def test_node_replace_swaps(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_node_replace.db")
+        pid = _seed_pipeline_with_graph(db_path)
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "node",
+                pipeline_id=pid,
+                node_action="replace",
+                node_id="gen_0",
+                node_spec="generator:prompt_template=replaced",
+            ),
+        )
+
+        row = _read_pipeline_row(db_path, pid)
+        graph = json.loads(row["pipeline_json"])
+        gen_node = next(n for n in graph["nodes"] if n["id"] == "gen_0")
+        assert gen_node["config"].get("prompt_template") == "replaced"
+        assert "Replaced node" in capsys.readouterr().out
+
+    def test_node_remove_drops(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_node_remove.db")
+        pid = _seed_pipeline_with_graph(db_path)
+
+        # Pre-add a deletable extra node so the minimum src→gen→out chain stays intact
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "node",
+                pipeline_id=pid,
+                node_action="add",
+                node_spec="image_generator",
+            ),
+        )
+        capsys.readouterr()
+
+        row = _read_pipeline_row(db_path, pid)
+        graph = json.loads(row["pipeline_json"])
+        added = next(n for n in graph["nodes"] if n["type"] == "image_generator")
+        added_id = added["id"]
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "node",
+                pipeline_id=pid,
+                node_action="remove",
+                node_id=added_id,
+            ),
+        )
+
+        row2 = _read_pipeline_row(db_path, pid)
+        graph2 = json.loads(row2["pipeline_json"])
+        ids = [n["id"] for n in graph2["nodes"]]
+        assert added_id not in ids
+        assert "Removed node" in capsys.readouterr().out
+
+
+class TestPipelineEdgeRW:
+    def test_edge_add_and_remove(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_edge.db")
+        pid = _seed_pipeline_with_graph(db_path)
+
+        # Add an extra node first so we have a fresh edge target
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "node",
+                pipeline_id=pid,
+                node_action="add",
+                node_spec="image_generator",
+            ),
+        )
+        capsys.readouterr()
+
+        row = _read_pipeline_row(db_path, pid)
+        graph = json.loads(row["pipeline_json"])
+        new_node = next(n for n in graph["nodes"] if n["type"] == "image_generator")
+
+        # edge add
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "edge",
+                pipeline_id=pid,
+                edge_action="add",
+                from_node="gen_0",
+                to_node=new_node["id"],
+            ),
+        )
+
+        row2 = _read_pipeline_row(db_path, pid)
+        graph2 = json.loads(row2["pipeline_json"])
+        edge_pairs = {(e["from_node"], e["to_node"]) for e in graph2["edges"]}
+        assert ("gen_0", new_node["id"]) in edge_pairs
+        assert "Added edge" in capsys.readouterr().out
+
+        # edge remove
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "edge",
+                pipeline_id=pid,
+                edge_action="remove",
+                from_node="gen_0",
+                to_node=new_node["id"],
+            ),
+        )
+
+        row3 = _read_pipeline_row(db_path, pid)
+        graph3 = json.loads(row3["pipeline_json"])
+        edge_pairs3 = {(e["from_node"], e["to_node"]) for e in graph3["edges"]}
+        assert ("gen_0", new_node["id"]) not in edge_pairs3
+        assert "Removed edge" in capsys.readouterr().out
