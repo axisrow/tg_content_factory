@@ -178,10 +178,14 @@ def _evaluate_real_tg_policy(
             f"{REAL_TG_LIVE_FIXTURE} requires @{REAL_TG_SAFE_MARK} or @{REAL_TG_MANUAL_MARK}.",
         )
 
+    # Only safe-mode CLI-integration tests are allowed to skip the live fixture
+    # (they bring their own pool via the live CLI subprocess). Manual-mode is
+    # always sandbox-required because manual tests are the mutating category.
+    safe_bypass = is_cli_integration and mode == REAL_TG_SAFE_MARK
     if (
         mode in {REAL_TG_SAFE_MARK, REAL_TG_MANUAL_MARK}
         and not uses_live_fixture
-        and not is_cli_integration
+        and not safe_bypass
     ):
         return (
             "fail",

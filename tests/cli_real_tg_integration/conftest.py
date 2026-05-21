@@ -90,6 +90,8 @@ def run_cli(cli_env: CliEnv):
             cwd=str(cli_env.repo_root),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             env=env,
         )

@@ -79,6 +79,20 @@ def test_real_tg_policy_allows_safe_mode_without_fixture_for_cli_integration():
     assert message is None
 
 
+def test_real_tg_policy_rejects_manual_mode_without_fixture_for_cli_integration():
+    """Manual-mode (mutating) tests must always use the sandbox fixture, even
+    inside cli_real_tg_integration/. The bypass is safe-only by design."""
+    action, message = _evaluate_real_tg_policy(
+        mode=REAL_TG_MANUAL_MARK,
+        fixturenames=(),
+        environ={REAL_TG_MANUAL_GATE_ENV: "1"},
+        is_cli_integration=True,
+    )
+
+    assert action == "fail"
+    assert REAL_TG_LIVE_FIXTURE in message
+
+
 def test_real_tg_policy_skips_safe_mode_without_gate():
     action, message = _evaluate_real_tg_policy(
         mode=REAL_TG_SAFE_MARK,
@@ -161,7 +175,7 @@ def test_real_tg_sandbox_config_parses_required_and_optional_fields():
 def test_real_tg_safe_marker_is_not_used_in_mutating_test_files():
     violations: list[str] = []
 
-    for path in _TESTS_DIR.glob("test_*.py"):
+    for path in _TESTS_DIR.rglob("test_*.py"):
         if path.name in _AUDIT_EXCLUDED_FILES:
             continue
         content = path.read_text(encoding="utf-8")
@@ -177,7 +191,7 @@ def test_real_tg_safe_marker_is_not_used_in_mutating_test_files():
 def test_real_tg_never_marker_does_not_request_live_fixture():
     violations: list[str] = []
 
-    for path in _TESTS_DIR.glob("test_*.py"):
+    for path in _TESTS_DIR.rglob("test_*.py"):
         if path.name in _AUDIT_EXCLUDED_FILES:
             continue
         content = path.read_text(encoding="utf-8")
@@ -192,7 +206,7 @@ def test_real_tg_never_marker_does_not_request_live_fixture():
 def test_live_fixture_is_not_used_without_real_tg_policy_marker():
     violations: list[str] = []
 
-    for path in _TESTS_DIR.glob("test_*.py"):
+    for path in _TESTS_DIR.rglob("test_*.py"):
         if path.name in _AUDIT_EXCLUDED_FILES:
             continue
         content = path.read_text(encoding="utf-8")
