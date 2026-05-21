@@ -36,8 +36,6 @@ def _detect_repo_root() -> Path:
 
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if parent.name == "worktrees":
-            continue
         if (parent / "config.yaml").exists() and "worktrees" not in parent.parts:
             return parent
 
