@@ -243,3 +243,73 @@ def test_filter_no_action(cli_init_patch, capsys):
 
     out = capsys.readouterr().out
     assert "Usage:" in out
+
+
+def _read_channel_is_filtered(db_path: str, pk: int) -> int:
+    """Read is_filtered for a channel using a fresh sqlite3 connection.
+
+    Needed because CLI handlers call db.close() in finally — the original
+    aiosqlite Database is unusable after run().
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.execute("SELECT is_filtered FROM channels WHERE id = ?", (pk,))
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def test_filter_toggle_flips_flag(tmp_path, cli_init_patch, capsys):
+    """filter toggle: marks unfiltered channel as filtered, then back.
+
+    filter.run() calls db.close() in its own finally — we use fresh_database=True
+    so cli_init_patch opens (and closes) a separate Database for the handler each
+    time, leaving the seed Database fully manageable.
+    """
+    db_path = str(tmp_path / "filter_toggle.db")
+    seed = Database(db_path)
+    asyncio.run(seed.initialize())
+    try:
+        pk = asyncio.run(
+            seed.add_channel(Channel(channel_id=900_001, title="ToggleCh", is_filtered=False))
+        )
+
+        with cli_init_patch(seed, _FILTER_INIT_DB_TARGET, fresh_database=True):
+            from src.cli.commands.filter import run
+
+            run(_ns(filter_action="toggle", pk=pk))
+
+        assert _read_channel_is_filtered(db_path, pk) == 1
+        out = capsys.readouterr().out
+        assert "marked as filtered" in out
+
+        with cli_init_patch(seed, _FILTER_INIT_DB_TARGET, fresh_database=True):
+            from src.cli.commands.filter import run
+
+            run(_ns(filter_action="toggle", pk=pk))
+
+        assert _read_channel_is_filtered(db_path, pk) == 0
+        out2 = capsys.readouterr().out
+        assert "marked as unfiltered" in out2
+    finally:
+        asyncio.run(seed.close())
+
+
+def test_filter_toggle_not_found(tmp_path, cli_init_patch, capsys):
+    """filter toggle: pk that doesn't exist prints not-found."""
+    db_path = str(tmp_path / "filter_toggle_missing.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    try:
+        with cli_init_patch(db, _FILTER_INIT_DB_TARGET, fresh_database=True):
+            from src.cli.commands.filter import run
+
+            run(_ns(filter_action="toggle", pk=999))
+
+        out = capsys.readouterr().out
+        assert "not found" in out
+    finally:
+        asyncio.run(db.close())
