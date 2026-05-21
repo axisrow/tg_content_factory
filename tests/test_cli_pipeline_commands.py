@@ -77,18 +77,29 @@ def _seed_minimal_pipeline(db_path: str, *, name: str = "P1") -> int:
 
 
 def _seed_pipeline_with_graph(db_path: str, *, name: str = "DAG1") -> int:
-    """Seed a pipeline with a minimal DAG (source → generator → output)."""
+    """Seed a pipeline with a minimal DAG: source → llm_generate → publish.
+
+    Uses the canonical PipelineNodeType values; node ids match the
+    `generate_node_id(type, counter)` convention so the CLI's auto-id logic
+    (see pipeline.run for `pipeline node add`) yields predictable next ids.
+    Edges serialize with `from`/`to` keys via PipelineGraph.to_json.
+    """
     from src.services.pipeline_service import PipelineService
 
     graph_dict = {
         "nodes": [
-            {"id": "src_0", "type": "source", "name": "src", "config": {}},
-            {"id": "gen_0", "type": "generator", "name": "gen", "config": {"prompt_template": "x"}},
-            {"id": "out_0", "type": "output", "name": "out", "config": {}},
+            {"id": "source_0", "type": "source", "name": "source", "config": {}},
+            {
+                "id": "llm_generate_0",
+                "type": "llm_generate",
+                "name": "llm_generate",
+                "config": {"prompt_template": "x"},
+            },
+            {"id": "publish_0", "type": "publish", "name": "publish", "config": {}},
         ],
         "edges": [
-            {"from_node": "src_0", "to_node": "gen_0"},
-            {"from_node": "gen_0", "to_node": "out_0"},
+            {"from": "source_0", "to": "llm_generate_0"},
+            {"from": "llm_generate_0", "to": "publish_0"},
         ],
     }
     db = _open_db(db_path)
@@ -655,6 +666,15 @@ class TestPipelineFilterRW:
         assert "Cleared filter" in out
 
 
+def _edge_pairs(graph: dict) -> set[tuple[str, str]]:
+    """Extract (from, to) tuples from a serialized pipeline_json graph.
+
+    PipelineGraph.to_json writes edges with `from`/`to` keys (see models.py:275),
+    so reading the persisted JSON must use the same keys.
+    """
+    return {(e["from"], e["to"]) for e in graph["edges"]}
+
+
 class TestPipelineNodeRW:
     def test_node_add_appends(self, tmp_path, cli_init_patch, capsys):
         db_path = _empty_db_path(tmp_path, "pipeline_node_add.db")
@@ -667,14 +687,14 @@ class TestPipelineNodeRW:
                 "node",
                 pipeline_id=pid,
                 node_action="add",
-                node_spec="image_generator",
+                node_spec="image_generate",
             ),
         )
 
         row = _read_pipeline_row(db_path, pid)
         graph = json.loads(row["pipeline_json"])
         types = [node["type"] for node in graph["nodes"]]
-        assert "image_generator" in types
+        assert "image_generate" in types
         assert "Added node" in capsys.readouterr().out
 
     def test_node_replace_swaps(self, tmp_path, cli_init_patch, capsys):
@@ -688,14 +708,14 @@ class TestPipelineNodeRW:
                 "node",
                 pipeline_id=pid,
                 node_action="replace",
-                node_id="gen_0",
-                node_spec="generator:prompt_template=replaced",
+                node_id="llm_generate_0",
+                node_spec="llm_generate:prompt_template=replaced",
             ),
         )
 
         row = _read_pipeline_row(db_path, pid)
         graph = json.loads(row["pipeline_json"])
-        gen_node = next(n for n in graph["nodes"] if n["id"] == "gen_0")
+        gen_node = next(n for n in graph["nodes"] if n["id"] == "llm_generate_0")
         assert gen_node["config"].get("prompt_template") == "replaced"
         assert "Replaced node" in capsys.readouterr().out
 
@@ -703,7 +723,7 @@ class TestPipelineNodeRW:
         db_path = _empty_db_path(tmp_path, "pipeline_node_remove.db")
         pid = _seed_pipeline_with_graph(db_path)
 
-        # Pre-add a deletable extra node so the minimum src→gen→out chain stays intact
+        # Pre-add a deletable extra node so the minimum src→gen→publish chain stays intact
         _pipeline_cli_run(
             db_path,
             cli_init_patch,
@@ -711,14 +731,14 @@ class TestPipelineNodeRW:
                 "node",
                 pipeline_id=pid,
                 node_action="add",
-                node_spec="image_generator",
+                node_spec="image_generate",
             ),
         )
         capsys.readouterr()
 
         row = _read_pipeline_row(db_path, pid)
         graph = json.loads(row["pipeline_json"])
-        added = next(n for n in graph["nodes"] if n["type"] == "image_generator")
+        added = next(n for n in graph["nodes"] if n["type"] == "image_generate")
         added_id = added["id"]
 
         _pipeline_cli_run(
@@ -752,16 +772,16 @@ class TestPipelineEdgeRW:
                 "node",
                 pipeline_id=pid,
                 node_action="add",
-                node_spec="image_generator",
+                node_spec="image_generate",
             ),
         )
         capsys.readouterr()
 
         row = _read_pipeline_row(db_path, pid)
         graph = json.loads(row["pipeline_json"])
-        new_node = next(n for n in graph["nodes"] if n["type"] == "image_generator")
+        new_node = next(n for n in graph["nodes"] if n["type"] == "image_generate")
 
-        # edge add
+        # edge add: llm_generate_0 → image_generate_0
         _pipeline_cli_run(
             db_path,
             cli_init_patch,
@@ -769,15 +789,14 @@ class TestPipelineEdgeRW:
                 "edge",
                 pipeline_id=pid,
                 edge_action="add",
-                from_node="gen_0",
+                from_node="llm_generate_0",
                 to_node=new_node["id"],
             ),
         )
 
         row2 = _read_pipeline_row(db_path, pid)
         graph2 = json.loads(row2["pipeline_json"])
-        edge_pairs = {(e["from_node"], e["to_node"]) for e in graph2["edges"]}
-        assert ("gen_0", new_node["id"]) in edge_pairs
+        assert ("llm_generate_0", new_node["id"]) in _edge_pairs(graph2)
         assert "Added edge" in capsys.readouterr().out
 
         # edge remove
@@ -788,13 +807,12 @@ class TestPipelineEdgeRW:
                 "edge",
                 pipeline_id=pid,
                 edge_action="remove",
-                from_node="gen_0",
+                from_node="llm_generate_0",
                 to_node=new_node["id"],
             ),
         )
 
         row3 = _read_pipeline_row(db_path, pid)
         graph3 = json.loads(row3["pipeline_json"])
-        edge_pairs3 = {(e["from_node"], e["to_node"]) for e in graph3["edges"]}
-        assert ("gen_0", new_node["id"]) not in edge_pairs3
+        assert ("llm_generate_0", new_node["id"]) not in _edge_pairs(graph3)
         assert "Removed edge" in capsys.readouterr().out
