@@ -13,31 +13,45 @@ import pytest
 pytestmark = pytest.mark.real_tg_safe
 
 
-_THREAD_ID_RE = re.compile(r"thread\s*[:=]?\s*\[?(\d+)\]?", re.IGNORECASE)
+_THREAD_ROW_RE = re.compile(r"^\[(\d+)\]", re.MULTILINE)
 
 
 def test_proc_agent_chat_oneshot(run_cli, assert_cli_ok):
-    # Record threads that existed before so we can compute the new one.
+    # Record threads that existed before so we can compute the new one. This
+    # must run BEFORE the try/finally so a failure here doesn't leak a thread
+    # that was never created in the first place.
     before = run_cli("agent", "threads")
     assert_cli_ok(before)
-    pre_ids = set(re.findall(r"^\[(\d+)\]", before.stdout, re.MULTILINE))
+    pre_ids = set(_THREAD_ROW_RE.findall(before.stdout))
 
-    result = run_cli(
-        "agent", "chat", "-p", "Say literally just ok and stop.", timeout=180
-    )
-    assert_cli_ok(result)
-    assert result.stdout.strip(), (
-        f"`agent chat -p` produced empty stdout: {result.stderr!r}"
-    )
-
-    # Cleanup: delete the thread the command just created so the user's
-    # `agent threads` list returns to its prior state.
-    after = run_cli("agent", "threads")
-    assert_cli_ok(after)
-    post_ids = set(re.findall(r"^\[(\d+)\]", after.stdout, re.MULTILINE))
-    new_ids = post_ids - pre_ids
-    for tid in new_ids:
-        cleanup = run_cli("agent", "thread-delete", "--thread-id", tid)
-        # Cleanup failures shouldn't mask the chat assertion above; just log.
-        if cleanup.returncode != 0:
-            print(f"cleanup: failed to delete thread {tid}: {cleanup.stderr}")
+    try:
+        result = run_cli(
+            "agent", "chat", "-p", "Say literally just ok and stop.", timeout=180
+        )
+        assert_cli_ok(result)
+        assert result.stdout.strip(), (
+            f"`agent chat -p` produced empty stdout: {result.stderr!r}"
+        )
+    finally:
+        # Cleanup runs unconditionally: any assertion failure, run_cli
+        # timeout-skip, or unexpected exception above must NOT leave a
+        # half-created thread persisting in the user's real DB.
+        after = run_cli("agent", "threads")
+        if after.returncode == 0:
+            post_ids = set(_THREAD_ROW_RE.findall(after.stdout))
+            new_ids = post_ids - pre_ids
+            for tid in new_ids:
+                cleanup = run_cli("agent", "thread-delete", "--thread-id", tid)
+                if cleanup.returncode != 0:
+                    pytest.fail(
+                        f"agent thread {tid} leaked: thread-delete failed "
+                        f"with stderr={cleanup.stderr!r}"
+                    )
+        else:
+            # `agent threads` itself failed — can't reliably diff. Surface
+            # so the operator knows to inspect the DB manually.
+            pytest.fail(
+                f"cleanup `agent threads` failed (returncode={after.returncode}); "
+                f"any thread created by the chat above may be leaked: "
+                f"stderr={after.stderr!r}"
+            )
