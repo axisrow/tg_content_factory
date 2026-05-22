@@ -25,8 +25,11 @@ def test_proc_scheduler_trigger_enqueues(run_cli, assert_cli_ok):
     finally:
         # Reverse the side effect: delete any pending tasks the trigger created.
         # If no accounts were connected the trigger printed and exited without
-        # writing anything — clear-pending in that case is a no-op.
+        # writing anything — clear-pending in that case is a no-op. A failure
+        # here means pending collection_tasks rows stay in the user's real DB,
+        # which is exactly the silent-leak pattern fixed in test_proc_restart.
         cleanup = run_cli("scheduler", "clear-pending")
-        if cleanup.returncode != 0:
-            # Don't mask the primary assertion; surface via print.
-            print(f"cleanup `scheduler clear-pending` failed: {cleanup.stderr!r}")
+        assert cleanup.returncode == 0, (
+            f"cleanup `scheduler clear-pending` failed; pending collection "
+            f"tasks may be leaked: stderr={cleanup.stderr!r}"
+        )

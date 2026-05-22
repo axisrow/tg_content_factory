@@ -40,6 +40,18 @@ def test_proc_stop_terminates_serve(run_cli_popen, run_cli, cli_env):
             break
         time.sleep(0.3)
     if proc.poll() is None:
+        # `stop` returned 0 but serve is still alive. Drain stderr via
+        # communicate() (not wait()) so a log-noisy server doesn't stall
+        # on pipe backpressure mid-SIGTERM — same fix as in run_cli_popen.
+        import subprocess
+
         proc.terminate()
-        proc.wait(timeout=5)
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
         pytest.fail("`stop` did not actually terminate the serve process")
