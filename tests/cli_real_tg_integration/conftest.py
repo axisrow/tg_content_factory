@@ -73,6 +73,35 @@ def cli_env() -> CliEnv:
 _WORKTREE_ROOT = Path(__file__).resolve().parents[2]
 
 
+def cli_run_direct(
+    cli_env: "CliEnv", *args: str, timeout: float = 20.0
+) -> subprocess.CompletedProcess:
+    """subprocess.run wrapper for cleanup code that must NOT call pytest.skip.
+
+    The shared `run_cli` fixture converts subprocess.TimeoutExpired into
+    pytest.skip(). That is correct for the test body, but a Skipped raised
+    inside a `finally` block replaces any in-flight AssertionError, so
+    cleanup code that uses run_cli silently masks real test failures (and
+    leaks whatever resource the cleanup was supposed to release). Use this
+    helper for cleanup invocations: TimeoutExpired bubbles up to the caller
+    explicitly, no pytest.skip side effect.
+
+    Module-level (not a fixture) so cleanup `finally` blocks can call it
+    without depending on fixture resolution order.
+    """
+    return subprocess.run(  # noqa: S603 — controlled CLI module invocation
+        [sys.executable, "-m", "src.main", *args],
+        cwd=str(cli_env.repo_root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        env=_build_cli_env(),
+        check=False,
+    )
+
+
 def _build_cli_env() -> dict[str, str]:
     """Compose the env dict for any CLI subprocess: PYTHONPATH-pinned to the
     worktree so subprocess loads the code under test, not the live repo.

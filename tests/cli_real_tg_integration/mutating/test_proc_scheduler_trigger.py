@@ -4,12 +4,18 @@ Writes collection_tasks rows (pending) for every non-filtered channel. This
 is reversible via `scheduler clear-pending`, which the test runs in finally
 to leave the queue as it was before.
 """
+import subprocess
+import sys
+
 import pytest
+
+from tests.cli_real_tg_integration.conftest import cli_run_direct
 
 pytestmark = pytest.mark.real_tg_safe
 
 
-def test_proc_scheduler_trigger_enqueues(run_cli, assert_cli_ok):
+def test_proc_scheduler_trigger_enqueues(run_cli, assert_cli_ok, cli_env):
+    leak_msg: str | None = None
     try:
         result = run_cli("scheduler", "trigger")
         assert_cli_ok(result)
@@ -23,13 +29,23 @@ def test_proc_scheduler_trigger_enqueues(run_cli, assert_cli_ok):
             or "no channels" in combined.lower()
         ), f"unexpected `scheduler trigger` output: {combined!r}"
     finally:
-        # Reverse the side effect: delete any pending tasks the trigger created.
-        # If no accounts were connected the trigger printed and exited without
-        # writing anything — clear-pending in that case is a no-op. A failure
-        # here means pending collection_tasks rows stay in the user's real DB,
-        # which is exactly the silent-leak pattern fixed in test_proc_restart.
-        cleanup = run_cli("scheduler", "clear-pending")
-        assert cleanup.returncode == 0, (
-            f"cleanup `scheduler clear-pending` failed; pending collection "
-            f"tasks may be leaked: stderr={cleanup.stderr!r}"
-        )
+        # Cleanup uses cli_run_direct (not run_cli) so a TimeoutExpired here
+        # raises explicitly instead of pytest.skip(), which would replace any
+        # in-flight AssertionError from the try block.
+        try:
+            cleanup = cli_run_direct(cli_env, "scheduler", "clear-pending", timeout=30)
+        except subprocess.TimeoutExpired:
+            leak_msg = (
+                "cleanup `scheduler clear-pending` timed out; pending "
+                "collection_tasks rows may be leaked — inspect the DB manually."
+            )
+        else:
+            if cleanup.returncode != 0:
+                leak_msg = (
+                    f"cleanup `scheduler clear-pending` failed; pending "
+                    f"collection tasks may be leaked: stderr={cleanup.stderr!r}"
+                )
+
+        # Only raise on cleanup if the try block didn't already fail.
+        if leak_msg and sys.exc_info()[0] is None:
+            pytest.fail(leak_msg)

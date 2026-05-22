@@ -6,46 +6,17 @@ deepagents fallback with the configured LLM provider). The command creates
 an agent thread + messages, so the test cleans up by deleting the freshly
 created thread on the way out — keeping the side-effect reversible.
 """
-import os
 import re
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
+
+from tests.cli_real_tg_integration.conftest import cli_run_direct
 
 pytestmark = pytest.mark.real_tg_safe
 
 _THREAD_ROW_RE = re.compile(r"^\[(\d+)\]", re.MULTILINE)
-_WORKTREE_ROOT = Path(__file__).resolve().parents[3]
-
-
-def _direct_cli(cli_env, *args: str, timeout: float = 20.0) -> subprocess.CompletedProcess:
-    """Bypass run_cli's pytest.skip-on-timeout for cleanup code.
-
-    The shared run_cli fixture calls pytest.skip() on TimeoutExpired, which
-    raises Skipped. If that happens inside a `finally` block it replaces any
-    in-flight AssertionError from the test body — masking real failures AND
-    leaking the resource we were trying to clean up. Cleanup must therefore
-    run its CLI invocations through plain subprocess.run, never raising.
-    """
-    env = os.environ.copy()
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        f"{_WORKTREE_ROOT}{os.pathsep}{existing}" if existing else str(_WORKTREE_ROOT)
-    )
-    env["PYTHONSAFEPATH"] = "1"
-    return subprocess.run(
-        [sys.executable, "-m", "src.main", *args],
-        cwd=str(cli_env.repo_root),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=timeout,
-        env=env,
-        check=False,
-    )
 
 
 def test_proc_agent_chat_oneshot(run_cli, assert_cli_ok, cli_env):
@@ -65,11 +36,11 @@ def test_proc_agent_chat_oneshot(run_cli, assert_cli_ok, cli_env):
             f"`agent chat -p` produced empty stdout: {result.stderr!r}"
         )
     finally:
-        # Cleanup uses _direct_cli (not run_cli) so that a CLI timeout here
+        # Cleanup uses cli_run_direct (not run_cli) so that a CLI timeout here
         # raises TimeoutExpired (which we catch) instead of pytest.skip()
         # (which would replace any AssertionError from the try block above).
         try:
-            after = _direct_cli(cli_env, "agent", "threads")
+            after = cli_run_direct(cli_env, "agent", "threads")
         except subprocess.TimeoutExpired:
             after = None
 
@@ -89,7 +60,7 @@ def test_proc_agent_chat_oneshot(run_cli, assert_cli_ok, cli_env):
             new_ids = post_ids - pre_ids
             for tid in new_ids:
                 try:
-                    cleanup = _direct_cli(
+                    cleanup = cli_run_direct(
                         cli_env, "agent", "thread-delete", "--thread-id", tid
                     )
                 except subprocess.TimeoutExpired:
