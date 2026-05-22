@@ -20,6 +20,8 @@ pytestmark = pytest.mark.real_tg_safe
 def test_proc_scheduler_start_publishes_status(
     run_cli_popen, assert_cli_ok, cli_env, run_cli
 ):
+    import subprocess
+
     proc = run_cli_popen("scheduler", "start")
 
     row = wait_for_db_row(
@@ -29,19 +31,19 @@ def test_proc_scheduler_start_publishes_status(
         timeout=20.0,
     )
 
-    # Send SIGTERM and let the run_cli_popen fixture do its cleanup verification.
+    # communicate() drains stderr + waits in one shot — no risk of pipe stall.
     proc.terminate()
     try:
-        proc.wait(timeout=10)
-    except Exception:
+        _, stderr_text = proc.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait()
+        _, stderr_text = proc.communicate(timeout=5)
 
     if proc.returncode not in (0, -15, 143):
         # -15 / 143 = SIGTERM. 0 = clean exit on Ctrl+C handling.
-        stderr_tail = (proc.stderr.read() if proc.stderr else "") or ""
         pytest.fail(
-            f"`scheduler start` exited with {proc.returncode}; stderr tail: {stderr_tail[-500:]!r}"
+            f"`scheduler start` exited with {proc.returncode}; "
+            f"stderr tail: {(stderr_text or '')[-500:]!r}"
         )
 
     if row is None:

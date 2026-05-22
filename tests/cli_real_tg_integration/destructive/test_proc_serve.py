@@ -21,22 +21,25 @@ def _read_port(cli_env) -> int:
 
 
 def test_proc_serve_health_endpoint(run_cli_popen, cli_env):
+    import subprocess
+
     port = _read_port(cli_env)
     proc = run_cli_popen("serve", "--no-worker")
 
     healthy = wait_for_http_200(f"http://127.0.0.1:{port}/health", timeout=20.0)
+
+    # communicate() = drain stderr + wait in one shot; safe to do here because
+    # we no longer need the process. run_cli_popen's teardown is a no-op then
+    # (poll() != None).
     proc.terminate()
     try:
-        proc.wait(timeout=10)
-    except Exception:
+        _, stderr_text = proc.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait()
+        _, stderr_text = proc.communicate(timeout=5)
 
     if not healthy:
-        # If port was in use or the web app failed to start, surface the tail
-        # of stderr so the operator can diagnose quickly.
-        stderr_tail = (proc.stderr.read() if proc.stderr else "") or ""
         pytest.fail(
             f"`serve` did not serve /health within 20s on port {port}; "
-            f"stderr tail: {stderr_tail[-500:]!r}"
+            f"stderr tail: {(stderr_text or '')[-500:]!r}"
         )

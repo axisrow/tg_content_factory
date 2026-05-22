@@ -13,8 +13,8 @@ def test_proc_test_read(run_cli, assert_cli_ok):
     result = run_cli("test", "read")
     assert_cli_ok(result)
     combined = result.stdout + result.stderr
-    # `test read` prints a summary section. The exact format may evolve, but
-    # the word "PASS" (or "FAIL") for each check is stable.
-    assert "PASS" in combined or "FAIL" in combined, (
-        f"unexpected `test read` output: {combined!r}"
-    )
+    # `test read` always prints at least one PASS line — the schema/migrations
+    # probes run unconditionally and succeed on any initialized DB. Asserting
+    # PASS specifically (rather than PASS-or-FAIL) catches regressions where
+    # every check starts failing yet the command still exits 0.
+    assert "PASS" in combined, f"unexpected `test read` output: {combined!r}"

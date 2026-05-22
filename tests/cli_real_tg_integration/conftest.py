@@ -73,9 +73,15 @@ def cli_env() -> CliEnv:
 _WORKTREE_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _build_cli_env(repo_root: Path) -> dict[str, str]:
+def _build_cli_env() -> dict[str, str]:
     """Compose the env dict for any CLI subprocess: PYTHONPATH-pinned to the
     worktree so subprocess loads the code under test, not the live repo.
+
+    Takes no arguments because the worktree root is a module-level constant —
+    callers used to pass `cli_env.repo_root` here, but that path is the CWD
+    of the subprocess, not the PYTHONPATH (we deliberately want them to
+    diverge: cwd = main repo with config.yaml + data/, PYTHONPATH = worktree
+    with the code under test).
     """
     env = os.environ.copy()
     existing = env.get("PYTHONPATH", "")
@@ -93,7 +99,7 @@ def run_cli(cli_env: CliEnv):
         # текущий чекаут (worktree или main), а PYTHONSAFEPATH=1 убирает cwd из
         # sys.path → subprocess грузит `src/` из тестируемого кода, а не из
         # живого репозитория по cwd. Без этого worktree-правки в src/ невидимы.
-        env = _build_cli_env(cli_env.repo_root)
+        env = _build_cli_env()
         try:
             return subprocess.run(
                 [sys.executable, "-m", "src.main", *args],
@@ -119,16 +125,22 @@ def run_cli_popen(cli_env: CliEnv):
     On test teardown, every spawned process that is still alive is sent
     SIGTERM, then SIGKILL if it doesn't exit within 5s. Use this instead of
     `run_cli` when the command does not return on its own.
+
+    stdout is routed to DEVNULL so a verbose server (uvicorn access logs)
+    cannot fill the OS pipe buffer and stall the child mid-SIGTERM.
+    stderr is captured so failing tests can surface the tail in their
+    assertion messages — but it is drained via communicate() in teardown
+    to keep wait() from blocking on a half-full pipe.
     """
     processes: list[subprocess.Popen] = []
 
     def _spawn(*args: str) -> subprocess.Popen:
-        env = _build_cli_env(cli_env.repo_root)
+        env = _build_cli_env()
         proc = subprocess.Popen(  # noqa: S603 — controlled CLI module invocation
             [sys.executable, "-m", "src.main", *args],
             cwd=str(cli_env.repo_root),
             env=env,
-            stdout=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
@@ -144,10 +156,15 @@ def run_cli_popen(cli_env: CliEnv):
             continue
         proc.terminate()
         try:
-            proc.wait(timeout=5)
+            # communicate() drains stderr before waiting, so a stderr-noisy
+            # process (logs) doesn't stall on pipe backpressure during SIGTERM.
+            proc.communicate(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-            proc.wait()
+            try:
+                proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
 
 
 def wait_for_http_200(url: str, *, timeout: float = 15.0, interval: float = 0.5) -> bool:
