@@ -32,12 +32,15 @@ def test_proc_restart_brings_serve_back(run_cli_popen, run_cli, cli_env):
         f"stdout={restart_result.stdout!r} stderr={restart_result.stderr!r}"
     )
 
-    # After restart, /health should respond again (possibly from a new PID
-    # that we no longer manage from this test — clean it up explicitly).
-    try:
-        if not wait_for_http_200(f"http://127.0.0.1:{port}/health", timeout=20.0):
-            pytest.fail("`restart` did not bring /health back online within 20s")
-    finally:
-        stop_result = run_cli("stop", timeout=30)
-        if stop_result.returncode != 0:
-            print(f"final `stop` cleanup failed: {stop_result.stderr!r}")
+    # After restart, /health should respond again. The new server PID is
+    # detached and not tracked by run_cli_popen, so we MUST verify the final
+    # `stop` actually terminated it — otherwise the server keeps running on
+    # the operator's machine indefinitely (run_cli_popen's teardown can only
+    # reach the original `proc` we spawned, which is already dead).
+    health_back = wait_for_http_200(f"http://127.0.0.1:{port}/health", timeout=20.0)
+    stop_result = run_cli("stop", timeout=30)
+    assert stop_result.returncode == 0, (
+        f"final `stop` failed and the restarted server is leaked. "
+        f"stdout={stop_result.stdout!r} stderr={stop_result.stderr!r}"
+    )
+    assert health_back, "`restart` did not bring /health back online within 20s"

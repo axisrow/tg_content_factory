@@ -12,6 +12,8 @@ pytestmark = pytest.mark.real_tg_safe
 
 
 def test_proc_worker_publishes_heartbeat(run_cli_popen, cli_env):
+    import subprocess
+
     proc = run_cli_popen("worker")
 
     row = wait_for_db_row(
@@ -23,14 +25,13 @@ def test_proc_worker_publishes_heartbeat(run_cli_popen, cli_env):
 
     proc.terminate()
     try:
-        proc.wait(timeout=10)
-    except Exception:
+        _, stderr_text = proc.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait()
+        _, stderr_text = proc.communicate(timeout=5)
 
     if row is None:
-        stderr_tail = (proc.stderr.read() if proc.stderr else "") or ""
         pytest.fail(
             "`worker` did not publish worker_heartbeat within 20s; "
-            f"stderr tail: {stderr_tail[-500:]!r}"
+            f"stderr tail: {(stderr_text or '')[-500:]!r}"
         )
