@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -72,6 +73,19 @@ def cli_env() -> CliEnv:
 _WORKTREE_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _build_cli_env(repo_root: Path) -> dict[str, str]:
+    """Compose the env dict for any CLI subprocess: PYTHONPATH-pinned to the
+    worktree so subprocess loads the code under test, not the live repo.
+    """
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        f"{_WORKTREE_ROOT}{os.pathsep}{existing}" if existing else str(_WORKTREE_ROOT)
+    )
+    env["PYTHONSAFEPATH"] = "1"
+    return env
+
+
 @pytest.fixture
 def run_cli(cli_env: CliEnv):
     def _run(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
@@ -79,12 +93,7 @@ def run_cli(cli_env: CliEnv):
         # текущий чекаут (worktree или main), а PYTHONSAFEPATH=1 убирает cwd из
         # sys.path → subprocess грузит `src/` из тестируемого кода, а не из
         # живого репозитория по cwd. Без этого worktree-правки в src/ невидимы.
-        env = os.environ.copy()
-        existing = env.get("PYTHONPATH", "")
-        env["PYTHONPATH"] = (
-            f"{_WORKTREE_ROOT}{os.pathsep}{existing}" if existing else str(_WORKTREE_ROOT)
-        )
-        env["PYTHONSAFEPATH"] = "1"
+        env = _build_cli_env(cli_env.repo_root)
         try:
             return subprocess.run(
                 [sys.executable, "-m", "src.main", *args],
@@ -100,6 +109,97 @@ def run_cli(cli_env: CliEnv):
             pytest.skip(f"CLI command timed out after {timeout}s: {' '.join(args)}")
 
     return _run
+
+
+@pytest.fixture
+def run_cli_popen(cli_env: CliEnv):
+    """Spawn long-running CLI commands (serve/worker/scheduler start) as Popen.
+
+    Returns a callable that spawns the process and records it for cleanup.
+    On test teardown, every spawned process that is still alive is sent
+    SIGTERM, then SIGKILL if it doesn't exit within 5s. Use this instead of
+    `run_cli` when the command does not return on its own.
+    """
+    processes: list[subprocess.Popen] = []
+
+    def _spawn(*args: str) -> subprocess.Popen:
+        env = _build_cli_env(cli_env.repo_root)
+        proc = subprocess.Popen(  # noqa: S603 — controlled CLI module invocation
+            [sys.executable, "-m", "src.main", *args],
+            cwd=str(cli_env.repo_root),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        processes.append(proc)
+        return proc
+
+    yield _spawn
+
+    for proc in processes:
+        if proc.poll() is not None:
+            continue
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+
+
+def wait_for_http_200(url: str, *, timeout: float = 15.0, interval: float = 0.5) -> bool:
+    """Poll an HTTP endpoint until it returns 200 or the timeout elapses.
+
+    Returns True on success, False on timeout. Uses urllib (stdlib only) to
+    avoid pulling httpx/requests into the test environment.
+    """
+    import urllib.error
+    import urllib.request
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2.0) as resp:
+                if resp.status == 200:
+                    return True
+        except (urllib.error.URLError, ConnectionError, TimeoutError):
+            pass
+        time.sleep(interval)
+    return False
+
+
+def wait_for_db_row(
+    db_path: Path,
+    sql: str,
+    params: tuple = (),
+    *,
+    timeout: float = 15.0,
+    interval: float = 0.5,
+) -> tuple | None:
+    """Poll a sqlite DB for a row matching `sql`+`params`. Returns the row or None.
+
+    Uses synchronous sqlite3 so we never collide with an aiosqlite-backed
+    connection inside the CLI subprocess (WAL mode allows concurrent readers).
+    """
+    import sqlite3
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            conn = sqlite3.connect(str(db_path))
+            try:
+                row = conn.execute(sql, params).fetchone()
+                if row is not None:
+                    return row
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            pass
+        time.sleep(interval)
+    return None
 
 
 _FLOOD_WAIT_RE = re.compile(r"FloodWaitError|FLOOD_?WAIT", re.IGNORECASE)
