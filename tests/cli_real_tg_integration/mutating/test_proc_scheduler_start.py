@@ -17,9 +17,7 @@ from tests.cli_real_tg_integration.conftest import wait_for_db_row
 pytestmark = pytest.mark.real_tg_safe
 
 
-def test_proc_scheduler_start_publishes_status(
-    run_cli_popen, assert_cli_ok, cli_env, run_cli
-):
+def test_proc_scheduler_start_publishes_status(run_cli_popen, cli_env):
     import subprocess
 
     proc = run_cli_popen("scheduler", "start")
