@@ -15,15 +15,24 @@ def test_proc_test_telegram(run_cli, assert_cli_ok):
     assert_cli_ok(result)
     combined = result.stdout + result.stderr
 
-    # `test telegram` emits PASS/SKIP/FAIL lines per check. Reviewers caught
-    # two issues with the prior `"PASS" in combined or "SKIP" in combined`:
-    #   - all-SKIP (no accounts) silently passed the assertion.
-    #   - mixed PASS+FAIL silently passed when "PASS" was present.
-    # Real-world deployments DO legitimately produce FAIL lines on transient
-    # session/auth issues, so a blanket `FAIL not in combined` would over-reject.
-    # Compromise: require at least one PASS (smoke that something live actually
-    # worked). If there are zero PASS lines but the run reached its summary,
-    # turn it into a skip — the suite cannot tell us anything useful then.
+    # `test telegram` emits PASS/SKIP/FAIL lines per check. Round-2 review
+    # caught that `tg_db_copy` (a filesystem-only DB-copy probe — no Telegram
+    # involved) always emits "[PASS]" and would mask a "[FAIL] tg_pool_init"
+    # right after it, letting the test pass without ever opening a Telegram
+    # socket. So check the two critical-path probes explicitly:
+    #
+    #   - tg_db_copy   FAIL → environment broken before TG ever runs.
+    #   - tg_pool_init FAIL → no Telegram session was established.
+    #
+    # See src/cli/commands/test.py:730-772 for the check order.
+    if "[FAIL] tg_db_copy" in combined or "[FAIL] tg_pool_init" in combined:
+        pytest.fail(
+            f"`test telegram` critical check failed:\n{combined}"
+        )
+
+    # Beyond those two, individual probe FAILs are tolerated — they often
+    # reflect legitimate transient prod issues (SessionExpired on one client
+    # of many, etc.) rather than test regressions.
     if "PASS" in combined:
         return
     if "SKIP" in combined or "No accounts" in combined or "no accounts" in combined.lower():
