@@ -6,10 +6,12 @@
    still respond to a fresh request.
 3. Tear down the new server through a final `stop`.
 """
+import subprocess
+
 import pytest
 import yaml
 
-from tests.cli_real_tg_integration.conftest import wait_for_http_200
+from tests.cli_real_tg_integration.conftest import cli_run_direct, wait_for_http_200
 
 pytestmark = pytest.mark.real_tg_safe
 
@@ -37,8 +39,18 @@ def test_proc_restart_brings_serve_back(run_cli_popen, run_cli, cli_env):
     # `stop` actually terminated it — otherwise the server keeps running on
     # the operator's machine indefinitely (run_cli_popen's teardown can only
     # reach the original `proc` we spawned, which is already dead).
+    #
+    # `stop` is invoked via cli_run_direct (not run_cli) so a timeout here
+    # surfaces as pytest.fail, not pytest.skip — a skipped test would hide
+    # the fact that the restarted server is still running.
     health_back = wait_for_http_200(f"http://127.0.0.1:{port}/health", timeout=20.0)
-    stop_result = run_cli("stop", timeout=30)
+    try:
+        stop_result = cli_run_direct(cli_env, "stop", timeout=30)
+    except subprocess.TimeoutExpired:
+        pytest.fail(
+            "final `stop` timed out; the restarted server is leaked — "
+            "kill it manually."
+        )
     assert stop_result.returncode == 0, (
         f"final `stop` failed and the restarted server is leaked. "
         f"stdout={stop_result.stdout!r} stderr={stop_result.stderr!r}"
