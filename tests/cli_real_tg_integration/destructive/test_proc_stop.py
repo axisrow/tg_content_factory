@@ -7,7 +7,6 @@
 import subprocess
 
 import pytest
-import yaml
 
 from tests.cli_real_tg_integration.conftest import (
     read_pid_file,
@@ -19,15 +18,10 @@ from tests.cli_real_tg_integration.conftest import (
 pytestmark = pytest.mark.real_tg_manual
 
 
-def _read_port(cli_real_cli_env) -> int:
-    cfg = yaml.safe_load(cli_real_cli_env.config_path.read_text(encoding="utf-8")) or {}
-    return int((cfg.get("web") or {}).get("port", 8080))
-
-
 @pytest.mark.timeout(180)
 def test_proc_stop_terminates_serve(run_cli_popen, cli_real_cli_env):
     skip_if_server_pid_exists(cli_real_cli_env)
-    port = _read_port(cli_real_cli_env)
+    port = cli_real_cli_env.web_port
     proc = run_cli_popen("serve", "--no-worker")
 
     if not wait_for_pid_file(cli_real_cli_env.pid_path, proc.pid, timeout=10.0):
