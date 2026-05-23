@@ -91,7 +91,8 @@ def test_cli_test_constants():
     assert TELEGRAM_DIALOG_TIMEOUT == 120
     assert TELEGRAM_SEARCH_TIMEOUT == 120
     assert "pytest" in SERIAL_PYTEST_COMMAND
-    assert "not aiosqlite_serial" in PARALLEL_SAFE_PYTEST_COMMAND
+    assert any("not aiosqlite_serial" in part for part in PARALLEL_SAFE_PYTEST_COMMAND)
+    assert any("not real_tg_safe" in part for part in SERIAL_PYTEST_COMMAND)
     assert "tg_iter_messages" in _TG_CHECKS_AFTER_POOL
 
 

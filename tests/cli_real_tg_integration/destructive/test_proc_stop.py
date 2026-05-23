@@ -14,13 +14,13 @@ from tests.cli_real_tg_integration.conftest import wait_for_http_200
 pytestmark = pytest.mark.real_tg_safe
 
 
-def _read_port(cli_env) -> int:
-    cfg = yaml.safe_load(cli_env.config_path.read_text(encoding="utf-8")) or {}
+def _read_port(cli_real_cli_env) -> int:
+    cfg = yaml.safe_load(cli_real_cli_env.config_path.read_text(encoding="utf-8")) or {}
     return int((cfg.get("web") or {}).get("port", 8080))
 
 
-def test_proc_stop_terminates_serve(run_cli_popen, run_cli, cli_env):
-    port = _read_port(cli_env)
+def test_proc_stop_terminates_serve(run_cli_popen, run_cli, cli_real_cli_env):
+    port = _read_port(cli_real_cli_env)
     proc = run_cli_popen("serve", "--no-worker")
 
     if not wait_for_http_200(f"http://127.0.0.1:{port}/health", timeout=20.0):

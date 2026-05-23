@@ -4,8 +4,8 @@ pytestmark = pytest.mark.real_tg_safe
 
 
 @pytest.mark.timeout(240)
-def test_messages_read_first(run_cli, assert_cli_ok, sandbox_channel):
-    pk, _channel_id = sandbox_channel
+def test_messages_read_first(run_cli, assert_cli_ok, live_channel):
+    pk, _channel_id = live_channel
     result = run_cli(
         "messages", "read", pk, "--live", "--limit", "3", timeout=180
     )

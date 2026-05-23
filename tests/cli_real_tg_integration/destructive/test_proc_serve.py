@@ -14,16 +14,16 @@ from tests.cli_real_tg_integration.conftest import wait_for_http_200
 pytestmark = pytest.mark.real_tg_safe
 
 
-def _read_port(cli_env) -> int:
-    cfg = yaml.safe_load(cli_env.config_path.read_text(encoding="utf-8")) or {}
+def _read_port(cli_real_cli_env) -> int:
+    cfg = yaml.safe_load(cli_real_cli_env.config_path.read_text(encoding="utf-8")) or {}
     web = cfg.get("web") or {}
     return int(web.get("port", 8080))
 
 
-def test_proc_serve_health_endpoint(run_cli_popen, cli_env):
+def test_proc_serve_health_endpoint(run_cli_popen, cli_real_cli_env):
     import subprocess
 
-    port = _read_port(cli_env)
+    port = _read_port(cli_real_cli_env)
     proc = run_cli_popen("serve", "--no-worker")
 
     healthy = wait_for_http_200(f"http://127.0.0.1:{port}/health", timeout=20.0)
