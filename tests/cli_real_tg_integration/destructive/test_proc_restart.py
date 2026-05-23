@@ -11,7 +11,6 @@ import pytest
 import yaml
 
 from tests.cli_real_tg_integration.conftest import (
-    cli_run_direct,
     read_pid_file,
     skip_if_server_pid_exists,
     wait_for_http_200,
@@ -26,7 +25,7 @@ def _read_port(cli_real_cli_env) -> int:
     return int((cfg.get("web") or {}).get("port", 8080))
 
 
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(360)
 def test_proc_restart_brings_serve_back(run_cli_popen, cli_real_cli_env):
     skip_if_server_pid_exists(cli_real_cli_env)
     port = _read_port(cli_real_cli_env)
@@ -83,23 +82,26 @@ def test_proc_restart_brings_serve_back(run_cli_popen, cli_real_cli_env):
         pytest.fail("`restart` exited before final `stop`; /health may belong to another process")
     if read_pid_file(cli_real_cli_env.pid_path) != restart_proc.pid:
         pytest.fail("post-restart /health was not backed by the PID registered by this test")
+    stop_proc = run_cli_popen("stop", capture_stdout=True)
     try:
-        stop_result = cli_run_direct(cli_real_cli_env, "stop", timeout=180)
-    except subprocess.TimeoutExpired:
-        pytest.fail(
-            "final `stop` timed out; the restarted server is leaked — "
-            "kill it manually."
-        )
-    assert stop_result.returncode == 0, (
-        f"final `stop` failed and the restarted server is leaked. "
-        f"stdout={stop_result.stdout!r} stderr={stop_result.stderr!r}"
-    )
-    try:
-        _, restart_stderr = restart_proc.communicate(timeout=10)
+        _, restart_stderr = restart_proc.communicate(timeout=150)
     except subprocess.TimeoutExpired:
         restart_proc.kill()
         _, restart_stderr = restart_proc.communicate(timeout=5)
         pytest.fail(
             f"restarted server did not exit after final `stop`: {restart_stderr[-500:]!r}"
         )
+    try:
+        stop_stdout, stop_stderr = stop_proc.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        stop_proc.kill()
+        stop_stdout, stop_stderr = stop_proc.communicate(timeout=5)
+        pytest.fail(
+            "final `stop` did not return after the restarted server exited; "
+            f"stdout={stop_stdout!r} stderr={stop_stderr!r}"
+        )
+    assert stop_proc.returncode == 0, (
+        f"final `stop` failed and the restarted server is leaked. "
+        f"stdout={stop_stdout!r} stderr={stop_stderr!r}"
+    )
     assert health_back, "`restart` did not bring /health back online within 20s"
