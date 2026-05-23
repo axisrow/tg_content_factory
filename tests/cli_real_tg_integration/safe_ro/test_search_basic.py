@@ -3,6 +3,7 @@ import pytest
 pytestmark = pytest.mark.real_tg_safe
 
 
+@pytest.mark.timeout(90)
 def test_search_basic(run_cli, assert_cli_ok):
     # Local mode — пользуется FTS5, не дёргает Telegram, безопасно
     result = run_cli("search", "test", "--limit", "5", "--mode", "local", timeout=60)

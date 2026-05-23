@@ -3,12 +3,9 @@ import pytest
 pytestmark = pytest.mark.real_tg_safe
 
 
-def test_dialogs_broadcast_stats_first(run_cli, assert_cli_ok, discover_first_dialog_username):
-    username = discover_first_dialog_username()
-    result = run_cli("dialogs", "broadcast-stats", username, timeout=120)
-    # broadcast-stats может вернуть не-zero для не-broadcast чатов — assert_cli_ok
-    # тогда зафейлит и покажет stderr. Это ок для smoke: один из первых найденных
-    # @-чатов должен быть broadcast-каналом. Если падает стабильно — `discover`
-    # надо уточнить, чтобы выбирал именно channel.
+@pytest.mark.timeout(180)
+def test_dialogs_broadcast_stats_first(run_cli, assert_cli_ok, live_channel_username):
+    result = run_cli("dialogs", "broadcast-stats", live_channel_username, timeout=120)
     assert_cli_ok(result)
+    assert "Error fetching broadcast stats" not in result.stdout
     assert result.stdout.strip(), "`dialogs broadcast-stats` produced empty stdout"

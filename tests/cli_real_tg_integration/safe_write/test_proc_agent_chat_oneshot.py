@@ -19,7 +19,8 @@ pytestmark = pytest.mark.real_tg_safe
 _THREAD_ROW_RE = re.compile(r"^\[(\d+)\]", re.MULTILINE)
 
 
-def test_proc_agent_chat_oneshot(run_cli, assert_cli_ok, cli_env):
+@pytest.mark.timeout(240)
+def test_proc_agent_chat_oneshot(run_cli, assert_cli_ok, cli_real_cli_env):
     # Record threads that existed before so we can compute the new one. This
     # must run BEFORE the try/finally so a failure here doesn't leak a thread
     # that was never created in the first place.
@@ -40,7 +41,7 @@ def test_proc_agent_chat_oneshot(run_cli, assert_cli_ok, cli_env):
         # raises TimeoutExpired (which we catch) instead of pytest.skip()
         # (which would replace any AssertionError from the try block above).
         try:
-            after = cli_run_direct(cli_env, "agent", "threads")
+            after = cli_run_direct(cli_real_cli_env, "agent", "threads")
         except subprocess.TimeoutExpired:
             after = None
 
@@ -61,7 +62,7 @@ def test_proc_agent_chat_oneshot(run_cli, assert_cli_ok, cli_env):
             for tid in new_ids:
                 try:
                     cleanup = cli_run_direct(
-                        cli_env, "agent", "thread-delete", "--thread-id", tid
+                        cli_real_cli_env, "agent", "thread-delete", "--thread-id", tid
                     )
                 except subprocess.TimeoutExpired:
                     leak_msg = f"agent thread {tid} leaked: thread-delete timed out"

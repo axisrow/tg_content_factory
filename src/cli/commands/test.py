@@ -43,7 +43,18 @@ _TG_CHECKS_AFTER_POOL = [
 ]
 # src/cli/commands/test.py → src/cli/commands → src/cli → src → repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
-SERIAL_PYTEST_COMMAND = (sys.executable, "-m", "pytest", "tests", "-q")
+NON_LIVE_PYTEST_MARKER_EXPR = (
+    "not real_tg_safe and not real_tg_mutation_safe and not real_tg_manual and not real_provider_smoke"
+)
+SERIAL_PYTEST_COMMAND = (
+    sys.executable,
+    "-m",
+    "pytest",
+    "tests",
+    "-q",
+    "-m",
+    NON_LIVE_PYTEST_MARKER_EXPR,
+)
 PARALLEL_SAFE_PYTEST_COMMAND = (
     sys.executable,
     "-m",
@@ -51,7 +62,7 @@ PARALLEL_SAFE_PYTEST_COMMAND = (
     "tests",
     "-q",
     "-m",
-    "not aiosqlite_serial",
+    f"not aiosqlite_serial and {NON_LIVE_PYTEST_MARKER_EXPR}",
     "-n",
     "auto",
 )
@@ -62,7 +73,7 @@ AIOSQLITE_SERIAL_PYTEST_COMMAND = (
     "tests",
     "-q",
     "-m",
-    "aiosqlite_serial",
+    f"aiosqlite_serial and {NON_LIVE_PYTEST_MARKER_EXPR}",
 )
 
 

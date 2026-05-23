@@ -14,11 +14,11 @@ from tests.cli_real_tg_integration.conftest import cli_run_direct
 pytestmark = pytest.mark.real_tg_safe
 
 
-def test_proc_scheduler_trigger_enqueues(run_cli, assert_cli_ok, cli_env):
+def test_proc_scheduler_trigger_enqueues(run_cli, assert_cli_ok, cli_real_cli_env):
     leak_msg: str | None = None
     try:
         result = run_cli("scheduler", "trigger")
-        assert_cli_ok(result)
+        assert_cli_ok(result, allow_error_text=("No connected accounts",))
         combined = result.stdout + result.stderr
         # The handler prints "Enqueued N channels ..." or "No connected accounts."
         # Either is a legitimate outcome; we only require the command to exit 0
@@ -33,7 +33,7 @@ def test_proc_scheduler_trigger_enqueues(run_cli, assert_cli_ok, cli_env):
         # raises explicitly instead of pytest.skip(), which would replace any
         # in-flight AssertionError from the try block.
         try:
-            cleanup = cli_run_direct(cli_env, "scheduler", "clear-pending", timeout=30)
+            cleanup = cli_run_direct(cli_real_cli_env, "scheduler", "clear-pending", timeout=30)
         except subprocess.TimeoutExpired:
             leak_msg = (
                 "cleanup `scheduler clear-pending` timed out; pending "
