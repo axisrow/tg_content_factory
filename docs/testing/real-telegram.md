@@ -168,6 +168,7 @@ Manual mutation-safe Telegram-visible inventory:
 RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MUTATION_SAFE=1 \
 CLI_REAL_TG_REACT_CHAT_ID=<chat_id_or_username> \
 CLI_REAL_TG_REACT_MESSAGE_ID=<message_id> \
+CLI_REAL_TG_REACT_PHONE=<account_phone> \
 python3 -m pytest tests/cli_real_tg_integration/mutation_safe -v
 ```
 
@@ -193,3 +194,4 @@ python3 -m pytest tests/cli_real_tg_integration/manual -v
 - Do not add Telegram-visible mutations under `real_tg_safe`.
 - Do not add high-risk or broad Telegram-visible mutations under `real_tg_mutation_safe`; keep those under `real_tg_manual`.
 - Do not rely on “first live row” without a skip/fixture guard that makes the operator input explicit enough to understand the target.
+- Do not run process-control inventory against a config that already has a managed server PID file; use a separate config or stop the server first.

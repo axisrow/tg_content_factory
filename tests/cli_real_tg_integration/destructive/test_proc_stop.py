@@ -4,12 +4,18 @@
 2. Run `python -m src.main stop` synchronously.
 3. Assert that the Popen handle eventually reports a poll() != None.
 """
+import subprocess
 import time
 
 import pytest
 import yaml
 
-from tests.cli_real_tg_integration.conftest import wait_for_http_200
+from tests.cli_real_tg_integration.conftest import (
+    read_pid_file,
+    skip_if_server_pid_exists,
+    wait_for_http_200,
+    wait_for_pid_file,
+)
 
 pytestmark = pytest.mark.real_tg_manual
 
@@ -19,13 +25,31 @@ def _read_port(cli_real_cli_env) -> int:
     return int((cfg.get("web") or {}).get("port", 8080))
 
 
+@pytest.mark.timeout(90)
 def test_proc_stop_terminates_serve(run_cli_popen, run_cli, cli_real_cli_env):
+    skip_if_server_pid_exists(cli_real_cli_env)
     port = _read_port(cli_real_cli_env)
     proc = run_cli_popen("serve", "--no-worker")
 
+    if not wait_for_pid_file(cli_real_cli_env.pid_path, proc.pid, timeout=10.0):
+        proc.terminate()
+        try:
+            _, stderr_text = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            _, stderr_text = proc.communicate(timeout=5)
+        pytest.fail(
+            f"`serve` did not register PID {proc.pid} in {cli_real_cli_env.pid_path}; "
+            f"stderr tail: {(stderr_text or '')[-500:]!r}"
+        )
+
     if not wait_for_http_200(f"http://127.0.0.1:{port}/health", timeout=20.0):
         proc.terminate()
-        pytest.skip("serve never started — port collision or config issue")
+        pytest.fail("`serve` registered its PID but /health never became ready")
+    if proc.poll() is not None:
+        pytest.fail("`serve` exited before `stop`; /health may belong to another process")
+    if read_pid_file(cli_real_cli_env.pid_path) != proc.pid:
+        pytest.fail("`serve` health check was not backed by the PID registered by this test")
 
     stop_result = run_cli("stop", timeout=30)
     assert stop_result.returncode == 0, (
@@ -43,8 +67,6 @@ def test_proc_stop_terminates_serve(run_cli_popen, run_cli, cli_real_cli_env):
         # `stop` returned 0 but serve is still alive. Drain stderr via
         # communicate() (not wait()) so a log-noisy server doesn't stall
         # on pipe backpressure mid-SIGTERM — same fix as in run_cli_popen.
-        import subprocess
-
         proc.terminate()
         try:
             proc.communicate(timeout=5)

@@ -18,9 +18,8 @@ def _required_env(name: str) -> str:
 def test_dialogs_react_explicit_target(run_cli, assert_cli_ok):
     chat_id = _required_env("CLI_REAL_TG_REACT_CHAT_ID")
     message_id = _required_env("CLI_REAL_TG_REACT_MESSAGE_ID")
+    phone = _required_env("CLI_REAL_TG_REACT_PHONE")
     emoji = os.environ.get("CLI_REAL_TG_REACT_EMOJI", "👍")
-    phone = os.environ.get("CLI_REAL_TG_REACT_PHONE")
-    phone_args = ("--phone", phone) if phone else ()
 
     result = run_cli(
         "dialogs",
@@ -29,7 +28,8 @@ def test_dialogs_react_explicit_target(run_cli, assert_cli_ok):
         message_id,
         emoji,
         "--yes",
-        *phone_args,
+        "--phone",
+        phone,
         timeout=60,
     )
 

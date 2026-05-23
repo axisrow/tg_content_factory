@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,10 @@ class CliRealCliEnv:
         if self.channel_id is not None:
             return str(self.channel_id)
         return None
+
+    @property
+    def pid_path(self) -> Path:
+        return self.db_path.with_suffix(".pid")
 
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[2]
@@ -216,7 +221,7 @@ def run_cli(cli_real_cli_env: CliEnv):
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            pytest.skip(f"CLI command timed out after {timeout}s: {' '.join(args)}")
+            pytest.fail(f"CLI command timed out after {timeout}s: {' '.join(args)}", pytrace=False)
 
     return _run
 
@@ -268,6 +273,49 @@ def wait_for_http_200(url: str, *, timeout: float = 15.0, interval: float = 0.5)
                     return True
         except (urllib.error.URLError, ConnectionError, TimeoutError):
             pass
+        time.sleep(interval)
+    return False
+
+
+def sqlite_utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def read_pid_file(path: Path) -> int | None:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def skip_if_server_pid_exists(cli_env: CliEnv) -> None:
+    if not cli_env.pid_path.exists():
+        return
+    pid = read_pid_file(cli_env.pid_path)
+    suffix = f" PID {pid}" if pid is not None else ""
+    pytest.skip(
+        f"live server PID file already exists at {cli_env.pid_path}{suffix}; "
+        "stop the existing server or use a separate CLI_REAL_TG_CONFIG"
+    )
+
+
+def wait_for_pid_file(
+    path: Path,
+    expected_pid: int,
+    *,
+    timeout: float = 15.0,
+    interval: float = 0.2,
+) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if read_pid_file(path) == expected_pid:
+            return True
         time.sleep(interval)
     return False
 
