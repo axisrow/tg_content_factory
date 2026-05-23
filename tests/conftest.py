@@ -177,9 +177,7 @@ def _evaluate_real_tg_policy(
     mode: str | None,
     fixturenames: Collection[str],
     environ: Mapping[str, str],
-    is_cli_integration: bool = False,
 ) -> tuple[str | None, str | None]:
-    del is_cli_integration
     uses_live_fixture = any(fixture in fixturenames for fixture in REAL_TG_LIVE_FIXTURES)
 
     if uses_live_fixture and mode is None:
@@ -350,21 +348,12 @@ async def real_telegram_sandbox():
         await client.disconnect()
 
 
-CLI_REAL_TG_INTEGRATION_DIR = "cli_real_tg_integration"
-
-
-def _is_cli_real_tg_integration(item) -> bool:
-    path = Path(str(item.fspath))
-    return CLI_REAL_TG_INTEGRATION_DIR in path.parts
-
-
 def pytest_runtest_setup(item):
     mode = _resolve_real_tg_mode(item)
     action, message = _evaluate_real_tg_policy(
         mode=mode,
         fixturenames=item.fixturenames,
         environ=os.environ,
-        is_cli_integration=_is_cli_real_tg_integration(item),
     )
     if action == "skip":
         pytest.skip(message)

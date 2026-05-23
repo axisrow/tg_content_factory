@@ -18,7 +18,7 @@ def test_proc_scheduler_trigger_enqueues(run_cli, assert_cli_ok, cli_real_cli_en
     leak_msg: str | None = None
     try:
         result = run_cli("scheduler", "trigger")
-        assert_cli_ok(result)
+        assert_cli_ok(result, allow_error_text=True)
         combined = result.stdout + result.stderr
         # The handler prints "Enqueued N channels ..." or "No connected accounts."
         # Either is a legitimate outcome; we only require the command to exit 0
