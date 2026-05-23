@@ -24,7 +24,8 @@ async def test_toggle_account_enqueues_command(route_client, base_app):
     assert "account_toggle_queued" in location
     assert "command_id=" in location
 
-    pool.add_client.assert_not_called() if hasattr(pool, "add_client") else None
+    if hasattr(pool, "add_client"):
+        pool.add_client.assert_not_called()
     pool.remove_client.assert_not_called()
 
     commands = await db.repos.telegram_commands.list_commands(limit=1)

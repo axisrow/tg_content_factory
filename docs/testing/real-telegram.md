@@ -17,6 +17,13 @@
 
 Разрешены только read-only операции на sandbox-аккаунте и allowlist-ресурсах. Такие тесты можно запускать автоматически, но только при явном gate `RUN_REAL_TELEGRAM_SAFE=1`.
 
+Для live CLI subprocess тестов (`tests/cli_real_tg_integration/`) safe означает:
+
+- Telegram-side операции остаются read-only и привязаны к `REAL_TG_*` sandbox resources.
+- CLI subprocess запускается только с временным `config.yaml` и временным SQLite DB.
+- Запись в этот временный DB допустима для проверки CLI flows, но repo `config.yaml` и live `data/tg_search.db` не используются.
+- Массовые/долгие CLI checks дополнительно gated через `RUN_CLI_REAL_TG_HEAVY=1`.
+
 Разрешённые действия:
 
 - `get_me`, users info, проверка авторизации и подключения
@@ -128,13 +135,14 @@
 Доступный live fixture:
 
 - `real_telegram_sandbox`
+- `cli_real_telegram_sandbox` для live CLI subprocess тестов
 
 Правила:
 
 - live Telegram test обязан иметь marker `real_tg_safe` или `real_tg_manual`
-- live Telegram test обязан использовать `real_telegram_sandbox`
+- live Telegram test обязан использовать `real_telegram_sandbox` или `cli_real_telegram_sandbox`
 - `real_tg_safe` и `real_tg_manual` по умолчанию не запускаются без соответствующего env gate
-- `real_tg_never` несовместим с `real_telegram_sandbox`
+- `real_tg_never` несовместим с live fixtures
 - без marker+fixture доступ к real Telegram считается ошибкой конфигурации теста
 
 ## Что использовать по умолчанию

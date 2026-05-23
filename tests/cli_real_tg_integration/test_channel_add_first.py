@@ -3,7 +3,8 @@ import pytest
 pytestmark = pytest.mark.real_tg_safe
 
 
-def test_channel_add_already_existing(run_cli, assert_cli_ok, discover_first_dialog_username):
+@pytest.mark.timeout(180)
+def test_channel_add_already_existing(run_cli, assert_cli_ok, sandbox_channel_username):
     """Smoke: вызвать `channel add @username` для уже существующего канала.
 
     `channel add` идемпотентна на уровне строк — повторное добавление
@@ -12,7 +13,6 @@ def test_channel_add_already_existing(run_cli, assert_cli_ok, discover_first_dia
     src/database/repositories/channels.py:29-37). DB-эффект benign, цель теста —
     реальный TG API call (resolve_channel + fetch_channel_meta).
     """
-    username = discover_first_dialog_username()
-    result = run_cli("channel", "add", username, timeout=120)
+    result = run_cli("channel", "add", sandbox_channel_username, timeout=120)
     assert_cli_ok(result)
-    assert result.stdout.strip(), "`channel add` produced empty stdout"
+    assert "Added channel:" in result.stdout, f"unexpected `channel add` output: {result.stdout!r}"

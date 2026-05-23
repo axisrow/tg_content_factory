@@ -1619,8 +1619,9 @@ async def test_collect_stats_timeout_during_messages():
     collector = Collector(pool, db, SchedulerConfig())
 
     async def _stream_timeout(*a, **kw):
+        if kw.get("_never_yield"):
+            yield None
         raise asyncio.TimeoutError()
-        yield  # noqa: unreachable
 
     with patch.object(transport_session, "resolve_entity", return_value=entity):
         with patch.object(transport_session, "fetch_full_channel", return_value=full_result):

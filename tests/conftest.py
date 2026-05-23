@@ -29,6 +29,8 @@ REAL_TG_SAFE_MARK = "real_tg_safe"
 REAL_TG_MANUAL_MARK = "real_tg_manual"
 REAL_TG_NEVER_MARK = "real_tg_never"
 REAL_TG_LIVE_FIXTURE = "real_telegram_sandbox"
+CLI_REAL_TG_LIVE_FIXTURE = "cli_real_telegram_sandbox"
+REAL_TG_LIVE_FIXTURES = (REAL_TG_LIVE_FIXTURE, CLI_REAL_TG_LIVE_FIXTURE)
 REAL_TG_SAFE_GATE_ENV = "RUN_REAL_TELEGRAM_SAFE"
 REAL_TG_MANUAL_GATE_ENV = "RUN_REAL_TELEGRAM_MANUAL"
 REAL_TG_REQUIRED_ENV_VARS = (
@@ -170,32 +172,26 @@ def _evaluate_real_tg_policy(
     environ: Mapping[str, str],
     is_cli_integration: bool = False,
 ) -> tuple[str | None, str | None]:
-    uses_live_fixture = REAL_TG_LIVE_FIXTURE in fixturenames
+    del is_cli_integration
+    uses_live_fixture = any(fixture in fixturenames for fixture in REAL_TG_LIVE_FIXTURES)
 
     if uses_live_fixture and mode is None:
         return (
             "fail",
-            f"{REAL_TG_LIVE_FIXTURE} requires @{REAL_TG_SAFE_MARK} or @{REAL_TG_MANUAL_MARK}.",
+            f"real Telegram fixtures ({', '.join(REAL_TG_LIVE_FIXTURES)}) "
+            f"require @{REAL_TG_SAFE_MARK} or @{REAL_TG_MANUAL_MARK}.",
         )
 
-    # Only safe-mode CLI-integration tests are allowed to skip the live fixture
-    # (they bring their own pool via the live CLI subprocess). Manual-mode is
-    # always sandbox-required because manual tests are the mutating category.
-    safe_bypass = is_cli_integration and mode == REAL_TG_SAFE_MARK
-    if (
-        mode in {REAL_TG_SAFE_MARK, REAL_TG_MANUAL_MARK}
-        and not uses_live_fixture
-        and not safe_bypass
-    ):
+    if mode in {REAL_TG_SAFE_MARK, REAL_TG_MANUAL_MARK} and not uses_live_fixture:
         return (
             "fail",
-            f"@{mode} tests must use the {REAL_TG_LIVE_FIXTURE} fixture.",
+            f"@{mode} tests must use one of: {', '.join(REAL_TG_LIVE_FIXTURES)}.",
         )
 
     if mode == REAL_TG_NEVER_MARK and uses_live_fixture:
         return (
             "fail",
-            f"@{REAL_TG_NEVER_MARK} tests cannot request {REAL_TG_LIVE_FIXTURE}.",
+            f"@{REAL_TG_NEVER_MARK} tests cannot request real Telegram fixtures.",
         )
 
     if mode == REAL_TG_SAFE_MARK and environ.get(REAL_TG_SAFE_GATE_ENV) != "1":
@@ -372,7 +368,7 @@ def _enforce_cli_transport(
     native_auth_spy: NativeAuthSpy,
     tmp_path,
 ):
-    if REAL_TG_LIVE_FIXTURE in request.fixturenames:
+    if any(fixture in request.fixturenames for fixture in REAL_TG_LIVE_FIXTURES):
         return
 
     def _fake_create_client(namespace):

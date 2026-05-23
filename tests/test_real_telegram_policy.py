@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
 
 from tests.conftest import (
+    CLI_REAL_TG_LIVE_FIXTURE,
     REAL_TG_LIVE_FIXTURE,
+    REAL_TG_LIVE_FIXTURES,
     REAL_TG_MANUAL_GATE_ENV,
     REAL_TG_MANUAL_MARK,
     REAL_TG_NEVER_MARK,
@@ -17,6 +20,7 @@ from tests.conftest import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _TESTS_DIR = _REPO_ROOT / "tests"
+_CLI_REAL_TG_DIR = _TESTS_DIR / "cli_real_tg_integration"
 _MUTATING_PATTERNS = (
     "send_message(",
     "send_file(",
@@ -43,6 +47,41 @@ _NEVER_MARKER_USAGES = (
     "pytestmark = pytest.mark.real_tg_never",
 )
 _AUDIT_EXCLUDED_FILES = {"test_real_telegram_policy.py"}
+_SAFE_CLI_COMMAND_PREFIXES = {
+    ("account", "flood-status"),
+    ("account", "info"),
+    ("account", "list"),
+    ("analytics", "top"),
+    ("channel", "add"),
+    ("channel", "list"),
+    ("channel", "refresh-meta"),
+    ("channel", "stats"),
+    ("debug", "memory"),
+    ("debug", "timing"),
+    ("dialogs", "broadcast-stats"),
+    ("dialogs", "list"),
+    ("dialogs", "resolve"),
+    ("dialogs", "topics"),
+    ("export", "json"),
+    ("filter", "analyze"),
+    ("messages", "read"),
+    ("photo-loader", "dialogs"),
+    ("pipeline", "list"),
+    ("provider", "list"),
+    ("scheduler", "status"),
+    ("search", "test"),
+    ("search-query", "list"),
+    ("settings", "get"),
+    ("settings", "info"),
+    ("translate", "stats"),
+}
+_HEAVY_CLI_COMMAND_PREFIXES = {
+    ("channel", "collect"),
+    ("channel", "refresh-meta", "--all"),
+    ("channel", "refresh-types"),
+    ("channel", "stats", "--all"),
+    ("dialogs", "refresh"),
+}
 
 
 def test_real_tg_policy_rejects_live_fixture_without_policy_marker():
@@ -67,10 +106,22 @@ def test_real_tg_policy_requires_live_fixture_for_safe_mode():
     assert REAL_TG_LIVE_FIXTURE in message
 
 
-def test_real_tg_policy_allows_safe_mode_without_fixture_for_cli_integration():
+def test_real_tg_policy_rejects_safe_mode_without_fixture_for_cli_integration():
     action, message = _evaluate_real_tg_policy(
         mode=REAL_TG_SAFE_MARK,
         fixturenames=(),
+        environ={REAL_TG_SAFE_GATE_ENV: "1"},
+        is_cli_integration=True,
+    )
+
+    assert action == "fail"
+    assert CLI_REAL_TG_LIVE_FIXTURE in message
+
+
+def test_real_tg_policy_allows_cli_sandbox_fixture_for_cli_integration():
+    action, message = _evaluate_real_tg_policy(
+        mode=REAL_TG_SAFE_MARK,
+        fixturenames=(CLI_REAL_TG_LIVE_FIXTURE,),
         environ={REAL_TG_SAFE_GATE_ENV: "1"},
         is_cli_integration=True,
     )
@@ -80,8 +131,6 @@ def test_real_tg_policy_allows_safe_mode_without_fixture_for_cli_integration():
 
 
 def test_real_tg_policy_rejects_manual_mode_without_fixture_for_cli_integration():
-    """Manual-mode (mutating) tests must always use the sandbox fixture, even
-    inside cli_real_tg_integration/. The bypass is safe-only by design."""
     action, message = _evaluate_real_tg_policy(
         mode=REAL_TG_MANUAL_MARK,
         fixturenames=(),
@@ -90,7 +139,7 @@ def test_real_tg_policy_rejects_manual_mode_without_fixture_for_cli_integration(
     )
 
     assert action == "fail"
-    assert REAL_TG_LIVE_FIXTURE in message
+    assert CLI_REAL_TG_LIVE_FIXTURE in message
 
 
 def test_real_tg_policy_skips_safe_mode_without_gate():
@@ -210,9 +259,67 @@ def test_live_fixture_is_not_used_without_real_tg_policy_marker():
         if path.name in _AUDIT_EXCLUDED_FILES:
             continue
         content = path.read_text(encoding="utf-8")
-        if REAL_TG_LIVE_FIXTURE not in content:
+        if not any(fixture in content for fixture in REAL_TG_LIVE_FIXTURES):
             continue
         if not any(marker in content for marker in _SAFE_MARKER_USAGES + _MANUAL_MARKER_USAGES):
             violations.append(path.name)
 
     assert violations == []
+
+
+def _literal_run_cli_prefixes(path: Path) -> list[tuple[str, ...]]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    prefixes: list[tuple[str, ...]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name) or node.func.id != "run_cli":
+            continue
+        prefix: list[str] = []
+        for arg in node.args:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                prefix.append(arg.value)
+                continue
+            break
+        prefixes.append(tuple(prefix))
+    return prefixes
+
+
+def _has_prefix(command: tuple[str, ...], allowed: set[tuple[str, ...]]) -> bool:
+    return any(command[: len(prefix)] == prefix for prefix in allowed)
+
+
+def test_cli_real_tg_safe_commands_are_explicitly_allowlisted():
+    violations: list[str] = []
+
+    for path in _CLI_REAL_TG_DIR.rglob("test_*.py"):
+        content = path.read_text(encoding="utf-8")
+        if not any(marker in content for marker in _SAFE_MARKER_USAGES):
+            continue
+        is_heavy = "heavy" in path.relative_to(_CLI_REAL_TG_DIR).parts
+        for command in _literal_run_cli_prefixes(path):
+            if not command:
+                violations.append(f"{path.relative_to(_REPO_ROOT)}: dynamic run_cli command")
+                continue
+            if is_heavy:
+                if not _has_prefix(command, _HEAVY_CLI_COMMAND_PREFIXES):
+                    violations.append(f"{path.relative_to(_REPO_ROOT)}: {command!r} is not heavy-allowlisted")
+                continue
+            if _has_prefix(command, _HEAVY_CLI_COMMAND_PREFIXES):
+                violations.append(f"{path.relative_to(_REPO_ROOT)}: {command!r} must live under heavy/")
+                continue
+            if not _has_prefix(command, _SAFE_CLI_COMMAND_PREFIXES):
+                violations.append(f"{path.relative_to(_REPO_ROOT)}: {command!r} is not safe-allowlisted")
+
+    assert violations == []
+
+
+def test_cli_real_tg_tests_use_sandbox_fixture_not_repo_config_or_db():
+    content = (_CLI_REAL_TG_DIR / "conftest.py").read_text(encoding="utf-8")
+
+    assert CLI_REAL_TG_LIVE_FIXTURE in content
+    assert '"--config"' in content
+    assert "tmp_path_factory.mktemp" in content
+    assert 'cwd=str(cli_real_telegram_sandbox.work_dir)' in content
+    assert 'cwd=str(cli_env.repo_root)' not in content
+    assert "_detect_repo_root" not in content
