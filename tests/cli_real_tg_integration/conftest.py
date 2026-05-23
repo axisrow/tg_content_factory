@@ -2,174 +2,245 @@ from __future__ import annotations
 
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-import yaml
 
-REPO_ROOT_ENV = "TG_CONTENT_FACTORY_ROOT"
+from src.config import load_config
+
+CLI_REAL_TG_LIVE_GATE_ENV = "RUN_CLI_REAL_TG_LIVE"
+CLI_REAL_TG_ROOT_ENV = "CLI_REAL_TG_ROOT"
+CLI_REAL_TG_CONFIG_ENV = "CLI_REAL_TG_CONFIG"
 
 
 @dataclass(frozen=True)
-class CliEnv:
-    repo_root: Path
+class CliRealCliEnv:
+    source_root: Path
+    live_root: Path
     config_path: Path
     db_path: Path
+    web_port: int
+    phones: tuple[str, ...]
+    channel_pk: str | None
+    channel_id: int | None
+    channel_username: str | None
+
+    @property
+    def repo_root(self) -> Path:
+        return self.live_root
+
+    @property
+    def primary_phone(self) -> str:
+        if not self.phones:
+            pytest.skip("live DB has no connected Telegram accounts")
+        return self.phones[0]
+
+    @property
+    def channel_ref(self) -> str | None:
+        if self.channel_username:
+            return self.channel_username
+        if self.channel_id is not None:
+            return str(self.channel_id)
+        return None
+
+    @property
+    def pid_path(self) -> Path:
+        return self.db_path.with_suffix(".pid")
 
 
-def _detect_repo_root() -> Path:
-    """Return the project root where config.yaml lives.
+_SOURCE_ROOT = Path(__file__).resolve().parents[2]
+CliEnv = CliRealCliEnv
 
-    Priority: TG_CONTENT_FACTORY_ROOT env var → pytest invocation cwd → walk up
-    from this file looking for config.yaml outside any worktree.
-    """
-    env_root = os.environ.get(REPO_ROOT_ENV)
-    if env_root:
-        return Path(env_root).resolve()
 
-    cwd = Path.cwd().resolve()
-    if (cwd / "config.yaml").exists() and "worktrees" not in cwd.parts:
-        return cwd
+def _resolve_live_root() -> Path:
+    return Path(os.environ.get(CLI_REAL_TG_ROOT_ENV, _SOURCE_ROOT)).expanduser().resolve()
 
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        if (parent / "config.yaml").exists() and "worktrees" not in parent.parts:
-            return parent
 
-    return cwd
+def _resolve_config_path(live_root: Path) -> Path:
+    configured = os.environ.get(CLI_REAL_TG_CONFIG_ENV)
+    if configured:
+        path = Path(configured).expanduser()
+        return path if path.is_absolute() else (live_root / path).resolve()
+    return live_root / "config.yaml"
+
+
+def _resolve_db_path(live_root: Path, db_path: str) -> Path:
+    path = Path(db_path).expanduser()
+    return path if path.is_absolute() else (live_root / path).resolve()
+
+
+def _fetch_live_accounts(db_path: Path) -> tuple[str, ...]:
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT phone
+            FROM accounts
+            WHERE COALESCE(is_active, 1) = 1
+              AND COALESCE(session_string, '') != ''
+            ORDER BY COALESCE(is_primary, 0) DESC, id ASC
+            """
+        ).fetchall()
+    return tuple(str(row[0]) for row in rows if row[0])
+
+
+def _fetch_live_channel(db_path: Path) -> tuple[str | None, int | None, str | None]:
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT id, channel_id, username
+            FROM channels
+            WHERE COALESCE(is_active, 1) = 1
+            ORDER BY id ASC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None:
+        return None, None, None
+    pk = str(row[0]) if row[0] is not None else None
+    channel_id = int(row[1]) if row[1] is not None else None
+    username = str(row[2]) if row[2] else None
+    return pk, channel_id, username
 
 
 @pytest.fixture(scope="session")
-def cli_env() -> CliEnv:
-    root = _detect_repo_root()
-    config_path = root / "config.yaml"
+def cli_real_cli_env() -> CliRealCliEnv:
+    if os.environ.get(CLI_REAL_TG_LIVE_GATE_ENV) != "1":
+        pytest.skip(f"live CLI tests disabled; set {CLI_REAL_TG_LIVE_GATE_ENV}=1 to run them")
+
+    live_root = _resolve_live_root()
+    config_path = _resolve_config_path(live_root)
     if not config_path.exists():
         pytest.skip(
-            f"config.yaml not found under {root}. Set {REPO_ROOT_ENV} to the project root."
+            f"live CLI config not found at {config_path}; set {CLI_REAL_TG_CONFIG_ENV} or {CLI_REAL_TG_ROOT_ENV}"
         )
 
-    try:
-        cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as exc:
-        pytest.skip(f"failed to parse {config_path}: {exc}")
+    config = load_config(config_path)
+    if config.telegram.api_id == 0 or not config.telegram.api_hash:
+        pytest.skip("live CLI config has no Telegram api_id/api_hash")
 
-    db_rel = (cfg.get("database") or {}).get("path")
-    if not db_rel:
-        pytest.skip(f"{config_path} has no database.path entry")
-
-    db_path = (root / db_rel).resolve()
+    db_path = _resolve_db_path(live_root, config.database.path)
     if not db_path.exists():
-        pytest.skip(f"database file not found at {db_path}")
+        pytest.skip(f"live CLI database not found at {db_path}")
     if db_path.stat().st_size == 0:
-        pytest.skip(f"database file at {db_path} is empty")
+        pytest.skip(f"live CLI database at {db_path} is empty")
 
-    return CliEnv(repo_root=root, config_path=config_path, db_path=db_path)
+    try:
+        phones = _fetch_live_accounts(db_path)
+    except sqlite3.Error as exc:
+        pytest.skip(f"failed to read live CLI accounts from {db_path}: {exc}")
+    if not phones:
+        pytest.skip("live CLI database has no active connected Telegram accounts")
+
+    try:
+        channel_pk, channel_id, channel_username = _fetch_live_channel(db_path)
+    except sqlite3.Error:
+        channel_pk, channel_id, channel_username = None, None, None
+
+    return CliRealCliEnv(
+        source_root=_SOURCE_ROOT,
+        live_root=live_root,
+        config_path=config_path,
+        db_path=db_path,
+        web_port=int(config.web.port),
+        phones=phones,
+        channel_pk=channel_pk,
+        channel_id=channel_id,
+        channel_username=channel_username,
+    )
 
 
-_WORKTREE_ROOT = Path(__file__).resolve().parents[2]
+@pytest.fixture(scope="session")
+def cli_env(cli_real_cli_env: CliRealCliEnv) -> CliEnv:
+    return cli_real_cli_env
+
+
+def _cli_command(cli_env: CliEnv, args: tuple[str, ...]) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "src.main",
+        "--config",
+        str(cli_env.config_path),
+        *args,
+    ]
+
+
+def _build_cli_env(cli_env: CliEnv, extra_env: dict[str, str] | None = None) -> dict[str, str]:
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{cli_env.source_root}{os.pathsep}{existing}" if existing else str(cli_env.source_root)
+    env["PYTHONSAFEPATH"] = "1"
+    if extra_env:
+        env.update(extra_env)
+    return env
 
 
 def cli_run_direct(
-    cli_env: "CliEnv", *args: str, timeout: float = 20.0
+    cli_env: CliEnv,
+    *args: str,
+    timeout: float = 20.0,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess:
-    """subprocess.run wrapper for cleanup code that must NOT call pytest.skip.
-
-    The shared `run_cli` fixture converts subprocess.TimeoutExpired into
-    pytest.skip(). That is correct for the test body, but a Skipped raised
-    inside a `finally` block replaces any in-flight AssertionError, so
-    cleanup code that uses run_cli silently masks real test failures (and
-    leaks whatever resource the cleanup was supposed to release). Use this
-    helper for cleanup invocations: TimeoutExpired bubbles up to the caller
-    explicitly, no pytest.skip side effect.
-
-    Module-level (not a fixture) so cleanup `finally` blocks can call it
-    without depending on fixture resolution order.
-    """
-    return subprocess.run(  # noqa: S603 — controlled CLI module invocation
-        [sys.executable, "-m", "src.main", *args],
+    """subprocess.run wrapper for cleanup code that must not call pytest.skip."""
+    return subprocess.run(  # noqa: S603 - controlled CLI module invocation
+        _cli_command(cli_env, args),
         cwd=str(cli_env.repo_root),
         capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
-        env=_build_cli_env(),
+        env=_build_cli_env(cli_env, extra_env=extra_env),
         check=False,
     )
 
 
-def _build_cli_env() -> dict[str, str]:
-    """Compose the env dict for any CLI subprocess: PYTHONPATH-pinned to the
-    worktree so subprocess loads the code under test, not the live repo.
-
-    Takes no arguments because the worktree root is a module-level constant —
-    callers used to pass `cli_env.repo_root` here, but that path is the CWD
-    of the subprocess, not the PYTHONPATH (we deliberately want them to
-    diverge: cwd = main repo with config.yaml + data/, PYTHONPATH = worktree
-    with the code under test).
-    """
-    env = os.environ.copy()
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        f"{_WORKTREE_ROOT}{os.pathsep}{existing}" if existing else str(_WORKTREE_ROOT)
-    )
-    env["PYTHONSAFEPATH"] = "1"
-    return env
-
-
 @pytest.fixture
-def run_cli(cli_env: CliEnv):
-    def _run(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
-        # cwd = основной репо (там config.yaml + data/). PYTHONPATH ведёт на
-        # текущий чекаут (worktree или main), а PYTHONSAFEPATH=1 убирает cwd из
-        # sys.path → subprocess грузит `src/` из тестируемого кода, а не из
-        # живого репозитория по cwd. Без этого worktree-правки в src/ невидимы.
-        env = _build_cli_env()
+def run_cli(cli_real_cli_env: CliEnv):
+    def _run(
+        *args: str,
+        timeout: int = 120,
+        extra_env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess:
         try:
-            return subprocess.run(
-                [sys.executable, "-m", "src.main", *args],
-                cwd=str(cli_env.repo_root),
+            return subprocess.run(  # noqa: S603 - controlled CLI module invocation
+                _cli_command(cli_real_cli_env, args),
+                cwd=str(cli_real_cli_env.repo_root),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
                 timeout=timeout,
-                env=env,
+                env=_build_cli_env(cli_real_cli_env, extra_env=extra_env),
+                check=False,
             )
         except subprocess.TimeoutExpired:
-            pytest.skip(f"CLI command timed out after {timeout}s: {' '.join(args)}")
+            pytest.fail(f"CLI command timed out after {timeout}s: {' '.join(args)}", pytrace=False)
 
     return _run
 
 
 @pytest.fixture
-def run_cli_popen(cli_env: CliEnv):
-    """Spawn long-running CLI commands (serve/worker/scheduler start) as Popen.
-
-    Returns a callable that spawns the process and records it for cleanup.
-    On test teardown, every spawned process that is still alive is sent
-    SIGTERM, then SIGKILL if it doesn't exit within 5s. Use this instead of
-    `run_cli` when the command does not return on its own.
-
-    stdout is routed to DEVNULL so a verbose server (uvicorn access logs)
-    cannot fill the OS pipe buffer and stall the child mid-SIGTERM.
-    stderr is captured so failing tests can surface the tail in their
-    assertion messages — but it is drained via communicate() in teardown
-    to keep wait() from blocking on a half-full pipe.
-    """
+def run_cli_popen(cli_real_cli_env: CliEnv):
+    """Spawn long-running CLI commands and clean them up on test teardown."""
     processes: list[subprocess.Popen] = []
 
-    def _spawn(*args: str) -> subprocess.Popen:
-        env = _build_cli_env()
-        proc = subprocess.Popen(  # noqa: S603 — controlled CLI module invocation
-            [sys.executable, "-m", "src.main", *args],
-            cwd=str(cli_env.repo_root),
-            env=env,
-            stdout=subprocess.DEVNULL,
+    def _spawn(
+        *args: str,
+        extra_env: dict[str, str] | None = None,
+        capture_stdout: bool = False,
+    ) -> subprocess.Popen:
+        proc = subprocess.Popen(  # noqa: S603 - controlled CLI module invocation
+            _cli_command(cli_real_cli_env, args),
+            cwd=str(cli_real_cli_env.repo_root),
+            env=_build_cli_env(cli_real_cli_env, extra_env=extra_env),
+            stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
@@ -185,8 +256,6 @@ def run_cli_popen(cli_env: CliEnv):
             continue
         proc.terminate()
         try:
-            # communicate() drains stderr before waiting, so a stderr-noisy
-            # process (logs) doesn't stall on pipe backpressure during SIGTERM.
             proc.communicate(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
@@ -197,11 +266,6 @@ def run_cli_popen(cli_env: CliEnv):
 
 
 def wait_for_http_200(url: str, *, timeout: float = 15.0, interval: float = 0.5) -> bool:
-    """Poll an HTTP endpoint until it returns 200 or the timeout elapses.
-
-    Returns True on success, False on timeout. Uses urllib (stdlib only) to
-    avoid pulling httpx/requests into the test environment.
-    """
     import urllib.error
     import urllib.request
 
@@ -217,6 +281,49 @@ def wait_for_http_200(url: str, *, timeout: float = 15.0, interval: float = 0.5)
     return False
 
 
+def sqlite_utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def read_pid_file(path: Path) -> int | None:
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def skip_if_server_pid_exists(cli_env: CliEnv) -> None:
+    if not cli_env.pid_path.exists():
+        return
+    pid = read_pid_file(cli_env.pid_path)
+    suffix = f" PID {pid}" if pid is not None else ""
+    pytest.skip(
+        f"live server PID file already exists at {cli_env.pid_path}{suffix}; "
+        "stop the existing server or use a separate CLI_REAL_TG_CONFIG"
+    )
+
+
+def wait_for_pid_file(
+    path: Path,
+    expected_pid: int,
+    *,
+    timeout: float = 15.0,
+    interval: float = 0.2,
+) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if read_pid_file(path) == expected_pid:
+            return True
+        time.sleep(interval)
+    return False
+
+
 def wait_for_db_row(
     db_path: Path,
     sql: str,
@@ -225,13 +332,6 @@ def wait_for_db_row(
     timeout: float = 15.0,
     interval: float = 0.5,
 ) -> tuple | None:
-    """Poll a sqlite DB for a row matching `sql`+`params`. Returns the row or None.
-
-    Uses synchronous sqlite3 so we never collide with an aiosqlite-backed
-    connection inside the CLI subprocess (WAL mode allows concurrent readers).
-    """
-    import sqlite3
-
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
@@ -249,105 +349,108 @@ def wait_for_db_row(
 
 
 _FLOOD_WAIT_RE = re.compile(r"FloodWaitError|FLOOD_?WAIT", re.IGNORECASE)
-_AUTH_RE = re.compile(
-    r"AuthKeyError|AuthKeyUnregistered|session\s+expired|UnauthorizedError", re.IGNORECASE
+_AUTH_RE = re.compile(r"AuthKeyError|AuthKeyUnregistered|session\s+expired|UnauthorizedError", re.IGNORECASE)
+_SILENT_FAILURE_PATTERNS = (
+    ("Traceback", re.compile(r"Traceback", re.IGNORECASE)),
+    ("ModuleNotFoundError", re.compile(r"ModuleNotFoundError", re.IGNORECASE)),
+    ("No connected accounts", re.compile(r"No connected accounts", re.IGNORECASE)),
+    ("No accounts found", re.compile(r"No accounts found", re.IGNORECASE)),
+    ("Could not resolve channel", re.compile(r"Could not resolve channel", re.IGNORECASE)),
+    ("Error fetching broadcast stats", re.compile(r"Error fetching broadcast stats", re.IGNORECASE)),
+    ("Failed to initialize", re.compile(r"Failed to initialize", re.IGNORECASE)),
+    ("Failed to load", re.compile(r"Failed to load", re.IGNORECASE)),
+    ("Error sending reaction", re.compile(r"Error sending reaction", re.IGNORECASE)),
+    ("RuntimeError", re.compile(r"RuntimeError", re.IGNORECASE)),
 )
+_DEFAULT_ALLOWED_ERROR_TEXTS = frozenset({"No connected accounts"})
 
 
-@pytest.fixture
-def assert_cli_ok():
-    def _assert(result: subprocess.CompletedProcess) -> None:
-        # FLOOD_WAIT и auth-проблемы — это поводы для skip только если CLI упал.
-        # При успешном returncode упоминание «flood wait» в выводе (например, в
-        # заголовке таблицы `account flood-status`) — это легитимный текст, не ошибка.
-        if result.returncode != 0:
-            combined = (result.stdout or "") + "\n" + (result.stderr or "")
-            if _FLOOD_WAIT_RE.search(combined):
-                pytest.skip("Telegram FLOOD_WAIT; retry later")
-            if _AUTH_RE.search(combined):
-                pytest.skip("Telegram session not authorized; re-auth account")
+def _normalize_allowed_error_texts(
+    allow_error_text: bool | str | tuple[str, ...],
+) -> frozenset[str]:
+    if allow_error_text is True:
+        return _DEFAULT_ALLOWED_ERROR_TEXTS
+    if allow_error_text is False:
+        return frozenset()
+    if isinstance(allow_error_text, str):
+        return frozenset({allow_error_text})
+    return frozenset(allow_error_text)
+
+
+def _assert_cli_result_ok(
+    result: subprocess.CompletedProcess,
+    *,
+    allow_error_text: bool | str | tuple[str, ...] = False,
+) -> None:
+    combined = (result.stdout or "") + "\n" + (result.stderr or "")
+    if result.returncode != 0:
+        if _FLOOD_WAIT_RE.search(combined):
+            pytest.skip("Telegram FLOOD_WAIT; retry later")
+        if _AUTH_RE.search(combined):
+            pytest.skip("Telegram session not authorized; re-auth account")
+        pytest.fail(
+            f"CLI exited with {result.returncode}\n"
+            f"--- stdout ---\n{result.stdout}\n"
+            f"--- stderr ---\n{result.stderr}",
+            pytrace=False,
+        )
+    allowed_error_texts = _normalize_allowed_error_texts(allow_error_text)
+    for failure_text, pattern in _SILENT_FAILURE_PATTERNS:
+        if failure_text in allowed_error_texts:
+            continue
+        if pattern.search(combined):
             pytest.fail(
-                f"CLI exited with {result.returncode}\n"
+                "CLI returned zero but printed a failure-looking message "
+                f"({failure_text})\n"
                 f"--- stdout ---\n{result.stdout}\n"
                 f"--- stderr ---\n{result.stderr}",
                 pytrace=False,
             )
 
+
+@pytest.fixture
+def assert_cli_ok():
+    def _assert(
+        result: subprocess.CompletedProcess,
+        *,
+        allow_error_text: bool | str | tuple[str, ...] = False,
+    ) -> None:
+        _assert_cli_result_ok(result, allow_error_text=allow_error_text)
+
     return _assert
 
 
-_CHANNEL_LIST_ROW_RE = re.compile(r"^\s*(\d+)\s+(-?\d+)\s+", re.MULTILINE)
+@pytest.fixture
+def live_channel(cli_real_cli_env: CliRealCliEnv) -> tuple[str, str]:
+    if cli_real_cli_env.channel_pk is None or cli_real_cli_env.channel_id is None:
+        pytest.skip("live CLI database has no active channel")
+    return cli_real_cli_env.channel_pk, str(cli_real_cli_env.channel_id)
 
 
 @pytest.fixture
-def discover_first_channel(run_cli, assert_cli_ok):
-    """Run `channel list` and return (pk, channel_id) for the first row, or skip."""
-
-    def _discover() -> tuple[str, str]:
-        result = run_cli("channel", "list")
-        assert_cli_ok(result)
-        match = _CHANNEL_LIST_ROW_RE.search(result.stdout)
-        if not match:
-            pytest.skip("no channels in data.db — `channel list` returned no rows")
-        return match.group(1), match.group(2)
-
-    return _discover
-
-
-_DIALOG_USERNAME_RE = re.compile(r"@([A-Za-z0-9_]{4,})")
+def live_channel_username(cli_real_cli_env: CliRealCliEnv) -> str:
+    if not cli_real_cli_env.channel_username:
+        pytest.skip("live CLI database has no active channel with username")
+    username = cli_real_cli_env.channel_username
+    return username if username.startswith("@") else f"@{username}"
 
 
 @pytest.fixture
-def discover_first_dialog_username(run_cli, assert_cli_ok):
-    """Run `dialogs list` and return the first @username, or skip."""
-
-    def _discover() -> str:
-        result = run_cli("dialogs", "list")
-        assert_cli_ok(result)
-        match = _DIALOG_USERNAME_RE.search(result.stdout)
-        if not match:
-            pytest.skip("no @username in `dialogs list` output")
-        return "@" + match.group(1)
-
-    return _discover
+def live_phone(cli_real_cli_env: CliRealCliEnv) -> str:
+    return cli_real_cli_env.primary_phone
 
 
-_ACCOUNT_LIST_ROW_RE = re.compile(
-    r"^\s*\d+\s+(\+?\d{6,})\s",
-    re.MULTILINE,
-)
-
-
-@pytest.fixture
-def discover_first_phone(run_cli, assert_cli_ok):
-    """Run `account list` and return the first phone, or skip."""
-
-    def _discover() -> str:
-        result = run_cli("account", "list")
-        assert_cli_ok(result)
-        match = _ACCOUNT_LIST_ROW_RE.search(result.stdout)
-        if not match:
-            pytest.skip("no accounts in data.db — `account list` returned no rows")
-        return match.group(1)
-
-    return _discover
-
-
-# Таблицы pipeline/search-query/runs все печатают первой колонкой числовой ID:
-# заголовки начинаются с букв ("ID"), а строки — с цифр; regex отсекает шапку.
 _LEADING_INT_ROW_RE = re.compile(r"^\s*(\d+)\s+\S", re.MULTILINE)
 
 
 @pytest.fixture
 def discover_first_pipeline_id(run_cli, assert_cli_ok):
-    """Run `pipeline list` and return the first pipeline id, or skip."""
-
     def _discover() -> str:
         result = run_cli("pipeline", "list")
         assert_cli_ok(result)
         match = _LEADING_INT_ROW_RE.search(result.stdout)
         if not match:
-            pytest.skip("no pipelines — `pipeline list` returned no rows")
+            pytest.skip("no pipelines - `pipeline list` returned no rows")
         return match.group(1)
 
     return _discover
@@ -355,8 +458,6 @@ def discover_first_pipeline_id(run_cli, assert_cli_ok):
 
 @pytest.fixture
 def discover_first_run_id(run_cli, assert_cli_ok, discover_first_pipeline_id):
-    """Run `pipeline runs <pipeline_id>` and return the first run id, or skip."""
-
     def _discover() -> str:
         pipeline_id = discover_first_pipeline_id()
         result = run_cli("pipeline", "runs", pipeline_id, "--limit", "1")
@@ -371,33 +472,28 @@ def discover_first_run_id(run_cli, assert_cli_ok, discover_first_pipeline_id):
 
 @pytest.fixture
 def discover_first_search_query_id(run_cli, assert_cli_ok):
-    """Run `search-query list` and return the first search query id, or skip."""
-
     def _discover() -> str:
         result = run_cli("search-query", "list")
         assert_cli_ok(result)
         match = _LEADING_INT_ROW_RE.search(result.stdout)
         if not match:
-            pytest.skip("no search queries — `search-query list` returned no rows")
+            pytest.skip("no search queries - `search-query list` returned no rows")
         return match.group(1)
 
     return _discover
 
 
-# `agent threads` печатает строки вида `[<id>] <title>  (<created_at>)`.
 _AGENT_THREAD_ROW_RE = re.compile(r"^\[(\d+)\]", re.MULTILINE)
 
 
 @pytest.fixture
 def discover_first_agent_thread_id(run_cli, assert_cli_ok):
-    """Run `agent threads` and return the first thread id, or skip."""
-
     def _discover() -> str:
         result = run_cli("agent", "threads")
         assert_cli_ok(result)
         match = _AGENT_THREAD_ROW_RE.search(result.stdout)
         if not match:
-            pytest.skip("no agent threads — `agent threads` returned no rows")
+            pytest.skip("no agent threads - `agent threads` returned no rows")
         return match.group(1)
 
     return _discover

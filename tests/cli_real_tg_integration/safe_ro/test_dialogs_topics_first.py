@@ -3,8 +3,9 @@ import pytest
 pytestmark = pytest.mark.real_tg_safe
 
 
-def test_dialogs_topics_first(run_cli, assert_cli_ok, discover_first_channel):
-    _pk, channel_id = discover_first_channel()
+@pytest.mark.timeout(180)
+def test_dialogs_topics_first(run_cli, assert_cli_ok, live_channel):
+    _pk, channel_id = live_channel
     result = run_cli("dialogs", "topics", "--channel-id", channel_id, timeout=120)
     assert_cli_ok(result)
     # Если канал не форум — выведет «No forum topics found», exit 0 — это валидно

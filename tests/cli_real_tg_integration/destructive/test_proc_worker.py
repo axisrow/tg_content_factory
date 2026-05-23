@@ -6,20 +6,28 @@ We poll for that row, then SIGTERM the process.
 """
 import pytest
 
-from tests.cli_real_tg_integration.conftest import wait_for_db_row
+from tests.cli_real_tg_integration.conftest import sqlite_utc_now, wait_for_db_row
 
-pytestmark = pytest.mark.real_tg_safe
+pytestmark = pytest.mark.real_tg_manual
 
 
-def test_proc_worker_publishes_heartbeat(run_cli_popen, cli_env):
+@pytest.mark.timeout(60)
+def test_proc_worker_publishes_heartbeat(run_cli_popen, cli_real_cli_env):
     import subprocess
 
+    started_at = sqlite_utc_now()
     proc = run_cli_popen("worker")
 
     row = wait_for_db_row(
-        cli_env.db_path,
-        "SELECT 1 FROM runtime_snapshots WHERE snapshot_type = ? LIMIT 1",
-        ("worker_heartbeat",),
+        cli_real_cli_env.db_path,
+        """
+        SELECT updated_at
+        FROM runtime_snapshots
+        WHERE snapshot_type = ?
+          AND datetime(updated_at) > datetime(?)
+        LIMIT 1
+        """,
+        ("worker_heartbeat", started_at),
         timeout=20.0,
     )
 

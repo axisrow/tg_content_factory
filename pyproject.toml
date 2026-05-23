@@ -108,8 +108,9 @@ addopts = "--dist=loadfile"
 filterwarnings = ["error"]
 markers = [
     "native_backend_allowed: test intentionally exercises explicit native Telethon allowlist flows",
-    "real_tg_safe: opt-in real Telegram API test limited to read-only sandbox scenarios",
-    "real_tg_manual: opt-in real Telegram API test for sandbox-only manual scenarios",
+    "real_tg_safe: opt-in real Telegram API test with no Telegram-visible mutations",
+    "real_tg_mutation_safe: opt-in real Telegram API test for bounded operator-approved Telegram-visible mutations",
+    "real_tg_manual: opt-in real Telegram API test for manual/high-risk Telegram-visible scenarios",
     "real_tg_never: test must never request a real Telegram client fixture",
     "telegram_unit: pure unit test that does not verify backend transport wiring",
     "real_materializer: test uses real SessionMaterializer instead of the fake stub",

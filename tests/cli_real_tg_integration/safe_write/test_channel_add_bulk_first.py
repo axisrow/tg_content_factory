@@ -5,8 +5,8 @@ The CLI handler matches each provided id against `pool.get_my_dialogs(phone)`
 DB the handler prints "SKIP: ... — already exists" and does NOT touch the
 row — exactly the idempotency we need for a tier-safe_write smoke.
 
-We reuse channel_id (numeric) from discover_first_channel(): the
-add-bulk handler's `info_map` is keyed by channel_id (see
+We reuse channel_id (numeric) from live_channel: the add-bulk handler's
+`info_map` is keyed by channel_id (see
 src/cli/commands/channel.py:391), not by Telethon dialog.id, so this is
 the correct value to pass.
 """
@@ -15,11 +15,9 @@ import pytest
 pytestmark = pytest.mark.real_tg_safe
 
 
-def test_channel_add_bulk_idempotent_first(
-    run_cli, assert_cli_ok, discover_first_phone, discover_first_channel
-):
-    phone = discover_first_phone()
-    _pk, channel_id = discover_first_channel()
+def test_channel_add_bulk_idempotent_first(run_cli, assert_cli_ok, live_phone, live_channel):
+    phone = live_phone
+    _pk, channel_id = live_channel
     result = run_cli(
         "channel",
         "add-bulk",

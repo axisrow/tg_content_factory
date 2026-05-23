@@ -26,10 +26,14 @@ def anyio_backend() -> str:
 
 
 REAL_TG_SAFE_MARK = "real_tg_safe"
+REAL_TG_MUTATION_SAFE_MARK = "real_tg_mutation_safe"
 REAL_TG_MANUAL_MARK = "real_tg_manual"
 REAL_TG_NEVER_MARK = "real_tg_never"
 REAL_TG_LIVE_FIXTURE = "real_telegram_sandbox"
+CLI_REAL_TG_LIVE_FIXTURE = "cli_real_cli_env"
+REAL_TG_LIVE_FIXTURES = (REAL_TG_LIVE_FIXTURE, CLI_REAL_TG_LIVE_FIXTURE)
 REAL_TG_SAFE_GATE_ENV = "RUN_REAL_TELEGRAM_SAFE"
+REAL_TG_MUTATION_SAFE_GATE_ENV = "RUN_REAL_TELEGRAM_MUTATION_SAFE"
 REAL_TG_MANUAL_GATE_ENV = "RUN_REAL_TELEGRAM_MANUAL"
 REAL_TG_REQUIRED_ENV_VARS = (
     "REAL_TG_API_ID",
@@ -153,7 +157,12 @@ class RealTelegramSandbox:
 def _resolve_real_tg_mode(node) -> str | None:
     markers = [
         name
-        for name in (REAL_TG_SAFE_MARK, REAL_TG_MANUAL_MARK, REAL_TG_NEVER_MARK)
+        for name in (
+            REAL_TG_SAFE_MARK,
+            REAL_TG_MUTATION_SAFE_MARK,
+            REAL_TG_MANUAL_MARK,
+            REAL_TG_NEVER_MARK,
+        )
         if node.get_closest_marker(name)
     ]
     if len(markers) > 1:
@@ -168,40 +177,46 @@ def _evaluate_real_tg_policy(
     mode: str | None,
     fixturenames: Collection[str],
     environ: Mapping[str, str],
-    is_cli_integration: bool = False,
 ) -> tuple[str | None, str | None]:
-    uses_live_fixture = REAL_TG_LIVE_FIXTURE in fixturenames
+    uses_live_fixture = any(fixture in fixturenames for fixture in REAL_TG_LIVE_FIXTURES)
 
     if uses_live_fixture and mode is None:
         return (
             "fail",
-            f"{REAL_TG_LIVE_FIXTURE} requires @{REAL_TG_SAFE_MARK} or @{REAL_TG_MANUAL_MARK}.",
+            f"real Telegram fixtures ({', '.join(REAL_TG_LIVE_FIXTURES)}) "
+            f"require @{REAL_TG_SAFE_MARK}, @{REAL_TG_MUTATION_SAFE_MARK}, "
+            f"or @{REAL_TG_MANUAL_MARK}.",
         )
 
-    # Only safe-mode CLI-integration tests are allowed to skip the live fixture
-    # (they bring their own pool via the live CLI subprocess). Manual-mode is
-    # always sandbox-required because manual tests are the mutating category.
-    safe_bypass = is_cli_integration and mode == REAL_TG_SAFE_MARK
     if (
-        mode in {REAL_TG_SAFE_MARK, REAL_TG_MANUAL_MARK}
+        mode in {REAL_TG_SAFE_MARK, REAL_TG_MUTATION_SAFE_MARK, REAL_TG_MANUAL_MARK}
         and not uses_live_fixture
-        and not safe_bypass
     ):
         return (
             "fail",
-            f"@{mode} tests must use the {REAL_TG_LIVE_FIXTURE} fixture.",
+            f"@{mode} tests must use one of: {', '.join(REAL_TG_LIVE_FIXTURES)}.",
         )
 
     if mode == REAL_TG_NEVER_MARK and uses_live_fixture:
         return (
             "fail",
-            f"@{REAL_TG_NEVER_MARK} tests cannot request {REAL_TG_LIVE_FIXTURE}.",
+            f"@{REAL_TG_NEVER_MARK} tests cannot request real Telegram fixtures.",
         )
 
     if mode == REAL_TG_SAFE_MARK and environ.get(REAL_TG_SAFE_GATE_ENV) != "1":
         return (
             "skip",
             f"real Telegram safe tests are disabled; set {REAL_TG_SAFE_GATE_ENV}=1 to run them.",
+        )
+
+    if (
+        mode == REAL_TG_MUTATION_SAFE_MARK
+        and environ.get(REAL_TG_MUTATION_SAFE_GATE_ENV) != "1"
+    ):
+        return (
+            "skip",
+            "real Telegram mutation-safe tests are disabled; "
+            f"set {REAL_TG_MUTATION_SAFE_GATE_ENV}=1 to run them.",
         )
 
     if mode == REAL_TG_MANUAL_MARK and environ.get(REAL_TG_MANUAL_GATE_ENV) != "1":
@@ -333,21 +348,12 @@ async def real_telegram_sandbox():
         await client.disconnect()
 
 
-CLI_REAL_TG_INTEGRATION_DIR = "cli_real_tg_integration"
-
-
-def _is_cli_real_tg_integration(item) -> bool:
-    path = Path(str(item.fspath))
-    return CLI_REAL_TG_INTEGRATION_DIR in path.parts
-
-
 def pytest_runtest_setup(item):
     mode = _resolve_real_tg_mode(item)
     action, message = _evaluate_real_tg_policy(
         mode=mode,
         fixturenames=item.fixturenames,
         environ=os.environ,
-        is_cli_integration=_is_cli_real_tg_integration(item),
     )
     if action == "skip":
         pytest.skip(message)
@@ -372,7 +378,7 @@ def _enforce_cli_transport(
     native_auth_spy: NativeAuthSpy,
     tmp_path,
 ):
-    if REAL_TG_LIVE_FIXTURE in request.fixturenames:
+    if any(fixture in request.fixturenames for fixture in REAL_TG_LIVE_FIXTURES):
         return
 
     def _fake_create_client(namespace):
