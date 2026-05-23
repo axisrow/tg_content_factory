@@ -2364,67 +2364,83 @@ class TestDeepagentsSyncExceptions:
 
     def test_index_messages_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "index_messages" in tools:
-            with patch("src.services.embedding_service.EmbeddingService.index_pending_messages",
-                        side_effect=RuntimeError("fail")):
-                result = tools["index_messages"]()
-                assert "ошибка" in result.lower() or "fail" in result.lower()
+        assert "index_messages" in tools
+        with patch(
+            "src.services.embedding_service.EmbeddingService.index_pending_messages",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["index_messages"]()
+            assert "ошибка" in result.lower() or "fail" in result.lower()
 
     def test_toggle_pipeline_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "toggle_pipeline" in tools:
-            with patch("src.services.pipeline_service.PipelineService.toggle",
-                        side_effect=RuntimeError("fail")):
-                result = tools["toggle_pipeline"](1)
-                assert "ошибка" in result.lower()
+        assert "toggle_pipeline" in tools
+        with patch(
+            "src.services.pipeline_service.PipelineService.toggle",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["toggle_pipeline"](1)
+            assert "ошибка" in result.lower()
 
     def test_delete_pipeline_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "delete_pipeline" in tools:
-            with patch("src.services.pipeline_service.PipelineService.delete",
-                        side_effect=RuntimeError("fail")):
-                result = tools["delete_pipeline"](1)
-                assert "ошибка" in result.lower()
+        assert "delete_pipeline" in tools
+        with patch(
+            "src.services.pipeline_service.PipelineService.delete",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["delete_pipeline"](1)
+            assert "ошибка" in result.lower()
 
     def test_run_pipeline_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "run_pipeline" in tools:
-            with patch("src.services.pipeline_service.PipelineService.get",
-                        side_effect=RuntimeError("fail")):
-                result = tools["run_pipeline"](1)
-                assert "ошибка" in result.lower()
+        assert "run_pipeline" in tools
+        with patch(
+            "src.services.pipeline_service.PipelineService.get",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["run_pipeline"](1)
+            assert "ошибка" in result.lower()
 
     def test_list_search_queries_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "list_search_queries" in tools:
-            with patch("src.services.search_query_service.SearchQueryService.list",
-                        side_effect=RuntimeError("fail")):
-                result = tools["list_search_queries"]()
-                assert "ошибка" in result.lower()
+        assert "list_search_queries" in tools
+        with patch(
+            "src.services.search_query_service.SearchQueryService.list",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["list_search_queries"]()
+            assert "ошибка" in result.lower()
 
     def test_toggle_search_query_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "toggle_search_query" in tools:
-            with patch("src.services.search_query_service.SearchQueryService.toggle",
-                        side_effect=RuntimeError("fail")):
-                result = tools["toggle_search_query"](1)
-                assert "ошибка" in result.lower()
+        assert "toggle_search_query" in tools
+        with patch(
+            "src.services.search_query_service.SearchQueryService.toggle",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["toggle_search_query"](1)
+            assert "ошибка" in result.lower()
 
     def test_delete_search_query_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "delete_search_query" in tools:
-            with patch("src.services.search_query_service.SearchQueryService.delete",
-                        side_effect=RuntimeError("fail")):
-                result = tools["delete_search_query"](1, confirm=True)
-                assert "ошибка" in result.lower()
+        assert "delete_search_query" in tools
+        with patch(
+            "src.services.search_query_service.SearchQueryService.delete",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["delete_search_query"](1, confirm=True)
+            assert "ошибка" in result.lower()
 
     def test_run_search_query_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "run_search_query" in tools:
-            with patch("src.services.search_query_service.SearchQueryService.run_once",
-                        side_effect=RuntimeError("fail")):
-                result = tools["run_search_query"](1)
-                assert "ошибка" in result.lower()
+        assert "run_search_query" in tools
+        with patch(
+            "src.services.search_query_service.SearchQueryService.run_once",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["run_search_query"](1)
+            assert "ошибка" in result.lower()
 
     def test_get_flood_status(self, sync_tools):
         tools, mock_db = sync_tools
@@ -2437,106 +2453,114 @@ class TestDeepagentsSyncExceptions:
 
     def test_analyze_filters_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "analyze_filters" in tools:
-            with patch("src.filters.analyzer.ChannelAnalyzer.analyze_all",
-                        side_effect=RuntimeError("fail")):
-                result = tools["analyze_filters"]()
-                assert "ошибка" in result.lower()
+        assert "analyze_filters" in tools
+        with patch(
+            "src.filters.analyzer.ChannelAnalyzer.analyze_all",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["analyze_filters"]()
+            assert "ошибка" in result.lower()
 
     def test_apply_filters_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "apply_filters" in tools:
-            with patch("src.filters.analyzer.ChannelAnalyzer.analyze_all",
-                        side_effect=RuntimeError("fail")):
-                result = tools["apply_filters"](confirm=True)
-                assert "ошибка" in result.lower()
+        assert "apply_filters" in tools
+        with patch(
+            "src.filters.analyzer.ChannelAnalyzer.analyze_all",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["apply_filters"](confirm=True)
+            assert "ошибка" in result.lower()
 
     def test_reset_filters_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "reset_filters" in tools:
-            with patch("src.filters.analyzer.ChannelAnalyzer.reset_filters",
-                        side_effect=RuntimeError("fail")):
-                result = tools["reset_filters"](confirm=True)
-                assert "ошибка" in result.lower()
+        assert "reset_filters" in tools
+        with patch(
+            "src.filters.analyzer.ChannelAnalyzer.reset_filters",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["reset_filters"](confirm=True)
+            assert "ошибка" in result.lower()
 
     def test_toggle_channel_filter_not_found(self, sync_tools):
         tools, mock_db = sync_tools
-        if "toggle_channel_filter" in tools:
-            mock_db.get_channel_by_pk = AsyncMock(return_value=None)
-            result = tools["toggle_channel_filter"](999)
-            assert "не найден" in result.lower()
+        assert "toggle_channel_filter" in tools
+        mock_db.get_channel_by_pk = AsyncMock(return_value=None)
+        result = tools["toggle_channel_filter"](999)
+        assert "не найден" in result.lower()
 
     def test_toggle_channel_filter_exception(self, sync_tools):
         tools, mock_db = sync_tools
-        if "toggle_channel_filter" in tools:
-            mock_db.get_channel_by_pk = AsyncMock(side_effect=RuntimeError("fail"))
-            result = tools["toggle_channel_filter"](1)
-            assert "ошибка" in result.lower()
+        assert "toggle_channel_filter" in tools
+        mock_db.get_channel_by_pk = AsyncMock(side_effect=RuntimeError("fail"))
+        result = tools["toggle_channel_filter"](1)
+        assert "ошибка" in result.lower()
 
     def test_get_notification_status_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "get_notification_status" in tools:
-            with patch("src.services.notification_service.NotificationService.get_status",
-                        side_effect=RuntimeError("fail")):
-                result = tools["get_notification_status"]()
-                assert "ошибка" in result.lower()
+        assert "get_notification_status" in tools
+        with patch(
+            "src.services.notification_service.NotificationService.get_status",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["get_notification_status"]()
+            assert "ошибка" in result.lower()
 
     def test_generate_image_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "generate_image" in tools:
-            with patch(
-                "src.services.image_generation_service.ImageGenerationService.is_available",
-                new_callable=AsyncMock,
-                return_value=True,
-            ), patch(
-                "src.services.image_generation_service.ImageGenerationService.generate",
-                side_effect=RuntimeError("fail"),
-            ):
-                result = tools["generate_image"]("test prompt")
-                assert "ошибка" in result.lower()
+        assert "generate_image" in tools
+        with patch(
+            "src.services.image_generation_service.ImageGenerationService.is_available",
+            new_callable=AsyncMock,
+            return_value=True,
+        ), patch(
+            "src.services.image_generation_service.ImageGenerationService.generate",
+            side_effect=RuntimeError("fail"),
+        ):
+            result = tools["generate_image"]("test prompt")
+            assert "ошибка" in result.lower()
 
     def test_list_image_providers_exception(self, sync_tools):
         tools, _ = sync_tools
-        if "list_image_providers" in tools:
-            result = tools["list_image_providers"]()
-            # Either shows providers or "не настроены"
-            assert isinstance(result, str)
+        assert "list_image_providers" in tools
+        result = tools["list_image_providers"]()
+        # Either shows providers or "не настроены"
+        assert isinstance(result, str)
 
     def test_get_system_info_exception(self, sync_tools):
         tools, mock_db = sync_tools
-        if "get_system_info" in tools:
-            mock_db.get_stats = AsyncMock(side_effect=RuntimeError("fail"))
-            result = tools["get_system_info"]()
-            assert "ошибка" in result.lower()
+        assert "get_system_info" in tools
+        mock_db.get_stats = AsyncMock(side_effect=RuntimeError("fail"))
+        result = tools["get_system_info"]()
+        assert "ошибка" in result.lower()
 
     def test_list_agent_threads_exception(self, sync_tools):
         tools, mock_db = sync_tools
-        if "list_agent_threads" in tools:
-            mock_db.get_agent_threads = AsyncMock(side_effect=RuntimeError("fail"))
-            result = tools["list_agent_threads"]()
-            assert "ошибка" in result.lower()
+        assert "list_agent_threads" in tools
+        mock_db.get_agent_threads = AsyncMock(side_effect=RuntimeError("fail"))
+        result = tools["list_agent_threads"]()
+        assert "ошибка" in result.lower()
 
     def test_create_agent_thread_exception(self, sync_tools):
         tools, mock_db = sync_tools
-        if "create_agent_thread" in tools:
-            mock_db.create_agent_thread = AsyncMock(side_effect=RuntimeError("fail"))
-            result = tools["create_agent_thread"]("title")
-            assert "ошибка" in result.lower()
+        assert "create_agent_thread" in tools
+        mock_db.create_agent_thread = AsyncMock(side_effect=RuntimeError("fail"))
+        result = tools["create_agent_thread"]("title")
+        assert "ошибка" in result.lower()
 
     def test_delete_agent_thread_exception(self, sync_tools):
         tools, mock_db = sync_tools
-        if "delete_agent_thread" in tools:
-            mock_db.get_agent_thread = AsyncMock(return_value=None)
-            mock_db.delete_agent_thread = AsyncMock(side_effect=RuntimeError("fail"))
-            result = tools["delete_agent_thread"](1, confirm=True)
-            assert "ошибка" in result.lower()
+        assert "delete_agent_thread" in tools
+        mock_db.get_agent_thread = AsyncMock(return_value=None)
+        mock_db.delete_agent_thread = AsyncMock(side_effect=RuntimeError("fail"))
+        result = tools["delete_agent_thread"](1, confirm=True)
+        assert "ошибка" in result.lower()
 
     def test_get_settings_exception(self, sync_tools):
         tools, mock_db = sync_tools
-        if "get_settings" in tools:
-            mock_db.get_setting = AsyncMock(side_effect=RuntimeError("fail"))
-            result = tools["get_settings"]()
-            assert "ошибка" in result.lower()
+        assert "get_settings" in tools
+        mock_db.get_setting = AsyncMock(side_effect=RuntimeError("fail"))
+        result = tools["get_settings"]()
+        assert "ошибка" in result.lower()
 
 
 # ===========================================================================

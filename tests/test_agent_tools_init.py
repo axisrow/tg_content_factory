@@ -360,10 +360,10 @@ class TestBuildAgentToolsDict:
             tools_dict = build_agent_tools_dict(mock_db)
 
         # search_messages is in _PIPELINE_SAFE_TOOLS, so it should be included
-        if "search_messages" in tools_dict:
-            result = await tools_dict["search_messages"](query="test")
-            assert isinstance(result, str)
-            assert handler_call_count == 1
+        assert "search_messages" in tools_dict
+        result = await tools_dict["search_messages"](query="test")
+        assert isinstance(result, str)
+        assert handler_call_count == 1
 
     def test_runtime_context_passed_to_pipeline_tool_registers(self):
         from claude_agent_sdk import SdkMcpTool
