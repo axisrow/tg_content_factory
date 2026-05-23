@@ -58,6 +58,11 @@ _NEVER_MARKER_USAGES = (
     "@pytest.mark.real_tg_never",
     "pytestmark = pytest.mark.real_tg_never",
 )
+_OBSOLETE_CLI_LIVE_FIXTURE_NAMES = (
+    "discover_first_channel",
+    "discover_first_dialog_username",
+    "discover_first_phone",
+)
 _LIVE_POLICY_MARKER_USAGES = (
     _SAFE_MARKER_USAGES
     + _MUTATION_SAFE_MARKER_USAGES
@@ -97,24 +102,22 @@ def test_real_tg_policy_requires_live_fixture_for_safe_mode():
     assert REAL_TG_LIVE_FIXTURE in message
 
 
-def test_real_tg_policy_rejects_safe_mode_without_fixture_for_cli_integration():
+def test_real_tg_policy_rejects_safe_mode_without_fixture():
     action, message = _evaluate_real_tg_policy(
         mode=REAL_TG_SAFE_MARK,
         fixturenames=(),
         environ={REAL_TG_SAFE_GATE_ENV: "1"},
-        is_cli_integration=True,
     )
 
     assert action == "fail"
     assert CLI_REAL_TG_LIVE_FIXTURE in message
 
 
-def test_real_tg_policy_allows_cli_live_fixture_for_cli_integration():
+def test_real_tg_policy_allows_cli_live_fixture():
     action, message = _evaluate_real_tg_policy(
         mode=REAL_TG_SAFE_MARK,
         fixturenames=(CLI_REAL_TG_LIVE_FIXTURE,),
         environ={REAL_TG_SAFE_GATE_ENV: "1"},
-        is_cli_integration=True,
     )
 
     assert action is None
@@ -132,12 +135,11 @@ def test_real_tg_policy_requires_live_fixture_for_mutation_safe_mode():
     assert REAL_TG_LIVE_FIXTURE in message
 
 
-def test_real_tg_policy_rejects_manual_mode_without_fixture_for_cli_integration():
+def test_real_tg_policy_rejects_manual_mode_without_fixture():
     action, message = _evaluate_real_tg_policy(
         mode=REAL_TG_MANUAL_MARK,
         fixturenames=(),
         environ={REAL_TG_MANUAL_GATE_ENV: "1"},
-        is_cli_integration=True,
     )
 
     assert action == "fail"
@@ -444,6 +446,18 @@ def test_cli_real_tg_inventory_uses_live_cli_runner_fixture():
             continue
         if not _literal_cli_calls(path):
             violations.append(f"{path.relative_to(_REPO_ROOT)}: no run_cli/run_cli_popen/cli_run_direct call")
+
+    assert violations == []
+
+
+def test_cli_real_tg_inventory_does_not_reference_removed_discovery_fixtures():
+    violations: list[str] = []
+
+    for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
+        content = path.read_text(encoding="utf-8")
+        for fixture_name in _OBSOLETE_CLI_LIVE_FIXTURE_NAMES:
+            if fixture_name in content:
+                violations.append(f"{path.relative_to(_REPO_ROOT)}: {fixture_name}")
 
     assert violations == []
 
