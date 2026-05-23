@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import argparse
 import ast
 from pathlib import Path
 
 import pytest
 
+from tests.cli_real_tg_integration.command_manifest import (
+    CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY,
+    CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS,
+)
 from tests.conftest import (
     CLI_REAL_TG_LIVE_FIXTURE,
     REAL_TG_LIVE_FIXTURE,
@@ -21,6 +26,7 @@ from tests.conftest import (
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _TESTS_DIR = _REPO_ROOT / "tests"
 _CLI_REAL_TG_DIR = _TESTS_DIR / "cli_real_tg_integration"
+_RUN_CLI_HELPERS = {"run_cli", "run_cli_popen", "cli_run_direct"}
 _MUTATING_PATTERNS = (
     "send_message(",
     "send_file(",
@@ -47,95 +53,6 @@ _NEVER_MARKER_USAGES = (
     "pytestmark = pytest.mark.real_tg_never",
 )
 _AUDIT_EXCLUDED_FILES = {"test_real_telegram_policy.py"}
-_SAFE_RO_CLI_COMMAND_PREFIXES = {
-    ("account", "flood-status"),
-    ("account", "info"),
-    ("account", "list"),
-    ("agent", "messages"),
-    ("agent", "threads"),
-    ("analytics", "calendar"),
-    ("analytics", "channel"),
-    ("analytics", "content-types"),
-    ("analytics", "daily"),
-    ("analytics", "hourly"),
-    ("analytics", "peak-hours"),
-    ("analytics", "pipeline-stats"),
-    ("analytics", "summary"),
-    ("analytics", "top"),
-    ("analytics", "trending-channels"),
-    ("analytics", "trending-emojis"),
-    ("analytics", "trending-topics"),
-    ("analytics", "velocity"),
-    ("channel", "list"),
-    ("channel", "stats"),
-    ("channel", "tag", "get"),
-    ("channel", "tag", "list"),
-    ("debug", "logs"),
-    ("debug", "memory"),
-    ("debug", "timing"),
-    ("dialogs", "broadcast-stats"),
-    ("dialogs", "cache-status"),
-    ("dialogs", "list"),
-    ("dialogs", "resolve"),
-    ("dialogs", "topics"),
-    ("export", "csv"),
-    ("export", "json"),
-    ("export", "rss"),
-    ("filter", "analyze"),
-    ("filter", "precheck"),
-    ("image", "generated"),
-    ("image", "providers"),
-    ("messages", "read"),
-    ("notification", "dry-run"),
-    ("notification", "status"),
-    ("photo-loader", "dialogs"),
-    ("pipeline", "dry-run"),
-    ("pipeline", "dry-run-count"),
-    ("pipeline", "filter", "show"),
-    ("pipeline", "graph"),
-    ("pipeline", "list"),
-    ("pipeline", "moderation-list"),
-    ("pipeline", "moderation-view"),
-    ("pipeline", "queue"),
-    ("pipeline", "run-show"),
-    ("pipeline", "runs"),
-    ("pipeline", "show"),
-    ("pipeline", "templates"),
-    ("provider", "list"),
-    ("scheduler", "status"),
-    ("search", "test"),
-    ("search-query", "get"),
-    ("search-query", "list"),
-    ("search-query", "stats"),
-    ("settings", "get"),
-    ("settings", "info"),
-    ("test", "read"),
-    ("translate", "stats"),
-}
-_SAFE_WRITE_CLI_COMMAND_PREFIXES = {
-    ("agent", "chat"),
-    ("agent", "threads"),
-    ("channel", "add"),
-    ("dialogs", "download-media"),
-    ("pipeline", "export"),
-    ("test", "all"),
-    ("test", "benchmark"),
-}
-_MUTATING_CLI_COMMAND_PREFIXES = {
-    ("channel", "refresh-meta"),
-    ("scheduler", "trigger"),
-}
-_DESTRUCTIVE_CLI_COMMAND_PREFIXES = {
-    ("restart",),
-    ("stop",),
-}
-_HEAVY_CLI_COMMAND_PREFIXES = {
-    ("channel", "collect"),
-    ("channel", "refresh-meta", "--all"),
-    ("channel", "refresh-types"),
-    ("channel", "stats", "--all"),
-    ("dialogs", "refresh"),
-}
 
 
 def test_real_tg_policy_rejects_live_fixture_without_policy_marker():
@@ -172,7 +89,7 @@ def test_real_tg_policy_rejects_safe_mode_without_fixture_for_cli_integration():
     assert CLI_REAL_TG_LIVE_FIXTURE in message
 
 
-def test_real_tg_policy_allows_cli_sandbox_fixture_for_cli_integration():
+def test_real_tg_policy_allows_cli_live_fixture_for_cli_integration():
     action, message = _evaluate_real_tg_policy(
         mode=REAL_TG_SAFE_MARK,
         fixturenames=(CLI_REAL_TG_LIVE_FIXTURE,),
@@ -300,7 +217,7 @@ def test_real_tg_never_marker_does_not_request_live_fixture():
         content = path.read_text(encoding="utf-8")
         if not any(marker in content for marker in _NEVER_MARKER_USAGES):
             continue
-        if REAL_TG_LIVE_FIXTURE in content:
+        if any(fixture in content for fixture in REAL_TG_LIVE_FIXTURES):
             violations.append(path.name)
 
     assert violations == []
@@ -321,60 +238,168 @@ def test_live_fixture_is_not_used_without_real_tg_policy_marker():
     assert violations == []
 
 
-def _literal_run_cli_prefixes(path: Path) -> list[tuple[str, ...]]:
+def _cli_live_policy_paths() -> list[Path]:
+    paths = sorted(_CLI_REAL_TG_DIR.rglob("test_*.py"))
+    paths.append(_CLI_REAL_TG_DIR / "conftest.py")
+    return paths
+
+
+def _cli_leaf_commands() -> set[tuple[str, ...]]:
+    from src.cli.parser import build_parser
+
+    leafs: set[tuple[str, ...]] = set()
+
+    def walk(parser: argparse.ArgumentParser, prefix: tuple[str, ...]) -> None:
+        subparser_actions = [
+            action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
+        ]
+        if not subparser_actions:
+            if prefix:
+                leafs.add(prefix)
+            return
+
+        for action in subparser_actions:
+            for name, subparser in action.choices.items():
+                walk(subparser, (*prefix, name))
+
+    walk(build_parser(), ())
+    return leafs
+
+
+def _call_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    return None
+
+
+def _literal_cli_calls(path: Path) -> list[tuple[str, tuple[str, ...], int]]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    prefixes: list[tuple[str, ...]] = []
+    calls: list[tuple[str, tuple[str, ...], int]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        if not isinstance(node.func, ast.Name) or node.func.id != "run_cli":
+        helper = _call_name(node.func)
+        if helper not in _RUN_CLI_HELPERS:
             continue
+
+        args = node.args[1:] if helper == "cli_run_direct" else node.args
         prefix: list[str] = []
-        for arg in node.args:
+        for arg in args:
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
                 prefix.append(arg.value)
                 continue
             break
-        prefixes.append(tuple(prefix))
-    return prefixes
+        calls.append((helper, tuple(prefix), node.lineno))
+    return calls
 
 
-def _has_prefix(command: tuple[str, ...], allowed: set[tuple[str, ...]]) -> bool:
-    return any(command[: len(prefix)] == prefix for prefix in allowed)
+def _normalize_cli_command_case(
+    command: tuple[str, ...],
+    leafs: set[tuple[str, ...]],
+) -> tuple[str, ...] | None:
+    for leaf in sorted(leafs, key=len, reverse=True):
+        if command[: len(leaf)] != leaf:
+            continue
+        if leaf in {("channel", "refresh-meta"), ("channel", "stats")} and "--all" in command[len(leaf) :]:
+            return (*leaf, "--all")
+        return leaf
+    return None
+
+
+def _cli_real_tg_category(path: Path) -> str:
+    relative = path.relative_to(_CLI_REAL_TG_DIR)
+    if relative.parts == ("conftest.py",):
+        return "safe_ro"
+    return relative.parts[0] if len(relative.parts) > 1 else ""
+
+
+def _covered_cli_leaf(command_case: tuple[str, ...], leafs: set[tuple[str, ...]]) -> tuple[str, ...] | None:
+    if command_case in {("channel", "refresh-meta", "--all"), ("channel", "stats", "--all")}:
+        command_case = command_case[:-1]
+    return command_case if command_case in leafs else None
 
 
 def test_cli_real_tg_safe_commands_are_explicitly_allowlisted():
     violations: list[str] = []
+    leafs = _cli_leaf_commands()
 
-    for path in _CLI_REAL_TG_DIR.rglob("test_*.py"):
+    for path in _cli_live_policy_paths():
         content = path.read_text(encoding="utf-8")
-        if not any(marker in content for marker in _SAFE_MARKER_USAGES):
+        if path.name != "conftest.py" and not any(marker in content for marker in _SAFE_MARKER_USAGES):
             continue
-        relative_parts = path.relative_to(_CLI_REAL_TG_DIR).parts
-        category = relative_parts[0] if len(relative_parts) > 1 else "safe_ro"
-        allowed_by_category = {
-            "safe_ro": _SAFE_RO_CLI_COMMAND_PREFIXES,
-            "safe_write": _SAFE_WRITE_CLI_COMMAND_PREFIXES,
-            "mutating": _MUTATING_CLI_COMMAND_PREFIXES,
-            "destructive": _DESTRUCTIVE_CLI_COMMAND_PREFIXES,
-            "heavy": _HEAVY_CLI_COMMAND_PREFIXES,
-        }
-        allowed = allowed_by_category.get(category, _SAFE_RO_CLI_COMMAND_PREFIXES)
-        for command in _literal_run_cli_prefixes(path):
+        category = _cli_real_tg_category(path)
+        allowed = CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY.get(category)
+        if allowed is None:
+            violations.append(f"{path.relative_to(_REPO_ROOT)}: unknown CLI live category {category!r}")
+            continue
+        for helper, command, lineno in _literal_cli_calls(path):
             if not command:
-                violations.append(f"{path.relative_to(_REPO_ROOT)}: dynamic run_cli command")
+                violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: dynamic {helper} command")
                 continue
-            if not _has_prefix(command, allowed):
-                violations.append(f"{path.relative_to(_REPO_ROOT)}: {command!r} is not {category}-allowlisted")
+            command_case = _normalize_cli_command_case(command, leafs)
+            if command_case is None:
+                violations.append(
+                    f"{path.relative_to(_REPO_ROOT)}:{lineno}: {command!r} is not a parser leaf command"
+                )
+                continue
+            if command_case not in allowed:
+                violations.append(
+                    f"{path.relative_to(_REPO_ROOT)}:{lineno}: {command_case!r} is not {category}-allowlisted"
+                )
 
     assert violations == []
 
 
-def test_cli_real_tg_tests_use_sandbox_fixture_not_repo_config_or_db():
+def test_cli_real_tg_inventory_uses_live_cli_runner_fixture():
+    violations: list[str] = []
+
+    for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
+        content = path.read_text(encoding="utf-8")
+        if not any(marker in content for marker in _SAFE_MARKER_USAGES + _MANUAL_MARKER_USAGES):
+            violations.append(f"{path.relative_to(_REPO_ROOT)}: missing real Telegram marker")
+            continue
+        if not _literal_cli_calls(path):
+            violations.append(f"{path.relative_to(_REPO_ROOT)}: no run_cli/run_cli_popen/cli_run_direct call")
+
+    assert violations == []
+
+
+def test_cli_real_tg_parser_leaf_commands_are_covered_or_manifested():
+    leafs = _cli_leaf_commands()
+    covered: set[tuple[str, ...]] = set()
+    violations: list[str] = []
+
+    for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
+        for _helper, command, lineno in _literal_cli_calls(path):
+            if not command:
+                violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: dynamic CLI command")
+                continue
+            command_case = _normalize_cli_command_case(command, leafs)
+            if command_case is None:
+                violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: unknown CLI command {command!r}")
+                continue
+            covered_leaf = _covered_cli_leaf(command_case, leafs)
+            if covered_leaf is not None:
+                covered.add(covered_leaf)
+
+    manifested = set(CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS)
+    missing = sorted(leafs - covered - manifested)
+    stale_manifest = sorted(manifested - leafs)
+
+    assert violations == []
+    assert missing == []
+    assert stale_manifest == []
+
+
+def test_cli_real_tg_tests_use_live_fixture_and_real_config_contract():
     content = (_CLI_REAL_TG_DIR / "conftest.py").read_text(encoding="utf-8")
 
     assert CLI_REAL_TG_LIVE_FIXTURE in content
     assert '"--config"' in content
-    assert "tmp_path_factory.mktemp" in content
-    assert "return self.work_dir" in content
-    assert "_detect_repo_root" not in content
+    assert "RUN_CLI_REAL_TG_LIVE" in content
+    assert "CLI_REAL_TG_CONFIG" in content
+    assert "load_config(config_path)" in content
+    assert "config.database.path" in content
+    assert "tmp_path_factory" not in content
+    assert "_build_real_telegram_sandbox_config" not in content
+    assert "REAL_TG_SESSION" not in content

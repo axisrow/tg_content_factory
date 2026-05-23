@@ -17,13 +17,13 @@ from tests.cli_real_tg_integration.conftest import wait_for_db_row
 pytestmark = pytest.mark.real_tg_safe
 
 
-def test_proc_scheduler_start_publishes_status(run_cli_popen, cli_env):
+def test_proc_scheduler_start_publishes_status(run_cli_popen, cli_real_cli_env):
     import subprocess
 
     proc = run_cli_popen("scheduler", "start")
 
     row = wait_for_db_row(
-        cli_env.db_path,
+        cli_real_cli_env.db_path,
         "SELECT 1 FROM runtime_snapshots WHERE snapshot_type = ? LIMIT 1",
         ("scheduler_status",),
         timeout=20.0,
