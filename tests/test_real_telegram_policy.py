@@ -772,6 +772,20 @@ def test_cli_real_tg_inventory_does_not_disable_all_failure_text_checks():
     assert violations == []
 
 
+def test_cli_real_tg_inventory_does_not_use_help_as_leaf_smoke():
+    violations: list[str] = []
+
+    for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
+        for helper, command, lineno in _literal_cli_calls(path):
+            if _is_cli_help_command(command):
+                violations.append(
+                    f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
+                    f"{helper} {command!r} uses CLI help instead of exercising the leaf command"
+                )
+
+    assert violations == []
+
+
 def test_cli_real_tg_conftest_adds_default_pytest_timeout_for_live_cli_tests():
     assert _live_cli_default_timeout_marker_seconds() > RUN_CLI_DEFAULT_TIMEOUT_SECONDS
     assert _live_cli_default_timeout_marker_seconds() > _pytest_global_timeout_seconds()
@@ -968,6 +982,11 @@ def test_cli_real_tg_parser_leaf_commands_are_covered_or_manifested():
                 continue
             if not command:
                 violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: dynamic CLI command")
+                continue
+            if _is_cli_help_command(command):
+                violations.append(
+                    f"{path.relative_to(_REPO_ROOT)}:{lineno}: help command cannot satisfy live CLI coverage"
+                )
                 continue
             command_case = _normalize_cli_command_case(command, leafs)
             if command_case is None:

@@ -111,6 +111,30 @@ def _fetch_live_channel(db_path: Path) -> tuple[str | None, int | None, str | No
     return pk, channel_id, username
 
 
+def _fetch_live_media_message(db_path: Path) -> tuple[str | None, int | None]:
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                COALESCE(NULLIF(c.username, ''), CAST(m.channel_id AS TEXT)) AS chat_ref,
+                m.message_id
+            FROM messages m
+            LEFT JOIN channels c ON c.channel_id = m.channel_id
+            WHERE COALESCE(m.media_type, '') NOT IN ('', 'text')
+              AND COALESCE(c.is_active, 1) = 1
+            ORDER BY m.date DESC, m.id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    if row is None:
+        return None, None
+    chat_ref = str(row[0]) if row[0] else None
+    if chat_ref and not chat_ref.startswith("@") and not chat_ref.lstrip("-").isdigit():
+        chat_ref = f"@{chat_ref}"
+    message_id = int(row[1]) if row[1] is not None else None
+    return chat_ref, message_id
+
+
 @pytest.fixture(scope="session")
 def cli_real_cli_env() -> CliRealCliEnv:
     if os.environ.get(CLI_REAL_TG_LIVE_GATE_ENV) != "1":
@@ -454,6 +478,17 @@ def live_channel_username(cli_real_cli_env: CliRealCliEnv) -> str:
 @pytest.fixture
 def live_phone(cli_real_cli_env: CliRealCliEnv) -> str:
     return cli_real_cli_env.primary_phone
+
+
+@pytest.fixture
+def live_media_message(cli_real_cli_env: CliRealCliEnv) -> tuple[str, str]:
+    try:
+        chat_ref, message_id = _fetch_live_media_message(cli_real_cli_env.db_path)
+    except sqlite3.Error as exc:
+        pytest.skip(f"failed to discover live media message from {cli_real_cli_env.db_path}: {exc}")
+    if chat_ref is None or message_id is None:
+        pytest.skip("live CLI database has no collected media messages")
+    return chat_ref, str(message_id)
 
 
 _LEADING_INT_ROW_RE = re.compile(r"^\s*(\d+)\s+\S", re.MULTILINE)
