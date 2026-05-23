@@ -497,6 +497,12 @@ def _literal_cli_calls(path: Path) -> list[tuple[str, tuple[str, ...], int]]:
     ]
 
 
+def _literal_cli_call_groups(path: Path) -> list[list[tuple[str, tuple[str, ...], int, bool]]]:
+    if path.name == "conftest.py":
+        return [_literal_cli_call_records(path)]
+    return list(_literal_cli_call_records_by_test(path).values())
+
+
 def _normalize_cli_command_case(
     command: tuple[str, ...],
     leafs: set[tuple[str, ...]],
@@ -553,7 +559,7 @@ def test_cli_real_tg_marked_commands_are_explicitly_allowlisted():
         if allowed is None:
             violations.append(f"{path.relative_to(_REPO_ROOT)}: unknown CLI live category {category!r}")
             continue
-        for records in _literal_cli_call_records_by_test(path).values():
+        for records in _literal_cli_call_groups(path):
             for helper, command, lineno, in_finally in records:
                 if not command:
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: dynamic {helper} command")
