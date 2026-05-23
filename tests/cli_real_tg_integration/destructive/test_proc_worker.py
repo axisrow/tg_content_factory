@@ -24,7 +24,7 @@ def test_proc_worker_publishes_heartbeat(run_cli_popen, cli_real_cli_env):
         SELECT updated_at
         FROM runtime_snapshots
         WHERE snapshot_type = ?
-          AND datetime(updated_at) >= datetime(?)
+          AND datetime(updated_at) > datetime(?)
         LIMIT 1
         """,
         ("worker_heartbeat", started_at),

@@ -231,12 +231,16 @@ def run_cli_popen(cli_real_cli_env: CliEnv):
     """Spawn long-running CLI commands and clean them up on test teardown."""
     processes: list[subprocess.Popen] = []
 
-    def _spawn(*args: str, extra_env: dict[str, str] | None = None) -> subprocess.Popen:
+    def _spawn(
+        *args: str,
+        extra_env: dict[str, str] | None = None,
+        capture_stdout: bool = False,
+    ) -> subprocess.Popen:
         proc = subprocess.Popen(  # noqa: S603 - controlled CLI module invocation
             _cli_command(cli_real_cli_env, args),
             cwd=str(cli_real_cli_env.repo_root),
             env=_build_cli_env(cli_real_cli_env, extra_env=extra_env),
-            stdout=subprocess.DEVNULL,
+            stdout=subprocess.PIPE if capture_stdout else subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
