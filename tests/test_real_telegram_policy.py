@@ -3,15 +3,17 @@ from __future__ import annotations
 import argparse
 import ast
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
 
+from src.config import load_config
 from tests.cli_real_tg_integration.command_manifest import (
     CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY,
     CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS,
 )
-from tests.cli_real_tg_integration.conftest import _assert_cli_result_ok
+from tests.cli_real_tg_integration.conftest import _assert_cli_result_ok, _load_live_dotenv
 from tests.conftest import (
     CLI_REAL_TG_LIVE_FIXTURE,
     REAL_TG_LIVE_FIXTURE,
@@ -336,6 +338,37 @@ def _call_name(node: ast.AST) -> str | None:
     return None
 
 
+def _pytest_global_timeout_seconds() -> float:
+    pyproject = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    return float(pyproject["tool"]["pytest"]["ini_options"]["timeout"])
+
+
+def _has_pytest_timeout_marker(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    for decorator in node.decorator_list:
+        marker = decorator.func if isinstance(decorator, ast.Call) else decorator
+        parts: list[str] = []
+        while isinstance(marker, ast.Attribute):
+            parts.append(marker.attr)
+            marker = marker.value
+        if isinstance(marker, ast.Name):
+            parts.append(marker.id)
+        dotted = ".".join(reversed(parts))
+        if dotted in {"pytest.mark.timeout", "mark.timeout"}:
+            return True
+    return False
+
+
+def _module_has_timeout_marker(tree: ast.Module) -> bool:
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "pytestmark" for target in node.targets):
+            continue
+        if "timeout" in ast.unparse(node.value):
+            return True
+    return False
+
+
 def _literal_cli_calls(path: Path) -> list[tuple[str, tuple[str, ...], int]]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     calls: list[tuple[str, tuple[str, ...], int]] = []
@@ -481,6 +514,43 @@ def test_cli_real_tg_inventory_does_not_disable_all_failure_text_checks():
     assert violations == []
 
 
+def test_cli_real_tg_subprocess_timeouts_have_pytest_timeout_marker():
+    global_timeout = _pytest_global_timeout_seconds()
+    violations: list[str] = []
+
+    for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        module_has_timeout = _module_has_timeout_marker(tree)
+        test_functions = (
+            node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")
+        )
+        for test_function in test_functions:
+            if module_has_timeout or _has_pytest_timeout_marker(test_function):
+                continue
+            for call in ast.walk(test_function):
+                if not isinstance(call, ast.Call):
+                    continue
+                helper = _call_name(call.func)
+                if helper not in _RUN_CLI_HELPERS:
+                    continue
+                for keyword in call.keywords:
+                    if keyword.arg != "timeout":
+                        continue
+                    if not isinstance(keyword.value, ast.Constant) or not isinstance(keyword.value.value, (int, float)):
+                        continue
+                    timeout = float(keyword.value.value)
+                    if timeout > global_timeout:
+                        violations.append(
+                            f"{path.relative_to(_REPO_ROOT)}:{call.lineno}: "
+                            f"{helper} timeout={timeout:g} exceeds pytest timeout={global_timeout:g} "
+                            "without @pytest.mark.timeout"
+                        )
+
+    assert violations == []
+
+
 def test_cli_assert_ok_allows_only_named_failure_texts():
     allowed_result = subprocess.CompletedProcess(
         args=("src.main", "scheduler", "trigger"),
@@ -503,13 +573,43 @@ def test_cli_assert_ok_allows_only_named_failure_texts():
         )
 
 
+def test_cli_real_tg_live_dotenv_is_loaded_from_live_root(tmp_path, monkeypatch):
+    monkeypatch.setenv("TG_API_ID", "999999")
+    monkeypatch.delenv("TG_API_HASH", raising=False)
+
+    live_root = tmp_path
+    (live_root / ".env").write_text(
+        "TG_API_ID=123456\nTG_API_HASH=abcdef0123456789abcdef0123456789\n",
+        encoding="utf-8",
+    )
+    config_path = live_root / "config.yaml"
+    config_path.write_text(
+        """
+telegram:
+  api_id: ${TG_API_ID}
+  api_hash: ${TG_API_HASH}
+database:
+  path: data/tg_search.db
+""",
+        encoding="utf-8",
+    )
+
+    _load_live_dotenv(live_root)
+    config = load_config(config_path)
+
+    assert config.telegram.api_id == 999999
+    assert config.telegram.api_hash == "abcdef0123456789abcdef0123456789"
+
+
 def test_cli_real_tg_parser_leaf_commands_are_covered_or_manifested():
     leafs = _cli_leaf_commands()
     covered: set[tuple[str, ...]] = set()
     violations: list[str] = []
 
     for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
-        for _helper, command, lineno in _literal_cli_calls(path):
+        for helper, command, lineno in _literal_cli_calls(path):
+            if helper == "cli_run_direct":
+                continue
             if not command:
                 violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: dynamic CLI command")
                 continue

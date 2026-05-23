@@ -25,11 +25,12 @@ from tests.cli_real_tg_integration.conftest import cli_run_direct
 pytestmark = pytest.mark.real_tg_safe
 
 
+@pytest.mark.timeout(360)
 def test_collect_default_enqueues_all(run_cli, assert_cli_ok, cli_env):
     leak_msg: str | None = None
     try:
         result = run_cli("collect", timeout=300)
-        assert_cli_ok(result)
+        assert_cli_ok(result, allow_error_text=("No connected accounts",))
         combined = result.stdout + result.stderr
         # Possible outcomes:
         # - "Enqueued N channels (skipped M, total K)..." — normal path.

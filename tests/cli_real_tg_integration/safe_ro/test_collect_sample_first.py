@@ -3,6 +3,7 @@ import pytest
 pytestmark = pytest.mark.real_tg_safe
 
 
+@pytest.mark.timeout(180)
 def test_collect_sample_first(run_cli, assert_cli_ok, live_channel):
     """`collect sample <channel_id> --limit 5` — read-only preview.
 

@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
+from telethon.errors import (
+    ChannelInvalidError,
+    FloodWaitError,
+    UsernameInvalidError,
+    UsernameNotOccupiedError,
+)
 from telethon.tl.types import Channel as TLChannel
 from telethon.tl.types import (
     ChannelForbidden,
@@ -1086,6 +1092,30 @@ async def test_get_forum_topics_dialogs_fetched_but_still_fails(pool, mock_db):
     )):
         result = await pool.get_forum_topics(1)
     assert result == []
+
+
+@pytest.mark.anyio
+async def test_get_forum_topics_channel_invalid_returns_empty_without_traceback(pool, caplog):
+    client = AsyncMock()
+    entity = SimpleNamespace()
+    session = TelegramTransportSession(client, disconnect_on_close=False)
+    pool.clients["+7001"] = session
+
+    with (
+        patch.object(pool, "get_available_client", return_value=(session, "+7001")),
+        patch.object(session, "resolve_entity", new=AsyncMock(return_value=entity)),
+        patch.object(
+            session,
+            "fetch_forum_topics",
+            new=AsyncMock(side_effect=ChannelInvalidError(request=None)),
+        ),
+        caplog.at_level(logging.INFO, logger="src.telegram.client_pool"),
+    ):
+        result = await pool.get_forum_topics(1)
+
+    assert result == []
+    assert "get_forum_topics unavailable for channel 1" in caplog.text
+    assert "Traceback" not in caplog.text
 
 
 @pytest.mark.anyio

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from telethon.errors import (
+    ChannelInvalidError,
     ChannelPrivateError,
     ChatAdminRequiredError,
     UsernameInvalidError,
@@ -1470,6 +1471,9 @@ class ClientPool:
                 for t in response.topics
                 if hasattr(t, "title")
             ]
+        except ChannelInvalidError as e:
+            logger.info("get_forum_topics unavailable for channel %d: %s", channel_id, e)
+            return []
         except Exception as e:
             logger.warning(
                 "get_forum_topics failed for channel %d: %s", channel_id, e, exc_info=True

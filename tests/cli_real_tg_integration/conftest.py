@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from dotenv import load_dotenv
 
 from src.config import load_config
 
@@ -75,6 +76,10 @@ def _resolve_db_path(live_root: Path, db_path: str) -> Path:
     return path if path.is_absolute() else (live_root / path).resolve()
 
 
+def _load_live_dotenv(live_root: Path) -> None:
+    load_dotenv(live_root / ".env", override=False)
+
+
 def _fetch_live_accounts(db_path: Path) -> tuple[str, ...]:
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
@@ -120,6 +125,7 @@ def cli_real_cli_env() -> CliRealCliEnv:
             f"live CLI config not found at {config_path}; set {CLI_REAL_TG_CONFIG_ENV} or {CLI_REAL_TG_ROOT_ENV}"
         )
 
+    _load_live_dotenv(live_root)
     config = load_config(config_path)
     if config.telegram.api_id == 0 or not config.telegram.api_hash:
         pytest.skip("live CLI config has no Telegram api_id/api_hash")
