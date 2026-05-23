@@ -12,20 +12,28 @@ if jobs are due. Both are reversible/transient state.
 """
 import pytest
 
-from tests.cli_real_tg_integration.conftest import wait_for_db_row
+from tests.cli_real_tg_integration.conftest import sqlite_utc_now, wait_for_db_row
 
 pytestmark = pytest.mark.real_tg_safe
 
 
+@pytest.mark.timeout(60)
 def test_proc_scheduler_start_publishes_status(run_cli_popen, cli_real_cli_env):
     import subprocess
 
+    started_at = sqlite_utc_now()
     proc = run_cli_popen("scheduler", "start")
 
     row = wait_for_db_row(
         cli_real_cli_env.db_path,
-        "SELECT 1 FROM runtime_snapshots WHERE snapshot_type = ? LIMIT 1",
-        ("scheduler_status",),
+        """
+        SELECT updated_at
+        FROM runtime_snapshots
+        WHERE snapshot_type = ?
+          AND datetime(updated_at) >= datetime(?)
+        LIMIT 1
+        """,
+        ("scheduler_status", started_at),
         timeout=20.0,
     )
 
@@ -45,7 +53,4 @@ def test_proc_scheduler_start_publishes_status(run_cli_popen, cli_real_cli_env):
         )
 
     if row is None:
-        pytest.skip(
-            "scheduler_status snapshot never appeared — likely no connected "
-            "accounts (scheduler short-circuits before publishing)"
-        )
+        pytest.fail("fresh scheduler_status snapshot never appeared")
