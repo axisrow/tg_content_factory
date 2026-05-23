@@ -13,6 +13,7 @@ import pytest
 from src.cli.dotenv import load_cli_dotenv
 from src.config import load_config
 from tests.cli_real_tg_integration.command_manifest import (
+    CLI_REAL_TG_CLEANUP_COMMAND_CASES,
     CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY,
     CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS,
 )
@@ -452,6 +453,13 @@ def test_cli_real_tg_marked_commands_are_explicitly_allowlisted():
                     f"{path.relative_to(_REPO_ROOT)}:{lineno}: {command!r} is not a parser leaf command"
                 )
                 continue
+            if helper == "cli_run_direct":
+                if command_case not in CLI_REAL_TG_CLEANUP_COMMAND_CASES:
+                    violations.append(
+                        f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
+                        f"{command_case!r} is not cleanup-helper-allowlisted"
+                    )
+                continue
             if command_case not in allowed:
                 violations.append(
                     f"{path.relative_to(_REPO_ROOT)}:{lineno}: {command_case!r} is not {category}-allowlisted"
@@ -678,6 +686,7 @@ def test_cli_real_tg_parser_leaf_commands_are_covered_or_manifested():
     leafs = _cli_leaf_commands()
     covered: set[tuple[str, ...]] = set()
     violations: list[str] = []
+    manifested = set(CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS)
 
     for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
         for helper, command, lineno in _literal_cli_calls(path):
@@ -693,8 +702,12 @@ def test_cli_real_tg_parser_leaf_commands_are_covered_or_manifested():
             covered_leaf = _covered_cli_leaf(command_case, leafs)
             if covered_leaf is not None:
                 covered.add(covered_leaf)
+                if covered_leaf in manifested:
+                    violations.append(
+                        f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
+                        f"{covered_leaf!r} is in CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS"
+                    )
 
-    manifested = set(CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS)
     missing = sorted(leafs - covered - manifested)
     stale_manifest = sorted(manifested - leafs)
 

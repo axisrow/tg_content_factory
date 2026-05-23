@@ -99,11 +99,16 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
         ("channel", "stats", "--all"),
         ("collect",),
         ("dialogs", "refresh"),
-        ("scheduler", "clear-pending"),
         ("test", "all"),
         ("test", "benchmark"),
         ("test", "telegram"),
     },
+}
+
+CLI_REAL_TG_CLEANUP_COMMAND_CASES: set[tuple[str, ...]] = {
+    ("agent", "thread-delete"),
+    ("agent", "threads"),
+    ("scheduler", "clear-pending"),
 }
 
 CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
