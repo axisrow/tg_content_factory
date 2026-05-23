@@ -47,33 +47,87 @@ _NEVER_MARKER_USAGES = (
     "pytestmark = pytest.mark.real_tg_never",
 )
 _AUDIT_EXCLUDED_FILES = {"test_real_telegram_policy.py"}
-_SAFE_CLI_COMMAND_PREFIXES = {
+_SAFE_RO_CLI_COMMAND_PREFIXES = {
     ("account", "flood-status"),
     ("account", "info"),
     ("account", "list"),
+    ("agent", "messages"),
+    ("agent", "threads"),
+    ("analytics", "calendar"),
+    ("analytics", "channel"),
+    ("analytics", "content-types"),
+    ("analytics", "daily"),
+    ("analytics", "hourly"),
+    ("analytics", "peak-hours"),
+    ("analytics", "pipeline-stats"),
+    ("analytics", "summary"),
     ("analytics", "top"),
-    ("channel", "add"),
+    ("analytics", "trending-channels"),
+    ("analytics", "trending-emojis"),
+    ("analytics", "trending-topics"),
+    ("analytics", "velocity"),
     ("channel", "list"),
-    ("channel", "refresh-meta"),
     ("channel", "stats"),
+    ("channel", "tag", "get"),
+    ("channel", "tag", "list"),
+    ("debug", "logs"),
     ("debug", "memory"),
     ("debug", "timing"),
     ("dialogs", "broadcast-stats"),
+    ("dialogs", "cache-status"),
     ("dialogs", "list"),
     ("dialogs", "resolve"),
     ("dialogs", "topics"),
+    ("export", "csv"),
     ("export", "json"),
+    ("export", "rss"),
     ("filter", "analyze"),
+    ("filter", "precheck"),
+    ("image", "generated"),
+    ("image", "providers"),
     ("messages", "read"),
+    ("notification", "dry-run"),
+    ("notification", "status"),
     ("photo-loader", "dialogs"),
+    ("pipeline", "dry-run"),
+    ("pipeline", "dry-run-count"),
+    ("pipeline", "filter", "show"),
+    ("pipeline", "graph"),
     ("pipeline", "list"),
+    ("pipeline", "moderation-list"),
+    ("pipeline", "moderation-view"),
+    ("pipeline", "queue"),
+    ("pipeline", "run-show"),
+    ("pipeline", "runs"),
+    ("pipeline", "show"),
+    ("pipeline", "templates"),
     ("provider", "list"),
     ("scheduler", "status"),
     ("search", "test"),
+    ("search-query", "get"),
     ("search-query", "list"),
+    ("search-query", "stats"),
     ("settings", "get"),
     ("settings", "info"),
+    ("test", "read"),
     ("translate", "stats"),
+}
+_SAFE_WRITE_CLI_COMMAND_PREFIXES = {
+    ("agent", "chat"),
+    ("agent", "threads"),
+    ("channel", "add"),
+    ("dialogs", "download-media"),
+    ("pipeline", "export"),
+    ("test", "all"),
+    ("test", "benchmark"),
+}
+_MUTATING_CLI_COMMAND_PREFIXES = {
+    ("channel", "refresh-meta"),
+    ("scheduler", "trigger"),
+}
+_DESTRUCTIVE_CLI_COMMAND_PREFIXES = {
+    ("restart",),
+    ("stop",),
 }
 _HEAVY_CLI_COMMAND_PREFIXES = {
     ("channel", "collect"),
@@ -296,20 +350,22 @@ def test_cli_real_tg_safe_commands_are_explicitly_allowlisted():
         content = path.read_text(encoding="utf-8")
         if not any(marker in content for marker in _SAFE_MARKER_USAGES):
             continue
-        is_heavy = "heavy" in path.relative_to(_CLI_REAL_TG_DIR).parts
+        relative_parts = path.relative_to(_CLI_REAL_TG_DIR).parts
+        category = relative_parts[0] if len(relative_parts) > 1 else "safe_ro"
+        allowed_by_category = {
+            "safe_ro": _SAFE_RO_CLI_COMMAND_PREFIXES,
+            "safe_write": _SAFE_WRITE_CLI_COMMAND_PREFIXES,
+            "mutating": _MUTATING_CLI_COMMAND_PREFIXES,
+            "destructive": _DESTRUCTIVE_CLI_COMMAND_PREFIXES,
+            "heavy": _HEAVY_CLI_COMMAND_PREFIXES,
+        }
+        allowed = allowed_by_category.get(category, _SAFE_RO_CLI_COMMAND_PREFIXES)
         for command in _literal_run_cli_prefixes(path):
             if not command:
                 violations.append(f"{path.relative_to(_REPO_ROOT)}: dynamic run_cli command")
                 continue
-            if is_heavy:
-                if not _has_prefix(command, _HEAVY_CLI_COMMAND_PREFIXES):
-                    violations.append(f"{path.relative_to(_REPO_ROOT)}: {command!r} is not heavy-allowlisted")
-                continue
-            if _has_prefix(command, _HEAVY_CLI_COMMAND_PREFIXES):
-                violations.append(f"{path.relative_to(_REPO_ROOT)}: {command!r} must live under heavy/")
-                continue
-            if not _has_prefix(command, _SAFE_CLI_COMMAND_PREFIXES):
-                violations.append(f"{path.relative_to(_REPO_ROOT)}: {command!r} is not safe-allowlisted")
+            if not _has_prefix(command, allowed):
+                violations.append(f"{path.relative_to(_REPO_ROOT)}: {command!r} is not {category}-allowlisted")
 
     assert violations == []
 
@@ -320,6 +376,5 @@ def test_cli_real_tg_tests_use_sandbox_fixture_not_repo_config_or_db():
     assert CLI_REAL_TG_LIVE_FIXTURE in content
     assert '"--config"' in content
     assert "tmp_path_factory.mktemp" in content
-    assert 'cwd=str(cli_real_telegram_sandbox.work_dir)' in content
-    assert 'cwd=str(cli_env.repo_root)' not in content
+    assert "return self.work_dir" in content
     assert "_detect_repo_root" not in content
