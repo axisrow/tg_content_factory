@@ -11,13 +11,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
-from dotenv import load_dotenv
 
+from src.cli.dotenv import load_cli_dotenv
 from src.config import load_config
 
 CLI_REAL_TG_LIVE_GATE_ENV = "RUN_CLI_REAL_TG_LIVE"
 CLI_REAL_TG_ROOT_ENV = "CLI_REAL_TG_ROOT"
 CLI_REAL_TG_CONFIG_ENV = "CLI_REAL_TG_CONFIG"
+RUN_CLI_DEFAULT_TIMEOUT_SECONDS = 120
+LIVE_CLI_DEFAULT_PYTEST_TIMEOUT_SECONDS = RUN_CLI_DEFAULT_TIMEOUT_SECONDS + 60
 
 
 @dataclass(frozen=True)
@@ -76,10 +78,6 @@ def _resolve_db_path(live_root: Path, db_path: str) -> Path:
     return path if path.is_absolute() else (live_root / path).resolve()
 
 
-def _load_live_dotenv(live_root: Path) -> None:
-    load_dotenv(live_root / ".env", override=False)
-
-
 def _fetch_live_accounts(db_path: Path) -> tuple[str, ...]:
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute(
@@ -125,7 +123,7 @@ def cli_real_cli_env() -> CliRealCliEnv:
             f"live CLI config not found at {config_path}; set {CLI_REAL_TG_CONFIG_ENV} or {CLI_REAL_TG_ROOT_ENV}"
         )
 
-    _load_live_dotenv(live_root)
+    load_cli_dotenv(config_path)
     config = load_config(config_path)
     if config.telegram.api_id == 0 or not config.telegram.api_hash:
         pytest.skip("live CLI config has no Telegram api_id/api_hash")
@@ -164,6 +162,18 @@ def cli_real_cli_env() -> CliRealCliEnv:
 @pytest.fixture(scope="session")
 def cli_env(cli_real_cli_env: CliRealCliEnv) -> CliEnv:
     return cli_real_cli_env
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    root = Path(__file__).resolve().parent
+    default_timeout_marker = pytest.mark.timeout(LIVE_CLI_DEFAULT_PYTEST_TIMEOUT_SECONDS)
+    for item in items:
+        item_path = Path(str(item.fspath)).resolve()
+        if root not in item_path.parents:
+            continue
+        if item.get_closest_marker("timeout"):
+            continue
+        item.add_marker(default_timeout_marker)
 
 
 def _cli_command(cli_env: CliEnv, args: tuple[str, ...]) -> list[str]:
@@ -211,7 +221,7 @@ def cli_run_direct(
 def run_cli(cli_real_cli_env: CliEnv):
     def _run(
         *args: str,
-        timeout: int = 120,
+        timeout: int = RUN_CLI_DEFAULT_TIMEOUT_SECONDS,
         extra_env: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess:
         try:

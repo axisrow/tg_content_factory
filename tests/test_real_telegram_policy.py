@@ -2,18 +2,25 @@ from __future__ import annotations
 
 import argparse
 import ast
+import os
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 
 import pytest
 
+from src.cli.dotenv import load_cli_dotenv
 from src.config import load_config
 from tests.cli_real_tg_integration.command_manifest import (
     CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY,
     CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS,
 )
-from tests.cli_real_tg_integration.conftest import _assert_cli_result_ok, _load_live_dotenv
+from tests.cli_real_tg_integration.conftest import (
+    LIVE_CLI_DEFAULT_PYTEST_TIMEOUT_SECONDS,
+    RUN_CLI_DEFAULT_TIMEOUT_SECONDS,
+    _assert_cli_result_ok,
+)
 from tests.conftest import (
     CLI_REAL_TG_LIVE_FIXTURE,
     REAL_TG_LIVE_FIXTURE,
@@ -369,6 +376,10 @@ def _module_has_timeout_marker(tree: ast.Module) -> bool:
     return False
 
 
+def _live_cli_default_timeout_marker_seconds() -> float:
+    return float(LIVE_CLI_DEFAULT_PYTEST_TIMEOUT_SECONDS)
+
+
 def _literal_cli_calls(path: Path) -> list[tuple[str, tuple[str, ...], int]]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
     calls: list[tuple[str, tuple[str, ...], int]] = []
@@ -514,8 +525,14 @@ def test_cli_real_tg_inventory_does_not_disable_all_failure_text_checks():
     assert violations == []
 
 
+def test_cli_real_tg_conftest_adds_default_pytest_timeout_for_live_cli_tests():
+    assert _live_cli_default_timeout_marker_seconds() > RUN_CLI_DEFAULT_TIMEOUT_SECONDS
+    assert _live_cli_default_timeout_marker_seconds() > _pytest_global_timeout_seconds()
+
+
 def test_cli_real_tg_subprocess_timeouts_have_pytest_timeout_marker():
     global_timeout = _pytest_global_timeout_seconds()
+    default_marker_timeout = _live_cli_default_timeout_marker_seconds()
     violations: list[str] = []
 
     for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
@@ -535,18 +552,23 @@ def test_cli_real_tg_subprocess_timeouts_have_pytest_timeout_marker():
                 helper = _call_name(call.func)
                 if helper not in _RUN_CLI_HELPERS:
                     continue
+                timeout = None
                 for keyword in call.keywords:
                     if keyword.arg != "timeout":
                         continue
                     if not isinstance(keyword.value, ast.Constant) or not isinstance(keyword.value.value, (int, float)):
                         continue
                     timeout = float(keyword.value.value)
-                    if timeout > global_timeout:
-                        violations.append(
-                            f"{path.relative_to(_REPO_ROOT)}:{call.lineno}: "
-                            f"{helper} timeout={timeout:g} exceeds pytest timeout={global_timeout:g} "
-                            "without @pytest.mark.timeout"
-                        )
+                if timeout is None and helper == "run_cli":
+                    timeout = float(RUN_CLI_DEFAULT_TIMEOUT_SECONDS)
+                if timeout is None:
+                    continue
+                if timeout > global_timeout and default_marker_timeout <= timeout:
+                    violations.append(
+                        f"{path.relative_to(_REPO_ROOT)}:{call.lineno}: "
+                        f"{helper} timeout={timeout:g} exceeds pytest timeout={global_timeout:g} "
+                        "without @pytest.mark.timeout or live CLI default timeout marker"
+                    )
 
     assert violations == []
 
@@ -573,7 +595,7 @@ def test_cli_assert_ok_allows_only_named_failure_texts():
         )
 
 
-def test_cli_real_tg_live_dotenv_is_loaded_from_live_root(tmp_path, monkeypatch):
+def test_cli_real_tg_live_dotenv_is_loaded_from_config_root(tmp_path, monkeypatch):
     monkeypatch.setenv("TG_API_ID", "999999")
     monkeypatch.delenv("TG_API_HASH", raising=False)
 
@@ -594,11 +616,62 @@ database:
         encoding="utf-8",
     )
 
-    _load_live_dotenv(live_root)
+    load_cli_dotenv(config_path)
     config = load_config(config_path)
 
     assert config.telegram.api_id == 999999
     assert config.telegram.api_hash == "abcdef0123456789abcdef0123456789"
+
+
+def test_cli_entrypoint_loads_dotenv_from_config_root(tmp_path, monkeypatch):
+    source_root = _REPO_ROOT
+    live_root = tmp_path / "live"
+    unrelated_cwd = tmp_path / "cwd"
+    live_root.mkdir()
+    unrelated_cwd.mkdir()
+    db_path = live_root / "cli-dotenv-test.db"
+    config_path = live_root / "config.yaml"
+
+    (live_root / ".env").write_text(
+        f"CLI_DOTENV_TEST_DB={db_path}\n",
+        encoding="utf-8",
+    )
+    config_path.write_text(
+        """
+database:
+  path: ${CLI_DOTENV_TEST_DB}
+""",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("CLI_DOTENV_TEST_DB", raising=False)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "src.main",
+            "--config",
+            str(config_path),
+            "settings",
+            "info",
+        ],
+        cwd=unrelated_cwd,
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "PYTHONPATH": str(source_root),
+            "PYTHONSAFEPATH": "1",
+        },
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert db_path.exists()
+    assert not (unrelated_cwd / "data" / "tg_search.db").exists()
 
 
 def test_cli_real_tg_parser_leaf_commands_are_covered_or_manifested():

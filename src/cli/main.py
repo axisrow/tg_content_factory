@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import sys
 
-from dotenv import load_dotenv
-
 from src.cli.commands import (
     account,
     channel,
@@ -30,17 +28,18 @@ from src.cli.commands import pipeline as pipeline_cmd
 from src.cli.commands import settings as settings_cmd
 from src.cli.commands import test as test_cmd
 from src.cli.commands import translate as translate_cmd
+from src.cli.dotenv import load_cli_dotenv
 from src.cli.parser import build_parser
 from src.cli.runtime import ensure_data_dirs, setup_logging
 
 
 def main() -> None:
-    load_dotenv()
-    setup_logging()
-    ensure_data_dirs()
-
     parser = build_parser()
     args = parser.parse_args()
+
+    load_cli_dotenv(args.config)
+    setup_logging()
+    ensure_data_dirs()
 
     commands = {
         "serve": serve.run,

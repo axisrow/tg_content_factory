@@ -214,6 +214,7 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("provider", "probe"): "external provider network call",
     ("provider", "refresh"): "external provider network call and local write",
     ("provider", "test-all"): "external provider network calls",
+    ("scheduler", "clear-pending"): "unsafe standalone live smoke; deletes all pending channel collection tasks",
     ("scheduler", "job-toggle"): "local scheduler setting mutation",
     ("scheduler", "set-interval"): "local scheduler setting mutation",
     ("scheduler", "stop"): "local scheduler setting mutation",
