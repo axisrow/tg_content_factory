@@ -3,6 +3,7 @@ import pytest
 pytestmark = pytest.mark.real_tg_safe
 
 
+@pytest.mark.timeout(240)
 def test_photo_loader_refresh(run_cli, assert_cli_ok, live_phone):
     """`photo-loader refresh --phone +X` — refresh dialog cache from Telegram.
 
