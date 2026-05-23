@@ -89,6 +89,11 @@ _CLI_CATEGORY_REQUIRED_MARKERS = {
     "destructive": _MANUAL_MARKER_USAGES,
     "manual": _MANUAL_MARKER_USAGES,
 }
+_CLI_CLEANUP_COMMAND_PRODUCERS = {
+    ("agent", "thread-delete"): {("agent", "chat")},
+    ("agent", "threads"): {("agent", "chat")},
+    ("scheduler", "clear-pending"): {("collect",), ("scheduler", "trigger")},
+}
 _AUDIT_EXCLUDED_FILES = {"test_real_telegram_policy.py"}
 
 
@@ -351,30 +356,68 @@ def _pytest_global_timeout_seconds() -> float:
     return float(pyproject["tool"]["pytest"]["ini_options"]["timeout"])
 
 
-def _has_pytest_timeout_marker(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+def _pytest_timeout_marker_seconds(node: ast.AST) -> float | None:
+    if isinstance(node, ast.Call):
+        marker = node.func
+        timeout_args = node.args
+    else:
+        marker = node
+        timeout_args = []
+    parts: list[str] = []
+    while isinstance(marker, ast.Attribute):
+        parts.append(marker.attr)
+        marker = marker.value
+    if isinstance(marker, ast.Name):
+        parts.append(marker.id)
+    dotted = ".".join(reversed(parts))
+    if dotted not in {"pytest.mark.timeout", "mark.timeout"}:
+        return None
+    if not timeout_args:
+        return 0.0
+    value = timeout_args[0]
+    if isinstance(value, ast.Constant) and isinstance(value.value, (int, float)):
+        return float(value.value)
+    return 0.0
+
+
+def _function_timeout_marker_seconds(node: ast.FunctionDef | ast.AsyncFunctionDef) -> float | None:
     for decorator in node.decorator_list:
-        marker = decorator.func if isinstance(decorator, ast.Call) else decorator
-        parts: list[str] = []
-        while isinstance(marker, ast.Attribute):
-            parts.append(marker.attr)
-            marker = marker.value
-        if isinstance(marker, ast.Name):
-            parts.append(marker.id)
-        dotted = ".".join(reversed(parts))
-        if dotted in {"pytest.mark.timeout", "mark.timeout"}:
-            return True
-    return False
+        timeout = _pytest_timeout_marker_seconds(decorator)
+        if timeout is not None:
+            return timeout
+    return None
 
 
-def _module_has_timeout_marker(tree: ast.Module) -> bool:
+def _pytestmark_timeout_seconds(value: ast.AST) -> float | None:
+    timeout = _pytest_timeout_marker_seconds(value)
+    if timeout is not None:
+        return timeout
+    if isinstance(value, (ast.List, ast.Tuple)):
+        for item in value.elts:
+            timeout = _pytest_timeout_marker_seconds(item)
+            if timeout is not None:
+                return timeout
+    return None
+
+
+def _module_timeout_marker_seconds(tree: ast.Module) -> float | None:
     for node in tree.body:
         if not isinstance(node, ast.Assign):
             continue
         if not any(isinstance(target, ast.Name) and target.id == "pytestmark" for target in node.targets):
             continue
-        if "timeout" in ast.unparse(node.value):
-            return True
-    return False
+        timeout = _pytestmark_timeout_seconds(node.value)
+        if timeout is not None:
+            return timeout
+    return None
+
+
+def _has_pytest_timeout_marker(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    return _function_timeout_marker_seconds(node) is not None
+
+
+def _module_has_timeout_marker(tree: ast.Module) -> bool:
+    return _module_timeout_marker_seconds(tree) is not None
 
 
 def _live_cli_default_timeout_marker_seconds() -> float:
@@ -421,6 +464,32 @@ def _literal_cli_call_records(path: Path) -> list[tuple[str, tuple[str, ...], in
     return calls
 
 
+def _literal_cli_call_records_by_test(path: Path) -> dict[str, list[tuple[str, tuple[str, ...], int, bool]]]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    parents = _ast_parent_map(tree)
+    records: dict[str, list[tuple[str, tuple[str, ...], int, bool]]] = {}
+    for fn in tree.body:
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or not fn.name.startswith("test_"):
+            continue
+        calls: list[tuple[str, tuple[str, ...], int, bool]] = []
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Call):
+                continue
+            helper = _call_name(node.func)
+            if helper not in _RUN_CLI_HELPERS:
+                continue
+            args = node.args[1:] if helper == "cli_run_direct" else node.args
+            prefix: list[str] = []
+            for arg in args:
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    prefix.append(arg.value)
+                    continue
+                break
+            calls.append((helper, tuple(prefix), node.lineno, _is_inside_finally(node, parents)))
+        records[fn.name] = calls
+    return records
+
+
 def _literal_cli_calls(path: Path) -> list[tuple[str, tuple[str, ...], int]]:
     return [
         (helper, command, lineno)
@@ -454,6 +523,21 @@ def _covered_cli_leaf(command_case: tuple[str, ...], leafs: set[tuple[str, ...]]
     return command_case if command_case in leafs else None
 
 
+def _has_cleanup_producer(
+    cleanup_command_case: tuple[str, ...],
+    records: list[tuple[str, tuple[str, ...], int, bool]],
+    leafs: set[tuple[str, ...]],
+) -> bool:
+    producers = _CLI_CLEANUP_COMMAND_PRODUCERS.get(cleanup_command_case, set())
+    for helper, command, _lineno, _in_finally in records:
+        if helper == "cli_run_direct":
+            continue
+        command_case = _normalize_cli_command_case(command, leafs)
+        if command_case in producers:
+            return True
+    return False
+
+
 def test_cli_real_tg_marked_commands_are_explicitly_allowlisted():
     violations: list[str] = []
     leafs = _cli_leaf_commands()
@@ -469,32 +553,38 @@ def test_cli_real_tg_marked_commands_are_explicitly_allowlisted():
         if allowed is None:
             violations.append(f"{path.relative_to(_REPO_ROOT)}: unknown CLI live category {category!r}")
             continue
-        for helper, command, lineno, in_finally in _literal_cli_call_records(path):
-            if not command:
-                violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: dynamic {helper} command")
-                continue
-            command_case = _normalize_cli_command_case(command, leafs)
-            if command_case is None:
-                violations.append(
-                    f"{path.relative_to(_REPO_ROOT)}:{lineno}: {command!r} is not a parser leaf command"
-                )
-                continue
-            if helper == "cli_run_direct":
-                if command_case not in CLI_REAL_TG_CLEANUP_COMMAND_CASES:
+        for records in _literal_cli_call_records_by_test(path).values():
+            for helper, command, lineno, in_finally in records:
+                if not command:
+                    violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: dynamic {helper} command")
+                    continue
+                command_case = _normalize_cli_command_case(command, leafs)
+                if command_case is None:
                     violations.append(
-                        f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
-                        f"{command_case!r} is not cleanup-helper-allowlisted"
+                        f"{path.relative_to(_REPO_ROOT)}:{lineno}: {command!r} is not a parser leaf command"
                     )
-                if not in_finally:
+                    continue
+                if helper == "cli_run_direct":
+                    if command_case not in CLI_REAL_TG_CLEANUP_COMMAND_CASES:
+                        violations.append(
+                            f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
+                            f"{command_case!r} is not cleanup-helper-allowlisted"
+                        )
+                    if not in_finally:
+                        violations.append(
+                            f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
+                            f"{command_case!r} cleanup helper call is not inside a finally block"
+                        )
+                    if not _has_cleanup_producer(command_case, records, leafs):
+                        violations.append(
+                            f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
+                            f"{command_case!r} cleanup helper call has no producer command in the same test"
+                        )
+                    continue
+                if command_case not in allowed:
                     violations.append(
-                        f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
-                        f"{command_case!r} cleanup helper call is not inside a finally block"
+                        f"{path.relative_to(_REPO_ROOT)}:{lineno}: {command_case!r} is not {category}-allowlisted"
                     )
-                continue
-            if command_case not in allowed:
-                violations.append(
-                    f"{path.relative_to(_REPO_ROOT)}:{lineno}: {command_case!r} is not {category}-allowlisted"
-                )
 
     assert violations == []
 
@@ -507,24 +597,39 @@ import pytest
 
 pytestmark = pytest.mark.real_tg_safe
 
-def test_bad(cli_env):
+def test_bad_no_finally(cli_env):
     cli_run_direct(cli_env, "scheduler", "clear-pending")
 
-def test_good(cli_env):
+def test_bad_no_producer(cli_env):
     try:
         pass
+    finally:
+        cli_run_direct(cli_env, "scheduler", "clear-pending")
+
+def test_good(run_cli, cli_env):
+    try:
+        run_cli("scheduler", "trigger")
     finally:
         cli_run_direct(cli_env, "scheduler", "clear-pending")
 """,
         encoding="utf-8",
     )
 
-    records = _literal_cli_call_records(sample)
+    leafs = _cli_leaf_commands()
+    records = _literal_cli_call_records_by_test(sample)
 
-    assert records == [
+    assert records["test_bad_no_finally"] == [
         ("cli_run_direct", ("scheduler", "clear-pending"), 7, False),
+    ]
+    assert records["test_bad_no_producer"] == [
         ("cli_run_direct", ("scheduler", "clear-pending"), 13, True),
     ]
+    assert records["test_good"] == [
+        ("run_cli", ("scheduler", "trigger"), 17, False),
+        ("cli_run_direct", ("scheduler", "clear-pending"), 19, True),
+    ]
+    assert not _has_cleanup_producer(("scheduler", "clear-pending"), records["test_bad_no_producer"], leafs)
+    assert _has_cleanup_producer(("scheduler", "clear-pending"), records["test_good"], leafs)
 
 
 def test_cli_real_tg_folder_markers_match_risk_category():
@@ -604,15 +709,18 @@ def test_cli_real_tg_subprocess_timeouts_have_pytest_timeout_marker():
 
     for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        module_has_timeout = _module_has_timeout_marker(tree)
+        module_timeout = _module_timeout_marker_seconds(tree)
         test_functions = (
             node
             for node in tree.body
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")
         )
         for test_function in test_functions:
-            if module_has_timeout or _has_pytest_timeout_marker(test_function):
-                continue
+            pytest_timeout = (
+                _function_timeout_marker_seconds(test_function)
+                or module_timeout
+                or default_marker_timeout
+            )
             for call in ast.walk(test_function):
                 if not isinstance(call, ast.Call):
                     continue
@@ -630,14 +738,39 @@ def test_cli_real_tg_subprocess_timeouts_have_pytest_timeout_marker():
                     timeout = float(RUN_CLI_DEFAULT_TIMEOUT_SECONDS)
                 if timeout is None:
                     continue
-                if timeout > global_timeout and default_marker_timeout <= timeout:
+                if timeout > global_timeout and pytest_timeout <= timeout:
                     violations.append(
                         f"{path.relative_to(_REPO_ROOT)}:{call.lineno}: "
                         f"{helper} timeout={timeout:g} exceeds pytest timeout={global_timeout:g} "
-                        "without @pytest.mark.timeout or live CLI default timeout marker"
+                        f"but pytest timeout marker is only {pytest_timeout:g}"
                     )
 
     assert violations == []
+
+
+def test_cli_real_tg_timeout_policy_compares_marker_value(tmp_path):
+    sample = tmp_path / "test_timeout.py"
+    sample.write_text(
+        """
+import pytest
+
+pytestmark = pytest.mark.real_tg_safe
+
+@pytest.mark.timeout(60)
+def test_bad(run_cli):
+    run_cli("filter", "analyze", timeout=120)
+
+@pytest.mark.timeout(180)
+def test_good(run_cli):
+    run_cli("filter", "analyze", timeout=120)
+""",
+        encoding="utf-8",
+    )
+    tree = ast.parse(sample.read_text(encoding="utf-8"), filename=str(sample))
+    bad, good = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+
+    assert _function_timeout_marker_seconds(bad) == 60
+    assert _function_timeout_marker_seconds(good) == 180
 
 
 def test_cli_assert_ok_allows_only_named_failure_texts():

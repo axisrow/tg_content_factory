@@ -69,7 +69,6 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
     },
     "safe_write": {
         ("agent", "chat"),
-        ("agent", "thread-delete"),
         ("agent", "threads"),
         ("channel", "add"),
         ("channel", "add-bulk"),
@@ -121,6 +120,7 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("agent", "test-escaping"): "diagnostic aggregate, not a leaf operator smoke",
     ("agent", "test-tools"): "diagnostic aggregate, not a leaf operator smoke",
     ("agent", "thread-create"): "local agent-thread mutation",
+    ("agent", "thread-delete"): "cleanup-only live CLI command; deletes agent thread rows",
     ("agent", "thread-rename"): "local agent-thread mutation",
     ("channel", "delete"): "local channel destructive write",
     ("channel", "import"): "bulk local channel write",
