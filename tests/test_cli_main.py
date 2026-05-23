@@ -267,7 +267,7 @@ class TestParser:
 class TestMainDispatch:
     """Test the main() dispatch logic."""
 
-    @patch("src.cli.main.load_dotenv")
+    @patch("src.cli.main.load_cli_dotenv")
     @patch("src.cli.main.setup_logging")
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
@@ -284,7 +284,7 @@ class TestMainDispatch:
 
         assert exc_info.value.code == 1
 
-    @patch("src.cli.main.load_dotenv")
+    @patch("src.cli.main.load_cli_dotenv")
     @patch("src.cli.main.setup_logging")
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
@@ -293,6 +293,7 @@ class TestMainDispatch:
         parser = MagicMock()
         args = MagicMock()
         args.command = "stop"
+        args.config = "custom-config.yaml"
         parser.parse_args.return_value = args
         mock_build.return_value = parser
 
@@ -302,8 +303,9 @@ class TestMainDispatch:
             main()
 
         mock_handler.assert_called_once_with(args)
+        mock_dotenv.assert_called_once_with("custom-config.yaml")
 
-    @patch("src.cli.main.load_dotenv")
+    @patch("src.cli.main.load_cli_dotenv")
     @patch("src.cli.main.setup_logging")
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
@@ -320,7 +322,7 @@ class TestMainDispatch:
         with pytest.raises(SystemExit):
             main()
 
-    @patch("src.cli.main.load_dotenv")
+    @patch("src.cli.main.load_cli_dotenv")
     @patch("src.cli.main.setup_logging")
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
@@ -337,7 +339,7 @@ class TestMainDispatch:
             main()
             mock_mod.run.assert_called_once_with(args)
 
-    @patch("src.cli.main.load_dotenv")
+    @patch("src.cli.main.load_cli_dotenv")
     @patch("src.cli.main.setup_logging")
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
@@ -356,7 +358,7 @@ class TestMainDispatch:
             main()
             mock_mod.run.assert_called_once_with(args)
 
-    @patch("src.cli.main.load_dotenv")
+    @patch("src.cli.main.load_cli_dotenv")
     @patch("src.cli.main.setup_logging")
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
@@ -374,7 +376,7 @@ class TestMainDispatch:
             main()
             mock_mod.run.assert_called_once_with(args)
 
-    @patch("src.cli.main.load_dotenv")
+    @patch("src.cli.main.load_cli_dotenv")
     @patch("src.cli.main.setup_logging")
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
@@ -391,7 +393,7 @@ class TestMainDispatch:
         with pytest.raises(SystemExit):
             main()
 
-    @patch("src.cli.main.load_dotenv")
+    @patch("src.cli.main.load_cli_dotenv")
     @patch("src.cli.main.setup_logging")
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
