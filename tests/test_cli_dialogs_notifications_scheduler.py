@@ -580,6 +580,193 @@ class TestSchedulerCommand:
         assert "enqueued" in out.lower()
 
 
+def _sched_read_setting(db_path: str, key: str) -> str | None:
+    """Read a settings row using a fresh sqlite3 connection.
+
+    Needed because scheduler.run() calls db.close() in finally, leaving the
+    aiosqlite-backed cli_env Database unusable.
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def _sched_seed_collection_task(db: Database, channel_id: int = 100) -> int:
+    """Insert one pending collection task; return its id."""
+    return asyncio.run(
+        db.repos.tasks.create_collection_task(
+            channel_id=channel_id,
+            channel_title="seed",
+        )
+    )
+
+
+def _sched_read_task_status(db_path: str, task_id: int) -> str | None:
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.execute("SELECT status FROM collection_tasks WHERE id = ?", (task_id,))
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def _sched_count_pending_tasks(db_path: str) -> int:
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM collection_tasks WHERE status = ?",
+            ("pending",),
+        )
+        return cur.fetchone()[0]
+    finally:
+        conn.close()
+
+
+_SCHED_INIT_DB_TARGET = "src.cli.commands.scheduler.runtime.init_db"
+
+
+@pytest.fixture
+def sched_pool_patch():
+    """Patch src.cli.runtime.init_pool to return a pool with one fake client.
+
+    Bypasses scheduler.py's `if not pool.clients: return` guard so the command
+    reaches its DB write. The pool itself is just an AsyncMock with disconnect.
+    """
+    fake_pool = AsyncMock()
+    fake_pool.clients = {"+70001112233": AsyncMock()}
+    fake_pool.disconnect_all = AsyncMock()
+
+    async def fake_init_pool(config, db):
+        from src.telegram.auth import TelegramAuth
+
+        return TelegramAuth(0, ""), fake_pool
+
+    with patch("src.cli.runtime.init_pool", side_effect=fake_init_pool):
+        yield fake_pool
+
+
+def _sched_init_empty_db(tmp_path, name: str) -> str:
+    """Create a fresh DB file and return its path. Closes its own connection."""
+    db_path = str(tmp_path / name)
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    asyncio.run(db.close())
+    return db_path
+
+
+def _sched_run_with_db(db_path: str, cli_init_patch, ns):
+    """Open a fresh Database, run scheduler command via fresh_database=True, then close."""
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    try:
+        with cli_init_patch(db, _SCHED_INIT_DB_TARGET, fresh_database=True):
+            from src.cli.commands.scheduler import run
+
+            run(ns)
+    finally:
+        asyncio.run(db.close())
+
+
+class TestSchedulerCommandRW:
+    """RW-DB happy-path tests for scheduler stop/job-toggle/set-interval/task-cancel/clear-pending."""
+
+    def test_stop_sets_autostart_off(self, tmp_path, cli_init_patch, sched_pool_patch, capsys):
+        db_path = _sched_init_empty_db(tmp_path, "sched_stop.db")
+
+        _sched_run_with_db(db_path, cli_init_patch, _ns(scheduler_action="stop"))
+
+        assert _sched_read_setting(db_path, "scheduler_autostart") == "0"
+        assert "Scheduler autostart disabled" in capsys.readouterr().out
+
+    def test_job_toggle_disables_then_enables(
+        self, tmp_path, cli_init_patch, sched_pool_patch, capsys
+    ):
+        db_path = _sched_init_empty_db(tmp_path, "sched_toggle.db")
+
+        _sched_run_with_db(
+            db_path,
+            cli_init_patch,
+            _ns(scheduler_action="job-toggle", job_id="collect_all"),
+        )
+        assert _sched_read_setting(db_path, "scheduler_job_disabled:collect_all") == "1"
+        assert "disabled" in capsys.readouterr().out
+
+        _sched_run_with_db(
+            db_path,
+            cli_init_patch,
+            _ns(scheduler_action="job-toggle", job_id="collect_all"),
+        )
+        assert _sched_read_setting(db_path, "scheduler_job_disabled:collect_all") == "0"
+        assert "enabled" in capsys.readouterr().out
+
+    def test_set_interval_writes_setting(
+        self, tmp_path, cli_init_patch, sched_pool_patch, capsys
+    ):
+        db_path = _sched_init_empty_db(tmp_path, "sched_interval.db")
+
+        _sched_run_with_db(
+            db_path,
+            cli_init_patch,
+            _ns(scheduler_action="set-interval", job_id="collect_all", minutes=42),
+        )
+
+        assert _sched_read_setting(db_path, "collect_interval_minutes") == "42"
+        assert "42 min" in capsys.readouterr().out
+
+    def test_task_cancel_marks_task_cancelled(
+        self, tmp_path, cli_init_patch, sched_pool_patch, capsys
+    ):
+        db_path = str(tmp_path / "sched_taskcancel.db")
+        seed = Database(db_path)
+        asyncio.run(seed.initialize())
+        try:
+            task_id = _sched_seed_collection_task(seed, channel_id=222_001)
+        finally:
+            asyncio.run(seed.close())
+
+        _sched_run_with_db(
+            db_path,
+            cli_init_patch,
+            _ns(scheduler_action="task-cancel", task_id=task_id),
+        )
+
+        assert _sched_read_task_status(db_path, task_id) == "cancelled"
+        assert f"Task {task_id} cancelled" in capsys.readouterr().out
+
+    def test_clear_pending_removes_all(
+        self, tmp_path, cli_init_patch, sched_pool_patch, capsys
+    ):
+        db_path = str(tmp_path / "sched_clear.db")
+        seed = Database(db_path)
+        asyncio.run(seed.initialize())
+        try:
+            _sched_seed_collection_task(seed, channel_id=222_010)
+            _sched_seed_collection_task(seed, channel_id=222_011)
+        finally:
+            asyncio.run(seed.close())
+        assert _sched_count_pending_tasks(db_path) == 2
+
+        _sched_run_with_db(
+            db_path,
+            cli_init_patch,
+            _ns(scheduler_action="clear-pending"),
+        )
+
+        assert _sched_count_pending_tasks(db_path) == 0
+        assert "Cleared 2 pending" in capsys.readouterr().out
+
+
 # ---------------------------------------------------------------------------
 # serve command
 # ---------------------------------------------------------------------------
