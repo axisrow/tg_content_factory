@@ -16,6 +16,8 @@ from tests.conftest import (
     REAL_TG_LIVE_FIXTURES,
     REAL_TG_MANUAL_GATE_ENV,
     REAL_TG_MANUAL_MARK,
+    REAL_TG_MUTATION_SAFE_GATE_ENV,
+    REAL_TG_MUTATION_SAFE_MARK,
     REAL_TG_NEVER_MARK,
     REAL_TG_SAFE_GATE_ENV,
     REAL_TG_SAFE_MARK,
@@ -44,6 +46,10 @@ _SAFE_MARKER_USAGES = (
     "@pytest.mark.real_tg_safe",
     "pytestmark = pytest.mark.real_tg_safe",
 )
+_MUTATION_SAFE_MARKER_USAGES = (
+    "@pytest.mark.real_tg_mutation_safe",
+    "pytestmark = pytest.mark.real_tg_mutation_safe",
+)
 _MANUAL_MARKER_USAGES = (
     "@pytest.mark.real_tg_manual",
     "pytestmark = pytest.mark.real_tg_manual",
@@ -52,6 +58,20 @@ _NEVER_MARKER_USAGES = (
     "@pytest.mark.real_tg_never",
     "pytestmark = pytest.mark.real_tg_never",
 )
+_LIVE_POLICY_MARKER_USAGES = (
+    _SAFE_MARKER_USAGES
+    + _MUTATION_SAFE_MARKER_USAGES
+    + _MANUAL_MARKER_USAGES
+)
+_CLI_CATEGORY_REQUIRED_MARKERS = {
+    "safe_ro": _SAFE_MARKER_USAGES,
+    "safe_write": _SAFE_MARKER_USAGES,
+    "heavy": _SAFE_MARKER_USAGES,
+    "mutating": _SAFE_MARKER_USAGES,
+    "mutation_safe": _MUTATION_SAFE_MARKER_USAGES,
+    "destructive": _MANUAL_MARKER_USAGES,
+    "manual": _MANUAL_MARKER_USAGES,
+}
 _AUDIT_EXCLUDED_FILES = {"test_real_telegram_policy.py"}
 
 
@@ -101,6 +121,17 @@ def test_real_tg_policy_allows_cli_live_fixture_for_cli_integration():
     assert message is None
 
 
+def test_real_tg_policy_requires_live_fixture_for_mutation_safe_mode():
+    action, message = _evaluate_real_tg_policy(
+        mode=REAL_TG_MUTATION_SAFE_MARK,
+        fixturenames=(),
+        environ={REAL_TG_MUTATION_SAFE_GATE_ENV: "1"},
+    )
+
+    assert action == "fail"
+    assert REAL_TG_LIVE_FIXTURE in message
+
+
 def test_real_tg_policy_rejects_manual_mode_without_fixture_for_cli_integration():
     action, message = _evaluate_real_tg_policy(
         mode=REAL_TG_MANUAL_MARK,
@@ -122,6 +153,17 @@ def test_real_tg_policy_skips_safe_mode_without_gate():
 
     assert action == "skip"
     assert REAL_TG_SAFE_GATE_ENV in message
+
+
+def test_real_tg_policy_skips_mutation_safe_mode_without_gate():
+    action, message = _evaluate_real_tg_policy(
+        mode=REAL_TG_MUTATION_SAFE_MARK,
+        fixturenames=(REAL_TG_LIVE_FIXTURE,),
+        environ={},
+    )
+
+    assert action == "skip"
+    assert REAL_TG_MUTATION_SAFE_GATE_ENV in message
 
 
 def test_real_tg_policy_skips_manual_mode_without_gate():
@@ -151,6 +193,17 @@ def test_real_tg_policy_allows_gated_safe_mode():
         mode=REAL_TG_SAFE_MARK,
         fixturenames=(REAL_TG_LIVE_FIXTURE,),
         environ={REAL_TG_SAFE_GATE_ENV: "1"},
+    )
+
+    assert action is None
+    assert message is None
+
+
+def test_real_tg_policy_allows_gated_mutation_safe_mode():
+    action, message = _evaluate_real_tg_policy(
+        mode=REAL_TG_MUTATION_SAFE_MARK,
+        fixturenames=(REAL_TG_LIVE_FIXTURE,),
+        environ={REAL_TG_MUTATION_SAFE_GATE_ENV: "1"},
     )
 
     assert action is None
@@ -232,7 +285,7 @@ def test_live_fixture_is_not_used_without_real_tg_policy_marker():
         content = path.read_text(encoding="utf-8")
         if not any(fixture in content for fixture in REAL_TG_LIVE_FIXTURES):
             continue
-        if not any(marker in content for marker in _SAFE_MARKER_USAGES + _MANUAL_MARKER_USAGES):
+        if not any(marker in content for marker in _LIVE_POLICY_MARKER_USAGES):
             violations.append(path.name)
 
     assert violations == []
@@ -326,13 +379,15 @@ def _covered_cli_leaf(command_case: tuple[str, ...], leafs: set[tuple[str, ...]]
     return command_case if command_case in leafs else None
 
 
-def test_cli_real_tg_safe_commands_are_explicitly_allowlisted():
+def test_cli_real_tg_marked_commands_are_explicitly_allowlisted():
     violations: list[str] = []
     leafs = _cli_leaf_commands()
 
     for path in _cli_live_policy_paths():
         content = path.read_text(encoding="utf-8")
-        if path.name != "conftest.py" and not any(marker in content for marker in _SAFE_MARKER_USAGES):
+        if path.name != "conftest.py" and not any(
+            marker in content for marker in _LIVE_POLICY_MARKER_USAGES
+        ):
             continue
         category = _cli_real_tg_category(path)
         allowed = CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY.get(category)
@@ -357,12 +412,34 @@ def test_cli_real_tg_safe_commands_are_explicitly_allowlisted():
     assert violations == []
 
 
+def test_cli_real_tg_folder_markers_match_risk_category():
+    violations: list[str] = []
+
+    for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
+        category = _cli_real_tg_category(path)
+        required_markers = _CLI_CATEGORY_REQUIRED_MARKERS.get(category)
+        if required_markers is None:
+            violations.append(f"{path.relative_to(_REPO_ROOT)}: unknown CLI live category {category!r}")
+            continue
+
+        content = path.read_text(encoding="utf-8")
+        if not any(marker in content for marker in required_markers):
+            violations.append(f"{path.relative_to(_REPO_ROOT)}: missing expected marker for {category!r}")
+            continue
+
+        forbidden_markers = tuple(marker for marker in _LIVE_POLICY_MARKER_USAGES if marker not in required_markers)
+        if any(marker in content for marker in forbidden_markers):
+            violations.append(f"{path.relative_to(_REPO_ROOT)}: mixed real Telegram risk markers")
+
+    assert violations == []
+
+
 def test_cli_real_tg_inventory_uses_live_cli_runner_fixture():
     violations: list[str] = []
 
     for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
         content = path.read_text(encoding="utf-8")
-        if not any(marker in content for marker in _SAFE_MARKER_USAGES + _MANUAL_MARKER_USAGES):
+        if not any(marker in content for marker in _LIVE_POLICY_MARKER_USAGES):
             violations.append(f"{path.relative_to(_REPO_ROOT)}: missing real Telegram marker")
             continue
         if not _literal_cli_calls(path):

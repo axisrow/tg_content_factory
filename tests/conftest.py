@@ -26,12 +26,14 @@ def anyio_backend() -> str:
 
 
 REAL_TG_SAFE_MARK = "real_tg_safe"
+REAL_TG_MUTATION_SAFE_MARK = "real_tg_mutation_safe"
 REAL_TG_MANUAL_MARK = "real_tg_manual"
 REAL_TG_NEVER_MARK = "real_tg_never"
 REAL_TG_LIVE_FIXTURE = "real_telegram_sandbox"
 CLI_REAL_TG_LIVE_FIXTURE = "cli_real_cli_env"
 REAL_TG_LIVE_FIXTURES = (REAL_TG_LIVE_FIXTURE, CLI_REAL_TG_LIVE_FIXTURE)
 REAL_TG_SAFE_GATE_ENV = "RUN_REAL_TELEGRAM_SAFE"
+REAL_TG_MUTATION_SAFE_GATE_ENV = "RUN_REAL_TELEGRAM_MUTATION_SAFE"
 REAL_TG_MANUAL_GATE_ENV = "RUN_REAL_TELEGRAM_MANUAL"
 REAL_TG_REQUIRED_ENV_VARS = (
     "REAL_TG_API_ID",
@@ -155,7 +157,12 @@ class RealTelegramSandbox:
 def _resolve_real_tg_mode(node) -> str | None:
     markers = [
         name
-        for name in (REAL_TG_SAFE_MARK, REAL_TG_MANUAL_MARK, REAL_TG_NEVER_MARK)
+        for name in (
+            REAL_TG_SAFE_MARK,
+            REAL_TG_MUTATION_SAFE_MARK,
+            REAL_TG_MANUAL_MARK,
+            REAL_TG_NEVER_MARK,
+        )
         if node.get_closest_marker(name)
     ]
     if len(markers) > 1:
@@ -179,10 +186,14 @@ def _evaluate_real_tg_policy(
         return (
             "fail",
             f"real Telegram fixtures ({', '.join(REAL_TG_LIVE_FIXTURES)}) "
-            f"require @{REAL_TG_SAFE_MARK} or @{REAL_TG_MANUAL_MARK}.",
+            f"require @{REAL_TG_SAFE_MARK}, @{REAL_TG_MUTATION_SAFE_MARK}, "
+            f"or @{REAL_TG_MANUAL_MARK}.",
         )
 
-    if mode in {REAL_TG_SAFE_MARK, REAL_TG_MANUAL_MARK} and not uses_live_fixture:
+    if (
+        mode in {REAL_TG_SAFE_MARK, REAL_TG_MUTATION_SAFE_MARK, REAL_TG_MANUAL_MARK}
+        and not uses_live_fixture
+    ):
         return (
             "fail",
             f"@{mode} tests must use one of: {', '.join(REAL_TG_LIVE_FIXTURES)}.",
@@ -198,6 +209,16 @@ def _evaluate_real_tg_policy(
         return (
             "skip",
             f"real Telegram safe tests are disabled; set {REAL_TG_SAFE_GATE_ENV}=1 to run them.",
+        )
+
+    if (
+        mode == REAL_TG_MUTATION_SAFE_MARK
+        and environ.get(REAL_TG_MUTATION_SAFE_GATE_ENV) != "1"
+    ):
+        return (
+            "skip",
+            "real Telegram mutation-safe tests are disabled; "
+            f"set {REAL_TG_MUTATION_SAFE_GATE_ENV}=1 to run them.",
         )
 
     if mode == REAL_TG_MANUAL_MARK and environ.get(REAL_TG_MANUAL_GATE_ENV) != "1":

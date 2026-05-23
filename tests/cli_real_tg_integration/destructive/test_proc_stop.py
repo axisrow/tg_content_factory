@@ -11,7 +11,7 @@ import yaml
 
 from tests.cli_real_tg_integration.conftest import wait_for_http_200
 
-pytestmark = pytest.mark.real_tg_safe
+pytestmark = pytest.mark.real_tg_manual
 
 
 def _read_port(cli_real_cli_env) -> int:

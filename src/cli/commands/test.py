@@ -43,7 +43,9 @@ _TG_CHECKS_AFTER_POOL = [
 ]
 # src/cli/commands/test.py → src/cli/commands → src/cli → src → repo root
 REPO_ROOT = Path(__file__).resolve().parents[3]
-NON_LIVE_PYTEST_MARKER_EXPR = "not real_tg_safe and not real_tg_manual and not real_provider_smoke"
+NON_LIVE_PYTEST_MARKER_EXPR = (
+    "not real_tg_safe and not real_tg_mutation_safe and not real_tg_manual and not real_provider_smoke"
+)
 SERIAL_PYTEST_COMMAND = (
     sys.executable,
     "-m",
