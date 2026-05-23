@@ -3,6 +3,7 @@ import pytest
 pytestmark = pytest.mark.real_tg_safe
 
 
+@pytest.mark.timeout(180)
 def test_dialogs_participants_first(run_cli, assert_cli_ok, live_channel_username):
     """`dialogs participants @username --limit 10` — read participants list.
 

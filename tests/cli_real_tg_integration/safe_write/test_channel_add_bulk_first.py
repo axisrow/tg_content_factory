@@ -15,6 +15,7 @@ import pytest
 pytestmark = pytest.mark.real_tg_safe
 
 
+@pytest.mark.timeout(240)
 def test_channel_add_bulk_idempotent_first(run_cli, assert_cli_ok, live_phone, live_channel):
     phone = live_phone
     _pk, channel_id = live_channel

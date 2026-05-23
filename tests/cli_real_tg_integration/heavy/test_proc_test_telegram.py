@@ -10,6 +10,7 @@ import pytest
 pytestmark = pytest.mark.real_tg_safe
 
 
+@pytest.mark.timeout(360)
 def test_proc_test_telegram(run_cli, assert_cli_ok):
     result = run_cli("test", "telegram", timeout=300)
     assert_cli_ok(result)

@@ -69,7 +69,6 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
     },
     "safe_write": {
         ("agent", "chat"),
-        ("agent", "thread-delete"),
         ("agent", "threads"),
         ("channel", "add"),
         ("channel", "add-bulk"),
@@ -79,7 +78,6 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
     },
     "mutating": {
         ("channel", "refresh-meta"),
-        ("scheduler", "clear-pending"),
         ("scheduler", "start"),
         ("scheduler", "trigger"),
     },
@@ -99,11 +97,16 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
         ("channel", "stats", "--all"),
         ("collect",),
         ("dialogs", "refresh"),
-        ("scheduler", "clear-pending"),
         ("test", "all"),
         ("test", "benchmark"),
         ("test", "telegram"),
     },
+}
+
+CLI_REAL_TG_CLEANUP_COMMAND_CASES: set[tuple[str, ...]] = {
+    ("agent", "thread-delete"),
+    ("agent", "threads"),
+    ("scheduler", "clear-pending"),
 }
 
 CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
@@ -117,6 +120,7 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("agent", "test-escaping"): "diagnostic aggregate, not a leaf operator smoke",
     ("agent", "test-tools"): "diagnostic aggregate, not a leaf operator smoke",
     ("agent", "thread-create"): "local agent-thread mutation",
+    ("agent", "thread-delete"): "cleanup-only live CLI command; deletes agent thread rows",
     ("agent", "thread-rename"): "local agent-thread mutation",
     ("channel", "delete"): "local channel destructive write",
     ("channel", "import"): "bulk local channel write",
@@ -214,6 +218,7 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("provider", "probe"): "external provider network call",
     ("provider", "refresh"): "external provider network call and local write",
     ("provider", "test-all"): "external provider network calls",
+    ("scheduler", "clear-pending"): "unsafe standalone live smoke; deletes all pending channel collection tasks",
     ("scheduler", "job-toggle"): "local scheduler setting mutation",
     ("scheduler", "set-interval"): "local scheduler setting mutation",
     ("scheduler", "stop"): "local scheduler setting mutation",

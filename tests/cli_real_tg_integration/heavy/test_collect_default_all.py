@@ -25,20 +25,16 @@ from tests.cli_real_tg_integration.conftest import cli_run_direct
 pytestmark = pytest.mark.real_tg_safe
 
 
+@pytest.mark.timeout(360)
 def test_collect_default_enqueues_all(run_cli, assert_cli_ok, cli_env):
     leak_msg: str | None = None
     try:
         result = run_cli("collect", timeout=300)
         assert_cli_ok(result)
         combined = result.stdout + result.stderr
-        # Possible outcomes:
-        # - "Enqueued N channels (skipped M, total K)..." — normal path.
-        # - "No connected accounts..." — pool empty, the handler short-circuits
-        #   before reaching the enqueue branch.
-        assert (
-            "Enqueued" in combined
-            or "No connected accounts" in combined
-        ), f"unexpected bare `collect` output: {combined!r}"
+        # "No connected accounts" is not accepted here: the live fixture already
+        # requires a configured account, so this smoke must prove enqueue works.
+        assert "Enqueued" in combined, f"unexpected bare `collect` output: {combined!r}"
     finally:
         # Drain the queue this test created. Same self-contained pattern as
         # mutating/test_proc_scheduler_trigger.py:test_proc_scheduler_trigger_enqueues.
