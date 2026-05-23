@@ -258,6 +258,13 @@ def _cli_leaf_commands() -> set[tuple[str, ...]]:
                 leafs.add(prefix)
             return
 
+        has_own_arguments = any(
+            not isinstance(action, (argparse._HelpAction, argparse._SubParsersAction))
+            for action in parser._actions
+        )
+        if prefix and has_own_arguments:
+            leafs.add(prefix)
+
         for action in subparser_actions:
             for name, subparser in action.choices.items():
                 walk(subparser, (*prefix, name))
