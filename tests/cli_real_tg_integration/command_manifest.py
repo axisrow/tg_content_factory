@@ -83,6 +83,9 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
         ("scheduler", "start"),
         ("scheduler", "trigger"),
     },
+    "mutation_safe": {
+        ("dialogs", "react"),
+    },
     "destructive": {
         ("restart",),
         ("serve",),
@@ -133,7 +136,6 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("dialogs", "leave"): "Telegram-visible leave action",
     ("dialogs", "mark-read"): "Telegram-visible read state mutation",
     ("dialogs", "pin-message"): "Telegram-visible pin mutation",
-    ("dialogs", "react"): "Telegram-visible reaction mutation",
     ("dialogs", "send"): "Telegram-visible message send",
     ("dialogs", "unarchive"): "Telegram-visible dialog state mutation",
     ("dialogs", "unpin-message"): "Telegram-visible pin mutation",
@@ -162,7 +164,7 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("my-telegram", "mark-read"): "alias of dialogs mark-read",
     ("my-telegram", "participants"): "alias of dialogs participants",
     ("my-telegram", "pin-message"): "alias of dialogs pin-message",
-    ("my-telegram", "react"): "alias of dialogs react",
+    ("my-telegram", "react"): "alias of dialogs react; mutation-safe coverage uses canonical command",
     ("my-telegram", "refresh"): "alias of dialogs refresh",
     ("my-telegram", "resolve"): "alias of dialogs resolve",
     ("my-telegram", "send"): "alias of dialogs send",

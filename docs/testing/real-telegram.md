@@ -11,8 +11,9 @@
 
 - Live Telegram всегда opt-in.
 - `real_tg_safe` не означает “можно запускать в CI”; он означает только “нет Telegram-visible mutations”.
+- `real_tg_mutation_safe` означает bounded Telegram-visible mutation по явно выбранной оператором цели, например реакция на конкретное сообщение.
 - CLI inventory из `tests/cli_real_tg_integration/` предназначен для ручного запуска время от времени оператором на своей live-среде.
-- Telegram-visible write actions остаются `real_tg_manual` и требуют отдельного ручного gate.
+- High-risk Telegram-visible write actions остаются `real_tg_manual` и требуют отдельного ручного gate.
 - Локальные DB writes допустимы только в явно выделенных CLI folders (`safe_write`, `mutating`, `destructive`) и должны быть idempotent, cleanup-backed или осознанно операторскими.
 
 ## Pytest markers
@@ -20,14 +21,16 @@
 Доступные markers:
 
 - `@pytest.mark.real_tg_safe`
+- `@pytest.mark.real_tg_mutation_safe`
 - `@pytest.mark.real_tg_manual`
 - `@pytest.mark.real_tg_never`
 
 Правила:
 
-- live Telegram test обязан иметь `real_tg_safe` или `real_tg_manual`;
+- live Telegram test обязан иметь `real_tg_safe`, `real_tg_mutation_safe` или `real_tg_manual`;
 - live Telegram test обязан использовать `real_telegram_sandbox` или `cli_real_cli_env`;
 - `real_tg_safe` требует `RUN_REAL_TELEGRAM_SAFE=1`;
+- `real_tg_mutation_safe` требует `RUN_REAL_TELEGRAM_MUTATION_SAFE=1`;
 - `real_tg_manual` требует `RUN_REAL_TELEGRAM_MANUAL=1`;
 - `real_tg_never` несовместим с live fixtures;
 - без marker + live fixture доступ к real Telegram считается ошибкой конфигурации теста.
@@ -91,14 +94,19 @@ python -m src.main --config <real config.yaml> ...
 - Реальные локальные runtime/task/settings mutations.
 - Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_SAFE=1 RUN_CLI_MUTATING=1`.
 
+`mutation_safe/`
+
+- Bounded Telegram-visible mutations по explicit operator target, например `dialogs react` на конкретный `chat_id/message_id`.
+- Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MUTATION_SAFE=1` плюс command-specific target env vars.
+
 `destructive/`
 
 - Process-control commands such as `serve`, `worker`, `stop`, `restart`.
-- Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_SAFE=1 RUN_CLI_DESTRUCTIVE=1`.
+- Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MANUAL=1 RUN_CLI_DESTRUCTIVE=1`.
 
 `manual/`
 
-- Telegram-visible mutations: sends, auth, BotFather, leave/delete/pin/react/photo publish.
+- High-risk Telegram-visible mutations: sends, auth, BotFather, leave/delete/pin/photo publish.
 - Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MANUAL=1`.
 
 ## Coverage Contract
@@ -116,8 +124,8 @@ Default non-live development:
 
 ```bash
 python3 -m ruff check src/ tests/ conftest.py
-python3 -m pytest tests/ -v -m "not aiosqlite_serial and not real_tg_safe and not real_tg_manual and not real_provider_smoke" -n auto
-python3 -m pytest tests/ -v -m "aiosqlite_serial and not real_tg_safe and not real_tg_manual and not real_provider_smoke"
+python3 -m pytest tests/ -v -m "not aiosqlite_serial and not real_tg_safe and not real_tg_mutation_safe and not real_tg_manual and not real_provider_smoke" -n auto
+python3 -m pytest tests/ -v -m "aiosqlite_serial and not real_tg_safe and not real_tg_mutation_safe and not real_tg_manual and not real_provider_smoke"
 ```
 
 Verify the CLI inventory is disabled by default:
@@ -154,10 +162,19 @@ RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_SAFE=1 RUN_CLI_MUTATING=1 \
 python3 -m pytest tests/cli_real_tg_integration/mutating -v
 ```
 
+Manual mutation-safe Telegram-visible inventory:
+
+```bash
+RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MUTATION_SAFE=1 \
+CLI_REAL_TG_REACT_CHAT_ID=<chat_id_or_username> \
+CLI_REAL_TG_REACT_MESSAGE_ID=<message_id> \
+python3 -m pytest tests/cli_real_tg_integration/mutation_safe -v
+```
+
 Manual destructive process-control inventory:
 
 ```bash
-RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_SAFE=1 RUN_CLI_DESTRUCTIVE=1 \
+RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MANUAL=1 RUN_CLI_DESTRUCTIVE=1 \
 python3 -m pytest tests/cli_real_tg_integration/destructive -v
 ```
 
@@ -174,4 +191,5 @@ python3 -m pytest tests/cli_real_tg_integration/manual -v
 - Do not run it from cron or regular local validation.
 - Do not use `REAL_TG_*` sandbox credentials for CLI subprocess inventory.
 - Do not add Telegram-visible mutations under `real_tg_safe`.
+- Do not add high-risk or broad Telegram-visible mutations under `real_tg_mutation_safe`; keep those under `real_tg_manual`.
 - Do not rely on “first live row” without a skip/fixture guard that makes the operator input explicit enough to understand the target.

@@ -301,7 +301,7 @@ _AUTH_RE = re.compile(r"AuthKeyError|AuthKeyUnregistered|session\s+expired|Unaut
 _SILENT_FAILURE_RE = re.compile(
     r"Traceback|ModuleNotFoundError|No connected accounts|No accounts found|"
     r"Could not resolve channel|Error fetching broadcast stats|Failed to initialize|"
-    r"Failed to load|RuntimeError",
+    r"Failed to load|Error sending reaction|RuntimeError",
     re.IGNORECASE,
 )
 

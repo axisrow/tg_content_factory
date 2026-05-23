@@ -8,7 +8,7 @@ import pytest
 
 from tests.cli_real_tg_integration.conftest import wait_for_db_row
 
-pytestmark = pytest.mark.real_tg_safe
+pytestmark = pytest.mark.real_tg_manual
 
 
 def test_proc_worker_publishes_heartbeat(run_cli_popen, cli_real_cli_env):
