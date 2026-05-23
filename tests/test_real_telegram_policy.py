@@ -381,9 +381,28 @@ def _live_cli_default_timeout_marker_seconds() -> float:
     return float(LIVE_CLI_DEFAULT_PYTEST_TIMEOUT_SECONDS)
 
 
-def _literal_cli_calls(path: Path) -> list[tuple[str, tuple[str, ...], int]]:
+def _ast_parent_map(tree: ast.AST) -> dict[ast.AST, ast.AST]:
+    return {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+
+
+def _is_inside_finally(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> bool:
+    current = node
+    while current in parents:
+        parent = parents[current]
+        if isinstance(parent, ast.Try) and current in parent.finalbody:
+            return True
+        current = parent
+    return False
+
+
+def _literal_cli_call_records(path: Path) -> list[tuple[str, tuple[str, ...], int, bool]]:
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    calls: list[tuple[str, tuple[str, ...], int]] = []
+    parents = _ast_parent_map(tree)
+    calls: list[tuple[str, tuple[str, ...], int, bool]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -398,8 +417,15 @@ def _literal_cli_calls(path: Path) -> list[tuple[str, tuple[str, ...], int]]:
                 prefix.append(arg.value)
                 continue
             break
-        calls.append((helper, tuple(prefix), node.lineno))
+        calls.append((helper, tuple(prefix), node.lineno, _is_inside_finally(node, parents)))
     return calls
+
+
+def _literal_cli_calls(path: Path) -> list[tuple[str, tuple[str, ...], int]]:
+    return [
+        (helper, command, lineno)
+        for helper, command, lineno, _in_finally in _literal_cli_call_records(path)
+    ]
 
 
 def _normalize_cli_command_case(
@@ -443,7 +469,7 @@ def test_cli_real_tg_marked_commands_are_explicitly_allowlisted():
         if allowed is None:
             violations.append(f"{path.relative_to(_REPO_ROOT)}: unknown CLI live category {category!r}")
             continue
-        for helper, command, lineno in _literal_cli_calls(path):
+        for helper, command, lineno, in_finally in _literal_cli_call_records(path):
             if not command:
                 violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: dynamic {helper} command")
                 continue
@@ -459,6 +485,11 @@ def test_cli_real_tg_marked_commands_are_explicitly_allowlisted():
                         f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
                         f"{command_case!r} is not cleanup-helper-allowlisted"
                     )
+                if not in_finally:
+                    violations.append(
+                        f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
+                        f"{command_case!r} cleanup helper call is not inside a finally block"
+                    )
                 continue
             if command_case not in allowed:
                 violations.append(
@@ -466,6 +497,34 @@ def test_cli_real_tg_marked_commands_are_explicitly_allowlisted():
                 )
 
     assert violations == []
+
+
+def test_cli_run_direct_cleanup_policy_requires_finally_context(tmp_path):
+    sample = tmp_path / "test_sample.py"
+    sample.write_text(
+        """
+import pytest
+
+pytestmark = pytest.mark.real_tg_safe
+
+def test_bad(cli_env):
+    cli_run_direct(cli_env, "scheduler", "clear-pending")
+
+def test_good(cli_env):
+    try:
+        pass
+    finally:
+        cli_run_direct(cli_env, "scheduler", "clear-pending")
+""",
+        encoding="utf-8",
+    )
+
+    records = _literal_cli_call_records(sample)
+
+    assert records == [
+        ("cli_run_direct", ("scheduler", "clear-pending"), 7, False),
+        ("cli_run_direct", ("scheduler", "clear-pending"), 13, True),
+    ]
 
 
 def test_cli_real_tg_folder_markers_match_risk_category():

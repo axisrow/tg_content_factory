@@ -79,7 +79,6 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
     },
     "mutating": {
         ("channel", "refresh-meta"),
-        ("scheduler", "clear-pending"),
         ("scheduler", "start"),
         ("scheduler", "trigger"),
     },
