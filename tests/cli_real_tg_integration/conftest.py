@@ -350,36 +350,72 @@ def wait_for_db_row(
 
 _FLOOD_WAIT_RE = re.compile(r"FloodWaitError|FLOOD_?WAIT", re.IGNORECASE)
 _AUTH_RE = re.compile(r"AuthKeyError|AuthKeyUnregistered|session\s+expired|UnauthorizedError", re.IGNORECASE)
-_SILENT_FAILURE_RE = re.compile(
-    r"Traceback|ModuleNotFoundError|No connected accounts|No accounts found|"
-    r"Could not resolve channel|Error fetching broadcast stats|Failed to initialize|"
-    r"Failed to load|Error sending reaction|RuntimeError",
-    re.IGNORECASE,
+_SILENT_FAILURE_PATTERNS = (
+    ("Traceback", re.compile(r"Traceback", re.IGNORECASE)),
+    ("ModuleNotFoundError", re.compile(r"ModuleNotFoundError", re.IGNORECASE)),
+    ("No connected accounts", re.compile(r"No connected accounts", re.IGNORECASE)),
+    ("No accounts found", re.compile(r"No accounts found", re.IGNORECASE)),
+    ("Could not resolve channel", re.compile(r"Could not resolve channel", re.IGNORECASE)),
+    ("Error fetching broadcast stats", re.compile(r"Error fetching broadcast stats", re.IGNORECASE)),
+    ("Failed to initialize", re.compile(r"Failed to initialize", re.IGNORECASE)),
+    ("Failed to load", re.compile(r"Failed to load", re.IGNORECASE)),
+    ("Error sending reaction", re.compile(r"Error sending reaction", re.IGNORECASE)),
+    ("RuntimeError", re.compile(r"RuntimeError", re.IGNORECASE)),
 )
+_DEFAULT_ALLOWED_ERROR_TEXTS = frozenset({"No connected accounts"})
+
+
+def _normalize_allowed_error_texts(
+    allow_error_text: bool | str | tuple[str, ...],
+) -> frozenset[str]:
+    if allow_error_text is True:
+        return _DEFAULT_ALLOWED_ERROR_TEXTS
+    if allow_error_text is False:
+        return frozenset()
+    if isinstance(allow_error_text, str):
+        return frozenset({allow_error_text})
+    return frozenset(allow_error_text)
+
+
+def _assert_cli_result_ok(
+    result: subprocess.CompletedProcess,
+    *,
+    allow_error_text: bool | str | tuple[str, ...] = False,
+) -> None:
+    combined = (result.stdout or "") + "\n" + (result.stderr or "")
+    if result.returncode != 0:
+        if _FLOOD_WAIT_RE.search(combined):
+            pytest.skip("Telegram FLOOD_WAIT; retry later")
+        if _AUTH_RE.search(combined):
+            pytest.skip("Telegram session not authorized; re-auth account")
+        pytest.fail(
+            f"CLI exited with {result.returncode}\n"
+            f"--- stdout ---\n{result.stdout}\n"
+            f"--- stderr ---\n{result.stderr}",
+            pytrace=False,
+        )
+    allowed_error_texts = _normalize_allowed_error_texts(allow_error_text)
+    for failure_text, pattern in _SILENT_FAILURE_PATTERNS:
+        if failure_text in allowed_error_texts:
+            continue
+        if pattern.search(combined):
+            pytest.fail(
+                "CLI returned zero but printed a failure-looking message "
+                f"({failure_text})\n"
+                f"--- stdout ---\n{result.stdout}\n"
+                f"--- stderr ---\n{result.stderr}",
+                pytrace=False,
+            )
 
 
 @pytest.fixture
 def assert_cli_ok():
-    def _assert(result: subprocess.CompletedProcess, *, allow_error_text: bool = False) -> None:
-        combined = (result.stdout or "") + "\n" + (result.stderr or "")
-        if result.returncode != 0:
-            if _FLOOD_WAIT_RE.search(combined):
-                pytest.skip("Telegram FLOOD_WAIT; retry later")
-            if _AUTH_RE.search(combined):
-                pytest.skip("Telegram session not authorized; re-auth account")
-            pytest.fail(
-                f"CLI exited with {result.returncode}\n"
-                f"--- stdout ---\n{result.stdout}\n"
-                f"--- stderr ---\n{result.stderr}",
-                pytrace=False,
-            )
-        if not allow_error_text and _SILENT_FAILURE_RE.search(combined):
-            pytest.fail(
-                "CLI returned zero but printed a failure-looking message\n"
-                f"--- stdout ---\n{result.stdout}\n"
-                f"--- stderr ---\n{result.stderr}",
-                pytrace=False,
-            )
+    def _assert(
+        result: subprocess.CompletedProcess,
+        *,
+        allow_error_text: bool | str | tuple[str, ...] = False,
+    ) -> None:
+        _assert_cli_result_ok(result, allow_error_text=allow_error_text)
 
     return _assert
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from tests.cli_real_tg_integration.command_manifest import (
     CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY,
     CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS,
 )
+from tests.cli_real_tg_integration.conftest import _assert_cli_result_ok
 from tests.conftest import (
     CLI_REAL_TG_LIVE_FIXTURE,
     REAL_TG_LIVE_FIXTURE,
@@ -460,6 +462,45 @@ def test_cli_real_tg_inventory_does_not_reference_removed_discovery_fixtures():
                 violations.append(f"{path.relative_to(_REPO_ROOT)}: {fixture_name}")
 
     assert violations == []
+
+
+def test_cli_real_tg_inventory_does_not_disable_all_failure_text_checks():
+    violations: list[str] = []
+
+    for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for keyword in node.keywords:
+                if keyword.arg != "allow_error_text":
+                    continue
+                if isinstance(keyword.value, ast.Constant) and keyword.value.value is True:
+                    violations.append(f"{path.relative_to(_REPO_ROOT)}:{node.lineno}")
+
+    assert violations == []
+
+
+def test_cli_assert_ok_allows_only_named_failure_texts():
+    allowed_result = subprocess.CompletedProcess(
+        args=("src.main", "scheduler", "trigger"),
+        returncode=0,
+        stdout="No connected accounts.",
+        stderr="",
+    )
+    _assert_cli_result_ok(allowed_result, allow_error_text=("No connected accounts",))
+
+    mixed_failure_result = subprocess.CompletedProcess(
+        args=("src.main", "scheduler", "trigger"),
+        returncode=0,
+        stdout="No connected accounts.\nTraceback (most recent call last):",
+        stderr="",
+    )
+    with pytest.raises(pytest.fail.Exception, match="Traceback"):
+        _assert_cli_result_ok(
+            mixed_failure_result,
+            allow_error_text=("No connected accounts",),
+        )
 
 
 def test_cli_real_tg_parser_leaf_commands_are_covered_or_manifested():
