@@ -360,9 +360,11 @@ def _pytest_timeout_marker_seconds(node: ast.AST) -> float | None:
     if isinstance(node, ast.Call):
         marker = node.func
         timeout_args = node.args
+        timeout_keywords = node.keywords
     else:
         marker = node
         timeout_args = []
+        timeout_keywords = []
     parts: list[str] = []
     while isinstance(marker, ast.Attribute):
         parts.append(marker.attr)
@@ -372,6 +374,12 @@ def _pytest_timeout_marker_seconds(node: ast.AST) -> float | None:
     dotted = ".".join(reversed(parts))
     if dotted not in {"pytest.mark.timeout", "mark.timeout"}:
         return None
+    for keyword in timeout_keywords:
+        if keyword.arg != "timeout":
+            continue
+        if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, (int, float)):
+            return float(keyword.value.value)
+        return 0.0
     if not timeout_args:
         return 0.0
     value = timeout_args[0]
@@ -533,15 +541,38 @@ def _has_cleanup_producer(
     cleanup_command_case: tuple[str, ...],
     records: list[tuple[str, tuple[str, ...], int, bool]],
     leafs: set[tuple[str, ...]],
+    cleanup_lineno: int,
 ) -> bool:
-    producers = _CLI_CLEANUP_COMMAND_PRODUCERS.get(cleanup_command_case, set())
-    for helper, command, _lineno, _in_finally in records:
+    for helper, command, lineno, _in_finally in records:
         if helper == "cli_run_direct":
             continue
+        if lineno >= cleanup_lineno:
+            continue
         command_case = _normalize_cli_command_case(command, leafs)
-        if command_case in producers:
+        if _is_cleanup_producer_command(cleanup_command_case, command, command_case):
             return True
     return False
+
+
+def _is_cli_help_command(command: tuple[str, ...]) -> bool:
+    return "-h" in command or "--help" in command
+
+
+def _is_cleanup_producer_command(
+    cleanup_command_case: tuple[str, ...],
+    command: tuple[str, ...],
+    command_case: tuple[str, ...] | None,
+) -> bool:
+    if command_case is None or _is_cli_help_command(command):
+        return False
+
+    if cleanup_command_case == ("scheduler", "clear-pending"):
+        return command in {("collect",), ("scheduler", "trigger")}
+
+    if cleanup_command_case in {("agent", "thread-delete"), ("agent", "threads")}:
+        return command_case == ("agent", "chat") and any(arg in {"-p", "--prompt"} for arg in command[2:])
+
+    return command_case in _CLI_CLEANUP_COMMAND_PRODUCERS.get(cleanup_command_case, set())
 
 
 def test_cli_real_tg_marked_commands_are_explicitly_allowlisted():
@@ -581,7 +612,7 @@ def test_cli_real_tg_marked_commands_are_explicitly_allowlisted():
                             f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
                             f"{command_case!r} cleanup helper call is not inside a finally block"
                         )
-                    if not _has_cleanup_producer(command_case, records, leafs):
+                    if not _has_cleanup_producer(command_case, records, leafs, lineno):
                         violations.append(
                             f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
                             f"{command_case!r} cleanup helper call has no producer command in the same test"
@@ -612,11 +643,29 @@ def test_bad_no_producer(cli_env):
     finally:
         cli_run_direct(cli_env, "scheduler", "clear-pending")
 
+def test_bad_help_is_not_producer(run_cli, cli_env):
+    try:
+        run_cli("collect", "--help")
+    finally:
+        cli_run_direct(cli_env, "scheduler", "clear-pending")
+
 def test_good(run_cli, cli_env):
     try:
         run_cli("scheduler", "trigger")
     finally:
         cli_run_direct(cli_env, "scheduler", "clear-pending")
+
+def test_bad_agent_help_is_not_producer(run_cli, cli_env):
+    try:
+        run_cli("agent", "chat", "--help")
+    finally:
+        cli_run_direct(cli_env, "agent", "thread-delete", "--thread-id", "1")
+
+def test_good_agent_prompt(run_cli, cli_env):
+    try:
+        run_cli("agent", "chat", "-p", "ok")
+    finally:
+        cli_run_direct(cli_env, "agent", "thread-delete", "--thread-id", "1")
 """,
         encoding="utf-8",
     )
@@ -624,18 +673,38 @@ def test_good(run_cli, cli_env):
     leafs = _cli_leaf_commands()
     records = _literal_cli_call_records_by_test(sample)
 
-    assert records["test_bad_no_finally"] == [
-        ("cli_run_direct", ("scheduler", "clear-pending"), 7, False),
-    ]
-    assert records["test_bad_no_producer"] == [
-        ("cli_run_direct", ("scheduler", "clear-pending"), 13, True),
-    ]
-    assert records["test_good"] == [
-        ("run_cli", ("scheduler", "trigger"), 17, False),
-        ("cli_run_direct", ("scheduler", "clear-pending"), 19, True),
-    ]
-    assert not _has_cleanup_producer(("scheduler", "clear-pending"), records["test_bad_no_producer"], leafs)
-    assert _has_cleanup_producer(("scheduler", "clear-pending"), records["test_good"], leafs)
+    assert records["test_bad_no_finally"][0][3] is False
+    assert records["test_bad_no_producer"][0][3] is True
+    assert not _has_cleanup_producer(
+        ("scheduler", "clear-pending"),
+        records["test_bad_no_producer"],
+        leafs,
+        records["test_bad_no_producer"][0][2],
+    )
+    assert not _has_cleanup_producer(
+        ("scheduler", "clear-pending"),
+        records["test_bad_help_is_not_producer"],
+        leafs,
+        records["test_bad_help_is_not_producer"][1][2],
+    )
+    assert _has_cleanup_producer(
+        ("scheduler", "clear-pending"),
+        records["test_good"],
+        leafs,
+        records["test_good"][1][2],
+    )
+    assert not _has_cleanup_producer(
+        ("agent", "thread-delete"),
+        records["test_bad_agent_help_is_not_producer"],
+        leafs,
+        records["test_bad_agent_help_is_not_producer"][1][2],
+    )
+    assert _has_cleanup_producer(
+        ("agent", "thread-delete"),
+        records["test_good_agent_prompt"],
+        leafs,
+        records["test_good_agent_prompt"][1][2],
+    )
 
 
 def test_cli_real_tg_folder_markers_match_risk_category():
@@ -722,11 +791,13 @@ def test_cli_real_tg_subprocess_timeouts_have_pytest_timeout_marker():
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test_")
         )
         for test_function in test_functions:
-            pytest_timeout = (
-                _function_timeout_marker_seconds(test_function)
-                or module_timeout
-                or default_marker_timeout
-            )
+            function_timeout = _function_timeout_marker_seconds(test_function)
+            if function_timeout is not None:
+                pytest_timeout = function_timeout
+            elif module_timeout is not None:
+                pytest_timeout = module_timeout
+            else:
+                pytest_timeout = default_marker_timeout
             for call in ast.walk(test_function):
                 if not isinstance(call, ast.Call):
                     continue
@@ -769,14 +840,19 @@ def test_bad(run_cli):
 @pytest.mark.timeout(180)
 def test_good(run_cli):
     run_cli("filter", "analyze", timeout=120)
+
+@pytest.mark.timeout(timeout=60)
+def test_keyword_bad(run_cli):
+    run_cli("filter", "analyze", timeout=120)
 """,
         encoding="utf-8",
     )
     tree = ast.parse(sample.read_text(encoding="utf-8"), filename=str(sample))
-    bad, good = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    bad, good, keyword_bad = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
 
     assert _function_timeout_marker_seconds(bad) == 60
     assert _function_timeout_marker_seconds(good) == 180
+    assert _function_timeout_marker_seconds(keyword_bad) == 60
 
 
 def test_cli_assert_ok_allows_only_named_failure_texts():
