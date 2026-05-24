@@ -1,7 +1,8 @@
 """ENV-gate for bounded Telegram-visible mutation CLI tests.
 
 These tests intentionally mutate visible Telegram state, but only for an
-operator-chosen target such as a specific message reaction.
+auto-discovered live DB target with bounded scope and cleanup where the
+operation is reversible.
 
 Two env vars are required to run these tests:
 - RUN_CLI_REAL_TG_LIVE=1 — required by the live CLI fixture.

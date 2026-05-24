@@ -217,7 +217,7 @@ class TelegramActionService:
         phone: str | None,
         chat_id: Any,
         message_id: int,
-        emoji: str,
+        emoji: str | None,
         native: bool = True,
         allow_any: bool = False,
         resolve_entity: bool = True,
