@@ -72,6 +72,7 @@ class LiveCliMessageTarget:
 
 _SOURCE_ROOT = Path(__file__).resolve().parents[2]
 CliEnv = CliRealCliEnv
+_PIN_CAPABLE_DIALOG_TYPES = frozenset({"group", "supergroup", "gigagroup", "forum"})
 
 
 def _resolve_live_root() -> Path:
@@ -158,6 +159,7 @@ def _fetch_live_message_target(
     phones: tuple[str, ...],
     *,
     require_own_dialog: bool = False,
+    require_pin_capable_dialog: bool = False,
 ) -> LiveCliMessageTarget | None:
     phone_set = set(phones)
     with sqlite3.connect(db_path) as conn:
@@ -169,7 +171,8 @@ def _fetch_live_message_target(
                 m.message_id,
                 NULLIF(c.preferred_phone, '') AS preferred_phone,
                 d.phone AS dialog_phone,
-                COALESCE(d.is_own, 0) AS is_own
+                COALESCE(d.is_own, 0) AS is_own,
+                LOWER(COALESCE(NULLIF(d.channel_type, ''), NULLIF(c.channel_type, ''), '')) AS dialog_type
             FROM messages m
             JOIN channels c ON c.channel_id = m.channel_id
             LEFT JOIN dialog_cache d
@@ -200,7 +203,10 @@ def _fetch_live_message_target(
         preferred_phone = str(row["preferred_phone"]) if row["preferred_phone"] else None
         dialog_phone = str(row["dialog_phone"]) if row["dialog_phone"] else None
         is_own = bool(row["is_own"])
+        dialog_type = str(row["dialog_type"] or "").lower()
         if require_own_dialog and (not is_own or dialog_phone not in phone_set):
+            continue
+        if require_pin_capable_dialog and dialog_type not in _PIN_CAPABLE_DIALOG_TYPES:
             continue
 
         if preferred_phone in phone_set:
@@ -485,6 +491,8 @@ _SILENT_FAILURE_PATTERNS = (
     ("Failed to initialize", re.compile(r"Failed to initialize", re.IGNORECASE)),
     ("Failed to load", re.compile(r"Failed to load", re.IGNORECASE)),
     ("Error sending reaction", re.compile(r"Error sending reaction", re.IGNORECASE)),
+    ("Error pinning", re.compile(r"Error pinning", re.IGNORECASE)),
+    ("Error unpinning", re.compile(r"Error unpinning", re.IGNORECASE)),
     ("RuntimeError", re.compile(r"RuntimeError", re.IGNORECASE)),
 )
 _DEFAULT_ALLOWED_ERROR_TEXTS = frozenset({"No connected accounts"})
@@ -610,6 +618,22 @@ def live_owned_mutation_message(cli_real_cli_env: CliRealCliEnv) -> LiveCliMessa
         pytest.skip(f"failed to discover live owned mutation message from {cli_real_cli_env.db_path}: {exc}")
     if target is None:
         pytest.skip("live CLI database has no own cached dialog with a collected message target")
+    return target
+
+
+@pytest.fixture
+def live_pin_mutation_message(cli_real_cli_env: CliRealCliEnv) -> LiveCliMessageTarget:
+    try:
+        target = _fetch_live_message_target(
+            cli_real_cli_env.db_path,
+            cli_real_cli_env.phones,
+            require_own_dialog=True,
+            require_pin_capable_dialog=True,
+        )
+    except sqlite3.Error as exc:
+        pytest.skip(f"failed to discover live pin-capable mutation message from {cli_real_cli_env.db_path}: {exc}")
+    if target is None:
+        pytest.skip("live CLI database has no own cached group/supergroup/forum with a collected message target")
     return target
 
 

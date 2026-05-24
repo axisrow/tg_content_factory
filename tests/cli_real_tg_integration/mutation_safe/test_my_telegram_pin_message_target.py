@@ -11,10 +11,10 @@ pytestmark = pytest.mark.real_tg_mutation_safe
 
 
 @pytest.mark.timeout(120)
-def test_my_telegram_pin_message_owned_message(run_cli, assert_cli_ok, cli_real_cli_env, live_owned_mutation_message):
-    chat_id = live_owned_mutation_message.chat_ref
-    message_id = live_owned_mutation_message.message_id
-    phone = live_owned_mutation_message.phone
+def test_my_telegram_pin_message_owned_message(run_cli, assert_cli_ok, cli_real_cli_env, live_pin_mutation_message):
+    chat_id = live_pin_mutation_message.chat_ref
+    message_id = live_pin_mutation_message.message_id
+    phone = live_pin_mutation_message.phone
     leak_msg: str | None = None
 
     try:
