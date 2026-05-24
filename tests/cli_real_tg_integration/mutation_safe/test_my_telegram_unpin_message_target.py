@@ -21,6 +21,7 @@ def test_my_telegram_unpin_message_owned_message(
     message_id = live_pin_mutation_message.message_id
     phone = live_pin_mutation_message.phone
     leak_msg: str | None = None
+    message_pinned = False
 
     try:
         setup = run_cli(
@@ -34,6 +35,7 @@ def test_my_telegram_unpin_message_owned_message(
             timeout=60,
         )
         assert_cli_ok(setup)
+        message_pinned = True
 
         result = run_cli(
             "my-telegram",
@@ -48,26 +50,28 @@ def test_my_telegram_unpin_message_owned_message(
         )
         assert_cli_ok(result)
         assert "Message(s) unpinned." in result.stdout
+        message_pinned = False
     finally:
-        try:
-            cleanup = cli_run_direct(
-                cli_real_cli_env,
-                "my-telegram",
-                "unpin-message",
-                "--message-id",
-                message_id,
-                "--yes",
-                "--phone",
-                phone,
-                chat_id,
-                timeout=60,
-            )
-        except subprocess.TimeoutExpired:
-            leak_msg = f"message {message_id} in {chat_id} may be left pinned: cleanup timed out"
-        else:
-            cleanup_failure = cli_result_failure_summary(cleanup)
-            if cleanup_failure is not None:
-                leak_msg = f"message {message_id} in {chat_id} may be left pinned: {cleanup_failure}"
+        if message_pinned:
+            try:
+                cleanup = cli_run_direct(
+                    cli_real_cli_env,
+                    "my-telegram",
+                    "unpin-message",
+                    "--message-id",
+                    message_id,
+                    "--yes",
+                    "--phone",
+                    phone,
+                    chat_id,
+                    timeout=60,
+                )
+            except subprocess.TimeoutExpired:
+                leak_msg = f"message {message_id} in {chat_id} may be left pinned: cleanup timed out"
+            else:
+                cleanup_failure = cli_result_failure_summary(cleanup)
+                if cleanup_failure is not None:
+                    leak_msg = f"message {message_id} in {chat_id} may be left pinned: {cleanup_failure}"
 
         if leak_msg and sys.exc_info()[0] is None:
             pytest.fail(leak_msg)
