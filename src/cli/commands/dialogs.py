@@ -321,7 +321,7 @@ def run_with_dependencies(
                     emoji = args.emoji
                     if not emoji:
                         print("Error: emoji is required unless --clear is used.")
-                        return
+                        raise SystemExit(2)
                 if not args.yes:
                     action = (
                         f"Clear reaction from message #{args.message_id} in {args.chat_id}"

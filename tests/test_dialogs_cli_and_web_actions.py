@@ -52,6 +52,7 @@ def _mock_pool(*, clients=None, native_result=None, get_forum_topics=None):
     pool.get_forum_topics = AsyncMock(
         return_value=get_forum_topics if get_forum_topics is not None else [],
     )
+    pool._get_account_for_phone = AsyncMock(return_value=None)
     pool.disconnect_all = AsyncMock()
     pool._dialogs_cache = {}
     pool._dialogs_cache_ttl_sec = 60.0
@@ -654,6 +655,18 @@ class TestCliArchiveUnarchiveMarkRead:
         client.get_entity = AsyncMock(side_effect=RuntimeError("err"))
         _run_cli("mark-read", pool, cli_db, {"phone": _PHONE, "chat_id": "@ch", "max_id": None})
         assert "Error marking" in capsys.readouterr().out
+
+    def test_react_missing_emoji_exits_nonzero(self, cli_db, capsys):
+        pool, _ = _mock_pool()
+        with pytest.raises(SystemExit) as exc_info:
+            _run_cli(
+                "react",
+                pool,
+                cli_db,
+                {"phone": _PHONE, "chat_id": "@ch", "message_id": 1, "emoji": None, "clear": False, "yes": True},
+            )
+        assert exc_info.value.code == 2
+        assert "emoji is required unless --clear is used" in capsys.readouterr().out
 
 
 class TestCliTopics:
