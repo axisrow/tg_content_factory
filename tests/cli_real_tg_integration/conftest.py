@@ -510,6 +510,33 @@ def _normalize_allowed_error_texts(
     return frozenset(allow_error_text)
 
 
+def cli_result_failure_summary(
+    result: subprocess.CompletedProcess,
+    *,
+    allow_error_text: bool | str | tuple[str, ...] = False,
+) -> str | None:
+    combined = (result.stdout or "") + "\n" + (result.stderr or "")
+    if result.returncode != 0:
+        return (
+            f"CLI exited with {result.returncode}\n"
+            f"--- stdout ---\n{result.stdout}\n"
+            f"--- stderr ---\n{result.stderr}"
+        )
+
+    allowed_error_texts = _normalize_allowed_error_texts(allow_error_text)
+    for failure_text, pattern in _SILENT_FAILURE_PATTERNS:
+        if failure_text in allowed_error_texts:
+            continue
+        if pattern.search(combined):
+            return (
+                "CLI returned zero but printed a failure-looking message "
+                f"({failure_text})\n"
+                f"--- stdout ---\n{result.stdout}\n"
+                f"--- stderr ---\n{result.stderr}"
+            )
+    return None
+
+
 def _assert_cli_result_ok(
     result: subprocess.CompletedProcess,
     *,
@@ -521,24 +548,9 @@ def _assert_cli_result_ok(
             pytest.skip("Telegram FLOOD_WAIT; retry later")
         if _AUTH_RE.search(combined):
             pytest.skip("Telegram session not authorized; re-auth account")
-        pytest.fail(
-            f"CLI exited with {result.returncode}\n"
-            f"--- stdout ---\n{result.stdout}\n"
-            f"--- stderr ---\n{result.stderr}",
-            pytrace=False,
-        )
-    allowed_error_texts = _normalize_allowed_error_texts(allow_error_text)
-    for failure_text, pattern in _SILENT_FAILURE_PATTERNS:
-        if failure_text in allowed_error_texts:
-            continue
-        if pattern.search(combined):
-            pytest.fail(
-                "CLI returned zero but printed a failure-looking message "
-                f"({failure_text})\n"
-                f"--- stdout ---\n{result.stdout}\n"
-                f"--- stderr ---\n{result.stderr}",
-                pytrace=False,
-            )
+    failure_summary = cli_result_failure_summary(result, allow_error_text=allow_error_text)
+    if failure_summary is not None:
+        pytest.fail(failure_summary, pytrace=False)
 
 
 @pytest.fixture
@@ -633,7 +645,10 @@ def live_pin_mutation_message(cli_real_cli_env: CliRealCliEnv) -> LiveCliMessage
     except sqlite3.Error as exc:
         pytest.skip(f"failed to discover live pin-capable mutation message from {cli_real_cli_env.db_path}: {exc}")
     if target is None:
-        pytest.skip("live CLI database has no own cached group/supergroup/forum with a collected message target")
+        pytest.skip(
+            "live CLI database has no own cached group/supergroup/gigagroup/forum "
+            "with a collected message target"
+        )
     return target
 
 

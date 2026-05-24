@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from tests.cli_real_tg_integration.conftest import cli_run_direct
+from tests.cli_real_tg_integration.conftest import cli_result_failure_summary, cli_run_direct
 
 pytestmark = pytest.mark.real_tg_mutation_safe
 
@@ -65,11 +65,9 @@ def test_my_telegram_unpin_message_owned_message(
         except subprocess.TimeoutExpired:
             leak_msg = f"message {message_id} in {chat_id} may be left pinned: cleanup timed out"
         else:
-            if cleanup.returncode != 0:
-                leak_msg = (
-                    f"message {message_id} in {chat_id} may be left pinned: "
-                    f"cleanup stderr={cleanup.stderr!r}"
-                )
+            cleanup_failure = cli_result_failure_summary(cleanup)
+            if cleanup_failure is not None:
+                leak_msg = f"message {message_id} in {chat_id} may be left pinned: {cleanup_failure}"
 
         if leak_msg and sys.exc_info()[0] is None:
             pytest.fail(leak_msg)
