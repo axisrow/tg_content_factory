@@ -92,6 +92,30 @@ async def test_delete_messages():
     assert result is not None
 
 
+@pytest.mark.anyio
+async def test_send_reaction_invokes_raw_api_with_emoji():
+    session = _session()
+
+    await session.send_reaction("chat", 42, "🔥")
+
+    request = session.raw_client.invoke.await_args.args[0]
+    assert request.peer == "chat"
+    assert request.msg_id == 42
+    assert [reaction.emoticon for reaction in request.reaction] == ["🔥"]
+
+
+@pytest.mark.anyio
+async def test_send_reaction_invokes_raw_api_with_empty_vector_to_clear():
+    session = _session()
+
+    await session.send_reaction("chat", 42, None)
+
+    request = session.raw_client.invoke.await_args.args[0]
+    assert request.peer == "chat"
+    assert request.msg_id == 42
+    assert request.reaction == []
+
+
 # --- Batch 2: Media (#187) ---
 
 

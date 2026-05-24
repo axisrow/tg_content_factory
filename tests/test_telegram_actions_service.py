@@ -39,6 +39,26 @@ async def test_send_reaction_resolves_entity_and_releases_client():
 
 
 @pytest.mark.anyio
+async def test_send_reaction_clear_passes_none_and_releases_client():
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.send_reaction = AsyncMock()
+    pool = _pool_with_client(client)
+
+    result = await TelegramActionService(pool).send_reaction(
+        phone="+1",
+        chat_id="@chat",
+        message_id=42,
+        emoji=None,
+    )
+
+    assert result.phone == "+1"
+    client.get_entity.assert_awaited_once_with("@chat")
+    client.send_reaction.assert_awaited_once_with("entity", 42, None)
+    pool.release_client.assert_awaited_once_with("+1")
+
+
+@pytest.mark.anyio
 async def test_create_channel_sets_username_and_returns_link():
     client = AsyncMock()
     channel = SimpleNamespace(id=123, username="")

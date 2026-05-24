@@ -96,8 +96,9 @@ python -m src.main --config <real config.yaml> ...
 
 `mutation_safe/`
 
-- Bounded Telegram-visible mutations по explicit operator target, например `dialogs react` на конкретный `chat_id/message_id`.
-- Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MUTATION_SAFE=1` плюс command-specific target env vars.
+- Bounded Telegram-visible mutations по live DB/cache fixtures, например `dialogs react` на собранном сообщении,
+  `dialogs mark-read --max-id`, cleanup-backed archive/unarchive, cleanup-backed pin/unpin.
+- Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MUTATION_SAFE=1`.
 
 `destructive/`
 
@@ -106,7 +107,8 @@ python -m src.main --config <real config.yaml> ...
 
 `manual/`
 
-- High-risk Telegram-visible mutations: sends, auth, BotFather, leave/delete/pin/photo publish.
+- High-risk Telegram-visible mutations: sends, auth, BotFather, leave/delete/admin/edit/photo publish.
+- Pin/unpin are only mutation-safe for own cached dialogs with `--notify` forbidden and cleanup-backed tests.
 - Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MANUAL=1`.
 
 ## Coverage Contract
@@ -166,11 +168,18 @@ Manual mutation-safe Telegram-visible inventory:
 
 ```bash
 RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MUTATION_SAFE=1 \
-CLI_REAL_TG_REACT_CHAT_ID=<chat_id_or_username> \
-CLI_REAL_TG_REACT_MESSAGE_ID=<message_id> \
-CLI_REAL_TG_REACT_PHONE=<account_phone> \
 python3 -m pytest tests/cli_real_tg_integration/mutation_safe -v
 ```
+
+The mutation-safe inventory discovers targets from the live DB/cache, like the read-only inventory:
+
+- archive/unarchive/mark-read/react use an active collected dialog/message target;
+- pin/unpin require an own cached dialog with a collected message, otherwise those tests skip;
+- react tests set the requested emoji and then clear it with `dialogs react --clear` / `my-telegram react --clear`;
+- pin tests unpin in cleanup, and unpin tests first pin then unpin so the final state is unpinned;
+- archive tests unarchive in cleanup, and unarchive tests first archive then unarchive so the final state is unarchived.
+
+`CLI_REAL_TG_REACT_EMOJI` can override the default reaction emoji for react tests.
 
 Manual destructive process-control inventory:
 
@@ -193,5 +202,7 @@ python3 -m pytest tests/cli_real_tg_integration/manual -v
 - Do not use `REAL_TG_*` sandbox credentials for CLI subprocess inventory.
 - Do not add Telegram-visible mutations under `real_tg_safe`.
 - Do not add high-risk or broad Telegram-visible mutations under `real_tg_mutation_safe`; keep those under `real_tg_manual`.
-- Do not rely on “first live row” without a skip/fixture guard that makes the operator input explicit enough to understand the target.
+- Do not run mutation-safe pin with `--notify` or mutation-safe unpin without `--message-id`.
+- Do not run mutation-safe mark-read without `--max-id`.
+- Do not rely on “first live row” directly from tests; add a named live fixture with skip guards and cleanup expectations.
 - Do not run process-control inventory against a config that already has a managed server PID file; use a separate config or stop the server first.

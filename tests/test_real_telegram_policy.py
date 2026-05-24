@@ -75,6 +75,24 @@ _OBSOLETE_CLI_LIVE_FIXTURE_NAMES = (
     "discover_first_dialog_username",
     "discover_first_phone",
 )
+_OBSOLETE_MUTATION_SAFE_TARGET_ENV_NAMES = (
+    "CLI_REAL_TG_ARCHIVE_CHAT_ID",
+    "CLI_REAL_TG_ARCHIVE_PHONE",
+    "CLI_REAL_TG_MARK_READ_CHAT_ID",
+    "CLI_REAL_TG_MARK_READ_MAX_ID",
+    "CLI_REAL_TG_MARK_READ_PHONE",
+    "CLI_REAL_TG_PIN_CHAT_ID",
+    "CLI_REAL_TG_PIN_MESSAGE_ID",
+    "CLI_REAL_TG_PIN_PHONE",
+    "CLI_REAL_TG_REACT_CHAT_ID",
+    "CLI_REAL_TG_REACT_MESSAGE_ID",
+    "CLI_REAL_TG_REACT_PHONE",
+    "CLI_REAL_TG_UNARCHIVE_CHAT_ID",
+    "CLI_REAL_TG_UNARCHIVE_PHONE",
+    "CLI_REAL_TG_UNPIN_CHAT_ID",
+    "CLI_REAL_TG_UNPIN_MESSAGE_ID",
+    "CLI_REAL_TG_UNPIN_PHONE",
+)
 _LIVE_POLICY_MARKER_USAGES = (
     _SAFE_MARKER_USAGES
     + _MUTATION_SAFE_MARKER_USAGES
@@ -92,6 +110,16 @@ _CLI_CATEGORY_REQUIRED_MARKERS = {
 _CLI_CLEANUP_COMMAND_PRODUCERS = {
     ("agent", "thread-delete"): {("agent", "chat")},
     ("agent", "threads"): {("agent", "chat")},
+    ("dialogs", "archive"): {("dialogs", "unarchive")},
+    ("dialogs", "pin-message"): {("dialogs", "unpin-message")},
+    ("dialogs", "react"): {("dialogs", "react")},
+    ("dialogs", "unarchive"): {("dialogs", "archive")},
+    ("dialogs", "unpin-message"): {("dialogs", "pin-message")},
+    ("my-telegram", "archive"): {("my-telegram", "unarchive")},
+    ("my-telegram", "pin-message"): {("my-telegram", "unpin-message")},
+    ("my-telegram", "react"): {("my-telegram", "react")},
+    ("my-telegram", "unarchive"): {("my-telegram", "archive")},
+    ("my-telegram", "unpin-message"): {("my-telegram", "pin-message")},
     ("scheduler", "clear-pending"): {("collect",), ("scheduler", "trigger")},
 }
 _AUDIT_EXCLUDED_FILES = {"test_real_telegram_policy.py"}
@@ -498,6 +526,30 @@ def _literal_cli_call_records_by_test(path: Path) -> dict[str, list[tuple[str, t
     return records
 
 
+def _literal_cli_string_arg_records(path: Path) -> list[tuple[str, tuple[str, ...], tuple[str, ...], int]]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    records: list[tuple[str, tuple[str, ...], tuple[str, ...], int]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        helper = _call_name(node.func)
+        if helper not in _RUN_CLI_HELPERS:
+            continue
+        args = node.args[1:] if helper == "cli_run_direct" else node.args
+        prefix: list[str] = []
+        strings: list[str] = []
+        prefix_open = True
+        for arg in args:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                strings.append(arg.value)
+                if prefix_open:
+                    prefix.append(arg.value)
+                continue
+            prefix_open = False
+        records.append((helper, tuple(prefix), tuple(strings), node.lineno))
+    return records
+
+
 def _literal_cli_calls(path: Path) -> list[tuple[str, tuple[str, ...], int]]:
     return [
         (helper, command, lineno)
@@ -755,6 +807,21 @@ def test_cli_real_tg_inventory_does_not_reference_removed_discovery_fixtures():
     assert violations == []
 
 
+def test_cli_real_tg_mutation_safe_inventory_discovers_live_targets():
+    violations: list[str] = []
+    mutation_safe_dir = _CLI_REAL_TG_DIR / "mutation_safe"
+
+    for path in sorted(mutation_safe_dir.rglob("test_*.py")):
+        content = path.read_text(encoding="utf-8")
+        if "required_env(" in content or "mutation_safe.env" in content:
+            violations.append(f"{path.relative_to(_REPO_ROOT)}: uses required mutation target env helper")
+        for env_name in _OBSOLETE_MUTATION_SAFE_TARGET_ENV_NAMES:
+            if env_name in content:
+                violations.append(f"{path.relative_to(_REPO_ROOT)}: {env_name}")
+
+    assert violations == []
+
+
 def test_cli_real_tg_inventory_does_not_disable_all_failure_text_checks():
     violations: list[str] = []
 
@@ -782,6 +849,51 @@ def test_cli_real_tg_inventory_does_not_use_help_as_leaf_smoke():
                     f"{path.relative_to(_REPO_ROOT)}:{lineno}: "
                     f"{helper} {command!r} uses CLI help instead of exercising the leaf command"
                 )
+
+    assert violations == []
+
+
+def test_cli_real_tg_mutation_safe_commands_are_bounded():
+    violations: list[str] = []
+    leafs = _cli_leaf_commands()
+    mutation_safe_dir = _CLI_REAL_TG_DIR / "mutation_safe"
+
+    for path in sorted(mutation_safe_dir.rglob("test_*.py")):
+        for _helper, prefix, strings, lineno in _literal_cli_string_arg_records(path):
+            command_case = _normalize_cli_command_case(prefix, leafs)
+            if command_case is None:
+                continue
+            if command_case in {("dialogs", "mark-read"), ("my-telegram", "mark-read")}:
+                if "--max-id" not in strings:
+                    violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: mark-read must set --max-id")
+            if command_case in {("dialogs", "react"), ("my-telegram", "react")}:
+                if "--yes" not in strings:
+                    violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: react must be noninteractive")
+            if command_case in {("dialogs", "pin-message"), ("my-telegram", "pin-message")}:
+                if "--notify" in strings:
+                    violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: mutation-safe pin must not notify")
+                if "--yes" not in strings:
+                    violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: pin-message must be noninteractive")
+            if command_case in {("dialogs", "unpin-message"), ("my-telegram", "unpin-message")}:
+                if "--message-id" not in strings:
+                    violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: unpin-message must set --message-id")
+                if "--yes" not in strings:
+                    violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: unpin-message must be noninteractive")
+            if command_case in {
+                ("dialogs", "archive"),
+                ("dialogs", "mark-read"),
+                ("dialogs", "pin-message"),
+                ("dialogs", "react"),
+                ("dialogs", "unarchive"),
+                ("dialogs", "unpin-message"),
+                ("my-telegram", "archive"),
+                ("my-telegram", "mark-read"),
+                ("my-telegram", "pin-message"),
+                ("my-telegram", "react"),
+                ("my-telegram", "unarchive"),
+                ("my-telegram", "unpin-message"),
+            } and "--phone" not in strings:
+                violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: mutation-safe command must pin --phone")
 
     assert violations == []
 

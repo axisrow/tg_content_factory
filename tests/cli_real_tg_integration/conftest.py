@@ -57,6 +57,19 @@ class CliRealCliEnv:
         return self.db_path.with_suffix(".pid")
 
 
+@dataclass(frozen=True)
+class LiveCliDialogTarget:
+    chat_ref: str
+    phone: str
+
+
+@dataclass(frozen=True)
+class LiveCliMessageTarget:
+    chat_ref: str
+    message_id: str
+    phone: str
+
+
 _SOURCE_ROOT = Path(__file__).resolve().parents[2]
 CliEnv = CliRealCliEnv
 
@@ -111,6 +124,13 @@ def _fetch_live_channel(db_path: Path) -> tuple[str | None, int | None, str | No
     return pk, channel_id, username
 
 
+def _normalize_chat_ref(raw: object) -> str | None:
+    chat_ref = str(raw) if raw else None
+    if chat_ref and not chat_ref.startswith("@") and not chat_ref.lstrip("-").isdigit():
+        chat_ref = f"@{chat_ref}"
+    return chat_ref
+
+
 def _fetch_live_media_message(db_path: Path) -> tuple[str | None, int | None]:
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
@@ -128,11 +148,76 @@ def _fetch_live_media_message(db_path: Path) -> tuple[str | None, int | None]:
         ).fetchone()
     if row is None:
         return None, None
-    chat_ref = str(row[0]) if row[0] else None
-    if chat_ref and not chat_ref.startswith("@") and not chat_ref.lstrip("-").isdigit():
-        chat_ref = f"@{chat_ref}"
+    chat_ref = _normalize_chat_ref(row[0])
     message_id = int(row[1]) if row[1] is not None else None
     return chat_ref, message_id
+
+
+def _fetch_live_message_target(
+    db_path: Path,
+    phones: tuple[str, ...],
+    *,
+    require_own_dialog: bool = False,
+) -> LiveCliMessageTarget | None:
+    phone_set = set(phones)
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT
+                COALESCE(NULLIF(c.username, ''), CAST(m.channel_id AS TEXT)) AS chat_ref,
+                m.message_id,
+                NULLIF(c.preferred_phone, '') AS preferred_phone,
+                d.phone AS dialog_phone,
+                COALESCE(d.is_own, 0) AS is_own
+            FROM messages m
+            JOIN channels c ON c.channel_id = m.channel_id
+            LEFT JOIN dialog_cache d
+                ON d.dialog_id = m.channel_id
+               AND COALESCE(d.deactivate, 0) = 0
+            WHERE COALESCE(c.is_active, 1) = 1
+              AND m.message_id IS NOT NULL
+              AND COALESCE(m.service_action_raw, '') = ''
+              AND COALESCE(m.service_action_semantic, '') = ''
+            ORDER BY
+                COALESCE(d.is_own, 0) DESC,
+                CASE WHEN NULLIF(c.preferred_phone, '') IS NOT NULL THEN 0 ELSE 1 END,
+                CASE WHEN d.phone IS NOT NULL THEN 0 ELSE 1 END,
+                m.date DESC,
+                m.id DESC
+            LIMIT 200
+            """
+        ).fetchall()
+
+    for row in rows:
+        chat_ref = _normalize_chat_ref(row["chat_ref"])
+        if chat_ref is None:
+            continue
+        message_id = row["message_id"]
+        if message_id is None:
+            continue
+
+        preferred_phone = str(row["preferred_phone"]) if row["preferred_phone"] else None
+        dialog_phone = str(row["dialog_phone"]) if row["dialog_phone"] else None
+        is_own = bool(row["is_own"])
+        if require_own_dialog and (not is_own or dialog_phone not in phone_set):
+            continue
+
+        if preferred_phone in phone_set:
+            phone = preferred_phone
+        elif dialog_phone in phone_set:
+            phone = dialog_phone
+        elif chat_ref.startswith("@"):
+            phone = phones[0]
+        else:
+            continue
+
+        return LiveCliMessageTarget(
+            chat_ref=chat_ref,
+            message_id=str(int(message_id)),
+            phone=phone,
+        )
+    return None
 
 
 @pytest.fixture(scope="session")
@@ -489,6 +574,43 @@ def live_media_message(cli_real_cli_env: CliRealCliEnv) -> tuple[str, str]:
     if chat_ref is None or message_id is None:
         pytest.skip("live CLI database has no collected media messages")
     return chat_ref, str(message_id)
+
+
+@pytest.fixture
+def live_mutation_dialog(cli_real_cli_env: CliRealCliEnv) -> LiveCliDialogTarget:
+    try:
+        target = _fetch_live_message_target(cli_real_cli_env.db_path, cli_real_cli_env.phones)
+    except sqlite3.Error as exc:
+        pytest.skip(f"failed to discover live mutation target from {cli_real_cli_env.db_path}: {exc}")
+    if target is None:
+        pytest.skip("live CLI database has no active collected dialog target")
+    return LiveCliDialogTarget(chat_ref=target.chat_ref, phone=target.phone)
+
+
+@pytest.fixture
+def live_mutation_message(cli_real_cli_env: CliRealCliEnv) -> LiveCliMessageTarget:
+    try:
+        target = _fetch_live_message_target(cli_real_cli_env.db_path, cli_real_cli_env.phones)
+    except sqlite3.Error as exc:
+        pytest.skip(f"failed to discover live mutation message from {cli_real_cli_env.db_path}: {exc}")
+    if target is None:
+        pytest.skip("live CLI database has no active collected message target")
+    return target
+
+
+@pytest.fixture
+def live_owned_mutation_message(cli_real_cli_env: CliRealCliEnv) -> LiveCliMessageTarget:
+    try:
+        target = _fetch_live_message_target(
+            cli_real_cli_env.db_path,
+            cli_real_cli_env.phones,
+            require_own_dialog=True,
+        )
+    except sqlite3.Error as exc:
+        pytest.skip(f"failed to discover live owned mutation message from {cli_real_cli_env.db_path}: {exc}")
+    if target is None:
+        pytest.skip("live CLI database has no own cached dialog with a collected message target")
+    return target
 
 
 _LEADING_INT_ROW_RE = re.compile(r"^\s*(\d+)\s+\S", re.MULTILINE)

@@ -12,7 +12,7 @@ pytestmark = pytest.mark.real_tg_mutation_safe
 
 
 @pytest.mark.timeout(90)
-def test_dialogs_react_collected_message(run_cli, assert_cli_ok, cli_real_cli_env, live_mutation_message):
+def test_my_telegram_react_collected_message(run_cli, assert_cli_ok, cli_real_cli_env, live_mutation_message):
     chat_id = live_mutation_message.chat_ref
     message_id = live_mutation_message.message_id
     phone = live_mutation_message.phone
@@ -21,7 +21,7 @@ def test_dialogs_react_collected_message(run_cli, assert_cli_ok, cli_real_cli_en
 
     try:
         result = run_cli(
-            "dialogs",
+            "my-telegram",
             "react",
             "--yes",
             "--phone",
@@ -39,7 +39,7 @@ def test_dialogs_react_collected_message(run_cli, assert_cli_ok, cli_real_cli_en
         try:
             cleanup = cli_run_direct(
                 cli_real_cli_env,
-                "dialogs",
+                "my-telegram",
                 "react",
                 "--clear",
                 "--yes",
