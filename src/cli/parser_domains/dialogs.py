@@ -92,7 +92,8 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     my_tg_react = dialogs_sub.add_parser("react", help="Set a reaction on a message")
     my_tg_react.add_argument("chat_id", help="Chat ID or @username")
     my_tg_react.add_argument("message_id", type=int, help="Message ID to react on")
-    my_tg_react.add_argument("emoji", help="Reaction emoji (e.g. 👍)")
+    my_tg_react.add_argument("emoji", nargs="?", help="Reaction emoji (e.g. 👍)")
+    my_tg_react.add_argument("--clear", action="store_true", help="Remove your reaction from the message")
     my_tg_react.add_argument("--phone", default=None, help="Account phone (default: first connected)")
     my_tg_react.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 

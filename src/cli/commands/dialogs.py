@@ -315,8 +315,20 @@ def run_with_dependencies(
                             f"{acc.flood_wait_until.isoformat()}."
                         )
                         return
+                if args.clear:
+                    emoji = None
+                else:
+                    emoji = args.emoji
+                    if not emoji:
+                        print("Error: emoji is required unless --clear is used.")
+                        return
                 if not args.yes:
-                    print(f"Send reaction {args.emoji!r} to message #{args.message_id} in {args.chat_id}")
+                    action = (
+                        f"Clear reaction from message #{args.message_id} in {args.chat_id}"
+                        if args.clear
+                        else f"Send reaction {emoji!r} to message #{args.message_id} in {args.chat_id}"
+                    )
+                    print(action)
                     answer = input("Continue? [y/N] ").strip().lower()
                     if answer != "y":
                         print("Aborted.")
@@ -326,14 +338,20 @@ def run_with_dependencies(
                         phone=phone,
                         chat_id=args.chat_id,
                         message_id=args.message_id,
-                        emoji=args.emoji,
+                        emoji=emoji,
                         native=True,
                         resolve_entity=True,
                     )
-                    print(
-                        f"Reaction {args.emoji!r} sent to message #{args.message_id} "
-                        f"in {args.chat_id} (account {result.phone})"
-                    )
+                    if args.clear:
+                        print(
+                            f"Reaction cleared from message #{args.message_id} "
+                            f"in {args.chat_id} (account {result.phone})"
+                        )
+                    else:
+                        print(
+                            f"Reaction {emoji!r} sent to message #{args.message_id} "
+                            f"in {args.chat_id} (account {result.phone})"
+                        )
                 except TelegramActionClientUnavailableError:
                     print(f"Client for {phone} unavailable (no lease could be acquired).")
                 except Exception as exc:
