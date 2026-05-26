@@ -309,6 +309,52 @@ def test_set_and_get_gate():
     assert get_gate() is None
 
 
+def test_get_gate_returns_request_scoped_gate_without_global_gate():
+    request_gate = PermissionGate()
+    ctx = AgentRequestContext(
+        session_id="request-scoped",
+        thread_id=1,
+        queue=asyncio.Queue(),
+        permission_gate=request_gate,
+        permission_timeout=10,
+    )
+    set_gate(None)
+    token = set_request_context(ctx)
+    try:
+        assert get_gate() is request_gate
+    finally:
+        reset_request_context(token)
+
+
+def test_get_gate_prefers_request_scoped_gate_over_global_gate():
+    request_gate = PermissionGate()
+    global_gate = PermissionGate()
+    ctx = AgentRequestContext(
+        session_id="request-scoped",
+        thread_id=1,
+        queue=asyncio.Queue(),
+        permission_gate=request_gate,
+        permission_timeout=10,
+    )
+    set_gate(global_gate)
+    token = set_request_context(ctx)
+    try:
+        assert get_gate() is request_gate
+    finally:
+        reset_request_context(token)
+        set_gate(None)
+
+
+def test_get_gate_falls_back_to_global_without_request_context():
+    gate = PermissionGate()
+    set_gate(gate)
+    try:
+        assert get_request_context() is None
+        assert get_gate() is gate
+    finally:
+        set_gate(None)
+
+
 # ── ContextVar get/set/reset ────────────────────────────────────────
 
 

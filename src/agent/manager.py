@@ -583,9 +583,9 @@ class ClaudeSdkBackend:
         access_policy = await load_tool_access_policy(self._db, use_cache=True)
         # With PermissionGate active, requestable tools stay visible so the
         # runtime gate can ask; explicit denies remain hidden.
-        from src.agent.permission_gate import get_gate
+        from src.agent.permission_gate import get_gate, get_request_context
 
-        gate_active = get_gate() is not None
+        gate_active = get_gate() is not None and get_request_context() is not None
         allowed = visible_tools_for_llm(all_tools, access_policy, gate_active=gate_active)
         if len(allowed) < len(all_tools):
             denied = [t.removeprefix(MCP_PREFIX) for t in all_tools if t not in allowed]
@@ -2029,7 +2029,13 @@ class AgentManager:
         return await self._deepagents_backend.probe_config(cfg, probe_kind=probe_kind)
 
     async def chat_stream(
-        self, thread_id: int, message: str, model: str | None = None, session_id: str = "web",
+        self,
+        thread_id: int,
+        message: str,
+        model: str | None = None,
+        session_id: str = "web",
+        *,
+        interactive_permissions: bool = False,
     ) -> AsyncGenerator[str, None]:
         history = await self._db.get_agent_messages(thread_id)
         assert (
@@ -2094,14 +2100,12 @@ class AgentManager:
         # so the actual set/reset happens inside _run_backend (not in the generator).
         from src.agent.permission_gate import (
             AgentRequestContext,
-            get_gate,
             reset_request_context,
             set_request_context,
         )
 
-        _gate = get_gate()
         _req_ctx: AgentRequestContext | None = None
-        if _gate is not None:
+        if interactive_permissions:
             from src.agent.tools.permissions import load_tool_access_policy
 
             _access_policy = await load_tool_access_policy(self._db, use_cache=True)
@@ -2110,6 +2114,7 @@ class AgentManager:
                 thread_id=thread_id,
                 queue=queue,
                 tool_access_policy=_access_policy,
+                permission_gate=self._permission_gate,
                 permission_timeout=self._config.agent.permission_timeout,
             )
 

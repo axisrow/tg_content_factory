@@ -36,6 +36,7 @@ class AgentRequestContext:
     queue: asyncio.Queue              # SSE queue for this request
     db_permissions: dict[str, bool] | None = None  # legacy boolean view
     tool_access_policy: dict[str, object] | None = None
+    permission_gate: PermissionGate | None = None
     permission_timeout: int = 120     # seconds to wait for user response
 
 
@@ -68,6 +69,9 @@ _active_gate: PermissionGate | None = None
 
 def get_gate() -> PermissionGate | None:
     """Return the active PermissionGate, or None if not in use."""
+    ctx = get_request_context()
+    if ctx is not None and ctx.permission_gate is not None:
+        return ctx.permission_gate
     return _active_gate
 
 
