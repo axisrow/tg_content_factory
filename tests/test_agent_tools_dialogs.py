@@ -264,12 +264,25 @@ class TestDialogsToolClearDialogCache:
 
     @pytest.mark.anyio
     async def test_clears_all_when_no_phone(self, mock_db):
+        mock_db.get_setting = AsyncMock(return_value=None)
         mock_db.repos = MagicMock()
         mock_db.repos.dialog_cache.clear_all_dialogs = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["clear_dialog_cache"]({"phone": "", "confirm": True})
         assert "очищен" in _text(result)
         mock_db.repos.dialog_cache.clear_all_dialogs.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_no_phone_requires_explicit_phone_when_acl_configured(self, mock_db):
+        mock_db.get_setting = AsyncMock(return_value='{"phone": {"clear_dialog_cache": true}}')
+        mock_db.repos = MagicMock()
+        mock_db.repos.dialog_cache.clear_all_dialogs = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+
+        result = await handlers["clear_dialog_cache"]({"phone": "", "confirm": True})
+
+        assert "Укажите phone" in _text(result)
+        mock_db.repos.dialog_cache.clear_all_dialogs.assert_not_awaited()
 
 
 class TestDialogsToolGetCacheStatus:
