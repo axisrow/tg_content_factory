@@ -744,6 +744,9 @@
 
     function showPermissionDialog(toolName, phone) {
         return new Promise(function(resolve) {
+            document.querySelectorAll('#permission-modal').forEach(function(el) {
+                if (el.parentNode) el.parentNode.removeChild(el);
+            });
             var phoneStr = phone ? ' (' + escapeHtml(phone) + ')' : '';
             var modal = document.createElement('div');
             modal.id = 'permission-modal';
@@ -753,8 +756,8 @@
                 '<div class="perm-tool">' + escapeHtml(toolName) + phoneStr + '</div>' +
                 '<div class="perm-menu">' +
                 '<div class="perm-item" data-choice="once" tabindex="0"><span class="perm-cursor">&gt;</span> 1. Разрешить один раз</div>' +
-                '<div class="perm-item" data-choice="session" tabindex="0">  2. Разрешить в этой сессии</div>' +
-                '<div class="perm-item" data-choice="deny" tabindex="0">  3. Запретить</div>' +
+                '<div class="perm-item" data-choice="session" tabindex="0"><span class="perm-cursor"> </span> 2. Разрешить в этой сессии</div>' +
+                '<div class="perm-item" data-choice="deny" tabindex="0"><span class="perm-cursor"> </span> 3. Запретить</div>' +
                 '</div>' +
                 '<div class="perm-hint">↑↓ навигация &nbsp;·&nbsp; Enter выбор &nbsp;·&nbsp; Esc = Запретить</div>' +
                 '</div>';
@@ -762,6 +765,7 @@
 
             var items = modal.querySelectorAll('.perm-item');
             var selected = 0;
+            var settled = false;
 
             function highlight() {
                 items.forEach(function(el, i) {
@@ -771,28 +775,68 @@
             }
 
             function pick(choice) {
-                document.body.removeChild(modal);
-                document.removeEventListener('keydown', onKey);
+                if (settled) return;
+                settled = true;
+                if (modal.parentNode) modal.parentNode.removeChild(modal);
+                document.removeEventListener('keydown', onKey, true);
                 resolve(choice);
             }
 
+            function consume(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+            }
+
             function onKey(e) {
-                if (e.key === 'ArrowUp' || e.key === 'k') { selected = (selected + 2) % 3; highlight(); e.preventDefault(); }
-                else if (e.key === 'ArrowDown' || e.key === 'j') { selected = (selected + 1) % 3; highlight(); e.preventDefault(); }
-                else if (e.key === 'Enter') { pick(items[selected].dataset.choice); e.preventDefault(); }
-                else if (e.key === 'Escape') { pick('deny'); e.preventDefault(); }
-                else if (e.key === '1') pick('once');
-                else if (e.key === '2') pick('session');
-                else if (e.key === '3') pick('deny');
+                var key = e.key || '';
+                var code = e.code || '';
+                if (key === 'ArrowUp' || key === 'k') {
+                    selected = (selected + items.length - 1) % items.length;
+                    highlight();
+                    consume(e);
+                } else if (key === 'ArrowDown' || key === 'j') {
+                    selected = (selected + 1) % items.length;
+                    highlight();
+                    consume(e);
+                } else if (key === 'Enter') {
+                    pick(items[selected].dataset.choice);
+                    consume(e);
+                } else if (key === 'Escape') {
+                    pick('deny');
+                    consume(e);
+                } else if (key === '1' || code === 'Digit1' || code === 'Numpad1') {
+                    pick('once');
+                    consume(e);
+                } else if (key === '2' || code === 'Digit2' || code === 'Numpad2') {
+                    pick('session');
+                    consume(e);
+                } else if (key === '3' || code === 'Digit3' || code === 'Numpad3') {
+                    pick('deny');
+                    consume(e);
+                }
             }
 
             items.forEach(function(el, i) {
                 el.addEventListener('click', function() { pick(el.dataset.choice); });
             });
 
-            document.addEventListener('keydown', onKey);
+            document.addEventListener('keydown', onKey, true);
             highlight();
         });
+    }
+
+    async function resolvePermissionRequest(requestId, choice) {
+        console.info('Resolving permission request', requestId, choice);
+        var permissionResp = await fetch('/agent/threads/' + threadId + '/permission/' + requestId, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({choice: choice})
+        });
+        var permissionResult = await permissionResp.json().catch(function() { return {}; });
+        if (!permissionResp.ok || !permissionResult.ok) {
+            throw new Error(permissionResult.detail || ('Permission resolve failed: HTTP ' + permissionResp.status));
+        }
     }
 
     // Render existing assistant messages loaded from DB
@@ -1082,20 +1126,12 @@
                         if (data.type === 'permission_request') {
                             var choice = await showPermissionDialog(data.tool, data.phone || '');
                             try {
-                                await fetch('/agent/threads/' + threadId + '/permission/' + data.request_id, {
-                                    method: 'POST',
-                                    headers: {'Content-Type': 'application/json'},
-                                    body: JSON.stringify({choice: choice})
-                                });
+                                await resolvePermissionRequest(data.request_id, choice);
                             } catch (fetchErr) {
-                                console.error('Permission POST failed, sending deny:', fetchErr);
-                                try {
-                                    await fetch('/agent/threads/' + threadId + '/permission/' + data.request_id, {
-                                        method: 'POST',
-                                        headers: {'Content-Type': 'application/json'},
-                                        body: JSON.stringify({choice: 'deny'})
-                                    });
-                                } catch (_) { /* server-side timeout will handle it */ }
+                                console.error('Permission POST failed:', fetchErr);
+                                statusTracker.onWarning(
+                                    'Не удалось отправить выбор разрешения. Запрос разрешения истечёт по таймауту.'
+                                );
                             }
                         } else if (data.type === 'thinking') {
                             statusTracker.onThinking();

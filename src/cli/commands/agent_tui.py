@@ -578,7 +578,8 @@ class AgentTuiApp(App):
                     # Show interactive permission menu; tool handler is awaiting the Future
                     dialog = PermissionDialog(payload["tool"], payload.get("phone", ""))
                     choice = await self.push_screen_wait(dialog)
-                    self.agent_manager.permission_gate.resolve(payload["request_id"], choice)
+                    if not self.agent_manager.permission_gate.resolve(payload["request_id"], choice):
+                        widget._append_log("  ⚠️ Запрос разрешения уже истёк или был обработан.")
                     continue
                 if event_type == "thinking":
                     widget.set_pending_status("Думает...")

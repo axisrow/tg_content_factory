@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -202,6 +204,67 @@ async def test_resolve_permission_valid_choices(client, db):
         assert data["ok"] is True
 
 
+@pytest.mark.anyio
+async def test_resolve_permission_unknown_request_returns_404(client, db):
+    """Unknown or already-resolved permission requests must not look successful."""
+    thread_id = await db.create_agent_thread("Perm")
+    gate = MagicMock()
+    gate.resolve = MagicMock(return_value=False)
+    client._transport_app.state.agent_manager.permission_gate = gate
+
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/permission/missing-request-id",
+        content=json.dumps({"choice": "session"}),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert resp.status_code == 404
+    gate.resolve.assert_called_once_with("missing-request-id", "session")
+
+
+@pytest.mark.anyio
+async def test_resolve_permission_session_choice_updates_gate(client, db):
+    """Web resolve route stores a real session approval when the browser POST arrives."""
+    from src.agent.permission_gate import (
+        AgentRequestContext,
+        PermissionGate,
+        reset_request_context,
+        set_request_context,
+    )
+
+    thread_id = await db.create_agent_thread("Perm")
+    gate = PermissionGate()
+    session_id = "web-session"
+    phone = "+66982102247"
+    client._transport_app.state.agent_manager.permission_gate = gate
+    ctx = AgentRequestContext(
+        session_id=session_id,
+        thread_id=thread_id,
+        queue=asyncio.Queue(),
+        permission_gate=gate,
+        permission_timeout=5,
+    )
+    token = set_request_context(ctx)
+    try:
+        pending = asyncio.create_task(gate.check("send_reaction", phone))
+        event = await asyncio.wait_for(ctx.queue.get(), timeout=1)
+        payload = json.loads(event.removeprefix("data: ").strip())
+
+        resp = await client.post(
+            f"/agent/threads/{thread_id}/permission/{payload['request_id']}",
+            content=json.dumps({"choice": "session"}),
+            headers={"Content-Type": "application/json"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert await asyncio.wait_for(pending, timeout=1) is None
+    finally:
+        reset_request_context(token)
+
+    assert gate.is_session_approved("send_reaction", session_id, phone)
+
+
 # ── stop_chat: lines 211-213 ───────────────────────────────────────────
 
 
@@ -347,6 +410,31 @@ async def test_chat_enables_interactive_permissions(client, db):
 
     assert resp.status_code == 200
     assert captured["kwargs"]["interactive_permissions"] is True
+
+
+def test_permission_dialog_items_all_have_cursor_span():
+    """Every permission menu item must satisfy highlight()'s .perm-cursor lookup."""
+    template = Path("src/web/templates/agent.html").read_text(encoding="utf-8")
+    for choice in ("once", "session", "deny"):
+        marker = f'class="perm-item" data-choice="{choice}"'
+        start = template.index(marker)
+        end = template.index("</div>", start)
+        item_markup = template[start:end]
+        assert 'class="perm-cursor"' in item_markup
+
+
+def test_permission_dialog_keyboard_and_post_contract():
+    """Pressing 2 must map to session and POST failures must not auto-deny."""
+    template = Path("src/web/templates/agent.html").read_text(encoding="utf-8")
+
+    assert "document.addEventListener('keydown', onKey, true)" in template
+    assert "document.removeEventListener('keydown', onKey, true)" in template
+    assert "code === 'Digit2' || code === 'Numpad2'" in template
+    assert "pick('session')" in template
+    assert "resolvePermissionRequest(data.request_id, choice)" in template
+    assert "!permissionResp.ok || !permissionResult.ok" in template
+    assert "body: JSON.stringify({choice: 'deny'})" not in template
+    assert "sending deny" not in template
 
 
 # ── delete_thread: lines 86-88 (permission gate clearing) ──────────────
