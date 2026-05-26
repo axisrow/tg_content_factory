@@ -70,7 +70,17 @@ python -m src.main --config <real config.yaml> ...
 - существует `config.yaml`;
 - существует и не пустая DB из `database.path`;
 - в config есть Telegram `api_id`/`api_hash`;
-- в DB есть active accounts с `session_string`.
+- в DB есть active accounts с `session_string`;
+- хотя бы один active account проходит read-only readiness probe:
+  `python -m src.main --config <config.yaml> account info --phone <phone>`.
+
+Readiness probe ждет не просто `is_active=1`, а фактическое CLI-подключение к Telegram. По текущим live-логам
+успешное подключение занимает секунды, самый медленный нормальный auth/connect был около 26 секунд, поэтому default
+wait — 60 секунд. Для плохой сети можно поднять его вручную:
+
+- `CLI_REAL_TG_CONNECT_WAIT_SECONDS=60` — общий лимит ожидания active account + успешного probe;
+- `CLI_REAL_TG_CONNECT_POLL_SECONDS=2` — пауза между проверками DB/probe;
+- `CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_SECONDS=60` — timeout одного `account info --phone` probe.
 
 ## CLI Folders And Gates
 
@@ -97,7 +107,8 @@ python -m src.main --config <real config.yaml> ...
 `mutation_safe/`
 
 - Bounded Telegram-visible mutations по live DB/cache fixtures, например `dialogs react` на собранном сообщении,
-  `dialogs mark-read --max-id`, cleanup-backed archive/unarchive, cleanup-backed pin/unpin.
+  `dialogs mark-read --max-id`, cleanup-backed archive/unarchive, cleanup-backed pin/unpin, scratch-message
+  send/edit with final edit cleanup.
 - Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MUTATION_SAFE=1`.
 
 `destructive/`
@@ -107,7 +118,7 @@ python -m src.main --config <real config.yaml> ...
 
 `manual/`
 
-- High-risk Telegram-visible mutations: sends, auth, BotFather, leave/delete/admin/edit/photo publish.
+- High-risk Telegram-visible mutations: unbounded sends, auth, BotFather, leave/delete/admin/permissions/photo publish.
 - Pin/unpin are only mutation-safe for own cached dialogs with `--notify` forbidden and cleanup-backed tests.
 - Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MANUAL=1`.
 
@@ -175,11 +186,18 @@ The mutation-safe inventory discovers targets from the live DB/cache, like the r
 
 - archive/unarchive/mark-read/react use an active collected dialog/message target;
 - pin/unpin require an own cached dialog with a collected message, otherwise those tests skip;
+- scratch send/edit tests use `CLI_REAL_TG_MUTATION_CHAT` when set, otherwise an own cached dialog; they do not delete
+  the sent marker and leave it as a final `codex live cli edit test completed ...` message;
 - react tests set the requested emoji and then clear it with `dialogs react --clear` / `my-telegram react --clear`;
 - pin tests unpin in cleanup, and unpin tests first pin then unpin so the final state is unpinned;
 - archive tests unarchive in cleanup, and unarchive tests first archive then unarchive so the final state is unarchived.
 
 `CLI_REAL_TG_REACT_EMOJI` can override the default reaction emoji for react tests.
+`CLI_REAL_TG_MUTATION_CHAT` can pin scratch-message tests to a specific test chat, and
+`CLI_REAL_TG_MUTATION_PHONE` can pin the connected account used for that chat.
+If the test account was just toggled/authenticated from the UI, the fixture waits up to
+`CLI_REAL_TG_CONNECT_WAIT_SECONDS` for a real `account info --phone` probe before running mutation-safe commands.
+Use `CLI_REAL_TG_CONNECT_WAIT_SECONDS=180` only as an explicit poor-network override, not as the default.
 
 Manual destructive process-control inventory:
 
@@ -204,5 +222,6 @@ python3 -m pytest tests/cli_real_tg_integration/manual -v
 - Do not add high-risk or broad Telegram-visible mutations under `real_tg_mutation_safe`; keep those under `real_tg_manual`.
 - Do not run mutation-safe pin with `--notify` or mutation-safe unpin without `--message-id`.
 - Do not run mutation-safe mark-read without `--max-id`.
+- Do not clean up mutation-safe scratch messages with `delete-message`; use a final `edit-message` only.
 - Do not rely on “first live row” directly from tests; add a named live fixture with skip guards and cleanup expectations.
 - Do not run process-control inventory against a config that already has a managed server PID file; use a separate config or stop the server first.

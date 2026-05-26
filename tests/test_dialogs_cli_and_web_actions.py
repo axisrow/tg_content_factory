@@ -212,9 +212,9 @@ class TestCliSend:
     def test_send_confirmed(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=123))
-        client.send_message = AsyncMock()
+        client.send_message = AsyncMock(return_value=SimpleNamespace(id=42))
         _run_cli("send", pool, cli_db, {"phone": _PHONE, "recipient": "@user", "text": "hello", "yes": True})
-        assert "Message sent" in capsys.readouterr().out
+        assert "Message sent to @user. message_id=42" in capsys.readouterr().out
 
     def test_send_abort(self, cli_db, capsys):
         pool, client = _mock_pool()
@@ -225,10 +225,10 @@ class TestCliSend:
     def test_send_confirm_yes(self, cli_db, capsys):
         pool, client = _mock_pool()
         client.get_entity = AsyncMock(return_value=SimpleNamespace(id=123))
-        client.send_message = AsyncMock()
+        client.send_message = AsyncMock(return_value=SimpleNamespace(id=42))
         with patch("builtins.input", return_value="y"):
             _run_cli("send", pool, cli_db, {"phone": _PHONE, "recipient": "@user", "text": "hello", "yes": False})
-        assert "Message sent" in capsys.readouterr().out
+        assert "Message sent to @user. message_id=42" in capsys.readouterr().out
 
     def test_send_client_unavailable(self, cli_db, capsys):
         pool, _ = _mock_pool(native_result=None)
