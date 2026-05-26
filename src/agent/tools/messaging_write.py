@@ -10,6 +10,9 @@ from src.agent.tools._registry import (
     _text_response,
     arg_csv_ints,
     arg_str,
+    get_accounts_with_flood_cleanup,
+    is_flood_wait_active,
+    normalize_flood_wait_until,
     require_confirmation,
 )
 from src.agent.tools._telegram_runtime import prepare_telegram_tool
@@ -21,6 +24,45 @@ from src.agent.tools.messaging_schemas import (
     SEND_REACTION_SCHEMA,
 )
 from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
+from src.services.telegram_command_service import TelegramCommandService
+
+
+def _command_status_text(status: object) -> str:
+    value = getattr(status, "value", status)
+    return str(value or "unknown")
+
+
+def _explicit_pool_method(client_pool: Any, name: str) -> Any | None:
+    instance_attrs = getattr(client_pool, "__dict__", {})
+    if isinstance(instance_attrs, dict) and name in instance_attrs:
+        candidate = instance_attrs[name]
+    elif callable(getattr(type(client_pool), name, None)):
+        candidate = getattr(client_pool, name)
+    else:
+        return None
+    return candidate if callable(candidate) else None
+
+
+async def _reaction_queue_status_hint(ctx: Any, phone: str, client_pool: Any) -> str:
+    lines: list[str] = []
+    try:
+        accounts = await get_accounts_with_flood_cleanup(ctx.db)
+    except Exception:
+        accounts = []
+    account = next((item for item in accounts if str(getattr(item, "phone", "")) == phone), None)
+    if account is not None and is_flood_wait_active(account):
+        flood_until = normalize_flood_wait_until(getattr(account, "flood_wait_until", None))
+        if flood_until is not None:
+            lines.append(f"Аккаунт сейчас во flood-wait до {flood_until.isoformat()}; задача подождёт.")
+
+    is_warming = _explicit_pool_method(client_pool, "is_warming")
+    if callable(is_warming):
+        try:
+            if bool(is_warming()):
+                lines.append("Сейчас идёт прогрев диалогов; задача останется в очереди до готовности аккаунта.")
+        except Exception:
+            pass
+    return "\n".join(lines)
 
 
 def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
@@ -182,9 +224,15 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         SEND_REACTION_SCHEMA,
     )
     async def send_reaction(args):
-        phone, err = await prepare_telegram_tool(ctx, args, tool_name="send_reaction", action="Реакция на сообщение")
+        pool_gate = ctx.require_pool("Реакция на сообщение")
+        if pool_gate:
+            return pool_gate
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
+        perm_gate = await ctx.require_phone_permission(phone, "send_reaction")
+        if perm_gate:
+            return perm_gate
         try:
             chat_id = arg_str(args, "chat_id", required=True)
             emoji = arg_str(args, "emoji", required=True)
@@ -204,19 +252,30 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if gate:
             return gate
         try:
-            await TelegramActionService(client_pool).send_reaction(
-                phone=phone,
-                chat_id=chat_id,
-                message_id=message_id_int,
-                emoji=emoji,
-                native=True,
-                resolve_entity=True,
+            payload = {
+                "phone": phone,
+                "chat_id": chat_id,
+                "message_id": message_id_int,
+                "emoji": emoji,
+            }
+            command_id = await TelegramCommandService(ctx.db).enqueue(
+                "dialogs.react",
+                payload=payload,
+                requested_by="agent:send_reaction",
+                deduplicate=True,
             )
-            return _text_response(f"Реакция {emoji!r} поставлена на сообщение #{message_id_int} в {chat_id}.")
-        except TelegramActionClientUnavailableError:
-            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+            command = await TelegramCommandService(ctx.db).get(command_id)
+            status = _command_status_text(getattr(command, "status", None))
+            suffix = await _reaction_queue_status_hint(ctx, phone, client_pool)
+            lines = [
+                f"Реакция {emoji!r} принята в очередь: задача #{command_id}, статус {status}.",
+                "Если такая же реакция уже ждала выполнения, использована существующая задача.",
+            ]
+            if suffix:
+                lines.append(suffix)
+            return _text_response("\n".join(lines))
         except Exception as e:
-            return _text_response(f"Ошибка отправки реакции: {e}")
+            return _text_response(f"Ошибка постановки реакции в очередь: {e}")
 
     tools.append(send_reaction)
     return tools

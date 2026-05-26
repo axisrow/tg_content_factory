@@ -45,6 +45,7 @@ class TelegramCommandsRepository:
             requested_by=row["requested_by"],
             created_at=parse_datetime(row["created_at"]),
             started_at=parse_datetime(row["started_at"]),
+            run_after=parse_datetime(row["run_after"]),
             finished_at=parse_datetime(row["finished_at"]),
             error=row["error"],
             result_payload=_parse_json(row["result_payload"]),
@@ -54,14 +55,17 @@ class TelegramCommandsRepository:
         cur = await self._database.execute_write(
             """
             INSERT INTO telegram_commands (
-                command_type, payload, status, requested_by, result_payload
-            ) VALUES (?, ?, ?, ?, ?)
+                command_type, payload, status, requested_by, run_after, result_payload
+            ) VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
                 command.command_type,
                 safe_json_dumps(command.payload),
                 command.status.value,
                 command.requested_by,
+                command.run_after.astimezone(timezone.utc).isoformat()
+                if command.run_after is not None
+                else None,
                 safe_json_dumps(command.result_payload) if command.result_payload is not None else None,
             ),
         )
@@ -139,10 +143,11 @@ class TelegramCommandsRepository:
                 """
                 SELECT * FROM telegram_commands
                 WHERE status = ?
-                ORDER BY id ASC
+                  AND (run_after IS NULL OR run_after <= ?)
+                ORDER BY COALESCE(run_after, ''), id ASC
                 LIMIT 1
                 """,
-                (TelegramCommandStatus.PENDING.value,),
+                (TelegramCommandStatus.PENDING.value, now),
             )
             row = await cur.fetchone()
             if row is None:
@@ -171,6 +176,7 @@ class TelegramCommandsRepository:
         error: str | None = None,
         result_payload: dict[str, Any] | None = None,
         payload: dict[str, Any] | None = None,
+        run_after: datetime | None = None,
     ) -> None:
         finished_at = None
         if status in {
@@ -180,17 +186,32 @@ class TelegramCommandsRepository:
         }:
             finished_at = datetime.now(timezone.utc).isoformat()
         payload_json = safe_json_dumps(payload) if payload is not None else None
+        run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after is not None else None
         if status == TelegramCommandStatus.PENDING:
             # Reset started_at when re-queueing so a retried command shows
             # a fresh run timestamp rather than the interrupted attempt's.
-            sets = ["status = ?", "error = ?", "result_payload = ?", "started_at = NULL", "finished_at = NULL"]
+            sets = [
+                "status = ?",
+                "error = ?",
+                "result_payload = ?",
+                "run_after = ?",
+                "started_at = NULL",
+                "finished_at = NULL",
+            ]
             params: list[Any] = [
                 status.value,
                 error,
                 safe_json_dumps(result_payload) if result_payload is not None else None,
+                run_after_iso,
             ]
         else:
-            sets = ["status = ?", "error = ?", "result_payload = ?", "finished_at = COALESCE(?, finished_at)"]
+            sets = [
+                "status = ?",
+                "error = ?",
+                "result_payload = ?",
+                "run_after = NULL",
+                "finished_at = COALESCE(?, finished_at)",
+            ]
             params = [
                 status.value,
                 error,
