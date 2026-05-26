@@ -326,6 +326,29 @@ async def test_chat_with_model_parameter(client, db):
     assert resp.status_code == 200
 
 
+@pytest.mark.anyio
+async def test_chat_enables_interactive_permissions(client, db):
+    """Web chat requests opt into request-scoped PermissionGate prompts."""
+    thread_id = await db.create_agent_thread("Chat")
+    captured = {}
+
+    async def fake_stream(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        yield 'data: {"done": true, "full_text": "ok"}\n\n'
+
+    client._transport_app.state.agent_manager.chat_stream = fake_stream
+
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/chat",
+        content=json.dumps({"message": "hello"}),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert resp.status_code == 200
+    assert captured["kwargs"]["interactive_permissions"] is True
+
+
 # ── delete_thread: lines 86-88 (permission gate clearing) ──────────────
 
 

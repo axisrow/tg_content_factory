@@ -13,6 +13,7 @@ import pytest
 
 from src.agent.manager import (
     AgentManager,
+    AgentRuntimeStatus,
     DeepagentsBackend,
     _await_with_countdown,
     _embed_history_in_prompt,
@@ -1998,6 +1999,164 @@ class TestAgentManagerPermissionGate:
         """permission_gate property returns the gate instance."""
         mgr = AgentManager(db)
         assert mgr.permission_gate is not None
+
+    @pytest.mark.anyio
+    async def test_interactive_permissions_exposes_requestable_deepagents_tool(self, db):
+        from src.agent.permission_gate import get_gate, set_gate
+        from src.agent.tools.permissions import save_tool_permissions
+
+        def named_tool(name: str):
+            def _tool():
+                return name
+
+            _tool.__name__ = name
+            return _tool
+
+        await save_tool_permissions(
+            db,
+            {"pin_message": False, "list_channels": True},
+            phone="+66982102247",
+        )
+        set_gate(None)
+        mgr = AgentManager(db)
+        status = AgentRuntimeStatus(
+            claude_available=False,
+            deepagents_available=True,
+            dev_mode_enabled=False,
+            backend_override="auto",
+            selected_backend="deepagents",
+            fallback_model="openai:gpt-4",
+            fallback_provider="openai",
+            using_override=False,
+            error=None,
+        )
+        mgr.get_runtime_status = AsyncMock(return_value=status)  # type: ignore[method-assign]
+
+        fake_tools = [
+            named_tool("send_reaction"),
+            named_tool("pin_message"),
+            named_tool("list_channels"),
+        ]
+        configs = [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=0,
+                selected_model="gpt-4",
+                plain_fields={},
+                secret_fields={"api_key": "test"},
+            )
+        ]
+        captured_tools: list[list[str]] = []
+
+        def fake_run_agent(_prompt, _cfg, **kwargs):
+            tools = mgr._deepagents_backend._default_tools(
+                access_policy=kwargs.get("access_policy"),
+                gate_active=bool(kwargs.get("gate_active")),
+            )
+            captured_tools.append([tool.__name__ for tool in tools])
+            assert get_gate() is mgr.permission_gate
+            return "ok"
+
+        thread_id = await db.create_agent_thread("interactive-tools")
+        await db.save_agent_message(thread_id, "user", "test")
+        try:
+            with (
+                patch("src.agent.tools.deepagents_sync.build_deepagents_tools", return_value=fake_tools),
+                patch.object(mgr._deepagents_backend, "_candidate_configs", AsyncMock(return_value=configs)),
+                patch.object(mgr._deepagents_backend, "_validation_error", return_value=""),
+                patch.object(mgr._deepagents_backend, "_run_agent", side_effect=fake_run_agent),
+            ):
+                chunks = [
+                    chunk
+                    async for chunk in mgr.chat_stream(
+                        thread_id,
+                        "test",
+                        interactive_permissions=True,
+                    )
+                ]
+        finally:
+            await mgr.close_all()
+            set_gate(None)
+
+        assert captured_tools
+        assert captured_tools[-1] == ["send_reaction", "list_channels"]
+        assert any('"done": true' in chunk for chunk in chunks)
+
+    @pytest.mark.anyio
+    async def test_noninteractive_permissions_hide_requestable_deepagents_tool(self, db):
+        from src.agent.permission_gate import set_gate
+        from src.agent.tools.permissions import save_tool_permissions
+
+        def named_tool(name: str):
+            def _tool():
+                return name
+
+            _tool.__name__ = name
+            return _tool
+
+        await save_tool_permissions(
+            db,
+            {"pin_message": False, "list_channels": True},
+            phone="+66982102247",
+        )
+        mgr = AgentManager(db)
+        mgr.enable_permission_gate()
+        status = AgentRuntimeStatus(
+            claude_available=False,
+            deepagents_available=True,
+            dev_mode_enabled=False,
+            backend_override="auto",
+            selected_backend="deepagents",
+            fallback_model="openai:gpt-4",
+            fallback_provider="openai",
+            using_override=False,
+            error=None,
+        )
+        mgr.get_runtime_status = AsyncMock(return_value=status)  # type: ignore[method-assign]
+
+        fake_tools = [
+            named_tool("send_reaction"),
+            named_tool("pin_message"),
+            named_tool("list_channels"),
+        ]
+        configs = [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=0,
+                selected_model="gpt-4",
+                plain_fields={},
+                secret_fields={"api_key": "test"},
+            )
+        ]
+        captured_tools: list[list[str]] = []
+
+        def fake_run_agent(_prompt, _cfg, **kwargs):
+            tools = mgr._deepagents_backend._default_tools(
+                access_policy=kwargs.get("access_policy"),
+                gate_active=bool(kwargs.get("gate_active")),
+            )
+            captured_tools.append([tool.__name__ for tool in tools])
+            return "ok"
+
+        thread_id = await db.create_agent_thread("noninteractive-tools")
+        await db.save_agent_message(thread_id, "user", "test")
+        try:
+            with (
+                patch("src.agent.tools.deepagents_sync.build_deepagents_tools", return_value=fake_tools),
+                patch.object(mgr._deepagents_backend, "_candidate_configs", AsyncMock(return_value=configs)),
+                patch.object(mgr._deepagents_backend, "_validation_error", return_value=""),
+                patch.object(mgr._deepagents_backend, "_run_agent", side_effect=fake_run_agent),
+            ):
+                chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "test")]
+        finally:
+            await mgr.close_all()
+            set_gate(None)
+
+        assert captured_tools
+        assert captured_tools[-1] == ["list_channels"]
+        assert any('"done": true' in chunk for chunk in chunks)
 
 
 class TestAgentManagerCloseAll:
