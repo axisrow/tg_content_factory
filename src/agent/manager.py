@@ -19,6 +19,7 @@ from claude_agent_sdk import (
     CLIConnectionError,
     CLINotFoundError,
     PermissionResultAllow,
+    PermissionResultDeny,
     ProcessError,
     RateLimitEvent,
     ResultMessage,
@@ -357,16 +358,51 @@ async def _as_prompt_stream(text: str) -> AsyncIterator[dict]:
 
 async def _auto_approve_tool(
     tool_name: str, tool_input: dict, context: ToolPermissionContext,
-) -> PermissionResultAllow:
-    """Auto-approve all CLI tool permission requests.
+) -> PermissionResultAllow | PermissionResultDeny:
+    """Auto-approve CLI tool permission requests handled by our gates.
 
     Claude CLI sends can_use_tool control requests for tools that access the
     network (read_messages, send_message, etc.).  Without this callback the
     SDK raises "canUseTool callback is not provided" and the tool silently
     fails with "Tool permission stream closed before response received".
-    We manage permissions through our own PermissionGate instead.
+    MCP tools are still auto-approved here because our MCP wrappers perform
+    the actual runtime permission checks. Built-in SDK tools do not use those
+    wrappers, so requestable/denied built-ins must be handled here.
     """
-    return PermissionResultAllow()
+    del tool_input, context
+
+    from src.agent.permission_gate import get_gate, get_request_context
+    from src.agent.tools.permissions import BUILTIN_TOOLS, ToolAccessState
+
+    if tool_name not in BUILTIN_TOOLS:
+        return PermissionResultAllow()
+
+    ctx = get_request_context()
+    access_policy = ctx.tool_access_policy if ctx is not None else None
+    state = access_policy.get(tool_name) if access_policy is not None else None
+    if state is None or state == ToolAccessState.ALLOWED:
+        return PermissionResultAllow()
+    if state == ToolAccessState.DENIED:
+        return PermissionResultDeny(message=f"Инструмент '{tool_name}' не разрешён настройками агента.")
+
+    gate = get_gate()
+    if gate is None or ctx is None:
+        return PermissionResultDeny(
+            message=f"Инструмент '{tool_name}' требует интерактивное разрешение пользователя."
+        )
+
+    denied = await gate.check(tool_name, "")
+    if denied is None:
+        return PermissionResultAllow()
+
+    message = f"Доступ к '{tool_name}' запрещён пользователем."
+    content = denied.get("content") if isinstance(denied, dict) else None
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                message = item["text"]
+                break
+    return PermissionResultDeny(message=message)
 
 
 class ClaudeSdkBackend:
