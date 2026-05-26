@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -45,6 +46,190 @@ def test_deepagents_send_reaction_signature_and_runtime_gate(mock_db):
 
     result = tool_map["send_reaction"](chat_id="@chat", message_id=1, emoji="👍")
     assert "требует Telegram-клиент" in result
+
+
+@pytest.mark.anyio
+async def test_deepagents_send_reaction_missing_acl_requests_permission_once(mock_db):
+    from src.agent.permission_gate import (
+        AgentRequestContext,
+        PermissionGate,
+        reset_request_context,
+        set_gate,
+        set_request_context,
+    )
+    from src.agent.runtime_context import AgentRuntimeContext
+    from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+    mock_db.get_setting = AsyncMock(return_value=json.dumps({"+79001234567": {"pin_message": True}}))
+    mock_db.get_account_summaries = AsyncMock(return_value=[
+        SimpleNamespace(phone="+79001234567", is_primary=True, session_status="ok")
+    ])
+    mock_db.get_accounts = AsyncMock(return_value=[
+        SimpleNamespace(phone="+79001234567", is_primary=True, session_status="ok")
+    ])
+    runtime_context = AgentRuntimeContext.build(
+        db=mock_db,
+        client_pool=MagicMock(),
+        runtime_kind="live",
+        owner_loop=asyncio.get_running_loop(),
+    )
+    tool_map = {
+        tool.__name__: tool
+        for tool in build_deepagents_tools(mock_db, client_pool=MagicMock(), runtime_context=runtime_context)
+    }
+    gate = PermissionGate()
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    ctx = AgentRequestContext(
+        session_id="deepagents-requestable",
+        thread_id=1,
+        queue=queue,
+        permission_timeout=5,
+    )
+    set_gate(gate)
+    token = set_request_context(ctx)
+    try:
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                tool_map["send_reaction"],
+                chat_id="@chat",
+                message_id=1,
+                emoji="👍",
+            )
+        )
+        event = await asyncio.wait_for(queue.get(), timeout=2)
+        payload = json.loads(event.removeprefix("data: ").strip())
+        assert payload["tool"] == "send_reaction"
+        assert payload["phone"] == "+79001234567"
+        assert queue.empty()
+        gate.resolve(payload["request_id"], "deny")
+        result = await asyncio.wait_for(task, timeout=2)
+        assert "запрещён" in result
+    finally:
+        reset_request_context(token)
+        set_gate(None)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("choice", ["once", "session"])
+async def test_deepagents_send_reaction_permission_allow_reaches_action_service(mock_db, choice):
+    from src.agent.permission_gate import (
+        AgentRequestContext,
+        PermissionGate,
+        reset_request_context,
+        set_gate,
+        set_request_context,
+    )
+    from src.agent.runtime_context import AgentRuntimeContext
+    from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+    mock_db.get_setting = AsyncMock(return_value=json.dumps({"+79001234567": {"pin_message": True}}))
+    mock_db.get_account_summaries = AsyncMock(return_value=[
+        SimpleNamespace(phone="+79001234567", is_primary=True, session_status="ok")
+    ])
+    runtime_context = AgentRuntimeContext.build(
+        db=mock_db,
+        client_pool=MagicMock(),
+        runtime_kind="live",
+        owner_loop=asyncio.get_running_loop(),
+    )
+    tool_map = {
+        tool.__name__: tool
+        for tool in build_deepagents_tools(mock_db, client_pool=MagicMock(), runtime_context=runtime_context)
+    }
+    gate = PermissionGate()
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    ctx = AgentRequestContext(
+        session_id=f"deepagents-allow-{choice}",
+        thread_id=1,
+        queue=queue,
+        permission_timeout=5,
+    )
+    set_gate(gate)
+    token = set_request_context(ctx)
+    try:
+        with patch("src.agent.tools.messaging_write.TelegramActionService") as service_cls:
+            service = service_cls.return_value
+            service.send_reaction = AsyncMock()
+            task = asyncio.create_task(
+                asyncio.to_thread(
+                    tool_map["send_reaction"],
+                    chat_id="@chat",
+                    message_id=1,
+                    emoji="👍",
+                    confirm=True,
+                )
+            )
+            event = await asyncio.wait_for(queue.get(), timeout=2)
+            payload = json.loads(event.removeprefix("data: ").strip())
+            assert payload["tool"] == "send_reaction"
+            assert payload["phone"] == "+79001234567"
+            gate.resolve(payload["request_id"], choice)
+            result = await asyncio.wait_for(task, timeout=2)
+
+        assert "Реакция '👍' поставлена" in result
+        service.send_reaction.assert_awaited_once_with(
+            phone="+79001234567",
+            chat_id="@chat",
+            message_id=1,
+            emoji="👍",
+            native=True,
+            resolve_entity=True,
+        )
+        if choice == "session":
+            assert gate.is_session_approved("send_reaction", ctx.session_id, "+79001234567")
+    finally:
+        reset_request_context(token)
+        set_gate(None)
+
+
+@pytest.mark.anyio
+async def test_deepagents_send_reaction_explicit_false_does_not_prompt(mock_db):
+    from src.agent.permission_gate import (
+        AgentRequestContext,
+        PermissionGate,
+        reset_request_context,
+        set_gate,
+        set_request_context,
+    )
+    from src.agent.runtime_context import AgentRuntimeContext
+    from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+    mock_db.get_setting = AsyncMock(return_value=json.dumps({"+79001234567": {"send_reaction": False}}))
+    mock_db.get_account_summaries = AsyncMock(return_value=[
+        SimpleNamespace(phone="+79001234567", is_primary=True, session_status="ok")
+    ])
+    runtime_context = AgentRuntimeContext.build(
+        db=mock_db,
+        client_pool=MagicMock(),
+        runtime_kind="live",
+        owner_loop=asyncio.get_running_loop(),
+    )
+    tool_map = {
+        tool.__name__: tool
+        for tool in build_deepagents_tools(mock_db, client_pool=MagicMock(), runtime_context=runtime_context)
+    }
+    gate = PermissionGate()
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    ctx = AgentRequestContext(
+        session_id="deepagents-denied",
+        thread_id=1,
+        queue=queue,
+        permission_timeout=5,
+    )
+    set_gate(gate)
+    token = set_request_context(ctx)
+    try:
+        result = await asyncio.to_thread(
+            tool_map["send_reaction"],
+            chat_id="@chat",
+            message_id=1,
+            emoji="👍",
+        )
+        assert "не разрешён" in result
+        assert queue.empty()
+    finally:
+        reset_request_context(token)
+        set_gate(None)
 
 
 @pytest.mark.anyio

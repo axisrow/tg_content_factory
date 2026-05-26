@@ -34,7 +34,8 @@ class AgentRequestContext:
     session_id: str                   # UUID — unique per TUI launch / web session
     thread_id: int
     queue: asyncio.Queue              # SSE queue for this request
-    db_permissions: dict[str, bool]   # from load_tool_permissions_union at call time
+    db_permissions: dict[str, bool] | None = None  # legacy boolean view
+    tool_access_policy: dict[str, object] | None = None
     permission_timeout: int = 120     # seconds to wait for user response
 
 

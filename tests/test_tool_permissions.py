@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,13 +19,17 @@ from src.agent.tools._registry import (
 from src.agent.tools.permissions import (
     MCP_PREFIX,
     TOOL_CATEGORIES,
+    ToolAccessState,
     _is_per_phone_format,
     build_template_context,
     filter_allowed_tools,
+    get_tool_access_state,
+    load_tool_access_policy,
     load_tool_permissions,
     load_tool_permissions_all_phones,
     load_tool_permissions_union,
     save_tool_permissions,
+    visible_tools_for_llm,
 )
 from src.database import Database
 
@@ -222,6 +227,74 @@ class TestRequirePhonePermission:
         result = await require_phone_permission(mock_db, "+79990001111", "send_reaction")
         assert result is not None
         assert "не разрешён" in _text(result)
+
+    async def test_missing_tool_key_requests_permission_when_gate_active(self, mock_db):
+        from src.agent.permission_gate import (
+            AgentRequestContext,
+            PermissionGate,
+            reset_request_context,
+            set_gate,
+            set_request_context,
+        )
+
+        perms = {"+79990001111": {"search_messages": True, "pin_message": True}}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        gate = PermissionGate()
+        queue = asyncio.Queue()
+        ctx = AgentRequestContext(
+            session_id="session-tool-perms",
+            thread_id=1,
+            queue=queue,
+            permission_timeout=5,
+        )
+        set_gate(gate)
+        token = set_request_context(ctx)
+        try:
+            task = asyncio.create_task(
+                require_phone_permission(mock_db, "+79990001111", "send_reaction")
+            )
+            event = await asyncio.wait_for(queue.get(), timeout=2)
+            assert "permission_request" in event
+            payload = json.loads(event.removeprefix("data: ").strip())
+            assert payload["tool"] == "send_reaction"
+            assert payload["phone"] == "+79990001111"
+            gate.resolve(payload["request_id"], "deny")
+            result = await asyncio.wait_for(task, timeout=2)
+            assert result is not None
+            assert "запрещ" in _text(result)
+        finally:
+            reset_request_context(token)
+            set_gate(None)
+
+    async def test_explicit_false_does_not_request_permission(self, mock_db):
+        from src.agent.permission_gate import (
+            AgentRequestContext,
+            PermissionGate,
+            reset_request_context,
+            set_gate,
+            set_request_context,
+        )
+
+        perms = {"+79990001111": {"send_reaction": False}}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(perms))
+        gate = PermissionGate()
+        queue = asyncio.Queue()
+        ctx = AgentRequestContext(
+            session_id="session-tool-denied",
+            thread_id=1,
+            queue=queue,
+            permission_timeout=5,
+        )
+        set_gate(gate)
+        token = set_request_context(ctx)
+        try:
+            result = await require_phone_permission(mock_db, "+79990001111", "send_reaction")
+            assert result is not None
+            assert "не разрешён" in _text(result)
+            assert queue.empty()
+        finally:
+            reset_request_context(token)
+            set_gate(None)
 
     @pytest.mark.parametrize(
         "live_read_tool",
@@ -465,6 +538,71 @@ class TestLoadToolPermissionsAllPhones:
 
 
 # ---------------------------------------------------------------------------
+# permissions.load_tool_access_policy
+# ---------------------------------------------------------------------------
+
+
+class TestLoadToolAccessPolicy:
+    async def test_no_setting_returns_defaults(self, mock_db):
+        mock_db.get_setting = AsyncMock(return_value=None)
+        result = await load_tool_access_policy(mock_db)
+        assert all(v == ToolAccessState.ALLOWED for v in result.values())
+
+    async def test_malformed_acl_fail_closed(self, mock_db):
+        mock_db.get_setting = AsyncMock(return_value="{bad json")
+        result = await load_tool_access_policy(mock_db)
+        assert all(v == ToolAccessState.DENIED for v in result.values())
+
+    async def test_flat_missing_key_requestable(self, mock_db):
+        saved = {"search_messages": False}
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_access_policy(mock_db)
+        assert result["search_messages"] == ToolAccessState.DENIED
+        assert result["list_channels"] == ToolAccessState.REQUESTABLE
+
+    async def test_per_phone_missing_send_reaction_requestable_and_visible_with_gate(self, mock_db):
+        saved = {
+            "+7111": {"search_messages": True},
+            "+7222": {"pin_message": True},
+        }
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_access_policy(mock_db)
+        assert result["send_reaction"] == ToolAccessState.REQUESTABLE
+        tools = ["mcp__telegram_db__send_reaction"]
+        assert visible_tools_for_llm(tools, result, gate_active=True) == tools
+        assert visible_tools_for_llm(tools, result, gate_active=False) == []
+
+    async def test_per_phone_explicit_false_denied_and_hidden(self, mock_db):
+        saved = {
+            "+7111": {"send_reaction": False},
+            "+7222": {"send_reaction": False},
+        }
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_access_policy(mock_db)
+        assert result["send_reaction"] == ToolAccessState.DENIED
+        tools = ["mcp__telegram_db__send_reaction"]
+        assert visible_tools_for_llm(tools, result, gate_active=True) == []
+
+    async def test_per_phone_any_explicit_true_allowed(self, mock_db):
+        saved = {
+            "+7111": {"send_reaction": False},
+            "+7222": {"send_reaction": True},
+        }
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        result = await load_tool_access_policy(mock_db)
+        assert result["send_reaction"] == ToolAccessState.ALLOWED
+
+    async def test_phone_specific_missing_state_requestable(self, mock_db):
+        saved = {
+            "+7111": {"search_messages": True},
+            "+7222": {"pin_message": True},
+        }
+        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
+        assert await get_tool_access_state(mock_db, "send_reaction", phone="+7111") == ToolAccessState.REQUESTABLE
+        assert await get_tool_access_state(mock_db, "send_reaction", phone="+7333") == ToolAccessState.REQUESTABLE
+
+
+# ---------------------------------------------------------------------------
 # permissions.load_tool_permissions_union
 # ---------------------------------------------------------------------------
 
@@ -480,7 +618,7 @@ class TestLoadToolPermissionsUnion:
         mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
         result = await load_tool_permissions_union(mock_db)
         assert result["search_messages"] is False
-        assert result["list_channels"] is True
+        assert result["list_channels"] is False  # requestable is not executable without prompt
 
     async def test_per_phone_union_any_allows(self, mock_db):
         saved = {
@@ -492,53 +630,23 @@ class TestLoadToolPermissionsUnion:
         assert result["send_photos_now"] is True  # +7222 allows
         assert result["leave_dialogs"] is False  # both deny
 
-    async def test_per_phone_all_deny(self, mock_db):
-        saved = {
-            "+7111": {"send_photos_now": False},
-            "+7222": {"send_photos_now": False},
-        }
+    async def test_per_phone_requestable_is_false_in_boolean_view(self, mock_db):
+        saved = {"+7111": {"search_messages": True}}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
         result = await load_tool_permissions_union(mock_db)
-        assert result["send_photos_now"] is False
-
-    async def test_per_phone_union_phone_binded_missing_keys_false(self, mock_db):
-        # Phone-bound tools must follow require_phone_permission's "explicit
-        # True only" semantics in the union (Codex round 5). Otherwise the
-        # agent advertises tools the runtime gate will deny — e.g. resolve_entity
-        # added after the ACL was saved would appear available but every call
-        # would be blocked.
-        saved = {
-            "+7111": {"search_messages": True},
-            "+7222": {"pin_message": True},
-        }
-        mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
-        result = await load_tool_permissions_union(mock_db)
-        # Explicit grants pass through
-        assert result["pin_message"] is True  # phone-bound, explicit
-        # Phone-bound tools without an explicit True anywhere are hidden
-        assert result["send_reaction"] is False  # phone-bound WRITE
-        assert result["leave_dialogs"] is False  # phone-bound DELETE
-        assert result["resolve_entity"] is False  # phone-bound READ (Codex round 5)
-        assert result["read_messages"] is False  # phone-bound READ
-        # Non-phone-bound tools keep permissive defaults under per-phone ACLs:
-        # DB-only READ has no phone-gate to deny it.
-        assert result["list_channels"] is True  # not phone-bound
-        assert result["get_analytics_summary"] is True  # not phone-bound
+        assert result["send_reaction"] is False
+        assert result["list_channels"] is False
 
     async def test_missing_write_key_in_legacy_flat_false(self, mock_db):
-        # Same fail-closed semantics for legacy flat ACL.
         saved = {"search_messages": True}
         mock_db.get_setting = AsyncMock(return_value=json.dumps(saved))
         result = await load_tool_permissions_union(mock_db)
         assert result["search_messages"] is True
         assert result["send_reaction"] is False
         assert result["leave_dialogs"] is False
-        assert result["list_channels"] is True
+        assert result["list_channels"] is False
 
-    async def test_resolve_entity_hidden_for_legacy_per_phone_acl_without_it(self, mock_db):
-        # Codex round 5 regression: an ACL saved before resolve_entity was
-        # registered must NOT advertise resolve_entity through the union — the
-        # phone-gate would deny every call. visibility tracks execution.
+    async def test_requestable_tools_not_true_in_boolean_view(self, mock_db):
         saved = {
             "+7111": {"pin_message": True, "search_messages": True},
             "+7222": {"send_message": True},
@@ -884,8 +992,8 @@ def test_every_phone_binded_tool_is_registered_in_tool_categories():
 
 
 def test_phone_binded_tools_constant_matches_static_scan():
-    """The PHONE_BINDED_TOOLS constant in permissions.py drives the union
-    visibility logic and MUST match what the static scan finds in
+    """The PHONE_BINDED_TOOLS constant in permissions.py drives the access
+    policy and session-gate bypass and MUST match what the static scan finds in
     src/agent/tools.  If they drift, the agent will either advertise tools
     that the runtime phone-gate denies (Codex round 5 finding) or hide
     callable ones from the agent.
@@ -902,5 +1010,20 @@ def test_phone_binded_tools_constant_matches_static_scan():
     assert not missing_from_constant, (
         f"PHONE_BINDED_TOOLS is missing newly phone-bound tools: "
         f"{sorted(missing_from_constant)}. Add them to the constant in "
-        f"src/agent/tools/permissions.py so the union visibility matches the gate."
+        f"src/agent/tools/permissions.py so access policy matches the runtime gate."
     )
+
+
+def test_agent_backends_do_not_use_boolean_union_for_visibility():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent / "src" / "agent"
+    offenders: list[str] = []
+    for path in root.rglob("*.py"):
+        if path.name == "permissions.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "load_tool_permissions_union" in text:
+            offenders.append(str(path.relative_to(root.parent.parent)))
+
+    assert offenders == []
