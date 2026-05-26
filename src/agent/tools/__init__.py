@@ -19,9 +19,8 @@ from src.agent.tools._registry import AgentToolContext, _text_response  # noqa: 
 def _wrap_with_session_gate(tool: SdkMcpTool) -> SdkMcpTool:
     """Wrap a SdkMcpTool with a session-level permission check.
 
-    If the tool is disabled in DB settings for all phones (db_permissions[tool_name] == False)
-    and a PermissionGate is active, shows an interactive dialog instead of blocking silently.
-    Phone-level checks are handled separately inside require_phone_permission().
+    Non-phone-bound tools may ask PermissionGate before execution. Phone-bound
+    tools skip this wrapper so the prompt happens after phone resolution.
     """
     tool_name = tool.name
     original_handler = tool.handler
@@ -29,14 +28,24 @@ def _wrap_with_session_gate(tool: SdkMcpTool) -> SdkMcpTool:
     @functools.wraps(original_handler)
     async def wrapped_handler(*args, **kwargs):
         from src.agent.permission_gate import get_gate, get_request_context
+        from src.agent.tools.permissions import PHONE_BINDED_TOOLS, ToolAccessState
 
+        if tool_name in PHONE_BINDED_TOOLS:
+            return await original_handler(*args, **kwargs)
         gate = get_gate()
         if gate is not None:
             ctx = get_request_context()
-            if ctx is not None and not ctx.db_permissions.get(tool_name, True):
+            state = None
+            if ctx is not None and ctx.tool_access_policy is not None:
+                state = ctx.tool_access_policy.get(tool_name, ToolAccessState.DENIED)
+            elif ctx is not None and ctx.db_permissions is not None:
+                state = ToolAccessState.ALLOWED if ctx.db_permissions.get(tool_name, True) else ToolAccessState.DENIED
+            if state == ToolAccessState.REQUESTABLE:
                 result = await gate.check(tool_name, kwargs.get("phone", ""))
                 if result is not None:
                     return result
+            if state == ToolAccessState.DENIED:
+                return _text_response(f"❌ Доступ к '{tool_name}' запрещён настройками агента.")
         return await original_handler(*args, **kwargs)
 
     return SdkMcpTool(

@@ -129,19 +129,19 @@ async def test_phone_permission_no_setting():
 
 async def test_phone_permission_allowed():
     db = MagicMock()
-    db.get_setting = AsyncMock(return_value=json.dumps({"+1": {"test_tool": True}}))
-    result = await require_phone_permission(db, "+1", "test_tool")
+    db.get_setting = AsyncMock(return_value=json.dumps({"+1": {"send_reaction": True}}))
+    result = await require_phone_permission(db, "+1", "send_reaction")
     assert result is None
 
 
 async def test_phone_permission_denied():
     db = MagicMock()
-    # +2 is in perms but test_tool is False for +2 (but True for +1)
+    # +2 is in perms but send_reaction is False for +2 (but True for +1)
     db.get_setting = AsyncMock(return_value=json.dumps({
-        "+1": {"test_tool": True},
-        "+2": {"test_tool": False},
+        "+1": {"send_reaction": True},
+        "+2": {"send_reaction": False},
     }))
-    result = await require_phone_permission(db, "+2", "test_tool")
+    result = await require_phone_permission(db, "+2", "send_reaction")
     assert result is not None
     assert "+2" in result["content"][0]["text"]
 

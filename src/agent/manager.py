@@ -19,6 +19,7 @@ from claude_agent_sdk import (
     CLIConnectionError,
     CLINotFoundError,
     PermissionResultAllow,
+    PermissionResultDeny,
     ProcessError,
     RateLimitEvent,
     ResultMessage,
@@ -357,16 +358,51 @@ async def _as_prompt_stream(text: str) -> AsyncIterator[dict]:
 
 async def _auto_approve_tool(
     tool_name: str, tool_input: dict, context: ToolPermissionContext,
-) -> PermissionResultAllow:
-    """Auto-approve all CLI tool permission requests.
+) -> PermissionResultAllow | PermissionResultDeny:
+    """Auto-approve CLI tool permission requests handled by our gates.
 
     Claude CLI sends can_use_tool control requests for tools that access the
     network (read_messages, send_message, etc.).  Without this callback the
     SDK raises "canUseTool callback is not provided" and the tool silently
     fails with "Tool permission stream closed before response received".
-    We manage permissions through our own PermissionGate instead.
+    MCP tools are still auto-approved here because our MCP wrappers perform
+    the actual runtime permission checks. Built-in SDK tools do not use those
+    wrappers, so requestable/denied built-ins must be handled here.
     """
-    return PermissionResultAllow()
+    del tool_input, context
+
+    from src.agent.permission_gate import get_gate, get_request_context
+    from src.agent.tools.permissions import BUILTIN_TOOLS, ToolAccessState
+
+    if tool_name not in BUILTIN_TOOLS:
+        return PermissionResultAllow()
+
+    ctx = get_request_context()
+    access_policy = ctx.tool_access_policy if ctx is not None else None
+    state = access_policy.get(tool_name) if access_policy is not None else None
+    if state is None or state == ToolAccessState.ALLOWED:
+        return PermissionResultAllow()
+    if state == ToolAccessState.DENIED:
+        return PermissionResultDeny(message=f"Инструмент '{tool_name}' не разрешён настройками агента.")
+
+    gate = get_gate()
+    if gate is None or ctx is None:
+        return PermissionResultDeny(
+            message=f"Инструмент '{tool_name}' требует интерактивное разрешение пользователя."
+        )
+
+    denied = await gate.check(tool_name, "")
+    if denied is None:
+        return PermissionResultAllow()
+
+    message = f"Доступ к '{tool_name}' запрещён пользователем."
+    content = denied.get("content") if isinstance(denied, dict) else None
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                message = item["text"]
+                break
+    return PermissionResultDeny(message=message)
 
 
 class ClaudeSdkBackend:
@@ -538,27 +574,27 @@ class ClaudeSdkBackend:
         from src.agent.tools.permissions import (
             BUILTIN_TOOLS,
             MCP_PREFIX,
-            filter_allowed_tools,
             get_all_allowed_tools,
-            load_tool_permissions_union,
+            load_tool_access_policy,
+            visible_tools_for_llm,
         )
 
         all_tools = get_all_allowed_tools()
-        permissions = await load_tool_permissions_union(self._db, use_cache=True)
-        # When a PermissionGate is active (TUI/web mode), pass ALL tools to the LLM —
-        # the gate intercepts restricted calls at runtime instead of hiding them.
+        access_policy = await load_tool_access_policy(self._db, use_cache=True)
+        # With PermissionGate active, requestable tools stay visible so the
+        # runtime gate can ask; explicit denies remain hidden.
         from src.agent.permission_gate import get_gate
 
-        if get_gate() is not None:
-            allowed = all_tools
-            logger.debug("Agent tools: gate active, all %d tools visible to LLM", len(all_tools))
+        gate_active = get_gate() is not None
+        allowed = visible_tools_for_llm(all_tools, access_policy, gate_active=gate_active)
+        if len(allowed) < len(all_tools):
+            denied = [t.removeprefix(MCP_PREFIX) for t in all_tools if t not in allowed]
+            logger.debug(
+                "Agent tools: %d/%d visible (gate_active=%s), hidden: %s",
+                len(allowed), len(all_tools), gate_active, denied[:20],
+            )
         else:
-            allowed = filter_allowed_tools(all_tools, permissions)
-            if len(allowed) < len(all_tools):
-                denied = [t.removeprefix(MCP_PREFIX) for t in all_tools if t not in allowed]
-                logger.debug("Agent tools: %d/%d allowed, denied: %s", len(allowed), len(all_tools), denied[:20])
-            else:
-                logger.debug("Agent tools: all %d tools allowed", len(allowed))
+            logger.debug("Agent tools: all %d tools visible (gate_active=%s)", len(allowed), gate_active)
 
         enabled_builtins = [t for t in BUILTIN_TOOLS if t in allowed]
 
@@ -1158,8 +1194,14 @@ class DeepagentsBackend:
             f"Deepagents tool '{tool_name}' cannot run inside an active event loop: {loop}"
         )
 
-    def _default_tools(self, permissions: dict[str, bool] | None = None) -> list[Callable]:
-        """Return the tool set for deepagents backend, filtered by permissions."""
+    def _default_tools(
+        self,
+        permissions: dict[str, bool] | None = None,
+        *,
+        access_policy: dict | None = None,
+        gate_active: bool = False,
+    ) -> list[Callable]:
+        """Return the tool set for deepagents backend, filtered by access policy."""
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
         all_tools = build_deepagents_tools(
@@ -1168,6 +1210,14 @@ class DeepagentsBackend:
             config=self._config,
             runtime_context=self._runtime_context,
         )
+        if access_policy is not None:
+            from src.agent.tools.permissions import is_tool_visible_for_llm
+
+            return [
+                tool
+                for tool in all_tools
+                if is_tool_visible_for_llm(tool.__name__, access_policy, gate_active=gate_active)
+            ]
         if permissions is None:
             return all_tools
         return [t for t in all_tools if permissions.get(t.__name__, True)]
@@ -1194,6 +1244,8 @@ class DeepagentsBackend:
         *,
         tools: list[Callable] | None = None,
         permissions: dict[str, bool] | None = None,
+        access_policy: dict | None = None,
+        gate_active: bool = False,
         record_last_used: bool = True,
         system_prompt: str = DEFAULT_AGENT_PROMPT_TEMPLATE,
     ):
@@ -1232,7 +1284,11 @@ class DeepagentsBackend:
                 agent = OllamaReActAgent(
                     base_url=str(extra.get("base_url", "http://localhost:11434")),
                     model=resolved_model_name,
-                    tools=tools or self._default_tools(permissions=permissions),
+                    tools=tools or self._default_tools(
+                        permissions=permissions,
+                        access_policy=access_policy,
+                        gate_active=gate_active,
+                    ),
                     system_prompt=system_prompt,
                     api_key=cfg.secret_fields.get("api_key", ""),
                 )
@@ -1270,7 +1326,11 @@ class DeepagentsBackend:
         try:
             agent = create_deep_agent(
                 model=model,
-                tools=tools or self._default_tools(permissions=permissions),
+                tools=tools or self._default_tools(
+                    permissions=permissions,
+                    access_policy=access_policy,
+                    gate_active=gate_active,
+                ),
                 system_prompt=system_prompt,
             )
             if record_last_used:
@@ -1391,10 +1451,16 @@ class DeepagentsBackend:
         history_msgs: list[dict] | None = None,
         system_prompt: str = DEFAULT_AGENT_PROMPT_TEMPLATE,
         permissions: dict[str, bool] | None = None,
+        access_policy: dict | None = None,
+        gate_active: bool = False,
     ) -> str:
         # Append available tools list to system prompt so models without
         # native function calling still know which tools exist.
-        filtered_tools = self._default_tools(permissions=permissions)
+        filtered_tools = self._default_tools(
+            permissions=permissions,
+            access_policy=access_policy,
+            gate_active=gate_active,
+        )
         tool_names = [t.__name__ for t in filtered_tools]
         if tool_names:
             system_prompt += (
@@ -1407,7 +1473,13 @@ class DeepagentsBackend:
                 "сначала вызывай get_account_info. Не утверждай, что нужен SMS/2FA или что "
                 "аккаунт выключен/not connected, если live tool этого не подтвердил."
             )
-        agent = self._build_agent(cfg, system_prompt=system_prompt, permissions=permissions)
+        agent = self._build_agent(
+            cfg,
+            system_prompt=system_prompt,
+            permissions=permissions,
+            access_policy=access_policy,
+            gate_active=gate_active,
+        )
         logger.info(
             "Deepagents _run_agent: provider=%s, model=%s, tools=%d, agent_type=%s",
             cfg.provider, cfg.selected_model, len(filtered_tools), type(agent).__name__,
@@ -1594,14 +1666,20 @@ class DeepagentsBackend:
     ) -> None:
         del thread_id, stats, model
 
-        from src.agent.tools.permissions import load_tool_permissions_union
+        from src.agent.permission_gate import get_gate, get_request_context
+        from src.agent.tools.permissions import load_tool_access_policy, visible_tools_for_llm
 
-        permissions = await load_tool_permissions_union(self._db)
-        enabled_count = sum(1 for v in permissions.values() if v)
+        access_policy = await load_tool_access_policy(self._db)
+        gate_active = get_gate() is not None and get_request_context() is not None
+        visible_tools = visible_tools_for_llm(
+            [tool.__name__ for tool in self._default_tools()],
+            access_policy,
+            gate_active=gate_active,
+        )
         self._runtime_context.bind_owner_loop(asyncio.get_running_loop())
         logger.info(
-            "Deepagents tool permissions: %d/%d enabled",
-            enabled_count, len(permissions),
+            "Deepagents tool permissions: %d/%d visible (gate_active=%s)",
+            len(visible_tools), len(access_policy), gate_active,
         )
 
         tracker = _ToolTracker(queue=queue)
@@ -1627,7 +1705,8 @@ class DeepagentsBackend:
                     cfg,
                     history_msgs=history_msgs,
                     system_prompt=system_prompt,
-                    permissions=permissions,
+                    access_policy=access_policy,
+                    gate_active=gate_active,
                 )
 
                 agent_duration = round(time.monotonic() - agent_start, 1)
@@ -2010,7 +2089,7 @@ class AgentManager:
 
         queue: asyncio.Queue[str | None] = asyncio.Queue()
 
-        # Capture gate state and compute DB permissions before spawning the task.
+        # Capture gate state and compute DB access policy before spawning the task.
         # The ContextVar token must be created AND reset inside the same asyncio task,
         # so the actual set/reset happens inside _run_backend (not in the generator).
         from src.agent.permission_gate import (
@@ -2023,14 +2102,14 @@ class AgentManager:
         _gate = get_gate()
         _req_ctx: AgentRequestContext | None = None
         if _gate is not None:
-            from src.agent.tools.permissions import load_tool_permissions_union
+            from src.agent.tools.permissions import load_tool_access_policy
 
-            _db_perms = await load_tool_permissions_union(self._db, use_cache=True)
+            _access_policy = await load_tool_access_policy(self._db, use_cache=True)
             _req_ctx = AgentRequestContext(
                 session_id=session_id,
                 thread_id=thread_id,
                 queue=queue,
-                db_permissions=_db_perms,
+                tool_access_policy=_access_policy,
                 permission_timeout=self._config.agent.permission_timeout,
             )
 
