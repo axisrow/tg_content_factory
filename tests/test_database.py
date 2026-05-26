@@ -1,12 +1,13 @@
 import base64
 import hashlib
+import sqlite3
 from datetime import datetime, timezone
 
 import aiosqlite
 import pytest
 from cryptography.fernet import Fernet
 
-from src.database import Database
+from src.database import Database, DatabaseBusyError
 from src.models import (
     Account,
     AccountSessionStatus,
@@ -74,6 +75,57 @@ async def test_account_upsert_reactivates_without_overwriting_primary(db):
     assert accounts[0].session_string == "session2"
     assert accounts[0].is_active is True
     assert accounts[0].is_primary is True
+
+
+@pytest.mark.anyio
+async def test_agent_message_write_retries_when_database_is_locked_once(db, monkeypatch):
+    thread_id = await db.create_agent_thread("Retry")
+    assert db.db is not None
+
+    real_execute = db.db.execute
+    calls = 0
+
+    async def flaky_execute(sql, params=()):
+        nonlocal calls
+        if sql.startswith("INSERT INTO agent_messages"):
+            calls += 1
+            if calls == 1:
+                raise sqlite3.OperationalError("database is locked")
+        return await real_execute(sql, params)
+
+    db._busy_retry_delays_sec = (0,)
+    monkeypatch.setattr(db.db, "execute", flaky_execute)
+
+    await db.save_agent_message(thread_id, "user", "hello")
+
+    messages = await db.get_agent_messages(thread_id)
+    assert calls == 2
+    assert [m["content"] for m in messages] == ["hello"]
+
+
+@pytest.mark.anyio
+async def test_agent_message_write_raises_database_busy_after_retries(db, monkeypatch):
+    thread_id = await db.create_agent_thread("Retry")
+    assert db.db is not None
+
+    real_execute = db.db.execute
+    calls = 0
+
+    async def locked_execute(sql, params=()):
+        nonlocal calls
+        if sql.startswith("INSERT INTO agent_messages"):
+            calls += 1
+            raise sqlite3.OperationalError("database is locked")
+        return await real_execute(sql, params)
+
+    db._busy_retry_delays_sec = (0, 0)
+    monkeypatch.setattr(db.db, "execute", locked_execute)
+
+    with pytest.raises(DatabaseBusyError, match="Database is busy"):
+        await db.save_agent_message(thread_id, "user", "hello")
+
+    assert calls == 3
+    assert await db.get_agent_messages(thread_id) == []
 
 
 @pytest.mark.anyio
