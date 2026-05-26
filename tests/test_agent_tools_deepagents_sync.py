@@ -126,6 +126,12 @@ async def test_deepagents_send_reaction_permission_allow_reaches_action_service(
     mock_db.get_account_summaries = AsyncMock(return_value=[
         SimpleNamespace(phone="+79001234567", is_primary=True, session_status="ok")
     ])
+    command_repo = MagicMock()
+    command_repo.find_active_by_type = AsyncMock(return_value=None)
+    command_repo.create_command = AsyncMock(return_value=55)
+    command_repo.get_command = AsyncMock(return_value=SimpleNamespace(id=55, status="pending"))
+    mock_db.repos = MagicMock()
+    mock_db.repos.telegram_commands = command_repo
     runtime_context = AgentRuntimeContext.build(
         db=mock_db,
         client_pool=MagicMock(),
@@ -147,34 +153,25 @@ async def test_deepagents_send_reaction_permission_allow_reaches_action_service(
     set_gate(gate)
     token = set_request_context(ctx)
     try:
-        with patch("src.agent.tools.messaging_write.TelegramActionService") as service_cls:
-            service = service_cls.return_value
-            service.send_reaction = AsyncMock()
-            task = asyncio.create_task(
-                asyncio.to_thread(
-                    tool_map["send_reaction"],
-                    chat_id="@chat",
-                    message_id=1,
-                    emoji="👍",
-                    confirm=True,
-                )
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                tool_map["send_reaction"],
+                chat_id="@chat",
+                message_id=1,
+                emoji="👍",
+                confirm=True,
             )
-            event = await asyncio.wait_for(queue.get(), timeout=2)
-            payload = json.loads(event.removeprefix("data: ").strip())
-            assert payload["tool"] == "send_reaction"
-            assert payload["phone"] == "+79001234567"
-            gate.resolve(payload["request_id"], choice)
-            result = await asyncio.wait_for(task, timeout=2)
-
-        assert "Реакция '👍' поставлена" in result
-        service.send_reaction.assert_awaited_once_with(
-            phone="+79001234567",
-            chat_id="@chat",
-            message_id=1,
-            emoji="👍",
-            native=True,
-            resolve_entity=True,
         )
+        event = await asyncio.wait_for(queue.get(), timeout=2)
+        payload = json.loads(event.removeprefix("data: ").strip())
+        assert payload["tool"] == "send_reaction"
+        assert payload["phone"] == "+79001234567"
+        gate.resolve(payload["request_id"], choice)
+        result = await asyncio.wait_for(task, timeout=2)
+
+        assert "Реакция '👍' принята в очередь" in result
+        assert "задача #55" in result
+        command_repo.create_command.assert_awaited_once()
         if choice == "session":
             assert gate.is_session_approved("send_reaction", ctx.session_id, "+79001234567")
     finally:

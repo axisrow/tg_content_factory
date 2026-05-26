@@ -327,6 +327,11 @@ class ClientPool:
         target_type: str | None = None,
     ):
         session = adapt_transport_session(session, disconnect_on_close=False)
+        if target_type is None:
+            dialog = await self._get_cached_dialog(phone, dialog_id)
+            cached_type = str(dialog.get("channel_type") or "") if dialog else ""
+            if cached_type in {"dm", "bot", "saved"}:
+                target_type = cached_type
         peer = PeerUser(dialog_id) if target_type in ("dm", "bot", "saved") else PeerChannel(abs(dialog_id))
         try:
             return await run_with_flood_wait(

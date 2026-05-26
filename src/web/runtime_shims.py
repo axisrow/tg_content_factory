@@ -12,6 +12,7 @@ class SnapshotClientPool:
         self.available_phones: set[str] = set()
         self.flood_waits: dict[str, str] = {}
         self.timestamp: str | None = None
+        self._is_warming = False
 
     @property
     def clients(self) -> dict[str, object]:
@@ -39,12 +40,16 @@ class SnapshotClientPool:
         )
         timestamp = payload.get("timestamp")
         self.timestamp = str(timestamp) if timestamp is not None else None
+        self._is_warming = bool(payload.get("is_warming", False))
 
     async def initialize(self) -> None:
         await self.refresh()
 
     async def warm_all_dialogs(self) -> None:
         return None
+
+    def is_warming(self) -> bool:
+        return self._is_warming
 
     async def disconnect_all(self) -> None:
         return None

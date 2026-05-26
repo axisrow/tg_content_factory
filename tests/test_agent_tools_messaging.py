@@ -1,11 +1,12 @@
 """Tests for agent tools: messaging.py."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.models import Account
+from src.models import Account, TelegramCommandStatus
 from tests.agent_tools_helpers import _get_tool_handlers, _text, assert_tool_text
 
 
@@ -43,6 +44,16 @@ def _make_mock_pool():
     mock_pool.get_client_by_phone = AsyncMock(return_value=(mock_session, None))
     mock_pool.resolve_dialog_entity = AsyncMock(return_value=MagicMock(id=123456))
     return mock_pool, mock_client
+
+
+def _setup_command_queue(mock_db, *, command_id: int = 41, status=TelegramCommandStatus.PENDING):
+    repo = MagicMock()
+    repo.find_active_by_type = AsyncMock(return_value=None)
+    repo.create_command = AsyncMock(return_value=command_id)
+    repo.get_command = AsyncMock(return_value=SimpleNamespace(id=command_id, status=status))
+    mock_db.repos = MagicMock()
+    mock_db.repos.telegram_commands = repo
+    return repo
 
 
 class TestSendMessage:
@@ -116,22 +127,34 @@ class TestSendReaction:
     async def test_with_confirm_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        repo = _setup_command_queue(mock_db)
         handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
         result = await handlers["send_reaction"](
             {"phone": "+79001234567", "chat_id": "@chat", "message_id": 5, "emoji": "🔥", "confirm": True}
         )
 
-        # The producer formats the emoji via {emoji!r}, so the literal
-        # representation in the output is "'🔥'", not the bare glyph.
-        assert "Реакция '🔥' поставлена" in _text(result)
-        mock_client.get_entity.assert_awaited_with("@chat")
-        mock_client.send_reaction.assert_awaited_once()
-        # Verify call arguments — guards against accidental positional swap
-        # (e.g. emoji ↔ message_id) that assert_awaited_once would miss.
-        call_args = mock_client.send_reaction.await_args
-        assert call_args.args[1] == 5
-        assert call_args.args[2] == "🔥"
-        assert call_args.args[0] is mock_client.get_entity.return_value
+        assert "Реакция '🔥' принята в очередь" in _text(result)
+        assert "задача #41" in _text(result)
+        repo.create_command.assert_awaited_once()
+        mock_client.get_entity.assert_not_awaited()
+        mock_client.send_reaction.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_with_confirm_reuses_existing_queue_item(self, mock_db):
+        mock_pool, mock_client = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        repo = _setup_command_queue(mock_db, command_id=77, status=TelegramCommandStatus.RUNNING)
+        repo.find_active_by_type.return_value = SimpleNamespace(id=77)
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+
+        result = await handlers["send_reaction"](
+            {"phone": "+79001234567", "chat_id": "@chat", "message_id": 5, "emoji": "🔥", "confirm": True}
+        )
+
+        assert "задача #77" in _text(result)
+        assert "статус running" in _text(result)
+        repo.create_command.assert_not_awaited()
+        mock_client.send_reaction.assert_not_awaited()
 
 
 class TestEditMessage:

@@ -29,6 +29,7 @@ from telethon.tl.types import (
     MessageMediaGeo,
     MessageMediaGeoLive,
     MessageMediaWebPage,
+    PeerUser,
 )
 
 from src.config import SchedulerConfig, TelegramRuntimeConfig
@@ -88,6 +89,26 @@ def mock_auth():
 @pytest.fixture
 def pool(mock_auth, mock_db):
     return ClientPool(mock_auth, mock_db)
+
+
+@pytest.mark.anyio
+async def test_resolve_dialog_entity_uses_cached_dm_type_before_warm(pool, mock_db):
+    client = AsyncMock()
+    client.get_input_entity = AsyncMock(return_value="dm-entity")
+    client.get_dialogs = AsyncMock(return_value=[])
+    mock_db.repos.dialog_cache.get_dialog.return_value = {
+        "channel_id": 5832576119,
+        "title": "Work1nw",
+        "username": "Work1nw",
+        "channel_type": "dm",
+    }
+
+    result = await pool.resolve_dialog_entity(client, "+1", 5832576119)
+
+    assert result == "dm-entity"
+    peer = client.get_input_entity.await_args.args[0]
+    assert isinstance(peer, PeerUser)
+    client.get_dialogs.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

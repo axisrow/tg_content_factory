@@ -57,6 +57,9 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "payload": "payload TEXT",
         "parent_task_id": "parent_task_id INTEGER",
     },
+    "telegram_commands": {
+        "run_after": "run_after TEXT",
+    },
     "search_queries": {
         "is_regex": "is_regex INTEGER DEFAULT 0",
         "is_fts": "is_fts INTEGER DEFAULT 0",
@@ -145,6 +148,10 @@ SCHEMA_REPAIR_INDEXES: Sequence[str] = (
     """
     CREATE INDEX IF NOT EXISTS idx_collection_tasks_type_status_run_after
     ON collection_tasks(task_type, status, run_after)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_telegram_commands_status_run_after_id
+    ON telegram_commands(status, run_after, id)
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_generation_runs_pipeline_status

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
 
 from src.database import Database
 from src.models import RuntimeSnapshot, TelegramCommand, TelegramCommandStatus
+from src.services.telegram_command_service import TelegramCommandService
 
 
 @pytest.mark.anyio
@@ -91,6 +92,78 @@ async def test_claim_next_command_recovers_from_stale_transaction(tmp_path):
         claimed = await db.repos.telegram_commands.claim_next_command()
         assert claimed is not None
         assert claimed.status == TelegramCommandStatus.RUNNING
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_claim_next_command_skips_future_run_after(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        future_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="dialogs.react",
+                payload={"phone": "+1", "message_id": 1},
+                requested_by="test",
+                run_after=datetime.now(timezone.utc) + timedelta(minutes=5),
+            )
+        )
+        due_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="dialogs.react",
+                payload={"phone": "+1", "message_id": 2},
+                requested_by="test",
+            )
+        )
+
+        claimed = await db.repos.telegram_commands.claim_next_command()
+
+        assert claimed is not None
+        assert claimed.id == due_id
+        future = await db.repos.telegram_commands.get_command(future_id)
+        assert future is not None
+        assert future.status == TelegramCommandStatus.PENDING
+        assert future.run_after is not None
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_command_service_queues_distinct_reactions_and_deduplicates_exact_payload(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        service = TelegramCommandService(db)
+        ids = []
+        for message_id in range(10):
+            ids.append(
+                await service.enqueue(
+                    "dialogs.react",
+                    payload={
+                        "phone": "+1",
+                        "chat_id": "5832576119",
+                        "message_id": message_id,
+                        "emoji": "👍",
+                    },
+                    requested_by="test",
+                )
+            )
+        duplicate_id = await service.enqueue(
+            "dialogs.react",
+            payload={
+                "phone": "+1",
+                "chat_id": "5832576119",
+                "message_id": 3,
+                "emoji": "👍",
+            },
+            requested_by="test",
+        )
+
+        assert len(set(ids)) == 10
+        assert duplicate_id == ids[3]
     finally:
         await db.close()
 

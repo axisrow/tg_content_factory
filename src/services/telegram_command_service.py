@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from src.database import Database
 from src.models import TelegramCommand
 
@@ -15,6 +17,7 @@ class TelegramCommandService:
         payload: dict,
         requested_by: str | None = None,
         deduplicate: bool = True,
+        run_after: datetime | None = None,
     ) -> int:
         """Enqueue a telegram command.
 
@@ -35,6 +38,7 @@ class TelegramCommandService:
                 command_type=command_type,
                 payload=payload,
                 requested_by=requested_by,
+                run_after=run_after,
             )
         )
 

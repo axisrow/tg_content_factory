@@ -136,6 +136,7 @@ class TelegramCommand(BaseModel):
     requested_by: str | None = None
     created_at: datetime | None = None
     started_at: datetime | None = None
+    run_after: datetime | None = None
     finished_at: datetime | None = None
     error: str | None = None
     result_payload: dict[str, Any] | None = None

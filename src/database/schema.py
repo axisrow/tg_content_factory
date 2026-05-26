@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS telegram_commands (
     requested_by TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     started_at TEXT,
+    run_after TEXT,
     finished_at TEXT,
     error TEXT,
     result_payload TEXT
@@ -96,6 +97,8 @@ CREATE TABLE IF NOT EXISTS telegram_commands (
 
 CREATE INDEX IF NOT EXISTS idx_telegram_commands_status_id
     ON telegram_commands(status, id);
+CREATE INDEX IF NOT EXISTS idx_telegram_commands_status_run_after_id
+    ON telegram_commands(status, run_after, id);
 
 CREATE TABLE IF NOT EXISTS runtime_snapshots (
     snapshot_type TEXT NOT NULL,
