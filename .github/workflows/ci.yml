@@ -15,25 +15,23 @@ jobs:
     steps:
       - name: Reject branch names with "+"
         if: contains(github.head_ref, '+')
-        run: |
-          echo "::error::Branch name contains '+', which is not allowed. Use '-' or '.' instead."
-          exit 1
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '⛔ Символ `+` недопустим в названии ветки (`' + context.payload.pull_request.head.ref + '`). Переименуйте ветку без `+` (используйте `-` или `.`).'
+            });
+            core.setFailed('Branch name contains "+", which is not allowed.');
 
   lint-and-test:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository without GitHub token
-        run: |
-          git init .
-          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-            ref="refs/pull/${{ github.event.pull_request.number }}/merge"
-          else
-            ref="${GITHUB_REF}"
-          fi
-          git fetch --no-tags --depth=1 origin "+${ref}:refs/remotes/origin/ci"
-          git checkout --detach refs/remotes/origin/ci
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -41,10 +39,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: python -m pip install -e ".[dev]"
+        run: pip install -e ".[dev]"
 
       - name: Ruff
-        run: python -m ruff check src tests conftest.py
+        run: ruff check src tests conftest.py
 
       - name: Import architecture contracts
         run: lint-imports --config .importlinter
@@ -66,6 +64,4 @@ jobs:
           PY
 
       - name: Pytest
-        run: |
-          python -m pytest tests -q -m "not aiosqlite_serial" -n auto
-          python -m pytest tests -q -m aiosqlite_serial
+        run: pytest tests -q -m "not aiosqlite_serial" -n auto && pytest tests -q -m aiosqlite_serial
