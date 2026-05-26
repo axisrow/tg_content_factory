@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
@@ -48,6 +48,22 @@ from src.security import SessionCipher
 
 logger = logging.getLogger(__name__)
 
+_SQLITE_BUSY_MESSAGES = (
+    "database is locked",
+    "database table is locked",
+    "database is busy",
+)
+_BUSY_RETRY_DELAYS_SEC = (0.05, 0.2)
+
+
+class DatabaseBusyError(RuntimeError):
+    """Raised when SQLite stays locked after short write retries."""
+
+
+def _is_sqlite_busy_error(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return any(part in message for part in _SQLITE_BUSY_MESSAGES)
+
 
 class Database:
     def __init__(
@@ -67,6 +83,7 @@ class Database:
         # BEGIN IMMEDIATE block (which would otherwise commit our open
         # transaction prematurely under isolation_level=None).
         self._write_lock: asyncio.Lock = asyncio.Lock()
+        self._busy_retry_delays_sec = _BUSY_RETRY_DELAYS_SEC
         self._accounts: AccountsRepository | None = None
         self._channels: ChannelsRepository | None = None
         self._messages: MessagesRepository | None = None
@@ -173,6 +190,39 @@ class Database:
     async def execute_fetchall(self, sql: str, params: tuple = ()) -> list:
         return await self._connection.execute_fetchall(sql, params)
 
+    async def _with_busy_retry(
+        self,
+        operation: str,
+        action: Callable[[], Awaitable[aiosqlite.Cursor | None]],
+    ) -> aiosqlite.Cursor | None:
+        delays = self._busy_retry_delays_sec
+        for attempt in range(len(delays) + 1):
+            try:
+                return await action()
+            except sqlite3.OperationalError as exc:
+                if not _is_sqlite_busy_error(exc):
+                    raise
+                if attempt >= len(delays):
+                    logger.warning(
+                        "Database stayed locked during %s after %d attempts",
+                        operation,
+                        attempt + 1,
+                    )
+                    raise DatabaseBusyError(
+                        "Database is busy. Retry the request in a few seconds."
+                    ) from exc
+                delay = delays[attempt]
+                logger.warning(
+                    "Database locked during %s; retrying in %.2fs (%d/%d)",
+                    operation,
+                    delay,
+                    attempt + 1,
+                    len(delays) + 1,
+                )
+                if delay > 0:
+                    await asyncio.sleep(delay)
+        return None
+
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
         """Acquire the connection-wide write lock and run BEGIN IMMEDIATE.
@@ -187,7 +237,10 @@ class Database:
         """
         assert self._db is not None
         async with self._write_lock:
-            await begin_immediate(self._db)
+            await self._with_busy_retry(
+                "transaction begin",
+                lambda: begin_immediate(self._db),
+            )
             committed = False
             try:
                 yield self._db
@@ -211,8 +264,13 @@ class Database:
         """
         assert self._db is not None
         async with self._write_lock:
-            cur = await self._db.execute(sql, params)
-            await self._db.commit()
+            async def _write_once() -> aiosqlite.Cursor:
+                cur = await self._db.execute(sql, params)
+                await self._db.commit()
+                return cur
+
+            cur = await self._with_busy_retry("execute_write", _write_once)
+            assert cur is not None
             return cur
 
     async def executemany_write(
@@ -224,8 +282,13 @@ class Database:
         """
         assert self._db is not None
         async with self._write_lock:
-            cur = await self._db.executemany(sql, seq)
-            await self._db.commit()
+            async def _write_once() -> aiosqlite.Cursor:
+                cur = await self._db.executemany(sql, seq)
+                await self._db.commit()
+                return cur
+
+            cur = await self._with_busy_retry("executemany_write", _write_once)
+            assert cur is not None
             return cur
 
     @property

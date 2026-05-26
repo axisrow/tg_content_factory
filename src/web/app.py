@@ -13,9 +13,10 @@ from urllib.parse import parse_qs, urlparse
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import HTMLResponse, RedirectResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from src.config import AppConfig, load_config
+from src.database import DatabaseBusyError
 from src.web.assembly import (
     build_log_buffer,
     build_timing_buffer,
@@ -313,6 +314,40 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.add_middleware(ActionLogMiddleware)
     app.add_middleware(ErrorRedirectLogMiddleware)
     app.add_middleware(TimingMiddleware)
+
+    @app.exception_handler(DatabaseBusyError)
+    async def database_busy_exception_handler(request: Request, exc: DatabaseBusyError):
+        logger.warning("Database busy on %s %s: %s", request.method, request.url.path, exc)
+        headers = {"Retry-After": "2"}
+        detail = "База данных занята. Повторите попытку через несколько секунд."
+
+        if request.headers.get("HX-Request") == "true":
+            return HTMLResponse(
+                f'<div class="alert alert-warning">{detail}</div>',
+                status_code=503,
+                headers=headers,
+            )
+
+        accept = request.headers.get("Accept", "")
+        content_type = request.headers.get("Content-Type", "")
+        wants_json = (
+            request.url.path.startswith("/agent/")
+            or "application/json" in accept
+            or "application/json" in content_type
+        )
+        if wants_json:
+            return JSONResponse({"detail": detail}, status_code=503, headers=headers)
+
+        try:
+            tpl = app.state.templates.env.get_template("error.html")
+            body = tpl.render({
+                "request": request,
+                "status_code": 503,
+                "detail": detail,
+            })
+            return HTMLResponse(body, status_code=503, headers=headers)
+        except Exception:
+            return HTMLResponse(detail, status_code=503, headers=headers)
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception):
