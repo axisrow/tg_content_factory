@@ -1,3 +1,3 @@
-from src.database.facade import Database
+from src.database.facade import Database, DatabaseBusyError
 
-__all__ = ["Database"]
+__all__ = ["Database", "DatabaseBusyError"]

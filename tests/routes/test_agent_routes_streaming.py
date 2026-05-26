@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
+from src.database import DatabaseBusyError
+
 
 @pytest.fixture
 async def client(route_client, agent_manager_mock):
@@ -63,6 +65,26 @@ async def test_chat_streaming_saves_assistant_message(client, db):
     assistant_msgs = [m for m in messages if m["role"] == "assistant"]
     assert len(assistant_msgs) == 1
     assert assistant_msgs[0]["content"] == "hi"
+
+
+@pytest.mark.anyio
+async def test_chat_database_busy_returns_retryable_503(client, db):
+    thread_id = await db.create_agent_thread("Chat")
+
+    with patch.object(
+        db,
+        "save_agent_message",
+        side_effect=DatabaseBusyError("Database is busy. Retry the request in a few seconds."),
+    ):
+        resp = await client.post(
+            f"/agent/threads/{thread_id}/chat",
+            content=json.dumps({"message": "hello"}),
+            headers={"Content-Type": "application/json"},
+        )
+
+    assert resp.status_code == 503
+    assert resp.headers["retry-after"] == "2"
+    assert "База данных занята" in resp.json()["detail"]
 
 
 # === chat: generate() — IntegrityError on save (line 284-285) ===
