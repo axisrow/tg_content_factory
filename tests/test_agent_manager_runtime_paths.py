@@ -57,6 +57,36 @@ class TestAgentRuntimeContextPlumbing:
         assert build.call_args.kwargs["runtime_context"].client_pool is pool
         assert build.call_args.kwargs["runtime_context"].runtime_kind == "live"
 
+    def test_deepagents_default_tools_keeps_requestable_tools_when_gate_active(self):
+        from src.agent.tools.permissions import ToolAccessState
+
+        def named_tool(name):
+            def _tool():
+                return name
+
+            _tool.__name__ = name
+            return _tool
+
+        db = MagicMock(spec=Database)
+        backend = DeepagentsBackend(db, AppConfig(), client_pool=MagicMock())
+        fake_tools = [
+            named_tool("send_reaction"),
+            named_tool("pin_message"),
+            named_tool("list_channels"),
+        ]
+        policy = {
+            "send_reaction": ToolAccessState.REQUESTABLE,
+            "pin_message": ToolAccessState.DENIED,
+            "list_channels": ToolAccessState.ALLOWED,
+        }
+
+        with patch("src.agent.tools.deepagents_sync.build_deepagents_tools", return_value=fake_tools):
+            with_gate = backend._default_tools(access_policy=policy, gate_active=True)
+            without_gate = backend._default_tools(access_policy=policy, gate_active=False)
+
+        assert [tool.__name__ for tool in with_gate] == ["send_reaction", "list_channels"]
+        assert [tool.__name__ for tool in without_gate] == ["list_channels"]
+
 
 def _make_assistant_msg(text, model="test"):
     """Create a MagicMock AssistantMessage (avoids constructor issues)."""
