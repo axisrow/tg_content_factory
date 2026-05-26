@@ -235,7 +235,16 @@ async def resolve_permission(request: Request, thread_id: int, request_id: str):
     if agent_manager is None:
         return _agent_unavailable_response(agent_runtime_state)
     ok = agent_manager.permission_gate.resolve(request_id, choice)
-    return JSONResponse({"ok": ok})
+    logger.info(
+        "Permission resolve from web: thread_id=%s request_id=%s choice=%s ok=%s",
+        thread_id,
+        request_id,
+        choice,
+        ok,
+    )
+    if not ok:
+        raise HTTPException(status_code=404, detail="Permission request not found or already resolved")
+    return JSONResponse({"ok": True})
 
 
 @router.post("/threads/{thread_id}/stop")

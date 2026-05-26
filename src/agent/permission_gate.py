@@ -142,14 +142,23 @@ class PermissionGate:
             ensure_ascii=False,
         )
         await ctx.queue.put(f"data: {event}\n\n")
+        logger.info(
+            "Permission request emitted: request_id=%s tool=%s phone=%s thread=%d session=%s timeout=%ds",
+            request_id,
+            tool_name,
+            phone or "(none)",
+            ctx.thread_id,
+            ctx.session_id,
+            timeout,
+        )
 
         try:
             choice: str = await asyncio.wait_for(future, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending.pop(request_id, None)
             logger.warning(
-                "Permission timeout %ds fired for tool '%s' (thread %d, session %s)",
-                timeout, tool_name, ctx.thread_id, ctx.session_id,
+                "Permission timeout %ds fired for request_id=%s tool '%s' (thread %d, session %s)",
+                timeout, request_id, tool_name, ctx.thread_id, ctx.session_id,
             )
             mins = timeout // 60
             return _text_response(f"❌ Таймаут запроса разрешения для '{tool_name}' ({mins} мин).")
@@ -188,6 +197,7 @@ class PermissionGate:
             return False
         if not future.done():
             future.set_result(choice)
+            logger.info("Permission request resolved: request_id=%s choice=%s", request_id, choice)
         return True
 
     def clear_session(self, session_id: str) -> None:

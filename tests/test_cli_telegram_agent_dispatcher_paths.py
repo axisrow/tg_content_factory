@@ -1086,6 +1086,21 @@ class TestAgentRuntimeContextRunSync:
         result = AgentRuntimeContext.build(db=MagicMock()).run_sync("test_tool", _op)
         assert result == 42
 
+    def test_sync_timeout_exceeds_permission_timeout(self):
+        from src.agent.runtime_context import AgentRuntimeContext
+
+        config = MagicMock()
+        config.agent.permission_timeout = 77
+
+        ctx = AgentRuntimeContext.build(db=MagicMock(), config=config)
+
+        assert ctx.sync_timeout_sec == 120.0
+
+        config.agent.permission_timeout = 130
+        ctx = AgentRuntimeContext.build(db=MagicMock(), config=config)
+
+        assert ctx.sync_timeout_sec == 135.0
+
     @pytest.mark.anyio
     async def test_inside_event_loop_raises(self):
         from src.agent.runtime_context import AgentRuntimeContext
