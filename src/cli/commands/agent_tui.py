@@ -426,11 +426,6 @@ class AgentTuiApp(App):
         self.agent_manager = agent_manager
         self._stream_worker = None
         self._session_id = str(uuid.uuid4())
-        # Activate interactive permission dialogs for TUI mode
-        self.agent_manager.enable_permission_gate()
-
-    def on_unmount(self) -> None:
-        self.agent_manager.disable_permission_gate()
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -567,7 +562,11 @@ class AgentTuiApp(App):
         full_text = ""
         try:
             async for chunk in self.agent_manager.chat_stream(
-                thread_id, message, model=model, session_id=self._session_id
+                thread_id,
+                message,
+                model=model,
+                session_id=self._session_id,
+                interactive_permissions=True,
             ):
                 raw = chunk.removeprefix("data: ").strip()
                 try:

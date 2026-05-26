@@ -296,7 +296,13 @@ async def chat(request: Request, thread_id: int):
     session_id = request.cookies.get("session", "web")
 
     async def generate():
-        async for chunk in agent_manager.chat_stream(thread_id, message, model=model, session_id=session_id):
+        async for chunk in agent_manager.chat_stream(
+            thread_id,
+            message,
+            model=model,
+            session_id=session_id,
+            interactive_permissions=True,
+        ):
             try:
                 data_str = chunk.removeprefix("data: ").strip()
                 data = json.loads(data_str)

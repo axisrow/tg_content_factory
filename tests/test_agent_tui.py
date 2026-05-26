@@ -226,6 +226,7 @@ async def test_tui_send_message_calls_chat_stream(db, app_factory):
     mgr.chat_stream.assert_called_once()
     call_args = mgr.chat_stream.call_args
     assert call_args[0][1] == "test message" or call_args[1].get("message") == "test message"
+    assert call_args.kwargs["interactive_permissions"] is True
     # thread_id and message are positional args
     assert "test message" in str(call_args)
 
@@ -786,3 +787,4 @@ async def test_tui_stream_shows_tool_status(db, app_factory):
         await pilot.pause(0.3)
 
     mgr.chat_stream.assert_called_once()
+    assert mgr.chat_stream.call_args.kwargs["interactive_permissions"] is True
