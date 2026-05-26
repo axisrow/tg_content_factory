@@ -315,6 +315,14 @@ def register(db, client_pool, embedding_service, **kwargs):
             perm_gate = await require_phone_permission(db, phone, "clear_dialog_cache")
             if perm_gate:
                 return perm_gate
+        else:
+            from src.agent.tools.permissions import TOOL_PERMISSIONS_SETTING
+
+            if await db.get_setting(TOOL_PERMISSIONS_SETTING):
+                return _text_response(
+                    "❌ Укажите phone для clear_dialog_cache: глобальная очистка кеша недоступна, "
+                    "когда настроен ACL инструментов агента."
+                )
         gate = require_confirmation(
             f"очистит кеш диалогов{' для ' + phone if phone else ' для всех аккаунтов'}", args
         )

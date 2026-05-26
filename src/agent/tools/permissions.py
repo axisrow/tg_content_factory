@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 _PERMISSIONS_CACHE_TTL = 60.0  # seconds
 _permissions_cache: tuple[dict[str, bool], float] | None = None
+_access_policy_cache: tuple[dict[str, "ToolAccessState"], float] | None = None
 
 TOOL_PERMISSIONS_SETTING = "agent_tool_permissions"
 MCP_PREFIX = "mcp__telegram_db__"
@@ -20,10 +21,9 @@ BUILTIN_TOOLS = ["WebSearch", "WebFetch"]
 
 # Tools that bind to a specific Telegram account and route through
 # require_phone_permission (directly or via prepare_telegram_tool). For these
-# tools `load_tool_permissions_union` reports visibility based on explicit
-# per-phone grants only — so the agent never advertises a phone-bound tool
-# that the runtime phone-gate would deny. Non-phone-bound tools (DB search,
-# analytics, settings, …) keep permissive defaults for missing keys.
+# tools tri-state access policy treats explicit grants/denies separately from
+# missing ACL entries. Missing phone-bound entries are requestable in
+# interactive agent sessions and blocked in unattended contexts.
 #
 # Kept in sync with the static scan in
 # `tests/test_tool_permissions.py::test_every_phone_binded_tool_is_registered_in_tool_categories`.
@@ -77,6 +77,12 @@ class ToolCategory(str, Enum):
     READ = "read"
     WRITE = "write"
     DELETE = "delete"
+
+
+class ToolAccessState(str, Enum):
+    ALLOWED = "allowed"
+    REQUESTABLE = "requestable"
+    DENIED = "denied"
 
 
 # ---------------------------------------------------------------------------
@@ -399,6 +405,120 @@ async def _load_raw_permissions(db) -> dict:
         return {}
 
 
+async def _load_raw_permissions_strict(db) -> tuple[dict, bool]:
+    """Load raw permissions and preserve corruption as a fail-closed signal."""
+    raw = await db.get_setting(TOOL_PERMISSIONS_SETTING)
+    if not raw:
+        return {}, False
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("Corrupted tool permissions setting, using fail-closed policy")
+        return {}, True
+    if not isinstance(data, dict):
+        logger.warning("Tool permissions setting is not an object, using fail-closed policy")
+        return {}, True
+    return data, False
+
+
+def _state_from_saved_value(value: object) -> ToolAccessState:
+    if value is True:
+        return ToolAccessState.ALLOWED
+    if value is False:
+        return ToolAccessState.DENIED
+    return ToolAccessState.REQUESTABLE
+
+
+def _merge_access_states(states: list[ToolAccessState]) -> ToolAccessState:
+    if ToolAccessState.ALLOWED in states:
+        return ToolAccessState.ALLOWED
+    if ToolAccessState.REQUESTABLE in states:
+        return ToolAccessState.REQUESTABLE
+    return ToolAccessState.DENIED
+
+
+async def load_tool_access_policy(db, *, use_cache: bool = False) -> dict[str, ToolAccessState]:
+    """Return aggregate tool access states for model visibility decisions.
+
+    ``ALLOWED`` means at least one configured scope explicitly allows the tool.
+    ``REQUESTABLE`` means the tool is not explicitly allowed or denied and may
+    ask through PermissionGate in an interactive request.
+    ``DENIED`` means every configured scope explicitly denies the tool, or the
+    stored ACL is malformed.
+    """
+    global _access_policy_cache  # noqa: PLW0603
+    if use_cache and _access_policy_cache is not None:
+        cached_value, expires = _access_policy_cache
+        if time.monotonic() < expires:
+            return cached_value
+
+    saved, malformed = await _load_raw_permissions_strict(db)
+    if malformed:
+        result = {name: ToolAccessState.DENIED for name in TOOL_CATEGORIES}
+    elif not saved:
+        result = {name: ToolAccessState.ALLOWED for name in TOOL_CATEGORIES}
+    elif not _is_per_phone_format(saved):
+        result = {
+            name: _state_from_saved_value(saved.get(name))
+            for name in TOOL_CATEGORIES
+        }
+    else:
+        phone_dicts = [v for v in saved.values() if isinstance(v, dict)]
+        if not phone_dicts:
+            result = {name: ToolAccessState.REQUESTABLE for name in TOOL_CATEGORIES}
+        else:
+            result = {
+                name: _merge_access_states([
+                    _state_from_saved_value(phone_perms.get(name))
+                    for phone_perms in phone_dicts
+                ])
+                for name in TOOL_CATEGORIES
+            }
+
+    _access_policy_cache = (result, time.monotonic() + _PERMISSIONS_CACHE_TTL)
+    return result
+
+
+async def get_tool_access_state(db, tool_name: str, *, phone: str = "") -> ToolAccessState:
+    """Return access state for one tool, optionally scoped to a phone."""
+    if tool_name not in TOOL_CATEGORIES:
+        return ToolAccessState.DENIED
+    try:
+        saved, malformed = await _load_raw_permissions_strict(db)
+    except Exception:
+        logger.warning("Failed to load agent tool permissions; blocking '%s'", tool_name, exc_info=True)
+        return ToolAccessState.DENIED
+    if malformed:
+        return ToolAccessState.DENIED
+    if not saved:
+        return ToolAccessState.ALLOWED
+    if not _is_per_phone_format(saved):
+        return _state_from_saved_value(saved.get(tool_name))
+    if not phone:
+        policy = await load_tool_access_policy(db)
+        return policy.get(tool_name, ToolAccessState.DENIED)
+    phone_perms = saved.get(phone)
+    if not isinstance(phone_perms, dict):
+        return ToolAccessState.REQUESTABLE
+    return _state_from_saved_value(phone_perms.get(tool_name))
+
+
+async def get_explicit_allowed_phones(db, tool_name: str) -> list[str]:
+    """Return phones with an explicit True grant for the tool."""
+    try:
+        saved, malformed = await _load_raw_permissions_strict(db)
+    except Exception:
+        logger.warning("Failed to load agent tool permissions; cannot list allowed phones", exc_info=True)
+        return []
+    if malformed or not saved or not _is_per_phone_format(saved):
+        return []
+    return sorted(
+        phone
+        for phone, phone_perms in saved.items()
+        if isinstance(phone_perms, dict) and phone_perms.get(tool_name) is True
+    )
+
+
 async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]:
     """Load per-tool permissions from DB for a specific phone.
 
@@ -505,8 +625,9 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
     absent-phone deny.  Admin must explicitly open each account's tab in the
     settings UI and save it to grant any access.
     """
-    global _permissions_cache  # noqa: PLW0603
+    global _permissions_cache, _access_policy_cache  # noqa: PLW0603
     _permissions_cache = None  # invalidate cache on save
+    _access_policy_cache = None
 
     if phone is None:
         await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(permissions, ensure_ascii=False))
@@ -526,13 +647,10 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
 
 
 async def load_tool_permissions_union(db, *, use_cache: bool = False) -> dict[str, bool]:
-    """Union across all phones — True if ANY phone allows the tool.
+    """Compatibility boolean view: True only for explicitly allowed tools.
 
-    Used by agent backends so that tools visible to at least one account
-    remain available for the session.  Per-phone handler gates do fine-grained blocking.
-
-    When *use_cache* is True, returns a cached result for up to 60 seconds
-    to avoid repeated DB queries during agent chat.
+    New code should use ``load_tool_access_policy`` plus ``visible_tools_for_llm``
+    so requestable tools can remain visible in interactive agent sessions.
     """
     global _permissions_cache  # noqa: PLW0603
     if use_cache and _permissions_cache is not None:
@@ -540,35 +658,8 @@ async def load_tool_permissions_union(db, *, use_cache: bool = False) -> dict[st
         if time.monotonic() < expires:
             return cached_value
 
-    defaults = _default_permissions()
-    missing_defaults = _default_permissions(for_missing_in_saved=True)
-    saved = await _load_raw_permissions(db)
-    if not saved:
-        result = defaults
-    elif not _is_per_phone_format(saved):
-        # Legacy flat: missing READ defaults to True, missing WRITE/DELETE to False.
-        result = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
-    else:
-        phone_dicts = [v for v in saved.values() if isinstance(v, dict)]
-        if not phone_dicts:
-            result = defaults
-        else:
-            # Per-phone: a *phone-bound* tool is advertised only when at least
-            # one phone has an explicit True entry — visibility must track
-            # require_phone_permission, which only honours explicit True
-            # (Codex round 5). Non-phone-bound tools keep permissive defaults
-            # so DB-only READ stays available under any per-phone ACL.
-            result = {
-                name: any(
-                    pd.get(
-                        name,
-                        False if name in PHONE_BINDED_TOOLS else missing_defaults[name],
-                    )
-                    for pd in phone_dicts
-                )
-                for name in TOOL_CATEGORIES
-            }
-
+    policy = await load_tool_access_policy(db, use_cache=False)
+    result = {name: state == ToolAccessState.ALLOWED for name, state in policy.items()}
     _permissions_cache = (result, time.monotonic() + _PERMISSIONS_CACHE_TTL)
     return result
 
@@ -593,6 +684,39 @@ def get_all_allowed_tools() -> list[str]:
             result.append(f"{MCP_PREFIX}{name}")
     _all_allowed_tools_cache = result
     return result
+
+
+def _bare_tool_name(tool_name: str) -> str:
+    return tool_name.removeprefix(MCP_PREFIX) if tool_name.startswith(MCP_PREFIX) else tool_name
+
+
+def is_tool_visible_for_llm(
+    tool_name: str,
+    access_policy: dict[str, ToolAccessState],
+    *,
+    gate_active: bool,
+) -> bool:
+    """Return whether a tool should be advertised to the model."""
+    state = access_policy.get(_bare_tool_name(tool_name), ToolAccessState.DENIED)
+    if state == ToolAccessState.ALLOWED:
+        return True
+    if state == ToolAccessState.REQUESTABLE:
+        return gate_active
+    return False
+
+
+def visible_tools_for_llm(
+    all_tools: list[str],
+    access_policy: dict[str, ToolAccessState],
+    *,
+    gate_active: bool,
+) -> list[str]:
+    """Filter tool names for model visibility using tri-state access policy."""
+    return [
+        tool_name
+        for tool_name in all_tools
+        if is_tool_visible_for_llm(tool_name, access_policy, gate_active=gate_active)
+    ]
 
 
 def filter_allowed_tools(all_tools: list[str], permissions: dict[str, bool]) -> list[str]:
