@@ -454,17 +454,21 @@ def wait_for_ready_live_cli_accounts(
         if phones:
             last_phones = phones
             for phone in phones:
+                remaining_seconds = deadline - monotonic()
+                if remaining_seconds <= 0:
+                    break
+                effective_probe_timeout_seconds = min(probe_timeout_seconds, remaining_seconds)
                 try:
                     result = _run_account_info_probe(
                         cli_env,
                         phone,
-                        timeout=probe_timeout_seconds,
+                        timeout=effective_probe_timeout_seconds,
                         runner=runner,
                     )
                 except subprocess.TimeoutExpired:
                     last_probe_failure = (
                         f"`account info --phone {phone}` timed out after "
-                        f"{probe_timeout_seconds:g}s"
+                        f"{effective_probe_timeout_seconds:g}s"
                     )
                     continue
 

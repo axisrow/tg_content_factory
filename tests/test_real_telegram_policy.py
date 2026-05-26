@@ -187,6 +187,45 @@ def test_live_cli_account_readiness_retries_until_active_account_appears(tmp_pat
     assert probe_commands[0][-4:] == ("account", "info", "--phone", "+123")
 
 
+def test_live_cli_account_readiness_caps_probe_timeout_to_remaining_wait(tmp_path: Path):
+    cli_env = _live_cli_probe_env(tmp_path)
+    now = 0.0
+    probe_phones: list[str] = []
+    probe_timeouts: list[float] = []
+    sleep_calls: list[float] = []
+
+    def monotonic() -> float:
+        return now
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        sleep_calls.append(seconds)
+        now += seconds
+
+    def runner(args, **kwargs) -> subprocess.CompletedProcess:
+        nonlocal now
+        probe_phones.append(args[-1])
+        probe_timeouts.append(kwargs["timeout"])
+        now += kwargs["timeout"]
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="not ready")
+
+    with pytest.raises(LiveCliAccountReadinessError):
+        wait_for_ready_live_cli_accounts(
+            cli_env,
+            wait_seconds=2,
+            poll_seconds=1,
+            probe_timeout_seconds=60,
+            fetch_accounts=lambda _db_path: ("+111", "+222"),
+            runner=runner,
+            monotonic=monotonic,
+            sleep=sleep,
+        )
+
+    assert probe_phones == ["+111"]
+    assert probe_timeouts == [2]
+    assert sleep_calls == []
+
+
 def test_live_cli_account_readiness_times_out_without_active_account(tmp_path: Path):
     cli_env = _live_cli_probe_env(tmp_path)
 
@@ -201,6 +240,14 @@ def test_live_cli_account_readiness_times_out_without_active_account(tmp_path: P
 
 def test_live_cli_account_readiness_fails_on_zero_exit_no_account_probe(tmp_path: Path):
     cli_env = _live_cli_probe_env(tmp_path)
+    now = 0.0
+
+    def monotonic() -> float:
+        return now
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        now += seconds
 
     def runner(args, **_kwargs) -> subprocess.CompletedProcess:
         return subprocess.CompletedProcess(
@@ -213,9 +260,12 @@ def test_live_cli_account_readiness_fails_on_zero_exit_no_account_probe(tmp_path
     with pytest.raises(LiveCliAccountReadinessError, match="Live Telegram accounts not found"):
         wait_for_ready_live_cli_accounts(
             cli_env,
-            wait_seconds=0,
+            wait_seconds=1,
+            poll_seconds=1,
             fetch_accounts=lambda _db_path: ("+123",),
             runner=runner,
+            monotonic=monotonic,
+            sleep=sleep,
         )
 
 
