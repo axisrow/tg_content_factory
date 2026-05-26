@@ -2398,10 +2398,127 @@ class TestAsPromptStream:
 
 class TestAutoApproveTool:
     @pytest.mark.anyio
-    async def test_returns_allow(self):
+    async def test_returns_allow_for_mcp_tools(self):
         from claude_agent_sdk import PermissionResultAllow
 
         from src.agent.manager import _auto_approve_tool
 
-        result = await _auto_approve_tool("tool", {}, MagicMock())
+        result = await _auto_approve_tool("mcp__telegram_db__send_reaction", {}, MagicMock())
         assert isinstance(result, PermissionResultAllow)
+
+    @pytest.mark.anyio
+    async def test_builtin_requestable_asks_permission_gate(self):
+        from claude_agent_sdk import PermissionResultDeny
+
+        from src.agent.manager import _auto_approve_tool
+        from src.agent.permission_gate import (
+            AgentRequestContext,
+            PermissionGate,
+            reset_request_context,
+            set_gate,
+            set_request_context,
+        )
+        from src.agent.tools.permissions import ToolAccessState
+
+        gate = PermissionGate()
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        ctx = AgentRequestContext(
+            session_id="builtin-requestable",
+            thread_id=1,
+            queue=queue,
+            tool_access_policy={"WebSearch": ToolAccessState.REQUESTABLE},
+            permission_timeout=5,
+        )
+        set_gate(gate)
+        token = set_request_context(ctx)
+        try:
+            task = asyncio.create_task(_auto_approve_tool("WebSearch", {}, MagicMock()))
+            event = await asyncio.wait_for(queue.get(), timeout=2)
+            payload = json.loads(event.removeprefix("data: ").strip())
+            assert payload["type"] == "permission_request"
+            assert payload["tool"] == "WebSearch"
+            assert payload["phone"] == ""
+            assert queue.empty()
+
+            gate.resolve(payload["request_id"], "deny")
+            result = await asyncio.wait_for(task, timeout=2)
+            assert isinstance(result, PermissionResultDeny)
+            assert "запрещён" in result.message
+        finally:
+            reset_request_context(token)
+            set_gate(None)
+
+    @pytest.mark.anyio
+    async def test_builtin_session_allow_reuses_permission_gate_approval(self):
+        from claude_agent_sdk import PermissionResultAllow
+
+        from src.agent.manager import _auto_approve_tool
+        from src.agent.permission_gate import (
+            AgentRequestContext,
+            PermissionGate,
+            reset_request_context,
+            set_gate,
+            set_request_context,
+        )
+        from src.agent.tools.permissions import ToolAccessState
+
+        gate = PermissionGate()
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        ctx = AgentRequestContext(
+            session_id="builtin-session",
+            thread_id=1,
+            queue=queue,
+            tool_access_policy={"WebFetch": ToolAccessState.REQUESTABLE},
+            permission_timeout=5,
+        )
+        set_gate(gate)
+        token = set_request_context(ctx)
+        try:
+            task = asyncio.create_task(_auto_approve_tool("WebFetch", {}, MagicMock()))
+            event = await asyncio.wait_for(queue.get(), timeout=2)
+            payload = json.loads(event.removeprefix("data: ").strip())
+            gate.resolve(payload["request_id"], "session")
+            result = await asyncio.wait_for(task, timeout=2)
+            assert isinstance(result, PermissionResultAllow)
+            assert gate.is_session_approved("WebFetch", "builtin-session", "")
+
+            result = await _auto_approve_tool("WebFetch", {}, MagicMock())
+            assert isinstance(result, PermissionResultAllow)
+            assert queue.empty()
+        finally:
+            reset_request_context(token)
+            set_gate(None)
+
+    @pytest.mark.anyio
+    async def test_builtin_denied_does_not_prompt(self):
+        from claude_agent_sdk import PermissionResultDeny
+
+        from src.agent.manager import _auto_approve_tool
+        from src.agent.permission_gate import (
+            AgentRequestContext,
+            PermissionGate,
+            reset_request_context,
+            set_gate,
+            set_request_context,
+        )
+        from src.agent.tools.permissions import ToolAccessState
+
+        gate = PermissionGate()
+        queue: asyncio.Queue[str] = asyncio.Queue()
+        ctx = AgentRequestContext(
+            session_id="builtin-denied",
+            thread_id=1,
+            queue=queue,
+            tool_access_policy={"WebSearch": ToolAccessState.DENIED},
+            permission_timeout=5,
+        )
+        set_gate(gate)
+        token = set_request_context(ctx)
+        try:
+            result = await _auto_approve_tool("WebSearch", {}, MagicMock())
+            assert isinstance(result, PermissionResultDeny)
+            assert "не разрешён" in result.message
+            assert queue.empty()
+        finally:
+            reset_request_context(token)
+            set_gate(None)
