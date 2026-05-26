@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.database import Database
-from src.models import Account, AccountSessionStatus, AccountSummary
+from src.models import Account, AccountSessionStatus, AccountSummary, TelegramCommand, TelegramCommandStatus
 from src.services import telegram_command_dispatcher as mod
-from src.services.telegram_command_dispatcher import TelegramCommandDispatcher
+from src.services.telegram_command_dispatcher import TelegramCommandDispatcher, TelegramCommandRetryLaterError
+from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 
 
 class _FakeClient:
@@ -420,6 +422,70 @@ async def test_dialogs_forward():
         "phone": "+1", "from_chat": -100, "to_chat": -200, "message_ids": [1],
     })
     assert r["forwarded"] == 1
+
+
+async def test_dialogs_react_waits_while_pool_is_warming():
+    pool = _mock_pool()
+    pool.is_warming = MagicMock(return_value=True)
+    d = _dispatcher(pool=pool)
+
+    with pytest.raises(TelegramCommandRetryLaterError, match="warm-up"):
+        await d._handle_dialogs_react({"phone": "+1", "chat_id": -100, "message_id": 1, "emoji": "👍"})
+
+    pool.get_native_client_by_phone.assert_not_awaited()
+
+
+async def test_dialogs_react_waits_when_account_is_flooded():
+    db = _mock_db()
+    db.get_account_summaries.return_value = [
+        AccountSummary(
+            id=1,
+            phone="+1",
+            session_status=AccountSessionStatus.OK,
+            is_active=True,
+            flood_wait_until=datetime.now(timezone.utc) + timedelta(minutes=1),
+        )
+    ]
+    pool = _mock_pool()
+    pool.is_warming = MagicMock(return_value=False)
+    d = _dispatcher(db=db, pool=pool)
+
+    with pytest.raises(TelegramCommandRetryLaterError, match="flood-waited"):
+        await d._handle_dialogs_react({"phone": "+1", "chat_id": -100, "message_id": 1, "emoji": "👍"})
+
+    pool.get_native_client_by_phone.assert_not_awaited()
+
+
+async def test_run_loop_requeues_handled_flood_wait():
+    db = _mock_db()
+    command = TelegramCommand(
+        id=9,
+        command_type="dialogs.react",
+        payload={"phone": "+1", "chat_id": -100, "message_id": 1, "emoji": "👍"},
+    )
+    db.repos.telegram_commands.claim_next_command = AsyncMock(return_value=command)
+    d = _dispatcher(db=db)
+    info = FloodWaitInfo(
+        operation="telegram_send_reaction",
+        phone="+1",
+        wait_seconds=21,
+        next_available_at_utc=datetime.now(timezone.utc) + timedelta(seconds=21),
+        detail="Flood wait 21s for +1",
+    )
+    d._dispatch = AsyncMock(side_effect=HandledFloodWaitError(info))
+
+    async def _update_and_stop(*args, **kwargs):
+        d._stop_event.set()
+
+    db.repos.telegram_commands.update_command = AsyncMock(side_effect=_update_and_stop)
+
+    await d._run_loop()
+
+    db.repos.telegram_commands.update_command.assert_awaited_once()
+    kwargs = db.repos.telegram_commands.update_command.await_args.kwargs
+    assert kwargs["status"] == TelegramCommandStatus.PENDING
+    assert kwargs["run_after"] > datetime.now(timezone.utc)
+    assert kwargs["result_payload"]["state"] == "waiting_flood_wait"
 
 
 async def test_dialogs_pin_unpin():

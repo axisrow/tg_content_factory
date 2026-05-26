@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any
 
@@ -26,9 +29,20 @@ from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.flood_wait import HandledFloodWaitError
 from src.telegram.notifier import Notifier
+from src.telegram.utils import normalize_utc
 from src.utils.datetime import parse_required_datetime, parse_required_schedule_datetime
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(slots=True)
+class TelegramCommandRetryLaterError(RuntimeError):
+    run_after: datetime
+    reason: str
+    result_payload: dict[str, Any] | None = None
+
+    def __str__(self) -> str:
+        return self.reason
 
 
 class TelegramCommandDispatcher:
@@ -50,6 +64,8 @@ class TelegramCommandDispatcher:
         self._auth = auth
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
+        self._reaction_min_interval_sec = 30.0
+        self._last_reaction_at_monotonic: dict[str, float] = {}
 
     async def start(self) -> None:
         if self._task and not self._task.done():
@@ -92,6 +108,45 @@ class TelegramCommandDispatcher:
                     error="cancelled while running; reset for retry",
                 )
                 raise
+            except TelegramCommandRetryLaterError as exc:
+                logger.info(
+                    "Telegram command delayed: id=%s type=%s run_after=%s reason=%s",
+                    command.id,
+                    command.command_type,
+                    exc.run_after.isoformat(),
+                    exc.reason,
+                )
+                await self._db.repos.telegram_commands.update_command(
+                    command.id,
+                    status=TelegramCommandStatus.PENDING,
+                    error=exc.reason,
+                    result_payload=exc.result_payload or {},
+                    payload=command.payload,
+                    run_after=exc.run_after,
+                )
+            except HandledFloodWaitError as exc:
+                run_after = exc.info.next_available_at_utc + timedelta(seconds=1)
+                logger.info(
+                    "Telegram command delayed by flood-wait: id=%s type=%s run_after=%s reason=%s",
+                    command.id,
+                    command.command_type,
+                    run_after.isoformat(),
+                    exc.info.detail,
+                )
+                await self._db.repos.telegram_commands.update_command(
+                    command.id,
+                    status=TelegramCommandStatus.PENDING,
+                    error=exc.info.detail,
+                    result_payload={
+                        "state": "waiting_flood_wait",
+                        "operation": exc.info.operation,
+                        "phone": exc.info.phone,
+                        "wait_seconds": exc.info.wait_seconds,
+                        "next_available_at_utc": exc.info.next_available_at_utc.isoformat(),
+                    },
+                    payload=command.payload,
+                    run_after=run_after,
+                )
             except Exception as exc:
                 duration_ms = int((time.monotonic() - started_at) * 1000)
                 if is_auth_command:
@@ -167,6 +222,16 @@ class TelegramCommandDispatcher:
         from src.database.bundles import NotificationBundle
 
         return NotificationTargetService(NotificationBundle.from_database(self._db), self._pool)
+
+    def _pool_method(self, name: str) -> Any | None:
+        instance_attrs = getattr(self._pool, "__dict__", {})
+        if isinstance(instance_attrs, dict) and name in instance_attrs:
+            candidate = instance_attrs[name]
+        elif callable(getattr(type(self._pool), name, None)):
+            candidate = getattr(self._pool, name)
+        else:
+            return None
+        return candidate if callable(candidate) else None
 
     async def _handle_auth_send_code(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self._auth is None or not self._auth.is_configured:
@@ -285,6 +350,79 @@ class TelegramCommandDispatcher:
         )
         return {"phone": result.phone, "forwarded": result.count}
 
+    async def _account_flood_until(self, phone: str) -> datetime | None:
+        accounts: list[Any] = []
+        for getter_name in ("get_account_summaries", "get_accounts"):
+            getter = getattr(self._db, getter_name, None)
+            if not callable(getter):
+                continue
+            try:
+                result = getter(active_only=True)
+            except TypeError:
+                result = getter()
+            if isawaitable(result):
+                result = await result
+            if isinstance(result, (list, tuple)):
+                accounts = list(result)
+                break
+        now = datetime.now(timezone.utc)
+        for account in accounts:
+            if str(getattr(account, "phone", "")) != phone:
+                continue
+            flood_until = normalize_utc(getattr(account, "flood_wait_until", None))
+            if flood_until is not None and flood_until > now:
+                return flood_until
+        return None
+
+    async def _ensure_reaction_can_run(self, phone: str) -> None:
+        is_warming = self._pool_method("is_warming")
+        if callable(is_warming):
+            try:
+                warming = bool(is_warming())
+            except Exception:
+                warming = False
+            if warming:
+                run_after = datetime.now(timezone.utc) + timedelta(seconds=5)
+                raise TelegramCommandRetryLaterError(
+                    run_after=run_after,
+                    reason="account dialog warm-up is still running",
+                    result_payload={
+                        "state": "waiting_warmup",
+                        "phone": phone,
+                        "next_available_at_utc": run_after.isoformat(),
+                    },
+                )
+
+        flood_until = await self._account_flood_until(phone)
+        if flood_until is not None:
+            raise TelegramCommandRetryLaterError(
+                run_after=flood_until + timedelta(seconds=1),
+                reason=f"account {phone} is flood-waited until {flood_until.isoformat()}",
+                result_payload={
+                    "state": "waiting_flood_wait",
+                    "phone": phone,
+                    "next_available_at_utc": flood_until.isoformat(),
+                },
+            )
+
+        last = self._last_reaction_at_monotonic.get(phone)
+        if last is None:
+            return
+        elapsed = time.monotonic() - last
+        remaining = self._reaction_min_interval_sec - elapsed
+        if remaining > 0:
+            run_after = datetime.now(timezone.utc) + timedelta(seconds=remaining)
+            raise TelegramCommandRetryLaterError(
+                run_after=run_after,
+                reason=f"reaction rate limit for {phone}; waiting {int(remaining) + 1}s",
+                result_payload={
+                    "state": "waiting_rate_limit",
+                    "phone": phone,
+                    "retry_after_sec": int(remaining) + 1,
+                    "next_available_at_utc": run_after.isoformat(),
+                },
+            )
+
     async def _handle_dialogs_pin_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         result = await TelegramActionService(self._pool).pin_message(
             phone=str(payload["phone"]),
@@ -295,14 +433,17 @@ class TelegramCommandDispatcher:
         return {"phone": result.phone}
 
     async def _handle_dialogs_react(self, payload: dict[str, Any]) -> dict[str, Any]:
+        phone = str(payload["phone"])
+        await self._ensure_reaction_can_run(phone)
         result = await TelegramActionService(self._pool).send_reaction(
-            phone=str(payload["phone"]),
+            phone=phone,
             chat_id=payload["chat_id"],
             message_id=int(payload["message_id"]),
             emoji=str(payload["emoji"]),
             native=True,
             resolve_entity=True,
         )
+        self._last_reaction_at_monotonic[result.phone] = time.monotonic()
         return {"phone": result.phone}
 
     async def _handle_dialogs_unpin_message(self, payload: dict[str, Any]) -> dict[str, Any]:

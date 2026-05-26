@@ -72,6 +72,13 @@ async def _publish_snapshots(container) -> None:
                 available_phones.append(phone)
     else:
         available_phones = list(connected_phones)
+    is_warming_method = None
+    pool_attrs = getattr(container.pool, "__dict__", {})
+    if isinstance(pool_attrs, dict) and "is_warming" in pool_attrs:
+        is_warming_method = pool_attrs["is_warming"]
+    elif callable(getattr(type(container.pool), "is_warming", None)):
+        is_warming_method = getattr(container.pool, "is_warming")
+    is_warming = bool(is_warming_method()) if callable(is_warming_method) else False
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="worker_heartbeat",
@@ -86,6 +93,7 @@ async def _publish_snapshots(container) -> None:
                 "connected_count": len(connected_phones),
                 "available_phones": sorted(available_phones),
                 "flood_waits": flood_waits,
+                "is_warming": is_warming,
                 "timestamp": now.isoformat(),
             },
         )
