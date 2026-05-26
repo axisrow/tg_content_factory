@@ -185,8 +185,10 @@ class TestWrapWithSessionGate:
         assert result["content"][0]["text"] == "passed"
 
     @pytest.mark.anyio
-    async def test_gate_tool_disabled_returns_gate_result(self):
+    async def test_gate_tool_requestable_returns_gate_result(self):
         from claude_agent_sdk import SdkMcpTool
+
+        from src.agent.tools.permissions import ToolAccessState
 
         async def handler(*args, **kwargs):
             return {"content": [{"type": "text", "text": "should not reach"}]}
@@ -201,7 +203,7 @@ class TestWrapWithSessionGate:
         gate.check = AsyncMock(return_value={"content": [{"type": "text", "text": "blocked"}]})
 
         ctx = MagicMock()
-        ctx.db_permissions = {"test_tool": False}
+        ctx.tool_access_policy = {"test_tool": ToolAccessState.REQUESTABLE}
 
         with (
             patch("src.agent.permission_gate.get_gate", return_value=gate),
