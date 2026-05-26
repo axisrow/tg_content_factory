@@ -183,12 +183,13 @@ def run_with_dependencies(
                         return
 
                 try:
-                    await TelegramActionService(pool).send_message(
+                    result = await TelegramActionService(pool).send_message(
                         phone=phone,
                         recipient=recipient,
                         text=text,
                     )
-                    print(f"Message sent to {recipient}.")
+                    message_id = f" message_id={result.message_id}" if result.message_id is not None else ""
+                    print(f"Message sent to {recipient}.{message_id}")
                 except TelegramActionClientUnavailableError:
                     print(f"Client for {phone} unavailable (flood-wait or not connected).")
                 except Exception as exc:

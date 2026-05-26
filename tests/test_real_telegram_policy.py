@@ -20,7 +20,12 @@ from tests.cli_real_tg_integration.command_manifest import (
 from tests.cli_real_tg_integration.conftest import (
     LIVE_CLI_DEFAULT_PYTEST_TIMEOUT_SECONDS,
     RUN_CLI_DEFAULT_TIMEOUT_SECONDS,
+    CliRealCliEnv,
+    LiveCliAccountReadinessError,
+    LiveCliAccountWaitTimeoutError,
     _assert_cli_result_ok,
+    account_info_probe_failure,
+    wait_for_ready_live_cli_accounts,
 )
 from tests.conftest import (
     CLI_REAL_TG_LIVE_FIXTURE,
@@ -111,11 +116,13 @@ _CLI_CLEANUP_COMMAND_PRODUCERS = {
     ("agent", "thread-delete"): {("agent", "chat")},
     ("agent", "threads"): {("agent", "chat")},
     ("dialogs", "archive"): {("dialogs", "unarchive")},
+    ("dialogs", "edit-message"): {("dialogs", "edit-message")},
     ("dialogs", "pin-message"): {("dialogs", "unpin-message")},
     ("dialogs", "react"): {("dialogs", "react")},
     ("dialogs", "unarchive"): {("dialogs", "archive")},
     ("dialogs", "unpin-message"): {("dialogs", "pin-message")},
     ("my-telegram", "archive"): {("my-telegram", "unarchive")},
+    ("my-telegram", "edit-message"): {("my-telegram", "edit-message")},
     ("my-telegram", "pin-message"): {("my-telegram", "unpin-message")},
     ("my-telegram", "react"): {("my-telegram", "react")},
     ("my-telegram", "unarchive"): {("my-telegram", "archive")},
@@ -123,6 +130,154 @@ _CLI_CLEANUP_COMMAND_PRODUCERS = {
     ("scheduler", "clear-pending"): {("collect",), ("scheduler", "trigger")},
 }
 _AUDIT_EXCLUDED_FILES = {"test_real_telegram_policy.py"}
+
+
+def _live_cli_probe_env(tmp_path: Path) -> CliRealCliEnv:
+    return CliRealCliEnv(
+        source_root=_REPO_ROOT,
+        live_root=tmp_path,
+        config_path=tmp_path / "config.yaml",
+        db_path=tmp_path / "data.db",
+        web_port=8080,
+        phones=(),
+        channel_pk=None,
+        channel_id=None,
+        channel_username=None,
+    )
+
+
+def test_live_cli_account_readiness_retries_until_active_account_appears(tmp_path: Path):
+    cli_env = _live_cli_probe_env(tmp_path)
+    now = 0.0
+    sleep_calls: list[float] = []
+    fetch_calls = 0
+    probe_commands: list[tuple[str, ...]] = []
+
+    def monotonic() -> float:
+        return now
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        sleep_calls.append(seconds)
+        now += seconds
+
+    def fetch_accounts(_db_path: Path) -> tuple[str, ...]:
+        nonlocal fetch_calls
+        fetch_calls += 1
+        return () if fetch_calls == 1 else ("+123",)
+
+    def runner(args, **_kwargs) -> subprocess.CompletedProcess:
+        probe_commands.append(tuple(args))
+        return subprocess.CompletedProcess(args, 0, stdout="Live Telegram accounts (1):\n- +123: Test\n", stderr="")
+
+    phones = wait_for_ready_live_cli_accounts(
+        cli_env,
+        wait_seconds=5,
+        poll_seconds=2,
+        probe_timeout_seconds=3,
+        fetch_accounts=fetch_accounts,
+        runner=runner,
+        monotonic=monotonic,
+        sleep=sleep,
+    )
+
+    assert phones == ("+123",)
+    assert sleep_calls == [2]
+    assert probe_commands
+    assert probe_commands[0][-4:] == ("account", "info", "--phone", "+123")
+
+
+def test_live_cli_account_readiness_caps_probe_timeout_to_remaining_wait(tmp_path: Path):
+    cli_env = _live_cli_probe_env(tmp_path)
+    now = 0.0
+    probe_phones: list[str] = []
+    probe_timeouts: list[float] = []
+    sleep_calls: list[float] = []
+
+    def monotonic() -> float:
+        return now
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        sleep_calls.append(seconds)
+        now += seconds
+
+    def runner(args, **kwargs) -> subprocess.CompletedProcess:
+        nonlocal now
+        probe_phones.append(args[-1])
+        probe_timeouts.append(kwargs["timeout"])
+        now += kwargs["timeout"]
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="not ready")
+
+    with pytest.raises(LiveCliAccountReadinessError):
+        wait_for_ready_live_cli_accounts(
+            cli_env,
+            wait_seconds=2,
+            poll_seconds=1,
+            probe_timeout_seconds=60,
+            fetch_accounts=lambda _db_path: ("+111", "+222"),
+            runner=runner,
+            monotonic=monotonic,
+            sleep=sleep,
+        )
+
+    assert probe_phones == ["+111"]
+    assert probe_timeouts == [2]
+    assert sleep_calls == []
+
+
+def test_live_cli_account_readiness_times_out_without_active_account(tmp_path: Path):
+    cli_env = _live_cli_probe_env(tmp_path)
+
+    with pytest.raises(LiveCliAccountWaitTimeoutError, match="no active connected Telegram accounts"):
+        wait_for_ready_live_cli_accounts(
+            cli_env,
+            wait_seconds=0,
+            fetch_accounts=lambda _db_path: (),
+            runner=lambda args, **_kwargs: subprocess.CompletedProcess(args, 0, stdout="", stderr=""),
+        )
+
+
+def test_live_cli_account_readiness_fails_on_zero_exit_no_account_probe(tmp_path: Path):
+    cli_env = _live_cli_probe_env(tmp_path)
+    now = 0.0
+
+    def monotonic() -> float:
+        return now
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        now += seconds
+
+    def runner(args, **_kwargs) -> subprocess.CompletedProcess:
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout="Live Telegram accounts not found for this request: не найдены.\n",
+            stderr="",
+        )
+
+    with pytest.raises(LiveCliAccountReadinessError, match="Live Telegram accounts not found"):
+        wait_for_ready_live_cli_accounts(
+            cli_env,
+            wait_seconds=1,
+            poll_seconds=1,
+            fetch_accounts=lambda _db_path: ("+123",),
+            runner=runner,
+            monotonic=monotonic,
+            sleep=sleep,
+        )
+
+
+def test_account_info_probe_requires_requested_phone_in_stdout():
+    result = subprocess.CompletedProcess(
+        ("account", "info"),
+        0,
+        stdout="Live Telegram accounts (1):\n- +999: Other\n",
+        stderr="",
+    )
+
+    assert "`account info --phone +123` did not confirm" in account_info_probe_failure("+123", result)
 
 
 def test_real_tg_policy_rejects_live_fixture_without_policy_marker():
@@ -869,6 +1024,16 @@ def test_cli_real_tg_mutation_safe_commands_are_bounded():
             if command_case in {("dialogs", "react"), ("my-telegram", "react")}:
                 if "--yes" not in strings:
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: react must be noninteractive")
+            if command_case in {
+                ("dialogs", "edit-message"),
+                ("dialogs", "send"),
+                ("my-telegram", "edit-message"),
+                ("my-telegram", "send"),
+            }:
+                if "--yes" not in strings:
+                    violations.append(
+                        f"{path.relative_to(_REPO_ROOT)}:{lineno}: scratch-message command must be noninteractive"
+                    )
             if command_case in {("dialogs", "pin-message"), ("my-telegram", "pin-message")}:
                 if "--notify" in strings:
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: mutation-safe pin must not notify")
@@ -881,15 +1046,19 @@ def test_cli_real_tg_mutation_safe_commands_are_bounded():
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: unpin-message must be noninteractive")
             if command_case in {
                 ("dialogs", "archive"),
+                ("dialogs", "edit-message"),
                 ("dialogs", "mark-read"),
                 ("dialogs", "pin-message"),
                 ("dialogs", "react"),
+                ("dialogs", "send"),
                 ("dialogs", "unarchive"),
                 ("dialogs", "unpin-message"),
                 ("my-telegram", "archive"),
+                ("my-telegram", "edit-message"),
                 ("my-telegram", "mark-read"),
                 ("my-telegram", "pin-message"),
                 ("my-telegram", "react"),
+                ("my-telegram", "send"),
                 ("my-telegram", "unarchive"),
                 ("my-telegram", "unpin-message"),
             } and "--phone" not in strings:

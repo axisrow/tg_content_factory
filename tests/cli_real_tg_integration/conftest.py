@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,14 @@ from src.config import load_config
 CLI_REAL_TG_LIVE_GATE_ENV = "RUN_CLI_REAL_TG_LIVE"
 CLI_REAL_TG_ROOT_ENV = "CLI_REAL_TG_ROOT"
 CLI_REAL_TG_CONFIG_ENV = "CLI_REAL_TG_CONFIG"
+CLI_REAL_TG_MUTATION_CHAT_ENV = "CLI_REAL_TG_MUTATION_CHAT"
+CLI_REAL_TG_MUTATION_PHONE_ENV = "CLI_REAL_TG_MUTATION_PHONE"
+CLI_REAL_TG_CONNECT_WAIT_ENV = "CLI_REAL_TG_CONNECT_WAIT_SECONDS"
+CLI_REAL_TG_CONNECT_POLL_ENV = "CLI_REAL_TG_CONNECT_POLL_SECONDS"
+CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_ENV = "CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_SECONDS"
+CLI_REAL_TG_CONNECT_WAIT_DEFAULT_SECONDS = 60.0
+CLI_REAL_TG_CONNECT_POLL_DEFAULT_SECONDS = 2.0
+CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_DEFAULT_SECONDS = 60.0
 RUN_CLI_DEFAULT_TIMEOUT_SECONDS = 120
 LIVE_CLI_DEFAULT_PYTEST_TIMEOUT_SECONDS = RUN_CLI_DEFAULT_TIMEOUT_SECONDS + 60
 
@@ -70,9 +79,30 @@ class LiveCliMessageTarget:
     phone: str
 
 
+class LiveCliAccountWaitTimeoutError(RuntimeError):
+    """Raised when no active live CLI account appears before the wait deadline."""
+
+
+class LiveCliAccountReadinessError(RuntimeError):
+    """Raised when active live CLI accounts exist but do not pass readiness probing."""
+
+
 _SOURCE_ROOT = Path(__file__).resolve().parents[2]
 CliEnv = CliRealCliEnv
 _PIN_CAPABLE_DIALOG_TYPES = frozenset({"group", "supergroup", "gigagroup", "forum"})
+
+
+def _env_float(name: str, default: float, *, min_value: float = 0.0) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        pytest.fail(f"{name} must be a numeric seconds value, got {raw!r}", pytrace=False)
+    if value < min_value:
+        pytest.fail(f"{name} must be >= {min_value}, got {value}", pytrace=False)
+    return value
 
 
 def _resolve_live_root() -> Path:
@@ -127,7 +157,12 @@ def _fetch_live_channel(db_path: Path) -> tuple[str | None, int | None, str | No
 
 def _normalize_chat_ref(raw: object) -> str | None:
     chat_ref = str(raw) if raw else None
-    if chat_ref and not chat_ref.startswith("@") and not chat_ref.lstrip("-").isdigit():
+    if (
+        chat_ref
+        and chat_ref.lower() not in {"me", "self"}
+        and not chat_ref.startswith("@")
+        and not chat_ref.lstrip("-").isdigit()
+    ):
         chat_ref = f"@{chat_ref}"
     return chat_ref
 
@@ -249,12 +284,39 @@ def cli_real_cli_env() -> CliRealCliEnv:
     if db_path.stat().st_size == 0:
         pytest.skip(f"live CLI database at {db_path} is empty")
 
+    probe_env = CliRealCliEnv(
+        source_root=_SOURCE_ROOT,
+        live_root=live_root,
+        config_path=config_path,
+        db_path=db_path,
+        web_port=int(config.web.port),
+        phones=(),
+        channel_pk=None,
+        channel_id=None,
+        channel_username=None,
+    )
     try:
-        phones = _fetch_live_accounts(db_path)
-    except sqlite3.Error as exc:
-        pytest.skip(f"failed to read live CLI accounts from {db_path}: {exc}")
-    if not phones:
-        pytest.skip("live CLI database has no active connected Telegram accounts")
+        phones = wait_for_ready_live_cli_accounts(
+            probe_env,
+            wait_seconds=_env_float(
+                CLI_REAL_TG_CONNECT_WAIT_ENV,
+                CLI_REAL_TG_CONNECT_WAIT_DEFAULT_SECONDS,
+            ),
+            poll_seconds=_env_float(
+                CLI_REAL_TG_CONNECT_POLL_ENV,
+                CLI_REAL_TG_CONNECT_POLL_DEFAULT_SECONDS,
+                min_value=0.1,
+            ),
+            probe_timeout_seconds=_env_float(
+                CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_ENV,
+                CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_DEFAULT_SECONDS,
+                min_value=1.0,
+            ),
+        )
+    except LiveCliAccountWaitTimeoutError as exc:
+        pytest.skip(str(exc))
+    except LiveCliAccountReadinessError as exc:
+        pytest.fail(str(exc), pytrace=False)
 
     try:
         channel_pk, channel_id, channel_username = _fetch_live_channel(db_path)
@@ -329,6 +391,108 @@ def cli_run_direct(
         timeout=timeout,
         env=_build_cli_env(cli_env, extra_env=extra_env),
         check=False,
+    )
+
+
+def _run_account_info_probe(
+    cli_env: CliEnv,
+    phone: str,
+    *,
+    timeout: float,
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+) -> subprocess.CompletedProcess:
+    return runner(  # noqa: S603 - controlled CLI module invocation
+        _cli_command(cli_env, ("account", "info", "--phone", phone)),
+        cwd=str(cli_env.repo_root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        env=_build_cli_env(cli_env),
+        check=False,
+    )
+
+
+def account_info_probe_failure(phone: str, result: subprocess.CompletedProcess) -> str | None:
+    failure_summary = cli_result_failure_summary(result)
+    if failure_summary is not None:
+        return failure_summary
+    if phone not in (result.stdout or ""):
+        return (
+            f"`account info --phone {phone}` did not confirm the account in stdout\n"
+            f"--- stdout ---\n{result.stdout}\n"
+            f"--- stderr ---\n{result.stderr}"
+        )
+    return None
+
+
+def wait_for_ready_live_cli_accounts(
+    cli_env: CliEnv,
+    *,
+    wait_seconds: float = CLI_REAL_TG_CONNECT_WAIT_DEFAULT_SECONDS,
+    poll_seconds: float = CLI_REAL_TG_CONNECT_POLL_DEFAULT_SECONDS,
+    probe_timeout_seconds: float = CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_DEFAULT_SECONDS,
+    fetch_accounts: Callable[[Path], tuple[str, ...]] = _fetch_live_accounts,
+    runner: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> tuple[str, ...]:
+    deadline = monotonic() + wait_seconds
+    last_probe_failure: str | None = None
+    last_db_error: str | None = None
+    last_phones: tuple[str, ...] = ()
+
+    while True:
+        try:
+            phones = fetch_accounts(cli_env.db_path)
+            last_db_error = None
+        except sqlite3.Error as exc:
+            phones = ()
+            last_db_error = str(exc)
+
+        if phones:
+            last_phones = phones
+            for phone in phones:
+                remaining_seconds = deadline - monotonic()
+                if remaining_seconds <= 0:
+                    break
+                effective_probe_timeout_seconds = min(probe_timeout_seconds, remaining_seconds)
+                try:
+                    result = _run_account_info_probe(
+                        cli_env,
+                        phone,
+                        timeout=effective_probe_timeout_seconds,
+                        runner=runner,
+                    )
+                except subprocess.TimeoutExpired:
+                    last_probe_failure = (
+                        f"`account info --phone {phone}` timed out after "
+                        f"{effective_probe_timeout_seconds:g}s"
+                    )
+                    continue
+
+                failure = account_info_probe_failure(phone, result)
+                if failure is None:
+                    return (phone, *(candidate for candidate in phones if candidate != phone))
+                last_probe_failure = f"{phone}: {failure}"
+
+        now = monotonic()
+        if now >= deadline:
+            break
+        sleep(min(poll_seconds, max(0.0, deadline - now)))
+
+    if last_phones:
+        detail = f"; last probe failure: {last_probe_failure}" if last_probe_failure else ""
+        raise LiveCliAccountReadinessError(
+            "live CLI active account(s) did not pass Telegram readiness probe "
+            f"within {wait_seconds:g}s{detail}"
+        )
+
+    detail = f"; last DB error: {last_db_error}" if last_db_error else ""
+    raise LiveCliAccountWaitTimeoutError(
+        "live CLI database has no active connected Telegram accounts "
+        f"within {wait_seconds:g}s{detail}"
     )
 
 
@@ -486,11 +650,15 @@ _SILENT_FAILURE_PATTERNS = (
     ("ModuleNotFoundError", re.compile(r"ModuleNotFoundError", re.IGNORECASE)),
     ("No connected accounts", re.compile(r"No connected accounts", re.IGNORECASE)),
     ("No accounts found", re.compile(r"No accounts found", re.IGNORECASE)),
+    ("Live Telegram accounts not found", re.compile(r"Live Telegram accounts not found", re.IGNORECASE)),
+    ("not found for this request", re.compile(r"not found for this request", re.IGNORECASE)),
     ("Could not resolve channel", re.compile(r"Could not resolve channel", re.IGNORECASE)),
     ("Error fetching broadcast stats", re.compile(r"Error fetching broadcast stats", re.IGNORECASE)),
     ("Failed to initialize", re.compile(r"Failed to initialize", re.IGNORECASE)),
     ("Failed to load", re.compile(r"Failed to load", re.IGNORECASE)),
     ("Error sending reaction", re.compile(r"Error sending reaction", re.IGNORECASE)),
+    ("Error sending message", re.compile(r"Error sending message", re.IGNORECASE)),
+    ("Error editing message", re.compile(r"Error editing message", re.IGNORECASE)),
     ("Error pinning", re.compile(r"Error pinning", re.IGNORECASE)),
     ("Error unpinning", re.compile(r"Error unpinning", re.IGNORECASE)),
     ("RuntimeError", re.compile(r"RuntimeError", re.IGNORECASE)),
@@ -616,6 +784,32 @@ def live_mutation_message(cli_real_cli_env: CliRealCliEnv) -> LiveCliMessageTarg
     if target is None:
         pytest.skip("live CLI database has no active collected message target")
     return target
+
+
+@pytest.fixture
+def live_scratch_message_dialog(cli_real_cli_env: CliRealCliEnv) -> LiveCliDialogTarget:
+    chat_ref = _normalize_chat_ref(os.environ.get(CLI_REAL_TG_MUTATION_CHAT_ENV))
+    phone = os.environ.get(CLI_REAL_TG_MUTATION_PHONE_ENV)
+    if phone and phone not in cli_real_cli_env.phones:
+        pytest.skip(f"{CLI_REAL_TG_MUTATION_PHONE_ENV} is not a connected live CLI account")
+
+    if chat_ref is not None:
+        return LiveCliDialogTarget(chat_ref=chat_ref, phone=phone or cli_real_cli_env.primary_phone)
+
+    try:
+        target = _fetch_live_message_target(
+            cli_real_cli_env.db_path,
+            cli_real_cli_env.phones,
+            require_own_dialog=True,
+        )
+    except sqlite3.Error as exc:
+        pytest.skip(f"failed to discover live scratch-message dialog from {cli_real_cli_env.db_path}: {exc}")
+    if target is None:
+        pytest.skip(
+            f"set {CLI_REAL_TG_MUTATION_CHAT_ENV} or cache an own live dialog "
+            "before running scratch-message mutation tests"
+        )
+    return LiveCliDialogTarget(chat_ref=target.chat_ref, phone=phone or target.phone)
 
 
 @pytest.fixture
