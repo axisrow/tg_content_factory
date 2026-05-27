@@ -222,6 +222,7 @@ class MessagesRepository:
             for m in messages
         ]
         try:
+            existing_keys = await self._existing_message_keys(messages)
             cur = await self._database.executemany_write(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
@@ -235,7 +236,10 @@ class MessagesRepository:
                 data,
             )
             count = cur.rowcount if cur.rowcount >= 0 else len(messages)
-            await self._refresh_existing_messages(messages)
+            if existing_keys:
+                duplicates = [m for m in messages if (m.channel_id, m.message_id) in existing_keys]
+                if duplicates:
+                    await self._refresh_existing_messages(duplicates)
         except Exception as exc:
             logger.error("Failed to insert batch of %d messages: %s", len(messages), exc)
             return 0
@@ -257,6 +261,25 @@ class MessagesRepository:
                 logger.error("Failed to upsert reactions for batch: %s", exc)
 
         return count
+
+    async def _existing_message_keys(self, messages: list[Message]) -> set[tuple[int, int]]:
+        """Return the subset of (channel_id, message_id) pairs already present in the DB."""
+        if not messages:
+            return set()
+        unique_keys = list({(m.channel_id, m.message_id) for m in messages})
+        existing: set[tuple[int, int]] = set()
+        chunk_size = 400
+        for start in range(0, len(unique_keys), chunk_size):
+            chunk = unique_keys[start : start + chunk_size]
+            predicates = " OR ".join("(channel_id = ? AND message_id = ?)" for _ in chunk)
+            params = [value for key in chunk for value in key]
+            cur = await self._db.execute(
+                f"SELECT channel_id, message_id FROM messages WHERE {predicates}",
+                params,
+            )
+            rows = await cur.fetchall()
+            existing.update((row["channel_id"], row["message_id"]) for row in rows)
+        return existing
 
     async def _refresh_existing_messages(self, messages: list[Message]) -> None:
         """Refresh mutable fields for already-known Telegram messages."""

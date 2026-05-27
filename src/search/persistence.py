@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from src.database.bundles import SearchBundle
 from src.models import Channel, Message
+
+logger = logging.getLogger(__name__)
 
 
 class SearchPersistence:
@@ -39,5 +43,16 @@ class SearchPersistence:
         if not messages:
             return []
         keys = [(msg.channel_id, msg.message_id) for msg in messages]
-        persisted = await self._search.messages.get_messages_by_channel_message_ids(keys)
-        return persisted or messages
+        try:
+            persisted = await self._search.messages.get_messages_by_channel_message_ids(keys)
+        except Exception:
+            logger.exception("Failed to load persisted messages; returning originals")
+            return messages
+        by_key = {(msg.channel_id, msg.message_id): msg for msg in persisted}
+        if len(by_key) < len(keys):
+            logger.warning(
+                "Partial persistence load: %d of %d messages found; falling back to originals for the rest",
+                len(by_key),
+                len(keys),
+            )
+        return [by_key.get((msg.channel_id, msg.message_id), msg) for msg in messages]
