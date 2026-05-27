@@ -13,6 +13,11 @@ from src.services.telegram_actions import (
     TelegramActionService,
 )
 from src.telegram.flood_wait import HandledFloodWaitError
+from src.telegram.reactions import (
+    SUPPORTED_REACTION_EMOJIS_DISPLAY,
+    TelegramReactionInvalidError,
+    normalize_outgoing_reaction_emoji,
+)
 from src.utils.datetime import parse_required_datetime
 
 
@@ -319,10 +324,18 @@ def run_with_dependencies(
                 if args.clear:
                     emoji = None
                 else:
-                    emoji = args.emoji
-                    if not emoji:
+                    raw_emoji = args.emoji
+                    if not raw_emoji:
                         print("Error: emoji is required unless --clear is used.")
                         raise SystemExit(2)
+                    try:
+                        emoji = normalize_outgoing_reaction_emoji(raw_emoji)
+                    except TelegramReactionInvalidError:
+                        print(
+                            "Error: Telegram does not support this reaction emoji. "
+                            f"Supported reactions: {SUPPORTED_REACTION_EMOJIS_DISPLAY}"
+                        )
+                        return
                 if not args.yes:
                     action = (
                         f"Clear reaction from message #{args.message_id} in {args.chat_id}"
