@@ -71,7 +71,7 @@
                         {% for stat in pipeline_stats %}
                         <tr>
                             <td>
-                                <a href="/pipelines/{{ stat.pipeline_id }}">{{ stat.pipeline_name }}</a>
+                                <a href="/pipelines/{{ stat.pipeline_id }}/edit">{{ stat.pipeline_name }}</a>
                             </td>
                             <td>{{ stat.total_generations }}</td>
                             <td class="text-success">{{ stat.total_published }}</td>

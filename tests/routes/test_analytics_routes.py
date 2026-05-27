@@ -51,6 +51,25 @@ async def test_content_analytics_page_renders(route_client):
 
 
 @pytest.mark.anyio
+async def test_content_analytics_pipeline_links_use_edit_route(route_client):
+    """Pipeline statistics links point to an existing pipeline page."""
+    db = route_client._transport_app.state.db
+    from src.models import ContentPipeline
+
+    pipeline_id = await db.repos.content_pipelines.add(
+        ContentPipeline(name="Linked Pipeline", prompt_template="Write"),
+        source_channel_ids=[],
+        targets=[],
+    )
+
+    resp = await route_client.get("/analytics/content")
+
+    assert resp.status_code == 200
+    assert f'href="/pipelines/{pipeline_id}/edit"' in resp.text
+    assert f'href="/pipelines/{pipeline_id}"' not in resp.text
+
+
+@pytest.mark.anyio
 async def test_api_content_summary_returns_json(route_client):
     """Test content summary API returns JSON."""
     resp = await route_client.get("/analytics/content/api/summary")
