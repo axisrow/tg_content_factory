@@ -169,6 +169,54 @@ async def test_command_service_queues_distinct_reactions_and_deduplicates_exact_
 
 
 @pytest.mark.anyio
+async def test_command_service_lists_and_summarizes_with_filters(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        service = TelegramCommandService(db)
+        react_id = await service.enqueue(
+            "dialogs.react",
+            payload={"phone": "+1", "chat_id": "5832576119", "message_id": 1, "emoji": "👍"},
+            requested_by="test",
+        )
+        await service.enqueue(
+            "dialogs.react",
+            payload={"phone": "+2", "chat_id": "5832576119", "message_id": 2, "emoji": "🔥"},
+            requested_by="test",
+        )
+        send_id = await service.enqueue(
+            "dialogs.send_message",
+            payload={"phone": "+1", "recipient": "@chat", "text": "hello"},
+            requested_by="test",
+        )
+        await db.repos.telegram_commands.update_command(
+            send_id,
+            status=TelegramCommandStatus.SUCCEEDED,
+            payload={"phone": "+1", "recipient": "@chat", "text": "hello"},
+            result_payload={"phone": "+1"},
+        )
+        await db.repos.telegram_commands.update_command(
+            react_id,
+            status=TelegramCommandStatus.PENDING,
+            payload={"phone": "+1", "chat_id": "5832576119", "message_id": 1, "emoji": "👍"},
+            result_payload={"state": "waiting_flood_wait"},
+            run_after=datetime.now(timezone.utc) + timedelta(minutes=1),
+        )
+
+        phone_commands = await service.list(phone="+1", limit=10)
+        react_summary = await service.summary(command_type="dialogs.react")
+        state_summary = await service.result_state_summary(command_type="dialogs.react")
+
+        assert {item.command_type for item in phone_commands} == {"dialogs.react", "dialogs.send_message"}
+        assert react_summary[TelegramCommandStatus.PENDING] == 2
+        assert react_summary[TelegramCommandStatus.SUCCEEDED] == 0
+        assert state_summary["waiting_flood_wait"] == 1
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_runtime_snapshots_repository_upsert_and_get(tmp_path):
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()

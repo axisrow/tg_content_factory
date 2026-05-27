@@ -41,6 +41,7 @@ PHONE_BINDED_TOOLS: frozenset[str] = frozenset({
     "forward_messages",
     "get_broadcast_stats",
     "get_participants",
+    "get_telegram_queue_status",
     "kick_participant",
     "leave_dialogs",
     "list_photo_dialogs",
@@ -222,6 +223,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     # Messaging
     "send_message": ToolCategory.WRITE,
     "send_reaction": ToolCategory.WRITE,
+    "get_telegram_queue_status": ToolCategory.READ,
     "forward_messages": ToolCategory.WRITE,
     "edit_message": ToolCategory.WRITE,
     "delete_message": ToolCategory.DELETE,
@@ -330,6 +332,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ("Сообщения", [
         "send_message", "send_reaction", "forward_messages", "edit_message", "delete_message",
         "pin_message", "unpin_message", "download_media", "read_messages",
+        "get_telegram_queue_status",
     ]),
     ("Управление чатом", [
         "get_participants", "edit_admin", "edit_permissions", "kick_participant",
