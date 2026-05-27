@@ -20,6 +20,19 @@ from src.telegram.session_materializer import SessionMaterializer
 logger = logging.getLogger(__name__)
 
 
+async def fetch_message_reaction_users_raw(client: Any, peer: Any, message_id: int, *, limit: int) -> Any:
+    """Fetch raw Telegram reaction-user rows for a message."""
+    from telethon.tl.functions.messages import GetMessageReactionsListRequest
+
+    return await client(
+        GetMessageReactionsListRequest(
+            peer=peer,
+            id=int(message_id),
+            limit=limit,
+        )
+    )
+
+
 class BackendAcquireError(RuntimeError):
     """Raised when a backend cannot provide a usable authorized client."""
 

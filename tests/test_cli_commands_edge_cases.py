@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from src.cli.commands.filter import _build_deletion_service, _parse_pks, _print_result
 from src.cli.commands.messages import _print_live_messages, _print_messages
 from src.models import Account, Channel, Message, SearchQuery, SearchQueryDailyStat
-from tests.helpers import cli_ns
+from tests.helpers import AsyncIterMessages, cli_ns
 
 # ---------------------------------------------------------------------------
 # Helper: make runtime.init_db return an awaitable that yields (config, db)
@@ -228,6 +228,17 @@ class TestPrintLiveMessages:
         _print_live_messages(msgs)
         out = capsys.readouterr().out
         assert "reactions: 👍 5 ❤️ 2" in out
+
+    def test_with_reaction_users(self, capsys):
+        reactions = SimpleNamespace(
+            results=[
+                SimpleNamespace(reaction=SimpleNamespace(emoticon="👍"), count=5),
+            ]
+        )
+        msgs = [self._make_live_msg(reactions=reactions)]
+        _print_live_messages(msgs, reaction_users_by_message_id={10: "👍 @ivan, id=55"})
+        out = capsys.readouterr().out
+        assert "reaction users: 👍 @ivan, id=55" in out
 
 
 # ---------------------------------------------------------------------------
@@ -1478,6 +1489,32 @@ class TestSearchQueryStats:
 
 
 class TestMessagesReadDbMode:
+    def test_include_reaction_users_requires_live_mode(self, capsys):
+        from src.cli.commands.messages import run
+
+        db = MagicMock()
+        db.close = AsyncMock()
+
+        with patch("src.cli.commands.messages.runtime.init_db", side_effect=_make_coro((MagicMock(), db))):
+            run(cli_ns(
+                messages_action="read",
+                identifier="testch",
+                live=False,
+                query=None,
+                date_from=None,
+                date_to=None,
+                limit=10,
+                output_format="text",
+                topic_id=None,
+                offset_id=None,
+                include_reaction_users=True,
+                reaction_users_limit=20,
+            ))
+
+        out = capsys.readouterr().out
+        assert "--include-reaction-users works only with --live." in out
+        db.get_channels.assert_not_called()
+
     def test_channel_not_found(self, capsys):
         from src.cli.commands.messages import run
 
@@ -1621,3 +1658,71 @@ class TestMessagesReadDbMode:
 
         out = capsys.readouterr().out
         assert "msg by pk" in out
+
+
+class TestMessagesReadLiveMode:
+    def test_read_live_with_reaction_users(self, capsys):
+        from src.cli.commands.messages import run
+
+        reactions = SimpleNamespace(
+            results=[
+                SimpleNamespace(reaction=SimpleNamespace(emoticon="👍"), count=5),
+            ]
+        )
+        msg = SimpleNamespace(
+            id=10,
+            date=datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc),
+            text="live reacted",
+            sender=None,
+            media=None,
+            reactions=reactions,
+        )
+
+        client = AsyncMock()
+        client.get_entity = AsyncMock(return_value="entity")
+        client.iter_messages = MagicMock(return_value=AsyncIterMessages([msg]))
+        client.return_value = SimpleNamespace(
+            count=1,
+            next_offset=None,
+            reactions=[
+                SimpleNamespace(
+                    peer_id=SimpleNamespace(user_id=55),
+                    reaction=SimpleNamespace(emoticon="👍"),
+                ),
+            ],
+            users=[SimpleNamespace(id=55, username="ivan")],
+            chats=[],
+        )
+
+        pool = MagicMock()
+        pool.clients = {"+79001234567": object()}
+        pool.get_native_client_by_phone = AsyncMock(return_value=(client, None))
+        pool.disconnect_all = AsyncMock()
+
+        db = MagicMock()
+        db.close = AsyncMock()
+
+        with patch("src.cli.commands.messages.runtime.init_db", side_effect=_make_coro((MagicMock(), db))), \
+             patch("src.cli.commands.messages.runtime.init_pool", side_effect=_make_coro((MagicMock(), pool))):
+            run(cli_ns(
+                messages_action="read",
+                identifier="@test",
+                live=True,
+                query=None,
+                date_from=None,
+                date_to=None,
+                limit=10,
+                output_format="text",
+                topic_id=None,
+                offset_id=None,
+                phone="+79001234567",
+                include_reaction_users=True,
+                reaction_users_limit=10,
+            ))
+
+        out = capsys.readouterr().out
+        assert "live reacted" in out
+        assert "reactions: 👍 5" in out
+        assert "reaction users: 👍 @ivan" in out
+        assert client.await_args.args[0].id == 10
+        assert client.await_args.args[0].limit == 10

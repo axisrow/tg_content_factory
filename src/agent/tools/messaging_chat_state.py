@@ -6,7 +6,13 @@ from typing import Any
 from claude_agent_sdk import tool
 
 from src.agent.tools._formatters import format_sender_identity
-from src.agent.tools._registry import _text_response, require_confirmation, resolve_entity, resolve_live_read_phone
+from src.agent.tools._registry import (
+    _text_response,
+    arg_bool,
+    require_confirmation,
+    resolve_entity,
+    resolve_live_read_phone,
+)
 from src.agent.tools._telegram_runtime import find_single_dialog_id_by_title
 from src.agent.tools.messaging_schemas import (
     ARCHIVE_CHAT_SCHEMA,
@@ -18,7 +24,12 @@ from src.agent.tools.messaging_schemas import (
 from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.identity import extract_message_sender_identity
-from src.telegram.reactions import format_message_reactions
+from src.telegram.reactions import (
+    fetch_message_reaction_users,
+    format_message_reactions,
+    format_reaction_users_result,
+    normalize_reaction_users_limit,
+)
 
 
 def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
@@ -208,6 +219,8 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
             limit = max(1, min(int(args.get("limit") or 100), 500))
         except (TypeError, ValueError):
             limit = 100
+        include_reaction_users = arg_bool(args, "include_reaction_users", False)
+        reaction_users_limit = normalize_reaction_users_limit(args.get("reaction_users_limit"))
         if not chat_id:
             return _text_response("Ошибка: chat_id обязателен.")
         try:
@@ -268,7 +281,21 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
                     preview = msg.text[:500]
                     reactions = format_message_reactions(msg)
                     reaction_suffix = f" | реакции: {reactions}" if reactions else ""
-                    line = f"#{msg.id} {date_str}{sender}: {preview}{reaction_suffix}"
+                    reaction_users_suffix = ""
+                    if include_reaction_users and reactions:
+                        reaction_users = await fetch_message_reaction_users(
+                            client,
+                            entity,
+                            msg.id,
+                            limit=reaction_users_limit,
+                        )
+                        formatted_users = format_reaction_users_result(reaction_users)
+                        if formatted_users:
+                            if reaction_users.unavailable:
+                                reaction_users_suffix = f" | {formatted_users}"
+                            else:
+                                reaction_users_suffix = f" | поставили: {formatted_users}"
+                    line = f"#{msg.id} {date_str}{sender}: {preview}{reaction_suffix}{reaction_users_suffix}"
                     lines.append(line)
                     total_chars += len(line)
                     count += 1

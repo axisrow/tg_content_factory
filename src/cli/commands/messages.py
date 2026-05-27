@@ -10,7 +10,14 @@ from src.cli import runtime
 from src.cli.commands.common import resolve_channel
 from src.models import Message
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
-from src.telegram.reactions import format_message_reactions, format_reactions_json, parse_reactions_json
+from src.telegram.reactions import (
+    fetch_message_reaction_users,
+    format_message_reactions,
+    format_reaction_users_result,
+    format_reactions_json,
+    normalize_reaction_users_limit,
+    parse_reactions_json,
+)
 
 
 def _print_messages(messages: list[Message], fmt: str, total: int) -> None:
@@ -60,7 +67,8 @@ def _print_messages(messages: list[Message], fmt: str, total: int) -> None:
             print()
 
 
-def _print_live_messages(collected: list) -> None:
+def _print_live_messages(collected: list, reaction_users_by_message_id: dict[int, str] | None = None) -> None:
+    reaction_users_by_message_id = reaction_users_by_message_id or {}
     for msg in reversed(collected):
         date_str = str(msg.date)[:19] if msg.date else "—"
         sender = ""
@@ -76,6 +84,9 @@ def _print_live_messages(collected: list) -> None:
         print(f"[{date_str}] #{msg.id}{sender}{reaction_suffix}")
         if text:
             print(f"  {text[:500]}")
+        reaction_users = reaction_users_by_message_id.get(msg.id)
+        if reaction_users:
+            print(f"  reaction users: {reaction_users}")
         print()
 
 
@@ -86,6 +97,8 @@ def run(args: argparse.Namespace) -> None:
         try:
             if args.messages_action == "read":
                 identifier = args.identifier
+                include_reaction_users = bool(getattr(args, "include_reaction_users", False))
+                reaction_users_limit = normalize_reaction_users_limit(getattr(args, "reaction_users_limit", None))
 
                 if args.live:
                     # Live mode: read from Telegram
@@ -134,10 +147,39 @@ def run(args: argparse.Namespace) -> None:
                         if not collected:
                             print("No messages found.")
                             return
-                        _print_live_messages(collected)
+                        reaction_users_by_message_id: dict[int, str] = {}
+                        if include_reaction_users:
+                            async def _read_reaction_users() -> None:
+                                for msg in collected:
+                                    if not format_message_reactions(msg):
+                                        continue
+                                    result = await fetch_message_reaction_users(
+                                        client,
+                                        entity,
+                                        msg.id,
+                                        limit=reaction_users_limit,
+                                    )
+                                    formatted = format_reaction_users_result(result)
+                                    if formatted:
+                                        reaction_users_by_message_id[msg.id] = formatted
+
+                            try:
+                                await run_with_flood_wait(
+                                    _read_reaction_users(),
+                                    operation="cli_messages_reaction_users",
+                                    phone=phone,
+                                    pool=pool,
+                                )
+                            except HandledFloodWaitError as exc:
+                                print(f"Flood wait: {exc.info.detail}")
+                                return
+                        _print_live_messages(collected, reaction_users_by_message_id)
                     except Exception as exc:
                         print(f"Error reading messages: {exc}")
                 else:
+                    if include_reaction_users:
+                        print("--include-reaction-users works only with --live.")
+                        return
                     # DB mode: read collected messages
                     channels = await db.get_channels()
                     ch = resolve_channel(channels, identifier)
