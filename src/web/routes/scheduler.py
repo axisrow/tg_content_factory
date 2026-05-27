@@ -507,7 +507,7 @@ def _scheduler_redirect(
             if v is not None:
                 qp[k] = str(v)
     suffix = f"?{urlencode(qp)}" if qp else ""
-    return RedirectResponse(url=f"/scheduler{suffix}", status_code=303)
+    return RedirectResponse(url=f"/scheduler/{suffix}", status_code=303)
 
 
 async def _enqueue_scheduler_command(
