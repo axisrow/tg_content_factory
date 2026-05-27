@@ -42,6 +42,7 @@ from src.telegram.client_pool import ClientPool
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.identity import extract_message_sender_identity
 from src.telegram.notifier import Notifier
+from src.telegram.reactions import extract_message_reactions_json
 
 logger = logging.getLogger(__name__)
 
@@ -1431,28 +1432,7 @@ class Collector:
     @staticmethod
     def _extract_reactions(msg) -> str | None:
         """Extract reactions from a Telethon message as JSON string."""
-        reactions = getattr(msg, "reactions", None)
-        if not reactions:
-            return None
-        results = getattr(reactions, "results", None)
-        if not results:
-            return None
-        items = []
-        for r in results:
-            reaction = getattr(r, "reaction", None)
-            if reaction is None:
-                continue
-            emoticon = getattr(reaction, "emoticon", None)
-            if emoticon:
-                emoji = emoticon
-            else:
-                document_id = getattr(reaction, "document_id", None)
-                if document_id is not None:
-                    emoji = f"custom:{document_id}"
-                else:
-                    continue
-            items.append({"emoji": emoji, "count": getattr(r, "count", 0)})
-        return json.dumps(items, ensure_ascii=False) if items else None
+        return extract_message_reactions_json(msg)
 
     @staticmethod
     def _get_sender_name(msg) -> str | None:

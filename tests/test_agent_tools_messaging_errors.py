@@ -810,6 +810,40 @@ class TestReadMessagesTool:
         text = _text(result)
         assert "Hello world" in text
         assert "1 сообщений" in text
+        assert "реакции:" not in text
+
+    @pytest.mark.anyio
+    async def test_with_message_reactions(self, mock_db, mock_pool):
+        client = _make_client()
+        _setup_resolve_entity(mock_pool, client)
+
+        msg = SimpleNamespace(
+            id=1,
+            sender_id=42,
+            date=None,
+            text="Popular post",
+            reactions=SimpleNamespace(
+                results=[
+                    SimpleNamespace(reaction=SimpleNamespace(emoticon="👍"), count=5),
+                    SimpleNamespace(reaction=SimpleNamespace(emoticon="❤️"), count=2),
+                ]
+            ),
+        )
+
+        async def iter_msgs(*a, **kw):
+            yield msg
+
+        client.iter_messages = iter_msgs
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["read_messages"]({
+            "phone": "+79001234567",
+            "chat_id": "@test",
+            "limit": 10,
+        })
+
+        text = _text(result)
+        assert "Popular post | реакции: 👍 5 ❤️ 2" in text
 
     @pytest.mark.anyio
     async def test_none_phone_uses_available_connected_account(self, mock_db, mock_pool):
