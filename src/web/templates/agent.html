@@ -468,6 +468,12 @@
 }
 .perm-item.perm-selected { color: var(--bs-primary); }
 .perm-hint { margin-top: 0.75rem; color: var(--bs-secondary-color); font-size: 0.8rem; }
+.perm-error {
+    margin-top: 0.75rem;
+    color: var(--bs-danger-text-emphasis);
+    font-size: 0.8rem;
+    white-space: normal;
+}
 
 /* Tool call visibility */
 .tool-status-line {
@@ -742,12 +748,15 @@
         return d.innerHTML;
     }
 
-    function showPermissionDialog(toolName, phone) {
+    function showPermissionDialog(toolName, phone, errorMessage) {
         return new Promise(function(resolve) {
             document.querySelectorAll('#permission-modal').forEach(function(el) {
                 if (el.parentNode) el.parentNode.removeChild(el);
             });
             var phoneStr = phone ? ' (' + escapeHtml(phone) + ')' : '';
+            var errorHtml = errorMessage
+                ? '<div class="perm-error">' + escapeHtml(errorMessage) + '</div>'
+                : '';
             var modal = document.createElement('div');
             modal.id = 'permission-modal';
             modal.innerHTML =
@@ -759,6 +768,7 @@
                 '<div class="perm-item" data-choice="session" tabindex="0"><span class="perm-cursor"> </span> 2. Разрешить в этой сессии</div>' +
                 '<div class="perm-item" data-choice="deny" tabindex="0"><span class="perm-cursor"> </span> 3. Запретить</div>' +
                 '</div>' +
+                errorHtml +
                 '<div class="perm-hint">↑↓ навигация &nbsp;·&nbsp; Enter выбор &nbsp;·&nbsp; Esc = Запретить</div>' +
                 '</div>';
             document.body.appendChild(modal);
@@ -835,7 +845,9 @@
         });
         var permissionResult = await permissionResp.json().catch(function() { return {}; });
         if (!permissionResp.ok || !permissionResult.ok) {
-            throw new Error(permissionResult.detail || ('Permission resolve failed: HTTP ' + permissionResp.status));
+            var err = new Error(permissionResult.detail || ('Permission resolve failed: HTTP ' + permissionResp.status));
+            err.status = permissionResp.status;
+            throw err;
         }
     }
 
@@ -1124,14 +1136,23 @@
                     try {
                         var data = JSON.parse(jsonStr);
                         if (data.type === 'permission_request') {
-                            var choice = await showPermissionDialog(data.tool, data.phone || '');
-                            try {
-                                await resolvePermissionRequest(data.request_id, choice);
-                            } catch (fetchErr) {
-                                console.error('Permission POST failed:', fetchErr);
-                                statusTracker.onWarning(
-                                    'Не удалось отправить выбор разрешения. Запрос разрешения истечёт по таймауту.'
-                                );
+                            var permissionError = '';
+                            while (true) {
+                                var choice = await showPermissionDialog(data.tool, data.phone || '', permissionError);
+                                try {
+                                    await resolvePermissionRequest(data.request_id, choice);
+                                    break;
+                                } catch (fetchErr) {
+                                    console.error('Permission POST failed:', fetchErr);
+                                    if (fetchErr.status && fetchErr.status < 500) {
+                                        statusTracker.onWarning(
+                                            'Запрос разрешения уже обработан или был отменён. Повторите действие, если нужно.'
+                                        );
+                                        break;
+                                    }
+                                    permissionError = 'Не удалось отправить выбор. Проверьте соединение и выберите ещё раз.';
+                                    statusTracker.onWarning(permissionError);
+                                }
                             }
                         } else if (data.type === 'thinking') {
                             statusTracker.onThinking();

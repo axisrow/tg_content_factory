@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import shutil
+import threading
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import suppress
@@ -1852,6 +1853,8 @@ class AgentManager:
             db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
         )
         self._active_tasks: dict[int, asyncio.Task] = {}
+        self._active_task_sessions: dict[int, str] = {}
+        self._active_task_cancel_events: dict[int, threading.Event] = {}
         self._settings_cache = _SettingsCache()
         self._cached_allowed_tools: list[str] | None = None
         self._cached_filtered_tools: tuple[list[str], dict[str, bool]] | None = None
@@ -2100,11 +2103,14 @@ class AgentManager:
         # so the actual set/reset happens inside _run_backend (not in the generator).
         from src.agent.permission_gate import (
             AgentRequestContext,
+            PermissionWaitTracker,
             reset_request_context,
             set_request_context,
         )
 
         _req_ctx: AgentRequestContext | None = None
+        cancel_event = threading.Event()
+        permission_wait_tracker = PermissionWaitTracker()
         if interactive_permissions:
             from src.agent.tools.permissions import load_tool_access_policy
 
@@ -2116,6 +2122,8 @@ class AgentManager:
                 tool_access_policy=_access_policy,
                 permission_gate=self._permission_gate,
                 permission_timeout=self._config.agent.permission_timeout,
+                cancel_event=cancel_event,
+                permission_wait_tracker=permission_wait_tracker,
             )
 
         async def _run_backend(
@@ -2165,6 +2173,8 @@ class AgentManager:
                 )
                 await queue.put(f"data: {err_payload}\n\n")
             finally:
+                cancel_event.set()
+                self._permission_gate.clear_thread(session_id, thread_id)
                 if _token is not None:
                     reset_request_context(_token)
             await queue.put(None)
@@ -2178,10 +2188,14 @@ class AgentManager:
             _run_backend(backend, lambda text: f"Ошибка агента ({backend_name}): {text}")
         )
         self._active_tasks[thread_id] = task
+        self._active_task_sessions[thread_id] = session_id
+        self._active_task_cancel_events[thread_id] = cancel_event
 
         def _cleanup(t: asyncio.Task) -> None:
             if self._active_tasks.get(thread_id) is t:
                 del self._active_tasks[thread_id]
+                self._active_task_sessions.pop(thread_id, None)
+                self._active_task_cancel_events.pop(thread_id, None)
 
         task.add_done_callback(_cleanup)
 
@@ -2199,25 +2213,56 @@ class AgentManager:
                     break
                 yield item
         finally:
+            cancel_event.set()
+            self._permission_gate.clear_thread(session_id, thread_id)
             task.cancel()
             with suppress(asyncio.CancelledError):
                 await task
 
-    async def cancel_stream(self, thread_id: int) -> bool:
+    async def cancel_stream(self, thread_id: int, *, wait_timeout: float | None = None) -> bool:
         task = self._active_tasks.pop(thread_id, None)
         if task is None:
             return False
+        session_id = self._active_task_sessions.pop(thread_id, None)
+        cancel_event = self._active_task_cancel_events.pop(thread_id, None)
+        if cancel_event is not None:
+            cancel_event.set()
+        if session_id is not None:
+            self._permission_gate.clear_thread(session_id, thread_id)
         task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        if wait_timeout is None:
+            with suppress(asyncio.CancelledError):
+                await task
+        else:
+            done, pending = await asyncio.wait({task}, timeout=wait_timeout)
+            for done_task in done:
+                with suppress(asyncio.CancelledError):
+                    exc = done_task.exception()
+                    if exc is not None:
+                        logger.debug(
+                            "Cancelled agent stream %d finished with error",
+                            thread_id,
+                            exc_info=(type(exc), exc, exc.__traceback__),
+                        )
+            if pending:
+                logger.warning(
+                    "Agent stream %d did not stop within %.1fs; continuing cleanup",
+                    thread_id,
+                    wait_timeout,
+                )
         return True
 
     async def close_all(self) -> None:
         tasks = list(self._active_tasks.values())
         self._active_tasks.clear()
+        for cancel_event in self._active_task_cancel_events.values():
+            cancel_event.set()
+        self._active_task_sessions.clear()
+        self._active_task_cancel_events.clear()
         for task in tasks:
             task.cancel()
         if tasks:
             _, pending = await asyncio.wait(tasks, timeout=5.0)
             for task in pending:
                 logger.debug("Agent task did not finish within timeout: %s", task.get_name())
+        self._permission_gate.cancel_all()
