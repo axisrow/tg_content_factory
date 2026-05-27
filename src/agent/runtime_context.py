@@ -39,7 +39,7 @@ class AgentRuntimeContext:
     scheduler_manager: object | None = None
     runtime_kind: RuntimeKind = "none"
     owner_loop: asyncio.AbstractEventLoop | None = None
-    sync_timeout_sec: float = 120.0
+    sync_timeout_sec: float | None = None
 
     @classmethod
     def build(
@@ -57,11 +57,6 @@ class AgentRuntimeContext:
                 owner_loop = asyncio.get_running_loop()
             except RuntimeError:
                 owner_loop = None
-        sync_timeout_sec = 120.0
-        agent_config = getattr(config, "agent", None)
-        permission_timeout = getattr(agent_config, "permission_timeout", None)
-        if isinstance(permission_timeout, (int, float)):
-            sync_timeout_sec = max(sync_timeout_sec, float(permission_timeout) + 5.0)
         return cls(
             db=db,
             config=config,
@@ -69,7 +64,6 @@ class AgentRuntimeContext:
             scheduler_manager=scheduler_manager,
             runtime_kind=runtime_kind or detect_runtime_kind(client_pool),
             owner_loop=owner_loop,
-            sync_timeout_sec=sync_timeout_sec,
         )
 
     @property
@@ -99,6 +93,8 @@ class AgentRuntimeContext:
                     retryable=True,
                 )
             future = asyncio.run_coroutine_threadsafe(operation(), self.owner_loop)
+            if self.sync_timeout_sec is None:
+                return future.result()
             try:
                 return future.result(timeout=self.sync_timeout_sec)
             except FutureTimeoutError as exc:

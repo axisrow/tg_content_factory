@@ -10,6 +10,11 @@ Flow:
 5. choice "once"  → allow this single call (no override stored)
    choice "session" → store in _session_overrides[session_id], allow
    choice "deny"  → return _text_response error to the LLM
+
+Permission prompts are serialized per agent session.  This prevents parallel
+tool calls from opening a burst of dialogs before the user answers the first
+one.  There is intentionally no timeout: the agent pauses until the user
+chooses once/session/deny, or until the agent task is cancelled.
 """
 
 from __future__ import annotations
@@ -37,7 +42,7 @@ class AgentRequestContext:
     db_permissions: dict[str, bool] | None = None  # legacy boolean view
     tool_access_policy: dict[str, object] | None = None
     permission_gate: PermissionGate | None = None
-    permission_timeout: int = 120     # seconds to wait for user response
+    permission_timeout: int | None = None  # legacy config field; prompts no longer time out
 
 
 _request_ctx: ContextVar[AgentRequestContext | None] = ContextVar(
@@ -101,10 +106,24 @@ class PermissionGate:
     _session_overrides: dict[str, set[tuple[str, str]]] = field(default_factory=dict)
     # request_id (UUID str) → Future that resolves with "once"|"session"|"deny"
     _pending: dict[str, asyncio.Future] = field(default_factory=dict)
+    # request_id → session_id, so clear_session/cancel_all can unblock visible prompts
+    _pending_sessions: dict[str, str] = field(default_factory=dict)
+    # (session_id, event_loop_id) → lock.  A lock is loop-bound once contended,
+    # so tests and embedded runtimes that create fresh loops need separate locks.
+    _session_prompt_locks: dict[tuple[str, int], asyncio.Lock] = field(default_factory=dict)
 
     def is_session_approved(self, tool_name: str, session_id: str, phone: str = "") -> bool:
         """True if (tool, phone) was previously approved for this session_id."""
         return (tool_name, phone) in self._session_overrides.get(session_id, set())
+
+    def _prompt_lock(self, session_id: str) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        key = (session_id, id(loop))
+        lock = self._session_prompt_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._session_prompt_locks[key] = lock
+        return lock
 
     async def check(self, tool_name: str, phone: str) -> dict | None:
         """Check if tool/phone is allowed; show permission dialog if not.
@@ -125,48 +144,51 @@ class PermissionGate:
         if self.is_session_approved(tool_name, ctx.session_id, phone):
             return None
 
-        # Ask user
+        lock = self._prompt_lock(ctx.session_id)
+        async with lock:
+            # Another request may have received "session" while we were queued.
+            if self.is_session_approved(tool_name, ctx.session_id, phone):
+                return None
+            return await self._ask_user(ctx, tool_name, phone)
+
+    async def _ask_user(self, ctx: AgentRequestContext, tool_name: str, phone: str) -> dict | None:
+        """Emit one permission prompt and wait indefinitely for the user's choice."""
         request_id = str(uuid.uuid4())
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
+        self._pending_sessions[request_id] = ctx.session_id
 
-        timeout = ctx.permission_timeout
         event = json.dumps(
             {
                 "type": "permission_request",
                 "request_id": request_id,
                 "tool": tool_name,
                 "phone": phone,
-                "timeout": timeout,
+                "timeout": None,
             },
             ensure_ascii=False,
         )
         await ctx.queue.put(f"data: {event}\n\n")
         logger.info(
-            "Permission request emitted: request_id=%s tool=%s phone=%s thread=%d session=%s timeout=%ds",
+            "Permission request emitted: request_id=%s tool=%s phone=%s thread=%d session=%s timeout=none",
             request_id,
             tool_name,
             phone or "(none)",
             ctx.thread_id,
             ctx.session_id,
-            timeout,
         )
 
         try:
-            choice: str = await asyncio.wait_for(future, timeout=timeout)
-        except asyncio.TimeoutError:
-            self._pending.pop(request_id, None)
-            logger.warning(
-                "Permission timeout %ds fired for request_id=%s tool '%s' (thread %d, session %s)",
-                timeout, request_id, tool_name, ctx.thread_id, ctx.session_id,
-            )
-            mins = timeout // 60
-            return _text_response(f"❌ Таймаут запроса разрешения для '{tool_name}' ({mins} мин).")
+            choice: str = await future
         except asyncio.CancelledError:
             self._pending.pop(request_id, None)
+            self._pending_sessions.pop(request_id, None)
+            if not future.done():
+                future.cancel()
             raise
         finally:
             self._pending.pop(request_id, None)
+            self._pending_sessions.pop(request_id, None)
 
         if choice == "session":
             self._session_overrides.setdefault(ctx.session_id, set()).add((tool_name, phone))
@@ -203,6 +225,27 @@ class PermissionGate:
     def clear_session(self, session_id: str) -> None:
         """Clear session overrides for a specific session_id."""
         self._session_overrides.pop(session_id, None)
+        for request_id, pending_session_id in list(self._pending_sessions.items()):
+            if pending_session_id != session_id:
+                continue
+            future = self._pending.get(request_id)
+            if future is not None and not future.done():
+                future.cancel()
+            self._pending.pop(request_id, None)
+            self._pending_sessions.pop(request_id, None)
+        for key, lock in list(self._session_prompt_locks.items()):
+            if key[0] == session_id and not lock.locked():
+                self._session_prompt_locks.pop(key, None)
+
+    def cancel_all(self) -> None:
+        """Cancel all pending permission prompts and clear in-memory grants."""
+        for future in list(self._pending.values()):
+            if not future.done():
+                future.cancel()
+        self._pending.clear()
+        self._pending_sessions.clear()
+        self._session_overrides.clear()
+        self._session_prompt_locks.clear()
 
 
 def _text_response(text: str) -> dict:

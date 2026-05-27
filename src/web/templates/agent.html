@@ -1130,7 +1130,7 @@
                             } catch (fetchErr) {
                                 console.error('Permission POST failed:', fetchErr);
                                 statusTracker.onWarning(
-                                    'Не удалось отправить выбор разрешения. Запрос разрешения истечёт по таймауту.'
+                                    'Запрос разрешения уже обработан или был отменён. Повторите действие, если нужно.'
                                 );
                             }
                         } else if (data.type === 'thinking') {

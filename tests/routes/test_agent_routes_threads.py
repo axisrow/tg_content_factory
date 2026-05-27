@@ -434,7 +434,7 @@ def test_permission_dialog_keyboard_and_post_contract():
     assert "resolvePermissionRequest(data.request_id, choice)" in template
     assert "!permissionResp.ok || !permissionResult.ok" in template
     assert "body: JSON.stringify({choice: 'deny'})" not in template
-    assert "sending deny" not in template
+    assert "истечёт по таймауту" not in template
 
 
 # ── delete_thread: lines 86-88 (permission gate clearing) ──────────────

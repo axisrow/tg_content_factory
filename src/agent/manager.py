@@ -2221,3 +2221,4 @@ class AgentManager:
             _, pending = await asyncio.wait(tasks, timeout=5.0)
             for task in pending:
                 logger.debug("Agent task did not finish within timeout: %s", task.get_name())
+        self._permission_gate.cancel_all()
