@@ -223,6 +223,14 @@ class MessagesRepository:
         ]
         try:
             existing_keys = await self._existing_message_keys(messages)
+        except Exception as exc:
+            logger.warning(
+                "Could not pre-fetch existing message keys for refresh, proceeding without: %s",
+                exc,
+            )
+            existing_keys = set()
+
+        try:
             cur = await self._database.executemany_write(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
@@ -236,13 +244,14 @@ class MessagesRepository:
                 data,
             )
             count = cur.rowcount if cur.rowcount >= 0 else len(messages)
-            if existing_keys:
-                duplicates = [m for m in messages if (m.channel_id, m.message_id) in existing_keys]
-                if duplicates:
-                    await self._refresh_existing_messages(duplicates)
         except Exception as exc:
             logger.error("Failed to insert batch of %d messages: %s", len(messages), exc)
             return 0
+
+        if existing_keys:
+            duplicates = [m for m in messages if (m.channel_id, m.message_id) in existing_keys]
+            if duplicates:
+                await self._refresh_existing_messages(duplicates)
 
         reactions_data = [
             (m.channel_id, m.message_id, r["emoji"], r.get("count", 0))
