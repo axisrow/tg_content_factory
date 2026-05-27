@@ -12,6 +12,7 @@ from src.agent.tools.messaging_admin import register_admin_moderation_tools
 from src.agent.tools.messaging_chat_state import register_chat_state_read_tools
 from src.agent.tools.messaging_media import register_pin_media_tools
 from src.agent.tools.messaging_write import register_message_write_tools
+from src.agent.tools.telegram_queue import register_queue_status_tools
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -21,4 +22,5 @@ def register(db, client_pool, embedding_service, **kwargs):
     tools.extend(register_pin_media_tools(ctx, client_pool))
     tools.extend(register_admin_moderation_tools(ctx, client_pool))
     tools.extend(register_chat_state_read_tools(db, ctx, client_pool))
+    tools.extend(register_queue_status_tools(db))
     return tools
