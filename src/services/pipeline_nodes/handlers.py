@@ -346,10 +346,10 @@ class ReactHandler(BaseNodeHandler):
         except TelegramReactionInvalidError as exc:
             if random_emoji_list:
                 emoji = random_emoji_list[0]
-                context.record_error(
-                    node_id=node_id,
-                    code="reaction_invalid",
-                    detail=str(exc),
+                logger.info(
+                    "ReactHandler[%s]: primary emoji invalid (%s); falling back to random_emojis",
+                    node_id,
+                    exc,
                 )
             else:
                 context.record_error(

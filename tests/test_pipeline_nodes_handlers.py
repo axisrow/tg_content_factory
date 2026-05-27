@@ -567,7 +567,7 @@ async def test_react_skips_invalid_random_emojis():
 
     session.send_reaction.assert_awaited_once_with(-100, 1, "🔥")
     errors = ctx.get_errors()
-    assert [error["code"] for error in errors] == ["reaction_invalid", "reaction_invalid"]
+    assert [error["code"] for error in errors] == ["reaction_invalid"]
 
 
 # ── Issue #463: ReactHandler records structured node errors ───────────────────

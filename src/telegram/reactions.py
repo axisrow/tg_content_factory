@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, overload
 
 ReactionItem = dict[str, str | int]
 ReactionUserItem = dict[str, str | int]
@@ -100,6 +100,12 @@ class TelegramReactionInvalidError(ValueError):
     """Raised when an outgoing reaction is not supported by Telegram."""
 
 
+@overload
+def normalize_outgoing_reaction_emoji(emoji: str | None) -> str: ...
+@overload
+def normalize_outgoing_reaction_emoji(emoji: str | None, *, allow_clear: Literal[False]) -> str: ...
+@overload
+def normalize_outgoing_reaction_emoji(emoji: str | None, *, allow_clear: Literal[True]) -> str | None: ...
 def normalize_outgoing_reaction_emoji(emoji: str | None, *, allow_clear: bool = False) -> str | None:
     """Normalize and validate a Telegram built-in reaction emoji before sending."""
     if emoji is None:

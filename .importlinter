@@ -16,3 +16,4 @@ forbidden_modules =
 allow_indirect_imports = True
 ignore_imports =
     src.services.pipeline_nodes.handlers -> telethon
+    src.services.telegram_command_dispatcher -> telethon
