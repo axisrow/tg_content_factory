@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -129,6 +130,35 @@ async def test_get_telegram_queue_status_filters_by_command_type(tmp_path):
         assert "dialogs.react" in text
         assert "dialogs.send_message" not in text
         assert "Очередь Telegram-заданий: Всего: 1" in text
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_get_telegram_queue_status_requires_phone_when_acl_is_phone_scoped(tmp_path):
+    db = await _open_db(tmp_path)
+    try:
+        await db.set_setting(
+            "agent_tool_permissions",
+            json.dumps({
+                "+1": {"get_telegram_queue_status": True},
+                "+2": {"get_telegram_queue_status": False},
+            }),
+        )
+        await _create_reaction(db, phone="+1", message_id=1)
+        await _create_reaction(db, phone="+2", message_id=2)
+        handlers = _get_tool_handlers(db)
+
+        missing_phone = await handlers["get_telegram_queue_status"]({})
+        assert "укажи параметр phone" in _text(missing_phone)
+
+        allowed_phone = await handlers["get_telegram_queue_status"]({"phone": "+1"})
+        text = _text(allowed_phone)
+        assert "сообщение 1" in text
+        assert "сообщение 2" not in text
+
+        denied_phone = await handlers["get_telegram_queue_status"]({"phone": "+2"})
+        assert "не разрешён" in _text(denied_phone)
     finally:
         await db.close()
 

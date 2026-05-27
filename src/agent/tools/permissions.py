@@ -41,6 +41,7 @@ PHONE_BINDED_TOOLS: frozenset[str] = frozenset({
     "forward_messages",
     "get_broadcast_stats",
     "get_participants",
+    "get_telegram_queue_status",
     "kick_participant",
     "leave_dialogs",
     "list_photo_dialogs",

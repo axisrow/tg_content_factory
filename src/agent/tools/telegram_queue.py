@@ -7,7 +7,14 @@ from typing import Annotated, Any
 
 from claude_agent_sdk import tool
 
-from src.agent.tools._registry import ToolInputError, _text_response, arg_int, arg_str, normalize_phone
+from src.agent.tools._registry import (
+    ToolInputError,
+    _text_response,
+    arg_int,
+    arg_str,
+    normalize_phone,
+    require_phone_permission,
+)
 from src.models import TelegramCommand, TelegramCommandStatus
 from src.services.telegram_command_service import TelegramCommandService
 
@@ -147,6 +154,10 @@ def register_queue_status_tools(db: Any) -> list[Any]:
             raw_limit = arg_int(args, "limit", 20) or 20
         except ToolInputError as exc:
             return exc.to_response()
+
+        perm_gate = await require_phone_permission(db, phone, "get_telegram_queue_status")
+        if perm_gate:
+            return perm_gate
 
         limit = max(1, min(raw_limit, 100))
         service = TelegramCommandService(db)
