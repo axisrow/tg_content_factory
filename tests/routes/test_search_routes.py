@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.models import SearchResult
+from src.models import Message, SearchResult
 
 
 @pytest.mark.anyio
@@ -61,6 +62,69 @@ async def test_search_with_query(route_client, monkeypatch):
     resp = await route_client.get("/search?q=test")
     assert resp.status_code == 200
     mock_svc.search.assert_called_once()
+
+
+@pytest.mark.anyio
+async def test_search_result_does_not_render_translate_button_without_db_id(route_client, monkeypatch):
+    """Live/transient search results without DB id must not call /translate/None."""
+    mock_result = SearchResult(
+        messages=[
+            Message(
+                id=None,
+                channel_id=100,
+                message_id=1,
+                text="Привет, это достаточно длинный текст",
+                detected_lang="ru",
+                date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            )
+        ],
+        total=1,
+        query="привет",
+    )
+    mock_svc = MagicMock()
+    mock_svc.search = AsyncMock(return_value=mock_result)
+    mock_svc.check_quota = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.web.routes.search.deps.search_service",
+        lambda r: mock_svc,
+    )
+
+    resp = await route_client.get("/search?q=привет")
+
+    assert resp.status_code == 200
+    assert 'data-msg-id="None"' not in resp.text
+    assert 'data-target="translation-None"' not in resp.text
+
+
+@pytest.mark.anyio
+async def test_search_result_renders_translate_button_with_db_id(route_client, monkeypatch):
+    mock_result = SearchResult(
+        messages=[
+            Message(
+                id=123,
+                channel_id=100,
+                message_id=1,
+                text="Привет, это достаточно длинный текст",
+                detected_lang="ru",
+                date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            )
+        ],
+        total=1,
+        query="привет",
+    )
+    mock_svc = MagicMock()
+    mock_svc.search = AsyncMock(return_value=mock_result)
+    mock_svc.check_quota = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.web.routes.search.deps.search_service",
+        lambda r: mock_svc,
+    )
+
+    resp = await route_client.get("/search?q=привет")
+
+    assert resp.status_code == 200
+    assert 'data-msg-id="123"' in resp.text
+    assert 'data-target="translation-123"' in resp.text
 
 
 @pytest.mark.anyio

@@ -172,7 +172,7 @@ class TelegramSearch:
                 result = clearer(phone)
                 if inspect.isawaitable(result):
                     await result
-            await self._persistence.cache_search_results(seen_channels, messages, phone, query)
+            messages = await self._persistence.cache_search_results(seen_channels, messages, phone, query)
             return SearchResult(messages=messages, total=len(messages), query=query)
         except HandledFloodWaitError as exc:
             reporter = getattr(self._pool, "report_premium_flood", None)
@@ -268,6 +268,7 @@ class TelegramSearch:
                         ),
                         channel_title=chat_title,
                         channel_username=chat_username,
+                        **TelegramMessageTransformer.engagement_fields_from_message(msg),
                     )
                 )
 
@@ -341,7 +342,7 @@ class TelegramSearch:
                 timeout=90.0,
             )
 
-            await self._persistence.cache_messages_and_channels(seen_channels, messages)
+            messages = await self._persistence.cache_messages_and_channels(seen_channels, messages)
             return SearchResult(messages=messages, total=len(messages), query=query)
         except HandledFloodWaitError as exc:
             return SearchResult(
@@ -477,7 +478,7 @@ class TelegramSearch:
                 timeout=90.0,
             )
 
-            await self._persistence.cache_messages_and_channels(seen_channels, messages)
+            messages = await self._persistence.cache_messages_and_channels(seen_channels, messages)
             return SearchResult(messages=messages, total=len(messages), query=query)
         except HandledFloodWaitError as exc:
             return SearchResult(

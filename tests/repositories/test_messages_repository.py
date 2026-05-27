@@ -172,6 +172,62 @@ async def test_insert_messages_batch_with_duplicates(messages_repo):
     assert "New" in texts
 
 
+async def test_insert_messages_batch_refreshes_duplicate_stats(messages_repo):
+    await messages_repo.insert_messages_batch(
+        [
+            make_message(
+                1,
+                100,
+                "Original",
+                views=10,
+                forwards=1,
+                reply_count=2,
+                reactions_json='[{"emoji": "👍", "count": 1}]',
+                detected_lang="ru",
+            )
+        ]
+    )
+    rows = await messages_repo._db.execute(
+        "SELECT id FROM messages WHERE channel_id = ? AND message_id = ?",
+        (1, 100),
+    )
+    message_db_id = (await rows.fetchone())["id"]
+    await messages_repo.update_translation(message_db_id, "en", "Cached translation")
+
+    count = await messages_repo.insert_messages_batch(
+        [
+            make_message(
+                1,
+                100,
+                "Duplicate text should not replace original",
+                views=25,
+                forwards=3,
+                reply_count=4,
+                reactions_json='[{"emoji": "👍", "count": 9}]',
+                detected_lang="uk",
+            )
+        ]
+    )
+
+    assert count == 0
+    messages, total = await messages_repo.search_messages()
+    assert total == 1
+    stored = messages[0]
+    assert stored.text == "Original"
+    assert stored.views == 25
+    assert stored.forwards == 3
+    assert stored.reply_count == 4
+    assert stored.reactions_json == '[{"emoji": "👍", "count": 9}]'
+    assert stored.detected_lang == "uk"
+    assert stored.translation_en == "Cached translation"
+    cur = await messages_repo._db.execute(
+        "SELECT count FROM message_reactions WHERE channel_id = ? AND message_id = ? AND emoji = ?",
+        (1, 100, "👍"),
+    )
+    reaction = await cur.fetchone()
+    assert reaction["count"] == 9
+
+
 async def test_insert_messages_batch_sender_identity_round_trips(messages_repo):
     messages = [
         make_message(
