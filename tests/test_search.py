@@ -142,6 +142,10 @@ def _make_mock_api_message(channel_id=100123, msg_id=42, text="Test message abou
     msg.message = text
     msg.date = datetime.now(timezone.utc)
     msg.media = None
+    msg.views = 123
+    msg.forwards = 4
+    msg.replies = SimpleNamespace(replies=5)
+    msg.reactions = None
     return msg
 
 
@@ -183,6 +187,10 @@ def _make_resolved_message(
     msg.text = text
     msg.date = datetime.now(timezone.utc)
     msg.media = None
+    msg.views = 123
+    msg.forwards = 4
+    msg.replies = SimpleNamespace(replies=5)
+    msg.reactions = None
     return msg
 
 
@@ -233,6 +241,10 @@ async def test_search_telegram_returns_results(db, real_pool_harness_factory):
     assert result.messages[0].message_id == 42
     assert result.messages[0].text == "Test message about AI"
     assert result.messages[0].channel_title == "Test Channel"
+    assert result.messages[0].id is not None
+    assert result.messages[0].views == 123
+    assert result.messages[0].forwards == 4
+    assert result.messages[0].reply_count == 5
 
 
 @pytest.mark.anyio

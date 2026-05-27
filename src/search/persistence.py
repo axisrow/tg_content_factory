@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
+
 from src.database.bundles import SearchBundle
 from src.models import Channel, Message
+
+logger = logging.getLogger(__name__)
 
 
 class SearchPersistence:
@@ -14,7 +18,7 @@ class SearchPersistence:
         messages: list[Message],
         phone: str,
         query: str,
-    ) -> None:
+    ) -> list[Message]:
         for ch in channels.values():
             await self._search.add_channel(ch)
 
@@ -22,13 +26,34 @@ class SearchPersistence:
             await self._search.insert_messages_batch(messages)
 
         await self._search.log_search(phone, query, len(messages))
+        return await self._load_persisted_messages(messages)
 
     async def cache_messages_and_channels(
         self,
         channels: dict[int, Channel],
         messages: list[Message],
-    ) -> None:
+    ) -> list[Message]:
         for ch in channels.values():
             await self._search.add_channel(ch)
         if messages:
             await self._search.insert_messages_batch(messages)
+        return await self._load_persisted_messages(messages)
+
+    async def _load_persisted_messages(self, messages: list[Message]) -> list[Message]:
+        if not messages:
+            return []
+        keys = [(msg.channel_id, msg.message_id) for msg in messages]
+        unique_keys = set(keys)
+        try:
+            persisted = await self._search.messages.get_messages_by_channel_message_ids(keys)
+        except Exception:
+            logger.exception("Failed to load persisted messages; returning originals")
+            return messages
+        by_key = {(msg.channel_id, msg.message_id): msg for msg in persisted}
+        if len(by_key) < len(unique_keys):
+            logger.warning(
+                "Partial persistence load: %d of %d messages found; falling back to originals for the rest",
+                len(by_key),
+                len(unique_keys),
+            )
+        return [by_key.get((msg.channel_id, msg.message_id), msg) for msg in messages]

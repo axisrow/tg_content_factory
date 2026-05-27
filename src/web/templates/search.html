@@ -127,7 +127,7 @@
                 <span>{{ msg.text[:300] if msg.text else "—" }}{{ "..." if msg.text and msg.text|length > 300 else "" }}</span>
                 {% if msg.translation_en %}
                 <div class="text-muted mt-1" style="font-size:0.8rem"><i class="bi bi-translate me-1"></i>{{ msg.translation_en[:300] }}{{ "..." if msg.translation_en|length > 300 else "" }}</div>
-                {% elif msg.text and msg.detected_lang and msg.detected_lang != 'en' %}
+                {% elif msg.id is not none and msg.text and msg.detected_lang and msg.detected_lang != 'en' %}
                 <button class="btn btn-link btn-sm p-0 ms-1 translate-btn" data-msg-id="{{ msg.id }}" title="Перевести"><i class="bi bi-translate"></i></button>
                 <div class="translation-result text-muted mt-1" style="font-size:0.8rem;display:none" data-target="translation-{{ msg.id }}"></div>
                 {% endif %}
@@ -160,7 +160,7 @@
                 {{ msg.text[:200] if msg.text else "—" }}{{ "..." if msg.text and msg.text|length > 200 else "" }}
                 {% if msg.translation_en %}
                 <span class="text-muted d-block mt-1" style="font-size:0.8rem"><i class="bi bi-translate me-1"></i>{{ msg.translation_en[:200] }}{{ "..." if msg.translation_en|length > 200 else "" }}</span>
-                {% elif msg.text and msg.detected_lang and msg.detected_lang != 'en' %}
+                {% elif msg.id is not none and msg.text and msg.detected_lang and msg.detected_lang != 'en' %}
                 <button class="btn btn-link btn-sm p-0 ms-1 translate-btn" data-msg-id="{{ msg.id }}" title="Перевести"><i class="bi bi-translate"></i></button>
                 <span class="translation-result text-muted d-block mt-1" style="font-size:0.8rem;display:none" data-target="translation-{{ msg.id }}"></span>
                 {% endif %}
@@ -230,6 +230,14 @@ document.addEventListener('click', function(e) {
     if (!btn) return;
     e.preventDefault();
     var msgId = btn.dataset.msgId;
+    if (!/^\d+$/.test(msgId || '')) return;
+    function showTranslationStatus(text, isError) {
+        var container = btn.parentElement.querySelector('[data-target="translation-' + msgId + '"]');
+        if (!container) return;
+        container.textContent = text;
+        container.classList.toggle('text-danger', !!isError);
+        container.style.display = '';
+    }
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
     btn.disabled = true;
     fetch('/search/translate/' + msgId, {
@@ -245,6 +253,7 @@ document.addEventListener('click', function(e) {
                 var icon = document.createElement('i');
                 icon.className = 'bi bi-translate me-1';
                 container.innerHTML = '';
+                container.classList.remove('text-danger');
                 container.appendChild(icon);
                 container.appendChild(document.createTextNode(data.translation));
                 container.style.display = '';
@@ -253,11 +262,15 @@ document.addEventListener('click', function(e) {
         } else if (data.same_lang) {
             btn.innerHTML = '<i class="bi bi-check"></i>';
         } else {
+            showTranslationStatus(data.error || 'Не удалось перевести сообщение', true);
             btn.innerHTML = '<i class="bi bi-x text-danger"></i>';
+            btn.disabled = false;
         }
     })
     .catch(function() {
+        showTranslationStatus('Ошибка запроса перевода', true);
         btn.innerHTML = '<i class="bi bi-x text-danger"></i>';
+        btn.disabled = false;
     });
 });
 </script>

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from telethon.tl.types import (
@@ -108,6 +109,34 @@ def test_convert_telethon_message_basic():
     assert res.sender_last_name == "Doe"
     assert res.sender_username == "jdoe"
     assert res.date.tzinfo == timezone.utc
+
+
+def test_convert_telethon_message_includes_engagement_fields():
+    msg = SimpleNamespace(
+        id=124,
+        chat=SimpleNamespace(id=456, title="Chat", username="user"),
+        sender=SimpleNamespace(id=789, first_name="John", last_name="Doe", username="jdoe"),
+        date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        message="Это достаточно длинный русский текст для определения языка",
+        text="Это достаточно длинный русский текст для определения языка",
+        media=None,
+        views=123,
+        forwards=4,
+        replies=SimpleNamespace(replies=5),
+        reactions=SimpleNamespace(
+            results=[
+                SimpleNamespace(reaction=SimpleNamespace(emoticon="👍"), count=7),
+            ]
+        ),
+    )
+
+    res = TelegramMessageTransformer.convert_telethon_message(msg)
+
+    assert res.views == 123
+    assert res.forwards == 4
+    assert res.reply_count == 5
+    assert res.reactions_json == '[{"emoji": "👍", "count": 7}]'
+    assert res.detected_lang == "ru"
 
 
 def test_convert_telethon_message_no_chat():
