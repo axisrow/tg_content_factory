@@ -15,10 +15,16 @@ NOW = __import__("datetime").datetime(
 pytestmark = pytest.mark.aiosqlite_serial
 
 
-def _add_message(db, channel_id=100, message_id=1, text="hello"):
+def _add_message(db, channel_id=100, message_id=1, text="hello", reactions_json=None):
     __import__("asyncio").run(
         db.insert_message(
-            Message(channel_id=channel_id, message_id=message_id, text=text, date=NOW)
+            Message(
+                channel_id=channel_id,
+                message_id=message_id,
+                text=text,
+                date=NOW,
+                reactions_json=reactions_json,
+            )
         )
     )
 
@@ -45,11 +51,48 @@ def test_messages_read_text_format(cli_env, capsys):
     out = capsys.readouterr().out
     assert "test message" in out
     assert "Total:" in out
+    assert "reactions:" not in out
+
+
+def test_messages_read_text_format_with_reactions(cli_env, capsys):
+    _add_channel(cli_env, channel_id=100, title="MsgCh")
+    _add_message(
+        cli_env,
+        channel_id=100,
+        message_id=1,
+        text="reacted message",
+        reactions_json='[{"emoji": "👍", "count": 5}, {"emoji": "❤️", "count": 2}]',
+    )
+
+    from src.cli.commands.messages import run
+
+    run(_ns(
+        messages_action="read",
+        identifier="100",
+        limit=50,
+        live=False,
+        phone=None,
+        query="",
+        date_from=None,
+        date_to=None,
+        topic_id=None,
+        offset_id=None,
+        output_format="text",
+    ))
+    out = capsys.readouterr().out
+    assert "reacted message" in out
+    assert "reactions: 👍 5 ❤️ 2" in out
 
 
 def test_messages_read_json_format(cli_env, capsys):
     _add_channel(cli_env, channel_id=100, title="MsgCh")
-    _add_message(cli_env, channel_id=100, message_id=1, text="json msg")
+    _add_message(
+        cli_env,
+        channel_id=100,
+        message_id=1,
+        text="json msg",
+        reactions_json='[{"emoji": "🔥", "count": 7}]',
+    )
 
     from src.cli.commands.messages import run
 
@@ -70,11 +113,18 @@ def test_messages_read_json_format(cli_env, capsys):
     data = json.loads(out)
     assert isinstance(data, list)
     assert any(m["text"] == "json msg" for m in data)
+    assert any(m["reactions"] == [{"emoji": "🔥", "count": 7}] for m in data)
 
 
 def test_messages_read_csv_format(cli_env, capsys):
     _add_channel(cli_env, channel_id=100, title="MsgCh")
-    _add_message(cli_env, channel_id=100, message_id=1, text="csv msg")
+    _add_message(
+        cli_env,
+        channel_id=100,
+        message_id=1,
+        text="csv msg",
+        reactions_json='[{"emoji": "custom:42", "count": 3}]',
+    )
 
     from src.cli.commands.messages import run
 
@@ -94,6 +144,8 @@ def test_messages_read_csv_format(cli_env, capsys):
     out = capsys.readouterr().out
     assert "csv msg" in out
     assert "channel_id" in out
+    assert "reactions" in out.splitlines()[0]
+    assert "custom:42 3" in out
 
 
 def test_messages_read_with_query_filter(cli_env, capsys):

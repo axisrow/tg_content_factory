@@ -18,6 +18,7 @@ from src.agent.tools.messaging_schemas import (
 from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.identity import extract_message_sender_identity
+from src.telegram.reactions import format_message_reactions
 
 
 def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
@@ -265,7 +266,9 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
                     sender = f" {format_sender_identity(sender_identity)}"
                     date_str = msg.date.strftime("%Y-%m-%d %H:%M") if msg.date else ""
                     preview = msg.text[:500]
-                    line = f"#{msg.id} {date_str}{sender}: {preview}"
+                    reactions = format_message_reactions(msg)
+                    reaction_suffix = f" | реакции: {reactions}" if reactions else ""
+                    line = f"#{msg.id} {date_str}{sender}: {preview}{reaction_suffix}"
                     lines.append(line)
                     total_chars += len(line)
                     count += 1

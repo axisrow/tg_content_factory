@@ -72,6 +72,12 @@ class TestPrintMessages:
         out = capsys.readouterr().out
         assert "views=" not in out
 
+    def test_text_format_with_reactions(self, capsys):
+        msgs = [self._make_msg(reactions_json='[{"emoji": "👍", "count": 5}]')]
+        _print_messages(msgs, "text", total=1)
+        out = capsys.readouterr().out
+        assert "reactions: 👍 5" in out
+
     def test_text_format_empty_text(self, capsys):
         msgs = [self._make_msg(text="")]
         _print_messages(msgs, "text", total=1)
@@ -84,6 +90,14 @@ class TestPrintMessages:
         out = capsys.readouterr().out
         assert '"message_id": 500' in out
         assert '"text": "Hello world"' in out
+        assert '"reactions": []' in out
+
+    def test_json_format_with_reactions(self, capsys):
+        msgs = [self._make_msg(reactions_json='[{"emoji": "❤️", "count": 2}]')]
+        _print_messages(msgs, "json", total=1)
+        out = capsys.readouterr().out
+        assert '"emoji": "❤️"' in out
+        assert '"count": 2' in out
 
     def test_json_format_date_present(self, capsys):
         """JSON output includes date string."""
@@ -98,7 +112,14 @@ class TestPrintMessages:
         _print_messages(msgs, "csv", total=1)
         out = capsys.readouterr().out
         assert "id,channel_id,message_id" in out
+        assert "reactions" in out.splitlines()[0]
         assert "Hello world" in out
+
+    def test_csv_format_with_reactions(self, capsys):
+        msgs = [self._make_msg(reactions_json='[{"emoji": "custom:42", "count": 3}]')]
+        _print_messages(msgs, "csv", total=1)
+        out = capsys.readouterr().out
+        assert "custom:42 3" in out
 
     def test_csv_format_date_present(self, capsys):
         """CSV output includes date in row."""
@@ -195,6 +216,18 @@ class TestPrintLiveMessages:
         _print_live_messages(msgs)
         out = capsys.readouterr().out
         assert "—" in out
+
+    def test_with_reactions(self, capsys):
+        reactions = SimpleNamespace(
+            results=[
+                SimpleNamespace(reaction=SimpleNamespace(emoticon="👍"), count=5),
+                SimpleNamespace(reaction=SimpleNamespace(emoticon="❤️"), count=2),
+            ]
+        )
+        msgs = [self._make_live_msg(reactions=reactions)]
+        _print_live_messages(msgs)
+        out = capsys.readouterr().out
+        assert "reactions: 👍 5 ❤️ 2" in out
 
 
 # ---------------------------------------------------------------------------
