@@ -9,15 +9,29 @@ from src.web import deps
 router = APIRouter()
 
 
+def _parse_pipeline_id(value: str | None) -> int | None:
+    if value is None or value.strip() == "":
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
+
+
 @router.get("/", response_class=HTMLResponse)
-async def calendar_page(request: Request, days: int = Query(default=7, ge=1, le=90), pipeline_id: int | None = None):
+async def calendar_page(
+    request: Request,
+    days: int = Query(default=7, ge=1, le=90),
+    pipeline_id: str | None = None,
+):
     """Render content calendar page."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
+    selected_pipeline_id = _parse_pipeline_id(pipeline_id)
 
-    calendar_days = await calendar.get_calendar(days=days, pipeline_id=pipeline_id)
+    calendar_days = await calendar.get_calendar(days=days, pipeline_id=selected_pipeline_id)
     stats = await calendar.get_stats()
-    upcoming = await calendar.get_upcoming(limit=10, pipeline_id=pipeline_id)
+    upcoming = await calendar.get_upcoming(limit=10, pipeline_id=selected_pipeline_id)
 
     pipelines = await db.repos.content_pipelines.get_all()
 
@@ -29,19 +43,24 @@ async def calendar_page(request: Request, days: int = Query(default=7, ge=1, le=
             "stats": stats,
             "upcoming": upcoming,
             "pipelines": pipelines,
-            "selected_pipeline_id": pipeline_id,
+            "selected_pipeline_id": selected_pipeline_id,
             "days": days,
         },
     )
 
 
 @router.get("/api/calendar")
-async def api_calendar(request: Request, days: int = Query(default=7, ge=1, le=90), pipeline_id: int | None = None):
+async def api_calendar(
+    request: Request,
+    days: int = Query(default=7, ge=1, le=90),
+    pipeline_id: str | None = None,
+):
     """Get calendar data as JSON."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
+    selected_pipeline_id = _parse_pipeline_id(pipeline_id)
 
-    calendar_days = await calendar.get_calendar(days=days, pipeline_id=pipeline_id)
+    calendar_days = await calendar.get_calendar(days=days, pipeline_id=selected_pipeline_id)
 
     return JSONResponse([
         {
@@ -64,12 +83,17 @@ async def api_calendar(request: Request, days: int = Query(default=7, ge=1, le=9
 
 
 @router.get("/api/upcoming")
-async def api_upcoming(request: Request, limit: int = Query(default=20, ge=1, le=200), pipeline_id: int | None = None):
+async def api_upcoming(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=200),
+    pipeline_id: str | None = None,
+):
     """Get upcoming events as JSON."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
+    selected_pipeline_id = _parse_pipeline_id(pipeline_id)
 
-    events = await calendar.get_upcoming(limit=limit, pipeline_id=pipeline_id)
+    events = await calendar.get_upcoming(limit=limit, pipeline_id=selected_pipeline_id)
 
     return JSONResponse([
         {
