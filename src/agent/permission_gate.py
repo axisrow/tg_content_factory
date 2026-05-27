@@ -36,6 +36,29 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class PermissionWaitTracker:
+    """Thread-safe marker for sync bridges blocked on interactive permissions."""
+
+    _event: threading.Event = field(default_factory=threading.Event)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _count: int = 0
+
+    def begin(self) -> None:
+        with self._lock:
+            self._count += 1
+            self._event.set()
+
+    def end(self) -> None:
+        with self._lock:
+            self._count = max(0, self._count - 1)
+            if self._count == 0:
+                self._event.clear()
+
+    def is_waiting(self) -> bool:
+        return self._event.is_set()
+
+
+@dataclass
 class AgentRequestContext:
     session_id: str                   # UUID — unique per TUI launch / web session
     thread_id: int
@@ -45,6 +68,7 @@ class AgentRequestContext:
     permission_gate: PermissionGate | None = None
     permission_timeout: int | None = None  # legacy config field; prompts no longer time out
     cancel_event: threading.Event | None = None
+    permission_wait_tracker: PermissionWaitTracker | None = None
 
 
 _request_ctx: ContextVar[AgentRequestContext | None] = ContextVar(
@@ -149,11 +173,18 @@ class PermissionGate:
             return None
 
         lock = self._prompt_lock(ctx.session_id)
-        async with lock:
-            # Another request may have received "session" while we were queued.
-            if self.is_session_approved(tool_name, ctx.session_id, phone):
-                return None
-            return await self._ask_user(ctx, tool_name, phone)
+        tracker = ctx.permission_wait_tracker
+        if tracker is not None:
+            tracker.begin()
+        try:
+            async with lock:
+                # Another request may have received "session" while we were queued.
+                if self.is_session_approved(tool_name, ctx.session_id, phone):
+                    return None
+                return await self._ask_user(ctx, tool_name, phone)
+        finally:
+            if tracker is not None:
+                tracker.end()
 
     async def _ask_user(self, ctx: AgentRequestContext, tool_name: str, phone: str) -> dict | None:
         """Emit one permission prompt and wait indefinitely for the user's choice."""

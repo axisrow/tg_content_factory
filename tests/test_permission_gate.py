@@ -10,6 +10,7 @@ import pytest
 from src.agent.permission_gate import (
     AgentRequestContext,
     PermissionGate,
+    PermissionWaitTracker,
     _text_response,
     get_gate,
     get_request_context,
@@ -435,6 +436,43 @@ async def test_concurrent_once_grant_keeps_following_requests_queued():
         assert results == [None] * 3
         assert ctx.queue.empty()
         assert gate.is_session_approved("send_reaction", ctx.session_id, "+1234567890")
+    finally:
+        reset_request_context(token)
+
+
+@pytest.mark.anyio
+async def test_permission_wait_tracker_stays_active_for_queued_prompts():
+    gate = PermissionGate()
+    tracker = PermissionWaitTracker()
+    ctx = AgentRequestContext(
+        session_id="session-queue-tracker",
+        thread_id=10,
+        queue=asyncio.Queue(),
+        db_permissions={},
+        permission_wait_tracker=tracker,
+    )
+    token = set_request_context(ctx)
+    try:
+        tasks = [
+            asyncio.create_task(gate.check("send_reaction", "+1234567890"))
+            for _ in range(2)
+        ]
+
+        first_event = await asyncio.wait_for(ctx.queue.get(), timeout=2.0)
+        first_data = json.loads(first_event.removeprefix("data: ").strip())
+        await asyncio.sleep(0.05)
+        assert tracker.is_waiting()
+
+        gate.resolve(first_data["request_id"], "once")
+        second_event = await asyncio.wait_for(ctx.queue.get(), timeout=2.0)
+        second_data = json.loads(second_event.removeprefix("data: ").strip())
+        assert tracker.is_waiting()
+
+        gate.resolve(second_data["request_id"], "once")
+        results = await asyncio.wait_for(asyncio.gather(*tasks), timeout=2.0)
+
+        assert results == [None, None]
+        assert not tracker.is_waiting()
     finally:
         reset_request_context(token)
 

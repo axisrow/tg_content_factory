@@ -2103,12 +2103,14 @@ class AgentManager:
         # so the actual set/reset happens inside _run_backend (not in the generator).
         from src.agent.permission_gate import (
             AgentRequestContext,
+            PermissionWaitTracker,
             reset_request_context,
             set_request_context,
         )
 
         _req_ctx: AgentRequestContext | None = None
         cancel_event = threading.Event()
+        permission_wait_tracker = PermissionWaitTracker()
         if interactive_permissions:
             from src.agent.tools.permissions import load_tool_access_policy
 
@@ -2121,6 +2123,7 @@ class AgentManager:
                 permission_gate=self._permission_gate,
                 permission_timeout=self._config.agent.permission_timeout,
                 cancel_event=cancel_event,
+                permission_wait_tracker=permission_wait_tracker,
             )
 
         async def _run_backend(

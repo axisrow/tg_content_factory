@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from typing import Literal, TypeVar
 
 _T = TypeVar("_T")
 RuntimeKind = Literal["live", "snapshot", "none"]
+DEFAULT_SYNC_TIMEOUT_SEC = 120.0
 
 
 class AgentToolRuntimeError(RuntimeError):
@@ -39,7 +41,7 @@ class AgentRuntimeContext:
     scheduler_manager: object | None = None
     runtime_kind: RuntimeKind = "none"
     owner_loop: asyncio.AbstractEventLoop | None = None
-    sync_timeout_sec: float | None = None
+    sync_timeout_sec: float | None = DEFAULT_SYNC_TIMEOUT_SEC
 
     @classmethod
     def build(
@@ -93,34 +95,63 @@ class AgentRuntimeContext:
                     retryable=True,
                 )
             future = asyncio.run_coroutine_threadsafe(operation(), self.owner_loop)
-            if self.sync_timeout_sec is None:
-                cancel_event = None
-                try:
-                    from src.agent.permission_gate import get_request_context
+            cancel_event = None
+            permission_wait_tracker = None
+            try:
+                from src.agent.permission_gate import get_request_context
 
-                    request_context = get_request_context()
-                    cancel_event = request_context.cancel_event if request_context is not None else None
-                except (AttributeError, LookupError):
-                    cancel_event = None
-                while True:
-                    if cancel_event is not None and cancel_event.is_set():
+                request_context = get_request_context()
+                if request_context is not None:
+                    cancel_event = request_context.cancel_event
+                    permission_wait_tracker = request_context.permission_wait_tracker
+            except (AttributeError, LookupError):
+                cancel_event = None
+                permission_wait_tracker = None
+
+            deadline = (
+                time.monotonic() + self.sync_timeout_sec
+                if self.sync_timeout_sec is not None
+                else None
+            )
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    future.cancel()
+                    raise AgentToolRuntimeError(
+                        f"Agent tool '{tool_name}' was cancelled while waiting for the live Telegram runtime.",
+                        retryable=True,
+                    )
+
+                permission_waiting = (
+                    permission_wait_tracker is not None
+                    and permission_wait_tracker.is_waiting()
+                )
+                poll_timeout = 0.5
+                started_at = time.monotonic()
+                if deadline is not None and not permission_waiting:
+                    remaining = deadline - started_at
+                    if remaining <= 0:
                         future.cancel()
                         raise AgentToolRuntimeError(
-                            f"Agent tool '{tool_name}' was cancelled while waiting for the live Telegram runtime.",
+                            f"Agent tool '{tool_name}' timed out while waiting for the live Telegram runtime.",
                             retryable=True,
                         )
-                    try:
-                        return future.result(timeout=0.5)
-                    except FutureTimeoutError:
-                        continue
-            try:
-                return future.result(timeout=self.sync_timeout_sec)
-            except FutureTimeoutError as exc:
-                future.cancel()
-                raise AgentToolRuntimeError(
-                    f"Agent tool '{tool_name}' timed out while waiting for the live Telegram runtime.",
-                    retryable=True,
-                ) from exc
+                    poll_timeout = min(poll_timeout, remaining)
+
+                try:
+                    return future.result(timeout=poll_timeout)
+                except FutureTimeoutError as exc:
+                    permission_waiting = (
+                        permission_wait_tracker is not None
+                        and permission_wait_tracker.is_waiting()
+                    )
+                    if deadline is not None and permission_waiting:
+                        deadline += time.monotonic() - started_at
+                    elif deadline is not None and deadline <= time.monotonic():
+                        future.cancel()
+                        raise AgentToolRuntimeError(
+                            f"Agent tool '{tool_name}' timed out while waiting for the live Telegram runtime.",
+                            retryable=True,
+                        ) from exc
 
         if current_loop is None:
             return asyncio.run(operation())

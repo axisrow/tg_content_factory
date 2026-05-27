@@ -1087,20 +1087,20 @@ class TestAgentRuntimeContextRunSync:
         result = AgentRuntimeContext.build(db=MagicMock()).run_sync("test_tool", _op)
         assert result == 42
 
-    def test_sync_bridge_has_no_default_permission_timeout_ceiling(self):
-        from src.agent.runtime_context import AgentRuntimeContext
+    def test_sync_bridge_keeps_runtime_timeout_independent_from_permission_timeout(self):
+        from src.agent.runtime_context import DEFAULT_SYNC_TIMEOUT_SEC, AgentRuntimeContext
 
         config = MagicMock()
         config.agent.permission_timeout = 77
 
         ctx = AgentRuntimeContext.build(db=MagicMock(), config=config)
 
-        assert ctx.sync_timeout_sec is None
+        assert ctx.sync_timeout_sec == DEFAULT_SYNC_TIMEOUT_SEC
 
         config.agent.permission_timeout = 130
         ctx = AgentRuntimeContext.build(db=MagicMock(), config=config)
 
-        assert ctx.sync_timeout_sec is None
+        assert ctx.sync_timeout_sec == DEFAULT_SYNC_TIMEOUT_SEC
 
     @pytest.mark.anyio
     async def test_inside_event_loop_raises(self):
@@ -1151,6 +1151,86 @@ class TestAgentRuntimeContextRunSync:
             with pytest.raises(AgentToolRuntimeError, match="cancelled"):
                 await asyncio.wait_for(task, timeout=2.0)
             await asyncio.wait_for(cancelled.wait(), timeout=2.0)
+        finally:
+            reset_request_context(token)
+
+    @pytest.mark.anyio
+    async def test_sync_bridge_times_out_non_permission_waits(self):
+        from src.agent.runtime_context import AgentRuntimeContext, AgentToolRuntimeError
+
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+        ctx = AgentRuntimeContext.build(
+            db=MagicMock(),
+            client_pool=MagicMock(),
+            runtime_kind="live",
+            owner_loop=asyncio.get_running_loop(),
+        )
+        ctx.sync_timeout_sec = 0.05
+
+        async def _op():
+            started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        task = asyncio.create_task(asyncio.to_thread(ctx.run_sync, "test_tool", _op))
+        await asyncio.wait_for(started.wait(), timeout=2.0)
+
+        with pytest.raises(AgentToolRuntimeError, match="timed out"):
+            await asyncio.wait_for(task, timeout=2.0)
+        await asyncio.wait_for(cancelled.wait(), timeout=2.0)
+
+    @pytest.mark.anyio
+    async def test_sync_bridge_excludes_permission_waits_from_runtime_timeout(self):
+        from src.agent.permission_gate import (
+            AgentRequestContext,
+            PermissionWaitTracker,
+            reset_request_context,
+            set_request_context,
+        )
+        from src.agent.runtime_context import AgentRuntimeContext
+
+        tracker = PermissionWaitTracker()
+        cancel_event = threading.Event()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        ctx = AgentRuntimeContext.build(
+            db=MagicMock(),
+            client_pool=MagicMock(),
+            runtime_kind="live",
+            owner_loop=asyncio.get_running_loop(),
+        )
+        ctx.sync_timeout_sec = 0.05
+        request_ctx = AgentRequestContext(
+            session_id="sync-permission-wait",
+            thread_id=1,
+            queue=asyncio.Queue(),
+            cancel_event=cancel_event,
+            permission_wait_tracker=tracker,
+        )
+
+        async def _op():
+            tracker.begin()
+            started.set()
+            try:
+                await release.wait()
+            finally:
+                tracker.end()
+            return "ok"
+
+        token = set_request_context(request_ctx)
+        try:
+            task = asyncio.create_task(asyncio.to_thread(ctx.run_sync, "test_tool", _op))
+            await asyncio.wait_for(started.wait(), timeout=2.0)
+            await asyncio.sleep(0.12)
+            assert not task.done()
+
+            release.set()
+
+            assert await asyncio.wait_for(task, timeout=2.0) == "ok"
         finally:
             reset_request_context(token)
 
