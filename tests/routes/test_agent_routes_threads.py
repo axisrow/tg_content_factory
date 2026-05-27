@@ -446,12 +446,14 @@ async def test_delete_thread_clears_permission_gate(client, db):
     thread_id = await db.create_agent_thread("Perm")
 
     mock_gate = MagicMock()
+    mock_gate.clear_thread = MagicMock()
     mock_gate.clear_session = MagicMock()
     client._transport_app.state.agent_manager.permission_gate = mock_gate
 
     resp = await client.delete(f"/agent/threads/{thread_id}")
     assert resp.status_code == 200
-    mock_gate.clear_session.assert_called_once()
+    mock_gate.clear_thread.assert_called_once_with("web", thread_id)
+    mock_gate.clear_session.assert_called_once_with("web")
 
 
 @pytest.mark.anyio

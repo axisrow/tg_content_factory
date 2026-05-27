@@ -127,6 +127,7 @@ async def delete_thread(request: Request, thread_id: int):
     await db.delete_agent_thread(thread_id)
     if agent_manager is not None and agent_manager.permission_gate is not None:
         session_id = request.cookies.get("session", "web")
+        agent_manager.permission_gate.clear_thread(session_id, thread_id)
         agent_manager.permission_gate.clear_session(session_id)
     return {"ok": True, "cancelled": cancelled}
 

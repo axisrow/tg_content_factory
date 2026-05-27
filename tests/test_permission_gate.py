@@ -107,9 +107,70 @@ def test_clear_session():
     assert "session-1" not in gate._session_overrides
 
 
+@pytest.mark.anyio
+async def test_clear_session_does_not_cancel_pending_prompts():
+    gate = PermissionGate()
+    future = asyncio.get_running_loop().create_future()
+    gate._session_overrides["session-1"] = {("tool_a", "+1")}
+    gate._pending["request-1"] = future
+    gate._pending_sessions["request-1"] = "session-1"
+    gate._pending_threads["request-1"] = 10
+
+    gate.clear_session("session-1")
+
+    assert "session-1" not in gate._session_overrides
+    assert not future.cancelled()
+    assert gate._pending["request-1"] is future
+    assert gate._pending_sessions["request-1"] == "session-1"
+    assert gate._pending_threads["request-1"] == 10
+
+
 def test_clear_session_nonexistent():
     gate = PermissionGate()
     gate.clear_session("nonexistent")  # should not raise
+
+
+# ── clear_thread() ─────────────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_clear_thread_cancels_only_matching_thread():
+    gate = PermissionGate()
+    matching = asyncio.get_running_loop().create_future()
+    other_thread = asyncio.get_running_loop().create_future()
+    other_session = asyncio.get_running_loop().create_future()
+    gate._pending.update(
+        {
+            "matching": matching,
+            "other-thread": other_thread,
+            "other-session": other_session,
+        }
+    )
+    gate._pending_sessions.update(
+        {
+            "matching": "session-1",
+            "other-thread": "session-1",
+            "other-session": "session-2",
+        }
+    )
+    gate._pending_threads.update(
+        {
+            "matching": 10,
+            "other-thread": 11,
+            "other-session": 10,
+        }
+    )
+
+    gate.clear_thread("session-1", 10)
+
+    assert matching.cancelled()
+    assert not other_thread.cancelled()
+    assert not other_session.cancelled()
+    assert "matching" not in gate._pending
+    assert "other-thread" in gate._pending
+    assert "other-session" in gate._pending
+    assert gate._pending_threads["other-thread"] == 11
+    assert gate._pending_threads["other-session"] == 10
 
 
 # ── check() with no context ────────────────────────────────────────

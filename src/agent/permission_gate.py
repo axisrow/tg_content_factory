@@ -106,8 +106,10 @@ class PermissionGate:
     _session_overrides: dict[str, set[tuple[str, str]]] = field(default_factory=dict)
     # request_id (UUID str) → Future that resolves with "once"|"session"|"deny"
     _pending: dict[str, asyncio.Future] = field(default_factory=dict)
-    # request_id → session_id, so clear_session/cancel_all can unblock visible prompts
+    # request_id → session_id, so clear_thread/cancel_all can unblock visible prompts
     _pending_sessions: dict[str, str] = field(default_factory=dict)
+    # request_id → thread_id, so thread deletion cancels only its own visible prompt
+    _pending_threads: dict[str, int] = field(default_factory=dict)
     # (session_id, event_loop_id) → lock.  A lock is loop-bound once contended,
     # so tests and embedded runtimes that create fresh loops need separate locks.
     _session_prompt_locks: dict[tuple[str, int], asyncio.Lock] = field(default_factory=dict)
@@ -157,6 +159,7 @@ class PermissionGate:
         future: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
         self._pending_sessions[request_id] = ctx.session_id
+        self._pending_threads[request_id] = ctx.thread_id
 
         event = json.dumps(
             {
@@ -183,12 +186,14 @@ class PermissionGate:
         except asyncio.CancelledError:
             self._pending.pop(request_id, None)
             self._pending_sessions.pop(request_id, None)
+            self._pending_threads.pop(request_id, None)
             if not future.done():
                 future.cancel()
             raise
         finally:
             self._pending.pop(request_id, None)
             self._pending_sessions.pop(request_id, None)
+            self._pending_threads.pop(request_id, None)
 
         if choice == "session":
             self._session_overrides.setdefault(ctx.session_id, set()).add((tool_name, phone))
@@ -225,14 +230,23 @@ class PermissionGate:
     def clear_session(self, session_id: str) -> None:
         """Clear session overrides for a specific session_id."""
         self._session_overrides.pop(session_id, None)
+        for key, lock in list(self._session_prompt_locks.items()):
+            if key[0] == session_id and not lock.locked():
+                self._session_prompt_locks.pop(key, None)
+
+    def clear_thread(self, session_id: str, thread_id: int) -> None:
+        """Cancel pending permission prompts for one thread in one session."""
         for request_id, pending_session_id in list(self._pending_sessions.items()):
             if pending_session_id != session_id:
+                continue
+            if self._pending_threads.get(request_id) != thread_id:
                 continue
             future = self._pending.get(request_id)
             if future is not None and not future.done():
                 future.cancel()
             self._pending.pop(request_id, None)
             self._pending_sessions.pop(request_id, None)
+            self._pending_threads.pop(request_id, None)
         for key, lock in list(self._session_prompt_locks.items()):
             if key[0] == session_id and not lock.locked():
                 self._session_prompt_locks.pop(key, None)
@@ -244,6 +258,7 @@ class PermissionGate:
                 future.cancel()
         self._pending.clear()
         self._pending_sessions.clear()
+        self._pending_threads.clear()
         self._session_overrides.clear()
         self._session_prompt_locks.clear()
 
