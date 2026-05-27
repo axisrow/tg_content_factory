@@ -94,7 +94,25 @@ class AgentRuntimeContext:
                 )
             future = asyncio.run_coroutine_threadsafe(operation(), self.owner_loop)
             if self.sync_timeout_sec is None:
-                return future.result()
+                cancel_event = None
+                try:
+                    from src.agent.permission_gate import get_request_context
+
+                    request_context = get_request_context()
+                    cancel_event = request_context.cancel_event if request_context is not None else None
+                except (AttributeError, LookupError):
+                    cancel_event = None
+                while True:
+                    if cancel_event is not None and cancel_event.is_set():
+                        future.cancel()
+                        raise AgentToolRuntimeError(
+                            f"Agent tool '{tool_name}' was cancelled while waiting for the live Telegram runtime.",
+                            retryable=True,
+                        )
+                    try:
+                        return future.result(timeout=0.5)
+                    except FutureTimeoutError:
+                        continue
             try:
                 return future.result(timeout=self.sync_timeout_sec)
             except FutureTimeoutError as exc:

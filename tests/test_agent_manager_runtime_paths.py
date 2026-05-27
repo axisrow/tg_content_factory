@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1890,6 +1891,27 @@ class TestAgentManagerChatStreamErrors:
         mgr.initialize()
         result = await mgr.cancel_stream(999)
         assert result is False
+
+    @pytest.mark.anyio
+    async def test_cancel_stream_sets_runtime_cancel_event_and_clears_thread(self, db):
+        """cancel_stream unblocks sync tool waits tied to the cancelled thread."""
+        mgr = AgentManager(db)
+        cancel_event = threading.Event()
+        task = asyncio.create_task(asyncio.sleep(100))
+        mgr._active_tasks[123] = task
+        mgr._active_task_sessions[123] = "session-123"
+        mgr._active_task_cancel_events[123] = cancel_event
+        mgr.permission_gate.clear_thread = MagicMock()
+
+        result = await mgr.cancel_stream(123)
+
+        assert result is True
+        assert cancel_event.is_set()
+        mgr.permission_gate.clear_thread.assert_called_once_with("session-123", 123)
+        assert 123 not in mgr._active_tasks
+        assert 123 not in mgr._active_task_sessions
+        assert 123 not in mgr._active_task_cancel_events
+        assert task.cancelled() or task.done()
 
     @pytest.mark.anyio
     async def test_chat_stream_with_invalid_model_for_claude(self, db):

@@ -14,6 +14,7 @@ Targets:
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -1110,6 +1111,48 @@ class TestAgentRuntimeContextRunSync:
 
         with pytest.raises(RuntimeError, match="cannot run inside"):
             AgentRuntimeContext.build(db=MagicMock()).run_sync("test_tool", _op)
+
+    @pytest.mark.anyio
+    async def test_sync_bridge_unbounded_wait_stops_on_request_cancel(self):
+        from src.agent.permission_gate import AgentRequestContext, reset_request_context, set_request_context
+        from src.agent.runtime_context import AgentRuntimeContext, AgentToolRuntimeError
+
+        cancel_event = threading.Event()
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+        ctx = AgentRuntimeContext.build(
+            db=MagicMock(),
+            client_pool=MagicMock(),
+            runtime_kind="live",
+            owner_loop=asyncio.get_running_loop(),
+        )
+        request_ctx = AgentRequestContext(
+            session_id="sync-cancel",
+            thread_id=1,
+            queue=asyncio.Queue(),
+            cancel_event=cancel_event,
+        )
+
+        async def _op():
+            started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        token = set_request_context(request_ctx)
+        try:
+            task = asyncio.create_task(asyncio.to_thread(ctx.run_sync, "test_tool", _op))
+            await asyncio.wait_for(started.wait(), timeout=2.0)
+
+            cancel_event.set()
+
+            with pytest.raises(AgentToolRuntimeError, match="cancelled"):
+                await asyncio.wait_for(task, timeout=2.0)
+            await asyncio.wait_for(cancelled.wait(), timeout=2.0)
+        finally:
+            reset_request_context(token)
 
 
 class TestDeepagentsSyncTools:

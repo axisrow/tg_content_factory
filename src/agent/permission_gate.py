@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -43,6 +44,7 @@ class AgentRequestContext:
     tool_access_policy: dict[str, object] | None = None
     permission_gate: PermissionGate | None = None
     permission_timeout: int | None = None  # legacy config field; prompts no longer time out
+    cancel_event: threading.Event | None = None
 
 
 _request_ctx: ContextVar[AgentRequestContext | None] = ContextVar(
