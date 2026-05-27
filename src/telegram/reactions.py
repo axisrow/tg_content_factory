@@ -9,6 +9,84 @@ ReactionItem = dict[str, str | int]
 ReactionUserItem = dict[str, str | int]
 DEFAULT_REACTION_USERS_LIMIT = 20
 MAX_REACTION_USERS_LIMIT = 100
+SUPPORTED_REACTION_EMOJIS: tuple[str, ...] = (
+    "👍",
+    "👎",
+    "❤",
+    "🔥",
+    "🥰",
+    "👏",
+    "😁",
+    "🤔",
+    "🤯",
+    "😱",
+    "🤬",
+    "😢",
+    "🎉",
+    "🤩",
+    "🤮",
+    "💩",
+    "🙏",
+    "👌",
+    "🕊",
+    "🤡",
+    "🥱",
+    "🥴",
+    "😍",
+    "🐳",
+    "❤‍🔥",
+    "🌚",
+    "🌭",
+    "💯",
+    "🤣",
+    "⚡",
+    "🍌",
+    "🏆",
+    "💔",
+    "🤨",
+    "😐",
+    "🍓",
+    "🍾",
+    "💋",
+    "🖕",
+    "😈",
+    "😴",
+    "😭",
+    "🤓",
+    "👻",
+    "👨‍💻",
+    "👀",
+    "🎃",
+    "🙈",
+    "😇",
+    "😨",
+    "🤝",
+    "✍",
+    "🤗",
+    "🫡",
+    "🎅",
+    "🎄",
+    "☃",
+    "💅",
+    "🤪",
+    "🗿",
+    "🆒",
+    "💘",
+    "🙉",
+    "🦄",
+    "😘",
+    "💊",
+    "🙊",
+    "😎",
+    "👾",
+    "🤷‍♂",
+    "🤷",
+    "🤷‍♀",
+    "😡",
+)
+SUPPORTED_REACTION_EMOJIS_SET = frozenset(SUPPORTED_REACTION_EMOJIS)
+SUPPORTED_REACTION_EMOJIS_DISPLAY = " ".join(SUPPORTED_REACTION_EMOJIS)
+_VARIATION_SELECTOR_16 = "\ufe0f"
 
 
 @dataclass(frozen=True)
@@ -16,6 +94,30 @@ class ReactionUsersResult:
     items: list[ReactionUserItem]
     unavailable: str | None = None
     limited: bool = False
+
+
+class TelegramReactionInvalidError(ValueError):
+    """Raised when an outgoing reaction is not supported by Telegram."""
+
+
+def normalize_outgoing_reaction_emoji(emoji: str | None, *, allow_clear: bool = False) -> str | None:
+    """Normalize and validate a Telegram built-in reaction emoji before sending."""
+    if emoji is None:
+        if allow_clear:
+            return None
+        raise TelegramReactionInvalidError(_invalid_reaction_message(emoji))
+
+    normalized = str(emoji).strip().replace(_VARIATION_SELECTOR_16, "")
+    if not normalized or normalized not in SUPPORTED_REACTION_EMOJIS_SET:
+        raise TelegramReactionInvalidError(_invalid_reaction_message(emoji))
+    return normalized
+
+
+def _invalid_reaction_message(emoji: object) -> str:
+    return (
+        f"Unsupported Telegram reaction emoji {emoji!r}. "
+        f"Supported reactions: {SUPPORTED_REACTION_EMOJIS_DISPLAY}"
+    )
 
 
 def _coerce_count(value: Any) -> int:

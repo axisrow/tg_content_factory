@@ -6,6 +6,8 @@ import pytest
 from telethon.tl.types import ReactionPaid
 
 from src.telegram.reactions import (
+    SUPPORTED_REACTION_EMOJIS_DISPLAY,
+    TelegramReactionInvalidError,
     extract_message_reactions,
     extract_message_reactions_json,
     extract_reaction_users,
@@ -15,6 +17,7 @@ from src.telegram.reactions import (
     format_reaction_users,
     format_reaction_users_result,
     format_reactions_json,
+    normalize_outgoing_reaction_emoji,
     normalize_reaction_users_limit,
     parse_reactions_json,
 )
@@ -27,6 +30,21 @@ def test_extract_message_reactions_none():
     assert extract_message_reactions(msg) == []
     assert extract_message_reactions_json(msg) is None
     assert format_message_reactions(msg) == ""
+
+
+def test_normalize_outgoing_reaction_accepts_supported_and_strips_variation_selector():
+    assert normalize_outgoing_reaction_emoji(" ❤️ ") == "❤"
+    assert normalize_outgoing_reaction_emoji("✍️") == "✍"
+    assert normalize_outgoing_reaction_emoji(None, allow_clear=True) is None
+
+
+@pytest.mark.parametrize("emoji", ["✅", "ok", "👍 ✅", ""])
+def test_normalize_outgoing_reaction_rejects_unsupported(emoji):
+    with pytest.raises(TelegramReactionInvalidError) as exc_info:
+        normalize_outgoing_reaction_emoji(emoji)
+
+    assert repr(emoji) in str(exc_info.value)
+    assert SUPPORTED_REACTION_EMOJIS_DISPLAY in str(exc_info.value)
 
 
 def test_extract_message_reactions_multiple_emoji():

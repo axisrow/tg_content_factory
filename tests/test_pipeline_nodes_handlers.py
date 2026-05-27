@@ -549,6 +549,27 @@ async def test_react_random_emojis():
     session.send_reaction.assert_awaited_once_with(-100, 1, "🎉")
 
 
+@pytest.mark.anyio
+async def test_react_skips_invalid_random_emojis():
+    ctx = NodeContext()
+    m = _msg(channel_id=-100, message_id=1)
+    ctx.set_global("context_messages", [m])
+    session = AsyncMock()
+    pool = AsyncMock()
+    pool.get_available_client = AsyncMock(return_value=(session, "p"))
+    pool.release_client = AsyncMock()
+    with patch("random.choice", return_value="🔥"):
+        await ReactHandler().execute(
+            {"emoji": "✅", "random_emojis": ["✅", "🔥"]},
+            ctx,
+            {"client_pool": pool, "_current_node_id": "react_1"},
+        )
+
+    session.send_reaction.assert_awaited_once_with(-100, 1, "🔥")
+    errors = ctx.get_errors()
+    assert [error["code"] for error in errors] == ["reaction_invalid", "reaction_invalid"]
+
+
 # ── Issue #463: ReactHandler records structured node errors ───────────────────
 
 

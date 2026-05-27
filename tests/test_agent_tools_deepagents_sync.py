@@ -49,6 +49,50 @@ def test_deepagents_send_reaction_signature_and_runtime_gate(mock_db):
 
 
 @pytest.mark.anyio
+async def test_deepagents_send_reaction_invalid_emoji_does_not_prompt_or_enqueue(mock_db):
+    from src.agent.permission_gate import AgentRequestContext, reset_request_context, set_request_context
+    from src.agent.runtime_context import AgentRuntimeContext
+    from src.agent.tools.deepagents_sync import build_deepagents_tools
+
+    mock_db.get_account_summaries = AsyncMock(return_value=[
+        SimpleNamespace(phone="+79001234567", is_primary=True, session_status="ok")
+    ])
+    command_repo = MagicMock()
+    command_repo.find_active_by_type = AsyncMock(return_value=None)
+    command_repo.create_command = AsyncMock(return_value=55)
+    mock_db.repos = MagicMock()
+    mock_db.repos.telegram_commands = command_repo
+    runtime_context = AgentRuntimeContext.build(
+        db=mock_db,
+        client_pool=MagicMock(),
+        runtime_kind="live",
+        owner_loop=asyncio.get_running_loop(),
+    )
+    tool_map = {
+        tool.__name__: tool
+        for tool in build_deepagents_tools(mock_db, client_pool=MagicMock(), runtime_context=runtime_context)
+    }
+    queue: asyncio.Queue[str] = asyncio.Queue()
+    token = set_request_context(
+        AgentRequestContext(session_id="invalid-reaction", thread_id=1, queue=queue, permission_timeout=1)
+    )
+    try:
+        result = await asyncio.to_thread(
+            tool_map["send_reaction"],
+            chat_id="@chat",
+            message_id=1,
+            emoji="✅",
+            confirm=True,
+        )
+    finally:
+        reset_request_context(token)
+
+    assert "Telegram не принимает такую реакцию" in result
+    assert queue.empty()
+    command_repo.create_command.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_deepagents_send_reaction_missing_acl_requests_permission_once(mock_db):
     from src.agent.permission_gate import (
         AgentRequestContext,
