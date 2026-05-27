@@ -129,4 +129,6 @@ READ_MESSAGES_SCHEMA = {
     "phone": PHONE_ARG,
     "chat_id": CHAT_ID_ARG,
     "limit": Annotated[int, "Максимальное количество результатов"],
+    "include_reaction_users": Annotated[bool, "Показать пользователей, поставивших реакции"],
+    "reaction_users_limit": Annotated[int, "Максимальное количество пользователей реакций на сообщение"],
 }

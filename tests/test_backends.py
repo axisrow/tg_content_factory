@@ -13,6 +13,7 @@ from src.telegram.backends import (
     NativeTelethonBackend,
     TelegramTransportSession,
     TelethonCliBackend,
+    fetch_message_reaction_users_raw,
 )
 from src.telegram.flood_wait import HandledFloodWaitError
 from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
@@ -114,6 +115,18 @@ async def test_send_reaction_invokes_raw_api_with_empty_vector_to_clear():
     assert request.peer == "chat"
     assert request.msg_id == 42
     assert request.reaction == []
+
+
+@pytest.mark.anyio
+async def test_fetch_message_reaction_users_raw_invokes_request():
+    client = FakeCliTelethonClient()
+
+    await fetch_message_reaction_users_raw(client, "chat", 42, limit=10)
+
+    request = client.invoke.await_args.args[0]
+    assert request.peer == "chat"
+    assert request.id == 42
+    assert request.limit == 10
 
 
 # --- Batch 2: Media (#187) ---
