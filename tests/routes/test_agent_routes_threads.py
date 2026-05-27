@@ -433,6 +433,9 @@ def test_permission_dialog_keyboard_and_post_contract():
     assert "pick('session')" in template
     assert "resolvePermissionRequest(data.request_id, choice)" in template
     assert "!permissionResp.ok || !permissionResult.ok" in template
+    assert "while (true)" in template
+    assert "showPermissionDialog(data.tool, data.phone || '', permissionError)" in template
+    assert "Не удалось отправить выбор. Проверьте соединение и выберите ещё раз." in template
     assert "body: JSON.stringify({choice: 'deny'})" not in template
     assert "истечёт по таймауту" not in template
 
