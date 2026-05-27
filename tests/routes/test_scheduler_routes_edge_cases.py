@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.models import CollectionTaskStatus, SearchQuery
+from src.models import Channel, CollectionTaskStatus, SearchQuery
 
 
 @pytest.fixture
@@ -646,6 +646,35 @@ async def test_web_mode_scheduler_page_renders(web_mode_client):
     """/scheduler/ must render a 200 OK under the real web-mode wiring, no 500."""
     resp = await web_mode_client.get("/scheduler/", follow_redirects=True)
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_web_mode_trigger_then_get_scheduler_with_pending_tasks(web_mode_app, web_mode_client):
+    """/scheduler/ must render after collect-all queues DB tasks in web-mode."""
+    _, container = web_mode_app
+    await container.db.add_channel(Channel(channel_id=-100571, title="Issue 571 Channel"))
+
+    resp = await web_mode_client.post("/scheduler/trigger")
+    assert resp.status_code == 303
+    location = resp.headers.get("location", "")
+    assert location.startswith("/scheduler")
+    assert "msg=collect_all_queued" in location
+
+    tasks = await container.db.repos.tasks.get_pending_channel_tasks()
+    assert any(t.channel_id == -100571 for t in tasks)
+
+    redirected = await web_mode_client.get(location)
+    assert redirected.status_code == 200
+    assert "Планировщик" in redirected.text
+
+    noop = await web_mode_client.post("/scheduler/trigger")
+    assert noop.status_code == 303
+    noop_location = noop.headers.get("location", "")
+    assert "msg=collect_all_noop" in noop_location
+
+    noop_redirected = await web_mode_client.get(noop_location)
+    assert noop_redirected.status_code == 200
+    assert "Планировщик" in noop_redirected.text
 
 
 # ── web-mode fallback: collection_queue=None must not 500 (fix for #457 round 2) ─

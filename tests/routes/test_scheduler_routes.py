@@ -576,10 +576,15 @@ async def test_trigger_then_get_scheduler_with_pending_tasks(client):
             channel_type="channel",
         ))
 
-    # Trigger collection (follow redirect to GET /scheduler/?msg=...)
-    resp = await client.post("/scheduler/trigger")
-    assert resp.status_code == 200
-    assert "Планировщик" in resp.text
+    resp = await client.post("/scheduler/trigger", follow_redirects=False)
+    assert resp.status_code == 303
+    location = resp.headers.get("location", "")
+    assert location.startswith("/scheduler")
+    assert "msg=collect_all_queued" in location
+
+    redirected = await client.get(location)
+    assert redirected.status_code == 200
+    assert "Планировщик" in redirected.text
 
 
 @pytest.mark.anyio
