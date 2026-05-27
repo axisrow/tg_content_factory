@@ -345,7 +345,6 @@ class ReactHandler(BaseNodeHandler):
             emoji = normalize_outgoing_reaction_emoji(node_config.get("emoji") or "👍")
         except TelegramReactionInvalidError as exc:
             if random_emoji_list:
-                emoji = random_emoji_list[0]
                 logger.info(
                     "ReactHandler[%s]: primary emoji invalid (%s); falling back to random_emojis",
                     node_id,
