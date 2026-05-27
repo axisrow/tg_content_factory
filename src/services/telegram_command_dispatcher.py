@@ -459,7 +459,7 @@ class TelegramCommandDispatcher:
     async def _handle_dialogs_react(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])
         await self._ensure_reaction_can_run(phone)
-        emoji = normalize_outgoing_reaction_emoji(str(payload["emoji"]))
+        emoji = normalize_outgoing_reaction_emoji(str(payload.get("emoji") or ""))
         result = await TelegramActionService(self._pool).send_reaction(
             phone=phone,
             chat_id=payload["chat_id"],
