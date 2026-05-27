@@ -81,11 +81,22 @@ class TestParser:
     def test_parser_messages_read(self):
         """messages read subcommand parses identifier and options."""
         parser = build_parser()
-        args = parser.parse_args(["messages", "read", "test_channel", "--limit", "10"])
+        args = parser.parse_args([
+            "messages",
+            "read",
+            "test_channel",
+            "--limit",
+            "10",
+            "--include-reaction-users",
+            "--reaction-users-limit",
+            "5",
+        ])
         assert args.command == "messages"
         assert args.messages_action == "read"
         assert args.identifier == "test_channel"
         assert args.limit == 10
+        assert args.include_reaction_users is True
+        assert args.reaction_users_limit == 5
 
     def test_parser_channel_list(self):
         """channel list subcommand."""

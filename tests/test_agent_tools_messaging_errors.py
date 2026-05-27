@@ -846,6 +846,88 @@ class TestReadMessagesTool:
         assert "Popular post | реакции: 👍 5 ❤️ 2" in text
 
     @pytest.mark.anyio
+    async def test_with_reaction_users_flag(self, mock_db, mock_pool):
+        client = AsyncMock()
+        _setup_resolve_entity(mock_pool, client)
+
+        msg = SimpleNamespace(
+            id=1,
+            sender_id=42,
+            date=None,
+            text="Popular post",
+            reactions=SimpleNamespace(
+                results=[
+                    SimpleNamespace(reaction=SimpleNamespace(emoticon="👍"), count=5),
+                ]
+            ),
+        )
+
+        async def iter_msgs(*a, **kw):
+            yield msg
+
+        client.iter_messages = iter_msgs
+        client.return_value = SimpleNamespace(
+            count=1,
+            next_offset=None,
+            reactions=[
+                SimpleNamespace(
+                    peer_id=SimpleNamespace(user_id=55),
+                    reaction=SimpleNamespace(emoticon="👍"),
+                ),
+            ],
+            users=[SimpleNamespace(id=55, username="ivan", first_name="Ivan", last_name="Petrov")],
+            chats=[],
+        )
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["read_messages"]({
+            "phone": "+79001234567",
+            "chat_id": "@test",
+            "limit": 10,
+            "include_reaction_users": True,
+            "reaction_users_limit": 10,
+        })
+
+        text = _text(result)
+        assert "Popular post | реакции: 👍 5 | поставили: 👍 @ivan" in text
+        assert client.await_args.args[0].id == 1
+        assert client.await_args.args[0].limit == 10
+
+    @pytest.mark.anyio
+    async def test_reaction_users_unavailable_does_not_break_read(self, mock_db, mock_pool):
+        client = AsyncMock(side_effect=RuntimeError("forbidden"))
+        _setup_resolve_entity(mock_pool, client)
+
+        msg = SimpleNamespace(
+            id=1,
+            sender_id=42,
+            date=None,
+            text="Popular post",
+            reactions=SimpleNamespace(
+                results=[
+                    SimpleNamespace(reaction=SimpleNamespace(emoticon="👍"), count=5),
+                ]
+            ),
+        )
+
+        async def iter_msgs(*a, **kw):
+            yield msg
+
+        client.iter_messages = iter_msgs
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["read_messages"]({
+            "phone": "+79001234567",
+            "chat_id": "@test",
+            "limit": 10,
+            "include_reaction_users": True,
+        })
+
+        text = _text(result)
+        assert "Popular post | реакции: 👍 5" in text
+        assert "пользователи реакций недоступны" in text
+
+    @pytest.mark.anyio
     async def test_none_phone_uses_available_connected_account(self, mock_db, mock_pool):
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)

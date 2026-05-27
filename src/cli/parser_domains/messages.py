@@ -19,6 +19,17 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     msg_read.add_argument("--offset-id", type=int, default=None, dest="offset_id",
                           help="Read messages before this message ID (--live)")
     msg_read.add_argument(
+        "--include-reaction-users",
+        action="store_true",
+        help="Show users who reacted (live mode only)",
+    )
+    msg_read.add_argument(
+        "--reaction-users-limit",
+        type=int,
+        default=20,
+        help="Max reaction users per message for --include-reaction-users (default: 20)",
+    )
+    msg_read.add_argument(
         "--format", choices=["text", "json", "csv"], default="text", dest="output_format",
         help="Output format (default: text)",
     )
