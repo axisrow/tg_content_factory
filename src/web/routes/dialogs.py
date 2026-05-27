@@ -11,6 +11,7 @@ from src.database import Database
 from src.models import AccountSessionStatus
 from src.services.channel_service import ChannelService
 from src.services.telegram_command_service import TelegramCommandService
+from src.telegram.reactions import TelegramReactionInvalidError, normalize_outgoing_reaction_emoji
 from src.web import deps
 from src.web.dialogs.forms import (
     CacheClearForm,
@@ -261,6 +262,10 @@ async def react_message(request: Request, command_service: TelegramCommandServic
         return dialogs_redirect(form.phone, error="missing_fields")
     if not form.message_id.isdigit():
         return dialogs_redirect(form.phone, error="invalid_message_id")
+    try:
+        emoji = normalize_outgoing_reaction_emoji(form.emoji)
+    except TelegramReactionInvalidError:
+        return dialogs_redirect(form.phone, error="invalid_reaction")
     return await _enqueue_dialog_command(
         command_service,
         "dialogs.react",
@@ -268,7 +273,7 @@ async def react_message(request: Request, command_service: TelegramCommandServic
             "phone": form.phone,
             "chat_id": form.chat_id,
             "message_id": int(form.message_id),
-            "emoji": form.emoji,
+            "emoji": emoji,
         },
         phone=form.phone,
     )

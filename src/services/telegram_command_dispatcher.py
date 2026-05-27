@@ -29,8 +29,15 @@ from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.flood_wait import HandledFloodWaitError
 from src.telegram.notifier import Notifier
+from src.telegram.reactions import TelegramReactionInvalidError, normalize_outgoing_reaction_emoji
 from src.telegram.utils import normalize_utc
 from src.utils.datetime import parse_required_datetime, parse_required_schedule_datetime
+
+try:  # telethon is an optional dependency at test-time
+    from telethon.errors import ReactionInvalidError
+except ImportError:  # pragma: no cover
+    class ReactionInvalidError(Exception):  # type: ignore[no-redef]
+        pass
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +153,23 @@ class TelegramCommandDispatcher:
                     },
                     payload=command.payload,
                     run_after=run_after,
+                )
+            except (TelegramReactionInvalidError, ReactionInvalidError) as exc:
+                logger.info(
+                    "Telegram command rejected invalid reaction: id=%s type=%s error=%s",
+                    command.id,
+                    command.command_type,
+                    str(exc),
+                )
+                await self._db.repos.telegram_commands.update_command(
+                    command.id,
+                    status=TelegramCommandStatus.FAILED,
+                    error=str(exc),
+                    result_payload={
+                        "state": "invalid_reaction",
+                        "emoji": command.payload.get("emoji"),
+                    },
+                    payload=command.payload,
                 )
             except Exception as exc:
                 duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -435,11 +459,12 @@ class TelegramCommandDispatcher:
     async def _handle_dialogs_react(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])
         await self._ensure_reaction_can_run(phone)
+        emoji = normalize_outgoing_reaction_emoji(str(payload.get("emoji") or ""))
         result = await TelegramActionService(self._pool).send_reaction(
             phone=phone,
             chat_id=payload["chat_id"],
             message_id=int(payload["message_id"]),
-            emoji=str(payload["emoji"]),
+            emoji=emoji,
             native=True,
             resolve_entity=True,
         )

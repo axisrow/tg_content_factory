@@ -488,6 +488,31 @@ async def test_run_loop_requeues_handled_flood_wait():
     assert kwargs["result_payload"]["state"] == "waiting_flood_wait"
 
 
+async def test_run_loop_marks_invalid_reaction_failed_without_calling_telegram():
+    db = _mock_db()
+    command = TelegramCommand(
+        id=10,
+        command_type="dialogs.react",
+        payload={"phone": "+1", "chat_id": -100, "message_id": 1, "emoji": "✅"},
+    )
+    db.repos.telegram_commands.claim_next_command = AsyncMock(return_value=command)
+    pool = _mock_pool()
+    d = _dispatcher(db=db, pool=pool)
+
+    async def _update_and_stop(*args, **kwargs):
+        d._stop_event.set()
+
+    db.repos.telegram_commands.update_command = AsyncMock(side_effect=_update_and_stop)
+
+    await d._run_loop()
+
+    pool.get_native_client_by_phone.assert_not_awaited()
+    kwargs = db.repos.telegram_commands.update_command.await_args.kwargs
+    assert kwargs["status"] == TelegramCommandStatus.FAILED
+    assert kwargs["result_payload"]["state"] == "invalid_reaction"
+    assert kwargs["result_payload"]["emoji"] == "✅"
+
+
 async def test_dialogs_pin_unpin():
     pool = _mock_pool()
     c = _client_mock()

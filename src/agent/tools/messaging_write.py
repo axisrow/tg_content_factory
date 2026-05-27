@@ -25,6 +25,11 @@ from src.agent.tools.messaging_schemas import (
 )
 from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
 from src.services.telegram_command_service import TelegramCommandService
+from src.telegram.reactions import (
+    SUPPORTED_REACTION_EMOJIS_DISPLAY,
+    TelegramReactionInvalidError,
+    normalize_outgoing_reaction_emoji,
+)
 
 
 def _command_status_text(status: object) -> str:
@@ -230,12 +235,14 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
-        perm_gate = await ctx.require_phone_permission(phone, "send_reaction")
-        if perm_gate:
-            return perm_gate
         try:
             chat_id = arg_str(args, "chat_id", required=True)
-            emoji = arg_str(args, "emoji", required=True)
+            emoji = normalize_outgoing_reaction_emoji(arg_str(args, "emoji", required=True))
+        except TelegramReactionInvalidError:
+            return _text_response(
+                "Ошибка: Telegram не принимает такую реакцию. "
+                f"Поддерживаемые реакции: {SUPPORTED_REACTION_EMOJIS_DISPLAY}"
+            )
         except ToolInputError:
             return _text_response("Ошибка: chat_id и emoji обязательны.")
         message_id = args.get("message_id")
@@ -245,6 +252,9 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
             message_id_int = int(message_id)
         except (TypeError, ValueError):
             return _text_response("Ошибка: message_id должен быть целым числом.")
+        perm_gate = await ctx.require_phone_permission(phone, "send_reaction")
+        if perm_gate:
+            return perm_gate
         gate = require_confirmation(
             f"поставит реакцию {emoji!r} на сообщение #{message_id_int} в чате {chat_id}",
             args,

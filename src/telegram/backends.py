@@ -15,6 +15,7 @@ from telethon_cli.errors import CLIError
 from src.models import Account
 from src.telegram.auth import TelegramAuth
 from src.telegram.flood_wait import HandledFloodWaitError, handle_flood_wait
+from src.telegram.reactions import normalize_outgoing_reaction_emoji
 from src.telegram.session_materializer import SessionMaterializer
 
 logger = logging.getLogger(__name__)
@@ -248,7 +249,8 @@ class TelegramTransportSession:
             from telethon.tl.functions.messages import SendReactionRequest
             from telethon.tl.types import ReactionEmoji
 
-            reaction = [] if emoji is None else [ReactionEmoji(emoticon=emoji)]
+            normalized_emoji = normalize_outgoing_reaction_emoji(emoji, allow_clear=True)
+            reaction = [] if normalized_emoji is None else [ReactionEmoji(emoticon=normalized_emoji)]
             return await self._run(
                 "telegram_send_reaction",
                 self._client(

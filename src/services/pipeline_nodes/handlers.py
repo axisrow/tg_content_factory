@@ -10,6 +10,7 @@ from src.services.pipeline_filters import filter_messages
 from src.services.pipeline_nodes.base import BaseNodeHandler, NodeContext
 from src.services.pipeline_result import increment_action_count
 from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
+from src.telegram.reactions import TelegramReactionInvalidError, normalize_outgoing_reaction_emoji
 
 try:  # telethon is an optional dependency at test-time
     from telethon.errors import (
@@ -328,8 +329,34 @@ class ReactHandler(BaseNodeHandler):
             raise RuntimeError("ReactHandler: client_pool not available")
 
         messages = context.get_global("context_messages", [])
-        emoji = node_config.get("emoji") or "👍"
-        random_emoji_list = node_config.get("random_emojis", [])
+        raw_random_emojis = node_config.get("random_emojis", [])
+        random_emoji_list: list[str] = []
+        if isinstance(raw_random_emojis, (list, tuple)):
+            for raw_emoji in raw_random_emojis:
+                try:
+                    random_emoji_list.append(normalize_outgoing_reaction_emoji(str(raw_emoji)))
+                except TelegramReactionInvalidError as exc:
+                    context.record_error(
+                        node_id=node_id,
+                        code="reaction_invalid",
+                        detail=str(exc),
+                    )
+        try:
+            emoji = normalize_outgoing_reaction_emoji(node_config.get("emoji") or "👍")
+        except TelegramReactionInvalidError as exc:
+            if random_emoji_list:
+                logger.info(
+                    "ReactHandler[%s]: primary emoji invalid (%s); falling back to random_emojis",
+                    node_id,
+                    exc,
+                )
+            else:
+                context.record_error(
+                    node_id=node_id,
+                    code="reaction_invalid",
+                    detail=str(exc),
+                )
+                return
         resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
         action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
 

@@ -16,6 +16,7 @@ from src.telegram.backends import (
     fetch_message_reaction_users_raw,
 )
 from src.telegram.flood_wait import HandledFloodWaitError
+from src.telegram.reactions import TelegramReactionInvalidError
 from tests.helpers import AsyncIterMessages, FakeCliTelethonClient
 
 
@@ -97,12 +98,12 @@ async def test_delete_messages():
 async def test_send_reaction_invokes_raw_api_with_emoji():
     session = _session()
 
-    await session.send_reaction("chat", 42, "🔥")
+    await session.send_reaction("chat", 42, "❤️")
 
     request = session.raw_client.invoke.await_args.args[0]
     assert request.peer == "chat"
     assert request.msg_id == 42
-    assert [reaction.emoticon for reaction in request.reaction] == ["🔥"]
+    assert [reaction.emoticon for reaction in request.reaction] == ["❤"]
 
 
 @pytest.mark.anyio
@@ -115,6 +116,16 @@ async def test_send_reaction_invokes_raw_api_with_empty_vector_to_clear():
     assert request.peer == "chat"
     assert request.msg_id == 42
     assert request.reaction == []
+
+
+@pytest.mark.anyio
+async def test_send_reaction_rejects_unsupported_emoji_before_raw_api():
+    session = _session()
+
+    with pytest.raises(TelegramReactionInvalidError):
+        await session.send_reaction("chat", 42, "✅")
+
+    session.raw_client.invoke.assert_not_awaited()
 
 
 @pytest.mark.anyio

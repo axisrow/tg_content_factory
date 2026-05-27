@@ -121,6 +121,28 @@ async def test_edit_permissions_missing_fields(route_client):
     assert "missing_fields" in resp.headers.get("location", "")
 
 
+# === react ===
+
+
+@pytest.mark.anyio
+async def test_react_rejects_unsupported_emoji(route_client):
+    resp = await route_client.post(
+        "/dialogs/react",
+        data={
+            "phone": "+1234567890",
+            "chat_id": "-100123",
+            "message_id": "42",
+            "emoji": "✅",
+        },
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    location = resp.headers.get("location", "")
+    assert "invalid_reaction" in location
+    assert "command_id=" not in location
+
+
 # === kick ===
 
 
