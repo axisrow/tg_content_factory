@@ -448,13 +448,19 @@ async def test_delete_thread_clears_permission_gate(client, db):
     """Test delete thread clears permission gate for session (lines 86-88)."""
     thread_id = await db.create_agent_thread("Perm")
 
+    mock_mgr = MagicMock()
+    mock_mgr.cancel_stream = AsyncMock(return_value=True)
     mock_gate = MagicMock()
     mock_gate.clear_thread = MagicMock()
     mock_gate.clear_session = MagicMock()
-    client._transport_app.state.agent_manager.permission_gate = mock_gate
+    mock_mgr.permission_gate = mock_gate
+    client._transport_app.state.agent_manager = mock_mgr
 
     resp = await client.delete(f"/agent/threads/{thread_id}")
     assert resp.status_code == 200
+    data = json.loads(resp.text)
+    assert data["cancelled"] is True
+    mock_mgr.cancel_stream.assert_called_once_with(thread_id, wait_timeout=5.0)
     mock_gate.clear_thread.assert_called_once_with("web", thread_id)
     mock_gate.clear_session.assert_called_once_with("web")
 

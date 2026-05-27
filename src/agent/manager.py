@@ -2219,7 +2219,7 @@ class AgentManager:
             with suppress(asyncio.CancelledError):
                 await task
 
-    async def cancel_stream(self, thread_id: int) -> bool:
+    async def cancel_stream(self, thread_id: int, *, wait_timeout: float | None = None) -> bool:
         task = self._active_tasks.pop(thread_id, None)
         if task is None:
             return False
@@ -2230,8 +2230,26 @@ class AgentManager:
         if session_id is not None:
             self._permission_gate.clear_thread(session_id, thread_id)
         task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        if wait_timeout is None:
+            with suppress(asyncio.CancelledError):
+                await task
+        else:
+            done, pending = await asyncio.wait({task}, timeout=wait_timeout)
+            for done_task in done:
+                with suppress(asyncio.CancelledError):
+                    exc = done_task.exception()
+                    if exc is not None:
+                        logger.debug(
+                            "Cancelled agent stream %d finished with error",
+                            thread_id,
+                            exc_info=(type(exc), exc, exc.__traceback__),
+                        )
+            if pending:
+                logger.warning(
+                    "Agent stream %d did not stop within %.1fs; continuing cleanup",
+                    thread_id,
+                    wait_timeout,
+                )
         return True
 
     async def close_all(self) -> None:

@@ -7,6 +7,7 @@ import json
 import os
 import threading
 import time
+from contextlib import suppress
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1912,6 +1913,41 @@ class TestAgentManagerChatStreamErrors:
         assert 123 not in mgr._active_task_sessions
         assert 123 not in mgr._active_task_cancel_events
         assert task.cancelled() or task.done()
+
+    @pytest.mark.anyio
+    async def test_cancel_stream_timeout_does_not_wait_forever(self, db):
+        """cancel_stream can bound the wait for tasks that ignore cancellation."""
+        mgr = AgentManager(db)
+        stop = False
+        started = asyncio.Event()
+
+        async def _stubborn_task():
+            nonlocal stop
+            started.set()
+            while not stop:
+                try:
+                    await asyncio.sleep(60)
+                except asyncio.CancelledError:
+                    if stop:
+                        raise
+                    continue
+
+        task = asyncio.create_task(_stubborn_task())
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        mgr._active_tasks[123] = task
+
+        started_at = time.monotonic()
+        result = await mgr.cancel_stream(123, wait_timeout=0.01)
+
+        assert result is True
+        assert time.monotonic() - started_at < 0.5
+        assert 123 not in mgr._active_tasks
+        assert not task.done()
+
+        stop = True
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
 
     @pytest.mark.anyio
     async def test_chat_stream_with_invalid_model_for_claude(self, db):
