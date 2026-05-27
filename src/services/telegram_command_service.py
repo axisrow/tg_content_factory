@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from src.database import Database
-from src.models import TelegramCommand
+from src.models import TelegramCommand, TelegramCommandStatus
 
 
 class TelegramCommandService:
@@ -44,3 +44,44 @@ class TelegramCommandService:
 
     async def get(self, command_id: int):
         return await self._db.repos.telegram_commands.get_command(command_id)
+
+    async def list(
+        self,
+        *,
+        command_type: str | None = None,
+        phone: str | None = None,
+        status: TelegramCommandStatus | None = None,
+        limit: int = 100,
+    ) -> list[TelegramCommand]:
+        return await self._db.repos.telegram_commands.list_commands(
+            command_type=command_type,
+            phone=phone,
+            status=status,
+            limit=limit,
+        )
+
+    async def summary(
+        self,
+        *,
+        command_type: str | None = None,
+        phone: str | None = None,
+        status: TelegramCommandStatus | None = None,
+    ) -> dict[TelegramCommandStatus, int]:
+        return await self._db.repos.telegram_commands.count_by_status(
+            command_type=command_type,
+            phone=phone,
+            status=status,
+        )
+
+    async def result_state_summary(
+        self,
+        *,
+        command_type: str | None = None,
+        phone: str | None = None,
+        status: TelegramCommandStatus | None = None,
+    ) -> dict[str, int]:
+        return await self._db.repos.telegram_commands.count_result_states(
+            command_type=command_type,
+            phone=phone,
+            status=status,
+        )

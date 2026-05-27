@@ -191,6 +191,7 @@
 | `read_messages` | READ | Читать сообщения из чата |
 | `send_message` | WRITE | Отправить сообщение |
 | `send_reaction` | WRITE | Поставить emoji-реакцию на сообщение |
+| `get_telegram_queue_status` | READ | Статус очереди Telegram-заданий и реакций |
 | `forward_messages` | WRITE | Переслать сообщения |
 | `edit_message` | WRITE | Редактировать |
 | `delete_message` | DELETE | Удалить (⚠️ destructive) |

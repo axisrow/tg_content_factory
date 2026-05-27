@@ -79,13 +79,85 @@ class TelegramCommandsRepository:
         row = await cur.fetchone()
         return self._to_command(row) if row else None
 
-    async def list_commands(self, *, limit: int = 100) -> list[TelegramCommand]:
+    @staticmethod
+    def _filtered_query(
+        *,
+        command_type: str | None = None,
+        status: TelegramCommandStatus | None = None,
+        phone: str | None = None,
+    ) -> tuple[str, list[Any]]:
+        where: list[str] = []
+        params: list[Any] = []
+        if command_type:
+            where.append("command_type = ?")
+            params.append(command_type)
+        if status is not None:
+            where.append("status = ?")
+            params.append(status.value)
+        if phone:
+            where.append("json_extract(payload, '$.phone') = ?")
+            params.append(phone)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        return clause, params
+
+    async def list_commands(
+        self,
+        *,
+        limit: int = 100,
+        command_type: str | None = None,
+        status: TelegramCommandStatus | None = None,
+        phone: str | None = None,
+    ) -> list[TelegramCommand]:
+        where, params = self._filtered_query(command_type=command_type, status=status, phone=phone)
         cur = await self._db.execute(
-            "SELECT * FROM telegram_commands ORDER BY id DESC LIMIT ?",
-            (limit,),
+            f"SELECT * FROM telegram_commands {where} ORDER BY id DESC LIMIT ?",
+            (*params, limit),
         )
         rows = await cur.fetchall()
         return [self._to_command(row) for row in rows]
+
+    async def count_by_status(
+        self,
+        *,
+        command_type: str | None = None,
+        status: TelegramCommandStatus | None = None,
+        phone: str | None = None,
+    ) -> dict[TelegramCommandStatus, int]:
+        where, params = self._filtered_query(command_type=command_type, status=status, phone=phone)
+        cur = await self._db.execute(
+            f"""
+            SELECT status, COUNT(*) AS count
+            FROM telegram_commands
+            {where}
+            GROUP BY status
+            """,
+            tuple(params),
+        )
+        rows = await cur.fetchall()
+        result = {status_value: 0 for status_value in TelegramCommandStatus}
+        for row in rows:
+            result[TelegramCommandStatus(row["status"])] = int(row["count"] or 0)
+        return result
+
+    async def count_result_states(
+        self,
+        *,
+        command_type: str | None = None,
+        status: TelegramCommandStatus | None = None,
+        phone: str | None = None,
+    ) -> dict[str, int]:
+        where, params = self._filtered_query(command_type=command_type, status=status, phone=phone)
+        cur = await self._db.execute(
+            f"""
+            SELECT COALESCE(json_extract(result_payload, '$.state'), '') AS state, COUNT(*) AS count
+            FROM telegram_commands
+            {where}
+            GROUP BY state
+            """,
+            tuple(params),
+        )
+        rows = await cur.fetchall()
+        return {str(row["state"]): int(row["count"] or 0) for row in rows if row["state"]}
 
     async def find_active_by_type(
         self, command_type: str, *, payload: dict[str, Any] | None = None
