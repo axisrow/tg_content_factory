@@ -120,12 +120,16 @@ async def create_thread(request: Request):
 @router.delete("/threads/{thread_id}")
 async def delete_thread(request: Request, thread_id: int):
     db = deps.get_db(request)
-    await db.delete_agent_thread(thread_id)
     agent_manager = deps.get_agent_manager(request)
+    cancelled = False
+    if agent_manager is not None:
+        cancelled = await agent_manager.cancel_stream(thread_id, wait_timeout=5.0)
+    await db.delete_agent_thread(thread_id)
     if agent_manager is not None and agent_manager.permission_gate is not None:
         session_id = request.cookies.get("session", "web")
+        agent_manager.permission_gate.clear_thread(session_id, thread_id)
         agent_manager.permission_gate.clear_session(session_id)
-    return {"ok": True}
+    return {"ok": True, "cancelled": cancelled}
 
 
 @router.post("/threads/{thread_id}/rename")
