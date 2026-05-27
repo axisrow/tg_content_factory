@@ -81,7 +81,7 @@
                     {% if event.preview %}
                     <div class="small text-truncate" title="{{ event.preview }}">{{ event.preview[:60] }}</div>
                     {% endif %}
-                    <a href="/pipelines/runs/{{ event.run_id }}" class="btn btn-sm btn-outline-primary mt-1" style="font-size:.7rem;padding:.1rem .3rem">Открыть</a>
+                    <a href="/moderation/{{ event.run_id }}/view" class="btn btn-sm btn-outline-primary mt-1" style="font-size:.7rem;padding:.1rem .3rem">Открыть</a>
                 </div>
                 {% else %}
                 <p class="text-muted small mb-0 text-center mt-3">—</p>
@@ -110,7 +110,7 @@
                             {{ event.moderation_status }}
                         </span>
                     </div>
-                    <a href="/pipelines/runs/{{ event.run_id }}" class="btn btn-sm btn-outline-primary mt-1" style="font-size:.7rem;padding:.1rem .3rem">Открыть</a>
+                    <a href="/moderation/{{ event.run_id }}/view" class="btn btn-sm btn-outline-primary mt-1" style="font-size:.7rem;padding:.1rem .3rem">Открыть</a>
                 </div>
                 {% else %}
                 <p class="text-muted small mb-0">—</p>
@@ -150,7 +150,7 @@
                             </span>
                         </td>
                         <td class="small text-muted">{{ event.preview[:80] }}</td>
-                        <td><a href="/pipelines/runs/{{ event.run_id }}" class="btn btn-sm btn-outline-primary">Открыть</a></td>
+                        <td><a href="/moderation/{{ event.run_id }}/view" class="btn btn-sm btn-outline-primary">Открыть</a></td>
                     </tr>
                     {% endfor %}
                 </tbody>
