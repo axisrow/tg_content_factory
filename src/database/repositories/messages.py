@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import aiosqlite
 
 from src.models import Message, SearchQuery
+from src.telegram.reactions import parse_reactions_json
 from src.utils.datetime import parse_datetime, parse_required_datetime
 from src.utils.search_query_chat_filter import parse_chat_filter
 
@@ -23,11 +24,7 @@ _EMBEDDING_DIMENSIONS_SETTING = "semantic_embedding_dimensions"
 
 def _parse_reactions_json(reactions_json: str) -> list[dict]:
     """Parse reactions_json string into a list of {emoji, count} dicts."""
-    try:
-        items = json.loads(reactions_json)
-        return [r for r in items if isinstance(r, dict) and "emoji" in r]
-    except (json.JSONDecodeError, TypeError):
-        return []
+    return parse_reactions_json(reactions_json)
 
 
 def _normalize_date_to(date_to: str) -> tuple[str, str]:

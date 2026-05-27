@@ -10,6 +10,7 @@ from src.cli import runtime
 from src.cli.commands.common import resolve_channel
 from src.models import Message
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.telegram.reactions import format_message_reactions, format_reactions_json, parse_reactions_json
 
 
 def _print_messages(messages: list[Message], fmt: str, total: int) -> None:
@@ -24,18 +25,20 @@ def _print_messages(messages: list[Message], fmt: str, total: int) -> None:
                 "text": msg.text,
                 "views": msg.views,
                 "forwards": msg.forwards,
+                "reactions": parse_reactions_json(msg.reactions_json),
             })
         print(json.dumps(items, ensure_ascii=False, indent=2))
     elif fmt == "csv":
         buf = io.StringIO()
         writer = csv.writer(buf)
-        writer.writerow(["id", "channel_id", "message_id", "date", "text", "views", "forwards"])
+        writer.writerow(["id", "channel_id", "message_id", "date", "text", "views", "forwards", "reactions"])
         for msg in messages:
             writer.writerow([
                 msg.id, msg.channel_id, msg.message_id,
                 str(msg.date) if msg.date else "",
                 (msg.text or "")[:500],
                 msg.views, msg.forwards,
+                format_reactions_json(msg.reactions_json),
             ])
         print(buf.getvalue(), end="")
     else:
@@ -46,8 +49,13 @@ def _print_messages(messages: list[Message], fmt: str, total: int) -> None:
             preview = text[:200].replace("\n", " ")
             if len(text) > 200:
                 preview += "..."
-            views = f"views={msg.views}" if msg.views else ""
-            print(f"[{date_str}] #{msg.message_id} {views}")
+            reactions = format_reactions_json(msg.reactions_json)
+            fields = [f"#{msg.message_id}"]
+            if msg.views:
+                fields.append(f"views={msg.views}")
+            if reactions:
+                fields.append(f"reactions: {reactions}")
+            print(f"[{date_str}] {' '.join(fields)}")
             print(f"  {preview}")
             print()
 
@@ -63,7 +71,9 @@ def _print_live_messages(collected: list) -> None:
         text = (msg.text or "").strip()
         if not text and msg.media:
             text = f"[media: {type(msg.media).__name__}]"
-        print(f"[{date_str}] #{msg.id}{sender}")
+        reactions = format_message_reactions(msg)
+        reaction_suffix = f" reactions: {reactions}" if reactions else ""
+        print(f"[{date_str}] #{msg.id}{sender}{reaction_suffix}")
         if text:
             print(f"  {text[:500]}")
         print()
