@@ -3,10 +3,33 @@ from __future__ import annotations
 from datetime import timezone
 
 from src.models import Message
+from src.services.translation_service import TranslationService
 from src.telegram.identity import SenderIdentity, extract_message_sender_identity, extract_sender_identity
+from src.telegram.reactions import extract_message_reactions_json
 
 
 class TelegramMessageTransformer:
+    @staticmethod
+    def _optional_int(value) -> int | None:
+        if isinstance(value, bool) or value is None:
+            return None
+        return value if isinstance(value, int) else None
+
+    @staticmethod
+    def engagement_fields_from_message(msg) -> dict:
+        """Extract mutable post stats from a Telethon-like message."""
+        return {
+            "reactions_json": extract_message_reactions_json(msg),
+            "views": TelegramMessageTransformer._optional_int(getattr(msg, "views", None)),
+            "forwards": TelegramMessageTransformer._optional_int(getattr(msg, "forwards", None)),
+            "reply_count": TelegramMessageTransformer._optional_int(
+                getattr(getattr(msg, "replies", None), "replies", None)
+            ),
+            "detected_lang": TranslationService.detect_language(
+                getattr(msg, "message", None) or getattr(msg, "text", None)
+            ),
+        }
+
     @staticmethod
     def media_type_from_message(msg) -> str | None:
         from telethon.tl.types import (
@@ -88,6 +111,7 @@ class TelegramMessageTransformer:
             date=date,
             channel_title=chat_title,
             channel_username=chat_username,
+            **TelegramMessageTransformer.engagement_fields_from_message(msg),
         )
 
     @staticmethod

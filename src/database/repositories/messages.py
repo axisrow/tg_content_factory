@@ -157,6 +157,8 @@ class MessagesRepository:
                 ),
             )
             inserted = cur.rowcount > 0
+            if not inserted:
+                await self._refresh_existing_messages([msg])
             if msg.reactions_json:
                 await self._upsert_reactions(msg.channel_id, msg.message_id, msg.reactions_json)
             return inserted
@@ -220,6 +222,15 @@ class MessagesRepository:
             for m in messages
         ]
         try:
+            existing_keys = await self._existing_message_keys(messages)
+        except Exception as exc:
+            logger.warning(
+                "Could not pre-fetch existing message keys for refresh, proceeding without: %s",
+                exc,
+            )
+            existing_keys = set()
+
+        try:
             cur = await self._database.executemany_write(
                 """INSERT OR IGNORE INTO messages
                    (channel_id, message_id, sender_id, sender_name,
@@ -236,6 +247,11 @@ class MessagesRepository:
         except Exception as exc:
             logger.error("Failed to insert batch of %d messages: %s", len(messages), exc)
             return 0
+
+        if existing_keys:
+            duplicates = [m for m in messages if (m.channel_id, m.message_id) in existing_keys]
+            if duplicates:
+                await self._refresh_existing_messages(duplicates)
 
         reactions_data = [
             (m.channel_id, m.message_id, r["emoji"], r.get("count", 0))
@@ -254,6 +270,60 @@ class MessagesRepository:
                 logger.error("Failed to upsert reactions for batch: %s", exc)
 
         return count
+
+    async def _existing_message_keys(self, messages: list[Message]) -> set[tuple[int, int]]:
+        """Return the subset of (channel_id, message_id) pairs already present in the DB."""
+        if not messages:
+            return set()
+        unique_keys = list({(m.channel_id, m.message_id) for m in messages})
+        existing: set[tuple[int, int]] = set()
+        chunk_size = 400
+        for start in range(0, len(unique_keys), chunk_size):
+            chunk = unique_keys[start : start + chunk_size]
+            predicates = " OR ".join("(channel_id = ? AND message_id = ?)" for _ in chunk)
+            params = [value for key in chunk for value in key]
+            cur = await self._db.execute(
+                f"SELECT channel_id, message_id FROM messages WHERE {predicates}",
+                params,
+            )
+            rows = await cur.fetchall()
+            existing.update((row["channel_id"], row["message_id"]) for row in rows)
+        return existing
+
+    async def _refresh_existing_messages(self, messages: list[Message]) -> None:
+        """Refresh mutable fields for already-known Telegram messages."""
+        if not messages:
+            return
+        data = [
+            (
+                m.views,
+                m.views,
+                m.forwards,
+                m.forwards,
+                m.reply_count,
+                m.reply_count,
+                m.reactions_json,
+                m.reactions_json,
+                m.detected_lang,
+                m.detected_lang,
+                m.channel_id,
+                m.message_id,
+            )
+            for m in messages
+        ]
+        try:
+            await self._database.executemany_write(
+                """UPDATE messages
+                   SET views = CASE WHEN ? IS NOT NULL THEN ? ELSE views END,
+                       forwards = CASE WHEN ? IS NOT NULL THEN ? ELSE forwards END,
+                       reply_count = CASE WHEN ? IS NOT NULL THEN ? ELSE reply_count END,
+                       reactions_json = CASE WHEN ? IS NOT NULL THEN ? ELSE reactions_json END,
+                       detected_lang = CASE WHEN ? IS NOT NULL THEN ? ELSE detected_lang END
+                   WHERE channel_id = ? AND message_id = ?""",
+                data,
+            )
+        except Exception as exc:
+            logger.error("Failed to refresh %d existing messages: %s", len(messages), exc)
 
     async def ensure_embeddings_table(self, dimensions: int) -> None:
         if dimensions < 1:
@@ -1220,6 +1290,24 @@ class MessagesRepository:
             return None
         msgs = self._rows_to_messages([row])
         return msgs[0] if msgs else None
+
+    async def get_messages_by_channel_message_ids(self, keys: list[tuple[int, int]]) -> list[Message]:
+        """Load messages by Telegram identity, preserving the requested order."""
+        if not keys:
+            return []
+        unique_keys = list(dict.fromkeys(keys))
+        predicates = " OR ".join("(m.channel_id = ? AND m.message_id = ?)" for _ in unique_keys)
+        params = [value for key in unique_keys for value in key]
+        cur = await self._db.execute(
+            f"""SELECT m.*, c.title AS channel_title, c.username AS channel_username
+                FROM messages m
+                LEFT JOIN channels c ON m.channel_id = c.channel_id
+                WHERE {predicates}""",
+            params,
+        )
+        rows = await cur.fetchall()
+        by_key = {(msg.channel_id, msg.message_id): msg for msg in self._rows_to_messages(rows)}
+        return [by_key[key] for key in keys if key in by_key]
 
     async def update_detected_lang(self, message_db_id: int, lang: str) -> None:
         """Update detected_lang for a message."""
