@@ -34,7 +34,7 @@
             <td class="text-center">
                 {% if account_status[acc.phone].state == 'available' %}<span class="badge text-bg-success">OK</span>
                 {% elif account_status[acc.phone].state == 'flood' %}<span class="badge text-bg-warning">Flood</span>
-                {% elif account_status[acc.phone].state == 'session_unavailable' %}<span class="badge text-bg-danger">{{ acc.session_status }}</span>
+                {% elif account_status[acc.phone].state == 'session_unavailable' %}<span class="badge text-bg-danger" title="{{ acc.session_status }}">{{ session_status_label(acc.session_status) }}</span>
                 {% elif account_status[acc.phone].state == 'disconnected' %}<span class="badge text-bg-secondary">Нет соединения</span>
                 {% else %}<span class="badge text-bg-secondary">Неактивен</span>{% endif %}
             </td>
@@ -48,6 +48,11 @@
             </td>
             <td>{{ acc.created_at|local_dt("date") }}</td>
             <td class="text-nowrap">
+                {% if account_status[acc.phone].state == 'session_unavailable' %}
+                <a href="/auth/login?phone={{ acc.phone|urlencode }}" class="btn btn-outline-primary btn-sm" title="Переподключить аккаунт" aria-label="Переподключить">
+                    <i class="bi bi-arrow-repeat" aria-hidden="true"></i>
+                </a>
+                {% endif %}
                 <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm"
                             aria-label="{{ 'Отключить' if acc.is_active else 'Включить' }}" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
@@ -81,10 +86,15 @@
                 {% if account_status[acc.phone].state == 'available' %}&middot; Доступен{% endif %}
                 {% if account_status[acc.phone].state == 'disconnected' %}&middot; Не подключён{% endif %}
                 {% if account_status[acc.phone].state == 'flood' %}&middot; Flood до {{ acc.flood_wait_until|local_dt("time") }} ({{ account_status[acc.phone].remaining_minutes }} мин){% endif %}
-                {% if account_status[acc.phone].state == 'session_unavailable' %}&middot; {{ acc.session_status }}{% endif %}
+                {% if account_status[acc.phone].state == 'session_unavailable' %}&middot; {{ session_status_label(acc.session_status) }}{% endif %}
                 {% if acc.created_at %}&middot; {{ acc.created_at|local_dt("date") }}{% endif %}
             </small>
             <div class="card-actions">
+                {% if account_status[acc.phone].state == 'session_unavailable' %}
+                <a href="/auth/login?phone={{ acc.phone|urlencode }}" class="btn btn-outline-primary btn-sm" title="Переподключить аккаунт" aria-label="Переподключить">
+                    <i class="bi bi-arrow-repeat" aria-hidden="true"></i>
+                </a>
+                {% endif %}
                 <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm"
                             aria-label="{{ 'Отключить' if acc.is_active else 'Включить' }}" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
