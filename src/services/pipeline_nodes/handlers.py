@@ -43,6 +43,28 @@ def _current_node_id(services: dict, default: str = "?") -> str:
     return str(value) if value else default
 
 
+async def _dedup_context(services: dict, node_id: str, action: str, node_config: dict):
+    """Return (repo, processed_message_ids) when action dedup is active (issue #471).
+
+    Dedup is opt-out via node_config["deduplicate"]=false and only engages when a
+    pipeline_id and a db with the pipeline_action_log repo are available — so unit
+    tests and ad-hoc executions without those keys keep the previous behaviour.
+    The processed-id set is a snapshot of *prior* runs; callers must not mutate it
+    mid-run so that multi-target forwards still reach every target in one run.
+    """
+    if not node_config.get("deduplicate", True):
+        return None, set()
+    db = services.get("db")
+    pipeline_id = services.get("pipeline_id")
+    if db is None or pipeline_id is None:
+        return None, set()
+    repo = getattr(getattr(db, "repos", None), "pipeline_action_log", None)
+    if repo is None:
+        return None, set()
+    processed = await repo.processed_message_ids(pipeline_id, node_id, action)
+    return repo, processed
+
+
 def _resolve_account_phone(account_phone: str | None, services: dict, context: NodeContext) -> str | None:
     """Return explicit account_phone, or discover one from source channel access map."""
     if account_phone:
@@ -415,8 +437,14 @@ class ReactHandler(BaseNodeHandler):
                 return
         resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
         action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
+        dedup_repo, processed_ids = await _dedup_context(services, node_id, "react", node_config)
+        pipeline_id = services.get("pipeline_id")
+        skipped = 0
 
         for message in messages:
+            if message.message_id in processed_ids:
+                skipped += 1
+                continue
             try:
                 chosen_emoji = random.choice(random_emoji_list) if random_emoji_list else emoji
                 await action_service.send_reaction(
@@ -429,6 +457,10 @@ class ReactHandler(BaseNodeHandler):
                     resolve_entity=False,
                 )
                 increment_action_count(context, "react")
+                if dedup_repo is not None:
+                    await dedup_repo.log_action(
+                        pipeline_id, node_id, "react", message.channel_id, message.message_id
+                    )
                 logger.info(
                     "ReactHandler[%s]: reacted %s to message_id=%s channel_id=%s phone=%s",
                     node_id,
@@ -481,6 +513,8 @@ class ReactHandler(BaseNodeHandler):
                     message.message_id,
                     exc_info=True,
                 )
+        if skipped:
+            logger.info("ReactHandler[%s]: skipped %d already-reacted message(s)", node_id, skipped)
 
 
 class ForwardHandler(BaseNodeHandler):
@@ -501,6 +535,8 @@ class ForwardHandler(BaseNodeHandler):
         messages = context.get_global("context_messages", [])
         targets = node_config.get("targets", [])
         action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
+        dedup_repo, processed_ids = await _dedup_context(services, node_id, "forward", node_config)
+        pipeline_id = services.get("pipeline_id")
 
         for target in targets:
             phone = target.get("phone", "")
@@ -512,6 +548,10 @@ class ForwardHandler(BaseNodeHandler):
                     await action_service.ensure_client(phone=phone, native=False)
                     continue
                 for message in messages:
+                    # processed_ids is a prior-run snapshot; not mutated mid-run so
+                    # every target still receives the message within this run.
+                    if message.message_id in processed_ids:
+                        continue
                     await action_service.forward_messages(
                         phone=phone,
                         from_chat=message.channel_id,
@@ -522,6 +562,10 @@ class ForwardHandler(BaseNodeHandler):
                         collapse_single_message_id=True,
                     )
                     increment_action_count(context, "forward")
+                    if dedup_repo is not None:
+                        await dedup_repo.log_action(
+                            pipeline_id, node_id, "forward", message.channel_id, message.message_id
+                        )
                     logger.info(
                         "ForwardHandler[%s]: forwarded message_id=%s channel_id=%s to dialog_id=%s phone=%s",
                         node_id,
@@ -582,8 +626,14 @@ class DeleteMessageHandler(BaseNodeHandler):
         messages = context.get_global("context_messages", [])
         resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
         action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
+        dedup_repo, processed_ids = await _dedup_context(services, node_id, "delete_message", node_config)
+        pipeline_id = services.get("pipeline_id")
+        skipped = 0
 
         for message in messages:
+            if message.message_id in processed_ids:
+                skipped += 1
+                continue
             try:
                 await action_service.delete_messages(
                     phone=resolved_phone,
@@ -594,6 +644,10 @@ class DeleteMessageHandler(BaseNodeHandler):
                     resolve_entity=False,
                 )
                 increment_action_count(context, "delete_message")
+                if dedup_repo is not None:
+                    await dedup_repo.log_action(
+                        pipeline_id, node_id, "delete_message", message.channel_id, message.message_id
+                    )
                 logger.info(
                     "DeleteMessageHandler[%s]: deleted message_id=%s channel_id=%s phone=%s",
                     node_id,
@@ -639,6 +693,10 @@ class DeleteMessageHandler(BaseNodeHandler):
                     message.message_id,
                     exc_info=True,
                 )
+        if skipped:
+            logger.info(
+                "DeleteMessageHandler[%s]: skipped %d already-deleted message(s)", node_id, skipped
+            )
 
 
 class ConditionHandler(BaseNodeHandler):

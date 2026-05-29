@@ -1175,3 +1175,123 @@ async def test_agent_loop_with_tools_in_graph_execution():
     result = await executor.execute(pipeline, graph, services)
 
     assert result.get("generated_text") == "Final answer from agent"
+
+
+# ---------------------------------------------------------------------------
+# Action dedup (issue #471) — skip already-processed messages across runs
+# ---------------------------------------------------------------------------
+
+
+def _dedup_db(processed_ids):
+    db = MagicMock()
+    db.repos.pipeline_action_log.processed_message_ids = AsyncMock(return_value=set(processed_ids))
+    db.repos.pipeline_action_log.log_action = AsyncMock()
+    return db
+
+
+@pytest.mark.anyio
+async def test_react_skips_already_processed_message():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=7)])
+    action_service = AsyncMock()
+    db = _dedup_db({7})
+    await ReactHandler().execute(
+        {"emoji": "🔥"},
+        ctx,
+        {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db, "pipeline_id": 42},
+    )
+    action_service.send_reaction.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_react_processes_and_logs_new_message():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=8)])
+    action_service = AsyncMock()
+    db = _dedup_db(set())
+    await ReactHandler().execute(
+        {"emoji": "🔥"},
+        ctx,
+        {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db, "pipeline_id": 42},
+    )
+    action_service.send_reaction.assert_awaited_once()
+    db.repos.pipeline_action_log.log_action.assert_awaited_once_with(42, "react", "react", -100, 8)
+
+
+@pytest.mark.anyio
+async def test_react_dedup_disabled_via_config():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=7)])
+    action_service = AsyncMock()
+    db = _dedup_db({7})
+    await ReactHandler().execute(
+        {"emoji": "🔥", "deduplicate": False},
+        ctx,
+        {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db, "pipeline_id": 42},
+    )
+    # Dedup turned off → never consults the log, acts on the message.
+    db.repos.pipeline_action_log.processed_message_ids.assert_not_awaited()
+    action_service.send_reaction.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_react_dedup_inactive_without_pipeline_id():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=7)])
+    action_service = AsyncMock()
+    db = _dedup_db({7})
+    # No pipeline_id → dedup stays off (back-compat), message is acted on.
+    await ReactHandler().execute(
+        {"emoji": "🔥"},
+        ctx,
+        {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db},
+    )
+    action_service.send_reaction.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_delete_skips_already_processed_message():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=5)])
+    action_service = AsyncMock()
+    db = _dedup_db({5})
+    await DeleteMessageHandler().execute(
+        {},
+        ctx,
+        {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db, "pipeline_id": 1},
+    )
+    action_service.delete_messages.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_forward_reaches_all_targets_within_run():
+    """A new message must be forwarded to every target in one run, even though
+    it is logged after the first target (snapshot is not mutated mid-run)."""
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=9)])
+    action_service = AsyncMock()
+    db = _dedup_db(set())
+    targets = [
+        {"phone": "+1", "dialog_id": 111},
+        {"phone": "+1", "dialog_id": 222},
+    ]
+    await ForwardHandler().execute(
+        {"targets": targets},
+        ctx,
+        {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db, "pipeline_id": 3},
+    )
+    assert action_service.forward_messages.await_count == 2
+
+
+@pytest.mark.anyio
+async def test_forward_skips_message_processed_in_prior_run():
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=9)])
+    action_service = AsyncMock()
+    db = _dedup_db({9})
+    await ForwardHandler().execute(
+        {"targets": [{"phone": "+1", "dialog_id": 111}]},
+        ctx,
+        {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db, "pipeline_id": 3},
+    )
+    action_service.forward_messages.assert_not_awaited()
