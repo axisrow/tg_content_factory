@@ -275,6 +275,84 @@ class TestNotifierErrorHandling:
         assert result is False
 
 
+class TestNotifierCircuitBreaker:
+    """Tests for the circuit breaker that stops retrying persistent failures (#553)."""
+
+    def _failing_notifier(self, mock_target_service, *, threshold=3, cooldown=3600.0):
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(side_effect=RuntimeError("account deleted"))
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+        return Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=MagicMock(spec=NotificationBundle),
+            failure_threshold=threshold,
+            cooldown_seconds=cooldown,
+        )
+
+    @pytest.mark.anyio
+    async def test_opens_after_threshold_and_stops_attempting(self, mock_target_service):
+        notifier = self._failing_notifier(mock_target_service, threshold=3)
+
+        for _ in range(3):
+            assert await notifier.notify("x") is False
+
+        # use_client invoked exactly threshold times so far
+        assert mock_target_service.use_client.call_count == 3
+        assert notifier.is_degraded is True
+
+        # Further calls are skipped entirely — no new client acquisition.
+        assert await notifier.notify("x") is False
+        assert await notifier.notify("x") is False
+        assert mock_target_service.use_client.call_count == 3
+
+    @pytest.mark.anyio
+    async def test_recovers_after_cooldown(self, mock_target_service):
+        notifier = self._failing_notifier(mock_target_service, threshold=2, cooldown=100.0)
+
+        with patch("src.telegram.notifier.time.monotonic", return_value=1000.0):
+            assert await notifier.notify("x") is False
+            assert await notifier.notify("x") is False
+            assert notifier.is_degraded is True
+            # Still degraded just before cooldown elapses.
+            assert await notifier.notify("x") is False
+            assert mock_target_service.use_client.call_count == 2
+
+        # After cooldown the breaker half-opens and attempts again.
+        with patch("src.telegram.notifier.time.monotonic", return_value=1101.0):
+            assert await notifier.notify("x") is False
+            assert mock_target_service.use_client.call_count == 3
+
+    @pytest.mark.anyio
+    async def test_success_resets_failure_counter(self, mock_target_service):
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,  # no bundle → send_message path
+            failure_threshold=3,
+        )
+
+        # Two failures, then succeed → counter resets, breaker never opens.
+        assert await notifier.notify("x") is False
+        assert await notifier.notify("x") is False
+        assert notifier._consecutive_failures == 2
+
+        mock_client.send_message = AsyncMock(return_value=None)
+        mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+        assert await notifier.notify("x") is True
+        assert notifier._consecutive_failures == 0
+        assert notifier.is_degraded is False
+
+
 class TestNotifierInvalidateCache:
     """Tests for cache invalidation."""
 
