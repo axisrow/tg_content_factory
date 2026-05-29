@@ -121,6 +121,25 @@
     document.body.addEventListener('htmx:afterSwap', function(e) { convertLocalDates(e.detail.target); });
     window.convertLocalDates = convertLocalDates;
 
+    function initServerClock() {
+        var el = document.querySelector('.server-clock[data-utc]');
+        if (!el) return;
+        var serverStart = new Date(el.dataset.utc).getTime();
+        if (isNaN(serverStart)) return;
+        var offset = serverStart - Date.now(); // server - client
+        var out = el.querySelector('.server-clock-value') || el;
+        function tick() {
+            var d = new Date(Date.now() + offset);
+            var hh = String(d.getUTCHours()).padStart(2, '0');
+            var mm = String(d.getUTCMinutes()).padStart(2, '0');
+            var ss = String(d.getUTCSeconds()).padStart(2, '0');
+            out.textContent = hh + ':' + mm + ':' + ss + ' UTC';
+        }
+        tick();
+        setInterval(tick, 1000);
+    }
+    document.addEventListener('DOMContentLoaded', initServerClock);
+
     function tgdlgCreate(message, choices) {
         return new Promise(function(resolve) {
             var modal = document.createElement('div');
