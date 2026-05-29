@@ -558,45 +558,27 @@ class CollectionTasksRepository:
     ) -> CollectionTask | None:
         if not handled_types:
             return None
-        now_iso = now.astimezone(timezone.utc).isoformat()
-        placeholders = ", ".join("?" for _ in handled_types)
-
-        # Phase 1: lightweight read-only peek — no write lock
-        cur = await self._db.execute(
-            f"SELECT id FROM collection_tasks "
-            f"WHERE task_type IN ({placeholders}) "
-            "AND status = ? "
-            "AND (run_after IS NULL OR run_after <= ?) "
-            "ORDER BY COALESCE(run_after, ''), id ASC LIMIT 1",
-            (*handled_types, CollectionTaskStatus.PENDING.value, now_iso),
-        )
-        peek = await cur.fetchone()
-        if peek is None:
-            return None
-
-        # Phase 2: acquire write lock only when there is work to claim
         assert self._database is not None, (
             "CollectionTasksRepository.claim requires a Database reference"
         )
-        claimed = None
-        async with self._database.transaction() as conn:
-            selected_id = peek["id"]
-            updated = await conn.execute(
-                "UPDATE collection_tasks "
-                "SET status = 'running', started_at = ?, completed_at = NULL "
-                "WHERE id = ? AND status = ?",
-                (now_iso, selected_id, CollectionTaskStatus.PENDING.value),
-            )
-            if (updated.rowcount or 0) == 0:
-                return None
-            cur = await conn.execute(
-                "SELECT * FROM collection_tasks WHERE id = ?",
-                (selected_id,),
-            )
-            claimed = await cur.fetchone()
-        if claimed is None:
+        now_iso = now.astimezone(timezone.utc).isoformat()
+        placeholders = ", ".join("?" for _ in handled_types)
+        cur = await self._database.execute_write(
+            f"UPDATE collection_tasks "
+            f"SET status = 'running', started_at = ?, completed_at = NULL "
+            f"WHERE id = ("
+            f"    SELECT id FROM collection_tasks "
+            f"    WHERE task_type IN ({placeholders}) "
+            f"    AND status = ? "
+            f"    AND (run_after IS NULL OR run_after <= ?) "
+            f"    ORDER BY COALESCE(run_after, ''), id ASC LIMIT 1"
+            f") RETURNING *",
+            (now_iso, *handled_types, CollectionTaskStatus.PENDING.value, now_iso),
+        )
+        row = await cur.fetchone()
+        if row is None:
             return None
-        return self._to_task(claimed)
+        return self._to_task(row)
 
     async def requeue_running_generic_tasks_on_startup(
         self, now: datetime, handled_types: list[str]
