@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from src.database.repositories.collection_tasks import CollectionTasksRepository
@@ -371,18 +372,20 @@ async def test_claim_next_due_stats_task_success(collection_tasks_repo):
     assert claimed.started_at is not None
 
 
-async def test_claim_next_due_stats_task_recovers_from_stale_transaction(collection_tasks_repo):
-    """A stale transaction on the shared connection must not break claim flow."""
+async def test_claim_next_due_stats_task_only_claimed_once(collection_tasks_repo):
+    """Two concurrent claim calls on the same task must result in exactly one winner."""
     payload = StatsAllTaskPayload(channel_ids=[1, 2])
     task_id = await collection_tasks_repo.create_stats_task(payload)
 
-    await collection_tasks_repo._db.execute("BEGIN")
     now = datetime.now(tz=timezone.utc)
-    claimed = await collection_tasks_repo.claim_next_due_generic_task(now, [CollectionTaskType.STATS_ALL.value])
-
-    assert claimed is not None
-    assert claimed.id == task_id
-    assert claimed.status == CollectionTaskStatus.RUNNING
+    results = await asyncio.gather(
+        collection_tasks_repo.claim_next_due_generic_task(now, [CollectionTaskType.STATS_ALL.value]),
+        collection_tasks_repo.claim_next_due_generic_task(now, [CollectionTaskType.STATS_ALL.value]),
+    )
+    claimed = [r for r in results if r is not None]
+    assert len(claimed) == 1
+    assert claimed[0].id == task_id
+    assert claimed[0].status == CollectionTaskStatus.RUNNING
 
 
 async def test_claim_next_due_stats_task_respects_run_after(collection_tasks_repo):
