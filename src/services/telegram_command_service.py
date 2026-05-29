@@ -73,6 +73,22 @@ class TelegramCommandService:
             status=status,
         )
 
+    async def cancel(self, command_id: int) -> bool:
+        """Cancel a single PENDING command. Returns True if it was cancelled."""
+        return await self._db.repos.telegram_commands.cancel_command(command_id)
+
+    async def cancel_pending(
+        self,
+        *,
+        command_type: str | None = None,
+        phone: str | None = None,
+    ) -> int:
+        """Bulk-cancel PENDING commands matching the filters. Returns count."""
+        return await self._db.repos.telegram_commands.cancel_pending_commands(
+            command_type=command_type,
+            phone=phone,
+        )
+
     async def result_state_summary(
         self,
         *,

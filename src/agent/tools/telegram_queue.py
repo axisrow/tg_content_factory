@@ -13,6 +13,7 @@ from src.agent.tools._registry import (
     arg_int,
     arg_str,
     normalize_phone,
+    require_confirmation,
     require_phone_permission,
 )
 from src.models import TelegramCommand, TelegramCommandStatus
@@ -207,4 +208,77 @@ def register_queue_status_tools(db: Any) -> list[Any]:
         return _text_response("\n".join(lines))
 
     tools.append(get_telegram_queue_status)
+
+    @tool(
+        "cancel_telegram_command",
+        "⚠️ Cancel a pending Telegram command (reaction, send, forward, etc.) by command_id. "
+        "Only PENDING commands can be cancelled; RUNNING ones must finish (a Telegram API "
+        "call is already in flight). Use get_telegram_queue_status to find the id. "
+        "Requires confirmation.",
+        {
+            "command_id": Annotated[int, "ID задания в очереди telegram_commands"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
+    )
+    async def cancel_telegram_command(args):
+        try:
+            command_id = arg_int(args, "command_id")
+        except ToolInputError as exc:
+            return exc.to_response()
+        if not command_id:
+            return _text_response("Ошибка: command_id обязателен.")
+        gate = require_confirmation(f"отменит задание очереди id={command_id}", args)
+        if gate:
+            return gate
+        service = TelegramCommandService(db)
+        try:
+            ok = await service.cancel(command_id)
+        except Exception as exc:
+            return _text_response(f"Ошибка отмены задания: {exc}")
+        if ok:
+            return _text_response(f"Задание #{command_id} отменено.")
+        return _text_response(
+            f"Задание #{command_id} не найдено или не в статусе 'ждёт' (отменять можно только PENDING)."
+        )
+
+    tools.append(cancel_telegram_command)
+
+    @tool(
+        "clear_pending_telegram_commands",
+        "⚠️ Bulk-cancel pending Telegram commands. Filter by command_type (e.g. 'dialogs.react') "
+        "and/or phone. Both empty = cancel ALL pending commands. Only affects PENDING; RUNNING "
+        "commands are not touched. Requires confirmation.",
+        {
+            "command_type": Annotated[str, "Фильтр по типу, например dialogs.react. Пусто = все типы"],
+            "phone": Annotated[str, "Фильтр по телефону аккаунта. Пусто = все аккаунты"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
+    )
+    async def clear_pending_telegram_commands(args):
+        try:
+            command_type = arg_str(args, "command_type") or None
+            phone = normalize_phone(arg_str(args, "phone")) or None
+        except ToolInputError as exc:
+            return exc.to_response()
+        if phone:
+            perm_gate = await require_phone_permission(db, phone, "clear_pending_telegram_commands")
+            if perm_gate:
+                return perm_gate
+        scope_parts = []
+        if command_type:
+            scope_parts.append(f"тип '{command_type}'")
+        if phone:
+            scope_parts.append(f"телефон {phone}")
+        scope = ", ".join(scope_parts) if scope_parts else "все типы и аккаунты"
+        gate = require_confirmation(f"отменит все ожидающие задания ({scope})", args)
+        if gate:
+            return gate
+        service = TelegramCommandService(db)
+        try:
+            cancelled = await service.cancel_pending(command_type=command_type, phone=phone)
+        except Exception as exc:
+            return _text_response(f"Ошибка массовой отмены: {exc}")
+        return _text_response(f"Отменено ожидающих заданий: {cancelled}.")
+
+    tools.append(clear_pending_telegram_commands)
     return tools
