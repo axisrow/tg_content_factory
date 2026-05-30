@@ -274,6 +274,7 @@ python -m src.main settings set KEY VALUE
 python -m src.main settings info
 python -m src.main settings agent [--backend BACKEND] [--prompt-template TEMPLATE]
 python -m src.main settings filter-criteria [--min-uniqueness N] [--min-sub-ratio N] [--max-cross-dupe N] [--min-cyrillic N]
+python -m src.main settings reactions [--min-interval SECONDS]
 python -m src.main settings semantic [--provider PROVIDER] [--model MODEL] [--api-key KEY]
 ```
 

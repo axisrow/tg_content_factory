@@ -5,6 +5,12 @@
                min="1" max="1440" value="{{ collect_interval_minutes }}">
         <div class="form-text">Как часто планировщик автоматически собирает новые сообщения из каналов. Диапазон: 1–1440 минут.</div>
     </div>
+    <div class="mb-3">
+        <label for="reaction_min_interval_sec" class="form-label">Минимальный интервал между реакциями (секунды)</label>
+        <input type="number" class="form-control w-auto" id="reaction_min_interval_sec" name="reaction_min_interval_sec"
+               min="1" max="300" value="{{ reaction_min_interval_sec }}">
+        <div class="form-text">Пауза между реакциями агента на один аккаунт. Меньшие значения быстрее, но Telegram ограничивает реакции на стороне сервера — слишком частые могут вызвать flood-wait. Диапазон: 1–300 секунд.</div>
+    </div>
     <div class="d-flex justify-content-end">
         <button type="submit" class="btn btn-primary">Сохранить</button>
     </div>

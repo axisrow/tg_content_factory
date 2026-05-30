@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -454,6 +455,55 @@ async def test_dialogs_react_waits_when_account_is_flooded():
         await d._handle_dialogs_react({"phone": "+1", "chat_id": -100, "message_id": 1, "emoji": "👍"})
 
     pool.get_native_client_by_phone.assert_not_awaited()
+
+
+async def test_reaction_min_interval_uses_configured_setting():
+    db = _mock_db()
+    db.get_setting.return_value = "5"
+    pool = _mock_pool()
+    pool.is_warming = MagicMock(return_value=False)
+    d = _dispatcher(db=db, pool=pool)
+    # A reaction just went out for this phone — only ~5s spacing should be enforced now.
+    d._last_reaction_at_monotonic["+1"] = time.monotonic()
+
+    with pytest.raises(TelegramCommandRetryLaterError, match="waiting") as exc_info:
+        await d._ensure_reaction_can_run("+1")
+
+    payload = exc_info.value.result_payload
+    assert payload["state"] == "waiting_rate_limit"
+    # 5s window (not the old 30s): remaining is at most the configured interval.
+    assert payload["retry_after_sec"] <= 5
+
+
+async def test_reaction_min_interval_clamps_below_floor():
+    db = _mock_db()
+    db.get_setting.return_value = "0"
+    pool = _mock_pool()
+    pool.is_warming = MagicMock(return_value=False)
+    d = _dispatcher(db=db, pool=pool)
+
+    # 0 is clamped up to the 1s floor, so the interval reader never returns 0.
+    assert await d._reaction_min_interval() == mod.REACTION_MIN_INTERVAL_FLOOR_SEC
+
+
+async def test_reaction_min_interval_falls_back_on_garbage():
+    db = _mock_db()
+    db.get_setting.return_value = "abc"
+    pool = _mock_pool()
+    pool.is_warming = MagicMock(return_value=False)
+    d = _dispatcher(db=db, pool=pool)
+
+    assert await d._reaction_min_interval() == mod.DEFAULT_REACTION_MIN_INTERVAL_SEC
+
+
+async def test_reaction_min_interval_clamps_above_ceiling():
+    db = _mock_db()
+    db.get_setting.return_value = "9999"
+    pool = _mock_pool()
+    pool.is_warming = MagicMock(return_value=False)
+    d = _dispatcher(db=db, pool=pool)
+
+    assert await d._reaction_min_interval() == mod.REACTION_MIN_INTERVAL_CEILING_SEC
 
 
 async def test_run_loop_requeues_handled_flood_wait():

@@ -11,6 +11,7 @@ from src.services.embedding_service import (
     DEFAULT_EMBEDDINGS_MODEL,
     DEFAULT_EMBEDDINGS_PROVIDER,
 )
+from src.services.telegram_command_dispatcher import DEFAULT_REACTION_MIN_INTERVAL_SEC
 
 CREDENTIALS_MASK = "••••••••"
 
@@ -32,6 +33,7 @@ class _FrozenForm(BaseModel):
 
 class SchedulerSettingsForm(_FrozenForm):
     interval_minutes: int
+    reaction_min_interval_sec: int
 
 
 class SemanticSearchSettingsForm(_FrozenForm):
@@ -131,9 +133,19 @@ def _validate_strings(model: type[TForm], data: Mapping[str, object], code: str 
 def parse_scheduler_form(form: FormMapping) -> SchedulerSettingsForm:
     parsed = _validate_strings(
         SchedulerSettingsForm,
-        {"interval_minutes": form.get("collect_interval_minutes", 60)},
+        {
+            "interval_minutes": form.get("collect_interval_minutes", 60),
+            "reaction_min_interval_sec": form.get(
+                "reaction_min_interval_sec", int(DEFAULT_REACTION_MIN_INTERVAL_SEC)
+            ),
+        },
     )
-    return parsed.model_copy(update={"interval_minutes": max(1, min(1440, parsed.interval_minutes))})
+    return parsed.model_copy(
+        update={
+            "interval_minutes": max(1, min(1440, parsed.interval_minutes)),
+            "reaction_min_interval_sec": max(1, min(300, parsed.reaction_min_interval_sec)),
+        }
+    )
 
 
 def parse_semantic_search_form(form: FormMapping) -> SemanticSearchSettingsForm:

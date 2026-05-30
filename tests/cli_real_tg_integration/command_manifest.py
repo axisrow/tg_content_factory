@@ -249,6 +249,7 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("search-query", "toggle"): "local search query mutation",
     ("settings", "agent"): "local settings write",
     ("settings", "filter-criteria"): "local settings write",
+    ("settings", "reactions"): "local settings write",
     ("settings", "semantic"): "local settings write",
     ("settings", "set"): "local settings write",
     ("test", "write"): "diagnostic aggregate with local DB writes",
