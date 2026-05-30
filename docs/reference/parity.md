@@ -242,7 +242,9 @@
 | Переименовать | `agent thread-rename` | `POST /agent/threads/{id}/rename` | `rename_agent_thread` |
 | Сообщения треда | `agent messages` | — | `get_thread_messages` |
 | Чат | `agent chat` | `POST /agent/threads/{id}/chat` | — |
-| Статус Telegram-очереди | `agent chat` | `POST /agent/threads/{id}/chat` | `get_telegram_queue_status` |
+| Статус Telegram-очереди | `dialogs queue status` | `POST /agent/threads/{id}/chat` | `get_telegram_queue_status` |
+| Отменить задание очереди | `dialogs queue cancel` | `POST /dialogs/queue/{id}/cancel` | `cancel_telegram_command` |
+| Очистить ожидающие в очереди | `dialogs queue clear-pending` | `POST /dialogs/queue/clear-pending` | `clear_pending_telegram_commands` |
 | Контекст | `agent context` | `POST /agent/threads/{id}/context` | — |
 | Остановить | — | `POST /agent/threads/{id}/stop` | — |
 

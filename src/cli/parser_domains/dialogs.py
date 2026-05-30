@@ -162,3 +162,28 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     my_tg_mark_read.add_argument("--phone", default=None, help="Account phone (default: first connected)")
     my_tg_mark_read.add_argument("--max-id", type=int, default=None, dest="max_id",
                                  help="Mark messages up to this ID as read (default: all)")
+
+    my_tg_queue = dialogs_sub.add_parser(
+        "queue",
+        help="Inspect and manage the Telegram command queue (reactions, sends, forwards, ...)",
+    )
+    queue_sub = my_tg_queue.add_subparsers(dest="queue_action")
+    queue_sub.required = True
+
+    queue_status = queue_sub.add_parser("status", help="Show pending/running queue status")
+    queue_status.add_argument("--command-type", default=None, dest="command_type",
+                              help="Filter by command type, e.g. dialogs.react")
+    queue_status.add_argument("--phone", default=None, help="Filter by account phone")
+    queue_status.add_argument("--limit", type=int, default=20, help="Recent entries to show (1-100)")
+
+    queue_cancel = queue_sub.add_parser("cancel", help="Cancel a pending queue command by id")
+    queue_cancel.add_argument("command_id", type=int, help="Command id from queue status")
+    queue_cancel.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
+    queue_clear = queue_sub.add_parser(
+        "clear-pending", help="Bulk-cancel pending queue commands (optionally filtered)"
+    )
+    queue_clear.add_argument("--command-type", default=None, dest="command_type",
+                             help="Filter by command type, e.g. dialogs.react")
+    queue_clear.add_argument("--phone", default=None, help="Filter by account phone")
+    queue_clear.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")

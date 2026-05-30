@@ -16,6 +16,8 @@ def mock_db():
     db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
     db.repos.telegram_commands.create_command = AsyncMock(return_value=1)
     db.repos.telegram_commands.get_command = AsyncMock(return_value=None)
+    db.repos.telegram_commands.cancel_command = AsyncMock(return_value=False)
+    db.repos.telegram_commands.cancel_pending_commands = AsyncMock(return_value=0)
     return db
 
 
@@ -85,3 +87,31 @@ async def test_get_returns_none_when_not_found(service, mock_db):
 
     assert result is None
     mock_db.repos.telegram_commands.get_command.assert_awaited_once_with(999)
+
+
+async def test_cancel_delegates_to_repo(service, mock_db):
+    mock_db.repos.telegram_commands.cancel_command.return_value = True
+    result = await service.cancel(42)
+    assert result is True
+    mock_db.repos.telegram_commands.cancel_command.assert_awaited_once_with(42)
+
+
+async def test_cancel_returns_false_when_not_pending(service, mock_db):
+    mock_db.repos.telegram_commands.cancel_command.return_value = False
+    assert await service.cancel(42) is False
+
+
+async def test_cancel_pending_passes_filters(service, mock_db):
+    mock_db.repos.telegram_commands.cancel_pending_commands.return_value = 7
+    result = await service.cancel_pending(command_type="dialogs.react", phone="+79990001111")
+    assert result == 7
+    mock_db.repos.telegram_commands.cancel_pending_commands.assert_awaited_once_with(
+        command_type="dialogs.react", phone="+79990001111"
+    )
+
+
+async def test_cancel_pending_unfiltered(service, mock_db):
+    await service.cancel_pending()
+    mock_db.repos.telegram_commands.cancel_pending_commands.assert_awaited_once_with(
+        command_type=None, phone=None
+    )

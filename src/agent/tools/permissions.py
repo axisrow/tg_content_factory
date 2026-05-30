@@ -29,7 +29,9 @@ BUILTIN_TOOLS = ["WebSearch", "WebFetch"]
 # `tests/test_tool_permissions.py::test_every_phone_binded_tool_is_registered_in_tool_categories`.
 PHONE_BINDED_TOOLS: frozenset[str] = frozenset({
     "archive_chat",
+    "cancel_telegram_command",
     "clear_dialog_cache",
+    "clear_pending_telegram_commands",
     "create_auto_upload",
     "create_photo_batch",
     "create_telegram_channel",
@@ -224,6 +226,8 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "send_message": ToolCategory.WRITE,
     "send_reaction": ToolCategory.WRITE,
     "get_telegram_queue_status": ToolCategory.READ,
+    "cancel_telegram_command": ToolCategory.WRITE,
+    "clear_pending_telegram_commands": ToolCategory.WRITE,
     "forward_messages": ToolCategory.WRITE,
     "edit_message": ToolCategory.WRITE,
     "delete_message": ToolCategory.DELETE,
@@ -332,7 +336,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ("Сообщения", [
         "send_message", "send_reaction", "forward_messages", "edit_message", "delete_message",
         "pin_message", "unpin_message", "download_media", "read_messages",
-        "get_telegram_queue_status",
+        "get_telegram_queue_status", "cancel_telegram_command", "clear_pending_telegram_commands",
     ]),
     ("Управление чатом", [
         "get_participants", "edit_admin", "edit_permissions", "kick_participant",
