@@ -254,6 +254,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "save_agent_settings": ToolCategory.WRITE,
     "save_filter_settings": ToolCategory.WRITE,
     "get_system_info": ToolCategory.READ,
+    "get_server_time": ToolCategory.READ,
     # Agent Threads
     "list_agent_threads": ToolCategory.READ,
     "create_agent_thread": ToolCategory.WRITE,
@@ -347,7 +348,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ]),
     ("Настройки", [
         "get_settings", "save_scheduler_settings", "save_agent_settings",
-        "save_filter_settings", "get_system_info",
+        "save_filter_settings", "get_system_info", "get_server_time",
     ]),
     ("Треды агента", [
         "list_agent_threads", "create_agent_thread", "delete_agent_thread",

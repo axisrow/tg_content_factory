@@ -255,6 +255,7 @@
 | Получить | `settings get` | `GET /settings/` | `get_settings` |
 | Установить raw key/value | `settings set` | `POST /settings/save-*` | — |
 | Диагностика | `settings info` | — | `get_system_info` |
+| Время сервера | `settings server-time` | — | `get_server_time` |
 | Агент | `settings agent` | `POST /settings/save-agent` | `save_agent_settings` |
 | Фильтры | `settings filter-criteria` | `POST /settings/save-filters` | `save_filter_settings` |
 | Семантический поиск | `settings semantic` | `POST /settings/save-semantic-search` | — |

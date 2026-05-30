@@ -207,3 +207,25 @@ class TestGetSystemInfoTool:
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_system_info"]({})
         assert "Ошибка получения" in _text(result)
+
+
+class TestGetServerTimeTool:
+    @pytest.mark.anyio
+    async def test_returns_utc_time(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_server_time"]({})
+        text = _text(result)
+        assert "UTC" in text
+        assert "ISO8601" in text
+        assert "Unix" in text
+
+    @pytest.mark.anyio
+    async def test_iso_string_is_parseable(self, mock_db):
+        from datetime import datetime
+
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_server_time"]({})
+        iso_line = next(line for line in _text(result).splitlines() if "ISO8601" in line)
+        iso_value = iso_line.split("ISO8601:", 1)[1].strip()
+        parsed = datetime.fromisoformat(iso_value)
+        assert parsed.tzinfo is not None
