@@ -46,7 +46,7 @@ from src.services.telegram_command_dispatcher import (
     DEFAULT_REACTION_MIN_INTERVAL_SEC,
     REACTION_MIN_INTERVAL_SETTING,
 )
-from src.settings_utils import parse_int_setting
+from src.settings_utils import parse_float_setting, parse_int_setting
 from src.utils.datetime import parse_datetime
 from src.web import deps
 from src.web.settings.forms import (
@@ -461,11 +461,21 @@ async def handle_settings_page(request: Request) -> dict[str, object]:
         default=config.scheduler.collect_interval_minutes,
         logger=logger,
     )
-    reaction_min_interval_sec = parse_int_setting(
+    # Read with parse_float_setting to match enforcement in the dispatcher
+    # (telegram_command_dispatcher._reaction_min_interval), so a decimal value
+    # written via the generic `settings set` passthrough is displayed exactly as
+    # it is enforced rather than silently shown as the default. Render as int when
+    # the value is whole (the typed CLI/web write paths only ever emit integers).
+    reaction_min_interval_value = parse_float_setting(
         await db.get_setting(REACTION_MIN_INTERVAL_SETTING),
         setting_name=REACTION_MIN_INTERVAL_SETTING,
-        default=int(DEFAULT_REACTION_MIN_INTERVAL_SEC),
+        default=DEFAULT_REACTION_MIN_INTERVAL_SEC,
         logger=logger,
+    )
+    reaction_min_interval_sec = (
+        int(reaction_min_interval_value)
+        if reaction_min_interval_value == int(reaction_min_interval_value)
+        else reaction_min_interval_value
     )
     accounts = await db.get_account_summaries()
     telegram_session_warning = any(

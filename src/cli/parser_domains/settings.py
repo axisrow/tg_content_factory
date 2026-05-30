@@ -28,7 +28,7 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     settings_reactions = settings_sub.add_parser("reactions", help="Configure reaction sending cadence")
     settings_reactions.add_argument(
         "--min-interval", type=int, default=None, dest="min_interval",
-        help="Minimum seconds between reactions per account (clamped to 1–300; default 5)",
+        help="Minimum seconds between reactions per account (clamped to 1–300; default 30)",
     )
 
     settings_semantic = settings_sub.add_parser("semantic", help="Configure semantic search")

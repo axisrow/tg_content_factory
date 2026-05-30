@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # DB setting below; a non-zero floor is enforced because Telegram rate-limits
 # reactions server-side and zero spacing risks FLOOD_WAIT / account limiting.
 REACTION_MIN_INTERVAL_SETTING = "reaction_min_interval_sec"
-DEFAULT_REACTION_MIN_INTERVAL_SEC = 5.0
+DEFAULT_REACTION_MIN_INTERVAL_SEC = 30.0
 REACTION_MIN_INTERVAL_FLOOR_SEC = 1.0
 REACTION_MIN_INTERVAL_CEILING_SEC = 300.0
 

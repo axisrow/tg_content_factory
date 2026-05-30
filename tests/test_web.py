@@ -2964,6 +2964,18 @@ async def test_settings_page_renders_reaction_min_interval(client):
 
 
 @pytest.mark.anyio
+async def test_settings_page_renders_decimal_reaction_min_interval(client):
+    """A decimal value (e.g. via `settings set`) is displayed as enforced, not as the default."""
+    db = client._transport.app.state.db
+    await db.set_setting("reaction_min_interval_sec", "2.5")
+    resp = await client.get("/settings")
+    assert resp.status_code == 200
+    # Displayed value matches what the dispatcher enforces (parse_float_setting),
+    # rather than silently falling back to the integer default.
+    assert 'min="1" max="300" value="2.5"' in resp.text
+
+
+@pytest.mark.anyio
 async def test_save_filters_valid(client):
     from src.models import Channel, ChannelStats
 
