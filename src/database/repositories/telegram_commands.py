@@ -186,6 +186,61 @@ class TelegramCommandsRepository:
                 return self._to_command(row)
         return None
 
+    async def cancel_command(self, command_id: int) -> bool:
+        """Cancel a single PENDING command.
+
+        Returns True if the row was transitioned PENDING → CANCELLED. RUNNING
+        commands are not cancelled here — the dispatcher may already be in the
+        middle of a Telegram API call and the row would be overwritten when
+        it finishes; cancel from the UI is only safe for not-yet-claimed work.
+        """
+        finished_at = datetime.now(timezone.utc).isoformat()
+        cur = await self._database.execute_write(
+            """
+            UPDATE telegram_commands
+            SET status = ?, finished_at = ?, run_after = NULL
+            WHERE id = ? AND status = ?
+            """,
+            (
+                TelegramCommandStatus.CANCELLED.value,
+                finished_at,
+                command_id,
+                TelegramCommandStatus.PENDING.value,
+            ),
+        )
+        return (cur.rowcount or 0) > 0
+
+    async def cancel_pending_commands(
+        self,
+        *,
+        command_type: str | None = None,
+        phone: str | None = None,
+    ) -> int:
+        """Bulk-cancel PENDING commands matching the filters. Returns count."""
+        finished_at = datetime.now(timezone.utc).isoformat()
+        where = ["status = ?"]
+        params: list[Any] = [TelegramCommandStatus.PENDING.value]
+        if command_type:
+            where.append("command_type = ?")
+            params.append(command_type)
+        if phone:
+            where.append("json_extract(payload, '$.phone') = ?")
+            params.append(phone)
+        sql = (
+            "UPDATE telegram_commands "
+            "SET status = ?, finished_at = ?, run_after = NULL "
+            f"WHERE {' AND '.join(where)}"
+        )
+        cur = await self._database.execute_write(
+            sql,
+            (
+                TelegramCommandStatus.CANCELLED.value,
+                finished_at,
+                *params,
+            ),
+        )
+        return cur.rowcount or 0
+
     async def reset_running_on_startup(self) -> int:
         """Move RUNNING commands back to PENDING on worker startup.
 
