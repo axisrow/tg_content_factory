@@ -3294,6 +3294,91 @@ class TestWebAgent:
         assert resp_stop.status_code == 200
         agent_manager.cancel_stream.assert_called_once_with(thread_id)
 
+    @staticmethod
+    def _ready_agent_manager() -> AsyncMock:
+        """AgentManager mock that reports a ready Claude backend (parity with CLI)."""
+        agent_manager = AsyncMock()
+        agent_manager.estimate_prompt_tokens = AsyncMock(return_value=10)
+        agent_manager.get_runtime_status = AsyncMock(
+            return_value=SimpleNamespace(
+                claude_available=True,
+                deepagents_available=False,
+                dev_mode_enabled=False,
+                backend_override="auto",
+                selected_backend="claude",
+                fallback_model="",
+                fallback_provider="",
+                using_override=False,
+                error=None,
+            )
+        )
+        return agent_manager
+
+    @pytest.mark.anyio
+    async def test_chat_multiturn_preserves_thread_context(self, client):
+        """Web drives the same thread across separate POSTs, so history accumulates (#635).
+
+        Parity with the CLI ``agent chat`` loop: both go through the same
+        ``AgentManager.chat_stream`` which loads the full thread history each turn.
+        """
+        db = client._transport.app.state.db
+        thread_id = await db.create_agent_thread("Новый тред")
+
+        calls: list[tuple[int, str]] = []
+
+        async def mock_stream(t_id, message, *args, **kwargs):
+            calls.append((t_id, message))
+            yield f'data: {{"done": true, "full_text": "A{len(calls)}"}}\n\n'
+
+        agent_manager = self._ready_agent_manager()
+        agent_manager.chat_stream = mock_stream
+        client._transport.app.state.agent_manager = agent_manager
+
+        resp1 = await client.post(
+            f"/agent/threads/{thread_id}/chat", json={"message": "Q1"}
+        )
+        assert resp1.status_code == 200
+        resp2 = await client.post(
+            f"/agent/threads/{thread_id}/chat", json={"message": "Q2"}
+        )
+        assert resp2.status_code == 200
+
+        # Both turns hit the same thread via the shared chat_stream entrypoint.
+        assert calls == [(thread_id, "Q1"), (thread_id, "Q2")]
+
+        # History accumulates in the thread: user/assistant/user/assistant.
+        messages = await db.get_agent_messages(thread_id)
+        assert [(m["role"], m["content"]) for m in messages] == [
+            ("user", "Q1"),
+            ("assistant", "A1"),
+            ("user", "Q2"),
+            ("assistant", "A2"),
+        ]
+
+    @pytest.mark.anyio
+    async def test_chat_stream_relays_tool_events(self, client):
+        """tool_start/tool_end events reach the web SSE client verbatim (#635 parity)."""
+        db = client._transport.app.state.db
+        thread_id = await db.create_agent_thread("Новый тред")
+
+        async def mock_stream(*args, **kwargs):
+            yield 'data: {"type": "tool_start", "tool": "list_channels"}\n\n'
+            yield 'data: {"type": "tool_end", "tool": "list_channels", "duration": 0.5, "is_error": false}\n\n'
+            yield 'data: {"text": "done thinking"}\n\n'
+            yield 'data: {"done": true, "full_text": "ok"}\n\n'
+
+        agent_manager = self._ready_agent_manager()
+        agent_manager.chat_stream = mock_stream
+        client._transport.app.state.agent_manager = agent_manager
+
+        resp = await client.post(
+            f"/agent/threads/{thread_id}/chat", json={"message": "list my channels"}
+        )
+        assert resp.status_code == 200
+        assert "tool_start" in resp.text
+        assert "tool_end" in resp.text
+        assert "list_channels" in resp.text
+
 
 @pytest.mark.anyio
 async def test_test_notification_no_bot(client):
