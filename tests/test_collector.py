@@ -907,6 +907,59 @@ async def test_incremental_collection_sends_notification_queries(db):
 
 
 @pytest.mark.anyio
+async def test_first_run_detects_topics_without_retaining_messages(db):
+    """First-run forum-topic detection runs via the saw_topic_message flag (#633).
+
+    On first-run we no longer accumulate every Message object in memory, so topic
+    detection must rely on the running flag rather than scanning a retained list.
+    """
+    ch = Channel(channel_id=-100199, title="Forum", username="forum199", last_collected_id=0)
+    await db.add_channel(ch)
+
+    topic_msg = make_mock_message(1, text="topic msg")
+    topic_msg.reply_to = SimpleNamespace(forum_topic=True, reply_to_top_id=42, reply_to_msg_id=None)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(side_effect=lambda *a, **kw: _AsyncIterMessages([topic_msg]))
+
+    pool = make_mock_pool(
+        get_available_client=AsyncMock(return_value=(mock_client, "+7000")),
+        get_forum_topics=AsyncMock(return_value=[]),
+    )
+
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+    count = await collector._collect_channel(ch)
+
+    assert count == 1
+    pool.get_forum_topics.assert_awaited_once_with(-100199)
+
+
+@pytest.mark.anyio
+async def test_first_run_skips_topic_lookup_without_topic_messages(db):
+    """No topic messages → no forum-topic lookup (saw_topic_message stays False) (#633)."""
+    ch = Channel(channel_id=-100200, title="Plain", username="plain200", last_collected_id=0)
+    await db.add_channel(ch)
+
+    mock_msgs = [make_mock_message(i, text=f"msg {i}") for i in range(1, 4)]
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(side_effect=lambda *a, **kw: _AsyncIterMessages(mock_msgs))
+
+    pool = make_mock_pool(
+        get_available_client=AsyncMock(return_value=(mock_client, "+7000")),
+        get_forum_topics=AsyncMock(return_value=[]),
+    )
+
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+    count = await collector._collect_channel(ch)
+
+    assert count == 3
+    pool.get_forum_topics.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_collect_channel_retries_after_short_flood_wait(db):
     ch = Channel(channel_id=-100171, title="Retry", username="retry", last_collected_id=5)
     ch_id = await db.add_channel(ch)

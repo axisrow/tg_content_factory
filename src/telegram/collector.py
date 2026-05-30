@@ -595,7 +595,12 @@ class Collector:
                 except Exception as e:
                     logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
             messages_batch: list[Message] = []
+            # `all_messages` only retains message objects when notifications are
+            # enabled (incremental runs, bounded by min_id). On first-run for huge
+            # channels we keep just a count to avoid unbounded growth / OOM (#633).
             all_messages: list[Message] = []
+            collected_count = 0
+            saw_topic_message = False
             persisted_max_msg_id = min_id
             flood_wait_sec: int | None = None
             flood_wait_operation: str | None = None
@@ -614,7 +619,7 @@ class Collector:
             )
 
             async def _flush_batch(batch: list[Message]) -> bool:
-                nonlocal persisted_max_msg_id
+                nonlocal persisted_max_msg_id, collected_count, saw_topic_message
                 if not batch:
                     return True
 
@@ -641,15 +646,20 @@ class Collector:
                     return False
 
                 persisted_max_msg_id = max(persisted_max_msg_id, max(expected_ids))
-                all_messages.extend(batch)
+                collected_count += len(batch)
+                if not saw_topic_message and any(m.topic_id is not None for m in batch):
+                    saw_topic_message = True
+                # Only retain objects when they are needed downstream (notifications).
+                if should_notify:
+                    all_messages.extend(batch)
                 logger.info(
                     "Channel %d: persisted %d messages, total %d",
                     channel_id,
                     len(batch),
-                    len(all_messages),
+                    collected_count,
                 )
                 if progress_callback:
-                    await progress_callback(total_collected + len(all_messages))
+                    await progress_callback(total_collected + collected_count)
                 return True
 
             try:
@@ -989,7 +999,7 @@ class Collector:
                 await self._pool.release_client(phone)
 
             if stop_due_to_persistence_error:
-                return total_collected + len(all_messages)
+                return total_collected + collected_count
 
             # Handle FloodWait AFTER finally has flushed progress.
             # Rotate regular collection FloodWaits to another account
@@ -1032,11 +1042,11 @@ class Collector:
                 if channel.id is not None:
                     updated = await self._db.get_channel_by_pk(channel.id)
                 if updated:
-                    total_collected += len(all_messages)
-                    progress_offset += len(all_messages)
+                    total_collected += collected_count
+                    progress_offset += collected_count
                     channel = updated
                     continue
-                return total_collected + len(all_messages)
+                return total_collected + collected_count
 
             if should_notify and all_messages:
                 for m in all_messages:
@@ -1045,7 +1055,7 @@ class Collector:
 
             # Update forum topics in DB if messages with topic_id
             # were collected
-            if all_messages and any(m.topic_id is not None for m in all_messages):
+            if saw_topic_message:
                 cached = await self._db.get_forum_topics(channel_id)
                 if not cached:
                     try:
@@ -1059,7 +1069,7 @@ class Collector:
                             e,
                         )
 
-            if is_first_run and not force and len(all_messages) >= 50:
+            if is_first_run and not force and collected_count >= 50:
                 cur = await self._db.execute(
                     "SELECT COUNT(*) as total,"
                     " COUNT(DISTINCT substr(text,1,100)) as uniq"
@@ -1080,7 +1090,7 @@ class Collector:
                         # Not auto-deleting here: messages were just collected,
                         # channel will be deleted on the next collection run.
 
-            return total_collected + len(all_messages)
+            return total_collected + collected_count
 
     async def _discover_phone_for_channel(
         self, channel_id: int, exclude: str
