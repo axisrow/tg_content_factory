@@ -18,7 +18,7 @@ from telethon.errors import (
     UsernameNotOccupiedError,
 )
 from telethon.tl.types import Channel as TLChannel
-from telethon.tl.types import ChannelForbidden, Chat, PeerChannel, PeerUser
+from telethon.tl.types import ChannelForbidden, Chat, PeerChannel, PeerChat, PeerUser
 
 from src.config import TelegramRuntimeConfig
 from src.database import Database
@@ -330,9 +330,15 @@ class ClientPool:
         if target_type is None:
             dialog = await self._get_cached_dialog(phone, dialog_id)
             cached_type = str(dialog.get("channel_type") or "") if dialog else ""
-            if cached_type in {"dm", "bot", "saved"}:
+            if cached_type in {"dm", "bot", "saved", "group"}:
                 target_type = cached_type
-        peer = PeerUser(dialog_id) if target_type in ("dm", "bot", "saved") else PeerChannel(abs(dialog_id))
+        if target_type in ("dm", "bot", "saved"):
+            peer = PeerUser(dialog_id)
+        elif target_type == "group":
+            # Legacy small groups are PeerChat, not PeerChannel.
+            peer = PeerChat(abs(dialog_id))
+        else:
+            peer = PeerChannel(abs(dialog_id))
         try:
             return await run_with_flood_wait(
                 session.resolve_input_entity(peer),
@@ -1363,7 +1369,13 @@ class ClientPool:
         try:
             for cid, ctype in dialogs:
                 try:
-                    peer = PeerUser(cid) if ctype in ("dm", "bot", "saved") else PeerChannel(abs(cid))
+                    if ctype in ("dm", "bot", "saved"):
+                        peer = PeerUser(cid)
+                    elif ctype == "group":
+                        # Legacy small groups are PeerChat, not PeerChannel.
+                        peer = PeerChat(abs(cid))
+                    else:
+                        peer = PeerChannel(abs(cid))
                     async def _remove_dialog() -> None:
                         entity = await session.resolve_entity(peer)
                         await session.remove_dialog(entity)

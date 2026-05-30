@@ -29,6 +29,8 @@ from telethon.tl.types import (
     MessageMediaGeo,
     MessageMediaGeoLive,
     MessageMediaWebPage,
+    PeerChannel,
+    PeerChat,
     PeerUser,
 )
 
@@ -109,6 +111,49 @@ async def test_resolve_dialog_entity_uses_cached_dm_type_before_warm(pool, mock_
     peer = client.get_input_entity.await_args.args[0]
     assert isinstance(peer, PeerUser)
     client.get_dialogs.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_resolve_dialog_entity_legacy_group_uses_peerchat(pool, mock_db):
+    """Legacy small groups (channel_type == 'group') must resolve via PeerChat (#633)."""
+    client = AsyncMock()
+    client.get_input_entity = AsyncMock(return_value="chat-entity")
+    client.get_dialogs = AsyncMock(return_value=[])
+    mock_db.repos.dialog_cache.get_dialog.return_value = {
+        "channel_id": -1234567,
+        "title": "Legacy Group",
+        "username": None,
+        "channel_type": "group",
+    }
+
+    result = await pool.resolve_dialog_entity(client, "+1", -1234567)
+
+    assert result == "chat-entity"
+    peer = client.get_input_entity.await_args.args[0]
+    assert isinstance(peer, PeerChat)
+    assert peer.chat_id == 1234567
+    client.get_dialogs.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_resolve_dialog_entity_channel_uses_peerchannel(pool, mock_db):
+    """Regular channels still resolve via PeerChannel (#633 regression guard)."""
+    client = AsyncMock()
+    client.get_input_entity = AsyncMock(return_value="channel-entity")
+    client.get_dialogs = AsyncMock(return_value=[])
+    mock_db.repos.dialog_cache.get_dialog.return_value = {
+        "channel_id": -1001234567,
+        "title": "Some Channel",
+        "username": "somechannel",
+        "channel_type": "channel",
+    }
+
+    result = await pool.resolve_dialog_entity(client, "+1", -1001234567)
+
+    assert result == "channel-entity"
+    peer = client.get_input_entity.await_args.args[0]
+    assert isinstance(peer, PeerChannel)
+    assert peer.channel_id == 1001234567
 
 
 # ---------------------------------------------------------------------------
