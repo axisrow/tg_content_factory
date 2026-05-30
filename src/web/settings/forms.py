@@ -11,6 +11,7 @@ from src.services.embedding_service import (
     DEFAULT_EMBEDDINGS_MODEL,
     DEFAULT_EMBEDDINGS_PROVIDER,
 )
+from src.services.telegram_command_dispatcher import DEFAULT_REACTION_MIN_INTERVAL_SEC
 
 CREDENTIALS_MASK = "••••••••"
 
@@ -134,7 +135,9 @@ def parse_scheduler_form(form: FormMapping) -> SchedulerSettingsForm:
         SchedulerSettingsForm,
         {
             "interval_minutes": form.get("collect_interval_minutes", 60),
-            "reaction_min_interval_sec": form.get("reaction_min_interval_sec", 5),
+            "reaction_min_interval_sec": form.get(
+                "reaction_min_interval_sec", int(DEFAULT_REACTION_MIN_INTERVAL_SEC)
+            ),
         },
     )
     return parsed.model_copy(

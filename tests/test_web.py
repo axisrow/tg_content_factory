@@ -2953,6 +2953,21 @@ async def test_save_scheduler_clamps_reaction_min_interval(client):
 
 
 @pytest.mark.anyio
+async def test_save_scheduler_reaction_min_interval_missing_uses_default(client):
+    """A POST omitting the field falls back to the dispatcher default (30), not a stale 5."""
+    from src.services.telegram_command_dispatcher import DEFAULT_REACTION_MIN_INTERVAL_SEC
+
+    db = client._transport.app.state.db
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "30"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert await db.get_setting("reaction_min_interval_sec") == str(int(DEFAULT_REACTION_MIN_INTERVAL_SEC))
+
+
+@pytest.mark.anyio
 async def test_settings_page_renders_reaction_min_interval(client):
     """GET /settings renders the persisted reaction spacing value in the form."""
     db = client._transport.app.state.db
