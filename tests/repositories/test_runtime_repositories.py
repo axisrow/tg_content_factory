@@ -217,6 +217,130 @@ async def test_command_service_lists_and_summarizes_with_filters(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_cancel_command_only_cancels_pending(tmp_path):
+    """Issue #621: reaction tasks (PENDING `dialogs.react` rows) must be
+    cancellable. RUNNING ones must be left alone — their Telegram API call
+    is already in flight."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        pending_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="dialogs.react",
+                payload={"phone": "+1", "message_id": 1, "emoji": "👍"},
+                requested_by="test",
+            )
+        )
+        running_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="dialogs.react",
+                payload={"phone": "+1", "message_id": 2, "emoji": "👍"},
+                requested_by="test",
+            )
+        )
+        # Promote the second row to RUNNING directly so we have one of each.
+        await db.repos.telegram_commands.update_command(
+            running_id, status=TelegramCommandStatus.RUNNING
+        )
+
+        ok = await db.repos.telegram_commands.cancel_command(pending_id)
+        assert ok is True
+        cancelled = await db.repos.telegram_commands.get_command(pending_id)
+        assert cancelled is not None
+        assert cancelled.status == TelegramCommandStatus.CANCELLED
+        assert cancelled.finished_at is not None
+
+        ok_running = await db.repos.telegram_commands.cancel_command(running_id)
+        assert ok_running is False
+        still_running = await db.repos.telegram_commands.get_command(running_id)
+        assert still_running is not None
+        assert still_running.status == TelegramCommandStatus.RUNNING
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_cancel_pending_commands_filters_by_type_and_phone(tmp_path):
+    """Issue #621: bulk-cancel must respect command_type and phone filters."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        for message_id in range(3):
+            await db.repos.telegram_commands.create_command(
+                TelegramCommand(
+                    command_type="dialogs.react",
+                    payload={"phone": "+1", "message_id": message_id, "emoji": "👍"},
+                    requested_by="test",
+                )
+            )
+        other_phone_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="dialogs.react",
+                payload={"phone": "+2", "message_id": 99, "emoji": "👍"},
+                requested_by="test",
+            )
+        )
+        other_type_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="dialogs.send_message",
+                payload={"phone": "+1", "recipient": "@chat", "text": "hi"},
+                requested_by="test",
+            )
+        )
+
+        cancelled = await db.repos.telegram_commands.cancel_pending_commands(
+            command_type="dialogs.react", phone="+1"
+        )
+        assert cancelled == 3
+
+        # +2 reaction and +1 send_message must be untouched.
+        other_phone = await db.repos.telegram_commands.get_command(other_phone_id)
+        other_type = await db.repos.telegram_commands.get_command(other_type_id)
+        assert other_phone is not None and other_phone.status == TelegramCommandStatus.PENDING
+        assert other_type is not None and other_type.status == TelegramCommandStatus.PENDING
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_cancel_pending_commands_unfiltered_skips_running(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        pending_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="dialogs.react",
+                payload={"phone": "+1", "message_id": 1, "emoji": "👍"},
+                requested_by="test",
+            )
+        )
+        running_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="dialogs.react",
+                payload={"phone": "+1", "message_id": 2, "emoji": "👍"},
+                requested_by="test",
+            )
+        )
+        await db.repos.telegram_commands.update_command(
+            running_id, status=TelegramCommandStatus.RUNNING
+        )
+
+        cancelled = await db.repos.telegram_commands.cancel_pending_commands()
+        assert cancelled == 1
+        pending_check = await db.repos.telegram_commands.get_command(pending_id)
+        assert pending_check is not None
+        assert pending_check.status == TelegramCommandStatus.CANCELLED
+        running_check = await db.repos.telegram_commands.get_command(running_id)
+        assert running_check is not None
+        assert running_check.status == TelegramCommandStatus.RUNNING
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_runtime_snapshots_repository_upsert_and_get(tmp_path):
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()

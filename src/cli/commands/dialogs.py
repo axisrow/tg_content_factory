@@ -5,6 +5,7 @@ import asyncio
 import time
 
 from src.cli import runtime
+from src.models import TelegramCommandStatus
 from src.services.channel_service import ChannelService
 from src.services.telegram_actions import (
     BROADCAST_STAT_FIELDS,
@@ -13,6 +14,7 @@ from src.services.telegram_actions import (
     TelegramActionNoMediaError,
     TelegramActionService,
 )
+from src.services.telegram_command_service import TelegramCommandService
 from src.telegram.flood_wait import HandledFloodWaitError
 from src.telegram.reactions import (
     SUPPORTED_REACTION_EMOJIS_DISPLAY,
@@ -767,6 +769,74 @@ def run_with_dependencies(
                         else 0
                     )
                     print(fmt.format(phone, str(db_count), cached_at_str, str(mem_entries)))
+
+            elif args.dialogs_action == "queue":
+                service = TelegramCommandService(db)
+                if args.queue_action == "status":
+                    status_value = None
+                    summary = await service.summary(
+                        command_type=args.command_type or None,
+                        phone=args.phone or None,
+                        status=status_value,
+                    )
+                    total = sum(summary.values())
+                    print(
+                        f"Total: {total} | "
+                        f"pending: {summary.get(TelegramCommandStatus.PENDING, 0)} | "
+                        f"running: {summary.get(TelegramCommandStatus.RUNNING, 0)} | "
+                        f"succeeded: {summary.get(TelegramCommandStatus.SUCCEEDED, 0)} | "
+                        f"failed: {summary.get(TelegramCommandStatus.FAILED, 0)} | "
+                        f"cancelled: {summary.get(TelegramCommandStatus.CANCELLED, 0)}"
+                    )
+                    limit = max(1, min(int(args.limit or 20), 100))
+                    commands = await service.list(
+                        command_type=args.command_type or None,
+                        phone=args.phone or None,
+                        limit=limit,
+                    )
+                    if not commands:
+                        print("No commands in queue.")
+                    else:
+                        for cmd in commands:
+                            payload_phone = cmd.payload.get("phone") if isinstance(cmd.payload, dict) else None
+                            run_after = cmd.run_after.isoformat() if cmd.run_after else "-"
+                            print(
+                                f"#{cmd.id} {cmd.command_type} status={cmd.status.value} "
+                                f"phone={payload_phone or '-'} run_after={run_after}"
+                            )
+                elif args.queue_action == "cancel":
+                    if not args.yes:
+                        print(f"Cancel queue command #{args.command_id}")
+                        answer = input("Continue? [y/N] ").strip().lower()
+                        if answer != "y":
+                            print("Aborted.")
+                            return
+                    ok = await service.cancel(int(args.command_id))
+                    if ok:
+                        print(f"Command #{args.command_id} cancelled.")
+                    else:
+                        print(
+                            f"Command #{args.command_id} not found or not pending "
+                            f"(only PENDING commands can be cancelled)."
+                        )
+                elif args.queue_action == "clear-pending":
+                    if not args.yes:
+                        filt = []
+                        if args.command_type:
+                            filt.append(f"type={args.command_type}")
+                        if args.phone:
+                            filt.append(f"phone={args.phone}")
+                        scope = ", ".join(filt) if filt else "ALL types and accounts"
+                        print(f"Bulk-cancel pending commands ({scope})")
+                        answer = input("Continue? [y/N] ").strip().lower()
+                        if answer != "y":
+                            print("Aborted.")
+                            return
+                    cancelled = await service.cancel_pending(
+                        command_type=args.command_type or None,
+                        phone=args.phone or None,
+                    )
+                    print(f"Cancelled pending commands: {cancelled}.")
         finally:
             await pool.disconnect_all()
             await db.close()

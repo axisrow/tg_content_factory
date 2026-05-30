@@ -13,7 +13,7 @@
 | Статистика канала | `channel stats` | `POST /channels/{pk}/stats` | `collect_channel_stats`, `get_channel_stats` |
 | Импорт каналов | `channel import` | `POST /channels/import` | `import_channels` |
 | Обновить типы | `channel refresh-types` | `POST /channels/refresh-types` | `refresh_channel_types` |
-| Обновить метаданные | `channel refresh-meta` | — | `refresh_channel_meta` |
+| Обновить метаданные | `channel refresh-meta` | `POST /channels/refresh-meta` | `refresh_channel_meta` |
 | Массовое добавление из диалогов | `channel add-bulk` | `POST /channels/add-bulk` | — |
 | Список тегов | `channel tag list` | `GET /channels/tags` | `list_tags` |
 | Создать тег | `channel tag add` | `POST /channels/tags` | `create_tag` |
@@ -101,11 +101,11 @@
 | Одобрить (bulk) | `pipeline bulk-approve` | `POST /moderation/bulk-approve` | `bulk_approve_runs` |
 | Отклонить (bulk) | `pipeline bulk-reject` | `POST /moderation/bulk-reject` | `bulk_reject_runs` |
 | Шаги refinement | `pipeline refinement-steps` | `GET/POST /pipelines/{id}/refinement-steps` | `get_refinement_steps`, `set_refinement_steps` |
-| Экспорт JSON | `pipeline export` | — | `export_pipeline_json` |
-| Импорт JSON | `pipeline import` | — | `import_pipeline_json` |
-| Список шаблонов | `pipeline templates` | — | `list_pipeline_templates` |
-| Создать из шаблона | `pipeline from-template` | — | `create_pipeline_from_template` |
-| AI edit | `pipeline ai-edit` | — | `ai_edit_pipeline` |
+| Экспорт JSON | `pipeline export` | `GET /pipelines/{id}/export` | `export_pipeline_json` |
+| Импорт JSON | `pipeline import` | `POST /pipelines/import` | `import_pipeline_json` |
+| Список шаблонов | `pipeline templates` | `GET /pipelines/templates` | `list_pipeline_templates` |
+| Создать из шаблона | `pipeline from-template` | `POST /pipelines/from-template` | `create_pipeline_from_template` |
+| AI edit | `pipeline ai-edit` | `POST /pipelines/{id}/ai-edit` | `ai_edit_pipeline` |
 | Страница модерации | `pipeline moderation-list` | `GET /moderation/` | `list_pending_moderation` |
 | Просмотр модерации | `pipeline moderation-view` | `GET /moderation/{id}/view` | `view_moderation_run` |
 | Стрим генерации | — | `GET /pipelines/{id}/generate-stream` | — |
@@ -141,8 +141,8 @@
 | Список | `account list` | `GET /settings/` | `list_accounts` |
 | Вкл/выкл | `account toggle` | `POST /settings/{id}/toggle` | `toggle_account` |
 | Удалить | `account delete` | `POST /settings/{id}/delete` | `delete_account` |
-| Flood статус | `account flood-status` | — | `get_flood_status` |
-| Сбросить flood | `account flood-clear` | — | `clear_flood_status` |
+| Flood статус | `account flood-status` | `GET /settings/flood-status` | `get_flood_status` |
+| Сбросить flood | `account flood-clear` | `POST /settings/{id}/flood-clear` | `clear_flood_status` |
 | Инфо | `account info` | — | `get_account_info` |
 | Добавить аккаунт | `account add` | `POST /auth/send-code`, `POST /auth/verify-code` | — |
 
@@ -153,7 +153,7 @@
 | Сводка | `analytics summary` | `GET /analytics/content/api/summary` | `get_analytics_summary` |
 | Топ сообщений | `analytics top` | — | `get_top_messages` |
 | Типы контента | `analytics content-types` | `GET /analytics/content` | `get_content_type_stats` |
-| Почасовая активность | `analytics hourly` | — | `get_hourly_activity` |
+| Почасовая активность | `analytics hourly` | `GET /analytics` | `get_hourly_activity` |
 | Ежедневная статистика | `analytics daily` | `GET /analytics/content/api/pipelines` | `get_daily_stats` |
 | Статистика пайплайнов | `analytics pipeline-stats` | — | `get_pipeline_stats` |
 | Трендовые темы | `analytics trending-topics` | `GET /analytics/trends` | `get_trending_topics` |
@@ -206,7 +206,7 @@
 | Отменить батч | `photo-loader batch-cancel` | `POST /dialogs/photos/items/{id}/cancel` | `cancel_photo_item` |
 | Авто-загрузка | `photo-loader auto-create` | `POST /dialogs/photos/auto` | `create_auto_upload` |
 | Список авто | `photo-loader auto-list` | — | `list_auto_uploads` |
-| Обновить авто | `photo-loader auto-update` | — | `update_auto_upload` |
+| Обновить авто | `photo-loader auto-update` | `POST /dialogs/photos/auto/{id}/update` | `update_auto_upload` |
 | Вкл/выкл авто | `photo-loader auto-toggle` | `POST /dialogs/photos/auto/{id}/toggle` | `toggle_auto_upload` |
 | Удалить авто | `photo-loader auto-delete` | `POST /dialogs/photos/auto/{id}/delete` | `delete_auto_upload` |
 | Запустить due | `photo-loader run-due` | `POST /dialogs/photos/run-due` | `run_photo_due` |
@@ -242,7 +242,9 @@
 | Переименовать | `agent thread-rename` | `POST /agent/threads/{id}/rename` | `rename_agent_thread` |
 | Сообщения треда | `agent messages` | — | `get_thread_messages` |
 | Чат | `agent chat` | `POST /agent/threads/{id}/chat` | — |
-| Статус Telegram-очереди | `agent chat` | `POST /agent/threads/{id}/chat` | `get_telegram_queue_status` |
+| Статус Telegram-очереди | `dialogs queue status` | `POST /agent/threads/{id}/chat` | `get_telegram_queue_status` |
+| Отменить задание очереди | `dialogs queue cancel` | `POST /dialogs/queue/{id}/cancel` | `cancel_telegram_command` |
+| Очистить ожидающие в очереди | `dialogs queue clear-pending` | `POST /dialogs/queue/clear-pending` | `clear_pending_telegram_commands` |
 | Контекст | `agent context` | `POST /agent/threads/{id}/context` | — |
 | Остановить | — | `POST /agent/threads/{id}/stop` | — |
 
@@ -253,6 +255,7 @@
 | Получить | `settings get` | `GET /settings/` | `get_settings` |
 | Установить raw key/value | `settings set` | `POST /settings/save-*` | — |
 | Диагностика | `settings info` | — | `get_system_info` |
+| Время сервера | `settings server-time` | — | `get_server_time` |
 | Агент | `settings agent` | `POST /settings/save-agent` | `save_agent_settings` |
 | Фильтры | `settings filter-criteria` | `POST /settings/save-filters` | `save_filter_settings` |
 | Семантический поиск | `settings semantic` | `POST /settings/save-semantic-search` | — |

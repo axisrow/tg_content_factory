@@ -1500,6 +1500,49 @@ async def test_search_with_invalid_channel_id_returns_error(client):
 
 
 @pytest.mark.anyio
+async def test_search_modes_disabled_when_backends_unavailable(client):
+    """#618: unavailable search modes are disabled in the UI, no raw errors leak."""
+    import re
+
+    app = client._transport.app
+    app.state.pool = SimpleNamespace(clients={})
+    app.state.search_engine = SimpleNamespace(
+        semantic_available=False,
+        check_search_quota=AsyncMock(return_value=None),
+    )
+
+    resp = await client.get("/search")
+    assert resp.status_code == 200
+    text = resp.text
+
+    def radio(mode_id):
+        m = re.search(r'id="' + re.escape(mode_id) + r'"[^>]*>', text)
+        assert m, f"radio {mode_id} not found"
+        return m.group(0)
+
+    for mode_id in ("mode-semantic", "mode-hybrid", "mode-my-chats", "mode-channel", "mode-telegram"):
+        assert "disabled" in radio(mode_id), f"{mode_id} should be disabled"
+    assert "disabled" not in radio("mode-local")
+    assert "Semantic search is unavailable" not in text
+
+
+@pytest.mark.anyio
+async def test_search_semantic_unavailable_shows_friendly_message(client):
+    """#618: requesting a semantic search without backend yields a friendly message."""
+    app = client._transport.app
+    # Force the real engine's semantic backend to report unavailable so the
+    # facade guard returns a friendly SearchResult instead of raising.
+    app.state.search_engine._search_bundle = SimpleNamespace(
+        vec_available=False, numpy_available=False
+    )
+
+    resp = await client.get("/search?q=paris&mode=semantic")
+    assert resp.status_code == 200
+    assert "Semantic search is unavailable" not in resp.text
+    assert "Семантический поиск недоступен" in resp.text
+
+
+@pytest.mark.anyio
 async def test_search_with_semantic_mode(client, monkeypatch):
     from src.models import Message
     from src.services.embedding_service import EmbeddingService

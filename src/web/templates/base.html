@@ -52,6 +52,7 @@
                     <li class="nav-item"><a class="nav-link" href="/scheduler">Планировщик</a></li>
                     <li class="nav-item"><a class="nav-link" href="/debug">Дебаг</a></li>
                     <li class="nav-item ms-lg-2 mt-2 mt-lg-0 d-flex align-items-center gap-2">
+                        <span class="navbar-text text-light small me-2 server-clock" data-utc="{{ server_now().isoformat() }}" title="Время сервера (UTC)"><i class="bi bi-clock"></i> <span class="server-clock-value">--:--:-- UTC</span></span>
                         <a class="btn btn-sm btn-outline-light" href="/settings" title="Настройки"><i class="bi bi-gear"></i></a>
                         <button class="btn btn-sm btn-outline-light" id="theme-toggle" type="button" title="Тема: авто"></button>
                         <a class="btn btn-sm btn-outline-light" href="/logout" title="Выйти"><i class="bi bi-box-arrow-right"></i></a>
