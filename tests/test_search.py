@@ -689,3 +689,23 @@ async def test_search_in_channel_runtime_error_returns_search_result(
 )
 def test_extract_length(query, expected):
     assert _extract_length(query) == expected
+
+
+@pytest.mark.anyio
+async def test_search_semantic_unavailable_returns_friendly_error(db):
+    engine = SearchEngine(db)
+    engine._search_bundle = SimpleNamespace(vec_available=False, numpy_available=False)
+    result = await engine.search_semantic("paris")
+    assert result.messages == []
+    assert result.total == 0
+    assert result.error and "Семантический поиск недоступен" in result.error
+
+
+@pytest.mark.anyio
+async def test_search_hybrid_unavailable_returns_friendly_error(db):
+    engine = SearchEngine(db)
+    engine._search_bundle = SimpleNamespace(vec_available=False, numpy_available=False)
+    result = await engine.search_hybrid("paris")
+    assert result.messages == []
+    assert result.total == 0
+    assert result.error and "Семантический поиск недоступен" in result.error
