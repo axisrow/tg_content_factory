@@ -247,12 +247,18 @@
 | Удалить тред | `agent thread-delete` | `DELETE /agent/threads/{id}` | `delete_agent_thread` |
 | Переименовать | `agent thread-rename` | `POST /agent/threads/{id}/rename` | `rename_agent_thread` |
 | Сообщения треда | `agent messages` | — | `get_thread_messages` |
-| Чат | `agent chat` | `POST /agent/threads/{id}/chat` | — |
+| Чат (многоходовой) | `agent chat` | `POST /agent/threads/{id}/chat` | — |
 | Статус Telegram-очереди | `dialogs queue status` | `POST /agent/threads/{id}/chat` | `get_telegram_queue_status` |
 | Отменить задание очереди | `dialogs queue cancel` | `POST /dialogs/queue/{id}/cancel` | `cancel_telegram_command` |
 | Очистить ожидающие в очереди | `dialogs queue clear-pending` | `POST /dialogs/queue/clear-pending` | `clear_pending_telegram_commands` |
 | Контекст | `agent context` | `POST /agent/threads/{id}/context` | — |
 | Остановить | — | `POST /agent/threads/{id}/stop` | — |
+
+> **Многоходовой чат (паритет CLI ↔ Web).** Обе стороны идут через единый
+> `AgentManager.chat_stream`, который на каждом ходе загружает полную историю треда
+> (`get_agent_messages`). В web многоходовость реализована как повторные `POST` в один и тот же
+> `thread_id`: контекст между ходами и события `tool_start`/`tool_end` в SSE на паритете с
+> интерактивным циклом CLI `agent chat`.
 
 ## Настройки
 
