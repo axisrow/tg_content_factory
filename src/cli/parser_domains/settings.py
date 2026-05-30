@@ -12,6 +12,7 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     settings_set.add_argument("key", help="Setting key")
     settings_set.add_argument("value", help="Setting value")
     settings_sub.add_parser("info", help="Show system diagnostics")
+    settings_sub.add_parser("server-time", help="Show current server time (UTC)")
 
     settings_agent = settings_sub.add_parser("agent", help="Configure agent backend and defaults")
     settings_agent.add_argument("--backend", default=None, help="Agent backend (claude-agent-sdk, deepagents)")
