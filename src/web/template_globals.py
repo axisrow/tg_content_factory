@@ -29,6 +29,21 @@ FILTER_FLAG_EMOJI = {
     "suspicious_username": (Markup('<i class="bi bi-dice-5"></i>'), "Подозрительный юзернейм"),
 }
 
+# Human-readable labels for AccountSessionStatus values shown in the accounts
+# table when a saved session cannot be used (issue #550 — SESSION_ENCRYPTION_KEY
+# rotated/lost). Keyed by the StrEnum value.
+SESSION_STATUS_LABELS = {
+    "decrypt_failed": "Ошибка расшифровки",
+    "missing_key": "Нет ключа шифрования",
+    "unsupported_version": "Неподдерживаемая версия шифрования",
+    "encrypted_unknown": "Сессия зашифрована",
+}
+
+
+def session_status_label(status) -> str:
+    """Return a human-readable label for an AccountSessionStatus (or its value)."""
+    return SESSION_STATUS_LABELS.get(str(status), str(status))
+
 FLASH_MESSAGES = {
     "channel_added": "Канал добавлен.",
     "channels_added": "Каналы добавлены.",
@@ -260,6 +275,7 @@ def configure_template_globals(
     templates.env.globals["app_version"] = get_app_version()
     templates.env.globals["server_now"] = lambda: datetime.now(timezone.utc)
     templates.env.globals["filter_flag_emoji"] = FILTER_FLAG_EMOJI
+    templates.env.globals["session_status_label"] = session_status_label
     templates.env.globals["flash_messages"] = FLASH_MESSAGES
     templates.env.globals["flash_errors"] = FLASH_ERRORS
     templates.env.filters["local_dt"] = local_dt_filter

@@ -80,7 +80,11 @@ async def test_settings_degrades_when_account_session_key_is_wrong(route_client,
     assert resp.status_code == 200
     assert "Saved Telegram logins are unavailable" in resp.text
     assert "provider API keys cannot be decrypted" not in resp.text
-    assert "decrypt_failed" in resp.text
+    # Human-readable label is shown (issue #550); raw enum stays as the tooltip.
+    assert "Ошибка расшифровки" in resp.text
+    assert 'title="decrypt_failed"' in resp.text
+    # A per-account reconnect affordance points at the re-login flow.
+    assert "/auth/login?phone=" in resp.text
 
 
 @pytest.mark.anyio
