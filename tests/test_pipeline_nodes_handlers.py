@@ -339,15 +339,21 @@ async def test_notify_no_service():
 
 
 @pytest.mark.anyio
-async def test_notify_success():
+async def test_notify_success(caplog):
     ctx = NodeContext()
     ctx.set_global("generated_text", "news")
     ctx.set_global("trigger_channel_title", "Chan")
     svc = AsyncMock()
-    await NotifyHandler().execute(
-        {"message_template": "[{channel_title}] {text}"}, ctx, {"notification_service": svc}
-    )
+    with caplog.at_level("INFO", logger="src.services.pipeline_nodes.handlers"):
+        await NotifyHandler().execute(
+            {"message_template": "[{channel_title}] {text}"}, ctx, {"notification_service": svc}
+        )
     svc.send_text.assert_awaited_once_with("[Chan] news")
+    # Regression: node_id was assigned only inside the missing-service guard, so the
+    # success log raised NameError that the bare `except` swallowed — silently turning
+    # a successful send into a false "failed to send" warning. Assert the real outcome.
+    assert any("notification sent" in r.message for r in caplog.records)
+    assert not any("failed to send" in r.message for r in caplog.records)
 
 
 @pytest.mark.anyio
