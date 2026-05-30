@@ -624,3 +624,32 @@ async def test_set_channel_type(channels_repo):
 
     channel = await channels_repo.get_channel_by_channel_id(1)
     assert channel.channel_type == "supergroup"
+
+
+# preferred_phone tests
+
+
+async def test_get_preferred_phone_default_none(channels_repo):
+    """A freshly added channel has no preferred phone."""
+    await channels_repo.add_channel(make_channel(1))
+    assert await channels_repo.get_preferred_phone(1) is None
+
+
+async def test_get_preferred_phone_roundtrip(channels_repo):
+    """update_channel_preferred_phone is readable back via get_preferred_phone.
+
+    Regression for #633 (#1): get_preferred_phone used a non-existent
+    Database.fetchone() and crashed with AttributeError on every call.
+    """
+    await channels_repo.add_channel(make_channel(1))
+    await channels_repo.update_channel_preferred_phone(1, "+1234567890")
+    assert await channels_repo.get_preferred_phone(1) == "+1234567890"
+
+    # Clearing resets it back to None.
+    await channels_repo.update_channel_preferred_phone(1, None)
+    assert await channels_repo.get_preferred_phone(1) is None
+
+
+async def test_get_preferred_phone_unknown_channel(channels_repo):
+    """Unknown channel_id yields None, not an error."""
+    assert await channels_repo.get_preferred_phone(999) is None
