@@ -281,7 +281,17 @@
       crossCite.forEach(function(row) {
         var name = row.source_title || row.source_username || row.source_channel_id;
         var tr = document.createElement('tr');
-        tr.innerHTML = '<td>' + name + '</td><td>' + row.citation_count + '</td><td>' + (row.latest_date || '').slice(0, 10) + '</td>';
+        // textContent (not innerHTML): channel titles are attacker-controlled and
+        // would otherwise allow stored XSS, e.g. a title of "<img onerror=...>" (issue #633).
+        var nameTd = document.createElement('td');
+        nameTd.textContent = name;
+        var countTd = document.createElement('td');
+        countTd.textContent = row.citation_count;
+        var dateTd = document.createElement('td');
+        dateTd.textContent = (row.latest_date || '').slice(0, 10);
+        tr.appendChild(nameTd);
+        tr.appendChild(countTd);
+        tr.appendChild(dateTd);
         tbody.appendChild(tr);
       });
     } else {
