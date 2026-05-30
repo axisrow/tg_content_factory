@@ -164,6 +164,88 @@ async def test_get_telegram_queue_status_requires_phone_when_acl_is_phone_scoped
 
 
 @pytest.mark.anyio
+async def test_cancel_telegram_command_gates_on_target_command_phone(tmp_path):
+    """Regression: single-command cancel must be gated on the command's own phone.
+
+    cancel_telegram_command takes a bare command_id (no phone arg), so without a
+    lookup-then-check a phone-restricted agent could enumerate sequential
+    autoincrement IDs and cancel another account's command. The tool now reads
+    the target command's payload phone and gates on it.
+    """
+    db = await _open_db(tmp_path)
+    try:
+        await db.set_setting(
+            "agent_tool_permissions",
+            json.dumps({
+                "+1": {"cancel_telegram_command": True},
+                "+2": {"cancel_telegram_command": False},
+            }),
+        )
+        cmd1 = await _create_reaction(db, phone="+1", message_id=1)
+        cmd2 = await _create_reaction(db, phone="+2", message_id=2)
+        handlers = _get_tool_handlers(db)
+
+        # Agent allowed on +1 tries to cancel +2's command → denied, +2 untouched.
+        denied = await handlers["cancel_telegram_command"]({"command_id": cmd2, "confirm": True})
+        assert "не разрешён" in _text(denied)
+        assert (await db.repos.telegram_commands.get_command(cmd2)).status == TelegramCommandStatus.PENDING
+
+        # Its own command goes through.
+        allowed = await handlers["cancel_telegram_command"]({"command_id": cmd1, "confirm": True})
+        assert "отменено" in _text(allowed)
+        assert (await db.repos.telegram_commands.get_command(cmd1)).status == TelegramCommandStatus.CANCELLED
+
+        # Unknown id is reported as not-found, not a crash.
+        missing = await handlers["cancel_telegram_command"]({"command_id": 999999, "confirm": True})
+        assert "не найдено" in _text(missing)
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_clear_pending_requires_phone_when_acl_is_phone_scoped(tmp_path):
+    """Regression: unscoped bulk-cancel must be gated under a per-phone ACL.
+
+    clear_pending_telegram_commands is in PHONE_BINDED_TOOLS. A phone-restricted
+    agent calling it with no phone would otherwise bulk-cancel pending commands
+    across ALL accounts, because the ACL check used to sit under `if phone:`.
+    """
+    db = await _open_db(tmp_path)
+    try:
+        await db.set_setting(
+            "agent_tool_permissions",
+            json.dumps({
+                "+1": {"clear_pending_telegram_commands": True},
+                "+2": {"clear_pending_telegram_commands": False},
+            }),
+        )
+        await _create_reaction(db, phone="+1", message_id=1)
+        await _create_reaction(db, phone="+2", message_id=2)
+        handlers = _get_tool_handlers(db)
+
+        # No phone + confirm: must be blocked asking for phone, NOT cancel all.
+        missing_phone = await handlers["clear_pending_telegram_commands"]({"confirm": True})
+        assert "укажи параметр phone" in _text(missing_phone)
+
+        # Both commands are still PENDING — nothing was cancelled.
+        for command_id in (1, 2):
+            cmd = await db.repos.telegram_commands.get_command(command_id)
+            assert cmd.status == TelegramCommandStatus.PENDING
+
+        # Denied phone is rejected outright.
+        denied = await handlers["clear_pending_telegram_commands"]({"phone": "+2", "confirm": True})
+        assert "не разрешён" in _text(denied)
+
+        # Allowed phone goes through and cancels only that account's commands.
+        allowed = await handlers["clear_pending_telegram_commands"]({"phone": "+1", "confirm": True})
+        assert "отмен" in _text(allowed).lower()
+        assert (await db.repos.telegram_commands.get_command(1)).status == TelegramCommandStatus.CANCELLED
+        assert (await db.repos.telegram_commands.get_command(2)).status == TelegramCommandStatus.PENDING
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_get_telegram_queue_status_clamps_limit_to_100(tmp_path):
     db = await _open_db(tmp_path)
     try:

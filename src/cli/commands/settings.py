@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from datetime import datetime, timezone
 
 from src.cli import runtime
 
@@ -37,6 +38,14 @@ def run(args: argparse.Namespace) -> None:
                 print("System information:")
                 for key, value in stats.items():
                     print(f"  {key}: {value}")
+
+            elif action == "server-time":
+                # CLI counterpart of the get_server_time agent tool — same UTC fields.
+                now = datetime.now(timezone.utc)
+                print("Текущее время сервера (UTC):")
+                print(f"  ISO8601: {now.isoformat()}")
+                print(f"  Unix: {int(now.timestamp())}")
+                print(f"  Читаемо: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
             elif action == "agent":
                 updated = []
