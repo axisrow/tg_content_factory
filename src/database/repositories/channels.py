@@ -269,10 +269,11 @@ class ChannelsRepository:
 
     async def get_preferred_phone(self, channel_id: int) -> str | None:
         """Return the preferred phone for a channel, or None if not set."""
-        row = await self._db.fetchone(
+        cur = await self._db.execute(
             "SELECT preferred_phone FROM channels WHERE channel_id = ?",
             (channel_id,),
         )
+        row = await cur.fetchone()
         return row["preferred_phone"] if row else None
 
     async def update_channel_created_at(self, channel_id: int, created_at) -> None:
