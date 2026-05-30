@@ -243,6 +243,7 @@ class ContentGenerationService:
             "generation_query": scope.query,
             "channel_id": scope.channel_id,
             "account_phone": pipeline.account_phone,
+            "pipeline_id": pipeline.id,
         }
 
         # Inject read-only agent tools for AgentLoopHandler

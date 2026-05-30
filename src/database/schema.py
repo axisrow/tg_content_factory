@@ -446,4 +446,15 @@ CREATE TABLE IF NOT EXISTS agent_messages (
     content    TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS pipeline_action_log (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    pipeline_id INTEGER NOT NULL,
+    node_id     TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    channel_id  INTEGER NOT NULL,
+    message_id  INTEGER NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(pipeline_id, node_id, action, channel_id, message_id)
+);
 """

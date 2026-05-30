@@ -16,6 +16,7 @@ from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
+from src.database.repositories.pipeline_action_log import PipelineActionLogRepository
 from src.database.repositories.pipeline_templates import PipelineTemplatesRepository
 from src.database.repositories.runtime_snapshots import RuntimeSnapshotsRepository
 from src.database.repositories.search_log import SearchLogRepository
@@ -68,6 +69,7 @@ class DatabaseRepositories:
     pipeline_templates: PipelineTemplatesRepository
     telegram_commands: TelegramCommandsRepository
     runtime_snapshots: RuntimeSnapshotsRepository
+    pipeline_action_log: PipelineActionLogRepository
 
 
 @dataclass(frozen=True)
