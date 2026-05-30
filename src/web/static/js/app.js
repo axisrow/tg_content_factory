@@ -121,6 +121,46 @@
     document.body.addEventListener('htmx:afterSwap', function(e) { convertLocalDates(e.detail.target); });
     window.convertLocalDates = convertLocalDates;
 
+    var _clockInterval = null;
+    function initServerClock() {
+        var el = document.querySelector('.server-clock[data-utc]');
+        if (!el) return;
+        var serverStart = new Date(el.dataset.utc).getTime();
+        if (isNaN(serverStart)) return;
+        // Clear any prior interval: an htmx:afterSwap of hx-target="body" (e.g. the
+        // /dialogs/ account switcher) replaces the navbar, so the old .server-clock node
+        // is detached. Without re-init the clock would freeze; without clearing first we
+        // would leak a tick() writing to a detached node.
+        if (_clockInterval !== null) {
+            clearInterval(_clockInterval);
+            _clockInterval = null;
+        }
+        var offset = serverStart - Date.now(); // server - client
+        var out = el.querySelector('.server-clock-value') || el;
+        function tick() {
+            var d = new Date(Date.now() + offset);
+            var hh = String(d.getUTCHours()).padStart(2, '0');
+            var mm = String(d.getUTCMinutes()).padStart(2, '0');
+            var ss = String(d.getUTCSeconds()).padStart(2, '0');
+            out.textContent = hh + ':' + mm + ':' + ss + ' UTC';
+        }
+        tick();
+        _clockInterval = setInterval(tick, 1000);
+    }
+    document.addEventListener('DOMContentLoaded', initServerClock);
+    // Re-init only when the swap actually replaced the clock (e.g. hx-target="body"
+    // on /dialogs/). Re-initialising on every partial swap would needlessly clear and
+    // restart the interval, making the seconds counter visibly stutter. Mirrors how
+    // convertLocalDates scopes its work to e.detail.target.
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        var t = e.detail && e.detail.target;
+        if (!t) return;
+        if ((t.classList && t.classList.contains('server-clock')) ||
+            (t.querySelector && t.querySelector('.server-clock'))) {
+            initServerClock();
+        }
+    });
+
     function tgdlgCreate(message, choices) {
         return new Promise(function(resolve) {
             var modal = document.createElement('div');
