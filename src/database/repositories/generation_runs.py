@@ -92,6 +92,17 @@ class GenerationRunsRepository:
             (run_id,),
         )
 
+    async def set_metadata(self, run_id: int, metadata: dict) -> None:
+        """Persist the run metadata JSON without touching status or published_at.
+
+        Used to record incremental publish progress (per-target delivery) so a
+        retry does not re-send to targets already published.
+        """
+        await self._database.execute_write(
+            "UPDATE generation_runs SET metadata = ?, updated_at = datetime('now') WHERE id = ?",
+            (safe_json_dumps(metadata, ensure_ascii=False), run_id),
+        )
+
     async def set_quality_score(
         self, run_id: int, score: float, issues: list[str] | None = None
     ) -> None:

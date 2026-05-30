@@ -18,6 +18,11 @@ class PublishResult:
     error: str | None = None
 
 
+def _target_key(target: PipelineTarget) -> str:
+    """Stable identity for a publish target — (phone, dialog_id) pair."""
+    return f"{target.phone}:{target.dialog_id}"
+
+
 class PublishService:
     """Service for publishing generated content to Telegram targets.
 
@@ -64,10 +69,30 @@ class PublishService:
             logger.warning("Pipeline %s has no targets", pipeline.id)
             return [PublishResult(success=False, error="No targets configured")]
 
+        # Track per-target delivery across attempts: on a partial failure the run
+        # stays eligible for retry, so without this a re-publish would re-send to
+        # targets that already succeeded, duplicating messages (issue #633).
+        metadata = dict(run.metadata or {})
+        delivered: set[str] = set(metadata.get("published_targets") or [])
+
         results: list[PublishResult] = []
+        newly_delivered: list[str] = []
         for target in targets:
+            key = _target_key(target)
+            if key in delivered:
+                # Already published on a previous attempt — skip to avoid a duplicate.
+                results.append(PublishResult(success=True))
+                continue
             result = await self._publish_to_target(run, target)
             results.append(result)
+            if result.success:
+                newly_delivered.append(key)
+
+        # Persist incremental progress so a later retry resumes only the failed targets.
+        if newly_delivered:
+            delivered.update(newly_delivered)
+            metadata["published_targets"] = sorted(delivered)
+            await self._db.repos.generation_runs.set_metadata(run.id, metadata)
 
         if all(r.success for r in results):
             await self._db.repos.generation_runs.set_published_at(run.id)

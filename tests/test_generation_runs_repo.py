@@ -95,3 +95,20 @@ async def test_generation_runs_repo_hydrates_variant_fields(db):
     rows = await repo.list_by_pipeline(42)
     assert rows[0].variants == ["base", "variant 2"]
     assert rows[0].selected_variant == 1
+
+
+@pytest.mark.anyio
+async def test_set_metadata_persists_without_changing_status(db):
+    """set_metadata writes the metadata JSON but leaves status/published_at intact (issue #633)."""
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt-template")
+    await repo.set_moderation_status(run_id, "approved")
+
+    await repo.set_metadata(run_id, {"published_targets": ["+1:-1001"]})
+
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.metadata["published_targets"] == ["+1:-1001"]
+    # Status and publication state are untouched.
+    assert run.moderation_status == "approved"
+    assert run.published_at is None
