@@ -2925,6 +2925,79 @@ async def test_save_scheduler_clamps_to_max(client):
 
 
 @pytest.mark.anyio
+async def test_save_scheduler_persists_reaction_min_interval(client):
+    """POST /settings/save-scheduler persists the reaction spacing setting."""
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "30", "reaction_min_interval_sec": "5"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=scheduler_saved" in resp.headers["location"]
+    db = client._transport.app.state.db
+    assert await db.get_setting("reaction_min_interval_sec") == "5"
+
+
+@pytest.mark.anyio
+async def test_save_scheduler_clamps_reaction_min_interval(client):
+    """Reaction spacing is clamped to the [1, 300] range."""
+    db = client._transport.app.state.db
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "30", "reaction_min_interval_sec": "0"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert await db.get_setting("reaction_min_interval_sec") == "1"
+
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "30", "reaction_min_interval_sec": "9999"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert await db.get_setting("reaction_min_interval_sec") == "300"
+
+
+@pytest.mark.anyio
+async def test_save_scheduler_reaction_min_interval_missing_uses_default(client):
+    """A POST omitting the field falls back to the dispatcher default (30), not a stale 5."""
+    from src.services.telegram_command_dispatcher import DEFAULT_REACTION_MIN_INTERVAL_SEC
+
+    db = client._transport.app.state.db
+    resp = await client.post(
+        "/settings/save-scheduler",
+        data={"collect_interval_minutes": "30"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert await db.get_setting("reaction_min_interval_sec") == str(int(DEFAULT_REACTION_MIN_INTERVAL_SEC))
+
+
+@pytest.mark.anyio
+async def test_settings_page_renders_reaction_min_interval(client):
+    """GET /settings renders the persisted reaction spacing value in the form."""
+    db = client._transport.app.state.db
+    await db.set_setting("reaction_min_interval_sec", "7")
+    resp = await client.get("/settings")
+    assert resp.status_code == 200
+    assert 'id="reaction_min_interval_sec" name="reaction_min_interval_sec"' in resp.text
+    assert 'name="reaction_min_interval_sec"\n               min="1" max="300" value="7"' in resp.text
+
+
+@pytest.mark.anyio
+async def test_settings_page_renders_decimal_reaction_min_interval(client):
+    """A decimal value (e.g. via `settings set`) is displayed as enforced, not as the default."""
+    db = client._transport.app.state.db
+    await db.set_setting("reaction_min_interval_sec", "2.5")
+    resp = await client.get("/settings")
+    assert resp.status_code == 200
+    # Displayed value matches what the dispatcher enforces (parse_float_setting),
+    # rather than silently falling back to the integer default.
+    assert 'min="1" max="300" value="2.5"' in resp.text
+
+
+@pytest.mark.anyio
 async def test_save_filters_valid(client):
     from src.models import Channel, ChannelStats
 
