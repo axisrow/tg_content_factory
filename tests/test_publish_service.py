@@ -37,19 +37,24 @@ class FakePipelinesRepo:
 class FakeGenerationRunsRepo:
     def __init__(self):
         self.published_ids = []
+        self.metadata_by_id = {}
 
     async def set_published_at(self, run_id):
         self.published_ids.append(run_id)
 
+    async def set_metadata(self, run_id, metadata):
+        self.metadata_by_id[run_id] = metadata
+
 
 class FakeClientPool:
-    def __init__(self, should_succeed=True):
+    def __init__(self, should_succeed=True, fail_phones=None):
         self._should_succeed = should_succeed
+        self._fail_phones = set(fail_phones or [])
         self._clients = {}
         self.released = []
 
     async def get_client_by_phone(self, phone):
-        if not self._should_succeed:
+        if not self._should_succeed or phone in self._fail_phones:
             return None
         client = self._clients.setdefault(phone, FakeClient())
         return (client, phone)
@@ -186,6 +191,75 @@ async def test_publish_service_success():
     assert results[0].message_id == 12345
     assert 1 in db.repos.generation_runs.published_ids
     assert pool.released == ["+1234567890"]
+
+
+@pytest.mark.anyio
+async def test_publish_service_partial_failure_records_delivered():
+    """Partial multi-target failure records delivered targets and does NOT mark published (issue #633)."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [
+            PipelineTarget(id=1, pipeline_id=1, phone="+1111111111", dialog_id=-1001),
+            PipelineTarget(id=2, pipeline_id=1, phone="+2222222222", dialog_id=-1002),
+        ]
+    )
+    # Second target has no available client → fails.
+    pool = FakeClientPool(fail_phones={"+2222222222"})
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert [r.success for r in results] == [True, False]
+    # Not fully published → run stays eligible for retry.
+    assert 1 not in db.repos.generation_runs.published_ids
+    # The delivered target is persisted so a retry can skip it.
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == ["+1111111111:-1001"]
+
+
+@pytest.mark.anyio
+async def test_publish_service_retry_skips_delivered_targets():
+    """A retry skips already-delivered targets (no duplicate) and completes the run (issue #633)."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [
+            PipelineTarget(id=1, pipeline_id=1, phone="+1111111111", dialog_id=-1001),
+            PipelineTarget(id=2, pipeline_id=1, phone="+2222222222", dialog_id=-1002),
+        ]
+    )
+    # On retry every client is available again.
+    pool = FakeClientPool()
+    service = PublishService(db, pool)
+
+    # Simulate a prior attempt that already delivered to the first target.
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        metadata={"published_targets": ["+1111111111:-1001"]},
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert [r.success for r in results] == [True, True]
+    # First target was skipped — never acquired a client, so no duplicate send.
+    assert "+1111111111" not in pool._clients
+    # Second target was actually sent.
+    assert "+2222222222" in pool._clients
+    assert len(pool._clients["+2222222222"].sent_messages) == 1
+    # All targets delivered → run is now marked published.
+    assert 1 in db.repos.generation_runs.published_ids
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
+        "+1111111111:-1001",
+        "+2222222222:-1002",
+    ]
 
 
 @pytest.mark.anyio
