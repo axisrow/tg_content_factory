@@ -2002,3 +2002,47 @@ async def test_dialogs_edit_permissions_with_until_date():
     })
     kwargs = c.edit_permissions.call_args[1]
     assert "until_date" in kwargs
+
+
+# --- _handle_search_telegram: proxies live Telegram search to the worker (#643) ---
+
+
+async def test_search_telegram_handler_routes_premium():
+    from src.models import Message, SearchResult
+
+    engine = MagicMock()
+    msg = Message(
+        channel_id=-100, message_id=1, text="hit",
+        date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+    engine.search_telegram = AsyncMock(return_value=SearchResult(messages=[msg], total=1, query="q"))
+    d = _dispatcher(search_engine=engine)
+
+    out = await d._handle_search_telegram({"mode": "telegram", "query": "q", "limit": 25})
+
+    engine.search_telegram.assert_awaited_once_with("q", limit=25)
+    assert out["result"]["total"] == 1
+    assert out["result"]["messages"][0]["text"] == "hit"
+    # result_payload must round-trip back into a SearchResult
+    assert SearchResult.model_validate(out["result"]).messages[0].message_id == 1
+
+
+async def test_search_telegram_handler_routes_my_chats_and_channel():
+    from src.models import SearchResult
+
+    engine = MagicMock()
+    engine.search_my_chats = AsyncMock(return_value=SearchResult(messages=[], total=0, query="q"))
+    engine.search_in_channel = AsyncMock(return_value=SearchResult(messages=[], total=0, query="q"))
+    d = _dispatcher(search_engine=engine)
+
+    await d._handle_search_telegram({"mode": "my_chats", "query": "q", "limit": 10})
+    engine.search_my_chats.assert_awaited_once_with("q", limit=10)
+
+    await d._handle_search_telegram({"mode": "channel", "query": "q", "limit": 10, "channel_id": -100500})
+    engine.search_in_channel.assert_awaited_once_with(-100500, "q", limit=10)
+
+
+async def test_search_telegram_handler_without_engine_raises():
+    d = _dispatcher(search_engine=None)
+    with pytest.raises(RuntimeError, match="Search engine unavailable"):
+        await d._handle_search_telegram({"mode": "telegram", "query": "q"})
