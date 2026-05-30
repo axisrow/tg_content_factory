@@ -192,6 +192,8 @@
 | `send_message` | WRITE | Отправить сообщение |
 | `send_reaction` | WRITE | Поставить emoji-реакцию на сообщение |
 | `get_telegram_queue_status` | READ | Статус очереди Telegram-заданий и реакций |
+| `cancel_telegram_command` | WRITE | Отменить ожидающее задание очереди по id |
+| `clear_pending_telegram_commands` | WRITE | Массовая отмена ожидающих заданий очереди (по типу/телефону) |
 | `forward_messages` | WRITE | Переслать сообщения |
 | `edit_message` | WRITE | Редактировать |
 | `delete_message` | DELETE | Удалить (⚠️ destructive) |
