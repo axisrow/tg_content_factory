@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import aiohttp
 
@@ -12,6 +13,12 @@ logger = logging.getLogger(__name__)
 
 _BOT_API_URL = "https://api.telegram.org/bot{token}/sendMessage"
 
+# Circuit-breaker defaults (issue #553): after this many consecutive failures
+# the notifier stops attempting sends for a cooldown window instead of logging
+# the same persistent error indefinitely.
+_DEFAULT_FAILURE_THRESHOLD = 3
+_DEFAULT_COOLDOWN_SECONDS = 3600.0
+
 
 class Notifier:
     """Send notifications to admin via Telegram."""
@@ -21,21 +28,82 @@ class Notifier:
         target_service: NotificationTargetService,
         admin_chat_id: int | None,
         notification_bundle: NotificationBundle | None = None,
+        *,
+        failure_threshold: int = _DEFAULT_FAILURE_THRESHOLD,
+        cooldown_seconds: float = _DEFAULT_COOLDOWN_SECONDS,
     ):
         self._target_service = target_service
         self._admin_chat_id = admin_chat_id
         self._notification_bundle = notification_bundle
         self._cached_me_id: int | None = None
+        # Circuit-breaker state. Both knobs are clamped to sane minimums: a
+        # non-positive cooldown would expire immediately and turn the breaker
+        # into a no-op (degraded state never holds), defeating the whole point.
+        self._failure_threshold = max(1, failure_threshold)
+        self._cooldown_seconds = max(0.1, cooldown_seconds)
+        self._consecutive_failures = 0
+        self._degraded_until: float | None = None
 
     @property
     def admin_chat_id(self) -> int | None:
         return self._admin_chat_id
 
+    @property
+    def is_degraded(self) -> bool:
+        """True while the circuit breaker is open (sends are being skipped)."""
+        if self._degraded_until is None:
+            return False
+        return time.monotonic() < self._degraded_until
+
     def invalidate_me_cache(self) -> None:
         """Invalidate the cached me.id. Call when the notification account changes."""
         self._cached_me_id = None
 
+    def _on_success(self) -> None:
+        # Read the recovery flag BEFORE clearing state, otherwise the log can
+        # never fire (the half-open path zeroes the counters before the probe).
+        if self._consecutive_failures or self._degraded_until is not None:
+            logger.info("Notifier recovered; resuming notifications")
+        self._consecutive_failures = 0
+        self._degraded_until = None
+
+    def _open_breaker(self, *, reason: str) -> None:
+        self._degraded_until = time.monotonic() + self._cooldown_seconds
+        logger.warning(
+            "Notifier entering degraded state (%s); suppressing further attempts for %.0fs",
+            reason,
+            self._cooldown_seconds,
+        )
+
+    def _on_failure(self) -> None:
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= self._failure_threshold and self._degraded_until is None:
+            self._open_breaker(reason=f"{self._consecutive_failures} consecutive failures")
+
     async def notify(self, text: str) -> bool:
+        # Circuit breaker: while degraded, skip the attempt entirely (no log spam).
+        half_open = False
+        if self._degraded_until is not None:
+            if time.monotonic() < self._degraded_until:
+                return False
+            # Cooldown elapsed — half-open: try exactly one probe. Keep the open
+            # state intact for now so _on_success can still log the recovery and
+            # a failed probe re-opens immediately (single-probe semantics).
+            half_open = True
+
+        ok = await self._attempt_send(text)
+        if ok:
+            self._on_success()
+        elif half_open:
+            # The single half-open probe failed: re-enter degraded right away
+            # instead of granting another full failure_threshold window of
+            # error logs (issue #553 — "no more than N errors per outage").
+            self._open_breaker(reason="half-open probe failed")
+        else:
+            self._on_failure()
+        return ok
+
+    async def _attempt_send(self, text: str) -> bool:
         try:
             # Fast path: if me.id is cached and a bot is configured, skip the
             # Telegram client entirely — _send_via_bot_api is a pure HTTP call.

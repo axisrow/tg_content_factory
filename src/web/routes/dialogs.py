@@ -279,6 +279,43 @@ async def react_message(request: Request, command_service: TelegramCommandServic
     )
 
 
+@router.post("/queue/{command_id}/cancel")
+async def cancel_queue_command(
+    request: Request, command_id: int, command_service: TelegramCommandServiceDep
+):
+    """Cancel a pending Telegram command (reaction, send, forward, etc.).
+
+    Reactions and other dialog actions live in `telegram_commands`, NOT in
+    `collection_tasks` — so the regular scheduler-cancel route does not touch
+    them. This endpoint plugs that gap (issue #621).
+    """
+    form = await request.form()
+    phone = (form.get("phone") or "") if hasattr(form, "get") else ""
+    ok = await command_service.cancel(command_id)
+    error = None if ok else "command_not_cancellable"
+    msg = "command_cancelled" if ok else None
+    return dialogs_redirect(phone, msg=msg, error=error)
+
+
+@router.post("/queue/clear-pending")
+async def clear_pending_queue_commands(
+    request: Request, command_service: TelegramCommandServiceDep
+):
+    """Bulk-cancel pending Telegram commands. Optional filters: command_type, phone."""
+    form = await request.form()
+    if hasattr(form, "get"):
+        phone = str(form.get("phone") or "").strip() or None
+        command_type = str(form.get("command_type") or "").strip() or None
+    else:
+        phone = None
+        command_type = None
+    cancelled = await command_service.cancel_pending(
+        command_type=command_type, phone=phone
+    )
+    msg = "pending_commands_cancelled" if cancelled > 0 else "pending_commands_empty"
+    return dialogs_redirect(phone or "", msg=msg)
+
+
 @router.post("/unpin-message")
 async def unpin_message(request: Request, command_service: TelegramCommandServiceDep):
     form = await parse_dialog_form(request, UnpinMessageForm)

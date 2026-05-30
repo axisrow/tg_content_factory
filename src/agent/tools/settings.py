@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Annotated
 
 from claude_agent_sdk import tool
@@ -120,5 +121,23 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка получения системной информации: {e}")
 
     tools.append(get_system_info)
+
+    @tool(
+        "get_server_time",
+        "Get the current server time (UTC). Returns ISO8601, Unix timestamp and a "
+        "human-readable form. No parameters.",
+        {},
+    )
+    async def get_server_time(args):
+        now = datetime.now(timezone.utc)
+        lines = [
+            "Текущее время сервера (UTC):",
+            f"- ISO8601: {now.isoformat()}",
+            f"- Unix: {int(now.timestamp())}",
+            f"- Читаемо: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}",
+        ]
+        return _text_response("\n".join(lines))
+
+    tools.append(get_server_time)
 
     return tools
