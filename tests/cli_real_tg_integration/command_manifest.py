@@ -64,6 +64,7 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
         ("search-query", "stats"),
         ("settings", "get"),
         ("settings", "info"),
+        ("settings", "server-time"),
         ("test", "read"),
         ("translate", "stats"),
     },

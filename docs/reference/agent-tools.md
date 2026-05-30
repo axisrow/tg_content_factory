@@ -232,6 +232,7 @@
 | `save_agent_settings` | WRITE | Настройки агента |
 | `save_filter_settings` | WRITE | Настройки фильтров |
 | `get_system_info` | READ | Диагностика системы |
+| `get_server_time` | READ | Текущее время сервера (UTC) |
 
 ## Треды агента
 
