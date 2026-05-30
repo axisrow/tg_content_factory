@@ -43,6 +43,32 @@ def _current_node_id(services: dict, default: str = "?") -> str:
     return str(value) if value else default
 
 
+async def _dedup_context(services: dict, node_id: str, action: str, node_config: dict):
+    """Return (repo, processed_message_ids) when action dedup is active (issue #471).
+
+    Dedup is opt-out via node_config["deduplicate"]=false and only engages when a
+    pipeline_id and a db with the pipeline_action_log repo are available — so unit
+    tests and ad-hoc executions without those keys keep the previous behaviour.
+    The processed-id set is a snapshot of *prior* runs; callers must not mutate it
+    mid-run so that multi-target forwards still reach every target in one run.
+    """
+    if not node_config.get("deduplicate", True):
+        return None, set()
+    db = services.get("db")
+    pipeline_id = services.get("pipeline_id")
+    if db is None or pipeline_id is None:
+        return None, set()
+    repo = getattr(getattr(db, "repos", None), "pipeline_action_log", None)
+    if repo is None:
+        return None, set()
+    # Scope the loaded log to the fetch window: anything older can't match this
+    # run's candidates, so loading it would only grow memory unboundedly over the
+    # life of the pipeline. Returns {(channel_id, message_id)} pairs.
+    since_hours = float(services.get("since_hours", 24.0))
+    processed = await repo.processed_message_ids(pipeline_id, node_id, action, since_hours=since_hours)
+    return repo, processed
+
+
 def _resolve_account_phone(account_phone: str | None, services: dict, context: NodeContext) -> str | None:
     """Return explicit account_phone, or discover one from source channel access map."""
     if account_phone:
@@ -81,6 +107,7 @@ class FetchMessagesHandler(BaseNodeHandler):
             logger.warning("FetchMessagesHandler[%s]: no db, skipping", node_id)
             context.set_global("context_messages", [])
             return
+        node_id = _current_node_id(services, default="fetch_messages")
         channel_ids = context.get_global("source_channel_ids", [])
         since_hours = float(services.get("since_hours", context.get_global("since_hours", 24.0)))
         messages = await db.repos.messages.get_recent_for_channels(channel_ids, since_hours)
@@ -88,6 +115,13 @@ class FetchMessagesHandler(BaseNodeHandler):
         if limit is not None and len(messages) > limit:
             messages = messages[:limit]
         context.set_global("context_messages", messages)
+        logger.info(
+            "FetchMessagesHandler[%s]: fetched %d messages from %d channel(s) within %.1fh",
+            node_id,
+            len(messages),
+            len(channel_ids),
+            since_hours,
+        )
 
 
 class RetrieveContextHandler(BaseNodeHandler):
@@ -106,6 +140,7 @@ class RetrieveContextHandler(BaseNodeHandler):
             context.set_global("context_messages", [])
             return
 
+        node_id = _current_node_id(services, default="retrieve_context")
         query = context.get_global("generation_query", "") or context.get_global("prompt_template", "")
         limit = int(node_config.get("limit", 8))
         method = node_config.get("method", "hybrid")
@@ -114,13 +149,27 @@ class RetrieveContextHandler(BaseNodeHandler):
 
         try:
             if method == "hybrid" and search_engine.semantic_available:
+                effective_method = "hybrid"
                 result = await search_engine.search_hybrid(query, channel_id=channel_id, limit=limit)
             elif method == "semantic" and search_engine.semantic_available:
+                effective_method = "semantic"
                 result = await search_engine.search_semantic(query, channel_id=channel_id, limit=limit)
             else:
+                effective_method = "local"
                 result = await search_engine.search_local(query, channel_id=channel_id, limit=limit)
             context.set_global("context_messages", result.messages)
-        except Exception:
+            logger.info(
+                "RetrieveContextHandler[%s]: retrieved %d messages via %s",
+                node_id,
+                len(result.messages),
+                effective_method,
+            )
+        except Exception as exc:
+            context.record_error(
+                node_id=node_id,
+                code="retrieval_failed",
+                detail=f"{type(exc).__name__}: {exc}",
+            )
             logger.warning("RetrieveContextHandler: search failed, using empty context", exc_info=True)
             context.set_global("context_messages", [])
 
@@ -176,6 +225,14 @@ class LlmGenerateHandler(BaseNodeHandler):
             citations = result.get("citations", [])
         context.set_global("generated_text", generated_text)
         context.set_global("citations", citations)
+        node_id = _current_node_id(services, default="llm_generate")
+        logger.info(
+            "LlmGenerateHandler[%s]: generated %d chars via model=%s (%d source messages)",
+            node_id,
+            len(generated_text),
+            model or "<default>",
+            len(messages),
+        )
 
 
 class LlmRefineHandler(BaseNodeHandler):
@@ -212,15 +269,22 @@ class LlmRefineHandler(BaseNodeHandler):
         refined = result if isinstance(result, str) else (result.get("text") or result.get("generated_text") or "")
         if refined:
             context.set_global("generated_text", refined)
+            node_id = _current_node_id(services, default="llm_refine")
+            logger.info(
+                "LlmRefineHandler[%s]: refined to %d chars via model=%s",
+                node_id,
+                len(refined),
+                model or "<default>",
+            )
 
 
 class ImageGenerateHandler(BaseNodeHandler):
     """Generate an image based on generated text."""
 
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
+        node_id = _current_node_id(services, default="image_generate")
         image_service = services.get("image_service")
         if image_service is None:
-            node_id = _current_node_id(services, default="image_generate")
             context.record_error(
                 node_id=node_id,
                 code="missing_dependency",
@@ -239,7 +303,15 @@ class ImageGenerateHandler(BaseNodeHandler):
             image_url = await image_service.generate(model, text)
             if image_url:
                 context.set_global("image_url", image_url)
-        except Exception:
+                logger.info("ImageGenerateHandler[%s]: image generated url=%s", node_id, image_url)
+            else:
+                logger.info("ImageGenerateHandler[%s]: generation returned no image", node_id)
+        except Exception as exc:
+            context.record_error(
+                node_id=node_id,
+                code="image_generation_failed",
+                detail=f"{type(exc).__name__}: {exc}",
+            )
             logger.warning("ImageGenerateHandler: image generation failed", exc_info=True)
 
 
@@ -267,9 +339,12 @@ class NotifyHandler(BaseNodeHandler):
     """Send a notification via the notification bot."""
 
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
+        # Resolve node_id up front: it is used by both the missing-dependency guard
+        # and the success log on the normal path. Assigning it only inside the guard
+        # left it undefined for every successful send (NameError at the success log).
+        node_id = _current_node_id(services, default="notify")
         notification_service = services.get("notification_service")
         if notification_service is None:
-            node_id = _current_node_id(services, default="notify")
             context.record_error(
                 node_id=node_id,
                 code="missing_dependency",
@@ -285,18 +360,28 @@ class NotifyHandler(BaseNodeHandler):
 
         try:
             await notification_service.send_text(message)
+            logger.info("NotifyHandler[%s]: notification sent (%d chars)", node_id, len(message))
         except Exception:
-            logger.warning("NotifyHandler: failed to send notification", exc_info=True)
+            logger.warning("NotifyHandler[%s]: failed to send notification", node_id, exc_info=True)
 
 
 class FilterHandler(BaseNodeHandler):
     """Filter messages by various criteria."""
 
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
+        node_id = _current_node_id(services, default="filter")
         messages = context.get_global("context_messages", [])
         filtered = filter_messages(messages, node_config)
         context.set_global("filtered_messages", filtered)
         context.set_global("context_messages", filtered)
+        before, after = len(messages), len(filtered)
+        logger.info(
+            "FilterHandler[%s]: %d → %d messages (filtered %d)",
+            node_id,
+            before,
+            after,
+            before - after,
+        )
 
 
 class DelayHandler(BaseNodeHandler):
@@ -359,8 +444,14 @@ class ReactHandler(BaseNodeHandler):
                 return
         resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
         action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
+        dedup_repo, processed_ids = await _dedup_context(services, node_id, "react", node_config)  # {(chan, msg)}
+        pipeline_id = services.get("pipeline_id")
+        skipped = 0
 
         for message in messages:
+            if (message.channel_id, message.message_id) in processed_ids:
+                skipped += 1
+                continue
             try:
                 chosen_emoji = random.choice(random_emoji_list) if random_emoji_list else emoji
                 await action_service.send_reaction(
@@ -373,6 +464,18 @@ class ReactHandler(BaseNodeHandler):
                     resolve_entity=False,
                 )
                 increment_action_count(context, "react")
+                if dedup_repo is not None:
+                    await dedup_repo.log_action(
+                        pipeline_id, node_id, "react", message.channel_id, message.message_id
+                    )
+                logger.info(
+                    "ReactHandler[%s]: reacted %s to message_id=%s channel_id=%s phone=%s",
+                    node_id,
+                    chosen_emoji,
+                    message.message_id,
+                    message.channel_id,
+                    resolved_phone or "<any>",
+                )
             except TelegramActionClientUnavailableError:
                 context.record_error(
                     node_id=node_id,
@@ -417,6 +520,8 @@ class ReactHandler(BaseNodeHandler):
                     message.message_id,
                     exc_info=True,
                 )
+        if skipped:
+            logger.info("ReactHandler[%s]: skipped %d already-reacted message(s)", node_id, skipped)
 
 
 class ForwardHandler(BaseNodeHandler):
@@ -437,6 +542,8 @@ class ForwardHandler(BaseNodeHandler):
         messages = context.get_global("context_messages", [])
         targets = node_config.get("targets", [])
         action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
+        dedup_repo, processed_ids = await _dedup_context(services, node_id, "forward", node_config)
+        pipeline_id = services.get("pipeline_id")
 
         for target in targets:
             phone = target.get("phone", "")
@@ -448,6 +555,10 @@ class ForwardHandler(BaseNodeHandler):
                     await action_service.ensure_client(phone=phone, native=False)
                     continue
                 for message in messages:
+                    # processed_ids is a prior-run snapshot; not mutated mid-run so
+                    # every target still receives the message within this run.
+                    if (message.channel_id, message.message_id) in processed_ids:
+                        continue
                     await action_service.forward_messages(
                         phone=phone,
                         from_chat=message.channel_id,
@@ -458,6 +569,18 @@ class ForwardHandler(BaseNodeHandler):
                         collapse_single_message_id=True,
                     )
                     increment_action_count(context, "forward")
+                    if dedup_repo is not None:
+                        await dedup_repo.log_action(
+                            pipeline_id, node_id, "forward", message.channel_id, message.message_id
+                        )
+                    logger.info(
+                        "ForwardHandler[%s]: forwarded message_id=%s channel_id=%s to dialog_id=%s phone=%s",
+                        node_id,
+                        message.message_id,
+                        message.channel_id,
+                        dialog_id,
+                        phone,
+                    )
             except TelegramActionClientUnavailableError:
                 context.record_error(
                     node_id=node_id,
@@ -510,8 +633,14 @@ class DeleteMessageHandler(BaseNodeHandler):
         messages = context.get_global("context_messages", [])
         resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
         action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
+        dedup_repo, processed_ids = await _dedup_context(services, node_id, "delete_message", node_config)
+        pipeline_id = services.get("pipeline_id")
+        skipped = 0
 
         for message in messages:
+            if (message.channel_id, message.message_id) in processed_ids:
+                skipped += 1
+                continue
             try:
                 await action_service.delete_messages(
                     phone=resolved_phone,
@@ -522,6 +651,17 @@ class DeleteMessageHandler(BaseNodeHandler):
                     resolve_entity=False,
                 )
                 increment_action_count(context, "delete_message")
+                if dedup_repo is not None:
+                    await dedup_repo.log_action(
+                        pipeline_id, node_id, "delete_message", message.channel_id, message.message_id
+                    )
+                logger.info(
+                    "DeleteMessageHandler[%s]: deleted message_id=%s channel_id=%s phone=%s",
+                    node_id,
+                    message.message_id,
+                    message.channel_id,
+                    resolved_phone or "<any>",
+                )
             except TelegramActionClientUnavailableError:
                 context.record_error(
                     node_id=node_id,
@@ -560,6 +700,10 @@ class DeleteMessageHandler(BaseNodeHandler):
                     message.message_id,
                     exc_info=True,
                 )
+        if skipped:
+            logger.info(
+                "DeleteMessageHandler[%s]: skipped %d already-deleted message(s)", node_id, skipped
+            )
 
 
 class ConditionHandler(BaseNodeHandler):

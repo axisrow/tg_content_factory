@@ -161,6 +161,10 @@ SCHEMA_REPAIR_INDEXES: Sequence[str] = (
     CREATE INDEX IF NOT EXISTS idx_generation_runs_moderation
     ON generation_runs(moderation_status, pipeline_id)
     """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_pipeline_action_log_lookup
+    ON pipeline_action_log(pipeline_id, node_id, action)
+    """,
 )
 
 

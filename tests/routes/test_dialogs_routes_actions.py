@@ -278,3 +278,83 @@ async def test_mark_read_no_max_id(route_client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
+
+
+# === queue cancel / clear-pending (issue #621) ===
+
+
+async def _seed_pending_command(db, *, phone="+1234567890", emoji="👍"):
+    """Insert one PENDING dialogs.react command and return its id."""
+    from src.models import TelegramCommand, TelegramCommandStatus
+
+    return await db.repos.telegram_commands.create_command(
+        TelegramCommand(
+            command_type="dialogs.react",
+            payload={"phone": phone, "chat_id": "-100123", "message_id": 5, "emoji": emoji},
+            status=TelegramCommandStatus.PENDING,
+        )
+    )
+
+
+@pytest.mark.anyio
+async def test_cancel_queue_command_cancels_pending(route_client, base_app):
+    from src.models import TelegramCommandStatus
+
+    _, db, _ = base_app
+    command_id = await _seed_pending_command(db)
+
+    resp = await route_client.post(
+        f"/dialogs/queue/{command_id}/cancel",
+        data={"phone": "+1234567890"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_cancelled" in resp.headers.get("location", "")
+
+    cmd = await db.repos.telegram_commands.get_command(command_id)
+    assert cmd.status == TelegramCommandStatus.CANCELLED
+
+
+@pytest.mark.anyio
+async def test_cancel_queue_command_missing_id_redirects_with_error(route_client, base_app):
+    _, db, _ = base_app
+    # 999999 does not exist → cancel() returns False → error in redirect, no crash.
+    resp = await route_client.post(
+        "/dialogs/queue/999999/cancel",
+        data={"phone": "+1234567890"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_not_cancellable" in resp.headers.get("location", "")
+
+
+@pytest.mark.anyio
+async def test_clear_pending_queue_commands_bulk_cancels(route_client, base_app):
+    from src.models import TelegramCommandStatus
+
+    _, db, _ = base_app
+    ids = [await _seed_pending_command(db, emoji=e) for e in ("👍", "❤️", "🔥")]
+
+    resp = await route_client.post(
+        "/dialogs/queue/clear-pending",
+        data={"command_type": "dialogs.react"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "pending_commands_cancelled" in resp.headers.get("location", "")
+
+    for command_id in ids:
+        cmd = await db.repos.telegram_commands.get_command(command_id)
+        assert cmd.status == TelegramCommandStatus.CANCELLED
+
+
+@pytest.mark.anyio
+async def test_clear_pending_queue_commands_empty_reports_empty(route_client, base_app):
+    # No pending commands seeded → cancelled == 0 → "pending_commands_empty".
+    resp = await route_client.post(
+        "/dialogs/queue/clear-pending",
+        data={"command_type": "dialogs.react"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "pending_commands_empty" in resp.headers.get("location", "")
