@@ -29,6 +29,7 @@ BUILTIN_TOOLS = ["WebSearch", "WebFetch"]
 # `tests/test_tool_permissions.py::test_every_phone_binded_tool_is_registered_in_tool_categories`.
 PHONE_BINDED_TOOLS: frozenset[str] = frozenset({
     "archive_chat",
+    "cancel_telegram_command",
     "clear_dialog_cache",
     "clear_pending_telegram_commands",
     "create_auto_upload",

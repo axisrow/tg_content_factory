@@ -227,10 +227,24 @@ def register_queue_status_tools(db: Any) -> list[Any]:
             return exc.to_response()
         if not command_id:
             return _text_response("Ошибка: command_id обязателен.")
+        # Phone ACL: cancel_telegram_command takes a bare command_id, so a phone-restricted
+        # agent could otherwise enumerate sequential autoincrement IDs and cancel a command
+        # belonging to another account. Look up the command, read its payload phone, and gate
+        # on it. require_phone_permission returns None when no ACL is configured, so this is a
+        # no-op for single-admin deployments.
+        service = TelegramCommandService(db)
+        command = await service.get(command_id)
+        if command is None:
+            return _text_response(
+                f"Задание #{command_id} не найдено или не в статусе 'ждёт' (отменять можно только PENDING)."
+            )
+        command_phone = str(command.payload.get("phone") or "")
+        perm_gate = await require_phone_permission(db, command_phone, "cancel_telegram_command")
+        if perm_gate:
+            return perm_gate
         gate = require_confirmation(f"отменит задание очереди id={command_id}", args)
         if gate:
             return gate
-        service = TelegramCommandService(db)
         try:
             ok = await service.cancel(command_id)
         except Exception as exc:

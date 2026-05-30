@@ -164,6 +164,45 @@ async def test_get_telegram_queue_status_requires_phone_when_acl_is_phone_scoped
 
 
 @pytest.mark.anyio
+async def test_cancel_telegram_command_gates_on_target_command_phone(tmp_path):
+    """Regression: single-command cancel must be gated on the command's own phone.
+
+    cancel_telegram_command takes a bare command_id (no phone arg), so without a
+    lookup-then-check a phone-restricted agent could enumerate sequential
+    autoincrement IDs and cancel another account's command. The tool now reads
+    the target command's payload phone and gates on it.
+    """
+    db = await _open_db(tmp_path)
+    try:
+        await db.set_setting(
+            "agent_tool_permissions",
+            json.dumps({
+                "+1": {"cancel_telegram_command": True},
+                "+2": {"cancel_telegram_command": False},
+            }),
+        )
+        cmd1 = await _create_reaction(db, phone="+1", message_id=1)
+        cmd2 = await _create_reaction(db, phone="+2", message_id=2)
+        handlers = _get_tool_handlers(db)
+
+        # Agent allowed on +1 tries to cancel +2's command → denied, +2 untouched.
+        denied = await handlers["cancel_telegram_command"]({"command_id": cmd2, "confirm": True})
+        assert "не разрешён" in _text(denied)
+        assert (await db.repos.telegram_commands.get_command(cmd2)).status == TelegramCommandStatus.PENDING
+
+        # Its own command goes through.
+        allowed = await handlers["cancel_telegram_command"]({"command_id": cmd1, "confirm": True})
+        assert "отменено" in _text(allowed)
+        assert (await db.repos.telegram_commands.get_command(cmd1)).status == TelegramCommandStatus.CANCELLED
+
+        # Unknown id is reported as not-found, not a crash.
+        missing = await handlers["cancel_telegram_command"]({"command_id": 999999, "confirm": True})
+        assert "не найдено" in _text(missing)
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_clear_pending_requires_phone_when_acl_is_phone_scoped(tmp_path):
     """Regression: unscoped bulk-cancel must be gated under a per-phone ACL.
 
