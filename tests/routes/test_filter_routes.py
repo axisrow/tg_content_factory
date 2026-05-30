@@ -69,10 +69,15 @@ async def test_purge_selected_removes_messages(route_client, db):
 
     with patch("src.web.routes.filter.deps.filter_deletion_service") as mock_svc:
         mock_svc.return_value.purge_channels_by_pks = AsyncMock()
-        await route_client.post(
+        resp = await route_client.post(
             "/channels/filter/purge-selected",
             data={"pks": [str(pk)]},
+            follow_redirects=False,
         )
+
+    assert resp.status_code == 303
+    assert "msg=purged_selected" in resp.headers["location"]
+    mock_svc.return_value.purge_channels_by_pks.assert_awaited_once_with([pk])
 
 
 @pytest.mark.anyio

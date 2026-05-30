@@ -63,5 +63,9 @@ jobs:
               sys.exit(1)
           PY
 
-      - name: Pytest
-        run: pytest tests -q -m "not aiosqlite_serial" -n auto && pytest tests -q -m aiosqlite_serial
+      - name: Pytest (parallel-safe)
+        run: pytest tests -q -m "not aiosqlite_serial" -n auto
+
+      - name: Pytest (aiosqlite serial)
+        if: ${{ !cancelled() }}
+        run: pytest tests -q -m aiosqlite_serial
