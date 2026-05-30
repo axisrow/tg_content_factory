@@ -260,10 +260,13 @@ def register_queue_status_tools(db: Any) -> list[Any]:
             phone = normalize_phone(arg_str(args, "phone")) or None
         except ToolInputError as exc:
             return exc.to_response()
-        if phone:
-            perm_gate = await require_phone_permission(db, phone, "clear_pending_telegram_commands")
-            if perm_gate:
-                return perm_gate
+        # Phone ACL must be checked unconditionally: clear_pending_telegram_commands is in
+        # PHONE_BINDED_TOOLS, so a phone-restricted agent calling it with no phone (which would
+        # bulk-cancel across ALL accounts) must still be gated. require_phone_permission returns
+        # None when no ACL is configured, so this stays a no-op for single-admin deployments.
+        perm_gate = await require_phone_permission(db, phone, "clear_pending_telegram_commands")
+        if perm_gate:
+            return perm_gate
         scope_parts = []
         if command_type:
             scope_parts.append(f"тип '{command_type}'")
