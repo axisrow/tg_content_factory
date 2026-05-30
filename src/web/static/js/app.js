@@ -148,9 +148,18 @@
         _clockInterval = setInterval(tick, 1000);
     }
     document.addEventListener('DOMContentLoaded', initServerClock);
-    // Re-init after htmx body swaps (navbar gets re-rendered) — same pattern as
-    // convertLocalDates above. Guarded re-entry prevents double intervals.
-    document.body.addEventListener('htmx:afterSwap', function() { initServerClock(); });
+    // Re-init only when the swap actually replaced the clock (e.g. hx-target="body"
+    // on /dialogs/). Re-initialising on every partial swap would needlessly clear and
+    // restart the interval, making the seconds counter visibly stutter. Mirrors how
+    // convertLocalDates scopes its work to e.detail.target.
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        var t = e.detail && e.detail.target;
+        if (!t) return;
+        if ((t.classList && t.classList.contains('server-clock')) ||
+            (t.querySelector && t.querySelector('.server-clock'))) {
+            initServerClock();
+        }
+    });
 
     function tgdlgCreate(message, choices) {
         return new Promise(function(resolve) {
