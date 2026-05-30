@@ -106,8 +106,8 @@ def make_generic_http_adapter(
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(endpoint, json=payload, headers=headers) as resp:
-                    text = await resp.text()
                     if resp.status != 200:
+                        text = await resp.text()
                         raise RuntimeError(f"Provider error {resp.status}: {text}")
                     data = await resp.json()
                     return await _parse_json_for_text(data)
