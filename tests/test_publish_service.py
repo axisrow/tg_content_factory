@@ -263,6 +263,40 @@ async def test_publish_service_retry_skips_delivered_targets():
 
 
 @pytest.mark.anyio
+async def test_publish_service_all_targets_already_delivered():
+    """All targets already delivered: no new sends, set_metadata NOT called, run marked published (issue #633)."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [
+            PipelineTarget(id=1, pipeline_id=1, phone="+1111111111", dialog_id=-1001),
+            PipelineTarget(id=2, pipeline_id=1, phone="+2222222222", dialog_id=-1002),
+        ]
+    )
+    pool = FakeClientPool()
+    service = PublishService(db, pool)
+
+    # A prior attempt already delivered to every target.
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        metadata={"published_targets": ["+1111111111:-1001", "+2222222222:-1002"]},
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    # Every target was skipped — reported success, no client acquired, no send.
+    assert [r.success for r in results] == [True, True]
+    assert pool._clients == {}
+    assert pool.released == []
+    # newly_delivered is empty → set_metadata must NOT be called (no clobber, no redundant write).
+    assert 1 not in db.repos.generation_runs.metadata_by_id
+    # All results succeeded → idempotent re-publish still closes the run.
+    assert 1 in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
 async def test_publish_service_allows_auto_pipeline_without_approval():
     db = FakeDB()
     db.repos.content_pipelines.set_targets(
