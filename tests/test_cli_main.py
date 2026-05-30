@@ -225,6 +225,13 @@ class TestParser:
         assert args.key == "my_key"
         assert args.value == "my_value"
 
+    def test_parser_settings_server_time(self):
+        """settings server-time subcommand (CLI counterpart of get_server_time tool)."""
+        parser = build_parser()
+        args = parser.parse_args(["settings", "server-time"])
+        assert args.command == "settings"
+        assert args.settings_action == "server-time"
+
     def test_parser_debug_logs(self):
         """debug logs subcommand."""
         parser = build_parser()
@@ -259,6 +266,24 @@ class TestParser:
         args = parser.parse_args(["my-telegram", "list"])
         assert args.command == "my-telegram"
         assert args.dialogs_action == "list"
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["list"],
+            ["topics", "--channel-id", "123"],
+            ["send", "@user", "hello", "--phone", "+10001112233"],
+        ],
+    )
+    def test_my_telegram_alias_parses_identically_to_dialogs(self, argv):
+        """my-telegram must parse to the same args as dialogs (output identity, #567)."""
+        parser = build_parser()
+        dialogs_args = vars(parser.parse_args(["dialogs", *argv]))
+        alias_args = vars(parser.parse_args(["my-telegram", *argv]))
+        # Only the top-level command label differs; everything else is identical.
+        dialogs_args.pop("command")
+        alias_args.pop("command")
+        assert alias_args == dialogs_args
 
     def test_parser_filter_analyze(self):
         """filter analyze subcommand."""

@@ -853,3 +853,50 @@ class TestPipelineEdgeRW:
         graph3 = json.loads(row3["pipeline_json"])
         assert ("llm_generate_0", new_node["id"]) not in _edge_pairs(graph3)
         assert "Removed edge" in capsys.readouterr().out
+
+
+class TestPipelineExportRW:
+    def test_export_writes_new_file(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_export.db")
+        pid = _seed_minimal_pipeline(db_path, name="Exp")
+        out_file = tmp_path / "exported.json"
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns("export", id=pid, output=str(out_file), force=False),
+        )
+
+        assert out_file.exists()
+        assert json.loads(out_file.read_text(encoding="utf-8"))["name"] == "Exp"
+        assert f"Exported pipeline id={pid}" in capsys.readouterr().out
+
+    def test_export_refuses_overwrite_without_force(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_export_noforce.db")
+        pid = _seed_minimal_pipeline(db_path, name="Exp")
+        out_file = tmp_path / "exists.json"
+        out_file.write_text("ORIGINAL", encoding="utf-8")
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns("export", id=pid, output=str(out_file), force=False),
+        )
+
+        # File left untouched; user is told how to override.
+        assert out_file.read_text(encoding="utf-8") == "ORIGINAL"
+        assert "already exists" in capsys.readouterr().out
+
+    def test_export_force_overwrites(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_export_force.db")
+        pid = _seed_minimal_pipeline(db_path, name="Exp")
+        out_file = tmp_path / "exists.json"
+        out_file.write_text("ORIGINAL", encoding="utf-8")
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns("export", id=pid, output=str(out_file), force=True),
+        )
+
+        assert json.loads(out_file.read_text(encoding="utf-8"))["name"] == "Exp"
