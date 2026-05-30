@@ -258,6 +258,7 @@ def configure_template_globals(
 ) -> Jinja2Templates:
     templates.env.globals["agent_available"] = _agent_available_for_request
     templates.env.globals["app_version"] = get_app_version()
+    templates.env.globals["server_now"] = lambda: datetime.now(timezone.utc)
     templates.env.globals["filter_flag_emoji"] = FILTER_FLAG_EMOJI
     templates.env.globals["flash_messages"] = FLASH_MESSAGES
     templates.env.globals["flash_errors"] = FLASH_ERRORS

@@ -118,6 +118,8 @@ async def _render_search_page(
                     error=f"Ошибка поиска: {exc}",
                 )
 
+    semantic_available = deps.get_search_engine(request).semantic_available
+    telegram_available = bool(deps.get_pool(request).clients)
     ai_enabled = deps.get_ai_search(request).enabled
     try:
         search_quota = await service.check_quota()
@@ -149,6 +151,8 @@ async def _render_search_page(
             "is_fts": is_fts,
             "page": page,
             "total_pages": total_pages,
+            "semantic_available": semantic_available,
+            "telegram_available": telegram_available,
             "ai_enabled": ai_enabled,
             "search_quota": search_quota,
             "browse_mode": browse_mode,

@@ -9,6 +9,11 @@ from src.search.telegram_search import TelegramSearch
 from src.services.embedding_service import EmbeddingService
 from src.telegram.client_pool import ClientPool
 
+_SEMANTIC_UNAVAILABLE = (
+    "Семантический поиск недоступен: не установлен numpy и не загружено расширение "
+    "sqlite-vec. Используйте «Локальная база» или установите зависимости."
+)
+
 
 class SearchEngine:
     """Facade for local and Telegram-based search strategies."""
@@ -74,6 +79,8 @@ class SearchEngine:
         min_length: int | None = None,
         max_length: int | None = None,
     ) -> SearchResult:
+        if not self.semantic_available:
+            return SearchResult(messages=[], total=0, query=query, error=_SEMANTIC_UNAVAILABLE)
         return await self._local.search_semantic(
             query=query,
             channel_id=channel_id,
@@ -97,6 +104,8 @@ class SearchEngine:
         min_length: int | None = None,
         max_length: int | None = None,
     ) -> SearchResult:
+        if not self.semantic_available:
+            return SearchResult(messages=[], total=0, query=query, error=_SEMANTIC_UNAVAILABLE)
         return await self._local.search_hybrid(
             query=query,
             channel_id=channel_id,
