@@ -36,9 +36,11 @@ class Notifier:
         self._admin_chat_id = admin_chat_id
         self._notification_bundle = notification_bundle
         self._cached_me_id: int | None = None
-        # Circuit-breaker state
+        # Circuit-breaker state. Both knobs are clamped to sane minimums: a
+        # non-positive cooldown would expire immediately and turn the breaker
+        # into a no-op (degraded state never holds), defeating the whole point.
         self._failure_threshold = max(1, failure_threshold)
-        self._cooldown_seconds = cooldown_seconds
+        self._cooldown_seconds = max(0.1, cooldown_seconds)
         self._consecutive_failures = 0
         self._degraded_until: float | None = None
 
@@ -58,34 +60,45 @@ class Notifier:
         self._cached_me_id = None
 
     def _on_success(self) -> None:
+        # Read the recovery flag BEFORE clearing state, otherwise the log can
+        # never fire (the half-open path zeroes the counters before the probe).
         if self._consecutive_failures or self._degraded_until is not None:
             logger.info("Notifier recovered; resuming notifications")
         self._consecutive_failures = 0
         self._degraded_until = None
 
+    def _open_breaker(self, *, reason: str) -> None:
+        self._degraded_until = time.monotonic() + self._cooldown_seconds
+        logger.warning(
+            "Notifier entering degraded state (%s); suppressing further attempts for %.0fs",
+            reason,
+            self._cooldown_seconds,
+        )
+
     def _on_failure(self) -> None:
         self._consecutive_failures += 1
         if self._consecutive_failures >= self._failure_threshold and self._degraded_until is None:
-            self._degraded_until = time.monotonic() + self._cooldown_seconds
-            logger.warning(
-                "Notifier entering degraded state after %d consecutive failures; "
-                "suppressing further attempts for %.0fs",
-                self._consecutive_failures,
-                self._cooldown_seconds,
-            )
+            self._open_breaker(reason=f"{self._consecutive_failures} consecutive failures")
 
     async def notify(self, text: str) -> bool:
         # Circuit breaker: while degraded, skip the attempt entirely (no log spam).
+        half_open = False
         if self._degraded_until is not None:
             if time.monotonic() < self._degraded_until:
                 return False
-            # Cooldown elapsed — half-open: clear the open state and try once more.
-            self._degraded_until = None
-            self._consecutive_failures = 0
+            # Cooldown elapsed — half-open: try exactly one probe. Keep the open
+            # state intact for now so _on_success can still log the recovery and
+            # a failed probe re-opens immediately (single-probe semantics).
+            half_open = True
 
         ok = await self._attempt_send(text)
         if ok:
             self._on_success()
+        elif half_open:
+            # The single half-open probe failed: re-enter degraded right away
+            # instead of granting another full failure_threshold window of
+            # error logs (issue #553 — "no more than N errors per outage").
+            self._open_breaker(reason="half-open probe failed")
         else:
             self._on_failure()
         return ok
