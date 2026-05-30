@@ -13,6 +13,16 @@ from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 
 logger = logging.getLogger(__name__)
 
+# Broadcast-stats per-post metric attributes, shared so the CLI and the agent
+# tool always render the same set of fields (parity — issue #567).
+BROADCAST_STAT_FIELDS: tuple[str, ...] = (
+    "followers",
+    "views_per_post",
+    "shares_per_post",
+    "reactions_per_post",
+    "forwards_per_post",
+)
+
 
 class TelegramActionError(RuntimeError):
     """Base exception for shared Telegram action failures."""

@@ -245,6 +245,12 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     pipeline_export = pipeline_sub.add_parser("export", help="Export pipeline as JSON")
     pipeline_export.add_argument("id", type=int, help="Pipeline id")
     pipeline_export.add_argument("--output", "-o", default=None, help="Output file path (default: stdout)")
+    pipeline_export.add_argument(
+        "--force",
+        "-f",
+        action="store_true",
+        help="Overwrite the output file if it already exists",
+    )
 
     pipeline_import = pipeline_sub.add_parser("import", help="Import pipeline from JSON file")
     pipeline_import.add_argument("file", help="Path to JSON file")

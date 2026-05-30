@@ -21,7 +21,11 @@ from src.agent.tools.messaging_schemas import (
     READ_MESSAGES_SCHEMA,
     UNARCHIVE_CHAT_SCHEMA,
 )
-from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
+from src.services.telegram_actions import (
+    BROADCAST_STAT_FIELDS,
+    TelegramActionClientUnavailableError,
+    TelegramActionService,
+)
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.identity import extract_message_sender_identity
 from src.telegram.reactions import (
@@ -61,7 +65,7 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
             )
             stats = result.stats
             fields = {}
-            for attr in ("followers", "views_per_post", "shares_per_post", "reactions_per_post", "forwards_per_post"):
+            for attr in BROADCAST_STAT_FIELDS:
                 val = getattr(stats, attr, None)
                 if val is not None:
                     current = getattr(val, "current", None)

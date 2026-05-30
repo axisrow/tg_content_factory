@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 
 from src.cli import runtime
 from src.models import PipelineNode, PipelineNodeType
@@ -697,6 +698,11 @@ def run(args: argparse.Namespace) -> None:
                     return
                 output = json.dumps(data, ensure_ascii=False, indent=2)
                 if args.output:
+                    if os.path.exists(args.output) and not args.force:
+                        print(
+                            f"File {args.output} already exists. Use --force to overwrite."
+                        )
+                        return
                     with open(args.output, "w", encoding="utf-8") as fh:
                         fh.write(output)
                     print(f"Exported pipeline id={args.id} to {args.output}")

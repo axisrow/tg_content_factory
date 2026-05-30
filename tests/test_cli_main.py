@@ -267,6 +267,24 @@ class TestParser:
         assert args.command == "my-telegram"
         assert args.dialogs_action == "list"
 
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["list"],
+            ["topics", "--channel-id", "123"],
+            ["send", "@user", "hello", "--phone", "+10001112233"],
+        ],
+    )
+    def test_my_telegram_alias_parses_identically_to_dialogs(self, argv):
+        """my-telegram must parse to the same args as dialogs (output identity, #567)."""
+        parser = build_parser()
+        dialogs_args = vars(parser.parse_args(["dialogs", *argv]))
+        alias_args = vars(parser.parse_args(["my-telegram", *argv]))
+        # Only the top-level command label differs; everything else is identical.
+        dialogs_args.pop("command")
+        alias_args.pop("command")
+        assert alias_args == dialogs_args
+
     def test_parser_filter_analyze(self):
         """filter analyze subcommand."""
         parser = build_parser()

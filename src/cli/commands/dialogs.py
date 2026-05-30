@@ -8,6 +8,7 @@ from src.cli import runtime
 from src.models import TelegramCommandStatus
 from src.services.channel_service import ChannelService
 from src.services.telegram_actions import (
+    BROADCAST_STAT_FIELDS,
     TelegramActionClientUnavailableError,
     TelegramActionMessageNotFoundError,
     TelegramActionNoMediaError,
@@ -612,13 +613,7 @@ def run_with_dependencies(
                     )
                     stats = result.stats
                     print(f"Broadcast stats for {args.chat_id}:")
-                    for attr in (
-                        "followers",
-                        "views_per_post",
-                        "shares_per_post",
-                        "reactions_per_post",
-                        "forwards_per_post",
-                    ):
+                    for attr in BROADCAST_STAT_FIELDS:
                         val = getattr(stats, attr, None)
                         if val is not None:
                             current = getattr(val, "current", None)
