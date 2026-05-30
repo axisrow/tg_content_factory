@@ -313,9 +313,12 @@ class NotifyHandler(BaseNodeHandler):
     """Send a notification via the notification bot."""
 
     async def execute(self, node_config: dict, context: NodeContext, services: dict) -> None:
+        # Resolve node_id up front: it is used by both the missing-dependency guard
+        # and the success log on the normal path. Assigning it only inside the guard
+        # left it undefined for every successful send (NameError at the success log).
+        node_id = _current_node_id(services, default="notify")
         notification_service = services.get("notification_service")
         if notification_service is None:
-            node_id = _current_node_id(services, default="notify")
             context.record_error(
                 node_id=node_id,
                 code="missing_dependency",
@@ -333,7 +336,7 @@ class NotifyHandler(BaseNodeHandler):
             await notification_service.send_text(message)
             logger.info("NotifyHandler[%s]: notification sent (%d chars)", node_id, len(message))
         except Exception:
-            logger.warning("NotifyHandler: failed to send notification", exc_info=True)
+            logger.warning("NotifyHandler[%s]: failed to send notification", node_id, exc_info=True)
 
 
 class FilterHandler(BaseNodeHandler):
