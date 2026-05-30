@@ -205,7 +205,11 @@ document.addEventListener('DOMContentLoaded', function() {
             resultsDiv.innerHTML = '';
             resultsDiv.appendChild(list);
         } catch (err) {
-            resultsDiv.innerHTML = '<p class="text-danger small">' + err.message + '</p>';
+            resultsDiv.innerHTML = '';
+            var errP = document.createElement('p');
+            errP.className = 'text-danger small';
+            errP.textContent = err.message;  // textContent, not innerHTML (issue #633)
+            resultsDiv.appendChild(errP);
         } finally {
             spinner.classList.add('d-none');
         }

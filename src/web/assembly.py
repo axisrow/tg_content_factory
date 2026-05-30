@@ -130,8 +130,9 @@ def register_builtin_endpoints(app: FastAPI) -> None:
             status_code=401,  # RFC 7235 / Starlette convention for failed auth
         )
 
-    @app.get("/logout")
+    @app.post("/logout")
     async def logout():
+        # POST-only: a GET logout is CSRF-able via <img src="/logout"> (issue #633).
         response = RedirectResponse(url="/login", status_code=303)
         response.delete_cookie(COOKIE_NAME)
         return response

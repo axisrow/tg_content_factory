@@ -1772,12 +1772,19 @@ async def test_web_login_redirects_authenticated_user_to_next(client):
 
 @pytest.mark.anyio
 async def test_logout_clears_cookie_and_redirects_to_login(client):
-    resp = await client.get("/logout", follow_redirects=False)
+    resp = await client.post("/logout", follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"] == "/login"
     assert COOKIE_NAME in resp.headers.get("set-cookie", "")
     cookie_header = resp.headers.get("set-cookie", "")
     assert "Max-Age=0" in cookie_header or "max-age=0" in cookie_header
+
+
+@pytest.mark.anyio
+async def test_logout_rejects_get(client):
+    """GET /logout must not log out — prevents CSRF via <img src="/logout"> (issue #633)."""
+    resp = await client.get("/logout", follow_redirects=False)
+    assert resp.status_code == 405
 
 
 @pytest.mark.anyio
@@ -1816,7 +1823,7 @@ async def test_invalid_cookie_falls_back(unauth_client):
 
 @pytest.mark.anyio
 async def test_logout_no_auth_required(unauth_client):
-    resp = await unauth_client.get("/logout", follow_redirects=False)
+    resp = await unauth_client.post("/logout", follow_redirects=False)
     assert resp.status_code == 303
     assert resp.headers["location"] == "/login"
 
