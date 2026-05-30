@@ -121,11 +121,20 @@
     document.body.addEventListener('htmx:afterSwap', function(e) { convertLocalDates(e.detail.target); });
     window.convertLocalDates = convertLocalDates;
 
+    var _clockInterval = null;
     function initServerClock() {
         var el = document.querySelector('.server-clock[data-utc]');
         if (!el) return;
         var serverStart = new Date(el.dataset.utc).getTime();
         if (isNaN(serverStart)) return;
+        // Clear any prior interval: an htmx:afterSwap of hx-target="body" (e.g. the
+        // /dialogs/ account switcher) replaces the navbar, so the old .server-clock node
+        // is detached. Without re-init the clock would freeze; without clearing first we
+        // would leak a tick() writing to a detached node.
+        if (_clockInterval !== null) {
+            clearInterval(_clockInterval);
+            _clockInterval = null;
+        }
         var offset = serverStart - Date.now(); // server - client
         var out = el.querySelector('.server-clock-value') || el;
         function tick() {
@@ -136,9 +145,12 @@
             out.textContent = hh + ':' + mm + ':' + ss + ' UTC';
         }
         tick();
-        setInterval(tick, 1000);
+        _clockInterval = setInterval(tick, 1000);
     }
     document.addEventListener('DOMContentLoaded', initServerClock);
+    // Re-init after htmx body swaps (navbar gets re-rendered) — same pattern as
+    // convertLocalDates above. Guarded re-entry prevents double intervals.
+    document.body.addEventListener('htmx:afterSwap', function() { initServerClock(); });
 
     function tgdlgCreate(message, choices) {
         return new Promise(function(resolve) {
