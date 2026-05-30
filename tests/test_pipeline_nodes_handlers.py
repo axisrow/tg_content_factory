@@ -1200,13 +1200,31 @@ async def test_react_skips_already_processed_message():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=7)])
     action_service = AsyncMock()
-    db = _dedup_db({7})
+    db = _dedup_db({(-100, 7)})
     await ReactHandler().execute(
         {"emoji": "🔥"},
         ctx,
         {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db, "pipeline_id": 42},
     )
     action_service.send_reaction.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_react_dedup_is_channel_scoped():
+    """A message with the same bare id but from a different channel is NOT a
+    duplicate — it must still be reacted to (regression for cross-channel false
+    dedup, since Telegram message ids are per-channel)."""
+    ctx = NodeContext()
+    ctx.set_global("context_messages", [_msg(channel_id=-200, message_id=7)])
+    action_service = AsyncMock()
+    db = _dedup_db({(-100, 7)})  # channel -100 used id 7; the candidate is from -200
+    await ReactHandler().execute(
+        {"emoji": "🔥"},
+        ctx,
+        {"client_pool": MagicMock(), "telegram_actions": action_service, "db": db, "pipeline_id": 42},
+    )
+    action_service.send_reaction.assert_awaited_once()
+    db.repos.pipeline_action_log.log_action.assert_awaited_once_with(42, "react", "react", -200, 7)
 
 
 @pytest.mark.anyio
@@ -1229,7 +1247,7 @@ async def test_react_dedup_disabled_via_config():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=7)])
     action_service = AsyncMock()
-    db = _dedup_db({7})
+    db = _dedup_db({(-100, 7)})
     await ReactHandler().execute(
         {"emoji": "🔥", "deduplicate": False},
         ctx,
@@ -1245,7 +1263,7 @@ async def test_react_dedup_inactive_without_pipeline_id():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=7)])
     action_service = AsyncMock()
-    db = _dedup_db({7})
+    db = _dedup_db({(-100, 7)})
     # No pipeline_id → dedup stays off (back-compat), message is acted on.
     await ReactHandler().execute(
         {"emoji": "🔥"},
@@ -1260,7 +1278,7 @@ async def test_delete_skips_already_processed_message():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=5)])
     action_service = AsyncMock()
-    db = _dedup_db({5})
+    db = _dedup_db({(-100, 5)})
     await DeleteMessageHandler().execute(
         {},
         ctx,
@@ -1294,7 +1312,7 @@ async def test_forward_skips_message_processed_in_prior_run():
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg(channel_id=-100, message_id=9)])
     action_service = AsyncMock()
-    db = _dedup_db({9})
+    db = _dedup_db({(-100, 9)})
     await ForwardHandler().execute(
         {"targets": [{"phone": "+1", "dialog_id": 111}]},
         ctx,

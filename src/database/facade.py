@@ -334,6 +334,7 @@ class Database:
                 self._content_pipelines,
                 self._telegram_commands,
                 self._runtime_snapshots,
+                self._pipeline_action_log,
             )
         ):
             raise RuntimeError("Database.initialize() has not been called")

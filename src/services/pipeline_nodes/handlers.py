@@ -61,7 +61,11 @@ async def _dedup_context(services: dict, node_id: str, action: str, node_config:
     repo = getattr(getattr(db, "repos", None), "pipeline_action_log", None)
     if repo is None:
         return None, set()
-    processed = await repo.processed_message_ids(pipeline_id, node_id, action)
+    # Scope the loaded log to the fetch window: anything older can't match this
+    # run's candidates, so loading it would only grow memory unboundedly over the
+    # life of the pipeline. Returns {(channel_id, message_id)} pairs.
+    since_hours = float(services.get("since_hours", 24.0))
+    processed = await repo.processed_message_ids(pipeline_id, node_id, action, since_hours=since_hours)
     return repo, processed
 
 
@@ -440,12 +444,12 @@ class ReactHandler(BaseNodeHandler):
                 return
         resolved_phone = _resolve_account_phone(services.get("account_phone"), services, context)
         action_service = services.get("telegram_actions") or TelegramActionService(client_pool)
-        dedup_repo, processed_ids = await _dedup_context(services, node_id, "react", node_config)
+        dedup_repo, processed_ids = await _dedup_context(services, node_id, "react", node_config)  # {(chan, msg)}
         pipeline_id = services.get("pipeline_id")
         skipped = 0
 
         for message in messages:
-            if message.message_id in processed_ids:
+            if (message.channel_id, message.message_id) in processed_ids:
                 skipped += 1
                 continue
             try:
@@ -553,7 +557,7 @@ class ForwardHandler(BaseNodeHandler):
                 for message in messages:
                     # processed_ids is a prior-run snapshot; not mutated mid-run so
                     # every target still receives the message within this run.
-                    if message.message_id in processed_ids:
+                    if (message.channel_id, message.message_id) in processed_ids:
                         continue
                     await action_service.forward_messages(
                         phone=phone,
@@ -634,7 +638,7 @@ class DeleteMessageHandler(BaseNodeHandler):
         skipped = 0
 
         for message in messages:
-            if message.message_id in processed_ids:
+            if (message.channel_id, message.message_id) in processed_ids:
                 skipped += 1
                 continue
             try:
