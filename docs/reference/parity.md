@@ -101,6 +101,10 @@
 | Одобрить (bulk) | `pipeline bulk-approve` | `POST /moderation/bulk-approve` | `bulk_approve_runs` |
 | Отклонить (bulk) | `pipeline bulk-reject` | `POST /moderation/bulk-reject` | `bulk_reject_runs` |
 | Шаги refinement | `pipeline refinement-steps` | `GET/POST /pipelines/{id}/refinement-steps` | `get_refinement_steps`, `set_refinement_steps` |
+| Подсчёт dry-run | `pipeline dry-run-count` | `GET /pipelines/{id}/dry-run-count` | — |
+| Узлы графа (CRUD) | `pipeline node` | — | — |
+| Связи графа (CRUD) | `pipeline edge` | — | — |
+| Граф (ASCII) | `pipeline graph` | — | — |
 | Экспорт JSON | `pipeline export` | `GET /pipelines/{id}/export` | `export_pipeline_json` |
 | Импорт JSON | `pipeline import` | `POST /pipelines/import` | `import_pipeline_json` |
 | Список шаблонов | `pipeline templates` | `GET /pipelines/templates` | `list_pipeline_templates` |
@@ -145,6 +149,8 @@
 | Сбросить flood | `account flood-clear` | `POST /settings/{id}/flood-clear` | `clear_flood_status` |
 | Инфо | `account info` | — | `get_account_info` |
 | Добавить аккаунт | `account add` | `POST /auth/send-code`, `POST /auth/verify-code` | — |
+| Отправить код авторизации | `account send-code` | `POST /auth/send-code` | — |
+| Подтвердить код авторизации | `account verify-code` | `POST /auth/verify-code` | — |
 
 ## Аналитика
 
@@ -162,6 +168,7 @@
 | Скорость сообщений | `analytics velocity` | — | `get_message_velocity` |
 | Пиковые часы | `analytics peak-hours` | — | `get_peak_hours` |
 | Календарь | `analytics calendar` | `GET /calendar/api/calendar` | `get_calendar` |
+| Аналитика канала | `analytics channel` | `GET /analytics/channels` | — |
 
 ## Dialogs
 
@@ -176,7 +183,6 @@
 | Топики форума | `dialogs topics` | `GET /agent/forum-topics` | `get_forum_topics` |
 | Создать канал | `dialogs create-channel` | `POST /dialogs/create-channel` | `create_telegram_channel` |
 | Отправить сообщение | `dialogs send` | `POST /dialogs/send` | `send_message` |
-| Поставить реакцию | `dialogs react` | — | `send_reaction` |
 | Переслать сообщение | `dialogs forward` | `POST /dialogs/forward` | `forward_messages` |
 | Редактировать | `dialogs edit-message` | `POST /dialogs/edit-message` | `edit_message` |
 | Удалить | `dialogs delete-message` | `POST /dialogs/delete-message` | `delete_message` |
@@ -265,6 +271,7 @@
 | Операция | CLI | Web Endpoint |
 |----------|-----|-------------|
 | Запустить | `serve` | — |
+| Фоновый worker | `worker` | — |
 | Остановить | `stop` | — |
 | Перезапустить | `restart` | — |
 | Health check | — | `GET /health` |
