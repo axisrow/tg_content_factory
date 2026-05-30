@@ -26,6 +26,7 @@ from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.repositories.messages import MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
+from src.database.repositories.pipeline_action_log import PipelineActionLogRepository
 from src.database.repositories.pipeline_templates import PipelineTemplatesRepository
 from src.database.repositories.runtime_snapshots import RuntimeSnapshotsRepository
 from src.database.repositories.search_log import SearchLogRepository
@@ -99,6 +100,7 @@ class Database:
         self._content_pipelines: ContentPipelinesRepository | None = None
         self._telegram_commands: TelegramCommandsRepository | None = None
         self._runtime_snapshots: RuntimeSnapshotsRepository | None = None
+        self._pipeline_action_log: PipelineActionLogRepository | None = None
         self._repos: DatabaseRepositories | None = None
 
     async def _has_encrypted_sessions(self) -> bool:
@@ -151,6 +153,7 @@ class Database:
         self._generation_runs = GenerationRunsRepository(self._db, database=self)
         self._generated_images = GeneratedImagesRepository(self._db, database=self)
         self._pipeline_templates = PipelineTemplatesRepository(self._db, database=self)
+        self._pipeline_action_log = PipelineActionLogRepository(self._db, database=self)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -170,6 +173,7 @@ class Database:
             pipeline_templates=self._pipeline_templates,
             telegram_commands=self._telegram_commands,
             runtime_snapshots=self._runtime_snapshots,
+            pipeline_action_log=self._pipeline_action_log,
         )
 
         await self._accounts.migrate_sessions()
@@ -330,6 +334,7 @@ class Database:
                 self._content_pipelines,
                 self._telegram_commands,
                 self._runtime_snapshots,
+                self._pipeline_action_log,
             )
         ):
             raise RuntimeError("Database.initialize() has not been called")
