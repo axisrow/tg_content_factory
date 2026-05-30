@@ -17,3 +17,19 @@ def parse_int_setting(
     except (TypeError, ValueError):
         logger.warning("Invalid %s in settings DB (%r), using %d", setting_name, raw_value, default)
         return default
+
+
+def parse_float_setting(
+    raw_value: object,
+    *,
+    setting_name: str,
+    default: float,
+    logger: logging.Logger,
+) -> float:
+    if raw_value in (None, ""):
+        return default
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        logger.warning("Invalid %s in settings DB (%r), using %s", setting_name, raw_value, default)
+        return default

@@ -25,6 +25,12 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     settings_filter.add_argument("--max-cross-dupe", type=float, default=None, dest="max_cross_dupe")
     settings_filter.add_argument("--min-cyrillic", type=float, default=None, dest="min_cyrillic")
 
+    settings_reactions = settings_sub.add_parser("reactions", help="Configure reaction sending cadence")
+    settings_reactions.add_argument(
+        "--min-interval", type=int, default=None, dest="min_interval",
+        help="Minimum seconds between reactions per account (clamped to 1–300; default 5)",
+    )
+
     settings_semantic = settings_sub.add_parser("semantic", help="Configure semantic search")
     settings_semantic.add_argument("--provider", default=None, help="Embedding provider")
     settings_semantic.add_argument("--model", default=None, help="Embedding model")

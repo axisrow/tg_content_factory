@@ -86,6 +86,27 @@ def run(args: argparse.Namespace) -> None:
                         val = await db.get_setting(setting_key)
                         print(f"  {setting_key} = {val or '(not set)'}")
 
+            elif action == "reactions":
+                from src.services.telegram_command_dispatcher import (
+                    REACTION_MIN_INTERVAL_CEILING_SEC,
+                    REACTION_MIN_INTERVAL_FLOOR_SEC,
+                    REACTION_MIN_INTERVAL_SETTING,
+                )
+
+                min_interval = getattr(args, "min_interval", None)
+                if min_interval is not None:
+                    clamped = int(
+                        max(
+                            REACTION_MIN_INTERVAL_FLOOR_SEC,
+                            min(REACTION_MIN_INTERVAL_CEILING_SEC, min_interval),
+                        )
+                    )
+                    await db.set_setting(REACTION_MIN_INTERVAL_SETTING, str(clamped))
+                    print(f"Set {REACTION_MIN_INTERVAL_SETTING} = {clamped}")
+                else:
+                    val = await db.get_setting(REACTION_MIN_INTERVAL_SETTING)
+                    print(f"  {REACTION_MIN_INTERVAL_SETTING} = {val or '(not set)'}")
+
             elif action == "semantic":
                 updated = []
                 for attr, setting_key in [

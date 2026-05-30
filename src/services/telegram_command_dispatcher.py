@@ -24,6 +24,7 @@ from src.services.telegram_actions import (
     TelegramActionPathEscapeError,
     TelegramActionService,
 )
+from src.settings_utils import parse_float_setting
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
@@ -40,6 +41,14 @@ except ImportError:  # pragma: no cover
         pass
 
 logger = logging.getLogger(__name__)
+
+# Minimum spacing between reactions on the same phone. Configurable live via the
+# DB setting below; a non-zero floor is enforced because Telegram rate-limits
+# reactions server-side and zero spacing risks FLOOD_WAIT / account limiting.
+REACTION_MIN_INTERVAL_SETTING = "reaction_min_interval_sec"
+DEFAULT_REACTION_MIN_INTERVAL_SEC = 5.0
+REACTION_MIN_INTERVAL_FLOOR_SEC = 1.0
+REACTION_MIN_INTERVAL_CEILING_SEC = 300.0
 
 
 @dataclass(slots=True)
@@ -71,7 +80,6 @@ class TelegramCommandDispatcher:
         self._auth = auth
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
-        self._reaction_min_interval_sec = 30.0
         self._last_reaction_at_monotonic: dict[str, float] = {}
 
     async def start(self) -> None:
@@ -398,6 +406,22 @@ class TelegramCommandDispatcher:
                 return flood_until
         return None
 
+    async def _reaction_min_interval(self) -> float:
+        """Per-phone minimum seconds between reactions, read live from DB settings.
+
+        Clamped to a non-zero floor because Telegram rate-limits reactions
+        server-side; values outside the range or unparseable fall back to the
+        default.
+        """
+        raw = await self._db.get_setting(REACTION_MIN_INTERVAL_SETTING)
+        value = parse_float_setting(
+            raw,
+            setting_name=REACTION_MIN_INTERVAL_SETTING,
+            default=DEFAULT_REACTION_MIN_INTERVAL_SEC,
+            logger=logger,
+        )
+        return max(REACTION_MIN_INTERVAL_FLOOR_SEC, min(REACTION_MIN_INTERVAL_CEILING_SEC, value))
+
     async def _ensure_reaction_can_run(self, phone: str) -> None:
         is_warming = self._pool_method("is_warming")
         if callable(is_warming):
@@ -432,8 +456,9 @@ class TelegramCommandDispatcher:
         last = self._last_reaction_at_monotonic.get(phone)
         if last is None:
             return
+        min_interval = await self._reaction_min_interval()
         elapsed = time.monotonic() - last
-        remaining = self._reaction_min_interval_sec - elapsed
+        remaining = min_interval - elapsed
         if remaining > 0:
             run_after = datetime.now(timezone.utc) + timedelta(seconds=remaining)
             raise TelegramCommandRetryLaterError(

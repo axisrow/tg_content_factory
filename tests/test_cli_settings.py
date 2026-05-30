@@ -110,6 +110,41 @@ class TestFilterCriteria:
         assert "0.75" in out
 
 
+class TestReactions:
+    def test_reactions_show_defaults(self, cli_env, capsys):
+        from src.cli.commands.settings import run
+        run(_ns(settings_action="reactions"))
+        out = capsys.readouterr().out
+        assert "reaction_min_interval_sec" in out
+        assert "(not set)" in out
+
+    def test_reactions_set_min_interval(self, cli_env, capsys):
+        from src.cli.commands.settings import run
+        run(_ns(settings_action="reactions", min_interval=5))
+        out = capsys.readouterr().out
+        assert "reaction_min_interval_sec = 5" in out
+
+    def test_reactions_clamps_below_floor(self, cli_env, capsys):
+        from src.cli.commands.settings import run
+        run(_ns(settings_action="reactions", min_interval=0))
+        out = capsys.readouterr().out
+        assert "reaction_min_interval_sec = 1" in out
+
+    def test_reactions_clamps_above_ceiling(self, cli_env, capsys):
+        from src.cli.commands.settings import run
+        run(_ns(settings_action="reactions", min_interval=9999))
+        out = capsys.readouterr().out
+        assert "reaction_min_interval_sec = 300" in out
+
+    def test_reactions_show_after_set(self, cli_env, capsys):
+        from src.cli.commands.settings import run
+        run(_ns(settings_action="reactions", min_interval=12))
+        capsys.readouterr()
+        run(_ns(settings_action="reactions"))
+        out = capsys.readouterr().out
+        assert "reaction_min_interval_sec = 12" in out
+
+
 class TestSemantic:
     def test_semantic_show_defaults(self, cli_env, capsys):
         from src.cli.commands.settings import run

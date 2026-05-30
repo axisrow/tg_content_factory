@@ -264,6 +264,7 @@
 | Время сервера | `settings server-time` | — | `get_server_time` |
 | Агент | `settings agent` | `POST /settings/save-agent` | `save_agent_settings` |
 | Фильтры | `settings filter-criteria` | `POST /settings/save-filters` | `save_filter_settings` |
+| Интервал реакций | `settings reactions` | `POST /settings/save-scheduler` | — |
 | Семантический поиск | `settings semantic` | `POST /settings/save-semantic-search` | — |
 
 ## Сервер и диагностика

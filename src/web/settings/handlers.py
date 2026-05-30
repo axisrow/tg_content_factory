@@ -42,6 +42,10 @@ from src.services.image_provider_service import (
     ImageProviderService,
     image_provider_spec,
 )
+from src.services.telegram_command_dispatcher import (
+    DEFAULT_REACTION_MIN_INTERVAL_SEC,
+    REACTION_MIN_INTERVAL_SETTING,
+)
 from src.settings_utils import parse_int_setting
 from src.utils.datetime import parse_datetime
 from src.web import deps
@@ -457,6 +461,12 @@ async def handle_settings_page(request: Request) -> dict[str, object]:
         default=config.scheduler.collect_interval_minutes,
         logger=logger,
     )
+    reaction_min_interval_sec = parse_int_setting(
+        await db.get_setting(REACTION_MIN_INTERVAL_SETTING),
+        setting_name=REACTION_MIN_INTERVAL_SETTING,
+        default=int(DEFAULT_REACTION_MIN_INTERVAL_SEC),
+        logger=logger,
+    )
     accounts = await db.get_account_summaries()
     telegram_session_warning = any(
         account.session_status != AccountSessionStatus.OK for account in accounts
@@ -571,6 +581,7 @@ async def handle_settings_page(request: Request) -> dict[str, object]:
         "notification_bot": notification_bot,
         "notification_bot_error": notification_bot_error,
         "collect_interval_minutes": collect_interval_minutes,
+        "reaction_min_interval_sec": reaction_min_interval_sec,
         "agent_dev_mode_enabled": agent_dev_mode_enabled,
         "agent_backend_override": agent_backend_override,
         "agent_prompt_template": agent_prompt_template,
@@ -600,6 +611,7 @@ async def handle_save_scheduler_settings(
 ) -> SettingsFlash:
     db = deps.get_db(request)
     await db.set_setting("collect_interval_minutes", str(form.interval_minutes))
+    await db.set_setting(REACTION_MIN_INTERVAL_SETTING, str(form.reaction_min_interval_sec))
     scheduler = getattr(request.app.state, "scheduler", None)
     if scheduler:
         scheduler.update_interval(form.interval_minutes)
