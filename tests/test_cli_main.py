@@ -225,6 +225,13 @@ class TestParser:
         assert args.key == "my_key"
         assert args.value == "my_value"
 
+    def test_parser_settings_server_time(self):
+        """settings server-time subcommand (CLI counterpart of get_server_time tool)."""
+        parser = build_parser()
+        args = parser.parse_args(["settings", "server-time"])
+        assert args.command == "settings"
+        assert args.settings_action == "server-time"
+
     def test_parser_debug_logs(self):
         """debug logs subcommand."""
         parser = build_parser()
