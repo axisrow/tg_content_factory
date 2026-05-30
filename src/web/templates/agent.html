@@ -3,7 +3,8 @@
 {% block title %}Агент — TG Agent{% endblock %}
 
 {% block head_scripts %}
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js" integrity="sha384-eEu5CTj3qGvu9PdJuS+YlkNi7d2XxQROAFYOr59zgObtlcux1ae1Il3u7jvdCSWu" crossorigin="anonymous"></script>
 <style>
 .agent-layout {
     display: flex;
@@ -738,7 +739,11 @@
     marked.setOptions({breaks: true, gfm: true});
 
     function renderMd(text) {
-        return marked.parse(text || '');
+        var raw = marked.parse(text || '');
+        // Markdown may contain raw HTML; sanitize before innerHTML to block XSS (issue #633).
+        if (window.DOMPurify) return DOMPurify.sanitize(raw);
+        // Fail closed: if the sanitizer is unavailable, render escaped plain text.
+        return escapeHtml(text || '');
     }
 
     // Permission request dialog — menu style with keyboard shortcuts (1/2/3 + Enter)
