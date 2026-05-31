@@ -256,7 +256,9 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "clear_flood_status",
-        "Clear flood wait restriction for a specific account. Ask user for confirmation first.",
+        "Clear a STALE/expired flood-wait entry for an account. Refuses to clear an "
+        "ACTIVE flood wait — that is a Telegram-mandated pause and must not be bypassed. "
+        "Ask user for confirmation first.",
         {
             "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
             "confirm": Annotated[bool, "Установите true для подтверждения действия"],
@@ -274,6 +276,20 @@ def register(db, client_pool, embedding_service, **kwargs):
             acc = next((a for a in accounts if a.phone == phone), None)
             if acc is None:
                 return _text_response(f"Аккаунт {phone} не найден.")
+            # Do not let the agent defeat a live Telegram flood wait by clearing
+            # it as a retry hack (#597). An active wait is server-mandated; only
+            # stale/expired entries may be cleared here. Manual stale-state repair
+            # stays available via CLI `account flood-clear`.
+            if is_flood_wait_active(acc):
+                remaining = _remaining_seconds(acc)
+                suffix = f" (осталось ~{remaining}s)" if remaining is not None else ""
+                return _text_response(
+                    f"Отклонено: у {phone} активен flood-wait до {acc.flood_wait_until}{suffix}. "
+                    "Это пауза, предписанная Telegram, — её нельзя обойти сбросом, "
+                    "иначе аккаунт получит ещё более длинную блокировку. Дождитесь "
+                    "окончания. Для ручного восстановления зависшего состояния есть "
+                    "CLI `account flood-clear`."
+                )
             await db.update_account_flood(phone, None)
             return _text_response(f"Flood-wait для {phone} сброшен.")
         except Exception as e:
