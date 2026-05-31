@@ -1594,10 +1594,56 @@ async def test_search_runtime_error_is_rendered(client, monkeypatch):
 
     monkeypatch.setattr(deps, "search_service", lambda request: BrokenSearchService())
 
-    resp = await client.get("/search?q=test&mode=telegram")
+    # mode=local goes through service.search directly (telegram modes are now
+    # proxied to the worker in web runtime, see #643).
+    resp = await client.get("/search?q=test&mode=local")
 
     assert resp.status_code == 200
     assert "Ошибка поиска: boom" in resp.text
+
+
+@pytest.mark.anyio
+async def test_search_telegram_proxy_when_worker_down(client, monkeypatch):
+    """Telegram-mode search in web runtime fails fast when no worker is alive (#643)."""
+    monkeypatch.setattr("src.web.routes.scheduler._is_worker_alive", AsyncMock(return_value=False))
+
+    resp = await client.get("/search?q=test&mode=telegram")
+
+    assert resp.status_code == 200
+    assert "Telegram-worker не запущен" in resp.text
+
+
+@pytest.mark.anyio
+async def test_search_telegram_proxy_renders_worker_result(client, monkeypatch):
+    """Web proxies premium search to the worker and renders its result (#643)."""
+    from src.models import Message, SearchResult, TelegramCommand, TelegramCommandStatus
+    from src.web import deps
+
+    monkeypatch.setattr("src.web.routes.scheduler._is_worker_alive", AsyncMock(return_value=True))
+
+    msg = Message(
+        channel_id=-100, message_id=7, text="proxied premium hit",
+        date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    )
+    payload = SearchResult(messages=[msg], total=1, query="test").model_dump(mode="json")
+    command = TelegramCommand(
+        id=99,
+        command_type="search.telegram",
+        status=TelegramCommandStatus.SUCCEEDED,
+        result_payload=payload,
+    )
+    fake_cmd_service = SimpleNamespace(
+        enqueue=AsyncMock(return_value=99),
+        get=AsyncMock(return_value=command),
+    )
+    monkeypatch.setattr(deps, "telegram_command_service", lambda request: fake_cmd_service)
+
+    resp = await client.get("/search?q=test&mode=telegram")
+
+    assert resp.status_code == 200
+    assert "proxied premium hit" in resp.text
+    fake_cmd_service.enqueue.assert_awaited_once()
+    assert fake_cmd_service.enqueue.await_args.args[0] == "search.telegram"
 
 
 @pytest.fixture

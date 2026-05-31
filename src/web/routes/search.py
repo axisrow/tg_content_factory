@@ -1,10 +1,13 @@
+import asyncio
 import logging
 import re
+import time
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import ValidationError
 
-from src.models import SearchResult
+from src.models import SearchResult, TelegramCommandStatus
 from src.web import deps
 from src.web.template_globals import _agent_available_for_request
 
@@ -12,6 +15,70 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _LEN_RE = re.compile(r"\blen\s*(<|>)\s*(\d+)[,;]?")
+
+# Telegram-backed search modes need a live ClientPool. The web container has
+# none (runtime_mode="web"), so these are proxied to the worker process (#643).
+_TELEGRAM_SEARCH_MODES = {"telegram", "my_chats", "channel"}
+_WORKER_SEARCH_TIMEOUT_SEC = 45.0
+_WORKER_SEARCH_POLL_SEC = 0.4
+
+
+async def _telegram_search_via_worker(
+    request: Request,
+    *,
+    mode: str,
+    query: str,
+    limit: int,
+    channel_id: int | None,
+) -> SearchResult:
+    """Proxy a live Telegram search to the worker and await its result (#643).
+
+    The web container cannot open Telegram connections, so it enqueues a
+    ``search.telegram`` command and polls ``telegram_commands.result_payload``
+    until the worker (embedded or standalone) finishes it.
+    """
+    from src.web.routes.scheduler import _is_worker_alive
+
+    db = deps.get_db(request)
+    if not await _is_worker_alive(db):
+        return SearchResult(
+            messages=[],
+            total=0,
+            query=query,
+            error="Telegram-worker не запущен — premium-поиск недоступен. Запустите worker.",
+        )
+    cmd_service = deps.telegram_command_service(request)
+    payload: dict = {"mode": mode, "query": query, "limit": limit}
+    if channel_id is not None:
+        payload["channel_id"] = channel_id
+    command_id = await cmd_service.enqueue(
+        "search.telegram", payload=payload, requested_by="web:search"
+    )
+    deadline = time.monotonic() + _WORKER_SEARCH_TIMEOUT_SEC
+    while time.monotonic() < deadline:
+        command = await cmd_service.get(command_id)
+        if command is None:
+            break
+        if command.status == TelegramCommandStatus.SUCCEEDED:
+            try:
+                return SearchResult.model_validate(command.result_payload or {})
+            except ValidationError:
+                logger.warning("Malformed worker search result for command %s", command_id)
+                return SearchResult(messages=[], total=0, query=query, error="Некорректный ответ worker.")
+        if command.status == TelegramCommandStatus.FAILED:
+            return SearchResult(
+                messages=[], total=0, query=query,
+                error=command.error or "Ошибка поиска в worker.",
+            )
+        if command.status == TelegramCommandStatus.CANCELLED:
+            return SearchResult(messages=[], total=0, query=query, error="Поиск отменён.")
+        await asyncio.sleep(_WORKER_SEARCH_POLL_SEC)
+    return SearchResult(
+        messages=[],
+        total=0,
+        query=query,
+        error="Worker не ответил вовремя. Проверьте, что Telegram-worker запущен.",
+    )
 
 
 def _extract_length(q: str) -> tuple[str, int | None, int | None]:
@@ -70,6 +137,7 @@ async def _render_search_page(
 
     service = deps.search_service(request)
     channels = await db.get_channels()
+    runtime_mode = getattr(request.app.state, "runtime_mode", "web")
 
     # Browse mode: channel_id without query shows latest messages from that channel
     if not q and channel_id_int and mode in {"local", "semantic", "hybrid"}:
@@ -95,6 +163,15 @@ async def _render_search_page(
     elif q:
         if channel_id_error and mode in {"local", "semantic", "hybrid", "channel"}:
             result = SearchResult(messages=[], total=0, query=q, error=channel_id_error)
+        elif mode in _TELEGRAM_SEARCH_MODES and runtime_mode == "web":
+            # Web container has no live ClientPool — run it on the worker (#643).
+            try:
+                result = await _telegram_search_via_worker(
+                    request, mode=mode, query=fts_query, limit=limit, channel_id=channel_id_int
+                )
+            except Exception as exc:
+                logger.exception("Worker search proxy failed: mode=%s query=%r", mode, q)
+                result = SearchResult(messages=[], total=0, query=q, error=f"Ошибка поиска: {exc}")
         else:
             try:
                 result = await service.search(
