@@ -278,7 +278,8 @@ class TestClearFloodStatusTool:
         assert "не найден" in _text(result)
 
     @pytest.mark.anyio
-    async def test_with_confirm_clears_flood(self, mock_db):
+    async def test_with_confirm_clears_stale_flood(self, mock_db):
+        # Past timestamp → flood already expired → safe to clear.
         acc = _make_account(phone="+71111111111", flood_wait_until="2025-01-01")
         mock_db.get_accounts = AsyncMock(return_value=[acc])
         mock_db.update_account_flood = AsyncMock()
@@ -286,3 +287,18 @@ class TestClearFloodStatusTool:
         result = await handlers["clear_flood_status"]({"phone": "+71111111111", "confirm": True})
         assert "сброшен" in _text(result)
         mock_db.update_account_flood.assert_awaited_once_with("+71111111111", None)
+
+    @pytest.mark.anyio
+    async def test_refuses_to_clear_active_flood(self, mock_db):
+        # #597: an active (future) flood wait is Telegram-mandated — the agent
+        # must NOT be able to clear it as a retry hack.
+        future = datetime.now(timezone.utc) + timedelta(hours=2)
+        acc = _make_account(phone="+71111111111", flood_wait_until=future)
+        mock_db.get_accounts = AsyncMock(return_value=[acc])
+        mock_db.update_account_flood = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["clear_flood_status"]({"phone": "+71111111111", "confirm": True})
+        text = _text(result)
+        assert "Отклонено" in text
+        assert "Telegram" in text
+        mock_db.update_account_flood.assert_not_awaited()
