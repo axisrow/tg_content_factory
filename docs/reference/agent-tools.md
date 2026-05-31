@@ -98,6 +98,7 @@
 | `toggle_account` | WRITE | Вкл/выкл |
 | `delete_account` | DELETE | Удалить |
 | `get_flood_status` | READ | Статус flood wait |
+| `get_account_availability` | READ | Доступность аккаунта (как в Settings UI): available/flood/disconnected/inactive/session_unavailable |
 | `clear_flood_status` | WRITE | Сбросить flood wait |
 | `get_account_info` | READ | Информация об аккаунте (имя, username, premium) |
 
