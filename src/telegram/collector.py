@@ -509,12 +509,20 @@ class Collector:
                         stats["errors"] += 1
                         break
                     except UsernameResolveFloodWaitDeferredError as e:
+                        # The triggering channel set the global resolve backoff and
+                        # deferred itself. Do NOT abort the whole run (#552): the
+                        # backoff is now active, so every subsequent channel resolves
+                        # cache-only and never hits the live API. Continue so cached
+                        # channels keep collecting within the same run instead of
+                        # bricking the run that first hits the flood.
                         logger.warning(
-                            "Stopping collection until %s: username resolve flood wait",
+                            "Channel %s deferred until %s (resolve flood backoff active); "
+                            "continuing run cache-only",
+                            channel.channel_id,
                             e.next_available_at.isoformat(),
                         )
-                        stats["errors"] += 1
-                        break
+                        stats["deferred"] = stats.get("deferred", 0) + 1
+                        continue
                     except Exception as e:
                         logger.error("Error collecting channel %s: %s", channel.channel_id, e)
                         stats["errors"] += 1

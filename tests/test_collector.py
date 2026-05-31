@@ -410,6 +410,50 @@ async def test_collect_all_channels_continues_cache_only_during_backoff(db):
 
 
 @pytest.mark.anyio
+async def test_collect_all_channels_continues_after_mid_run_resolve_flood(db):
+    """#552: when the FIRST channel of a run triggers a long resolve flood mid-run,
+    the run must NOT abort — the backoff it just set makes every subsequent channel
+    resolve cache-only, so the run continues instead of bricking on the triggering
+    channel. Regression guard for the break→continue fix (the pre-set-backoff test
+    never reaches this path)."""
+    await db.add_channel(
+        Channel(channel_id=1970788991, title="Trigger Flood", username="trigger_flood")
+    )
+    await db.add_channel(
+        Channel(channel_id=1970788992, title="After Flood", username="after_flood")
+    )
+
+    # Channel 1's live resolve raises a 7200s flood (> 300s threshold) → sets the
+    # global backoff and raises UsernameResolveFloodWaitDeferredError mid-run.
+    flood_err = FloodWaitError(request=None, capture=7200)
+    raw1 = FakeTelethonClient(entity_resolver=lambda _arg: flood_err)
+    # Channel 2 would resolve fine live, but the active backoff routes it cache-only,
+    # so its live get_input_entity must never be awaited.
+    raw2 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    pool = make_mock_pool()
+    s1 = TelegramTransportSession(raw1, disconnect_on_close=False, phone="+7001", pool=pool)
+    s2 = TelegramTransportSession(raw2, disconnect_on_close=False, phone="+7002", pool=pool)
+    pool.get_available_client = AsyncMock(side_effect=[(s1, "+7001"), (s2, "+7002")])
+    collector = Collector(
+        pool, db, SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10)
+    )
+
+    stats = await collector.collect_all_channels()
+
+    # The run reached channel 2 (get_available_client awaited twice) — it did NOT
+    # break on channel 1's flood.
+    assert pool.get_available_client.await_count == 2
+    # The triggering channel is counted as deferred, not as an error.
+    assert stats["errors"] == 0
+    assert stats.get("deferred", 0) >= 1
+    # Backoff is active and capped to the 3600s window.
+    remaining = collector._get_resolve_username_backoff_remaining_sec()
+    assert 3500 < remaining <= 3600
+    # Channel 2 was routed cache-only — no live resolve fired.
+    raw2.get_input_entity.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_collect_no_username_channel_fetches_dialogs_once(db):
     """For no-username channels get_dialogs() is called once per process to warm entity cache."""
     ch = Channel(channel_id=123, title="No Username")
