@@ -2062,3 +2062,34 @@ async def test_search_telegram_handler_without_engine_raises():
     d = _dispatcher(search_engine=None)
     with pytest.raises(RuntimeError, match="Search engine unavailable"):
         await d._handle_search_telegram({"mode": "telegram", "query": "q"})
+
+
+async def test_collection_pause_sets_setting_and_pauses():
+    db = _mock_db()
+    db.set_setting = AsyncMock()
+    queue = MagicMock()
+    d = _dispatcher(db=db, collection_queue=queue)
+    result = await d._handle_collection_pause({})
+    db.set_setting.assert_awaited_once_with("collection_queue_paused", "1")
+    queue.pause.assert_called_once_with()
+    assert result == {"paused": True}
+
+
+async def test_collection_resume_sets_setting_and_resumes():
+    db = _mock_db()
+    db.set_setting = AsyncMock()
+    queue = MagicMock()
+    d = _dispatcher(db=db, collection_queue=queue)
+    result = await d._handle_collection_resume({})
+    db.set_setting.assert_awaited_once_with("collection_queue_paused", "0")
+    queue.resume.assert_called_once_with()
+    assert result == {"paused": False}
+
+
+async def test_collection_pause_without_queue_still_sets_setting():
+    db = _mock_db()
+    db.set_setting = AsyncMock()
+    d = _dispatcher(db=db, collection_queue=None)
+    result = await d._handle_collection_pause({})
+    db.set_setting.assert_awaited_once_with("collection_queue_paused", "1")
+    assert result == {"paused": True}
