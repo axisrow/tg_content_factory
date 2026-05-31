@@ -250,8 +250,9 @@ async def test_collect_channel_long_username_resolve_flood_sets_backoff_without_
     pool.report_flood.assert_not_awaited()
     pool.get_available_client.assert_awaited_once()
     raw_client2.get_input_entity.assert_not_awaited()
+    # #552: a 7200s flood is capped to the 3600s global backoff window.
     remaining = collector._get_resolve_username_backoff_remaining_sec()
-    assert 7100 < remaining <= 7200
+    assert 3500 < remaining <= 3600
 
 
 @pytest.mark.anyio
@@ -294,13 +295,16 @@ async def test_collect_channel_username_resolve_flood_does_not_rotate(db):
         SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
     )
 
-    with pytest.raises(UsernameResolveFloodWaitDeferredError):
-        await collector._collect_channel(stored)
+    # #552: a 120s flood is below the global-backoff threshold (300s) — the
+    # channel is skipped for this run without freezing all accounts and
+    # without rotating to a second account.
+    result = await collector._collect_channel(stored)
 
+    assert result == 0
     pool.report_flood.assert_not_awaited()
     assert pool.get_available_client.await_count == 1
     raw_client2.get_input_entity.assert_not_awaited()
-    assert 0 < collector._get_resolve_username_backoff_remaining_sec() <= 120
+    assert collector._get_resolve_username_backoff_remaining_sec() == 0
 
 
 @pytest.mark.anyio
@@ -345,7 +349,10 @@ async def test_collect_channel_defers_when_resolve_rate_limited(db):
 
 
 @pytest.mark.anyio
-async def test_collect_channel_skips_username_resolve_when_backoff_active(db):
+async def test_collect_channel_cache_only_defers_on_backoff_miss(db):
+    """#552: while a global resolve backoff is active, a channel whose InputPeer
+    is not cached runs in cache-only mode — it is deferred (returns 0) without
+    ever calling the live resolve API."""
     ch = Channel(
         channel_id=1970788986,
         title="Backoff Active",
@@ -356,17 +363,27 @@ async def test_collect_channel_skips_username_resolve_when_backoff_active(db):
     stored = await db.get_channel_by_pk(ch_id)
     assert stored is not None
 
-    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(AsyncMock(), "+7001")))
+    raw_client = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    pool = make_mock_pool()
+    session = TelegramTransportSession(
+        raw_client, disconnect_on_close=False, phone="+7001", pool=pool
+    )
+    pool.get_available_client = AsyncMock(return_value=(session, "+7001"))
     collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
     collector._set_resolve_username_backoff(600)
 
-    with pytest.raises(UsernameResolveFloodWaitDeferredError):
-        await collector._collect_channel(stored)
-    pool.get_available_client.assert_not_awaited()
+    result = await collector._collect_channel(stored)
+
+    assert result == 0
+    raw_client.get_input_entity.assert_not_awaited()
+    pool.report_flood.assert_not_awaited()
 
 
 @pytest.mark.anyio
-async def test_collect_all_channels_stops_on_username_resolve_backoff(db):
+async def test_collect_all_channels_continues_cache_only_during_backoff(db):
+    """#552: a global resolve backoff no longer aborts the whole run. Channels
+    that miss the cache are deferred while the run continues — cache-resolvable
+    channels keep collecting on subsequent accounts."""
     await db.add_channel(
         Channel(channel_id=1970788987, title="Backoff Active 1", username="backoff_active_1")
     )
@@ -374,14 +391,66 @@ async def test_collect_all_channels_stops_on_username_resolve_backoff(db):
         Channel(channel_id=1970788988, title="Backoff Active 2", username="backoff_active_2")
     )
 
-    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(AsyncMock(), "+7001")))
+    raw1 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    raw2 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    pool = make_mock_pool()
+    s1 = TelegramTransportSession(raw1, disconnect_on_close=False, phone="+7001", pool=pool)
+    s2 = TelegramTransportSession(raw2, disconnect_on_close=False, phone="+7002", pool=pool)
+    pool.get_available_client = AsyncMock(side_effect=[(s1, "+7001"), (s2, "+7002")])
     collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
     collector._set_resolve_username_backoff(600)
 
     stats = await collector.collect_all_channels()
 
-    assert stats == {"channels": 0, "messages": 0, "errors": 1}
-    pool.get_available_client.assert_not_awaited()
+    # Run did NOT stop on the backoff; both channels were processed (deferred).
+    assert stats["errors"] == 0
+    assert stats["messages"] == 0
+    raw1.get_input_entity.assert_not_awaited()
+    raw2.get_input_entity.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_collect_all_channels_continues_after_mid_run_resolve_flood(db):
+    """#552: when the FIRST channel of a run triggers a long resolve flood mid-run,
+    the run must NOT abort — the backoff it just set makes every subsequent channel
+    resolve cache-only, so the run continues instead of bricking on the triggering
+    channel. Regression guard for the break→continue fix (the pre-set-backoff test
+    never reaches this path)."""
+    await db.add_channel(
+        Channel(channel_id=1970788991, title="Trigger Flood", username="trigger_flood")
+    )
+    await db.add_channel(
+        Channel(channel_id=1970788992, title="After Flood", username="after_flood")
+    )
+
+    # Channel 1's live resolve raises a 7200s flood (> 300s threshold) → sets the
+    # global backoff and raises UsernameResolveFloodWaitDeferredError mid-run.
+    flood_err = FloodWaitError(request=None, capture=7200)
+    raw1 = FakeTelethonClient(entity_resolver=lambda _arg: flood_err)
+    # Channel 2 would resolve fine live, but the active backoff routes it cache-only,
+    # so its live get_input_entity must never be awaited.
+    raw2 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    pool = make_mock_pool()
+    s1 = TelegramTransportSession(raw1, disconnect_on_close=False, phone="+7001", pool=pool)
+    s2 = TelegramTransportSession(raw2, disconnect_on_close=False, phone="+7002", pool=pool)
+    pool.get_available_client = AsyncMock(side_effect=[(s1, "+7001"), (s2, "+7002")])
+    collector = Collector(
+        pool, db, SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10)
+    )
+
+    stats = await collector.collect_all_channels()
+
+    # The run reached channel 2 (get_available_client awaited twice) — it did NOT
+    # break on channel 1's flood.
+    assert pool.get_available_client.await_count == 2
+    # The triggering channel is counted as deferred, not as an error.
+    assert stats["errors"] == 0
+    assert stats.get("deferred", 0) >= 1
+    # Backoff is active and capped to the 3600s window.
+    remaining = collector._get_resolve_username_backoff_remaining_sec()
+    assert 3500 < remaining <= 3600
+    # Channel 2 was routed cache-only — no live resolve fired.
+    raw2.get_input_entity.assert_not_awaited()
 
 
 @pytest.mark.anyio
