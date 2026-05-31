@@ -101,8 +101,6 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Auth failed: {exc}")
                     return
 
-                await db.set_setting(_pending_key(phone), "")
-
                 existing = await db.get_account_summaries(active_only=False)
                 is_primary = len(existing) == 0
 
@@ -119,6 +117,15 @@ def run(args: argparse.Namespace) -> None:
                     is_premium=False,
                 )
                 await db.add_account(account)
+
+                # Clear the pending-auth key only AFTER the account is durably
+                # persisted (#449). Clearing it before add_account opened a data-loss
+                # window: a crash between the two autocommit writes would leave no
+                # pending key AND no account, so a verify-code retry would hit the
+                # "No pending auth" guard above with the session gone. add_account is
+                # an idempotent ON CONFLICT(phone) upsert, so a retry after a crash
+                # between sign-in and this point safely re-persists the same session.
+                await db.set_setting(_pending_key(phone), "")
 
                 is_premium = False
                 try:

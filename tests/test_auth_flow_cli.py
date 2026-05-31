@@ -149,6 +149,17 @@ def test_cli_verify_code_persists_account_before_pool_warmup(tmp_path, capsys):
             return await original_add(account)
 
         db.add_account = traced_add_account  # type: ignore[method-assign]
+
+        original_set_setting = db.set_setting
+
+        async def traced_set_setting(key, value):
+            # Trace only the pending-auth clear (value == "") so the order list
+            # captures when the pending key is wiped relative to add_account (#449).
+            if key == "auth_pending:+1" and value == "":
+                order.append("clear_pending")
+            return await original_set_setting(key, value)
+
+        db.set_setting = traced_set_setting  # type: ignore[method-assign]
         captured["db"] = db
         return config, db
 
@@ -182,7 +193,9 @@ def test_cli_verify_code_persists_account_before_pool_warmup(tmp_path, capsys):
         account_cmd.run(args)
 
     # DB write happened, and it happened BEFORE the (failing) pool warm-up.
-    assert order == ["add_account", "add_client"], order
+    # The pending-auth key is cleared AFTER the account is persisted (#449), so a
+    # crash between sign-in and persist leaves the pending key intact for retry.
+    assert order == ["add_account", "clear_pending", "add_client"], order
     assert captured["account"].phone == "+1"
     assert captured["account"].session_string == "SESSION_XYZ"
     assert captured["account"].is_primary is True
