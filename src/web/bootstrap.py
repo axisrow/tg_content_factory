@@ -297,6 +297,7 @@ async def build_container_with_templates(
             collector,
             scheduler=scheduler,
             auth=auth,
+            search_engine=search_engine,
         )
         agent_manager = AgentManager(db, config, client_pool=pool, scheduler_manager=scheduler)
     else:

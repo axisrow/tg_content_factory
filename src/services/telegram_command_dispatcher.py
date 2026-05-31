@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from inspect import isawaitable
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.config import AppConfig
 from src.database import Database
@@ -40,6 +40,9 @@ except ImportError:  # pragma: no cover
     class ReactionInvalidError(Exception):  # type: ignore[no-redef]
         pass
 
+if TYPE_CHECKING:
+    from src.search.engine import SearchEngine
+
 logger = logging.getLogger(__name__)
 
 # Minimum spacing between reactions on the same phone. Configurable live via the
@@ -71,6 +74,7 @@ class TelegramCommandDispatcher:
         *,
         scheduler: SchedulerManager | None = None,
         auth: TelegramAuth | None = None,
+        search_engine: "SearchEngine | None" = None,
     ):
         self._db = db
         self._pool = pool
@@ -78,6 +82,7 @@ class TelegramCommandDispatcher:
         self._collector = collector
         self._scheduler = scheduler
         self._auth = auth
+        self._search_engine = search_engine
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._last_reaction_at_monotonic: dict[str, float] = {}
@@ -644,6 +649,29 @@ class TelegramCommandDispatcher:
             "channel_username": result.channel_username,
             "invite_link": result.invite_link,
         }
+
+    async def _handle_search_telegram(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run a live Telegram-backed search on the worker's real pool.
+
+        The web container has no live ClientPool (runtime_mode="web"), so it
+        proxies premium/my_chats/in-channel search here and reads the serialized
+        SearchResult back from ``result_payload`` (#643).
+        """
+        if self._search_engine is None:
+            raise RuntimeError("Search engine unavailable in worker")
+        query = str(payload.get("query", ""))
+        mode = str(payload.get("mode", "telegram"))
+        limit = int(payload.get("limit", 50))
+        if mode == "my_chats":
+            result = await self._search_engine.search_my_chats(query, limit=limit)
+        elif mode == "channel":
+            channel_id = payload.get("channel_id")
+            result = await self._search_engine.search_in_channel(
+                int(channel_id) if channel_id is not None else None, query, limit=limit
+            )
+        else:
+            result = await self._search_engine.search_telegram(query, limit=limit)
+        return {"result": result.model_dump(mode="json")}
 
     async def _handle_agent_forum_topics_refresh(self, payload: dict[str, Any]) -> dict[str, Any]:
         channel_id = int(payload["channel_id"])
