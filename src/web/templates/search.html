@@ -32,47 +32,51 @@
         </div>
     </div>
 
-    <div class="d-flex align-items-center gap-3 flex-wrap mb-3">
-        <div class="form-check form-check-inline" title="Поиск по ранее собранным сообщениям в локальной базе данных">
+    <div class="row g-2 align-items-end mb-3 search-options">
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="Поиск по ранее собранным сообщениям в локальной базе данных">
             <input class="form-check-input" type="radio" name="mode" id="mode-local" value="local" {{ 'checked' if mode == 'local' else '' }}>
             <label class="form-check-label" for="mode-local">Локальная база</label>
         </div>
-        <div class="form-check form-check-inline" title="{{ 'Недоступно: не установлен numpy / sqlite-vec' if not semantic_available else 'Семантический поиск по локальной базе через embeddings и semantic backend' }}">
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="{{ 'Недоступно: не установлен numpy / sqlite-vec' if not semantic_available else 'Семантический поиск по локальной базе через embeddings и semantic backend' }}">
             <input class="form-check-input" type="radio" name="mode" id="mode-semantic" value="semantic" {{ 'checked' if mode == 'semantic' else '' }} {{ 'disabled' if not semantic_available else '' }}>
             <label class="form-check-label {{ 'text-muted' if not semantic_available else '' }}" for="mode-semantic">Семантический</label>
         </div>
-        <div class="form-check form-check-inline" title="{{ 'Недоступно: не установлен numpy / sqlite-vec' if not semantic_available else 'Гибридный поиск: объединяет FTS5 и semantic retrieval' }}">
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="{{ 'Недоступно: не установлен numpy / sqlite-vec' if not semantic_available else 'Гибридный поиск: объединяет FTS5 и semantic retrieval' }}">
             <input class="form-check-input" type="radio" name="mode" id="mode-hybrid" value="hybrid" {{ 'checked' if mode == 'hybrid' else '' }} {{ 'disabled' if not semantic_available else '' }}>
             <label class="form-check-label {{ 'text-muted' if not semantic_available else '' }}" for="mode-hybrid">Гибридный</label>
         </div>
-        <div class="form-check form-check-inline" title="{{ 'Недоступно: нет подключённого Telegram-аккаунта' if not telegram_available else 'Поиск по всем чатам и каналам подключённого аккаунта через Telegram API' }}">
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="{{ 'Недоступно: нет подключённого Telegram-аккаунта' if not telegram_available else 'Поиск по всем чатам и каналам подключённого аккаунта через Telegram API' }}">
             <input class="form-check-input" type="radio" name="mode" id="mode-my-chats" value="my_chats" {{ 'checked' if mode == 'my_chats' else '' }} {{ 'disabled' if not telegram_available else '' }}>
             <label class="form-check-label {{ 'text-muted' if not telegram_available else '' }}" for="mode-my-chats">Мои чаты</label>
         </div>
-        <div class="form-check form-check-inline" title="{{ 'Недоступно: нет подключённого Telegram-аккаунта' if not telegram_available else 'Поиск внутри выбранного канала через Telegram API' }}">
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="{{ 'Недоступно: нет подключённого Telegram-аккаунта' if not telegram_available else 'Поиск внутри выбранного канала через Telegram API' }}">
             <input class="form-check-input" type="radio" name="mode" id="mode-channel" value="channel" {{ 'checked' if mode == 'channel' else '' }} {{ 'disabled' if not telegram_available else '' }}>
             <label class="form-check-label {{ 'text-muted' if not telegram_available else '' }}" for="mode-channel">В канале</label>
         </div>
-        <div class="form-check form-check-inline" title="{{ 'Недоступно: нет подключённого Telegram-аккаунта' if not telegram_available else 'Глобальный поиск по публичным каналам (требуется Telegram Premium)' }}">
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="{{ 'Недоступно: нет подключённого Telegram-аккаунта' if not telegram_available else 'Глобальный поиск по публичным каналам (требуется Telegram Premium)' }}">
             <input class="form-check-input" type="radio" name="mode" id="mode-telegram" value="telegram" {{ 'checked' if mode == 'telegram' else '' }} {{ 'disabled' if not telegram_available else '' }}>
             <label class="form-check-label {{ 'text-muted' if not telegram_available else '' }}" for="mode-telegram">Публичные (Premium)</label>
         </div>
         {% if search_quota and search_quota.remains is not none %}
-        <small id="quota-info" class="text-muted">
-            Premium-поиск: осталось {{ search_quota.remains }}{% if search_quota.total_daily %} из {{ search_quota.total_daily }}{% endif %} сегодня
-        </small>
+        <div class="col-12 col-lg-auto">
+            <small id="quota-info" class="text-muted">
+                Premium-поиск: осталось {{ search_quota.remains }}{% if search_quota.total_daily %} из {{ search_quota.total_daily }}{% endif %} сегодня
+            </small>
+        </div>
         {% endif %}
         {% if ai_enabled %}
-        <div class="form-check form-check-inline" title="Семантический поиск с помощью LLM по локальной базе">
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="Семантический поиск с помощью LLM по локальной базе">
             <input class="form-check-input" type="radio" name="mode" id="mode-ai" value="ai" {{ 'checked' if mode == 'ai' else '' }}>
             <label class="form-check-label" for="mode-ai">AI-поиск</label>
         </div>
         {% endif %}
-        <div class="form-check form-check-inline" id="fts-label" title="Полнотекстовый поиск FTS5 (поддерживает операторы AND, OR, NOT, фразы в кавычках)">
+        <div class="col-12 col-sm-6 col-lg-auto form-check" id="fts-label" title="Полнотекстовый поиск FTS5 (поддерживает операторы AND, OR, NOT, фразы в кавычках)">
             <input class="form-check-input" type="checkbox" name="is_fts" value="1" id="fts-checkbox" {{ 'checked' if is_fts else '' }}>
             <label class="form-check-label" for="fts-checkbox">FTS5 <span class="hint" data-tooltip="Полнотекстовый поиск с поддержкой операторов: OR, AND, NOT, префикс*, «точная фраза», len&lt;400, len&gt;100">?</span></label>
         </div>
-        <button type="submit" class="btn btn-primary ms-auto">Найти</button>
+        <div class="col-12 col-sm-auto ms-sm-auto">
+            <button type="submit" class="btn btn-primary w-100">Найти</button>
+        </div>
     </div>
 </form>
 

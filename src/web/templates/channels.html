@@ -42,7 +42,7 @@
     </span>
 </div>
 <!-- Desktop: table -->
-<div class="table-responsive d-none d-md-block">
+<div class="table-responsive d-none d-lg-block">
 <table class="tga-table-striped-hover channels-table">
     <thead>
         <tr>
@@ -110,7 +110,7 @@
 </div>
 
 <!-- Mobile: cards -->
-<div class="d-md-none mobile-cards">
+<div class="d-lg-none mobile-cards">
     {% for ch in channels %}
     {% set st = latest_stats.get(ch.channel_id) if latest_stats else None %}
     <div class="card mb-2{% if ch.is_filtered %} opacity-50{% endif %}">

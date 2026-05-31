@@ -41,6 +41,30 @@ async def test_search_page_renders(route_client):
 
 
 @pytest.mark.anyio
+async def test_sidebar_hides_agent_link_when_unavailable(route_client):
+    """The sidebar should preserve the existing agent availability gate."""
+    resp = await route_client.get("/search")
+
+    assert resp.status_code == 200
+    assert 'href="/agent"' not in resp.text
+
+
+@pytest.mark.anyio
+async def test_sidebar_shows_agent_link_when_available(route_client):
+    """Available agent backends should still get an active-capable sidebar link."""
+    from src.agent.manager import AgentManager
+
+    agent_manager_mock = MagicMock(spec=AgentManager)
+    agent_manager_mock.available = True
+    route_client._transport_app.state.agent_manager = agent_manager_mock
+
+    resp = await route_client.get("/search")
+
+    assert resp.status_code == 200
+    assert 'href="/agent"' in resp.text
+
+
+@pytest.mark.anyio
 async def test_search_page_with_message(route_client):
     """Test search page with message param."""
     resp = await route_client.get("/search?msg=test_message")

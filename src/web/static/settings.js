@@ -360,6 +360,10 @@ function activateSettingsTab(tabId) {
     if (btn) {
         var tab = new bootstrap.Tab(btn);
         tab.show();
+        var select = document.getElementById('settings-section-select');
+        if (select && select.value !== tabId) {
+            select.value = tabId;
+        }
     }
 }
 
@@ -393,9 +397,24 @@ function initSettingsTabs() {
     document.querySelectorAll('#settings-tabs button[data-bs-toggle="pill"]').forEach(function(btn) {
         btn.addEventListener('shown.bs.tab', function() {
             var id = btn.getAttribute('data-bs-target').replace('#pane-', '');
+            var select = document.getElementById('settings-section-select');
+            if (select && select.value !== id) {
+                select.value = id;
+            }
             history.replaceState(null, '', '#' + id);
         });
     });
+
+    var sectionSelect = document.getElementById('settings-section-select');
+    if (sectionSelect) {
+        var active = document.querySelector('#settings-tabs .nav-link.active');
+        if (active) {
+            sectionSelect.value = active.getAttribute('data-bs-target').replace('#pane-', '');
+        }
+        sectionSelect.addEventListener('change', function() {
+            activateSettingsTab(sectionSelect.value);
+        });
+    }
 
     window.addEventListener('hashchange', function() {
         var tabId = settingsTabIdFromHash(window.location.hash);
