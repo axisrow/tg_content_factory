@@ -1143,11 +1143,14 @@ async def handle_delete_notification_bot(request: Request) -> SettingsFlash | Se
 
 
 async def handle_test_notification(request: Request) -> SettingsFlash | SettingsJson:
+    form = await request.form()
+    text = str(form.get("text", "")).strip()
     return await _enqueue_notification_command(
         request,
         "notifications.test",
         requested_by="web:settings.notifications.test",
         redirect_code="notification_test_queued",
+        payload={"text": text} if text else None,
     )
 
 
