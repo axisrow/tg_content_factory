@@ -1044,7 +1044,13 @@ class TestDeepagentsBackendInit:
         config = AppConfig()
         config.agent.fallback_model = ""
         backend = DeepagentsBackend(mock_db, config)
+
+        assert backend.configured is False
         backend.initialize()
+
+        # Early return must not flag preflight availability or record an error.
+        assert backend.preflight_available is None
+        assert backend.init_error is None
 
     def test_initialize_no_candidates_with_legacy_model(self, mock_db):
         """initialize() raises when legacy model format is wrong."""

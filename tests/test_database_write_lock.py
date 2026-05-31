@@ -17,6 +17,7 @@ from src.models import (
     ContentPipeline,
     PipelineGenerationBackend,
     PipelinePublishMode,
+    PipelineTarget,
 )
 
 
@@ -215,6 +216,40 @@ async def test_delete_channel_serialized_with_pipeline_add(db: Database):
             f"iter={i}: channel survived but children gone: "
             f"alive={channel_alive} msgs={msgs} stats={stats}"
         )
+
+
+async def test_replace_helpers_honor_provided_conn(db: Database):
+    """_replace_*_no_commit must write through the caller's transaction conn,
+    not self._db — otherwise the DELETE+INSERT escape the write-lock (#633)."""
+    repo = db.repos.content_pipelines
+    captured: list[tuple[str, str]] = []
+
+    class _FakeConn:
+        async def execute(self, sql, params=()):
+            captured.append(("execute", sql))
+
+        async def executemany(self, sql, seq):
+            captured.append(("executemany", sql))
+
+    fake = _FakeConn()
+    await repo._replace_sources_no_commit(1, [10, 11], conn=fake)
+    await repo._replace_targets_no_commit(
+        1,
+        [PipelineTarget(pipeline_id=1, phone="+1", dialog_id=-100, title="t", dialog_type="channel")],
+        conn=fake,
+    )
+
+    statements = [sql for (_, sql) in captured]
+    assert any("DELETE FROM pipeline_sources" in s for s in statements)
+    assert any("INSERT INTO pipeline_sources" in s for s in statements)
+    assert any("DELETE FROM pipeline_targets" in s for s in statements)
+    assert any("INSERT INTO pipeline_targets" in s for s in statements)
+
+    # Everything went to the fake conn (a no-op), so self._db wrote nothing.
+    src_rows = await db.execute_fetchall("SELECT COUNT(*) AS n FROM pipeline_sources")
+    tgt_rows = await db.execute_fetchall("SELECT COUNT(*) AS n FROM pipeline_targets")
+    assert src_rows[0]["n"] == 0
+    assert tgt_rows[0]["n"] == 0
 
 
 async def test_read_does_not_acquire_lock(db: Database):

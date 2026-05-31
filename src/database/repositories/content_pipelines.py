@@ -117,8 +117,8 @@ class ContentPipelinesRepository:
                 ),
             )
             pipeline_id = cur.lastrowid or 0
-            await self._replace_sources_no_commit(pipeline_id, source_channel_ids)
-            await self._replace_targets_no_commit(pipeline_id, targets)
+            await self._replace_sources_no_commit(pipeline_id, source_channel_ids, conn=conn)
+            await self._replace_targets_no_commit(pipeline_id, targets, conn=conn)
             return pipeline_id
 
     async def get_all(self, active_only: bool = False) -> list[ContentPipeline]:
@@ -187,8 +187,8 @@ class ContentPipelinesRepository:
                 )
                 if not cur.rowcount:
                     raise _NotFoundError
-                await self._replace_sources_no_commit(pipeline_id, source_channel_ids)
-                await self._replace_targets_no_commit(pipeline_id, targets)
+                await self._replace_sources_no_commit(pipeline_id, source_channel_ids, conn=conn)
+                await self._replace_targets_no_commit(pipeline_id, targets, conn=conn)
         except _NotFoundError:
             return False
         return True
@@ -261,10 +261,15 @@ class ContentPipelinesRepository:
         self,
         pipeline_id: int,
         source_channel_ids: list[int],
+        conn=None,
     ) -> None:
-        await self._db.execute("DELETE FROM pipeline_sources WHERE pipeline_id = ?", (pipeline_id,))
+        # Must run on the caller's transaction connection so the DELETE+INSERT
+        # stay inside the write-lock; falling back to self._db would commit them
+        # autonomously and let another coroutine interleave (#633).
+        executor = conn or self._db
+        await executor.execute("DELETE FROM pipeline_sources WHERE pipeline_id = ?", (pipeline_id,))
         if source_channel_ids:
-            await self._db.executemany(
+            await executor.executemany(
                 "INSERT INTO pipeline_sources (pipeline_id, channel_id) VALUES (?, ?)",
                 [(pipeline_id, channel_id) for channel_id in source_channel_ids],
             )
@@ -273,10 +278,12 @@ class ContentPipelinesRepository:
         self,
         pipeline_id: int,
         targets: list[PipelineTarget],
+        conn=None,
     ) -> None:
-        await self._db.execute("DELETE FROM pipeline_targets WHERE pipeline_id = ?", (pipeline_id,))
+        executor = conn or self._db
+        await executor.execute("DELETE FROM pipeline_targets WHERE pipeline_id = ?", (pipeline_id,))
         if targets:
-            await self._db.executemany(
+            await executor.executemany(
                 """
                 INSERT INTO pipeline_targets (
                     pipeline_id, phone, target_dialog_id, target_title, target_type
