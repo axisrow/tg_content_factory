@@ -95,7 +95,7 @@ async def test_settings_page_notification_bot_error(route_client, db):
         "src.web.settings.handlers.ProviderConfigService.load_model_cache",
         AsyncMock(return_value={}),
     ), patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
+        "src.web.settings.handlers.deps.get_notification_target_service"
     ) as mock_target_svc:
         mock_target_svc.return_value.describe_target = AsyncMock(
             return_value=MagicMock(state="available", configured_phone="+1234567890")
@@ -201,9 +201,7 @@ async def test_save_semantic_search_no_api_key_field(route_client, db):
 @pytest.mark.anyio
 async def test_run_semantic_index_unavailable(route_client, db):
     """Test running semantic index when not available (line 624)."""
-    with patch(
-        "src.web.routes.settings.deps.get_search_engine"
-    ) as mock_se:
+    with patch("src.web.settings.handlers.deps.get_search_engine") as mock_se:
         mock_se.return_value.semantic_available = False
         resp = await route_client.post(
             "/settings/semantic-index",
@@ -221,7 +219,7 @@ async def test_run_semantic_index_with_reset_flag(route_client, db):
         "src.web.settings.handlers.EmbeddingService.index_pending_messages",
         AsyncMock(return_value=0),
     ), patch(
-        "src.web.routes.settings.deps.get_search_engine"
+        "src.web.settings.handlers.deps.get_search_engine"
     ) as mock_se:
         se = mock_se.return_value
         se.semantic_available = True
@@ -510,7 +508,7 @@ async def test_save_agent_providers_probes_enabled(route_client, db):
     with patch(
         "src.web.settings.handlers.ProviderConfigService"
     ) as mock_service_cls, patch(
-        "src.web.routes.settings.deps.get_agent_manager"
+        "src.web.settings.handlers.deps.get_agent_manager"
     ) as mock_get_mgr, patch(
         "src.web.settings.handlers._probe_provider_config",
         AsyncMock(return_value=MagicMock()),
@@ -775,9 +773,9 @@ async def test_save_notification_account_with_notifier(route_client, db):
     mock_notifier.invalidate_me_cache = MagicMock()
 
     with patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
+        "src.web.settings.handlers.deps.get_notification_target_service"
     ) as mock_svc, patch(
-        "src.web.routes.settings.deps.get_notifier"
+        "src.web.settings.handlers.deps.get_notifier"
     ) as mock_get_notifier:
         mock_svc.return_value.set_configured_phone = AsyncMock()
         mock_get_notifier.return_value = mock_notifier
@@ -796,9 +794,9 @@ async def test_save_notification_account_with_notifier(route_client, db):
 async def test_save_notification_account_empty_phone(route_client, db):
     """Test save notification account with empty phone clears setting."""
     with patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
+        "src.web.settings.handlers.deps.get_notification_target_service"
     ) as mock_svc, patch(
-        "src.web.routes.settings.deps.get_notifier"
+        "src.web.settings.handlers.deps.get_notifier"
     ) as mock_get_notifier:
         mock_svc.return_value.set_configured_phone = AsyncMock()
         mock_get_notifier.return_value = None

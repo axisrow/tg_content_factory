@@ -321,9 +321,9 @@ async def test_save_agent_backend(route_client, db):
 async def test_save_notification_account(route_client, db):
     """Test save notification account."""
     with patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
+        "src.web.settings.handlers.deps.get_notification_target_service"
     ) as mock_svc, patch(
-        "src.web.routes.settings.deps.get_notifier"
+        "src.web.settings.handlers.deps.get_notifier"
     ) as mock_notifier:
         mock_svc.return_value.set_configured_phone = AsyncMock()
         mock_notifier.return_value = None
