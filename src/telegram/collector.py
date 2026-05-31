@@ -42,6 +42,7 @@ from src.telegram.client_pool import ClientPool
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.identity import extract_message_sender_identity
 from src.telegram.notifier import Notifier
+from src.telegram.rate_limiter import ResolveRateLimiter
 from src.telegram.reactions import extract_message_reactions_json
 
 logger = logging.getLogger(__name__)
@@ -94,6 +95,20 @@ class UsernameResolveFloodWaitDeferredError(RuntimeError):
         self.next_available_at = next_available_at
 
 
+class UsernameResolveRateLimitedError(RuntimeError):
+    """Raised when a live username resolve is throttled by the per-account
+    rate limiter (#551) *before* hitting Telegram. Unlike a flood-wait deferral
+    this is a short, preventive reschedule — the channel is skipped this run and
+    retried shortly, not paused for hours."""
+
+    def __init__(self, phone: str, retry_after_sec: float):
+        super().__init__(
+            f"resolve_username rate-limited for {phone}; retry in {int(retry_after_sec)}s"
+        )
+        self.phone = phone
+        self.retry_after_sec = retry_after_sec
+
+
 class Collector:
     _SERVICE_ACTION_SEMANTICS = {
         "MessageActionChatAddUser": "join",
@@ -130,6 +145,9 @@ class Collector:
         self._stats_all_lock = asyncio.Lock()
         self._last_unavailability_log: tuple[str, str | int | None, datetime | None] | None = None
         self._resolve_username_backoff_until_utc: datetime | None = None
+        # Preventive per-account throttle for live resolve_username calls (#551):
+        # caps the burst that the reactive backoff above can only react to.
+        self._resolve_rate_limiter = ResolveRateLimiter()
 
     def _get_resolve_username_backoff_remaining_sec(self) -> int:
         if self._resolve_username_backoff_until_utc is None:
@@ -387,6 +405,15 @@ class Collector:
             live_input_resolver = _session_resolver("resolve_input_entity")
         if live_input_resolver is None:
             live_input_resolver = session.get_entity
+
+        # Only the live API fallback is rate-limited (#551) — the cached
+        # resolves above are free and must stay free. If the account has
+        # burned its window, defer the channel rather than firing the call
+        # that would trigger a multi-hour flood wait.
+        retry_after = self._resolve_rate_limiter.try_acquire(phone)
+        if retry_after > 0:
+            raise UsernameResolveRateLimitedError(phone, retry_after)
+
         return await run_with_flood_wait(
             live_input_resolver(username),
             operation=RESOLVE_USERNAME_OPERATION,
@@ -675,6 +702,19 @@ class Collector:
                         logger.warning(
                             "get_input_entity timed out for channel %d, skipping",
                             channel_id,
+                        )
+                        return total_collected
+                    except UsernameResolveRateLimitedError as exc:
+                        # Preventive throttle (#551): defer this channel briefly
+                        # rather than firing a resolve that would flood the
+                        # account. The next scheduler tick picks it up again.
+                        logger.warning(
+                            "Channel %d (%s): resolve_username rate-limited on %s, "
+                            "deferring ~%ss",
+                            channel_id,
+                            channel.username,
+                            exc.phone,
+                            int(exc.retry_after_sec),
                         )
                         return total_collected
                     except HandledFloodWaitError as exc:

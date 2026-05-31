@@ -304,6 +304,47 @@ async def test_collect_channel_username_resolve_flood_does_not_rotate(db):
 
 
 @pytest.mark.anyio
+async def test_collect_channel_defers_when_resolve_rate_limited(db):
+    """#551: when the per-account resolve limiter is exhausted, the live
+    get_input_entity call must not fire — the channel is deferred (returns 0),
+    not flooded."""
+    from src.telegram.rate_limiter import ResolveRateLimiter
+
+    ch = Channel(
+        channel_id=1970788990,
+        title="Rate Limited",
+        username="rate_limited",
+        last_collected_id=5,
+    )
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    raw_client = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    pool = make_mock_pool()
+    session = TelegramTransportSession(
+        raw_client,
+        disconnect_on_close=False,
+        phone="+7001",
+        pool=pool,
+    )
+    pool.get_available_client = AsyncMock(return_value=(session, "+7001"))
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+
+    # Exhaust the limiter for +7001 before collection runs.
+    collector._resolve_rate_limiter = ResolveRateLimiter(
+        max_calls=1, window_sec=60.0, jitter_sec=0.0
+    )
+    assert collector._resolve_rate_limiter.try_acquire("+7001") == 0.0
+
+    result = await collector._collect_channel(stored)
+
+    assert result == 0
+    raw_client.get_input_entity.assert_not_awaited()
+    pool.report_flood.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_collect_channel_skips_username_resolve_when_backoff_active(db):
     ch = Channel(
         channel_id=1970788986,
