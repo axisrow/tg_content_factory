@@ -302,3 +302,79 @@ class TestClearFloodStatusTool:
         assert "Отклонено" in text
         assert "Telegram" in text
         mock_db.update_account_flood.assert_not_awaited()
+
+
+def _avail_account(phone, *, is_active=True, flood_wait_until=None, session_status=None):
+    from src.models import AccountSessionStatus
+
+    return SimpleNamespace(
+        phone=phone,
+        is_active=is_active,
+        flood_wait_until=flood_wait_until,
+        session_status=session_status or AccountSessionStatus.OK,
+        is_primary=False,
+        id=1,
+    )
+
+
+def _pool_with(*connected_phones):
+    return SimpleNamespace(clients={p: object() for p in connected_phones})
+
+
+class TestGetAccountAvailabilityTool:
+    """#529: agent availability must match the Settings UI and distinguish a
+    saved-session reconnect from interactive Telegram login."""
+
+    @pytest.mark.anyio
+    async def test_available_account_reports_ok(self, mock_db):
+        acc = _avail_account("+8613000000000")
+        mock_db.get_accounts = AsyncMock(return_value=[acc])
+        mock_db.update_account_flood = AsyncMock()
+        handlers = _get_tool_handlers(mock_db, client_pool=_pool_with("+8613000000000"))
+        text = _text(await handlers["get_account_availability"]({"phone": "+8613000000000"}))
+        assert "available" in text
+        assert "OK" in text
+        # An available account must NOT be described as unavailable / needing re-auth.
+        assert "session_unavailable" not in text
+        assert "SMS" not in text
+
+    @pytest.mark.anyio
+    async def test_session_unavailable_reports_interactive_login(self, mock_db):
+        from src.models import AccountSessionStatus
+
+        acc = _avail_account(
+            "+8613000000000", session_status=AccountSessionStatus.DECRYPT_FAILED
+        )
+        mock_db.get_accounts = AsyncMock(return_value=[acc])
+        mock_db.update_account_flood = AsyncMock()
+        handlers = _get_tool_handlers(mock_db, client_pool=_pool_with("+8613000000000"))
+        text = _text(await handlers["get_account_availability"]({}))
+        assert "session_unavailable" in text
+        assert "decrypt_failed" in text
+        assert "SMS" in text and "/auth/login" in text
+
+    @pytest.mark.anyio
+    async def test_disconnected_saved_session_is_reconnect_not_reauth(self, mock_db):
+        # session ok, active, but not in the pool → reconnect saved session.
+        acc = _avail_account("+8613000000000")
+        mock_db.get_accounts = AsyncMock(return_value=[acc])
+        mock_db.update_account_flood = AsyncMock()
+        handlers = _get_tool_handlers(mock_db, client_pool=_pool_with())  # nothing connected
+        text = _text(await handlers["get_account_availability"]({}))
+        assert "disconnected" in text
+        assert "reconnect" in text.lower()
+        # The guidance must explicitly state SMS/2FA is NOT required for a
+        # saved-session reconnect (the bug was conflating it with re-auth).
+        assert "НЕ требуется" in text
+        assert "/auth/login" not in text
+
+    @pytest.mark.anyio
+    async def test_flood_reports_actual_reason(self, mock_db):
+        future = datetime.now(timezone.utc) + timedelta(minutes=10)
+        acc = _avail_account("+8613000000000", flood_wait_until=future)
+        mock_db.get_accounts = AsyncMock(return_value=[acc])
+        mock_db.update_account_flood = AsyncMock()
+        handlers = _get_tool_handlers(mock_db, client_pool=_pool_with("+8613000000000"))
+        text = _text(await handlers["get_account_availability"]({}))
+        assert "flood" in text
+        assert "осталось" in text
