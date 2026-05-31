@@ -2,6 +2,18 @@
 {% block title %}Настройки — TG Agent{% endblock %}
 {% block content %}
 <h1 class="mb-4">Настройки</h1>
+{% set settings_tabs = [
+    ("accounts", "Аккаунты", "phone", "Telegram-аккаунты", "settings/_accounts.html"),
+    ("credentials", "API", "key", "Telegram API credentials", "settings/_credentials.html"),
+    ("scheduler", "Планировщик", "clock", "Планировщик", "settings/_scheduler.html"),
+    ("semantic", "Semantic Search", "search-heart", "Semantic Search & Embeddings", "settings/_semantic.html"),
+    ("image", "Изображения", "image", "Image Generation Providers", "settings/_image_providers.html"),
+    ("devmode", "Разработчик", "code-slash", "Режим разработчика", "settings/_devmode.html"),
+    ("filters", "Фильтры", "funnel", "Фильтры каналов", "settings/_filters.html"),
+    ("notifications", "Уведомления", "bell", "Уведомления", "settings/_notifications.html"),
+    ("translation", "Перевод", "translate", "Перевод и определение языка", "settings/_translation.html"),
+    ("tool-permissions", "Разрешения агента", "shield-lock", "Разрешения инструментов агента", "settings/_tool_permissions.html")
+] %}
 
 {% set failed_agent_providers = agent_provider_views|selectattr("requires_secret_reentry")|list %}
 {% set failed_img_providers = img_provider_views|selectattr("requires_secret_reentry")|list %}
@@ -10,191 +22,58 @@
     <ul class="mb-0">
         {% if telegram_session_warning %}
         <li>
-            Saved Telegram logins are unavailable.
-            Restore <code>SESSION_ENCRYPTION_KEY</code> if it changed, upgrade the app if needed, or re-login accounts.
+            Сохранённые входы Telegram сейчас недоступны.
+            Восстановите прежний <code>SESSION_ENCRYPTION_KEY</code> или войдите в аккаунты заново.
         </li>
         {% endif %}
         {% if failed_agent_providers %}
         <li>
-            Agent provider API keys cannot be decrypted:{% for item in failed_agent_providers %}{% if loop.first %} {% endif %}{{ item.display_name or item.provider }}{% if not loop.last %}, {% endif %}{% endfor %}.
-            Re-enter the provider API key or restore the old <code>SESSION_ENCRYPTION_KEY</code>.
+            Ключи провайдеров агента не расшифровываются:{% for item in failed_agent_providers %}{% if loop.first %} {% endif %}{{ item.display_name or item.provider }}{% if not loop.last %}, {% endif %}{% endfor %}.
+            Введите ключ заново или восстановите прежний <code>SESSION_ENCRYPTION_KEY</code>.
         </li>
         {% endif %}
         {% if failed_img_providers %}
         <li>
-            Image provider API keys cannot be decrypted:{% for item in failed_img_providers %}{% if loop.first %} {% endif %}{{ item.display_name or item.provider }}{% if not loop.last %}, {% endif %}{% endfor %}.
-            Re-enter the provider API key or restore the old <code>SESSION_ENCRYPTION_KEY</code>.
+            Ключи генерации изображений не расшифровываются:{% for item in failed_img_providers %}{% if loop.first %} {% endif %}{{ item.display_name or item.provider }}{% if not loop.last %}, {% endif %}{% endfor %}.
+            Введите ключ заново или восстановите прежний <code>SESSION_ENCRYPTION_KEY</code>.
         </li>
         {% endif %}
     </ul>
 </div>
 {% endif %}
 
-<ul class="nav nav-pills mb-4" id="settings-tabs" role="tablist">
+<label for="settings-section-select" class="form-label d-lg-none">Раздел настроек</label>
+<select class="form-select mb-3 d-lg-none" id="settings-section-select">
+    {% for tab_id, label, icon_name, title, include_name in settings_tabs %}
+    <option value="{{ tab_id }}">{{ label }}</option>
+    {% endfor %}
+</select>
+
+<ul class="nav nav-pills mb-4 d-none d-lg-flex" id="settings-tabs" role="tablist">
+    {% for tab_id, label, icon_name, title, include_name in settings_tabs %}
     <li class="nav-item" role="presentation">
-        <button class="nav-link active" id="tab-accounts" data-bs-toggle="pill"
-                data-bs-target="#pane-accounts" type="button" role="tab"
-                aria-controls="pane-accounts" aria-selected="true">
-            <i class="bi bi-phone me-1"></i>Аккаунты
+        <button class="nav-link {{ 'active' if loop.first else '' }}" id="tab-{{ tab_id }}" data-bs-toggle="pill"
+                data-bs-target="#pane-{{ tab_id }}" type="button" role="tab"
+                aria-controls="pane-{{ tab_id }}" aria-selected="{{ 'true' if loop.first else 'false' }}">
+            <i class="bi bi-{{ icon_name }} me-1"></i>{{ label }}
         </button>
     </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-credentials" data-bs-toggle="pill"
-                data-bs-target="#pane-credentials" type="button" role="tab"
-                aria-controls="pane-credentials" aria-selected="false">
-            <i class="bi bi-key me-1"></i>API
-        </button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-scheduler" data-bs-toggle="pill"
-                data-bs-target="#pane-scheduler" type="button" role="tab"
-                aria-controls="pane-scheduler" aria-selected="false">
-            <i class="bi bi-clock me-1"></i>Планировщик
-        </button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-semantic" data-bs-toggle="pill"
-                data-bs-target="#pane-semantic" type="button" role="tab"
-                aria-controls="pane-semantic" aria-selected="false">
-            <i class="bi bi-search-heart me-1"></i>Semantic Search
-        </button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-image" data-bs-toggle="pill"
-                data-bs-target="#pane-image" type="button" role="tab"
-                aria-controls="pane-image" aria-selected="false">
-            <i class="bi bi-image me-1"></i>Изображения
-        </button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-devmode" data-bs-toggle="pill"
-                data-bs-target="#pane-devmode" type="button" role="tab"
-                aria-controls="pane-devmode" aria-selected="false">
-            <i class="bi bi-code-slash me-1"></i>Разработчик
-        </button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-filters" data-bs-toggle="pill"
-                data-bs-target="#pane-filters" type="button" role="tab"
-                aria-controls="pane-filters" aria-selected="false">
-            <i class="bi bi-funnel me-1"></i>Фильтры
-        </button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-notifications" data-bs-toggle="pill"
-                data-bs-target="#pane-notifications" type="button" role="tab"
-                aria-controls="pane-notifications" aria-selected="false">
-            <i class="bi bi-bell me-1"></i>Уведомления
-        </button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-translation" data-bs-toggle="pill"
-                data-bs-target="#pane-translation" type="button" role="tab"
-                aria-controls="pane-translation" aria-selected="false">
-            <i class="bi bi-translate me-1"></i>Перевод
-        </button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-tool-permissions" data-bs-toggle="pill"
-                data-bs-target="#pane-tool-permissions" type="button" role="tab"
-                aria-controls="pane-tool-permissions" aria-selected="false">
-            <i class="bi bi-shield-lock me-1"></i>Разрешения агента
-        </button>
-    </li>
+    {% endfor %}
 </ul>
 
 <div class="tab-content" id="settings-tab-content">
-    <div class="tab-pane fade show active" id="pane-accounts" role="tabpanel" aria-labelledby="tab-accounts">
-        <div class="card shadow-sm">
-            <div class="card-header bg-body-secondary fw-semibold">Telegram-аккаунты</div>
-            <div class="card-body">
-                {% include "settings/_accounts.html" %}
-            </div>
-        </div>
-    </div>
-
-    <div class="tab-pane fade" id="pane-credentials" role="tabpanel" aria-labelledby="tab-credentials">
-        <div class="card shadow-sm">
-            <div class="card-header bg-body-secondary fw-semibold">Telegram API credentials</div>
-            <div class="card-body">
-                {% include "settings/_credentials.html" %}
-            </div>
-        </div>
-    </div>
-
-    <div class="tab-pane fade" id="pane-scheduler" role="tabpanel" aria-labelledby="tab-scheduler">
-        <div class="card shadow-sm">
-            <div class="card-header bg-body-secondary fw-semibold">Планировщик</div>
-            <div class="card-body">
-                {% include "settings/_scheduler.html" %}
-            </div>
-        </div>
-    </div>
-
-    <div class="tab-pane fade" id="pane-semantic" role="tabpanel" aria-labelledby="tab-semantic">
-        <div class="card shadow-sm">
-            <div class="card-header bg-body-secondary fw-semibold">Semantic Search & Embeddings</div>
-            <div class="card-body">
-                {% include "settings/_semantic.html" %}
-            </div>
-        </div>
-    </div>
-
-    <div class="tab-pane fade" id="pane-image" role="tabpanel" aria-labelledby="tab-image">
-        <div class="card shadow-sm">
-            <div class="card-header bg-body-secondary fw-semibold">Image Generation Providers</div>
-            <div class="card-body">
-                {% include "settings/_image_providers.html" %}
-            </div>
-        </div>
-    </div>
-
-    <div class="tab-pane fade" id="pane-devmode" role="tabpanel" aria-labelledby="tab-devmode">
+    {% for tab_id, label, icon_name, title, include_name in settings_tabs %}
+    <div class="tab-pane fade {{ 'show active' if loop.first else '' }}" id="pane-{{ tab_id }}" role="tabpanel" aria-labelledby="tab-{{ tab_id }}">
         <div class="card shadow-sm">
             <div class="card-header bg-body-secondary fw-semibold">
-                Режим разработчика{% if agent_dev_mode_enabled %} & AI Agent{% endif %}
+                {{ title|safe }}{% if tab_id == "devmode" and agent_dev_mode_enabled %} & AI Agent{% endif %}
             </div>
             <div class="card-body">
-                {% include "settings/_devmode.html" %}
+                {% include include_name %}
             </div>
         </div>
     </div>
-
-    <div class="tab-pane fade" id="pane-filters" role="tabpanel" aria-labelledby="tab-filters">
-        <div class="card shadow-sm">
-            <div class="card-header bg-body-secondary fw-semibold">Фильтры каналов</div>
-            <div class="card-body">
-                {% include "settings/_filters.html" %}
-            </div>
-        </div>
-    </div>
-
-    <div class="tab-pane fade" id="pane-notifications" role="tabpanel" aria-labelledby="tab-notifications">
-        <div class="card shadow-sm">
-            <div class="card-header bg-body-secondary fw-semibold">Уведомления</div>
-            <div class="card-body">
-                {% include "settings/_notifications.html" %}
-            </div>
-        </div>
-    </div>
-
-    <div class="tab-pane fade" id="pane-translation" role="tabpanel" aria-labelledby="tab-translation">
-        <div class="card shadow-sm">
-            <div class="card-header bg-body-secondary fw-semibold">Перевод и определение языка</div>
-            <div class="card-body">
-                {% include "settings/_translation.html" %}
-            </div>
-        </div>
-    </div>
-
-    <div class="tab-pane fade" id="pane-tool-permissions" role="tabpanel" aria-labelledby="tab-tool-permissions">
-        <div class="card shadow-sm">
-            <div class="card-header bg-body-secondary fw-semibold">Разрешения инструментов агента</div>
-            <div class="card-body">
-                {% include "settings/_tool_permissions.html" %}
-            </div>
-        </div>
-    </div>
+    {% endfor %}
 </div>
 
 {% endblock %}

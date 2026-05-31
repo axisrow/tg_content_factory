@@ -86,7 +86,52 @@
     }
 
     var path = window.location.pathname;
-    var links = document.querySelectorAll("#mainNav .nav-link");
+    var sidebar = document.getElementById("app-sidebar");
+    var sidebarStorageKey = "tg-agent-sidebar-collapsed";
+    var sidebarToggles = document.querySelectorAll("[data-sidebar-toggle]");
+    var sidebarBackdrop = document.querySelector("[data-sidebar-backdrop]");
+    var topbarTitle = document.getElementById("app-topbar-title");
+    var settingsBtn = document.querySelector(".app-settings-btn");
+
+    function isDesktopSidebar() {
+        return window.matchMedia("(min-width: 992px)").matches;
+    }
+
+    function applySidebarState() {
+        if (!sidebar) return;
+        document.body.classList.toggle("sidebar-collapsed", localStorage.getItem(sidebarStorageKey) === "1");
+        if (isDesktopSidebar()) {
+            document.body.classList.remove("sidebar-open");
+        }
+    }
+
+    function toggleSidebar() {
+        if (!sidebar) return;
+        if (isDesktopSidebar()) {
+            var collapsed = !document.body.classList.contains("sidebar-collapsed");
+            document.body.classList.toggle("sidebar-collapsed", collapsed);
+            if (collapsed) {
+                localStorage.setItem(sidebarStorageKey, "1");
+            } else {
+                localStorage.removeItem(sidebarStorageKey);
+            }
+            return;
+        }
+        document.body.classList.toggle("sidebar-open");
+    }
+
+    applySidebarState();
+    sidebarToggles.forEach(function(btn) {
+        btn.addEventListener("click", toggleSidebar);
+    });
+    if (sidebarBackdrop) {
+        sidebarBackdrop.addEventListener("click", function() {
+            document.body.classList.remove("sidebar-open");
+        });
+    }
+    window.addEventListener("resize", applySidebarState);
+
+    var links = document.querySelectorAll("#mainNav .app-sidebar-link");
     function isActiveLink(path, href) {
         if (href === "/") {
             return path === "/";
@@ -96,11 +141,34 @@
         }
         return path.startsWith(href + "/");
     }
+    var activeLink = null;
     links.forEach(function(a) {
         var href = a.getAttribute("href");
         if (isActiveLink(path, href)) {
-            a.classList.add("active");
+            if (!activeLink || href.length > activeLink.getAttribute("href").length) {
+                activeLink = a;
+            }
         }
+    });
+    if (activeLink) {
+        activeLink.classList.add("active");
+        if (topbarTitle) {
+            var label = activeLink.querySelector("span");
+            topbarTitle.textContent = label ? label.textContent.trim() : document.title.split("—")[0].trim();
+        }
+    } else if (topbarTitle) {
+        topbarTitle.textContent = document.title.split("—")[0].trim() || "TG Agent";
+    }
+    if (settingsBtn && isActiveLink(path, "/settings")) {
+        settingsBtn.classList.add("active");
+        settingsBtn.setAttribute("aria-current", "page");
+    }
+    links.forEach(function(a) {
+        a.addEventListener("click", function() {
+            if (!isDesktopSidebar()) {
+                document.body.classList.remove("sidebar-open");
+            }
+        });
     });
 
     function convertLocalDates(root) {

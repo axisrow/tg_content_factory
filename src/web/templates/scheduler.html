@@ -37,7 +37,7 @@
         <small class="text-muted d-block mb-2">Автоматическое создание задач: сбор каждые {{ interval_minutes }} мин.</small>
         <p>Статус: <strong>{{ "Запущен" if is_running else "Остановлен" }}</strong></p>
 
-        <div class="d-flex flex-wrap gap-2">
+        <div class="scheduler-actions">
             {% if not is_running %}
             <form method="post" action="/scheduler/start{{ filter_qs }}" data-busy>
                 <button type="submit" class="btn btn-primary">{{ icon("run") }} Запустить</button>
@@ -240,7 +240,7 @@
     </div>
     <div class="card-body p-0">
         <!-- Desktop -->
-        <div class="table-responsive d-none d-md-block">
+        <div class="table-responsive d-none d-lg-block">
         <table class="tga-table-striped mb-0">
             <thead>
                 <tr>
@@ -263,7 +263,7 @@
         </table>
         </div>
         <!-- Mobile -->
-        <div class="d-md-none mobile-cards p-2">
+        <div class="d-lg-none mobile-cards p-2">
             {% for entry in search_log %}
             <div class="card mb-2">
                 <div class="card-body">
@@ -288,7 +288,7 @@
 
         <!-- Filter tabs -->
         <div class="px-3 pb-2">
-            <div class="btn-group" role="tablist">
+            <div class="btn-group flex-wrap scheduler-filter-group" role="tablist">
                 <a href="/scheduler?status=all&page=1&limit={{ limit }}" class="btn btn-sm {% if status_filter == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}">
                     Все ({{ all_count }})
                 </a>
@@ -303,7 +303,7 @@
 
         {% if tasks %}
         <!-- Desktop -->
-        <div class="table-responsive d-none d-md-block">
+        <div class="table-responsive d-none d-lg-block">
         <table class="tga-table-striped mb-0">
             <thead>
                 <tr>
@@ -363,7 +363,7 @@
         </table>
         </div>
         <!-- Mobile -->
-        <div class="d-md-none mobile-cards p-2">
+        <div class="d-lg-none mobile-cards p-2">
             {% for t in tasks %}
             <div class="card mb-2">
                 <div class="card-body">
