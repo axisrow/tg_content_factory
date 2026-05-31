@@ -42,6 +42,7 @@
         </div>
         <nav class="app-sidebar-nav" id="mainNav">
             {% for href, label, icon_name in nav_items %}
+            {% if href != "/agent" or agent_available(request) %}
             <a class="app-sidebar-link" href="{{ href }}">
                 <i class="bi bi-{{ icon_name }}"></i><span>{{ label }}</span>
                 {% if href == "/channels/renames" %}
@@ -53,6 +54,7 @@
                     hx-swap="innerHTML"></span>
                 {% endif %}
             </a>
+            {% endif %}
             {% endfor %}
         </nav>
     </aside>
