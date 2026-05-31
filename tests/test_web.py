@@ -2487,7 +2487,7 @@ async def test_filter_apply_with_snapshot_skips_reanalyze(client, monkeypatch):
     async def _boom(self):
         raise AssertionError("analyze_all should not be called for snapshot apply")
 
-    monkeypatch.setattr("src.web.routes.filter.ChannelAnalyzer.analyze_all", _boom)
+    monkeypatch.setattr("src.web.filter.handlers.ChannelAnalyzer.analyze_all", _boom)
 
     resp = await client.post(
         "/channels/filter/apply",
@@ -2518,7 +2518,7 @@ async def test_filter_apply_without_snapshot_returns_error(client, monkeypatch):
     async def _boom(self):
         raise AssertionError("analyze_all should not be called without snapshot")
 
-    monkeypatch.setattr("src.web.routes.filter.ChannelAnalyzer.analyze_all", _boom)
+    monkeypatch.setattr("src.web.filter.handlers.ChannelAnalyzer.analyze_all", _boom)
 
     resp = await client.post("/channels/filter/apply", data={}, follow_redirects=False)
     assert resp.status_code == 303
