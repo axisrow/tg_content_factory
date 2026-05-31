@@ -101,33 +101,54 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Auth failed: {exc}")
                     return
 
-                await db.set_setting(_pending_key(phone), "")
-
                 existing = await db.get_account_summaries(active_only=False)
                 is_primary = len(existing) == 0
 
-                _, pool = await runtime.init_pool(config, db)
-                await pool.add_client(phone, session_string)
-
-                is_premium = False
-                acquired = await pool.get_client_by_phone(phone)
-                if acquired:
-                    session, acquired_phone = acquired
-                    try:
-                        me = await session.fetch_me()
-                        is_premium = bool(getattr(me, "premium", False))
-                    except Exception:
-                        pass
-                    finally:
-                        await pool.release_client(acquired_phone)
-
+                # Persist the freshly authenticated session to the DB FIRST, before
+                # warming the in-memory pool (#449). The inverse order — pool first,
+                # DB second — loses the session string permanently if anything between
+                # the two calls fails (network, process kill): the pool is rebuilt from
+                # the DB on restart, so an unpersisted client vanishes. Premium status
+                # is a best-effort enrichment updated afterwards.
                 account = Account(
                     phone=phone,
                     session_string=session_string,
                     is_primary=is_primary,
-                    is_premium=is_premium,
+                    is_premium=False,
                 )
                 await db.add_account(account)
+
+                # Clear the pending-auth key only AFTER the account is durably
+                # persisted (#449). Clearing it before add_account opened a data-loss
+                # window: a crash between the two autocommit writes would leave no
+                # pending key AND no account, so a verify-code retry would hit the
+                # "No pending auth" guard above with the session gone. add_account is
+                # an idempotent ON CONFLICT(phone) upsert, so a retry after a crash
+                # between sign-in and this point safely re-persists the same session.
+                await db.set_setting(_pending_key(phone), "")
+
+                is_premium = False
+                try:
+                    _, pool = await runtime.init_pool(config, db)
+                    await pool.add_client(phone, session_string)
+                    acquired = await pool.get_client_by_phone(phone)
+                    if acquired:
+                        session, acquired_phone = acquired
+                        try:
+                            me = await session.fetch_me()
+                            is_premium = bool(getattr(me, "premium", False))
+                        except Exception:
+                            pass
+                        finally:
+                            await pool.release_client(acquired_phone)
+                    if is_premium:
+                        await db.update_account_premium(phone, is_premium)
+                except Exception as exc:
+                    print(
+                        f"Account {phone} saved, but pool warm-up failed "
+                        f"(premium unknown): {exc}"
+                    )
+
                 print(f"Account {phone} added successfully (primary={is_primary}).")
                 return
 
