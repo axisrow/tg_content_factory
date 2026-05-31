@@ -36,6 +36,10 @@
     <div class="card-body">
         <small class="text-muted d-block mb-2">Автоматическое создание задач: сбор каждые {{ interval_minutes }} мин.</small>
         <p>Статус: <strong>{{ "Запущен" if is_running else "Остановлен" }}</strong></p>
+        {% if queue_paused %}
+        <p><span class="badge text-bg-warning">Очередь на паузе</span>
+           <small class="text-muted">Поставленные задачи ждут возобновления.</small></p>
+        {% endif %}
 
         <div class="scheduler-actions">
             {% if not is_running %}
@@ -50,6 +54,15 @@
             <form method="post" action="/scheduler/trigger{{ filter_qs }}" data-busy>
                 <button type="submit" class="btn btn-outline-primary">{{ icon("run") }} Собрать все каналы</button>
             </form>
+            {% if queue_paused %}
+            <form method="post" action="/scheduler/resume{{ filter_qs }}" data-busy>
+                <button type="submit" class="btn btn-warning">&#9654; Продолжить очередь</button>
+            </form>
+            {% else %}
+            <form method="post" action="/scheduler/pause{{ filter_qs }}" data-busy>
+                <button type="submit" class="btn btn-outline-warning">&#9208; Пауза очереди</button>
+            </form>
+            {% endif %}
             {% if pending_collect_count > 0 %}
             <form method="post" action="/scheduler/tasks/clear-pending-collect{{ filter_qs }}" data-busy>
                 <button type="submit" class="btn btn-outline-danger">
