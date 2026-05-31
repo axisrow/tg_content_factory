@@ -372,6 +372,31 @@ async def test_live_runtime_sync_bridge_uses_owner_loop_not_asyncio_run(mock_db,
     run_mock.assert_not_called()
 
 
+@pytest.mark.anyio
+async def test_live_runtime_sync_bridge_converts_cancellation_to_retryable(mock_db):
+    """#597: a cancelled live operation (e.g. a sibling reaction future torn down
+    on flood) must surface as a retryable AgentToolRuntimeError, not a raw
+    concurrent.futures.CancelledError that the model misreports as a crash."""
+    from src.agent.runtime_context import AgentRuntimeContext, AgentToolRuntimeError
+
+    owner_loop = asyncio.get_running_loop()
+    ctx = AgentRuntimeContext.build(
+        db=mock_db,
+        client_pool=object(),
+        runtime_kind="live",
+        owner_loop=owner_loop,
+    )
+
+    async def _operation():
+        raise asyncio.CancelledError
+
+    with pytest.raises(AgentToolRuntimeError) as exc_info:
+        await asyncio.to_thread(ctx.run_sync, "send_reaction", _operation)
+
+    assert exc_info.value.retryable is True
+    assert "cancel" in str(exc_info.value).lower()
+
+
 class TestDeepagentsSyncSearchMessages:
     def test_results_include_channel_label(self, mock_db):
         from src.agent.tools.deepagents_sync import build_deepagents_tools

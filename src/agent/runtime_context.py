@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from typing import Literal, TypeVar
@@ -139,6 +140,16 @@ class AgentRuntimeContext:
 
                 try:
                     return future.result(timeout=poll_timeout)
+                except FutureCancelledError as exc:
+                    # The live operation was cancelled (e.g. a parallel flood-wait
+                    # batch tore down sibling futures). Surface it as a retryable
+                    # tool error instead of a raw CancelledError so the model can
+                    # retry/report it as a transient condition rather than a crash (#597).
+                    raise AgentToolRuntimeError(
+                        f"Agent tool '{tool_name}' was cancelled while running on the live "
+                        "Telegram runtime; retry shortly.",
+                        retryable=True,
+                    ) from exc
                 except FutureTimeoutError as exc:
                     permission_waiting = (
                         permission_wait_tracker is not None
