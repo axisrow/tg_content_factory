@@ -580,6 +580,21 @@ async def test_is_worker_alive_naive_datetime(base_app):
 
 
 @pytest.mark.anyio
+async def test_is_worker_alive_db_error_fails_closed(base_app):
+    """#530: a snapshot READ failure must be treated as worker-down (fail-closed),
+    matching the agent tool get_runtime_diagnostics — not silently reported as
+    'alive'. Returning True on a DB error would let the web banner and the agent
+    tool drift from the same failure, defeating the single-source-of-truth goal."""
+    from unittest.mock import AsyncMock
+
+    from src.web.routes.scheduler import _is_worker_alive
+
+    _, db, _ = base_app
+    db.repos.runtime_snapshots.get_snapshot = AsyncMock(side_effect=Exception("table missing"))
+    assert await _is_worker_alive(db) is False
+
+
+@pytest.mark.anyio
 async def test_scheduler_page_renders_worker_down_banner(client, base_app):
     """/scheduler/ surfaces the `worker_down` banner when the heartbeat is stale.
 
