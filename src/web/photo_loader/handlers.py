@@ -19,7 +19,7 @@ from src.web.photo_loader.forms import (
     PhotoScheduleForm,
     PhotoSendForm,
 )
-from src.web.photo_loader.responses import PhotoLoaderRedirect
+from src.web.photo_loader.responses import PhotoLoaderRedirect, PhotoLoaderTemplate
 
 logger = logging.getLogger("src.web.routes.photo_loader")
 
@@ -155,7 +155,7 @@ def build_feedback(
     return None
 
 
-async def handle_photo_loader_page(request: Request, phone: str | None = None) -> dict:
+async def handle_photo_loader_page(request: Request, phone: str | None = None) -> PhotoLoaderTemplate:
     pool = deps.get_pool(request)
     accounts = sorted(pool.clients.keys())
     selected_phone = phone if phone in pool.clients else (accounts[0] if accounts else None)
@@ -176,7 +176,7 @@ async def handle_photo_loader_page(request: Request, phone: str | None = None) -
         items=items,
         auto_jobs=auto_jobs,
     )
-    return {
+    context = {
         "accounts": accounts,
         "selected_phone": selected_phone,
         "dialogs": dialogs,
@@ -186,6 +186,7 @@ async def handle_photo_loader_page(request: Request, phone: str | None = None) -
         "auto_jobs": auto_jobs,
         "photo_feedback": photo_feedback,
     }
+    return PhotoLoaderTemplate("photo_loader.html", context)
 
 
 async def _validate_target(
@@ -438,8 +439,10 @@ async def handle_photo_toggle_auto(request: Request, job_id: int, form: PhotoPho
 async def handle_photo_update_auto(
     request: Request,
     job_id: int,
-    form: PhotoAutoUpdateForm,
+    form: PhotoAutoUpdateForm | None = None,
 ) -> PhotoLoaderRedirect:
+    if form is None:
+        form = forms.parse_auto_update_form(await request.form())
     service = deps.get_photo_auto_upload_service(request)
     job = await service.get_job(job_id)
     if job is None:
@@ -451,4 +454,3 @@ async def handle_photo_update_auto(
 async def handle_photo_delete_auto(request: Request, job_id: int, form: PhotoPhoneForm) -> PhotoLoaderRedirect:
     await deps.get_photo_auto_upload_service(request).delete_job(job_id)
     return PhotoLoaderRedirect(form.phone, "photo_auto_deleted")
-

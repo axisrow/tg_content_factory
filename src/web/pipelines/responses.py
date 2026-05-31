@@ -58,8 +58,6 @@ PipelineResult = (
     | PipelineJson
     | PipelineStream
     | PipelineFile
-    | Response
-    | Any
 )
 
 
@@ -68,7 +66,7 @@ def pipeline_redirect_response(result: PipelineRedirect) -> RedirectResponse:
     return redirect_see_other("/pipelines", {key: result.code, "phone": result.phone})
 
 
-def pipeline_response(request: Request, result: PipelineResult):
+def pipeline_response(request: Request, result: PipelineResult) -> Response:
     if isinstance(result, PipelineRedirect):
         return pipeline_redirect_response(result)
     if isinstance(result, PipelineUrlRedirect):
@@ -85,4 +83,3 @@ def pipeline_response(request: Request, result: PipelineResult):
             media_type=result.media_type,
             headers={"Content-Disposition": f'attachment; filename="{result.filename}"'},
         )
-    return result

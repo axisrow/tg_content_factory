@@ -97,7 +97,7 @@ async def api_channels_search(request: Request, q: str = ""):
             "SELECT channel_id, title, username FROM channels ORDER BY id DESC LIMIT 50",
         )
         rows = await cur.fetchall()
-        return [
+        items = [
             {
                 "value": row["channel_id"],
                 "title": row["title"] or str(row["channel_id"]),
@@ -106,6 +106,7 @@ async def api_channels_search(request: Request, q: str = ""):
             }
             for row in rows
         ]
+        return PipelineJson(items)
     cur = await db.execute(
         """SELECT channel_id, title, username FROM channels
            WHERE (LOWER(title) LIKE ? OR LOWER(username) LIKE ? OR CAST(channel_id AS TEXT) LIKE ?)
@@ -113,7 +114,7 @@ async def api_channels_search(request: Request, q: str = ""):
         (f"%{query.lower()}%", f"%{query.lower()}%", f"%{query}%"),
     )
     rows = await cur.fetchall()
-    return [
+    items = [
         {
             "value": row["channel_id"],
             "title": row["title"] or str(row["channel_id"]),
@@ -122,6 +123,7 @@ async def api_channels_search(request: Request, q: str = ""):
         }
         for row in rows
     ]
+    return PipelineJson(items)
 
 
 async def _page_context(request: Request) -> dict:
@@ -632,7 +634,7 @@ async def dry_run_count_new(request: Request, source_ids: str = "",
     ids = [int(x) for x in source_ids.split(",") if x.strip().isdigit()]
     db = deps.get_db(request)
     messages = await db.repos.messages.get_recent_for_channels(ids, since_hours)
-    return {"total": len(messages), "after_filter": len(messages)}
+    return PipelineJson({"total": len(messages), "after_filter": len(messages)})
 
 
 async def dry_run_count(request: Request, pipeline_id: int,
@@ -650,7 +652,7 @@ async def dry_run_count(request: Request, pipeline_id: int,
         ids = [s.channel_id for s in sources]
     messages = await db.repos.messages.get_recent_for_channels(ids, since_hours)
     after_filter = _apply_pipeline_filter(pipeline, messages)
-    return {"total": len(messages), "after_filter": after_filter}
+    return PipelineJson({"total": len(messages), "after_filter": after_filter})
 
 
 # ------------------------------------------------------------------
