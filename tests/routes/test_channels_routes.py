@@ -88,7 +88,7 @@ async def test_get_dialogs_json(route_client, db):
         [{"channel_id": 200, "title": "Test Dialog", "channel_type": "channel"}],
     )
 
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.channel_service") as mock_svc:
         mock_svc.return_value.get_dialogs_with_added_flags = AsyncMock(
             return_value=[{"channel_id": 200, "title": "Test Dialog"}]
         )
@@ -102,7 +102,7 @@ async def test_get_dialogs_json(route_client, db):
 @pytest.mark.anyio
 async def test_add_bulk_channels(route_client):
     """Test add bulk channels."""
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.channel_service") as mock_svc:
         mock_svc.return_value.add_bulk_by_dialog_ids = AsyncMock()
         resp = await route_client.post(
             "/channels/add-bulk",
@@ -116,7 +116,7 @@ async def test_add_bulk_channels(route_client):
 @pytest.mark.anyio
 async def test_toggle_channel(route_client):
     """Test toggle channel."""
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.channel_service") as mock_svc:
         mock_svc.return_value.toggle = AsyncMock()
         resp = await route_client.post("/channels/1/toggle", follow_redirects=False)
         assert resp.status_code == 303
@@ -126,7 +126,7 @@ async def test_toggle_channel(route_client):
 @pytest.mark.anyio
 async def test_delete_channel(route_client):
     """Test delete channel."""
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.channel_service") as mock_svc:
         mock_svc.return_value.delete = AsyncMock()
         resp = await route_client.post("/channels/1/delete", follow_redirects=False)
         assert resp.status_code == 303
@@ -136,7 +136,7 @@ async def test_delete_channel(route_client):
 @pytest.mark.anyio
 async def test_delete_channel_in_pipeline(route_client):
     """Test delete channel that is in pipeline."""
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.channel_service") as mock_svc:
         import sqlite3
 
         mock_svc.return_value.delete = AsyncMock(
