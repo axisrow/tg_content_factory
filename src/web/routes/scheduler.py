@@ -194,8 +194,15 @@ async def _worker_status(db) -> tuple[bool, str]:
     try:
         snapshot = await db.repos.runtime_snapshots.get_snapshot("worker_heartbeat")
     except Exception as exc:  # noqa: BLE001
+        # Fail closed (#530): a snapshot read failure means we cannot prove the
+        # worker is alive, so report it as down — matching the agent tool's
+        # get_runtime_diagnostics, which passes snapshot=None to
+        # evaluate_worker_heartbeat and gets status="missing". Returning True
+        # here (fail-open) would let the two surfaces drift: the banner would say
+        # "alive" while the agent says "missing" from the same DB error, defeating
+        # the single-source-of-truth goal and suppressing the very #444 banner.
         logger.warning("Failed to read worker_heartbeat snapshot: %s", exc)
-        return True, ""
+        return False, ""
     health = evaluate_worker_heartbeat(snapshot, stale_after_sec=WORKER_HEARTBEAT_STALE_AFTER_SEC)
     return health.alive, health.reason
 
