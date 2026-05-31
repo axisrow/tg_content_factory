@@ -24,17 +24,17 @@ def _agent_unavailable_copy(runtime_state: deps.AgentRuntimeState) -> tuple[str,
     if runtime_state.state == "starting":
         return (
             "Агент запускается.",
-            "Embedded worker поднимает live runtime. Обновите страницу через несколько секунд.",
+            "Рабочий процесс запускает чат. Обновите страницу через несколько секунд.",
         )
     if runtime_state.state == "failed":
         return (
             "Агент не запустился.",
-            runtime_state.error or "Embedded worker failed to start. Check server logs for details.",
+            runtime_state.error or "Рабочий процесс не запустился. Проверьте логи сервера.",
         )
     return (
         "Чат недоступен в web-процессе.",
-        "Agent chat is only available in the worker process. "
-        "Run `python -m src.main worker` alongside the web server to enable it.",
+        "Чат работает только в рабочем процессе. "
+        "Запустите рядом с web-сервером команду `python -m src.main worker`.",
     )
 
 
