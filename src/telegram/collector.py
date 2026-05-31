@@ -49,6 +49,12 @@ logger = logging.getLogger(__name__)
 
 RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
 RESOLVE_USERNAME_BACKOFF_BUFFER_SEC = 5
+# Global cross-account resolve backoff (#552). Only a *long* resolve flood
+# (> threshold) freezes live resolves for every account; short floods are left
+# to the per-account #502 rotation. The freeze is capped so a single 15-18h
+# Telegram flood cannot brick all collection for hours.
+GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC = 300
+GLOBAL_RESOLVE_BACKOFF_CAP_SEC = 3600
 
 
 class NoActiveStatsClientsError(RuntimeError):
@@ -161,8 +167,13 @@ class Collector:
         return int(remaining)
 
     def _set_resolve_username_backoff(self, wait_seconds: int) -> datetime:
+        # Cap the freeze (#552): Telegram resolve floods can be 15-18h; honoring
+        # them literally would brick all collection. We block live resolves for
+        # at most GLOBAL_RESOLVE_BACKOFF_CAP_SEC and rely on cache-only resolves
+        # plus rescheduling in the meantime.
+        capped = min(int(wait_seconds), GLOBAL_RESOLVE_BACKOFF_CAP_SEC)
         self._resolve_username_backoff_until_utc = datetime.now(timezone.utc) + timedelta(
-            seconds=wait_seconds
+            seconds=capped
         )
         return self._resolve_username_backoff_until_utc
 
@@ -377,6 +388,7 @@ class Collector:
         channel_id: int,
         username: str,
         phone: str,
+        cache_only: bool = False,
     ):
         try:
             return await session.resolve_cached_input_entity(PeerChannel(channel_id))
@@ -389,6 +401,13 @@ class Collector:
             cached = None
         if cached is not None and getattr(cached, "channel_id", None) == channel_id:
             return cached
+
+        if cache_only:
+            # Global resolve backoff (#552): the cache missed and we must not hit
+            # the live API on any account. Defer this channel for the run.
+            raise UsernameResolveRateLimitedError(
+                phone, self._get_resolve_username_backoff_remaining_sec()
+            )
 
         raw_client = None
         if isinstance(getattr(type(session), "raw_client", None), property):
@@ -562,18 +581,24 @@ class Collector:
             channel_id = channel.channel_id
             min_id = channel.last_collected_id
 
+            # Global resolve backoff (#552): while a long flood is in effect we
+            # do NOT abort the whole run. Instead this channel runs in cache-only
+            # mode — if its InputPeer is cached the collection proceeds, otherwise
+            # it is deferred and the run continues to the next channel (which may
+            # well be cache-resolvable).
+            resolve_cache_only = False
             if channel.username:
                 backoff_remaining_sec = self._get_resolve_username_backoff_remaining_sec()
                 if backoff_remaining_sec > 0:
+                    resolve_cache_only = True
                     logger.warning(
-                        "Skipping username resolve for channel %d (%s): "
-                        "%s backoff active for %ss",
+                        "Channel %d (%s): %s global backoff active for %ss — "
+                        "cache-only resolve",
                         channel_id,
                         channel.username,
                         RESOLVE_USERNAME_OPERATION,
                         backoff_remaining_sec,
                     )
-                    self._raise_resolve_username_deferred()
 
             # For private groups (no username):
             #   1. preferred_phone from DB (persists across restarts)
@@ -697,6 +722,7 @@ class Collector:
                             channel_id=channel_id,
                             username=channel.username,
                             phone=phone,
+                            cache_only=resolve_cache_only,
                         )
                     except asyncio.TimeoutError:
                         logger.warning(
@@ -1050,9 +1076,23 @@ class Collector:
             # Only skip the channel if the channel no longer exists in DB.
             if flood_wait_sec is not None:
                 if flood_wait_operation == RESOLVE_USERNAME_OPERATION:
+                    # Only a *long* resolve flood freezes live resolves for every
+                    # account (#552). A short flood is transient — skip just this
+                    # channel and let the run continue with other accounts so one
+                    # blip does not stall the whole pool.
+                    if flood_wait_sec <= GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC:
+                        logger.warning(
+                            "%s short FloodWait %ss on %s; skipping channel %d "
+                            "(no global backoff)",
+                            RESOLVE_USERNAME_OPERATION,
+                            flood_wait_sec,
+                            phone,
+                            channel_id,
+                        )
+                        return total_collected + collected_count
                     next_available_at = self._set_resolve_username_backoff(flood_wait_sec)
                     logger.warning(
-                        "%s got FloodWait %ss on %s; pausing username resolves until %s",
+                        "%s got FloodWait %ss on %s; pausing ALL username resolves until %s",
                         RESOLVE_USERNAME_OPERATION,
                         flood_wait_sec,
                         phone,
