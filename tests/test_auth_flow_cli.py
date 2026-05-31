@@ -1,6 +1,8 @@
 """CLI auth flow tests — pure unit tests covering two-step send-code/verify-code flow."""
 from __future__ import annotations
 
+import argparse
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -115,6 +117,79 @@ async def test_sign_in_fresh_2fa_with_password():
         session = await auth.sign_in_fresh("+1234567890", "54321", "hash_abc", password_2fa="mypass")
 
     assert session == "session_2fa_ok"
+
+
+@pytest.mark.telegram_unit
+def test_cli_verify_code_persists_account_before_pool_warmup(tmp_path, capsys):
+    """Regression #449: `account verify-code` must persist the authenticated session
+    to the DB BEFORE warming the in-memory pool. If the pool warm-up fails afterwards,
+    the session string is already safe; the inverse order would lose it permanently on
+    the next restart (the pool is rebuilt from the DB)."""
+    from src.cli.commands import account as account_cmd
+
+    order: list[str] = []
+
+    config = MagicMock()
+    config.telegram.api_id = 123
+    config.telegram.api_hash = "abc"
+
+    captured: dict = {}
+
+    async def fake_init_db(_config_path):
+        from src.database import Database
+
+        db = Database(str(tmp_path / "verify.db"))
+        await db.initialize()
+        await db.set_setting("auth_pending:+1", json.dumps({"phone_code_hash": "h"}))
+        original_add = db.add_account
+
+        async def traced_add_account(account):
+            order.append("add_account")
+            captured["account"] = account
+            return await original_add(account)
+
+        db.add_account = traced_add_account  # type: ignore[method-assign]
+        captured["db"] = db
+        return config, db
+
+    async def fake_init_pool(_config, _db):
+        pool = MagicMock()
+
+        async def add_client(_phone, _session):
+            order.append("add_client")
+            raise RuntimeError("pool boom")
+
+        pool.add_client = add_client
+        pool.disconnect_all = AsyncMock()
+        return None, pool
+
+    auth = MagicMock()
+    auth.sign_in_fresh = AsyncMock(return_value="SESSION_XYZ")
+
+    args = argparse.Namespace(
+        account_action="verify-code",
+        phone="+1",
+        code="55555",
+        password=None,
+        config=None,
+        api_id=None,
+        api_hash=None,
+    )
+
+    with patch.object(account_cmd.runtime, "init_db", fake_init_db), \
+         patch.object(account_cmd.runtime, "init_pool", fake_init_pool), \
+         patch.object(account_cmd, "TelegramAuth", return_value=auth):
+        account_cmd.run(args)
+
+    # DB write happened, and it happened BEFORE the (failing) pool warm-up.
+    assert order == ["add_account", "add_client"], order
+    assert captured["account"].phone == "+1"
+    assert captured["account"].session_string == "SESSION_XYZ"
+    assert captured["account"].is_primary is True
+
+    out = capsys.readouterr().out
+    assert "added successfully" in out
+    assert "pool warm-up failed" in out
 
 
 @pytest.mark.telegram_unit
