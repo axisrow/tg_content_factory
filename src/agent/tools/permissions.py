@@ -161,6 +161,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "toggle_account": ToolCategory.WRITE,
     "delete_account": ToolCategory.DELETE,
     "get_flood_status": ToolCategory.READ,
+    "get_account_availability": ToolCategory.READ,
     "clear_flood_status": ToolCategory.WRITE,
     "get_account_info": ToolCategory.READ,
     # Filters
@@ -303,7 +304,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ]),
     ("Аккаунты", [
         "list_accounts", "toggle_account", "delete_account", "get_flood_status",
-        "clear_flood_status", "get_account_info",
+        "get_account_availability", "clear_flood_status", "get_account_info",
     ]),
     ("Фильтры", [
         "analyze_filters", "apply_filters", "reset_filters", "toggle_channel_filter",

@@ -19,6 +19,7 @@ from src.agent.prompt_template import (
 from src.agent.provider_registry import PROVIDER_ORDER, ProviderRuntimeConfig
 from src.agent.provider_registry import provider_spec as deepagents_provider_spec
 from src.models import AccountSessionStatus
+from src.services.account_availability import compute_account_availability
 from src.services.agent_provider_service import (
     ProviderConfigService,
     ProviderModelCacheEntry,
@@ -494,34 +495,15 @@ async def handle_settings_page(request: Request) -> dict[str, object]:
     account_status: dict[str, dict[str, object]] = {}
     flooded_connected = []
     for account in accounts:
-        connected = account.phone in connected_phones
-        if account.session_status != AccountSessionStatus.OK:
-            state = "session_unavailable"
-            remaining_seconds = 0
-        elif not account.is_active:
-            state = "inactive"
-            remaining_seconds = 0
-        elif not connected:
-            state = "disconnected"
-            remaining_seconds = 0
-        elif account.flood_wait_until is not None:
+        availability = compute_account_availability(
+            account, connected=account.phone in connected_phones, now=now
+        )
+        if availability["state"] == "flood" and account.flood_wait_until is not None:
             flood_until = account.flood_wait_until
             if flood_until.tzinfo is None:
                 flood_until = flood_until.replace(tzinfo=UTC)
-            remaining_seconds = max(0, int((flood_until - now).total_seconds()))
-            if remaining_seconds > 0:
-                state = "flood"
-                flooded_connected.append(flood_until)
-            else:
-                state = "available"
-        else:
-            state = "available"
-            remaining_seconds = 0
-        account_status[account.phone] = {
-            "state": state,
-            "remaining_seconds": remaining_seconds,
-            "remaining_minutes": max(1, remaining_seconds // 60) if remaining_seconds else 0,
-        }
+            flooded_connected.append(flood_until)
+        account_status[account.phone] = availability
     all_accounts_flooded = bool(flooded_connected) and len(flooded_connected) == len(
         [
             acc

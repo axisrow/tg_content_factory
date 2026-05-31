@@ -21,8 +21,25 @@ from src.agent.tools._registry import (
     require_confirmation,
     resolve_phone,
 )
+from src.services.account_availability import compute_account_availability
 
 _NO_LIVE_RUNTIME = "live Telegram runtime unavailable"
+
+# Human guidance per availability state (#529). Critically distinguishes a
+# saved-session reconnect (no SMS/2FA) from interactive Telegram login.
+_AVAILABILITY_GUIDANCE = {
+    "available": "OK — аккаунт доступен и пригоден к использованию.",
+    "flood": "временный flood-wait (ограничение Telegram); дождитесь окончания.",
+    "disconnected": (
+        "сессия сохранена, но live-клиент не подключён — можно переподключить "
+        "СОХРАНЁННУЮ сессию (reconnect); повторный вход по SMS/2FA НЕ требуется."
+    ),
+    "inactive": "выключен в БД (is_active=false); включите через toggle_account.",
+    "session_unavailable": (
+        "сохранённая сессия отсутствует или невалидна — требуется ИНТЕРАКТИВНЫЙ "
+        "вход в Telegram (через /auth/login?phone=..., с кодом из SMS и 2FA)."
+    ),
+}
 
 
 def _runtime(kwargs: dict, db, client_pool) -> AgentRuntimeContext:
@@ -253,6 +270,46 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка получения flood-статуса: {e}")
 
     tools.append(get_flood_status)
+
+    @tool(
+        "get_account_availability",
+        "Report each Telegram account's availability using the SAME source of truth as the "
+        "Settings UI (states: available / flood / disconnected / inactive / session_unavailable). "
+        "ALWAYS call this BEFORE claiming an account is unavailable or needs re-authorization. "
+        "It distinguishes a saved-session reconnect (no SMS/2FA) from interactive Telegram login.",
+        {"phone": Annotated[str, "Опционально: телефон или префикс (например +8613... или +861*)"]},
+    )
+    async def get_account_availability(args):
+        try:
+            accounts = await get_accounts_with_flood_cleanup(db)
+            if not accounts:
+                return _text_response("Аккаунты не найдены.")
+            phone_filter = normalize_phone(args.get("phone", ""))
+            connected = connected_phones_from_pool(client_pool)
+            rows = []
+            for a in accounts:
+                phone = str(getattr(a, "phone", "") or "")
+                if not phone or (phone_filter and not _matches_phone(phone, phone_filter)):
+                    continue
+                avail = compute_account_availability(a, connected=phone in connected)
+                state = avail["state"]
+                guidance = _AVAILABILITY_GUIDANCE.get(state, state)
+                extra = ""
+                if state == "flood":
+                    remaining = _remaining_seconds(a)
+                    if remaining is not None:
+                        extra = f" (осталось ~{remaining}s)"
+                elif state == "session_unavailable":
+                    extra = f" (session_status={account_session_status(a)})"
+                rows.append(f"- {phone}: {state}{extra} — {guidance}")
+            if not rows:
+                return _text_response(f"Аккаунты по фильтру '{phone_filter}' не найдены.")
+            header = "Доступность аккаунтов (тот же источник истины, что и Settings UI):"
+            return _text_response("\n".join([header, *rows]))
+        except Exception as e:
+            return _text_response(f"Ошибка получения доступности аккаунтов: {e}")
+
+    tools.append(get_account_availability)
 
     @tool(
         "clear_flood_status",
