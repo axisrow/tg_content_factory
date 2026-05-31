@@ -378,3 +378,54 @@ class TestGetAccountAvailabilityTool:
         text = _text(await handlers["get_account_availability"]({}))
         assert "flood" in text
         assert "осталось" in text
+
+
+class SnapshotClientPool:  # noqa: N801 — exact name drives detect_runtime_kind
+    """Stand-in whose class name triggers runtime_kind == 'snapshot'."""
+
+    __test__ = False
+
+    def __init__(self, *connected):
+        self.clients = {p: object() for p in connected}
+
+
+class TestGetRuntimeDiagnosticsTool:
+    """#530: grounded runtime diagnostics — live pool kept separate from DB flags,
+    snapshot freshness reported only as snapshot health."""
+
+    @pytest.mark.anyio
+    async def test_live_runtime_omits_snapshot_health(self, mock_db):
+        mock_db.get_accounts = AsyncMock(return_value=[_avail_account("+8613000000000")])
+        mock_db.update_account_flood = AsyncMock()
+        handlers = _get_tool_handlers(mock_db, client_pool=_pool_with("+8613000000000"))
+        text = _text(await handlers["get_runtime_diagnostics"]({}))
+        assert "runtime_kind: live" in text
+        assert "+8613000000000" in text
+        # Live runtime proves connectivity directly — no snapshot-health line.
+        assert "снапшота воркера" not in text
+        assert "get_account_availability" in text
+
+    @pytest.mark.anyio
+    async def test_snapshot_runtime_warns_on_stale_heartbeat(self, mock_db):
+        stale = SimpleNamespace(
+            updated_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+            payload={"status": "alive"},
+        )
+        mock_db.get_accounts = AsyncMock(return_value=[])
+        mock_db.update_account_flood = AsyncMock()
+        mock_db.repos.runtime_snapshots.get_snapshot = AsyncMock(return_value=stale)
+        handlers = _get_tool_handlers(mock_db, client_pool=SnapshotClientPool())
+        text = _text(await handlers["get_runtime_diagnostics"]({}))
+        assert "snapshot" in text
+        assert "устаревший" in text
+        assert "Не делайте выводов" in text
+
+    @pytest.mark.anyio
+    async def test_none_runtime_reported(self, mock_db):
+        mock_db.get_accounts = AsyncMock(return_value=[])
+        mock_db.update_account_flood = AsyncMock()
+        mock_db.repos.runtime_snapshots.get_snapshot = AsyncMock(return_value=None)
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        text = _text(await handlers["get_runtime_diagnostics"]({}))
+        assert "runtime_kind: none" in text
+        assert "get_account_availability" in text
