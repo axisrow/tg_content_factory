@@ -99,6 +99,7 @@
 | `delete_account` | DELETE | Удалить |
 | `get_flood_status` | READ | Статус flood wait |
 | `get_account_availability` | READ | Доступность аккаунта (как в Settings UI): available/flood/disconnected/inactive/session_unavailable |
+| `get_runtime_diagnostics` | READ | Диагностика рантайма: runtime_kind (live/snapshot/none), live-пул отдельно от DB-флагов, свежесть снапшота воркера |
 | `clear_flood_status` | WRITE | Сбросить flood wait |
 | `get_account_info` | READ | Информация об аккаунте (имя, username, premium) |
 
