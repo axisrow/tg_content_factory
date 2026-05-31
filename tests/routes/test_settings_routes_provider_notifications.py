@@ -965,6 +965,49 @@ async def test_test_notification_notify_fails(route_client, db):
     assert "command_id=" in resp.headers["location"]
 
 
+@pytest.mark.anyio
+async def test_test_notification_custom_text_in_payload(route_client, db):
+    """Custom text from the form is forwarded to the queued command (#563)."""
+    with patch(
+        "src.web.settings.handlers.deps.telegram_command_service"
+    ) as mock_svc_factory:
+        svc = MagicMock()
+        svc.enqueue = AsyncMock(return_value=123)
+        mock_svc_factory.return_value = svc
+
+        resp = await route_client.post(
+            "/settings/notifications/test",
+            data={"text": "Custom alert"},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    svc.enqueue.assert_awaited_once()
+    _, kwargs = svc.enqueue.call_args
+    assert kwargs["payload"] == {"text": "Custom alert"}
+
+
+@pytest.mark.anyio
+async def test_test_notification_blank_text_omits_payload(route_client, db):
+    """Blank text yields an empty payload so the dispatcher uses its default (#563)."""
+    with patch(
+        "src.web.settings.handlers.deps.telegram_command_service"
+    ) as mock_svc_factory:
+        svc = MagicMock()
+        svc.enqueue = AsyncMock(return_value=123)
+        mock_svc_factory.return_value = svc
+
+        resp = await route_client.post(
+            "/settings/notifications/test",
+            data={"text": "   "},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    _, kwargs = svc.enqueue.call_args
+    assert kwargs["payload"] == {}
+
+
 # ── Image Providers: lines 1202-1262 ───────────────────────────────────
 
 

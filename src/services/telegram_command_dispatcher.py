@@ -880,7 +880,8 @@ class TelegramCommandDispatcher:
 
         target_service = self._notification_target_service()
         notifier = Notifier(target_service, None, NotificationBundle.from_database(self._db))
-        ok = await notifier.notify("✅ Тест уведомлений: соединение установлено")
+        text = str(payload.get("text") or "").strip() or "✅ Тест уведомлений: соединение установлено"
+        ok = await notifier.notify(text)
         if not ok:
             raise RuntimeError("notification_test_failed")
         return {"sent": True}

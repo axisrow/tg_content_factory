@@ -915,6 +915,22 @@ async def test_notifications_test():
         mock_notifier.return_value = mock_instance
         r = await d._handle_notifications_test({})
     assert r["sent"] is True
+    mock_instance.notify.assert_awaited_once_with("✅ Тест уведомлений: соединение установлено")
+
+
+async def test_notifications_test_custom_text():
+    db = _mock_db()
+    pool = _mock_pool()
+    d = _dispatcher(db=db, pool=pool)
+    with patch.object(mod, "Notifier") as mock_notifier, \
+         patch("src.database.bundles.NotificationBundle") as mock_bundle:
+        mock_bundle.from_database.return_value = MagicMock()
+        mock_instance = MagicMock()
+        mock_instance.notify = AsyncMock(return_value=True)
+        mock_notifier.return_value = mock_instance
+        r = await d._handle_notifications_test({"text": "hello world"})
+    assert r["sent"] is True
+    mock_instance.notify.assert_awaited_once_with("hello world")
 
 
 async def test_notifications_test_failed():

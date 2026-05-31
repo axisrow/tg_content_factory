@@ -35,7 +35,9 @@
         <button type="submit" class="btn btn-outline-danger btn-sm"><i class="bi bi-trash me-1"></i>Удалить bot</button>
     </form>
     {% if notification_target.state == "available" %}
-    <form method="post" action="/settings/notifications/test" data-busy>
+    <form method="post" action="/settings/notifications/test" class="d-flex gap-2" data-busy>
+        <input type="text" name="text" class="form-control form-control-sm" style="max-width:20rem"
+               placeholder="Текст теста (необязательно)">
         <button type="submit" class="btn btn-outline-secondary btn-sm"><i class="bi bi-send me-1"></i>Тест</button>
     </form>
     {% endif %}
