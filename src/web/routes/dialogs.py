@@ -8,6 +8,17 @@ from src.web.dialogs.responses import dialog_response
 
 router = APIRouter()
 
+handle_send_message = handlers.send_message
+handle_edit_message = handlers.edit_message
+handle_forward_messages = handlers.forward_messages
+handle_pin_message = handlers.pin_message
+handle_unpin_message = handlers.unpin_message
+handle_download_media = handlers.download_media
+handle_get_participants = handlers.get_participants
+handle_edit_admin = handlers.edit_admin
+handle_edit_permissions = handlers.edit_permissions
+handle_kick_participant = handlers.kick_participant
+
 
 @router.get("/", response_class=HTMLResponse)
 async def dialogs_page(
@@ -41,12 +52,12 @@ async def leave_dialogs(request: Request):
 
 @router.post("/send")
 async def send_message(request: Request):
-    return dialog_response(request, await handlers.send_message(request))
+    return dialog_response(request, await handle_send_message(request))
 
 
 @router.post("/edit-message")
 async def edit_message(request: Request):
-    return dialog_response(request, await handlers.edit_message(request))
+    return dialog_response(request, await handle_edit_message(request))
 
 
 @router.post("/delete-message")
@@ -56,12 +67,12 @@ async def delete_message(request: Request):
 
 @router.post("/forward-messages")
 async def forward_messages(request: Request):
-    return dialog_response(request, await handlers.forward_messages(request))
+    return dialog_response(request, await handle_forward_messages(request))
 
 
 @router.post("/pin-message")
 async def pin_message(request: Request):
-    return dialog_response(request, await handlers.pin_message(request))
+    return dialog_response(request, await handle_pin_message(request))
 
 
 @router.post("/react")
@@ -81,32 +92,32 @@ async def clear_pending_queue_commands(request: Request):
 
 @router.post("/unpin-message")
 async def unpin_message(request: Request):
-    return dialog_response(request, await handlers.unpin_message(request))
+    return dialog_response(request, await handle_unpin_message(request))
 
 
 @router.post("/download-media")
 async def download_media(request: Request):
-    return dialog_response(request, await handlers.download_media(request))
+    return dialog_response(request, await handle_download_media(request))
 
 
 @router.get("/participants")
 async def get_participants(request: Request):
-    return dialog_response(request, await handlers.get_participants(request))
+    return dialog_response(request, await handle_get_participants(request))
 
 
 @router.post("/edit-admin")
 async def edit_admin(request: Request):
-    return dialog_response(request, await handlers.edit_admin(request))
+    return dialog_response(request, await handle_edit_admin(request))
 
 
 @router.post("/edit-permissions")
 async def edit_permissions(request: Request):
-    return dialog_response(request, await handlers.edit_permissions(request))
+    return dialog_response(request, await handle_edit_permissions(request))
 
 
 @router.post("/kick")
 async def kick_participant(request: Request):
-    return dialog_response(request, await handlers.kick_participant(request))
+    return dialog_response(request, await handle_kick_participant(request))
 
 
 @router.get("/broadcast-stats")
