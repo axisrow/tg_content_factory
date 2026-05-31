@@ -22,6 +22,7 @@ from src.agent.tools._registry import (
     resolve_phone,
 )
 from src.services.account_availability import compute_account_availability
+from src.services.runtime_diagnostics import evaluate_worker_heartbeat
 
 _NO_LIVE_RUNTIME = "live Telegram runtime unavailable"
 
@@ -310,6 +311,70 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка получения доступности аккаунтов: {e}")
 
     tools.append(get_account_availability)
+
+    @tool(
+        "get_runtime_diagnostics",
+        "Grounded diagnostics for the agent's Telegram runtime. Labels runtime_kind "
+        "(live/snapshot/none), shows live ClientPool connectivity SEPARATELY from DB "
+        "active/flood flags, and reports worker-snapshot freshness as snapshot HEALTH "
+        "only — never as proof that an account is reachable. Call this before making "
+        "claims about whether Telegram/the runtime is available.",
+        {},
+    )
+    async def get_runtime_diagnostics(args):
+        try:
+            kind = runtime.runtime_kind
+            kind_expl = {
+                "live": "live — этот backend держит реальный ClientPool и может звать Telegram напрямую.",
+                "snapshot": (
+                    "snapshot — web-backend без live Telegram; видит снимок воркера, "
+                    "это НЕ доказательство связи с аккаунтом."
+                ),
+                "none": "none — Telegram runtime не подключён к этому backend.",
+            }.get(kind, kind)
+            lines = [f"runtime_kind: {kind_expl}"]
+
+            # Live pool connectivity — kept strictly separate from DB flags.
+            connected = connected_phones_from_pool(client_pool)
+            lines.append(f"Live ClientPool подключённые телефоны: {_format_phones(connected)}.")
+
+            accounts = await get_accounts_with_flood_cleanup(db)
+            active = [str(a.phone) for a in accounts if getattr(a, "is_active", False)]
+            flooded = [str(a.phone) for a in accounts if is_flood_wait_active(a)]
+            lines.append(f"DB активные аккаунты: {_format_phone_list(active)}.")
+            lines.append(f"DB flood-waited аккаунты: {_format_phone_list(flooded)}.")
+
+            # Snapshot health is only meaningful when this backend is NOT live.
+            if kind != "live":
+                snapshot = None
+                try:
+                    snapshot = await db.repos.runtime_snapshots.get_snapshot("worker_heartbeat")
+                except Exception:
+                    snapshot = None
+                health = evaluate_worker_heartbeat(snapshot)
+                if health.alive:
+                    age = int(health.age_sec) if health.age_sec is not None else "?"
+                    lines.append(
+                        f"Здоровье снапшота воркера: свежий (heartbeat ~{age}s назад). "
+                        "Это здоровье СНАПШОТА, а не доказательство связи аккаунта."
+                    )
+                else:
+                    detail = f" ({health.reason})" if health.reason else ""
+                    state = "устаревший" if health.stale else "отсутствует/недоступен"
+                    lines.append(
+                        f"Здоровье снапшота воркера: {state}{detail}. "
+                        "Не делайте выводов о доступности аккаунтов из устаревшего снапшота."
+                    )
+
+            lines.append(
+                "Для статуса конкретного аккаунта используйте get_account_availability/"
+                "get_account_info, а не вывод из снапшота."
+            )
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка диагностики рантайма: {e}")
+
+    tools.append(get_runtime_diagnostics)
 
     @tool(
         "clear_flood_status",

@@ -149,6 +149,7 @@
 | Сбросить flood | `account flood-clear` | `POST /settings/{id}/flood-clear` | `clear_flood_status` |
 | Инфо | `account info` | — | `get_account_info` |
 | Доступность | `account list` | `GET /settings/` | `get_account_availability` |
+| Диагностика рантайма | `scheduler status` | `GET /settings/` | `get_runtime_diagnostics` |
 | Добавить аккаунт | `account add` | `POST /auth/send-code`, `POST /auth/verify-code` | — |
 | Отправить код авторизации | `account send-code` | `POST /auth/send-code` | — |
 | Подтвердить код авторизации | `account verify-code` | `POST /auth/verify-code` | — |

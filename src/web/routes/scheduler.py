@@ -9,6 +9,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.models import AccountSessionStatus
 from src.services.pipeline_result import result_kind_label
+from src.services.runtime_diagnostics import (
+    WORKER_HEARTBEAT_STALE_AFTER_SEC as WORKER_HEARTBEAT_STALE_AFTER_SEC_SVC,
+)
+from src.services.runtime_diagnostics import evaluate_worker_heartbeat
 from src.web import deps
 from src.web.routes.channel_collection import bulk_enqueue_msg
 
@@ -25,8 +29,10 @@ JOB_LABELS = {
 }
 
 # Worker publishes `worker_heartbeat` every ~5s (src/runtime/worker.py:_publish_snapshots).
-# 60s gives us 12 missed publishes before we conclude the worker is down.
-WORKER_HEARTBEAT_STALE_AFTER_SEC = 60
+# 60s gives us 12 missed publishes before we conclude the worker is down. The
+# staleness window + classification now live in src.services.runtime_diagnostics
+# so the agent's get_runtime_diagnostics tool stays in lock-step with this banner.
+WORKER_HEARTBEAT_STALE_AFTER_SEC = WORKER_HEARTBEAT_STALE_AFTER_SEC_SVC
 
 
 def _job_label(job_id: str) -> str:
@@ -190,20 +196,8 @@ async def _worker_status(db) -> tuple[bool, str]:
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to read worker_heartbeat snapshot: %s", exc)
         return True, ""
-    if snapshot is None or snapshot.updated_at is None:
-        return False, ""
-    payload = snapshot.payload if isinstance(snapshot.payload, dict) else {}
-    status = str(payload.get("status", "alive"))
-    if status not in {"alive", "ok"}:
-        reason = str(payload.get("detail", "") or payload.get("reason", ""))
-        return False, reason
-    updated_at = snapshot.updated_at
-    if updated_at.tzinfo is None:
-        updated_at = updated_at.replace(tzinfo=timezone.utc)
-    age = (datetime.now(timezone.utc) - updated_at).total_seconds()
-    if age > WORKER_HEARTBEAT_STALE_AFTER_SEC:
-        return False, ""
-    return True, ""
+    health = evaluate_worker_heartbeat(snapshot, stale_after_sec=WORKER_HEARTBEAT_STALE_AFTER_SEC)
+    return health.alive, health.reason
 
 
 async def _is_worker_alive(db) -> bool:
