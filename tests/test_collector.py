@@ -940,6 +940,104 @@ async def test_progress_callback_invoked_on_batch_flush(db):
 
 
 @pytest.mark.anyio
+async def test_persist_progress_log_includes_channel_username(db, caplog):
+    ch = Channel(channel_id=-100133, title="Named Log", username="named_log", last_collected_id=0)
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages([_make_mock_message(1, text="msg 1")]))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+
+    caplog.set_level("INFO", logger="src.telegram.collector")
+    count = await collector._collect_channel(stored, force=True)
+
+    assert count == 1
+    assert "Channel -100133 (@named_log): persisted 1 messages, total 1" in caplog.text
+
+
+@pytest.mark.anyio
+async def test_incremental_batch_flushes_to_avoid_huge_final_flush(db):
+    """Incremental collection should flush large channels before the final flush."""
+    ch = Channel(channel_id=-100130, title="Test", username="test130", last_collected_id=50)
+    ch_id = await db.add_channel(ch)
+    await db.update_channel_last_id(ch.channel_id, 50)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    mock_msgs = [_make_mock_message(i, text=f"msg {i}") for i in range(51, 1251)]
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages(mock_msgs))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+
+    original_insert = db.insert_messages_batch
+    batch_sizes: list[int] = []
+
+    async def insert_spy(batch):
+        batch_sizes.append(len(batch))
+        return await original_insert(batch)
+
+    db.insert_messages_batch = AsyncMock(side_effect=insert_spy)  # type: ignore[method-assign]
+
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+    count = await collector._collect_channel(stored)
+
+    updated = await db.get_channel_by_pk(ch_id)
+    assert updated is not None
+    assert count == 1200
+    assert batch_sizes == [500, 500, 200]
+    assert updated.last_collected_id == 1250
+
+
+@pytest.mark.anyio
+async def test_flush_verifies_persisted_ids_in_chunks(db, monkeypatch):
+    """Persist verification should chunk SQL IN parameters under SQLite's limit."""
+    monkeypatch.setattr("src.telegram.collector.MESSAGE_FLUSH_BATCH_SIZE", 1001)
+    monkeypatch.setattr("src.telegram.collector.PERSISTED_ID_VERIFY_CHUNK_SIZE", 400)
+
+    ch = Channel(channel_id=-100131, title="Test", username="test131", last_collected_id=50)
+    ch_id = await db.add_channel(ch)
+    await db.update_channel_last_id(ch.channel_id, 50)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    mock_msgs = [_make_mock_message(i, text=f"msg {i}") for i in range(51, 1052)]
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages(mock_msgs))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+
+    original_execute = db.execute
+    verify_param_lengths: list[int] = []
+
+    async def execute_spy(sql, params=()):
+        if "message_id IN" in sql:
+            verify_param_lengths.append(len(params) - 1)
+        return await original_execute(sql, params)
+
+    db.execute = AsyncMock(side_effect=execute_spy)  # type: ignore[method-assign]
+
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+    count = await collector._collect_channel(stored)
+
+    updated = await db.get_channel_by_pk(ch_id)
+    assert updated is not None
+    assert count == 1001
+    assert verify_param_lengths == [400, 400, 201]
+    assert max(verify_param_lengths) <= 400
+    assert updated.last_collected_id == 1051
+
+
+@pytest.mark.anyio
 async def test_collect_channel_does_not_advance_last_id_when_flush_fails(db):
     ch = Channel(channel_id=-100126, title="Test", username="test", last_collected_id=5)
     await db.add_channel(ch)
@@ -962,6 +1060,33 @@ async def test_collect_channel_does_not_advance_last_id_when_flush_fails(db):
     updated = next(c for c in await db.get_channels() if c.channel_id == -100126)
     assert count == 0
     assert updated.last_collected_id == 5
+
+
+@pytest.mark.anyio
+async def test_full_backfill_does_not_rewind_existing_cursor(db):
+    """A full old-history scan must not lower the durable incremental cursor."""
+    ch = Channel(channel_id=-100132, title="Backfill", username="backfill", last_collected_id=500)
+    ch_id = await db.add_channel(ch)
+    await db.update_channel_last_id(ch.channel_id, 500)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    mock_msgs = [_make_mock_message(i, text=f"old msg {i}") for i in (10, 20)]
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages(mock_msgs))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+
+    count = await collector.collect_single_channel(stored, full=True, force=True)
+
+    updated = await db.get_channel_by_pk(ch_id)
+    assert updated is not None
+    assert count == 2
+    assert updated.last_collected_id == 500
+    assert mock_client.iter_messages.call_args.kwargs["min_id"] == 0
 
 
 @pytest.mark.anyio
@@ -1389,10 +1514,10 @@ async def test_enqueue_all_channels_uses_incremental_queue_tasks(db):
 
 
 @pytest.mark.anyio
-async def test_collection_queue_force_tasks_keep_full_collection(db):
+async def test_collection_queue_force_tasks_default_to_incremental(db):
     from src.collection_queue import CollectionQueue
 
-    await db.add_channel(Channel(channel_id=-100162, title="Full Channel", username="full_ch"))
+    await db.add_channel(Channel(channel_id=-100162, title="Manual Channel", username="manual_ch"))
 
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
     collector = Collector(pool, db, SchedulerConfig())
@@ -1405,7 +1530,36 @@ async def test_collection_queue_force_tasks_keep_full_collection(db):
 
     task = await db.get_collection_task(task_id)
     assert task is not None
-    assert task.payload == {"force": True}
+    assert task.payload == {"full": False, "force": True}
+
+    await queue._run_worker()
+
+    collector.collect_single_channel.assert_awaited_once()
+    _, kwargs = collector.collect_single_channel.await_args
+    assert kwargs["force"] is True
+    assert kwargs["full"] is False
+
+    await queue.shutdown()
+
+
+@pytest.mark.anyio
+async def test_collection_queue_explicit_full_tasks_keep_full_collection(db):
+    from src.collection_queue import CollectionQueue
+
+    await db.add_channel(Channel(channel_id=-100262, title="Full Channel", username="full_ch"))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
+    collector = Collector(pool, db, SchedulerConfig())
+    collector.collect_single_channel = AsyncMock(return_value=1)
+    queue = CollectionQueue(collector, db)
+    queue._ensure_worker = lambda: None
+
+    stored_ch = next(c for c in await db.get_channels() if c.channel_id == -100262)
+    task_id = await queue.enqueue(stored_ch, force=True, full=True)
+
+    task = await db.get_collection_task(task_id)
+    assert task is not None
+    assert task.payload == {"full": True, "force": True}
 
     await queue._run_worker()
 

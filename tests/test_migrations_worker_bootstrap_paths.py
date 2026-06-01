@@ -257,10 +257,16 @@ async def test_run_migrations_channel_type_normalization(fresh_db):
 
 @pytest.mark.anyio
 async def test_run_migrations_last_collected_id_fixup(fresh_db):
-    """Schema-only migrations do not backfill last_collected_id."""
+    """Migration repairs cursors from saved messages without rewinding."""
     await _init_minimal_schema(fresh_db)
     await fresh_db.execute(
         "INSERT INTO channels (channel_id, title, last_collected_id) VALUES (100, 'ch', 0)"
+    )
+    await fresh_db.execute(
+        "INSERT INTO channels (channel_id, title, last_collected_id) VALUES (200, 'ahead', 500)"
+    )
+    await fresh_db.execute(
+        "INSERT INTO channels (channel_id, title, last_collected_id) VALUES (300, 'empty', 25)"
     )
     await fresh_db.execute(
         "INSERT INTO messages (channel_id, message_id, date) VALUES (100, 50, '2024-01-01')"
@@ -268,11 +274,17 @@ async def test_run_migrations_last_collected_id_fixup(fresh_db):
     await fresh_db.execute(
         "INSERT INTO messages (channel_id, message_id, date) VALUES (100, 99, '2024-01-02')"
     )
+    await fresh_db.execute(
+        "INSERT INTO messages (channel_id, message_id, date) VALUES (200, 250, '2024-01-03')"
+    )
     await fresh_db.commit()
     await run_migrations(fresh_db)
-    cur = await fresh_db.execute("SELECT last_collected_id FROM channels WHERE channel_id=100")
-    row = await cur.fetchone()
-    assert row["last_collected_id"] == 0
+    await run_migrations(fresh_db)
+    cur = await fresh_db.execute(
+        "SELECT channel_id, last_collected_id FROM channels ORDER BY channel_id"
+    )
+    rows = {row["channel_id"]: row["last_collected_id"] async for row in cur}
+    assert rows == {100: 99, 200: 500, 300: 25}
 
 
 @pytest.mark.anyio

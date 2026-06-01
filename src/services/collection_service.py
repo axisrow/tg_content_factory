@@ -35,7 +35,7 @@ class CollectionService:
         self._queue = collection_queue
 
     async def _enqueue_channel(
-        self, channel: Channel, force: bool = False, full: bool = True
+        self, channel: Channel, force: bool = False, full: bool = False
     ) -> bool:
         """Enqueue a channel for collection, atomically skipping duplicates.
 
@@ -45,26 +45,26 @@ class CollectionService:
             task_id = await self._queue.enqueue(channel, force=force, full=full)
             return task_id is not None
         else:
-            payload = {}
+            payload = {"full": full}
             if force:
                 payload["force"] = True
-            if not full:
-                payload["full"] = False
             task_id = await self._channels.create_collection_task_if_not_active(
                 channel.channel_id,
                 channel.title,
                 channel_username=channel.username,
-                payload=payload or None,
+                payload=payload,
             )
             return task_id is not None
 
-    async def enqueue_channel_by_pk(self, pk: int, force: bool = False) -> EnqueueResult:
+    async def enqueue_channel_by_pk(
+        self, pk: int, force: bool = False, full: bool = False
+    ) -> EnqueueResult:
         channel = await self._channels.get_by_pk(pk)
         if not channel:
             return "not_found"
         if channel.is_filtered and not force:
             return "filtered"
-        created = await self._enqueue_channel(channel, force=force)
+        created = await self._enqueue_channel(channel, force=force, full=full)
         return "queued" if created else "already_active"
 
     async def enqueue_all_channels(self) -> BulkEnqueueResult:

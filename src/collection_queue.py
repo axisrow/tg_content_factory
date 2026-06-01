@@ -46,22 +46,26 @@ class CollectionQueue:
         self._pull_task: asyncio.Task | None = None
         self._pull_stop = asyncio.Event()
         self._shutdown_requested = False
+        # Pause gate: SET = queue is allowed to pull/process tasks (the default,
+        # not paused); CLEAR = paused. When paused the worker stops pulling NEW
+        # tasks (the running one finishes) and `_ingest_pending_tasks` no-ops, so
+        # queued tasks stay PENDING in the DB instead of being deleted (#scheduler-pause).
+        self._resume_gate = asyncio.Event()
+        self._resume_gate.set()
 
-    async def enqueue(self, channel: Channel, force: bool = False, full: bool = True) -> int | None:
+    async def enqueue(self, channel: Channel, force: bool = False, full: bool = False) -> int | None:
         """Enqueue a channel for collection, atomically skipping duplicates.
 
         Returns the new task ID, or ``None`` if an active task already exists.
         """
-        payload = {}
+        payload = {"full": full}
         if force:
             payload["force"] = True
-        if not full:
-            payload["full"] = False
         task_id = await self._channels.create_collection_task_if_not_active(
             channel.channel_id,
             channel.title,
             channel_username=channel.username,
-            payload=payload or None,
+            payload=payload,
         )
         if task_id is None:
             return None
@@ -116,6 +120,32 @@ class CollectionQueue:
         )
         return deleted
 
+    @property
+    def is_paused(self) -> bool:
+        return not self._resume_gate.is_set()
+
+    def pause(self) -> None:
+        """Pause processing: stop pulling/ingesting new collection tasks.
+
+        The currently-running task (if any) is allowed to finish; queued tasks
+        stay PENDING in the DB. Persisting the `collection_queue_paused` setting
+        is the caller's responsibility (mirrors how scheduler autostart is split
+        from `scheduler.start()`/`stop()`).
+        """
+        if self._resume_gate.is_set():
+            self._resume_gate.clear()
+            logger.info(
+                "Collection queue paused (current task #%s allowed to finish)",
+                self._current_task_id,
+            )
+
+    def resume(self) -> None:
+        """Resume processing: allow the worker to pull/ingest tasks again."""
+        if not self._resume_gate.is_set():
+            self._resume_gate.set()
+            self._ensure_worker()
+            logger.info("Collection queue resumed")
+
     def _ensure_worker(self) -> None:
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self._run_worker())
@@ -160,6 +190,15 @@ class CollectionQueue:
         while True:
             if self._shutdown_requested:
                 break
+            if not self._resume_gate.is_set():
+                # Paused: wait for resume, but stay alive (continue, not break) and
+                # keep re-checking shutdown so `shutdown()` still works while paused.
+                try:
+                    await asyncio.wait_for(self._resume_gate.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                if self._shutdown_requested:
+                    break
             try:
                 task_id, channel, force, full = await asyncio.wait_for(
                     self._queue.get(), timeout=1.0
@@ -419,6 +458,10 @@ class CollectionQueue:
         `_known_task_ids` so tasks already sitting in the queue or scheduled
         for delayed requeue are not pushed twice.
         """
+        if not self._resume_gate.is_set():
+            # Paused: leave PENDING rows in the DB (not buffered into memory) so
+            # they stay visible and survive a restart.
+            return 0
         availability_getter = getattr(self._collector, "get_collection_availability", None)
         if callable(availability_getter):
             availability = availability_getter()
@@ -450,7 +493,7 @@ class CollectionQueue:
                 )
                 continue
             force = bool((task.payload or {}).get("force", False))
-            full = bool((task.payload or {}).get("full", True))
+            full = bool((task.payload or {}).get("full", False))
             if task.run_after is not None and task.run_after.timestamp() > time.time():
                 self._schedule_requeue_after_delay(
                     task_id=task.id,

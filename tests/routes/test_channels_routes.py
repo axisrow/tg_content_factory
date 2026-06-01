@@ -88,7 +88,7 @@ async def test_get_dialogs_json(route_client, db):
         [{"channel_id": 200, "title": "Test Dialog", "channel_type": "channel"}],
     )
 
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.channel_service") as mock_svc:
         mock_svc.return_value.get_dialogs_with_added_flags = AsyncMock(
             return_value=[{"channel_id": 200, "title": "Test Dialog"}]
         )
@@ -102,7 +102,7 @@ async def test_get_dialogs_json(route_client, db):
 @pytest.mark.anyio
 async def test_add_bulk_channels(route_client):
     """Test add bulk channels."""
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.channel_service") as mock_svc:
         mock_svc.return_value.add_bulk_by_dialog_ids = AsyncMock()
         resp = await route_client.post(
             "/channels/add-bulk",
@@ -116,7 +116,7 @@ async def test_add_bulk_channels(route_client):
 @pytest.mark.anyio
 async def test_toggle_channel(route_client):
     """Test toggle channel."""
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.channel_service") as mock_svc:
         mock_svc.return_value.toggle = AsyncMock()
         resp = await route_client.post("/channels/1/toggle", follow_redirects=False)
         assert resp.status_code == 303
@@ -126,7 +126,7 @@ async def test_toggle_channel(route_client):
 @pytest.mark.anyio
 async def test_delete_channel(route_client):
     """Test delete channel."""
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.channel_service") as mock_svc:
         mock_svc.return_value.delete = AsyncMock()
         resp = await route_client.post("/channels/1/delete", follow_redirects=False)
         assert resp.status_code == 303
@@ -136,7 +136,7 @@ async def test_delete_channel(route_client):
 @pytest.mark.anyio
 async def test_delete_channel_in_pipeline(route_client):
     """Test delete channel that is in pipeline."""
-    with patch("src.web.routes.channels.deps.channel_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.channel_service") as mock_svc:
         import sqlite3
 
         mock_svc.return_value.delete = AsyncMock(
@@ -210,22 +210,55 @@ async def test_collect_all_shutting_down_htmx(route_client):
 async def test_collect_channel(route_client, db):
     """Test collect single channel."""
     with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
-        mock_svc.return_value.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
         resp = await route_client.post("/channels/1/collect", follow_redirects=False)
         assert resp.status_code == 303
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=False)
 
 
 @pytest.mark.anyio
 async def test_collect_channel_htmx(route_client, db):
     """Test collect single channel with HTMX."""
     with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
-        mock_svc.return_value.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
         resp = await route_client.post(
             "/channels/1/collect",
             headers={"HX-Request": "true"},
         )
         assert resp.status_code == 200
         assert "collect-btn-1" in resp.text
+        assert "collect-btn-m-1" in resp.text
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=False)
+
+
+@pytest.mark.anyio
+async def test_collect_channel_full(route_client, db):
+    """Test explicit full backfill route."""
+    with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        resp = await route_client.post("/channels/1/collect/full", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "collect_full" in resp.headers["location"]
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=True)
+
+
+@pytest.mark.anyio
+async def test_collect_channel_full_htmx(route_client, db):
+    """Explicit full backfill HTMX response updates desktop and mobile buttons."""
+    with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        resp = await route_client.post(
+            "/channels/1/collect/full",
+            headers={"HX-Request": "true"},
+        )
+        assert resp.status_code == 200
+        assert "collect-full-btn-1" in resp.text
+        assert "collect-full-btn-m-1" in resp.text
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=True)
 
 
 @pytest.mark.anyio

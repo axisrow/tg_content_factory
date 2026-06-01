@@ -38,7 +38,10 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Channel {args.channel_id} is filtered and excluded from collection")
                     return
                 try:
-                    count = await collector.collect_single_channel(channel, full=True)
+                    count = await collector.collect_single_channel(
+                        channel,
+                        full=bool(getattr(args, "full", False)),
+                    )
                 except UsernameResolveFloodWaitDeferredError as exc:
                     retry_at = exc.next_available_at.astimezone().isoformat()
                     print(f"Username resolve Flood Wait active until {retry_at}; try again later.")

@@ -298,6 +298,7 @@ async def build_container_with_templates(
             scheduler=scheduler,
             auth=auth,
             search_engine=search_engine,
+            collection_queue=collection_queue,
         )
         agent_manager = AgentManager(db, config, client_pool=pool, scheduler_manager=scheduler)
     else:
@@ -425,6 +426,9 @@ async def start_container(container: AppContainer) -> None:
                 "Skipping startup collection requeue because telegram pool has no connected clients"
             )
         else:
+            if (await container.db.repos.settings.get_setting("collection_queue_paused")) == "1":
+                container.collection_queue.pause()
+                logger.info("Collection queue restored to paused state from settings")
             requeued = await container.collection_queue.requeue_startup_tasks()
             if requeued:
                 logger.info("Re-enqueued %d pending collection tasks on startup", requeued)

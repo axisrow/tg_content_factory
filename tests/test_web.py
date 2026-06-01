@@ -2487,7 +2487,7 @@ async def test_filter_apply_with_snapshot_skips_reanalyze(client, monkeypatch):
     async def _boom(self):
         raise AssertionError("analyze_all should not be called for snapshot apply")
 
-    monkeypatch.setattr("src.web.routes.filter.ChannelAnalyzer.analyze_all", _boom)
+    monkeypatch.setattr("src.web.filter.handlers.ChannelAnalyzer.analyze_all", _boom)
 
     resp = await client.post(
         "/channels/filter/apply",
@@ -2518,7 +2518,7 @@ async def test_filter_apply_without_snapshot_returns_error(client, monkeypatch):
     async def _boom(self):
         raise AssertionError("analyze_all should not be called without snapshot")
 
-    monkeypatch.setattr("src.web.routes.filter.ChannelAnalyzer.analyze_all", _boom)
+    monkeypatch.setattr("src.web.filter.handlers.ChannelAnalyzer.analyze_all", _boom)
 
     resp = await client.post("/channels/filter/apply", data={}, follow_redirects=False)
     assert resp.status_code == 303
@@ -2586,6 +2586,7 @@ async def test_collect_filtered_channel_is_allowed(client):
 
     tasks = await db.get_collection_tasks()
     assert len(tasks) == 1
+    assert tasks[0].payload == {"full": False, "force": True}
 
     await client._transport.app.state.collection_queue.shutdown()
 
@@ -2914,6 +2915,23 @@ async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
         assert expected in _COLLECT_ALL_BTN
 
     assert _COLLECT_ALL_BTN == f'<span id="collect-all-btn">{_COLLECT_ALL_FORM}</span>'
+
+
+@pytest.mark.anyio
+async def test_channel_actions_include_explicit_full_backfill_button(client):
+    template_text = Path("src/web/templates/_macros.html").read_text(encoding="utf-8")
+
+    for expected in (
+        'id="collect-btn-{{ prefix }}{{ ch.id }}"',
+        'action="/channels/{{ ch.id }}/collect"',
+        'hx-post="/channels/{{ ch.id }}/collect"',
+        'id="collect-full-btn-{{ prefix }}{{ ch.id }}"',
+        'action="/channels/{{ ch.id }}/collect/full"',
+        'hx-post="/channels/{{ ch.id }}/collect/full"',
+        'data-confirm="Запустить полный обход истории канала? Это может занять долго."',
+        "btn-outline-warning",
+    ):
+        assert expected in template_text
 
 
 @pytest.mark.anyio

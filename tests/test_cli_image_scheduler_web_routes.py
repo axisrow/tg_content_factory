@@ -499,7 +499,7 @@ class TestWebImagesRoutes:
     @pytest.mark.anyio
     async def test_images_page_renders(self, route_client):
         """GET /images/ returns 200."""
-        with patch("src.web.routes.images._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
+        with patch("src.web.images.handlers._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
             svc = MagicMock()
             svc.adapter_names = []
             mock_svc_fn.return_value = svc
@@ -509,7 +509,7 @@ class TestWebImagesRoutes:
     @pytest.mark.anyio
     async def test_generate_no_prompt(self, route_client):
         """POST /images/generate without prompt returns 400."""
-        with patch("src.web.routes.images._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
+        with patch("src.web.images.handlers._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
             svc = MagicMock()
             svc.is_available = AsyncMock(return_value=True)
             mock_svc_fn.return_value = svc
@@ -521,7 +521,7 @@ class TestWebImagesRoutes:
     @pytest.mark.anyio
     async def test_generate_no_providers(self, route_client):
         """POST /images/generate when no providers returns 409."""
-        with patch("src.web.routes.images._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
+        with patch("src.web.images.handlers._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
             svc = MagicMock()
             svc.is_available = AsyncMock(return_value=False)
             mock_svc_fn.return_value = svc
@@ -531,7 +531,7 @@ class TestWebImagesRoutes:
     @pytest.mark.anyio
     async def test_generate_success(self, route_client):
         """POST /images/generate with valid prompt and provider returns 200 with url."""
-        with patch("src.web.routes.images._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
+        with patch("src.web.images.handlers._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
             svc = MagicMock()
             svc.is_available = AsyncMock(return_value=True)
             svc.generate = AsyncMock(return_value="https://example.com/img.png")
@@ -548,7 +548,7 @@ class TestWebImagesRoutes:
     @pytest.mark.anyio
     async def test_generate_provider_failure(self, route_client):
         """POST /images/generate when generation fails returns 500."""
-        with patch("src.web.routes.images._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
+        with patch("src.web.images.handlers._get_image_service", new_callable=AsyncMock) as mock_svc_fn:
             svc = MagicMock()
             svc.is_available = AsyncMock(return_value=True)
             svc.generate = AsyncMock(return_value=None)
@@ -566,8 +566,8 @@ class TestWebImagesRoutes:
     async def test_models_search_with_provider(self, route_client):
         """GET /images/models/search with provider returns model list."""
         with (
-            patch("src.web.routes.images._get_provider_api_key", new_callable=AsyncMock, return_value="key"),
-            patch("src.web.routes.images.ImageGenerationService") as mock_svc_cls,
+            patch("src.web.images.handlers._get_provider_api_key", new_callable=AsyncMock, return_value="key"),
+            patch("src.web.images.handlers.ImageGenerationService") as mock_svc_cls,
         ):
             svc = MagicMock()
             svc.search_models = AsyncMock(return_value=[])

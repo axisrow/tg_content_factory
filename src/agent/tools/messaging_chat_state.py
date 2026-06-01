@@ -11,7 +11,6 @@ from src.agent.tools._registry import (
     arg_bool,
     require_confirmation,
     resolve_entity,
-    resolve_live_read_phone,
 )
 from src.agent.tools._telegram_runtime import find_single_dialog_id_by_title
 from src.agent.tools.messaging_schemas import (
@@ -212,7 +211,7 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
         live_gate = ctx.require_live_runtime("Чтение сообщений", tool_name="read_messages")
         if live_gate:
             return live_gate
-        phone, err = await resolve_live_read_phone(db, client_pool, args.get("phone", ""), tool_name="read_messages")
+        phone, err = await ctx.resolve_live_read_phone(args.get("phone", ""), tool_name="read_messages")
         if err:
             return err
         perm_gate = await ctx.require_phone_permission(phone, "read_messages")

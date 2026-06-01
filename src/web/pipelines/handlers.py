@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 
 from fastapi import Request
-from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 
 from src.agent.prompt_template import ALLOWED_TEMPLATE_VARIABLES
 from src.models import PipelineGenerationBackend, PipelinePublishMode
@@ -37,7 +36,14 @@ from src.web.pipelines.forms import (
     get_filter_config,
     parse_target_refs,
 )
-from src.web.pipelines.responses import PipelineRedirect
+from src.web.pipelines.responses import (
+    PipelineFile,
+    PipelineJson,
+    PipelineRedirect,
+    PipelineStream,
+    PipelineTemplate,
+    PipelineUrlRedirect,
+)
 
 logger = logging.getLogger("src.web.routes.pipelines")
 
@@ -91,7 +97,7 @@ async def api_channels_search(request: Request, q: str = ""):
             "SELECT channel_id, title, username FROM channels ORDER BY id DESC LIMIT 50",
         )
         rows = await cur.fetchall()
-        return [
+        items = [
             {
                 "value": row["channel_id"],
                 "title": row["title"] or str(row["channel_id"]),
@@ -100,6 +106,7 @@ async def api_channels_search(request: Request, q: str = ""):
             }
             for row in rows
         ]
+        return PipelineJson(items)
     cur = await db.execute(
         """SELECT channel_id, title, username FROM channels
            WHERE (LOWER(title) LIKE ? OR LOWER(username) LIKE ? OR CAST(channel_id AS TEXT) LIKE ?)
@@ -107,7 +114,7 @@ async def api_channels_search(request: Request, q: str = ""):
         (f"%{query.lower()}%", f"%{query.lower()}%", f"%{query}%"),
     )
     rows = await cur.fetchall()
-    return [
+    items = [
         {
             "value": row["channel_id"],
             "title": row["title"] or str(row["channel_id"]),
@@ -116,6 +123,7 @@ async def api_channels_search(request: Request, q: str = ""):
         }
         for row in rows
     ]
+    return PipelineJson(items)
 
 
 async def _page_context(request: Request) -> dict:
@@ -179,11 +187,7 @@ async def _page_context(request: Request) -> dict:
 
 
 async def pipelines_page(request: Request):
-    return deps.get_templates(request).TemplateResponse(
-        request,
-        "pipelines.html",
-        await _page_context(request),
-    )
+    return PipelineTemplate("pipelines.html", await _page_context(request))
 
 
 async def create_wizard_page(request: Request):
@@ -192,8 +196,7 @@ async def create_wizard_page(request: Request):
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
     llm_provider_svc = deps.get_llm_provider_service(request)
     llm_configured = llm_provider_svc.has_providers()
-    return deps.get_templates(request).TemplateResponse(
-        request,
+    return PipelineTemplate(
         "pipelines/create.html",
         {
             "accounts": accounts,
@@ -425,8 +428,7 @@ async def edit_page(request: Request, pipeline_id: int):
     targets = await db.repos.content_pipelines.list_targets(pipeline_id)
     source_ids = [s.channel_id for s in sources]
     target_refs = [f"{t.phone}|{t.dialog_id}" for t in targets]
-    return deps.get_templates(request).TemplateResponse(
-        request,
+    return PipelineTemplate(
         "pipelines/edit.html",
         {
             "pipeline": pipeline,
@@ -455,8 +457,7 @@ async def generate_page(request: Request, pipeline_id: int):
         return _pipeline_redirect("pipeline_invalid", error=True)
     db = deps.get_db(request)
     runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)
-    return deps.get_templates(request).TemplateResponse(
-        request,
+    return PipelineTemplate(
         "pipelines/generate.html",
         {"pipeline": pipeline, "runs": runs, "request": request},
     )
@@ -528,7 +529,7 @@ async def generate_stream(
             await db.repos.generation_runs.set_status(run_id, "failed")
             raise
 
-    return StreamingResponse(event_gen(), media_type="text/event-stream")
+    return PipelineStream(event_gen())
 
 
 async def generate_pipeline(
@@ -572,13 +573,11 @@ async def generate_pipeline(
     except Exception:
         logger.exception("Generation failed for pipeline_id=%d", pipeline_id)
         runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)
-        return deps.get_templates(request).TemplateResponse(
-            request,
+        return PipelineTemplate(
             "pipelines/generate.html",
             {"pipeline": pipeline, "runs": runs, "error": "Generation failed", "request": request},
         )
-    return deps.get_templates(request).TemplateResponse(
-        request,
+    return PipelineTemplate(
         "pipelines/generate.html",
         {"pipeline": pipeline, "run": run, "request": request},
     )
@@ -607,7 +606,7 @@ async def get_refinement_steps(request: Request, pipeline_id: int):
     pipeline = await db.repos.content_pipelines.get_by_id(pipeline_id)
     if pipeline is None:
         return _pipeline_redirect("pipeline_not_found", error=True)
-    return JSONResponse(content={"steps": pipeline.refinement_steps})
+    return PipelineJson({"steps": pipeline.refinement_steps})
 
 
 # ------------------------------------------------------------------
@@ -635,7 +634,7 @@ async def dry_run_count_new(request: Request, source_ids: str = "",
     ids = [int(x) for x in source_ids.split(",") if x.strip().isdigit()]
     db = deps.get_db(request)
     messages = await db.repos.messages.get_recent_for_channels(ids, since_hours)
-    return {"total": len(messages), "after_filter": len(messages)}
+    return PipelineJson({"total": len(messages), "after_filter": len(messages)})
 
 
 async def dry_run_count(request: Request, pipeline_id: int,
@@ -644,7 +643,7 @@ async def dry_run_count(request: Request, pipeline_id: int,
     svc = deps.pipeline_service(request)
     pipeline = await svc.get(pipeline_id)
     if pipeline is None:
-        return JSONResponse({"error": "not found"}, status_code=404)
+        return PipelineJson({"error": "not found"}, status_code=404)
     db = deps.get_db(request)
     if pipeline.pipeline_json:
         ids = get_dag_source_channel_ids(pipeline) or []
@@ -653,7 +652,7 @@ async def dry_run_count(request: Request, pipeline_id: int,
         ids = [s.channel_id for s in sources]
     messages = await db.repos.messages.get_recent_for_channels(ids, since_hours)
     after_filter = _apply_pipeline_filter(pipeline, messages)
-    return {"total": len(messages), "after_filter": after_filter}
+    return PipelineJson({"total": len(messages), "after_filter": after_filter})
 
 
 # ------------------------------------------------------------------
@@ -668,8 +667,7 @@ async def templates_page(request: Request):
     accounts = await deps.get_account_bundle(request).list_account_summaries()
     cached_dialogs = await svc.list_cached_dialogs_by_phone()
     llm_configured = deps.get_llm_provider_service(request).has_providers()
-    return deps.get_templates(request).TemplateResponse(
-        request,
+    return PipelineTemplate(
         "pipelines/templates.html",
         {
             "templates": templates,
@@ -694,7 +692,7 @@ async def templates_json(request: Request):
             "category": tpl.category,
             "template_json": _json.loads(tpl.template_json.to_json()),
         })
-    return JSONResponse(content=result)
+    return PipelineJson(result)
 
 
 async def create_from_template(
@@ -723,7 +721,7 @@ async def create_from_template(
         await scheduler.sync_pipeline_jobs()
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
-    return RedirectResponse(url=f"/pipelines/{pipeline_id}/edit", status_code=303)
+    return PipelineUrlRedirect(f"/pipelines/{pipeline_id}/edit")
 
 
 # ------------------------------------------------------------------
@@ -736,13 +734,7 @@ async def export_pipeline(request: Request, pipeline_id: int):
     data = await svc.export_json(pipeline_id)
     if data is None:
         return _pipeline_redirect("pipeline_invalid", error=True)
-    filename = f"pipeline_{pipeline_id}.json"
-    content = safe_json_dumps(data, ensure_ascii=False, indent=2)
-    return Response(
-        content=content,
-        media_type="application/json",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    return PipelineFile(content=data, filename=f"pipeline_{pipeline_id}.json")
 
 
 async def import_pipeline(
@@ -775,24 +767,24 @@ async def import_pipeline(
         await scheduler.sync_pipeline_jobs()
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
-    return RedirectResponse(url=f"/pipelines/{pipeline_id}/generate", status_code=303)
+    return PipelineUrlRedirect(f"/pipelines/{pipeline_id}/generate")
 
 
 async def ai_edit_pipeline(request: Request, pipeline_id: int):
     """Accept JSON body: {"instruction": "..."}. Returns updated pipeline_json."""
     if not deps.get_llm_provider_service(request).has_providers():
-        return JSONResponse(content={"ok": False, "error": "LLM not configured"}, status_code=400)
+        return PipelineJson({"ok": False, "error": "LLM not configured"}, status_code=400)
     svc: PipelineService = deps.pipeline_service(request)
     db = deps.get_db(request)
     try:
         body = await request.json()
         instruction = body.get("instruction", "").strip()
         if not instruction:
-            return JSONResponse(content={"ok": False, "error": "instruction is required"}, status_code=400)
+            return PipelineJson({"ok": False, "error": "instruction is required"}, status_code=400)
         result = await svc.edit_via_llm(pipeline_id, instruction, db, config=request.app.state.config)
-        return JSONResponse(content=result)
+        return PipelineJson(result)
     except Exception as exc:
-        return JSONResponse(content={"ok": False, "error": str(exc)}, status_code=500)
+        return PipelineJson({"ok": False, "error": str(exc)}, status_code=500)
 
 
 async def set_refinement_steps(request: Request, pipeline_id: int):
@@ -812,6 +804,6 @@ async def set_refinement_steps(request: Request, pipeline_id: int):
             if isinstance(s, dict) and s.get("prompt", "").strip()
         ]
     except Exception as exc:
-        return JSONResponse(content={"ok": False, "error": str(exc)}, status_code=400)
+        return PipelineJson({"ok": False, "error": str(exc)}, status_code=400)
     await db.repos.content_pipelines.set_refinement_steps(pipeline_id, validated)
-    return JSONResponse(content={"ok": True, "steps": validated})
+    return PipelineJson({"ok": True, "steps": validated})

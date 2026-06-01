@@ -147,7 +147,7 @@ async def test_channels_set_channel_tags(client, db):
 @pytest.mark.anyio
 async def test_channels_refresh_types(client, db):
     """Covers POST /channels/refresh-types."""
-    with patch("src.web.routes.channels.deps.telegram_command_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.telegram_command_service") as mock_svc:
         mock_telegram_svc = MagicMock()
         mock_telegram_svc.enqueue = AsyncMock(return_value=42)
         mock_svc.return_value = mock_telegram_svc
@@ -160,7 +160,7 @@ async def test_channels_refresh_types(client, db):
 @pytest.mark.anyio
 async def test_channels_refresh_meta(client, db):
     """Covers POST /channels/refresh-meta."""
-    with patch("src.web.routes.channels.deps.telegram_command_service") as mock_svc:
+    with patch("src.web.channels.handlers.deps.telegram_command_service") as mock_svc:
         mock_telegram_svc = MagicMock()
         mock_telegram_svc.enqueue = AsyncMock(return_value=43)
         mock_svc.return_value = mock_telegram_svc

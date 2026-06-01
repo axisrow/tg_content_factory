@@ -1,20 +1,16 @@
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse
-from pydantic import ValidationError
 
-from src.web import deps
-from src.web.responses import flash_redirect
+from src.web.search_queries import handlers
+from src.web.search_queries.forms import SearchQueryForm
+from src.web.search_queries.responses import search_query_response
 
 router = APIRouter()
 
 
 @router.get("/", response_class=HTMLResponse)
 async def search_queries_page(request: Request):
-    svc = deps.search_query_service(request)
-    items = await svc.get_with_stats()
-    return deps.get_templates(request).TemplateResponse(
-        request, "search_queries.html", {"items": items}
-    )
+    return search_query_response(request, await handlers.search_queries_page(request))
 
 
 @router.post("/add")
@@ -30,42 +26,23 @@ async def add_search_query(
     max_length: int | None = Form(None),
     chat_filter: str = Form(""),
 ):
-    if not query.strip():
-        return flash_redirect("/search-queries", error="invalid_value")
-    svc = deps.search_query_service(request)
-    try:
-        await svc.add(
-            query,
-            interval_minutes,
-            is_regex=is_regex,
-            is_fts=is_fts,
-            notify_on_collect=notify_on_collect,
-            track_stats=track_stats,
-            exclude_patterns=exclude_patterns,
-            max_length=max_length,
-            chat_filter=chat_filter,
-        )
-    except ValidationError:
-        return flash_redirect("/search-queries", error="invalid_value")
-    chat_validation = await svc.validate_chat_filter(chat_filter)
-    scheduler = deps.get_scheduler(request)
-    if scheduler.is_running:
-        await scheduler.sync_search_query_jobs()
-    return flash_redirect(
-        "/search-queries",
-        msg="sq_added",
-        extra={"warning": chat_validation.warning_text() or None},
+    form = SearchQueryForm(
+        query=query,
+        interval_minutes=interval_minutes,
+        is_regex=is_regex,
+        is_fts=is_fts,
+        notify_on_collect=notify_on_collect,
+        track_stats=track_stats,
+        exclude_patterns=exclude_patterns,
+        max_length=max_length,
+        chat_filter=chat_filter,
     )
+    return search_query_response(request, await handlers.add_search_query(request, form))
 
 
 @router.post("/{sq_id}/toggle")
 async def toggle_search_query(request: Request, sq_id: int):
-    svc = deps.search_query_service(request)
-    await svc.toggle(sq_id)
-    scheduler = deps.get_scheduler(request)
-    if scheduler.is_running:
-        await scheduler.sync_search_query_jobs()
-    return flash_redirect("/search-queries", msg="sq_toggled")
+    return search_query_response(request, await handlers.toggle_search_query(request, sq_id))
 
 
 @router.post("/{sq_id}/edit")
@@ -82,47 +59,25 @@ async def edit_search_query(
     max_length: int | None = Form(None),
     chat_filter: str = Form(""),
 ):
-    if not query.strip():
-        return flash_redirect("/search-queries", error="invalid_value")
-    svc = deps.search_query_service(request)
-    try:
-        await svc.update(
-            sq_id,
-            query,
-            interval_minutes,
-            is_regex=is_regex,
-            is_fts=is_fts,
-            notify_on_collect=notify_on_collect,
-            track_stats=track_stats,
-            exclude_patterns=exclude_patterns,
-            max_length=max_length,
-            chat_filter=chat_filter,
-        )
-    except ValidationError:
-        return flash_redirect("/search-queries", error="invalid_value")
-    chat_validation = await svc.validate_chat_filter(chat_filter)
-    scheduler = deps.get_scheduler(request)
-    if scheduler.is_running:
-        await scheduler.sync_search_query_jobs()
-    return flash_redirect(
-        "/search-queries",
-        msg="sq_edited",
-        extra={"warning": chat_validation.warning_text() or None},
+    form = SearchQueryForm(
+        query=query,
+        interval_minutes=interval_minutes,
+        is_regex=is_regex,
+        is_fts=is_fts,
+        notify_on_collect=notify_on_collect,
+        track_stats=track_stats,
+        exclude_patterns=exclude_patterns,
+        max_length=max_length,
+        chat_filter=chat_filter,
     )
+    return search_query_response(request, await handlers.edit_search_query(request, sq_id, form))
 
 
 @router.post("/{sq_id}/delete")
 async def delete_search_query(request: Request, sq_id: int):
-    svc = deps.search_query_service(request)
-    await svc.delete(sq_id)
-    scheduler = deps.get_scheduler(request)
-    if scheduler.is_running:
-        await scheduler.sync_search_query_jobs()
-    return flash_redirect("/search-queries", msg="sq_deleted")
+    return search_query_response(request, await handlers.delete_search_query(request, sq_id))
 
 
 @router.post("/{sq_id}/run")
 async def run_search_query(request: Request, sq_id: int):
-    svc = deps.search_query_service(request)
-    await svc.run_once(sq_id)
-    return flash_redirect("/search-queries", msg="sq_run")
+    return search_query_response(request, await handlers.run_search_query(request, sq_id))

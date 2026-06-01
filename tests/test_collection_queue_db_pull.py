@@ -22,10 +22,12 @@ from src.telegram.collector import UsernameResolveFloodWaitDeferredError
 class _FakeCollector:
     def __init__(self):
         self.calls: list[int] = []
+        self.full_calls: list[bool] = []
         self.is_cancelled = False
 
     async def collect_single_channel(self, channel, *, full=False, progress_callback=None, force=False):
         self.calls.append(channel.channel_id)
+        self.full_calls.append(full)
         return 0
 
     async def cancel(self):
@@ -138,6 +140,26 @@ async def test_db_pull_does_not_ingest_when_no_clients(tmp_path, caplog):
         assert collector.calls == []
         assert queue._known_task_ids == set()
         assert "Pending-task ingest throttled" in caplog.text
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_pending_task_without_payload_defaults_to_incremental(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        collector = _FakeCollector()
+        queue = CollectionQueue(collector, db)
+        await _create_pending_task(db)
+
+        assert await queue._ingest_pending_tasks() == 1
+        await queue._run_worker()
+
+        assert collector.calls == [-1001]
+        assert collector.full_calls == [False]
     finally:
         await queue.shutdown()
         await db.close()
@@ -378,4 +400,171 @@ async def test_shutdown_timeout_requeues_active_collection_task(tmp_path):
         assert collector.is_cancelled is True
     finally:
         await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_is_paused_property(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        queue = CollectionQueue(_FakeCollector(), db)
+        assert queue.is_paused is False
+        queue.pause()
+        assert queue.is_paused is True
+        queue.resume()
+        assert queue.is_paused is False
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_ingest_noop_while_paused(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        collector = _FakeCollector()
+        queue = CollectionQueue(collector, db)
+        queue.pause()
+
+        task_id = await _create_pending_task(db)
+        # Paused: PENDING rows are not buffered into memory.
+        assert await queue._ingest_pending_tasks() == 0
+
+        task = await db.get_collection_task(task_id)
+        assert task.status == "pending"
+        assert collector.calls == []
+        assert queue._known_task_ids == set()
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_worker_stays_alive_while_paused(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels(active_only=True))[0]
+        collector = _FakeCollector()
+        queue = CollectionQueue(collector, db)
+        queue.pause()
+
+        task_id = await queue.enqueue(channel)
+        await asyncio.sleep(0.3)
+
+        # Worker is alive but holds the task without processing it while paused.
+        assert queue._worker is not None and not queue._worker.done()
+        assert collector.calls == []
+        task = await db.get_collection_task(task_id)
+        assert task.status == "pending"
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_pause_lets_running_task_finish_and_holds_next(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db, -1001)
+        await _seed_channel(db, -1002)
+        by_id = {c.channel_id: c for c in await db.get_channels(active_only=True)}
+
+        collector = _BlockingCollector()
+        queue = CollectionQueue(collector, db)
+        first_id = await queue.enqueue(by_id[-1001])
+        second_id = await queue.enqueue(by_id[-1002])
+        await asyncio.wait_for(collector.started.wait(), timeout=1.0)
+
+        # Pause while the first task is mid-collection.
+        queue.pause()
+        collector.finish.set()  # let the running task finish
+
+        # First completes; the second stays PENDING and is not picked up.
+        deadline = asyncio.get_event_loop().time() + 2.0
+        while asyncio.get_event_loop().time() < deadline:
+            first = await db.get_collection_task(first_id)
+            if first.status == "completed":
+                break
+            await asyncio.sleep(0.02)
+        assert first.status == "completed"
+        assert first.messages_collected == 7
+        await asyncio.sleep(0.2)
+        second = await db.get_collection_task(second_id)
+        assert second.status == "pending"
+        assert collector.calls == [-1001]
+
+        # Resume: the held task now runs.
+        queue.resume()
+        deadline = asyncio.get_event_loop().time() + 2.0
+        while asyncio.get_event_loop().time() < deadline:
+            second = await db.get_collection_task(second_id)
+            if second.status == "completed":
+                break
+            await asyncio.sleep(0.02)
+        assert second.status == "completed"
+        assert collector.calls == [-1001, -1002]
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_resume_reingests_pending_via_db_pull(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        collector = _FakeCollector()
+        queue = CollectionQueue(collector, db)
+        queue.pause()
+
+        task_id = await _create_pending_task(db)
+        queue.start_db_pull(interval=0.05)
+        try:
+            # Paused: db pull does not ingest, task stays pending.
+            await asyncio.sleep(0.3)
+            assert collector.calls == []
+            assert (await db.get_collection_task(task_id)).status == "pending"
+
+            # Resume: the periodic db pull re-ingests and the worker runs it.
+            queue.resume()
+            deadline = asyncio.get_event_loop().time() + 2.0
+            while asyncio.get_event_loop().time() < deadline:
+                if collector.calls:
+                    break
+                await asyncio.sleep(0.05)
+            assert collector.calls == [-1001]
+        finally:
+            await queue.stop_db_pull()
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_shutdown_while_paused_completes_cleanly(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels(active_only=True))[0]
+        collector = _FakeCollector()
+        queue = CollectionQueue(collector, db)
+        queue.pause()
+        task_id = await queue.enqueue(channel)
+        await asyncio.sleep(0.1)
+
+        # Shutdown must return even though the queue is paused.
+        await asyncio.wait_for(queue.shutdown(grace_timeout=1.0), timeout=2.0)
+
+        # The queued task was never processed; it stays pending in the DB.
+        assert collector.calls == []
+        assert (await db.get_collection_task(task_id)).status == "pending"
+    finally:
         await db.close()

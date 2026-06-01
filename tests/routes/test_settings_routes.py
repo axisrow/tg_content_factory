@@ -78,8 +78,8 @@ async def test_settings_degrades_when_account_session_key_is_wrong(route_client,
         resp = await route_client.get("/settings/")
 
     assert resp.status_code == 200
-    assert "Saved Telegram logins are unavailable" in resp.text
-    assert "provider API keys cannot be decrypted" not in resp.text
+    assert "Сохранённые входы Telegram сейчас недоступны" in resp.text
+    assert "Ключи провайдеров агента не расшифровываются" not in resp.text
     # Human-readable label is shown (issue #550); raw enum stays as the tooltip.
     assert "Ошибка расшифровки" in resp.text
     assert 'title="decrypt_failed"' in resp.text
@@ -101,8 +101,8 @@ async def test_settings_degrades_for_image_provider_only_key_failure(route_clien
         resp = await route_client.get("/settings/")
 
     assert resp.status_code == 200
-    assert "Image provider API keys cannot be decrypted: Replicate" in resp.text
-    assert "Saved Telegram logins are unavailable" not in resp.text
+    assert "Ключи генерации изображений не расшифровываются: Replicate" in resp.text
+    assert "Сохранённые входы Telegram сейчас недоступны" not in resp.text
     assert "Saved Telegram logins and provider API keys cannot be decrypted" not in resp.text
 
 
@@ -127,8 +127,8 @@ async def test_settings_degrades_with_separate_telegram_and_image_warnings(route
         resp = await route_client.get("/settings/")
 
     assert resp.status_code == 200
-    assert "Saved Telegram logins are unavailable" in resp.text
-    assert "Image provider API keys cannot be decrypted: Replicate" in resp.text
+    assert "Сохранённые входы Telegram сейчас недоступны" in resp.text
+    assert "Ключи генерации изображений не расшифровываются: Replicate" in resp.text
 
 
 @pytest.mark.anyio
@@ -321,9 +321,9 @@ async def test_save_agent_backend(route_client, db):
 async def test_save_notification_account(route_client, db):
     """Test save notification account."""
     with patch(
-        "src.web.routes.settings.deps.get_notification_target_service"
+        "src.web.settings.handlers.deps.get_notification_target_service"
     ) as mock_svc, patch(
-        "src.web.routes.settings.deps.get_notifier"
+        "src.web.settings.handlers.deps.get_notifier"
     ) as mock_notifier:
         mock_svc.return_value.set_configured_phone = AsyncMock()
         mock_notifier.return_value = None
