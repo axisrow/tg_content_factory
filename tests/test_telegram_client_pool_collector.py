@@ -1799,6 +1799,7 @@ async def test_collect_all_stats_defers_on_flood_without_sleep(monkeypatch):
     pool = make_mock_pool()
     db = MagicMock()
     db.get_channels = AsyncMock(return_value=[Channel(channel_id=1, title="Ch")])
+    db.get_latest_stats_for_all = AsyncMock(return_value={})
 
     config = SchedulerConfig()
     collector = Collector(pool, db, config)
@@ -1837,6 +1838,7 @@ async def test_collect_all_stats_respects_max_channels():
             Channel(channel_id=3, title="Ch3"),
         ]
     )
+    db.get_latest_stats_for_all = AsyncMock(return_value={})
 
     collector = Collector(pool, db, SchedulerConfig(stats_all_worker_count=1))
     seen: list[int] = []
