@@ -5,7 +5,7 @@ from typing import Any
 from claude_agent_sdk import tool
 
 from src.agent.tools._photo_loader_runtime import photo_auto_upload_service, photo_task_service
-from src.agent.tools._registry import _text_response, require_phone_permission, require_pool, resolve_phone
+from src.agent.tools._registry import _text_response
 from src.agent.tools.photo_loader_schemas import (
     LIST_AUTO_UPLOADS_SCHEMA,
     LIST_PHOTO_BATCHES_SCHEMA,
@@ -99,7 +99,7 @@ def register_auto_read_tools(db: Any, client_pool: Any) -> list[Any]:
     return tools
 
 
-def register_dialog_tools(db: Any, client_pool: Any) -> list[Any]:
+def register_dialog_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
     tools: list[Any] = []
 
     @tool(
@@ -108,13 +108,13 @@ def register_dialog_tools(db: Any, client_pool: Any) -> list[Any]:
         LIST_PHOTO_DIALOGS_SCHEMA,
     )
     async def list_photo_dialogs(args):
-        pool_gate = require_pool(client_pool, "Список диалогов для фото")
+        pool_gate = ctx.require_pool("Список диалогов для фото")
         if pool_gate:
             return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "list_photo_dialogs")
+        perm_gate = await ctx.require_phone_permission(phone, "list_photo_dialogs")
         if perm_gate:
             return perm_gate
         try:
@@ -143,13 +143,13 @@ def register_dialog_tools(db: Any, client_pool: Any) -> list[Any]:
         REFRESH_PHOTO_DIALOGS_SCHEMA,
     )
     async def refresh_photo_dialogs(args):
-        pool_gate = require_pool(client_pool, "Обновление кэша диалогов")
+        pool_gate = ctx.require_pool("Обновление кэша диалогов")
         if pool_gate:
             return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "refresh_photo_dialogs")
+        perm_gate = await ctx.require_phone_permission(phone, "refresh_photo_dialogs")
         if perm_gate:
             return perm_gate
         from src.agent.tools._registry import require_confirmation

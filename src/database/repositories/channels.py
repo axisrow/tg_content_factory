@@ -140,8 +140,15 @@ class ChannelsRepository:
 
     async def update_channel_last_id(self, channel_id: int, last_id: int) -> None:
         await self._database.execute_write(
-            "UPDATE channels SET last_collected_id = ? WHERE channel_id = ?",
-            (last_id, channel_id),
+            """
+            UPDATE channels
+            SET last_collected_id = CASE
+                WHEN COALESCE(last_collected_id, 0) < ? THEN ?
+                ELSE last_collected_id
+            END
+            WHERE channel_id = ?
+            """,
+            (last_id, last_id, channel_id),
         )
 
     async def set_channel_active(self, pk: int, active: bool) -> None:

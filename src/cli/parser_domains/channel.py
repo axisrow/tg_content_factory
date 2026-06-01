@@ -17,8 +17,13 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     ch_toggle = ch_sub.add_parser("toggle", help="Toggle channel active state")
     ch_toggle.add_argument("identifier", help="Channel pk, channel_id, or @username")
 
-    ch_collect = ch_sub.add_parser("collect", help="Collect single channel (full)")
+    ch_collect = ch_sub.add_parser("collect", help="Collect single channel (incremental)")
     ch_collect.add_argument("identifier", help="Channel pk, channel_id, or @username")
+    ch_collect.add_argument(
+        "--full",
+        action="store_true",
+        help="Explicitly backfill the full channel history",
+    )
 
     ch_stats = ch_sub.add_parser("stats", help="Collect channel statistics")
     ch_stats.add_argument(
