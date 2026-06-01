@@ -499,7 +499,7 @@ async def test_trigger_collection_uses_bulk_enqueue_msg(client, base_app):
     with patch(
         "src.web.routes.scheduler.deps.collection_service"
     ) as mock_svc, patch(
-        "src.web.routes.scheduler.bulk_enqueue_msg"
+        "src.web.scheduler.handlers.bulk_enqueue_msg"
     ) as mock_msg:
         mock_service = MagicMock()
         result = BulkEnqueueResult(queued_count=3, skipped_existing_count=0, total_candidates=3)
