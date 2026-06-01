@@ -65,7 +65,7 @@ from src.web.settings.forms import (
     TranslationRunForm,
     TranslationSettingsForm,
 )
-from src.web.settings.responses import SettingsFlash, SettingsJson
+from src.web.settings.responses import SettingsFlash, SettingsJson, SettingsTemplate
 
 logger = logging.getLogger("src.web.routes.settings")
 
@@ -428,7 +428,7 @@ async def _run_bulk_test_job(
         status["current_model"] = ""
 
 
-async def handle_settings_page(request: Request) -> dict[str, object]:
+async def handle_settings_page(request: Request) -> SettingsTemplate:
     auth = deps.get_auth(request)
     db = deps.get_db(request)
     pool = deps.get_pool(request)
@@ -553,7 +553,7 @@ async def handle_settings_page(request: Request) -> dict[str, object]:
         for phone, perms in phone_permissions.items()
     }
 
-    return {
+    context = {
         "is_configured": auth.is_configured,
         "telegram_credentials_from_env": telegram_credentials_from_env,
         "api_id": CREDENTIALS_MASK if api_id_raw else "",
@@ -595,6 +595,7 @@ async def handle_settings_page(request: Request) -> dict[str, object]:
         "translation_auto_on_collect": translation_auto_on_collect,
         "language_stats": language_stats,
     }
+    return SettingsTemplate("settings.html", context)
 
 
 async def handle_save_scheduler_settings(

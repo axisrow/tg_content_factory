@@ -766,6 +766,24 @@ class TestSchedulerCommandRW:
         assert _sched_count_pending_tasks(db_path) == 0
         assert "Cleared 2 pending" in capsys.readouterr().out
 
+    def test_queue_pause_sets_setting(self, tmp_path, cli_init_patch, sched_pool_patch, capsys):
+        db_path = _sched_init_empty_db(tmp_path, "sched_qpause.db")
+
+        _sched_run_with_db(db_path, cli_init_patch, _ns(scheduler_action="queue-pause"))
+
+        assert _sched_read_setting(db_path, "collection_queue_paused") == "1"
+        assert "Collection queue paused" in capsys.readouterr().out
+
+    def test_queue_resume_clears_setting(self, tmp_path, cli_init_patch, sched_pool_patch, capsys):
+        db_path = _sched_init_empty_db(tmp_path, "sched_qresume.db")
+
+        _sched_run_with_db(db_path, cli_init_patch, _ns(scheduler_action="queue-pause"))
+        capsys.readouterr()
+        _sched_run_with_db(db_path, cli_init_patch, _ns(scheduler_action="queue-resume"))
+
+        assert _sched_read_setting(db_path, "collection_queue_paused") == "0"
+        assert "Collection queue resumed" in capsys.readouterr().out
+
 
 # ---------------------------------------------------------------------------
 # serve command

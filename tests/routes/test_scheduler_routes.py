@@ -944,3 +944,51 @@ async def test_scheduler_hides_countdown_if_too_short(client):
     assert resp.status_code == 200
     # Countdown should not appear for very short waits
     assert "(0 мин)" not in resp.text
+
+
+@pytest.mark.anyio
+async def test_pause_queue_sets_setting_and_enqueues(client):
+    """POST /scheduler/pause persists collection_queue_paused=1 and enqueues collection.pause."""
+    db = client._transport.app.state.db
+    resp = await client.post("/scheduler/pause", follow_redirects=False)
+    assert resp.status_code == 303
+    assert await db.get_setting("collection_queue_paused") == "1"
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "collection.pause"
+
+
+@pytest.mark.anyio
+async def test_resume_queue_sets_setting_and_enqueues(client):
+    """POST /scheduler/resume persists collection_queue_paused=0 and enqueues collection.resume."""
+    db = client._transport.app.state.db
+    await db.set_setting("collection_queue_paused", "1")
+    resp = await client.post("/scheduler/resume", follow_redirects=False)
+    assert resp.status_code == 303
+    assert await db.get_setting("collection_queue_paused") == "0"
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "collection.resume"
+
+
+@pytest.mark.anyio
+async def test_pause_queue_shutting_down(client):
+    """POST /scheduler/pause is rejected while shutting down."""
+    client._transport.app.state.shutting_down = True
+    resp = await client.post("/scheduler/pause", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=shutting_down" in resp.headers.get("location", "")
+
+
+@pytest.mark.anyio
+async def test_scheduler_page_shows_pause_button_when_running(client):
+    """The page offers 'Пауза очереди' when not paused, 'Продолжить очередь' when paused."""
+    db = client._transport.app.state.db
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    assert "Пауза очереди" in resp.text
+    assert "Очередь на паузе" not in resp.text
+
+    await db.set_setting("collection_queue_paused", "1")
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    assert "Продолжить очередь" in resp.text
+    assert "Очередь на паузе" in resp.text
