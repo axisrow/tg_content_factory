@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Mapping
 from datetime import datetime
@@ -87,7 +88,7 @@ async def persist_uploads(files: list[UploadFile], folder_name: str) -> list[str
             continue
         safe_name = f"{uuid.uuid4().hex}_{Path(upload.filename).name}"
         path = target_dir / safe_name
-        path.write_bytes(data)
+        await asyncio.to_thread(path.write_bytes, data)
         stored.append(str(path))
     return stored
 

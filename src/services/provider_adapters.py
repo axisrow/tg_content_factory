@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 # Type alias for image generation adapters
 ImageAdapter = Callable[[str, str], Awaitable[Optional[str]]]
 
+# Default network timeout for outbound HTTP calls to LLM / image providers.
+# Without it aiohttp waits indefinitely and a stalled upstream hangs the calling
+# coroutine forever (#633 bug #10).
+_HTTP_TIMEOUT = aiohttp.ClientTimeout(total=120)
+
 
 async def _parse_json_for_text(data: Any) -> str:
     # Try common response shapes
@@ -104,7 +109,7 @@ def make_generic_http_adapter(
         if api_key:
             headers[api_key_header] = f"Bearer {api_key}"
         try:
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
                 async with session.post(endpoint, json=payload, headers=headers) as resp:
                     if resp.status != 200:
                         text = await resp.text()
@@ -139,7 +144,7 @@ def make_together_image_adapter(api_key: str) -> ImageAdapter:
             "n": 1,
             "steps": 4,
         }
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     text = await resp.text()
@@ -164,7 +169,7 @@ def make_huggingface_image_adapter(api_token: str, output_dir: str = "data/image
         url = f"https://router.huggingface.co/hf-inference/models/{model_id}"
         headers = {"Authorization": f"Bearer {api_token}"}
         payload = {"inputs": prompt}
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     text = await resp.text()
@@ -177,9 +182,10 @@ def make_huggingface_image_adapter(api_token: str, output_dir: str = "data/image
                     )
                 image_bytes = await resp.read()
                 out = Path(output_dir)
+                out.mkdir(parents=True, exist_ok=True)
                 filename = f"{uuid.uuid4().hex}.png"
                 filepath = out / filename
-                filepath.write_bytes(image_bytes)
+                await asyncio.to_thread(filepath.write_bytes, image_bytes)
                 return str(filepath)
 
     return adapter
@@ -198,7 +204,7 @@ def make_openai_image_adapter(api_key: str) -> ImageAdapter:
             "n": 1,
             "size": "1024x1024",
         }
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     text = await resp.text()
@@ -226,7 +232,7 @@ def make_replicate_image_adapter(api_token: str, timeout: float = 60.0) -> Image
         payload: Dict[str, Any] = {
             "input": {"prompt": prompt},
         }
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
             # Create prediction
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status not in (200, 201):
