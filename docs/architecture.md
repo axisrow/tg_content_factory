@@ -47,12 +47,32 @@
 
 ## Database Access Pattern
 
+`db.repos.<repo>.<method>()` — **канонический** низкоуровневый доступ к БД. Новый код
+обращается к репозиториям напрямую через `db.repos`, а не через pass-through-методы
+фасада/бандлов.
+
 ```python
-# Репозитории через db.repos
-db.repos.channels.get_all()
+# Репозитории через db.repos (канон)
+db.repos.channels.get_channels(active_only=True, include_filtered=False)
 db.repos.generation_runs.list_pending_moderation(pipeline_id=1)
-db.repos.settings.get("key")
+db.repos.settings.get_setting("key")
 ```
+
+### Bundles и facade — compat-шимы
+
+- `src/database/facade.py` (`Database`) исторически экспонирует ~90 методов вида
+  `self._require(); return await self._<repo>.<method>(...)` — это механические
+  pass-through к репозиториям. Они сохраняются как **compat-шимы** на время окна
+  совместимости; новый код их не наращивает (`db.get_setting(k)` → `db.repos.settings.get_setting(k)`,
+  `db.get_channels(...)` → `db.repos.channels.get_channels(...)`).
+- `src/database/bundles.py` (`AccountBundle`, `ChannelBundle`, …) группирует несколько
+  репозиториев под сервисную границу (`ChannelBundle` агрегирует `channels` + `channel_stats`
+  + `tasks`). Бандлы остаются там, где дают осмысленную агрегацию; чисто
+  переименовывающие 1:1-методы — тоже compat-шимы.
+
+Структурный guard `tests/test_db_access_conventions.py` фиксирует текущее число
+pass-through-методов (ratchet «только вниз») — добавление новых pass-through падает в CI,
+вынуждая использовать `db.repos`.
 
 ## Web App Wiring
 
