@@ -434,7 +434,11 @@ def run(args: argparse.Namespace) -> None:
                 await db.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
                 collector = Collector(pool, db, config.scheduler)
                 try:
-                    count = await collector.collect_single_channel(ch, full=True, force=True)
+                    count = await collector.collect_single_channel(
+                        ch,
+                        full=bool(getattr(args, "full", False)),
+                        force=True,
+                    )
                     await db.update_collection_task(
                         task_id,
                         CollectionTaskStatus.COMPLETED,

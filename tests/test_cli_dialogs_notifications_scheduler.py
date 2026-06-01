@@ -919,10 +919,13 @@ class TestCollectCommand:
 
         with patch.object(
             Collector, "collect_single_channel", new_callable=AsyncMock, return_value=mock_stats
-        ):
+        ) as mock_collect:
             from src.cli.commands.collect import run
 
             run(_ns(channel_id=100, full=False))
+
+            mock_collect.assert_awaited_once()
+            assert mock_collect.call_args.kwargs.get("full") is False
 
         out = capsys.readouterr().out
         assert "Collected" in out and "100" in out

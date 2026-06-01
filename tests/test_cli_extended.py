@@ -358,6 +358,9 @@ class TestCLIChannelExtended:
 
         out = capsys.readouterr().out
         assert "Collected 42 messages" in out
+        inst.collect_single_channel.assert_awaited_once()
+        assert inst.collect_single_channel.call_args.kwargs["full"] is False
+        assert inst.collect_single_channel.call_args.kwargs["force"] is True
 
         # Verify task status
         _ensure_db_open(db)

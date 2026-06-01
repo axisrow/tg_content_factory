@@ -52,6 +52,15 @@ class TestParser:
         args = parser.parse_args(["collect", "--channel-id", "12345"])
         assert args.command == "collect"
         assert args.channel_id == 12345
+        assert args.full is False
+
+    def test_parser_collect_full(self):
+        """collect --full parses for explicit single-channel backfills."""
+        parser = build_parser()
+        args = parser.parse_args(["collect", "--channel-id", "12345", "--full"])
+        assert args.command == "collect"
+        assert args.channel_id == 12345
+        assert args.full is True
 
     def test_parser_collect_default(self):
         """collect subcommand has no default channel-id."""
@@ -59,6 +68,7 @@ class TestParser:
         args = parser.parse_args(["collect"])
         assert args.command == "collect"
         assert args.channel_id is None
+        assert args.full is False
 
     def test_parser_search_subcommand(self):
         """search subcommand parses query and options."""
@@ -112,6 +122,15 @@ class TestParser:
         assert args.command == "channel"
         assert args.channel_action == "add"
         assert args.identifier == "@testchannel"
+
+    def test_parser_channel_collect_full(self):
+        """channel collect --full parses explicit backfill mode."""
+        parser = build_parser()
+        args = parser.parse_args(["channel", "collect", "@testchannel", "--full"])
+        assert args.command == "channel"
+        assert args.channel_action == "collect"
+        assert args.identifier == "@testchannel"
+        assert args.full is True
 
     def test_parser_pipeline_list(self):
         """pipeline list subcommand."""
