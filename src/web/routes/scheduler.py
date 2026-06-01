@@ -599,9 +599,11 @@ async def _scheduler_page_inner(
     completed_count = all_count - active_count
     has_active_tasks = active_count > 0
     pending_collect_count = len(pending_collect)
+    queue_paused = (await db.repos.settings.get_setting("collection_queue_paused")) == "1"
 
     context = {
         "is_running": sched.is_running,
+        "queue_paused": queue_paused,
         "interval_minutes": sched.interval_minutes,
         "msg": msg,
         "tasks": tasks,
@@ -702,6 +704,30 @@ async def stop_scheduler(request: Request):
         request,
         "scheduler.reconcile",
         redirect_code="scheduler_stopped",
+    )
+
+
+@router.post("/pause")
+async def pause_collection_queue(request: Request):
+    if getattr(request.app.state, "shutting_down", False):
+        return _scheduler_redirect(request, error="shutting_down")
+    await deps.get_db(request).set_setting("collection_queue_paused", "1")
+    return await _enqueue_scheduler_command(
+        request,
+        "collection.pause",
+        redirect_code="queue_paused",
+    )
+
+
+@router.post("/resume")
+async def resume_collection_queue(request: Request):
+    if getattr(request.app.state, "shutting_down", False):
+        return _scheduler_redirect(request, error="shutting_down")
+    await deps.get_db(request).set_setting("collection_queue_paused", "0")
+    return await _enqueue_scheduler_command(
+        request,
+        "collection.resume",
+        redirect_code="queue_resumed",
     )
 
 

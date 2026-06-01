@@ -41,6 +41,7 @@ except ImportError:  # pragma: no cover
         pass
 
 if TYPE_CHECKING:
+    from src.collection_queue import CollectionQueue
     from src.search.engine import SearchEngine
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,7 @@ class TelegramCommandDispatcher:
         scheduler: SchedulerManager | None = None,
         auth: TelegramAuth | None = None,
         search_engine: "SearchEngine | None" = None,
+        collection_queue: "CollectionQueue | None" = None,
     ):
         self._db = db
         self._pool = pool
@@ -83,6 +85,7 @@ class TelegramCommandDispatcher:
         self._scheduler = scheduler
         self._auth = auth
         self._search_engine = search_engine
+        self._collection_queue = collection_queue
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._last_reaction_at_monotonic: dict[str, float] = {}
@@ -327,6 +330,18 @@ class TelegramCommandDispatcher:
             raise RuntimeError("scheduler_unavailable")
         await self._scheduler.trigger_warm_background()
         return {"started": True}
+
+    async def _handle_collection_pause(self, payload: dict[str, Any]) -> dict[str, Any]:
+        await self._db.set_setting("collection_queue_paused", "1")
+        if self._collection_queue is not None:
+            self._collection_queue.pause()
+        return {"paused": True}
+
+    async def _handle_collection_resume(self, payload: dict[str, Any]) -> dict[str, Any]:
+        await self._db.set_setting("collection_queue_paused", "0")
+        if self._collection_queue is not None:
+            self._collection_queue.resume()
+        return {"paused": False}
 
     async def _handle_dialogs_refresh(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])
