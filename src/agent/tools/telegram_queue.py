@@ -14,7 +14,6 @@ from src.agent.tools._registry import (
     arg_str,
     normalize_phone,
     require_confirmation,
-    require_phone_permission,
 )
 from src.models import TelegramCommand, TelegramCommandStatus
 from src.services.telegram_command_service import TelegramCommandService
@@ -138,7 +137,7 @@ def _reaction_wait_line(state_counts: dict[str, int]) -> str | None:
     return "Ожидание реакций: " + ", ".join(parts) + "."
 
 
-def register_queue_status_tools(db: Any) -> list[Any]:
+def register_queue_status_tools(db: Any, ctx: Any) -> list[Any]:
     tools: list[Any] = []
 
     @tool(
@@ -156,7 +155,7 @@ def register_queue_status_tools(db: Any) -> list[Any]:
         except ToolInputError as exc:
             return exc.to_response()
 
-        perm_gate = await require_phone_permission(db, phone, "get_telegram_queue_status")
+        perm_gate = await ctx.require_phone_permission(phone, "get_telegram_queue_status")
         if perm_gate:
             return perm_gate
 
@@ -239,7 +238,7 @@ def register_queue_status_tools(db: Any) -> list[Any]:
                 f"Задание #{command_id} не найдено или не в статусе 'ждёт' (отменять можно только PENDING)."
             )
         command_phone = str(command.payload.get("phone") or "")
-        perm_gate = await require_phone_permission(db, command_phone, "cancel_telegram_command")
+        perm_gate = await ctx.require_phone_permission(command_phone, "cancel_telegram_command")
         if perm_gate:
             return perm_gate
         gate = require_confirmation(f"отменит задание очереди id={command_id}", args)
@@ -278,7 +277,7 @@ def register_queue_status_tools(db: Any) -> list[Any]:
         # PHONE_BINDED_TOOLS, so a phone-restricted agent calling it with no phone (which would
         # bulk-cancel across ALL accounts) must still be gated. require_phone_permission returns
         # None when no ACL is configured, so this stays a no-op for single-admin deployments.
-        perm_gate = await require_phone_permission(db, phone, "clear_pending_telegram_commands")
+        perm_gate = await ctx.require_phone_permission(phone, "clear_pending_telegram_commands")
         if perm_gate:
             return perm_gate
         scope_parts = []
