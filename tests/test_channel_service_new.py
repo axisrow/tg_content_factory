@@ -34,6 +34,8 @@ async def test_list_for_page():
 async def test_add_by_identifier_success():
     channels = MagicMock()
     channels.add_channel = AsyncMock(return_value=1)
+    channels.get_by_channel_id = AsyncMock(return_value=None)
+    channels.create_stats_task = AsyncMock(return_value=10)
     pool = MagicMock()
     pool.resolve_channel = AsyncMock(return_value={
         "channel_id": -100123,
@@ -59,6 +61,7 @@ async def test_add_by_identifier_success():
     assert added.username == "testch"
     assert added.channel_type == "channel"
     assert added.about == "Test about"
+    channels.create_stats_task.assert_awaited_once()
 
 
 @pytest.mark.anyio
@@ -94,7 +97,14 @@ async def test_get_dialogs_with_added_flags():
 async def test_add_bulk_by_dialog_ids():
     channels = MagicMock()
     channels.add_channel = AsyncMock(return_value=1)
+    channels.get_by_channel_id = AsyncMock(return_value=None)
+    channels.create_stats_task = AsyncMock(return_value=10)
     pool = MagicMock()
+    pool.fetch_channel_meta = AsyncMock(return_value={
+        "about": "Bulk about",
+        "linked_chat_id": None,
+        "has_comments": False,
+    })
     pool.get_dialogs = AsyncMock(return_value=[
         {"channel_id": 100, "title": "Test", "username": "testch", "channel_type": "channel"},
         {"channel_id": 200, "title": "Other", "username": "other", "channel_type": "channel"},
@@ -106,6 +116,8 @@ async def test_add_bulk_by_dialog_ids():
     # Should only add the requested channel
     added = channels.add_channel.call_args[0][0]
     assert added.channel_id == 100
+    assert added.about == "Bulk about"
+    channels.create_stats_task.assert_awaited_once()
 
 
 @pytest.mark.anyio

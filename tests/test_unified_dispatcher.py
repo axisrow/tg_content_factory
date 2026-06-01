@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -207,6 +208,7 @@ async def test_handle_stats_all_stops_after_cancelled_result(
 
     mock_collector.collect_channel_stats.assert_awaited_once()
     mock_tasks_repo.persist_stats_progress.assert_not_called()
+    mock_tasks_repo.reschedule_stats_task.assert_not_called()
     mock_tasks_repo.update_collection_task.assert_not_called()
 
 
@@ -320,6 +322,44 @@ async def test_handle_stats_all_processes_batch(
 
     # Should process all 3 channels, no continuation
     assert mock_collector.collect_channel_stats.call_count == 3
+
+
+@pytest.mark.anyio
+async def test_handle_stats_all_respects_worker_count(
+    mock_collector, mock_channel_bundle, mock_tasks_repo
+):
+    """_handle_stats_all processes stats with bounded concurrency."""
+    active = 0
+    max_active = 0
+    mock_collector.delay_between_channels_sec = 0
+
+    async def collect(_channel):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return MagicMock(subscriber_count=100)
+
+    mock_collector.collect_channel_stats = AsyncMock(side_effect=collect)
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.STATS_ALL,
+        status=CollectionTaskStatus.RUNNING,
+        payload=StatsAllTaskPayload(channel_ids=[100, 101, 102, 103]),
+    )
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+        config=SimpleNamespace(scheduler=SimpleNamespace(stats_worker_count=2)),
+    )
+
+    await dispatcher._handle_stats_all(task)
+
+    assert max_active == 2
 
 
 @pytest.mark.anyio

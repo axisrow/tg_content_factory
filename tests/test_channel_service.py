@@ -34,6 +34,8 @@ def _make_bundle() -> MagicMock:
     bundle.list_channels_with_counts = AsyncMock(return_value=[])
     bundle.get_latest_and_previous_stats = AsyncMock(return_value=({}, {}))
     bundle.add_channel = AsyncMock(return_value=1)
+    bundle.get_by_channel_id = AsyncMock(return_value=None)
+    bundle.create_stats_task = AsyncMock(return_value=10)
     bundle.get_by_pk = AsyncMock(return_value=None)
     bundle.set_active = AsyncMock(return_value=None)
     bundle.delete_channel = AsyncMock(return_value=None)

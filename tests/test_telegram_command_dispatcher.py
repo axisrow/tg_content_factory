@@ -191,8 +191,10 @@ def _mock_db():
     db.delete_account = AsyncMock()
     db.update_account_premium = AsyncMock()
     db.get_channel_by_pk = AsyncMock(return_value=None)
+    db.get_channel_by_channel_id = AsyncMock(return_value=None)
     db.get_channels = AsyncMock(return_value=[])
     db.add_channel = AsyncMock()
+    db.create_stats_task = AsyncMock(return_value=123)
     db.set_channel_active = AsyncMock()
     db.set_channel_type = AsyncMock()
     db.update_channel_full_meta = AsyncMock()
@@ -657,6 +659,9 @@ async def test_channels_add_identifier():
     d = _dispatcher(db=db, pool=pool)
     r = await d._handle_channels_add_identifier({"identifier": "@t"})
     assert r["channel_id"] == -100
+    added = db.add_channel.await_args.args[0]
+    assert added.about == "a"
+    db.create_stats_task.assert_awaited_once()
 
 
 async def test_channels_add_identifier_fail():
@@ -705,10 +710,15 @@ async def test_channels_refresh_meta():
 
 async def test_channels_import_batch():
     pool = _mock_pool()
+    db = _mock_db()
     pool.resolve_channel.return_value = {"channel_id": -100, "title": "T", "username": "t", "channel_type": "channel"}
-    d = _dispatcher(pool=pool)
+    pool.fetch_channel_meta.return_value = {"about": "a", "linked_chat_id": None, "has_comments": False}
+    d = _dispatcher(db=db, pool=pool)
     r = await d._handle_channels_import_batch({"identifiers": ["@t"]})
     assert r["added"] == 1
+    added = db.add_channel.await_args.args[0]
+    assert added.about == "a"
+    db.create_stats_task.assert_awaited_once()
 
 
 async def test_channels_import_batch_existing():
