@@ -15,6 +15,7 @@ from src.telegram.collector import (
     Collector,
     NoActiveCollectionClientsError,
     UsernameResolveFloodWaitDeferredError,
+    UsernameResolveRateLimitedError,
 )
 from tests.helpers import AsyncIterEmpty as _AsyncIterEmpty
 from tests.helpers import AsyncIterMessages as _AsyncIterMessages
@@ -310,8 +311,8 @@ async def test_collect_channel_username_resolve_flood_does_not_rotate(db):
 @pytest.mark.anyio
 async def test_collect_channel_defers_when_resolve_rate_limited(db):
     """#551: when the per-account resolve limiter is exhausted, the live
-    get_input_entity call must not fire — the channel is deferred (returns 0),
-    not flooded."""
+    get_input_entity call must not fire; the caller must defer the task instead
+    of completing it with zero collected messages."""
     from src.telegram.rate_limiter import ResolveRateLimiter
 
     ch = Channel(
@@ -341,9 +342,11 @@ async def test_collect_channel_defers_when_resolve_rate_limited(db):
     )
     assert collector._resolve_rate_limiter.try_acquire("+7001") == 0.0
 
-    result = await collector._collect_channel(stored)
+    with pytest.raises(UsernameResolveRateLimitedError) as exc_info:
+        await collector._collect_channel(stored)
 
-    assert result == 0
+    assert exc_info.value.phone == "+7001"
+    assert 0 < exc_info.value.retry_after_sec <= 60
     raw_client.get_input_entity.assert_not_awaited()
     pool.report_flood.assert_not_awaited()
 
@@ -351,7 +354,7 @@ async def test_collect_channel_defers_when_resolve_rate_limited(db):
 @pytest.mark.anyio
 async def test_collect_channel_cache_only_defers_on_backoff_miss(db):
     """#552: while a global resolve backoff is active, a channel whose InputPeer
-    is not cached runs in cache-only mode — it is deferred (returns 0) without
+    is not cached runs in cache-only mode — it raises a defer signal without
     ever calling the live resolve API."""
     ch = Channel(
         channel_id=1970788986,
@@ -372,9 +375,10 @@ async def test_collect_channel_cache_only_defers_on_backoff_miss(db):
     collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
     collector._set_resolve_username_backoff(600)
 
-    result = await collector._collect_channel(stored)
+    with pytest.raises(UsernameResolveRateLimitedError) as exc_info:
+        await collector._collect_channel(stored)
 
-    assert result == 0
+    assert exc_info.value.phone == "+7001"
     raw_client.get_input_entity.assert_not_awaited()
     pool.report_flood.assert_not_awaited()
 
@@ -405,6 +409,7 @@ async def test_collect_all_channels_continues_cache_only_during_backoff(db):
     # Run did NOT stop on the backoff; both channels were processed (deferred).
     assert stats["errors"] == 0
     assert stats["messages"] == 0
+    assert stats["deferred"] == 2
     raw1.get_input_entity.assert_not_awaited()
     raw2.get_input_entity.assert_not_awaited()
 

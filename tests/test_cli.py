@@ -969,8 +969,14 @@ class TestCLITest:
         args = parser.parse_args(["test", "benchmark"])
         assert args.test_action == "benchmark"
 
-    def test_benchmark(self, capsys):
+    def test_benchmark(self, capsys, monkeypatch):
         from src.cli.commands import test as test_cmd
+
+        monkeypatch.setenv("RUN_CLI_REAL_TG_LIVE", "1")
+        monkeypatch.setenv("CLI_REAL_TG_PHONE", "+70000000000")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "live-key")
+        monkeypatch.setenv("AGENT_FALLBACK_MODEL", "openai:gpt-4.1-mini")
+        monkeypatch.setenv("ENV", "DEV")
 
         completed = subprocess.CompletedProcess(args=["pytest"], returncode=0)
         with (
@@ -996,6 +1002,12 @@ class TestCLITest:
         assert run_mock.call_args_list[1].args[0] == test_cmd.PARALLEL_SAFE_PYTEST_COMMAND
         assert run_mock.call_args_list[2].args[0] == test_cmd.AIOSQLITE_SERIAL_PYTEST_COMMAND
         assert run_mock.call_args_list[0].kwargs["cwd"] == test_cmd.REPO_ROOT
+        env = run_mock.call_args_list[0].kwargs["env"]
+        assert "RUN_CLI_REAL_TG_LIVE" not in env
+        assert "CLI_REAL_TG_PHONE" not in env
+        assert "ANTHROPIC_API_KEY" not in env
+        assert "AGENT_FALLBACK_MODEL" not in env
+        assert "ENV" not in env
 
     def test_benchmark_fails_on_failed_subprocess(self, capsys):
         from src.cli.commands.test import run
@@ -1013,6 +1025,32 @@ class TestCLITest:
 
         out = capsys.readouterr().out
         assert "Benchmark step failed: serial_full_suite exited with code 2" in out
+
+    def test_sqlite_backup_copy_includes_committed_wal_data(self, tmp_path):
+        import sqlite3
+
+        from src.cli.commands.test import _backup_sqlite_db
+
+        source_path = tmp_path / "source.db"
+        target_path = tmp_path / "target.db"
+        conn = sqlite3.connect(source_path)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+            conn.execute("INSERT INTO items (name) VALUES ('live')")
+            conn.commit()
+
+            _backup_sqlite_db(str(source_path), str(target_path))
+
+            copied = sqlite3.connect(target_path)
+            try:
+                rows = copied.execute("SELECT name FROM items").fetchall()
+            finally:
+                copied.close()
+        finally:
+            conn.close()
+
+        assert rows == [("live",)]
 
 
 # ---------------------------------------------------------------------------

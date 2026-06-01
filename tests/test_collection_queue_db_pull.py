@@ -16,7 +16,10 @@ import pytest
 from src.collection_queue import CollectionQueue
 from src.database import Database
 from src.models import Channel
-from src.telegram.collector import UsernameResolveFloodWaitDeferredError
+from src.telegram.collector import (
+    UsernameResolveFloodWaitDeferredError,
+    UsernameResolveRateLimitedError,
+)
 
 
 class _FakeCollector:
@@ -58,6 +61,13 @@ class _UsernameResolveFloodCollector(_FakeCollector):
             wait_seconds=120,
             next_available_at=self.next_available_at,
         )
+
+
+class _UsernameResolveRateLimitedCollector(_FakeCollector):
+    async def collect_single_channel(self, channel, *, full=False, progress_callback=None, force=False):
+        self.calls.append(channel.channel_id)
+        self.full_calls.append(full)
+        raise UsernameResolveRateLimitedError("+7001", 28.2)
 
 
 class _BlockingCollector:
@@ -191,6 +201,46 @@ async def test_username_resolve_flood_defer_keeps_task_pending(tmp_path):
         assert task.run_after is not None
         assert task.run_after > next_available_at
         assert "Flood Wait на resolve_username" in (task.note or "")
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_username_resolve_rate_limit_keeps_task_pending(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+
+        collector = _UsernameResolveRateLimitedCollector()
+        queue = CollectionQueue(collector, db)
+        channel = (await db.get_channels(active_only=True))[0]
+        before = datetime.now(timezone.utc)
+        task_id = await queue.enqueue(channel)
+
+        deadline = asyncio.get_event_loop().time() + 2.0
+        while asyncio.get_event_loop().time() < deadline:
+            task = await db.get_collection_task(task_id)
+            if task.status == "pending" and task.run_after is not None:
+                break
+            await asyncio.sleep(0.05)
+
+        task = await db.get_collection_task(task_id)
+        assert task.status == "pending"
+        assert task.error is None
+        assert task.run_after is not None
+        assert task.run_after >= before + timedelta(seconds=33)
+        assert "resolve_username rate-limited" in (task.note or "")
+
+        queue.start_db_pull(interval=0.02)
+        try:
+            await asyncio.sleep(0.12)
+        finally:
+            await queue.stop_db_pull()
+
+        assert task_id in queue._known_task_ids
+        assert len(queue._delayed_requeues) == 1
     finally:
         await queue.shutdown()
         await db.close()

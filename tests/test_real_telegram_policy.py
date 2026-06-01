@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import ast
 import os
+import sqlite3
 import subprocess
 import sys
 import tomllib
@@ -18,12 +19,14 @@ from tests.cli_real_tg_integration.command_manifest import (
     CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS,
 )
 from tests.cli_real_tg_integration.conftest import (
+    CLI_REAL_TG_PHONE_ENV,
     LIVE_CLI_DEFAULT_PYTEST_TIMEOUT_SECONDS,
     RUN_CLI_DEFAULT_TIMEOUT_SECONDS,
     CliRealCliEnv,
     LiveCliAccountReadinessError,
     LiveCliAccountWaitTimeoutError,
     _assert_cli_result_ok,
+    _fetch_live_accounts,
     account_info_probe_failure,
     wait_for_ready_live_cli_accounts,
 )
@@ -144,6 +147,68 @@ def _live_cli_probe_env(tmp_path: Path) -> CliRealCliEnv:
         channel_id=None,
         channel_username=None,
     )
+
+
+def _create_live_accounts_db(path: Path) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT,
+                session_string TEXT,
+                is_active INTEGER,
+                is_primary INTEGER,
+                flood_wait_until TEXT
+            )
+            """
+        )
+
+
+def test_fetch_live_accounts_prefers_accounts_not_in_flood_wait(tmp_path, monkeypatch):
+    monkeypatch.delenv(CLI_REAL_TG_PHONE_ENV, raising=False)
+    db_path = tmp_path / "live.db"
+    _create_live_accounts_db(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO accounts (id, phone, session_string, is_active, is_primary, flood_wait_until)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (1, "+primary-flooded", "session", 1, 1, "2099-01-01T00:00:00+00:00"),
+                (2, "+secondary-ready", "session", 1, 0, None),
+                (3, "+primary-ready", "session", 1, 1, "2000-01-01T00:00:00+00:00"),
+            ),
+        )
+
+    assert _fetch_live_accounts(db_path) == (
+        "+primary-ready",
+        "+secondary-ready",
+        "+primary-flooded",
+    )
+
+
+def test_fetch_live_accounts_can_pin_requested_phone(tmp_path, monkeypatch):
+    db_path = tmp_path / "live.db"
+    _create_live_accounts_db(db_path)
+
+    with sqlite3.connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO accounts (id, phone, session_string, is_active, is_primary, flood_wait_until)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (1, "+old", "session", 1, 1, "2099-01-01T00:00:00+00:00"),
+                (2, "+fresh", "session", 1, 0, None),
+            ),
+        )
+
+    monkeypatch.setenv(CLI_REAL_TG_PHONE_ENV, "+fresh")
+
+    assert _fetch_live_accounts(db_path) == ("+fresh",)
 
 
 def test_live_cli_account_readiness_retries_until_active_account_appears(tmp_path: Path):

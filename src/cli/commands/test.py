@@ -5,7 +5,7 @@ import asyncio
 import logging
 import os
 import shlex
-import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -75,6 +75,39 @@ AIOSQLITE_SERIAL_PYTEST_COMMAND = (
     "-m",
     f"aiosqlite_serial and {NON_LIVE_PYTEST_MARKER_EXPR}",
 )
+BENCHMARK_ENV_DENYLIST = frozenset(
+    {
+        "AGENT_FALLBACK_API_KEY",
+        "AGENT_FALLBACK_MODEL",
+        "AGENT_MODEL",
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "COHERE_API_KEY",
+        "CONTEXT7_API_KEY",
+        "CTX7_API_KEY",
+        "ENV",
+        "GROQ_API_KEY",
+        "LLM_API_KEY",
+        "OLLAMA_BASE",
+        "OLLAMA_URL",
+        "OPENAI_API_KEY",
+        "SESSION_ENCRYPTION_KEY",
+        "TG_API_HASH",
+        "TG_API_ID",
+        "TG_BACKEND_MODE",
+        "TG_CLI_TRANSPORT",
+        "TG_SESSION_CACHE_DIR",
+        "WEB_PASS",
+        "ZAI_API_KEY",
+        "ZAI_BASE_URL",
+    }
+)
+BENCHMARK_ENV_PREFIX_DENYLIST = (
+    "CLI_REAL_TG_",
+    "REAL_TG_",
+    "RUN_CLI_REAL_TG_",
+    "RUN_REAL_TELEGRAM_",
+)
 
 
 class Status(Enum):
@@ -121,13 +154,28 @@ def _run_benchmark_step(step: BenchmarkStep) -> float:
     print(f"\n=== {step.name} ===")
     print(f"$ {shlex.join(step.command)}")
     started = time.perf_counter()
-    completed = subprocess.run(step.command, cwd=REPO_ROOT, check=False)
+    completed = subprocess.run(
+        step.command,
+        cwd=REPO_ROOT,
+        check=False,
+        env=_benchmark_subprocess_env(),
+    )
     elapsed = time.perf_counter() - started
     if completed.returncode != 0:
         print(f"\nBenchmark step failed: {step.name} exited with code {completed.returncode}")
         raise SystemExit(completed.returncode)
     print(f"Completed in {elapsed:.2f}s")
     return elapsed
+
+
+def _benchmark_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    for key in list(env):
+        if key in BENCHMARK_ENV_DENYLIST or any(
+            key.startswith(prefix) for prefix in BENCHMARK_ENV_PREFIX_DENYLIST
+        ):
+            env.pop(key, None)
+    return env
 
 
 def _run_pytest_benchmark() -> None:
@@ -379,7 +427,7 @@ async def _init_db_copy(config_path: str) -> tuple[Database, str, object]:
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
     try:
-        shutil.copy2(live_path, tmp.name)
+        _backup_sqlite_db(live_path, tmp.name)
         copy_db = Database(tmp.name, session_encryption_secret=encryption_secret)
         await copy_db.initialize()
         return copy_db, tmp.name, config
@@ -387,6 +435,21 @@ async def _init_db_copy(config_path: str) -> tuple[Database, str, object]:
         if os.path.exists(tmp.name):
             os.unlink(tmp.name)
         raise
+
+
+def _backup_sqlite_db(source_path: str, target_path: str) -> None:
+    """Create a consistent copy even when the live DB is in WAL mode."""
+    source = sqlite3.connect(
+        f"file:{source_path}?mode=ro",
+        uri=True,
+        timeout=30.0,
+    )
+    target = sqlite3.connect(target_path, timeout=30.0)
+    try:
+        source.backup(target, sleep=0.25)
+    finally:
+        target.close()
+        source.close()
 
 
 async def _run_write_checks(config_path: str) -> list[CheckResult]:

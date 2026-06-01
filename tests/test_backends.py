@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -611,3 +612,27 @@ async def test_telethon_cli_backend_disables_flood_auto_sleep(monkeypatch, tmp_p
     assert fake_client.flood_sleep_threshold == 0
     assert lease.phone == "+70001112233"
     assert lease.backend_name == "telethon_cli"
+
+
+@pytest.mark.anyio
+async def test_telethon_cli_backend_disconnects_partial_client_on_acquire_error(monkeypatch, tmp_path):
+    fake_client = FakeCliTelethonClient()
+    fake_client.is_user_authorized = AsyncMock(side_effect=sqlite3.OperationalError("database is locked"))
+    monkeypatch.setattr(
+        "src.telegram.backends.telethon_cli_runtime.create_client",
+        lambda namespace: fake_client,
+    )
+
+    materializer = SimpleNamespace(
+        materialize=lambda phone, session_string: str(tmp_path / "session"),
+        ensure_empty_env_file=lambda: str(tmp_path / ".env"),
+    )
+    auth = SimpleNamespace(api_id=1, api_hash="hash")
+    backend = TelethonCliBackend(auth, materializer, transport="hybrid")
+
+    with pytest.raises(sqlite3.OperationalError, match="database is locked"):
+        await backend.acquire_client(
+            Account(phone="+70001112233", session_string="session-xyz")
+        )
+
+    fake_client.disconnect.assert_awaited_once()
