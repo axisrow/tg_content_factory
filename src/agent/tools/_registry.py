@@ -77,6 +77,9 @@ class AgentToolContext:
     async def require_phone_permission(self, phone: str, tool_name: str) -> dict | None:
         return await require_phone_permission(self.db, phone, tool_name)
 
+    async def resolve_live_read_phone(self, raw_phone: object, *, tool_name: str) -> tuple[str, dict | None]:
+        return await resolve_live_read_phone(self.db, self.client_pool, raw_phone, tool_name=tool_name)
+
     def channel_service(self):
         from src.services.channel_service import ChannelService
 

@@ -18,3 +18,5 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     sched_task_cancel = sched_sub.add_parser("task-cancel", help="Cancel a collection task")
     sched_task_cancel.add_argument("task_id", type=int, help="Task ID to cancel")
     sched_sub.add_parser("clear-pending", help="Clear all pending collection tasks")
+    sched_sub.add_parser("queue-pause", help="Pause the collection queue (queued tasks stay pending)")
+    sched_sub.add_parser("queue-resume", help="Resume the collection queue")

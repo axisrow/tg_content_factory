@@ -1,0 +1,42 @@
+{
+  "tag": "v0.2.3",
+  "title": "Agent Reliability — Grounded Diagnostics, Flood-Wait Fixes & Web Polish",
+  "highlights": [
+    {
+      "title": "Grounded Runtime Diagnostics Tool",
+      "description": "Agent's diagnostics tool now reports real account availability from the Settings source of truth instead of stale snapshot data (#530, #529). Agents get accurate pool status for better decision-making during collection and publishing tasks."
+    },
+    {
+      "title": "Reaction Flood-Wait Bypass Fix",
+      "description": "Stopped reaction operations from silently bypassing flood-wait guards and added retryable cancellation handling (#597). Prevents cascading FloodWaitErrors that could lock accounts for extended periods."
+    },
+    {
+      "title": "Username Resolve Rate Limiter",
+      "description": "Per-account rate limiter for resolve_username prevents hitting Telegram limits when many channels are processed simultaneously (#551). Complements the existing global resolve backoff."
+    },
+    {
+      "title": "Global Resolve Backoff Hardening",
+      "description": "Capped and cache-only global resolve backoff prevents indefinite resolution delays (#552). Respects Telegram's error signalling without over-backing-off."
+    },
+    {
+      "title": "CLI Auth Pool Warm-Up Fix",
+      "description": "Account persistence now happens before pool warm-up in verify-code, so newly verified accounts are immediately available without restart (#449)."
+    },
+    {
+      "title": "Pipeline Write-Lock Integrity",
+      "description": "Pipeline source/target replace operations now stay inside the DB write-lock, preventing potential concurrent-write corruption (#633)."
+    },
+    {
+      "title": "Web Premium/Telegram Search Proxy",
+      "description": "Web-to-worker proxy for premium search and Telegram search operations ensures these features work correctly in split web/worker deployments (#643)."
+    },
+    {
+      "title": "Web UI Polish",
+      "description": "Responsive layout improvements for the tg agent interface — better mobile and small-screen experience."
+    },
+    {
+      "title": "Custom Test Notification Text",
+      "description": "Web UI now allows custom text when sending test notifications, making it easier to verify notification setup (#563)."
+    }
+  ]
+}

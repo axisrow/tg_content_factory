@@ -4,7 +4,6 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse
 
 from src.models import PhotoSendMode
-from src.web import deps
 from src.web.photo_loader.forms import (
     PhotoAutoCreateForm,
     PhotoBatchForm,
@@ -12,7 +11,6 @@ from src.web.photo_loader.forms import (
     PhotoRefreshForm,
     PhotoScheduleForm,
     PhotoSendForm,
-    parse_auto_update_form,
 )
 from src.web.photo_loader.handlers import (
     handle_photo_auto_create,
@@ -27,21 +25,20 @@ from src.web.photo_loader.handlers import (
     handle_photo_toggle_auto,
     handle_photo_update_auto,
 )
-from src.web.photo_loader.responses import photo_loader_redirect_response
+from src.web.photo_loader.responses import photo_loader_response
 
 router = APIRouter()
 
 
 @router.get("", response_class=HTMLResponse)
 async def photo_loader_page(request: Request, phone: str | None = None):
-    context = await handle_photo_loader_page(request, phone)
-    return deps.get_templates(request).TemplateResponse(request, "photo_loader.html", context)
+    return photo_loader_response(request, await handle_photo_loader_page(request, phone))
 
 
 @router.post("/refresh")
 async def photo_loader_refresh(request: Request, phone: str = Form("")):
     result = await handle_photo_loader_refresh(request, PhotoRefreshForm(phone=phone))
-    return photo_loader_redirect_response(result)
+    return photo_loader_response(request, result)
 
 
 @router.post("/send")
@@ -67,7 +64,7 @@ async def photo_send(
             photos=photos,
         ),
     )
-    return photo_loader_redirect_response(result)
+    return photo_loader_response(request, result)
 
 
 @router.post("/schedule")
@@ -95,7 +92,7 @@ async def photo_schedule(
             photos=photos,
         ),
     )
-    return photo_loader_redirect_response(result)
+    return photo_loader_response(request, result)
 
 
 @router.post("/batch")
@@ -119,7 +116,7 @@ async def photo_batch(
             manifest_text=manifest_text,
         ),
     )
-    return photo_loader_redirect_response(result)
+    return photo_loader_response(request, result)
 
 
 @router.post("/auto")
@@ -147,34 +144,33 @@ async def photo_auto_create(
             interval_minutes=interval_minutes,
         ),
     )
-    return photo_loader_redirect_response(result)
+    return photo_loader_response(request, result)
 
 
 @router.post("/run-due")
 async def photo_run_due(request: Request, phone: str = Form("")):
     result = await handle_photo_run_due(request, PhotoPhoneForm(phone=phone))
-    return photo_loader_redirect_response(result)
+    return photo_loader_response(request, result)
 
 
 @router.post("/items/{item_id}/cancel")
 async def photo_cancel_item(request: Request, item_id: int, phone: str = Form("")):
     result = await handle_photo_cancel_item(request, item_id, PhotoPhoneForm(phone=phone))
-    return photo_loader_redirect_response(result)
+    return photo_loader_response(request, result)
 
 
 @router.post("/auto/{job_id}/toggle")
 async def photo_toggle_auto(request: Request, job_id: int, phone: str = Form("")):
     result = await handle_photo_toggle_auto(request, job_id, PhotoPhoneForm(phone=phone))
-    return photo_loader_redirect_response(result)
+    return photo_loader_response(request, result)
 
 
 @router.post("/auto/{job_id}/update")
 async def photo_update_auto(request: Request, job_id: int):
-    result = await handle_photo_update_auto(request, job_id, parse_auto_update_form(await request.form()))
-    return photo_loader_redirect_response(result)
+    return photo_loader_response(request, await handle_photo_update_auto(request, job_id))
 
 
 @router.post("/auto/{job_id}/delete")
 async def photo_delete_auto(request: Request, job_id: int, phone: str = Form("")):
     result = await handle_photo_delete_auto(request, job_id, PhotoPhoneForm(phone=phone))
-    return photo_loader_redirect_response(result)
+    return photo_loader_response(request, result)
