@@ -71,6 +71,16 @@ def test_is_public_path():
     assert is_public_path("/settings") is False
 
 
+def test_rss_and_atom_are_public_by_design():
+    """#633 bug #38: RSS/Atom feeds are intentionally unauthenticated.
+
+    Pinning this so the decision (documented in docs/reference/rss-feeds.md)
+    cannot be flipped silently — RSS readers cannot do interactive Basic auth.
+    """
+    assert is_public_path("/rss.xml") is True
+    assert is_public_path("/atom.xml") is True
+
+
 def test_sanitize_next_empty():
     """Test sanitize_next with empty value."""
     assert sanitize_next(None) == "/"
