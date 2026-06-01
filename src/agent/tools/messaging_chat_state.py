@@ -25,7 +25,7 @@ from src.services.telegram_actions import (
     TelegramActionClientUnavailableError,
     TelegramActionService,
 )
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait_retry
 from src.telegram.identity import extract_message_sender_identity
 from src.telegram.reactions import (
     fetch_message_reaction_users,
@@ -307,8 +307,8 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
                         break
 
             try:
-                await run_with_flood_wait(
-                    _read_recent(),
+                await run_with_flood_wait_retry(
+                    _read_recent,
                     operation="agent_read_recent_messages",
                     phone=phone,
                     pool=client_pool,

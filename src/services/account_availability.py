@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from src.models import AccountSessionStatus
+from src.telegram.flood_wait import is_blocking_flood_wait_until
 
 # Ordered roughly by severity. Mirrors the states rendered by the Settings page.
 AVAILABILITY_STATES = (
@@ -52,6 +53,13 @@ def compute_account_availability(
             flood_until = flood_until.replace(tzinfo=timezone.utc)
         remaining_seconds = max(0, int((flood_until - now).total_seconds()))
         if remaining_seconds > 0:
+            if not is_blocking_flood_wait_until(flood_until, now=now):
+                return {
+                    "state": "available",
+                    "remaining_seconds": remaining_seconds,
+                    "remaining_minutes": max(1, remaining_seconds // 60),
+                    "transient_flood_wait": True,
+                }
             return {
                 "state": "flood",
                 "remaining_seconds": remaining_seconds,
