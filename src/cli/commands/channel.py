@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+from datetime import timedelta
 from pathlib import Path
 
 from src.cli import runtime
@@ -17,7 +18,12 @@ from src.services.channel_onboarding import (
 )
 from src.services.channel_service import ChannelService
 from src.telegram.backends import adapt_transport_session
-from src.telegram.collector import Collector, UsernameResolveRateLimitedError
+from src.telegram.collector import (
+    RESOLVE_USERNAME_BACKOFF_BUFFER_SEC,
+    Collector,
+    UsernameResolveFloodWaitDeferredError,
+    UsernameResolveRateLimitedError,
+)
 
 
 async def _handle_tag(args: argparse.Namespace, db) -> None:
@@ -463,6 +469,19 @@ def run(args: argparse.Namespace) -> None:
                         messages_collected=count,
                     )
                     print(f"Collected {count} messages from channel {ch.channel_id}")
+                except UsernameResolveFloodWaitDeferredError as exc:
+                    run_after = exc.next_available_at + timedelta(
+                        seconds=RESOLVE_USERNAME_BACKOFF_BUFFER_SEC
+                    )
+                    note = (
+                        "Отложено: Flood Wait на resolve_username до "
+                        f"{run_after.astimezone().isoformat()}"
+                    )
+                    await db.reschedule_collection_task(task_id, run_after=run_after, note=note)
+                    print(
+                        "Collection deferred: resolve_username Flood Wait "
+                        f"until {run_after.astimezone().isoformat()}"
+                    )
                 except UsernameResolveRateLimitedError as exc:
                     run_after = exc.run_after_with_buffer()
                     note = (
