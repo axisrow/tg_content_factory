@@ -10,6 +10,7 @@ from src.agent.provider_registry import (
     normalize_ollama_base_url,
     normalize_zai_base_url,
     provider_spec,
+    runtime_options_for_config,
 )
 
 logger = logging.getLogger(__name__)
@@ -290,35 +291,8 @@ class RuntimeProviderRegistry:
 
     @staticmethod
     def _runtime_options_for_config(cfg: Any) -> tuple[str, dict[str, object]]:
-        spec = provider_spec(cfg.provider)
-        if spec is None:
-            raise RuntimeError(f"Unknown provider: {cfg.provider}")
-
-        model_provider = spec.resolved_runtime_provider
-        extra: dict[str, object] = {
-            key: value for key, value in cfg.plain_fields.items() if value.strip()
-        }
-        if cfg.provider == "ollama":
-            api_key = cfg.secret_fields.get("api_key", "").strip()
-            extra["base_url"] = normalize_ollama_base_url(
-                str(extra.get("base_url", "")),
-                api_key,
-            )
-            if api_key:
-                extra["client_kwargs"] = {"headers": {"Authorization": f"Bearer {api_key}"}}
-            return model_provider, extra
-
-        extra.update({key: value for key, value in cfg.secret_fields.items() if value.strip()})
-        if cfg.provider == "zai":
-            raw_base_url = cfg.plain_fields.get("base_url", "")
-            if is_zai_legacy_anthropic_base_url(raw_base_url):
-                raise RuntimeError(
-                    "This URL is the Z.AI Anthropic-compatible proxy. Configure the "
-                    "anthropic provider with this URL instead, or use the OpenAI-compatible "
-                    "endpoint."
-                )
-            extra["base_url"] = normalize_zai_base_url(raw_base_url)
-        return model_provider, extra
+        # Single source of truth shared with the deepagents stack (#658).
+        return runtime_options_for_config(cfg)
 
     @staticmethod
     def _response_text(response: Any) -> str:
