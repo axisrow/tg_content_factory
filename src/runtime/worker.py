@@ -16,6 +16,16 @@ from src.web.bootstrap import build_worker_container, start_container, stop_cont
 from src.web.log_handler import LogBuffer
 
 logger = logging.getLogger(__name__)
+HEARTBEAT_INTERVAL_SEC = 5.0
+
+
+def _current_task_is_cancelling() -> bool:
+    task = asyncio.current_task()
+    return task is not None and task.cancelling() > 0
+
+
+def _is_expected_shutdown_cancellation(stop_event: asyncio.Event | None = None) -> bool:
+    return _current_task_is_cancelling() or bool(stop_event is not None and stop_event.is_set())
 
 
 def _worker_decrypt_failure_payload(exc: AccountSessionDecryptError) -> dict[str, str]:
@@ -39,7 +49,7 @@ async def _publish_worker_down_snapshot(container, exc: AccountSessionDecryptErr
     )
 
 
-async def _publish_snapshots(container) -> None:
+async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = None) -> None:
     now = datetime.now(timezone.utc)
     connected_phones = sorted(getattr(container.pool, "clients", {}).keys())
     active_accounts = []
@@ -164,6 +174,10 @@ async def _publish_snapshots(container) -> None:
                 container.config.notifications.bot_name_prefix,
                 container.config.notifications.bot_username_prefix,
             ).get_status()
+        except asyncio.CancelledError:
+            if _is_expected_shutdown_cancellation(stop_event):
+                raise
+            logger.warning("Notification bot snapshot refresh was cancelled; continuing worker")
         except Exception:
             logger.warning("Failed to refresh notification bot snapshot", exc_info=True)
         else:
@@ -211,9 +225,17 @@ async def _run_worker_async(config: AppConfig) -> None:
         return
     try:
         while not stop_event.is_set():
-            await _publish_snapshots(container)
             try:
-                await asyncio.wait_for(stop_event.wait(), timeout=5.0)
+                await _publish_snapshots(container, stop_event=stop_event)
+            except asyncio.CancelledError:
+                if _current_task_is_cancelling():
+                    raise
+                if stop_event.is_set():
+                    logger.info("Worker stopping during snapshot publish")
+                    break
+                logger.warning("Worker snapshot publish was cancelled; continuing worker loop")
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=HEARTBEAT_INTERVAL_SEC)
             except asyncio.TimeoutError:
                 continue
     finally:

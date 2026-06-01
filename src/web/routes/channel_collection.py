@@ -81,12 +81,22 @@ async def collect_all_channels(request: Request):
 
 @router.post("/{pk}/collect")
 async def collect_channel(request: Request, pk: int):
+    return await _collect_channel(request, pk, full=False)
+
+
+@router.post("/{pk}/collect/full")
+async def collect_channel_full(request: Request, pk: int):
+    return await _collect_channel(request, pk, full=True)
+
+
+async def _collect_channel(request: Request, pk: int, *, full: bool):
     is_htmx = request.headers.get("HX-Request") == "true"
+    button_id = "collect-full-btn" if full else "collect-btn"
 
     if getattr(request.app.state, "shutting_down", False):
         if is_htmx:
             return HTMLResponse(
-                f'<span id="collect-btn-{pk}" title="Сервер останавливается">' f"⚠️</span>"
+                f'<span id="{button_id}-{pk}" title="Сервер останавливается">' f"⚠️</span>"
             )
         return RedirectResponse(url="/channels?error=shutting_down", status_code=303)
 
@@ -94,33 +104,35 @@ async def collect_channel(request: Request, pk: int):
     db = deps.get_db(request)
     channel = await db.get_channel_by_pk(pk)
     is_filtered = channel.is_filtered if channel else False
-    enqueue_status = await service.enqueue_channel_by_pk(pk, force=True)
+    enqueue_status = await service.enqueue_channel_by_pk(pk, force=True, full=full)
 
     if is_htmx:
         if enqueue_status == "not_found":
-            return HTMLResponse(f'<span id="collect-btn-{pk}">❓</span>')
+            btn = "❓"
+            return HTMLResponse(
+                f'<span id="{button_id}-{pk}">{btn}</span>'
+                f'<span id="{button_id}-m-{pk}" hx-swap-oob="true">{btn}</span>'
+            )
         if enqueue_status == "already_active":
             btn = (
                 '<button class="btn btn-outline-secondary btn-sm emoji-btn"'
                 ' disabled title="Уже в очереди">⏳</button>'
             )
             fragment = (
-                f'<span id="collect-btn-{pk}">{btn}</span>'
-                f'<span id="collect-btn-m-{pk}" hx-swap-oob="true">'
+                f'<span id="{button_id}-{pk}">{btn}</span>'
+                f'<span id="{button_id}-m-{pk}" hx-swap-oob="true">'
                 f"{btn}</span>"
             )
             return HTMLResponse(fragment)
         collector = deps.get_collector(request)
         label = "В очереди" if collector.is_running else "Запущен"
         filtered_badge = ' <small title="Канал отфильтрован">⚡</small>' if is_filtered else ""
-        btn = (
-            f'<button class="btn btn-outline-primary btn-sm emoji-btn"'
-            f' disabled title="{label}">⏳</button>'
-        )
+        btn_class = "btn-outline-warning" if full else "btn-outline-primary"
+        btn = f'<button class="btn {btn_class} btn-sm emoji-btn" disabled title="{label}">⏳</button>'
         # Update both desktop and mobile buttons via HTMX OOB swap
         fragment = (
-            f'<span id="collect-btn-{pk}">{btn}{filtered_badge}</span>'
-            f'<span id="collect-btn-m-{pk}" hx-swap-oob="true">'
+            f'<span id="{button_id}-{pk}">{btn}{filtered_badge}</span>'
+            f'<span id="{button_id}-m-{pk}" hx-swap-oob="true">'
             f"{btn}{filtered_badge}</span>"
         )
         return HTMLResponse(fragment)
@@ -130,7 +142,10 @@ async def collect_channel(request: Request, pk: int):
     if enqueue_status == "already_active":
         return RedirectResponse(url="/channels?msg=collect_already_active", status_code=303)
     collector = deps.get_collector(request)
-    msg = "collect_queued" if collector.is_running else "collect_started"
+    if full:
+        msg = "collect_full_queued" if collector.is_running else "collect_full_started"
+    else:
+        msg = "collect_queued" if collector.is_running else "collect_started"
     return RedirectResponse(url=f"/channels?msg={msg}", status_code=303)
 
 

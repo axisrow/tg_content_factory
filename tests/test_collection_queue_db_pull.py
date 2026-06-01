@@ -22,10 +22,12 @@ from src.telegram.collector import UsernameResolveFloodWaitDeferredError
 class _FakeCollector:
     def __init__(self):
         self.calls: list[int] = []
+        self.full_calls: list[bool] = []
         self.is_cancelled = False
 
     async def collect_single_channel(self, channel, *, full=False, progress_callback=None, force=False):
         self.calls.append(channel.channel_id)
+        self.full_calls.append(full)
         return 0
 
     async def cancel(self):
@@ -138,6 +140,26 @@ async def test_db_pull_does_not_ingest_when_no_clients(tmp_path, caplog):
         assert collector.calls == []
         assert queue._known_task_ids == set()
         assert "Pending-task ingest throttled" in caplog.text
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_pending_task_without_payload_defaults_to_incremental(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        collector = _FakeCollector()
+        queue = CollectionQueue(collector, db)
+        await _create_pending_task(db)
+
+        assert await queue._ingest_pending_tasks() == 1
+        await queue._run_worker()
+
+        assert collector.calls == [-1001]
+        assert collector.full_calls == [False]
     finally:
         await queue.shutdown()
         await db.close()
