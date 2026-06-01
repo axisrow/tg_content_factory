@@ -15,11 +15,11 @@ from src.agent.tools._registry import (
     available_live_read_phones,
     connected_phones_from_pool,
     get_accounts_with_flood_cleanup,
+    get_tool_context,
     is_flood_wait_active,
     normalize_flood_wait_until,
     normalize_phone,
     require_confirmation,
-    resolve_phone,
 )
 from src.services.account_availability import compute_account_availability
 from src.services.runtime_diagnostics import evaluate_worker_heartbeat
@@ -168,6 +168,7 @@ async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: object
 
 def register(db, client_pool, embedding_service, **kwargs):
     runtime = _runtime(kwargs, db, client_pool)
+    ctx = get_tool_context(kwargs, db=db, client_pool=client_pool, embedding_service=embedding_service)
     tools = []
 
     @tool(
@@ -387,7 +388,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def clear_flood_status(args):
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
         gate = require_confirmation(f"сбросит flood-wait для аккаунта {phone}", args)

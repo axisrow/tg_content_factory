@@ -15,10 +15,6 @@ from src.agent.tools._registry import (
     get_tool_context,
     normalize_phone,
     require_confirmation,
-    require_phone_permission,
-    require_pool,
-    resolve_live_read_phone,
-    resolve_phone,
 )
 from src.parsers import normalize_identifier
 from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
@@ -53,18 +49,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         },
     )
     async def search_dialogs(args):
-        pool_gate = require_pool(client_pool, "Поиск диалогов")
+        pool_gate = ctx.require_pool("Поиск диалогов")
         if pool_gate:
             return pool_gate
-        phone, err = await resolve_live_read_phone(
-            db,
-            client_pool,
-            args.get("phone", ""),
-            tool_name="search_dialogs",
-        )
+        phone, err = await ctx.resolve_live_read_phone(args.get("phone", ""), tool_name="search_dialogs")
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "search_dialogs")
+        perm_gate = await ctx.require_phone_permission(phone, "search_dialogs")
         if perm_gate:
             return perm_gate
         try:
@@ -160,10 +151,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         live_gate = ctx.require_live_runtime("Обновление диалогов", tool_name="refresh_dialogs")
         if live_gate:
             return live_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "refresh_dialogs")
+        perm_gate = await ctx.require_phone_permission(phone,"refresh_dialogs")
         if perm_gate:
             return perm_gate
         try:
@@ -197,13 +188,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         live_gate = ctx.require_live_runtime("Выход из диалогов", tool_name="leave_dialogs")
         if live_gate:
             return live_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
         dialog_ids_str = args.get("dialog_ids", "")
         if not dialog_ids_str:
             return _text_response("Ошибка: dialog_ids обязателен.")
-        perm_gate = await require_phone_permission(db, phone, "leave_dialogs")
+        perm_gate = await ctx.require_phone_permission(phone,"leave_dialogs")
         if perm_gate:
             return perm_gate
         gate = require_confirmation(
@@ -241,13 +232,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         live_gate = ctx.require_live_runtime("Создание канала", tool_name="create_telegram_channel")
         if live_gate:
             return live_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
         title = args.get("title", "")
         if not title:
             return _text_response("Ошибка: title обязателен.")
-        perm_gate = await require_phone_permission(db, phone, "create_telegram_channel")
+        perm_gate = await ctx.require_phone_permission(phone,"create_telegram_channel")
         if perm_gate:
             return perm_gate
         gate = require_confirmation(f"создаст новый Telegram-канал '{title}'", args)
@@ -312,7 +303,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     async def clear_dialog_cache(args):
         phone = normalize_phone(args.get("phone", ""))
         if phone:
-            perm_gate = await require_phone_permission(db, phone, "clear_dialog_cache")
+            perm_gate = await ctx.require_phone_permission(phone,"clear_dialog_cache")
             if perm_gate:
                 return perm_gate
         else:
@@ -381,15 +372,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         identifier = (args.get("identifier") or "").strip()
         if not identifier:
             return _text_response("Ошибка: identifier обязателен.")
-        phone, err = await resolve_live_read_phone(
-            db,
-            client_pool,
-            args.get("phone", ""),
-            tool_name="resolve_entity",
-        )
+        phone, err = await ctx.resolve_live_read_phone(args.get("phone", ""), tool_name="resolve_entity")
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "resolve_entity")
+        perm_gate = await ctx.require_phone_permission(phone,"resolve_entity")
         if perm_gate:
             return perm_gate
         try:
