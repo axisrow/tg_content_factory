@@ -1,9 +1,10 @@
 """Tests for agent route streaming, generation, and large-context paths."""
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -40,6 +41,39 @@ async def test_inject_context_large_context_warning(client, db):
     assert resp.status_code == 200
     data = json.loads(resp.text)
     assert len(data["content"]) > 200_000
+
+
+@pytest.mark.anyio
+async def test_inject_context_rejects_non_object_json(client, db):
+    thread_id = await db.create_agent_thread("Context")
+
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/context",
+        content=json.dumps(["not", "an", "object"]),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Request body must be a JSON object"
+
+
+@pytest.mark.anyio
+async def test_inject_context_rejects_non_integral_json_numbers(client, db):
+    thread_id = await db.create_agent_thread("Context")
+
+    bool_resp = await client.post(
+        f"/agent/threads/{thread_id}/context",
+        json={"channel_id": True, "limit": 10},
+    )
+    float_resp = await client.post(
+        f"/agent/threads/{thread_id}/context",
+        json={"channel_id": 100, "limit": 1.9},
+    )
+
+    assert bool_resp.status_code == 400
+    assert bool_resp.json()["detail"] == "channel_id must be an integer"
+    assert float_resp.status_code == 400
+    assert float_resp.json()["detail"] == "limit must be an integer"
 
 
 # === chat: generate() — save assistant message on done (line 282-283) ===
@@ -85,6 +119,86 @@ async def test_chat_database_busy_returns_retryable_503(client, db):
     assert resp.status_code == 503
     assert resp.headers["retry-after"] == "2"
     assert "База данных занята" in resp.json()["detail"]
+
+
+@pytest.mark.anyio
+async def test_chat_rejects_malformed_json(client, db):
+    thread_id = await db.create_agent_thread("Chat")
+
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/chat",
+        content="{",
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert resp.status_code == 400
+    assert resp.json()["detail"] == "Request body must be valid JSON"
+
+
+@pytest.mark.anyio
+async def test_chat_streaming_idle_timeout_cancels_with_bounded_wait(client, db, monkeypatch):
+    from src.web.agent import handlers
+
+    thread_id = await db.create_agent_thread("Chat")
+    mock_mgr = client._transport_app.state.agent_manager
+    mock_mgr.cancel_stream = AsyncMock(return_value=True)
+    monkeypatch.setattr(handlers, "_SSE_IDLE_TIMEOUT", 0.01)
+    cleanup_started = asyncio.Event()
+    cleanup_release = asyncio.Event()
+
+    async def _hung_stream(*a, **kw):
+        try:
+            await asyncio.Event().wait()
+            yield 'data: {"done": true, "full_text": "late"}\n\n'
+        finally:
+            cleanup_started.set()
+            await cleanup_release.wait()
+
+    mock_mgr.chat_stream = _hung_stream
+
+    try:
+        resp = await asyncio.wait_for(
+            client.post(
+                f"/agent/threads/{thread_id}/chat",
+                json={"message": "hello"},
+            ),
+            timeout=0.2,
+        )
+        await asyncio.wait_for(cleanup_started.wait(), timeout=0.2)
+    finally:
+        cleanup_release.set()
+
+    assert resp.status_code == 200
+    assert "Agent response timed out" in resp.text
+    mock_mgr.cancel_stream.assert_awaited_once_with(thread_id, wait_timeout=5.0)
+
+
+@pytest.mark.anyio
+async def test_chat_permission_request_waits_without_idle_timeout(client, db, monkeypatch):
+    from src.web.agent import handlers
+
+    thread_id = await db.create_agent_thread("Chat")
+    mock_mgr = client._transport_app.state.agent_manager
+    mock_mgr.cancel_stream = AsyncMock(return_value=True)
+    monkeypatch.setattr(handlers, "_SSE_IDLE_TIMEOUT", 0.01)
+
+    async def _permission_then_done(*a, **kw):
+        yield 'data: {"type": "permission_request", "request_id": "r1", "tool": "WebSearch"}\n\n'
+        await asyncio.sleep(0.05)
+        yield 'data: {"done": true, "full_text": "allowed"}\n\n'
+
+    mock_mgr.chat_stream = _permission_then_done
+
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/chat",
+        json={"message": "hello"},
+    )
+
+    assert resp.status_code == 200
+    assert "permission_request" in resp.text
+    assert "allowed" in resp.text
+    assert "Agent response timed out" not in resp.text
+    mock_mgr.cancel_stream.assert_not_awaited()
 
 
 # === chat: generate() — IntegrityError on save (line 284-285) ===

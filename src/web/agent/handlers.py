@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -14,6 +15,33 @@ from src.web.agent.forms import select_model
 from src.web.agent.responses import AgentJson, AgentRedirect, AgentStream, AgentTemplate
 
 logger = logging.getLogger(__name__)
+
+# Max seconds the agent SSE stream may go without emitting a chunk before we
+# abort it. This prevents a hung LLM/backend from holding the connection open.
+_SSE_IDLE_TIMEOUT = 180.0
+
+
+async def _json_object_body(request: Request) -> dict:
+    """Return the request body as a JSON object, or raise HTTP 400."""
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        raise HTTPException(status_code=400, detail="Request body must be valid JSON") from None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+    return body
+
+
+def _coerce_int(value: object, field: str) -> int:
+    if isinstance(value, bool):
+        raise HTTPException(status_code=400, detail=f"{field} must be an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text and (text.isdecimal() or (text[0] in "+-" and text[1:].isdecimal())):
+            return int(text)
+    raise HTTPException(status_code=400, detail=f"{field} must be an integer")
 
 
 def _agent_unavailable_copy(runtime_state: deps.AgentRuntimeState) -> tuple[str, str]:
@@ -122,8 +150,9 @@ async def delete_thread(request: Request, thread_id: int) -> AgentJson:
 
 
 async def rename_thread(request: Request, thread_id: int) -> AgentJson:
-    body = await request.json()
-    title = (body.get("title") or "").strip()
+    body = await _json_object_body(request)
+    title_raw = body.get("title")
+    title = title_raw.strip() if isinstance(title_raw, str) else ""
     if not title:
         raise HTTPException(status_code=400, detail="Title cannot be empty")
     db = deps.get_db(request)
@@ -160,16 +189,18 @@ async def get_forum_topics(request: Request, channel_id: int) -> AgentJson:
 
 
 async def inject_context(request: Request, thread_id: int) -> AgentJson:
-    data = await request.json()
+    data = await _json_object_body(request)
     channel_id_raw = data.get("channel_id")
     if not channel_id_raw:
         raise HTTPException(status_code=400, detail="channel_id is required")
-    channel_id = int(channel_id_raw)
-    raw_limit = int(data.get("limit", 0))
+    channel_id = _coerce_int(channel_id_raw, "channel_id")
+    raw_limit = _coerce_int(data.get("limit", 0), "limit")
     limit = min(raw_limit, 10_000) if raw_limit > 0 else 10_000
-    topic_id = data.get("topic_id")
-    if topic_id is not None:
-        topic_id = int(topic_id) if str(topic_id).strip() else None
+    topic_id_raw = data.get("topic_id")
+    if topic_id_raw is None or not str(topic_id_raw).strip():
+        topic_id = None
+    else:
+        topic_id = _coerce_int(topic_id_raw, "topic_id")
 
     db = deps.get_db(request)
     thread = await db.get_agent_thread(thread_id)
@@ -209,7 +240,7 @@ async def inject_context(request: Request, thread_id: int) -> AgentJson:
 
 
 async def resolve_permission(request: Request, thread_id: int, request_id: str):
-    body = await request.json()
+    body = await _json_object_body(request)
     choice = body.get("choice", "deny")
     if choice not in ("once", "session", "deny"):
         raise HTTPException(status_code=400, detail="Invalid choice")
@@ -241,8 +272,9 @@ async def stop_chat(request: Request, thread_id: int) -> AgentJson:
 
 
 async def chat(request: Request, thread_id: int):
-    body = await request.json()
-    message = (body.get("message") or "").strip()
+    body = await _json_object_body(request)
+    message_raw = body.get("message")
+    message = message_raw.strip() if isinstance(message_raw, str) else ""
     if not message:
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
@@ -285,30 +317,77 @@ async def chat(request: Request, thread_id: int):
     session_id = request.cookies.get("session", "web")
 
     async def generate():
-        async for chunk in agent_manager.chat_stream(
+        def _consume_abandoned_next_chunk(task: asyncio.Task) -> None:
+            try:
+                task.result()
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
+            except Exception:
+                logger.debug("Abandoned agent stream chunk task failed", exc_info=True)
+
+        stream = agent_manager.chat_stream(
             thread_id,
             message,
             model=model,
             session_id=session_id,
             interactive_permissions=True,
-        ):
-            try:
-                data_str = chunk.removeprefix("data: ").strip()
-                data = json.loads(data_str)
-                if data.get("done") and data.get("full_text"):
+        )
+        agen = stream.__aiter__()
+        waiting_for_permission = False
+        pending_chunk_task: asyncio.Task | None = None
+        try:
+            while True:
+                try:
+                    if waiting_for_permission:
+                        chunk = await agen.__anext__()
+                    else:
+                        next_chunk_task = asyncio.create_task(agen.__anext__())
+                        done, _ = await asyncio.wait({next_chunk_task}, timeout=_SSE_IDLE_TIMEOUT)
+                        if not done:
+                            pending_chunk_task = next_chunk_task
+                            next_chunk_task.cancel()
+                            next_chunk_task.add_done_callback(_consume_abandoned_next_chunk)
+                            raise asyncio.TimeoutError
+                        chunk = next_chunk_task.result()
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Agent SSE stream for thread %d idle >%.0fs; aborting",
+                        thread_id,
+                        _SSE_IDLE_TIMEOUT,
+                    )
                     try:
-                        await db.save_agent_message(thread_id, "assistant", data["full_text"])
-                    except sqlite3.IntegrityError:
-                        logger.debug("Thread %d deleted during response — skipping save", thread_id)
-                elif data.get("error"):
-                    try:
-                        await db.delete_last_agent_exchange(thread_id)
-                    except sqlite3.IntegrityError:
-                        pass
-            except json.JSONDecodeError:
-                pass
-            except Exception:
-                logger.exception("Failed to process agent message for thread %d", thread_id)
-            yield chunk
+                        await agent_manager.cancel_stream(thread_id, wait_timeout=5.0)
+                    except Exception:
+                        logger.debug("cancel_stream after SSE timeout failed", exc_info=True)
+                    yield 'data: {"error": "Agent response timed out."}\n\n'
+                    break
+                try:
+                    data_str = chunk.removeprefix("data: ").strip()
+                    data = json.loads(data_str)
+                    waiting_for_permission = data.get("type") == "permission_request"
+                    if data.get("done") and data.get("full_text"):
+                        try:
+                            await db.save_agent_message(thread_id, "assistant", data["full_text"])
+                        except sqlite3.IntegrityError:
+                            logger.debug("Thread %d deleted during response; skipping save", thread_id)
+                    elif data.get("error"):
+                        try:
+                            await db.delete_last_agent_exchange(thread_id)
+                        except sqlite3.IntegrityError:
+                            pass
+                except json.JSONDecodeError:
+                    waiting_for_permission = False
+                    pass
+                except Exception:
+                    logger.exception("Failed to process agent message for thread %d", thread_id)
+                yield chunk
+        finally:
+            if pending_chunk_task is None or pending_chunk_task.done():
+                try:
+                    await agen.aclose()
+                except Exception:
+                    logger.debug("Error closing agent stream for thread %d", thread_id, exc_info=True)
 
     return AgentStream(generate())
