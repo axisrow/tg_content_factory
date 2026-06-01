@@ -156,6 +156,36 @@ async def test_import_file_empty(client):
 
 
 @pytest.mark.anyio
+async def test_import_file_too_large_rejected(client):
+    """#633 bug #20: an oversized upload is rejected with 413, not read into memory."""
+    from src.web.routes.import_channels import MAX_IMPORT_FILE_BYTES
+
+    oversized = b"@channel\n" * ((MAX_IMPORT_FILE_BYTES // 9) + 2)
+    assert len(oversized) > MAX_IMPORT_FILE_BYTES
+    file = ("huge.txt", io.BytesIO(oversized), "text/plain")
+
+    resp = await client.post("/channels/import", files={"file": file})
+
+    assert resp.status_code == 413
+    assert "слишком большой" in resp.text
+
+
+@pytest.mark.anyio
+async def test_import_file_at_limit_accepted(client):
+    """A file exactly at the size limit is still accepted."""
+    from src.web.routes.import_channels import MAX_IMPORT_FILE_BYTES
+
+    line = b"@channel1\n"
+    content = line * (MAX_IMPORT_FILE_BYTES // len(line))
+    assert len(content) <= MAX_IMPORT_FILE_BYTES
+    file = ("ok.txt", io.BytesIO(content), "text/plain")
+
+    resp = await client.post("/channels/import", files={"file": file})
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.anyio
 async def test_import_file_and_text_combined(client):
     """Test importing from both file and text."""
     content = b"@filechannel"
