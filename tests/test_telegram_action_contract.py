@@ -40,6 +40,8 @@ ENTRYPOINT_FORBIDDEN_ACTION_CALLS = {
     "edit_folder",
     "download_media",
     "leave_channels",
+    "join_channel",
+    "import_chat_invite",
     "send_reaction",
 }
 
@@ -50,6 +52,7 @@ def test_telegram_action_inventory_has_unique_complete_actions():
     assert "send_reaction" in actions
     assert "create_channel" in actions
     assert "download_media" in actions
+    assert "join_channel" in actions
     assert "leave_dialogs" in actions
     for item in TELEGRAM_ACTION_INVENTORY:
         assert item.backend_method, item.action

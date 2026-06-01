@@ -40,6 +40,12 @@ TELEGRAM_ACTION_INVENTORY: tuple[TelegramActionInventoryItem, ...] = (
         backend_method="leave_channels",
     ),
     TelegramActionInventoryItem(
+        action="join_channel",
+        cli="dialogs join",
+        agent_tool="join_channel",
+        backend_method="join_channel",
+    ),
+    TelegramActionInventoryItem(
         action="send_message",
         cli="dialogs send",
         web_command="dialogs.send",

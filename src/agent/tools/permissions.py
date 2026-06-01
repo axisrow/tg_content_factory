@@ -45,6 +45,8 @@ PHONE_BINDED_TOOLS: frozenset[str] = frozenset({
     "get_participants",
     "get_telegram_queue_status",
     "kick_participant",
+    "join_channel",
+    "join_chat",
     "leave_dialogs",
     "list_photo_dialogs",
     "mark_read",
@@ -58,6 +60,7 @@ PHONE_BINDED_TOOLS: frozenset[str] = frozenset({
     "send_message",
     "send_photos_now",
     "send_reaction",
+    "subscribe_channel",
     "unarchive_chat",
     "unpin_message",
 })
@@ -219,6 +222,9 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "search_dialogs": ToolCategory.READ,
     "refresh_dialogs": ToolCategory.WRITE,
     "leave_dialogs": ToolCategory.DELETE,
+    "join_channel": ToolCategory.WRITE,
+    "join_chat": ToolCategory.WRITE,
+    "subscribe_channel": ToolCategory.WRITE,
     "create_telegram_channel": ToolCategory.WRITE,
     "get_forum_topics": ToolCategory.READ,
     "clear_dialog_cache": ToolCategory.WRITE,
@@ -334,7 +340,8 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "list_photo_dialogs", "refresh_photo_dialogs",
     ]),
     ("Диалоги", [
-        "search_dialogs", "refresh_dialogs", "leave_dialogs", "create_telegram_channel",
+        "search_dialogs", "refresh_dialogs", "leave_dialogs",
+        "join_channel", "join_chat", "subscribe_channel", "create_telegram_channel",
         "get_forum_topics", "clear_dialog_cache", "get_cache_status", "resolve_entity",
     ]),
     ("Сообщения", [

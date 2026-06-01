@@ -118,6 +118,26 @@ def test_cli_dialogs_leave(cli_db, capsys):
     assert "left" in out
 
 
+def test_cli_dialogs_join(cli_db, capsys):
+    """Test `dialogs join` with auto-confirm."""
+    pool = _mock_pool()
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.join_channel = AsyncMock()
+    pool.get_native_client_by_phone = AsyncMock(return_value=(client, "+1234567890"))
+    pool.release_client = AsyncMock()
+
+    _run(
+        _ns(dialogs_action="join", phone="+1234567890", target="@prog_ai", yes=True),
+        pool,
+        cli_db,
+    )
+
+    out = capsys.readouterr().out
+    assert "Joined/subscribed" in out
+    client.join_channel.assert_awaited_once_with("entity")
+
+
 def test_cli_dialogs_topics(cli_db, capsys):
     """Test `dialogs topics` with no topics."""
     pool = _mock_pool()

@@ -9,13 +9,16 @@ from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
 from src.agent.tools._registry import (
+    ToolInputError,
     _text_response,
+    arg_str,
     find_dialogs_by_exact_title,
     format_dialog_title_candidates,
     get_tool_context,
     normalize_phone,
     require_confirmation,
 )
+from src.agent.tools._telegram_runtime import prepare_telegram_tool
 from src.parsers import normalize_identifier
 from src.services.telegram_actions import TelegramActionClientUnavailableError, TelegramActionService
 
@@ -215,6 +218,95 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка выхода из диалогов: {e}")
 
     tools.append(leave_dialogs)
+
+    join_channel_schema = {
+        "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+        "target": Annotated[str, "Канал/группа: @username, t.me ссылка или invite link"],
+        "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+    }
+
+    async def _join_channel_execute(args, phone: str):
+        try:
+            target = arg_str(args, "target", required=True)
+        except ToolInputError:
+            return _text_response("Ошибка: target обязателен.")
+        gate = require_confirmation(f"подпишет аккаунт {phone} на {target}", args)
+        if gate:
+            return gate
+        try:
+            result = await TelegramActionService(client_pool).join_dialog(
+                phone=phone,
+                target=target,
+            )
+            mode = "по invite-ссылке" if result.via_invite else "по публичному идентификатору"
+            return _text_response(f"Аккаунт {result.phone} подписан/вступил в {result.target} ({mode}).")
+        except TelegramActionClientUnavailableError:
+            return _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
+        except Exception as e:
+            return _text_response(f"Ошибка подписки/вступления: {e}")
+
+    @tool(
+        "join_channel",
+        "Join/subscribe to a Telegram channel or group from a connected account. "
+        "Synonyms: subscribe_channel, join_chat, подписаться на канал, вступить в группу/чат. "
+        "target accepts @username, t.me link, https://t.me link, private invite link, or tg://join link. "
+        "Ask user for confirmation first.",
+        join_channel_schema,
+    )
+    async def join_channel(args):
+        phone, err = await prepare_telegram_tool(
+            ctx,
+            args,
+            tool_name="join_channel",
+            action="Подписка/вступление в Telegram-канал",
+        )
+        if err:
+            return err
+        return await _join_channel_execute(args, phone)
+
+    tools.append(join_channel)
+
+    @tool(
+        "join_chat",
+        "Alias for join_channel. Join a Telegram group/chat/channel from a connected account. "
+        "Use this when the user asks to вступить в группу, войти в чат, join group, or join chat. "
+        "target accepts @username, t.me link, private invite link, or tg://join link. "
+        "Ask user for confirmation first.",
+        join_channel_schema,
+    )
+    async def join_chat(args):
+        phone, err = await prepare_telegram_tool(
+            ctx,
+            args,
+            tool_name="join_chat",
+            action="Вступление в Telegram-группу/чат",
+        )
+        if err:
+            return err
+        return await _join_channel_execute(args, phone)
+
+    tools.append(join_chat)
+
+    @tool(
+        "subscribe_channel",
+        "Alias for join_channel. Subscribe to a Telegram channel or group from a connected account. "
+        "Use this when the user asks to подписаться на канал, subscribe to channel, or follow a Telegram channel. "
+        "target accepts @username, t.me link, private invite link, or tg://join link. "
+        "Ask user for confirmation first.",
+        join_channel_schema,
+    )
+    async def subscribe_channel(args):
+        phone, err = await prepare_telegram_tool(
+            ctx,
+            args,
+            tool_name="subscribe_channel",
+            action="Подписка на Telegram-канал",
+        )
+        if err:
+            return err
+        return await _join_channel_execute(args, phone)
+
+    tools.append(subscribe_channel)
 
     @tool(
         "create_telegram_channel",
