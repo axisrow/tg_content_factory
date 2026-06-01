@@ -281,7 +281,19 @@ class CollectionQueue:
                 count = await self._collector.collect_single_channel(
                     channel, full=full, progress_callback=_progress, force=force
                 )
-                if self._collector.is_cancelled:
+                # A cancel arriving in the startup window (after _current_task_id
+                # is set but before the collector loop runs) sets the DB row to
+                # CANCELLED, but the collector clears its in-memory cancel flag at
+                # the start of collection — so is_cancelled can read False here even
+                # though the user cancelled. Re-read the persisted status so that
+                # cancel is the source of truth and we never clobber it with
+                # COMPLETED (#633 bug #30).
+                persisted = await self._channels.get_collection_task(task_id)
+                cancelled = self._collector.is_cancelled or (
+                    persisted is not None
+                    and persisted.status == CollectionTaskStatus.CANCELLED
+                )
+                if cancelled:
                     if self._shutdown_requested:
                         await self._reset_task_to_pending_after_shutdown(task_id)
                         logger.info("Task %d requeued after service shutdown interrupted collection", task_id)

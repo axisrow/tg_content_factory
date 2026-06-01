@@ -3763,6 +3763,66 @@ class TestCollectionQueueExtraCoverage:
             pass
         channels.cancel_collection_task.assert_awaited_once()
 
+    async def test_worker_honors_db_cancel_after_collector_clears_flag(self):
+        """#633 bug #30: cancel in the task-startup window must win.
+
+        The collector clears its in-memory cancel flag at the start of
+        collection, so a cancel that arrived in the startup window leaves
+        is_cancelled False. The persisted CANCELLED status must still be
+        honored — the task must NOT be marked COMPLETED.
+        """
+        from src.collection_queue import CollectionQueue
+        from src.models import Channel, CollectionTask, CollectionTaskStatus
+
+        channels = MagicMock()
+        running_task = CollectionTask(
+            id=1,
+            channel_id=100,
+            title="ch",
+            status=CollectionTaskStatus.RUNNING,
+        )
+        cancelled_task = CollectionTask(
+            id=1,
+            channel_id=100,
+            title="ch",
+            status=CollectionTaskStatus.CANCELLED,
+        )
+        # Startup check sees a live task; the post-collection re-read sees the
+        # CANCELLED row written by cancel_task during the startup window.
+        channels.get_collection_task = AsyncMock(
+            side_effect=[running_task, cancelled_task]
+        )
+        fresh_ch = Channel(id=1, channel_id=100, title="test", is_filtered=False)
+        channels.get_by_pk = AsyncMock(return_value=fresh_ch)
+        channels.update_collection_task = AsyncMock()
+        channels.cancel_collection_task = AsyncMock()
+        collector = MagicMock()
+        # Flag was cleared by collect_single_channel — looks "not cancelled".
+        collector.is_cancelled = False
+        collector.collect_single_channel = AsyncMock(return_value=7)
+
+        queue = CollectionQueue(collector, channels)
+        ch = Channel(id=1, channel_id=100, title="test")
+        queue._queue.put_nowait((1, ch, False, True))
+
+        worker = asyncio.create_task(queue._run_worker())
+        await asyncio.sleep(0.3)
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
+
+        # Task must be re-cancelled, never transitioned to COMPLETED.
+        channels.cancel_collection_task.assert_awaited_once()
+        completed_calls = [
+            c
+            for c in channels.update_collection_task.call_args_list
+            if CollectionTaskStatus.COMPLETED in c.args
+            or c.kwargs.get("status") == CollectionTaskStatus.COMPLETED
+        ]
+        assert completed_calls == []
+
     async def test_worker_generic_exception(self):
         """Lines 174-181: generic exception during collection."""
         from src.collection_queue import CollectionQueue

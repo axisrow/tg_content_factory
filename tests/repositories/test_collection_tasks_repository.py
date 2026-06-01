@@ -197,6 +197,24 @@ async def test_update_collection_task_to_completed(collection_tasks_repo):
     assert task.note == "Done"
 
 
+async def test_update_collection_task_does_not_overwrite_cancelled(collection_tasks_repo):
+    """#633 bug #30: a terminal CANCELLED must not be clobbered by a late update."""
+    task_id = await collection_tasks_repo.create_collection_task(1, "Test")
+    await collection_tasks_repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
+    await collection_tasks_repo.cancel_collection_task(task_id)
+
+    # A worker that lost the in-memory cancel flag tries to mark it COMPLETED.
+    await collection_tasks_repo.update_collection_task(
+        task_id,
+        CollectionTaskStatus.COMPLETED,
+        messages_collected=99,
+    )
+
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task.status == CollectionTaskStatus.CANCELLED
+    assert task.messages_collected != 99
+
+
 async def test_update_collection_task_to_failed(collection_tasks_repo):
     """Test updating task to failed status."""
     task_id = await collection_tasks_repo.create_collection_task(1, "Test")
