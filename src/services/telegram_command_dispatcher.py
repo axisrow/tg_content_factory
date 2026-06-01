@@ -14,6 +14,12 @@ from src.database import Database
 from src.database.live_accounts import load_live_usable_accounts
 from src.models import Account, RuntimeSnapshot, TelegramCommandStatus
 from src.scheduler.service import SchedulerManager
+from src.services.channel_onboarding import (
+    channel_from_resolved_info,
+    enqueue_stats_for_new_channels,
+    fetch_channel_meta,
+    get_existing_channel,
+)
 from src.services.notification_service import NotificationService
 from src.services.notification_target_service import NotificationTargetService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
@@ -701,23 +707,20 @@ class TelegramCommandDispatcher:
         info = await self._pool.resolve_channel(identifier)
         if not info:
             raise RuntimeError("resolve failed")
-        meta = await self._pool.fetch_channel_meta(info["channel_id"], info.get("channel_type"))
-        from src.models import Channel
-
-        await self._db.add_channel(
-            Channel(
-                channel_id=info["channel_id"],
-                title=info["title"],
-                username=info["username"],
-                channel_type=info.get("channel_type"),
-                is_active=not info.get("deactivate", False),
-                about=meta.get("about") if meta else None,
-                linked_chat_id=meta.get("linked_chat_id") if meta else None,
-                has_comments=meta.get("has_comments", False) if meta else False,
-                created_at=info.get("created_at"),
-            )
+        existing = await get_existing_channel(self._db, int(info["channel_id"]))
+        meta = await fetch_channel_meta(
+            self._pool, int(info["channel_id"]), info.get("channel_type")
         )
-        return {"channel_id": info["channel_id"]}
+        channel = channel_from_resolved_info(info, meta)
+        await self._db.add_channel(channel)
+        stats_task_id = None
+        if existing is None and channel.is_active:
+            stats_task_id = await enqueue_stats_for_new_channels(
+                self._db.create_stats_task,
+                [channel.channel_id],
+                context="channels.add_identifier",
+            )
+        return {"channel_id": info["channel_id"], "stats_task_id": stats_task_id}
 
     async def _handle_channels_collect_stats(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self._collector is None:
@@ -773,14 +776,13 @@ class TelegramCommandDispatcher:
         return {"updated": updated, "failed": failed}
 
     async def _handle_channels_import_batch(self, payload: dict[str, Any]) -> dict[str, Any]:
-        from src.models import Channel
-
         identifiers = [str(item).strip() for item in payload.get("identifiers", []) if str(item).strip()]
         existing = await self._db.get_channels()
         existing_ids = {channel.channel_id for channel in existing}
         added = 0
         skipped = 0
         failed = 0
+        stats_channel_ids: list[int] = []
         details: list[dict[str, Any]] = []
         for ident in identifiers:
             try:
@@ -795,20 +797,28 @@ class TelegramCommandDispatcher:
                 skipped += 1
                 details.append({"identifier": ident, "status": "skipped"})
                 continue
-            await self._db.add_channel(
-                Channel(
-                    channel_id=info["channel_id"],
-                    title=info["title"],
-                    username=info["username"],
-                    channel_type=info.get("channel_type"),
-                    is_active=not info.get("deactivate", False),
-                    created_at=info.get("created_at"),
-                )
+            meta = await fetch_channel_meta(
+                self._pool, int(info["channel_id"]), info.get("channel_type")
             )
+            channel = channel_from_resolved_info(info, meta)
+            await self._db.add_channel(channel)
             existing_ids.add(info["channel_id"])
+            if channel.is_active:
+                stats_channel_ids.append(channel.channel_id)
             added += 1
             details.append({"identifier": ident, "status": "added"})
-        return {"added": added, "skipped": skipped, "failed": failed, "details": details}
+        stats_task_id = await enqueue_stats_for_new_channels(
+            self._db.create_stats_task,
+            stats_channel_ids,
+            context="channels.import_batch",
+        )
+        return {
+            "added": added,
+            "skipped": skipped,
+            "failed": failed,
+            "details": details,
+            "stats_task_id": stats_task_id,
+        }
 
     async def _handle_dialogs_download_media(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])

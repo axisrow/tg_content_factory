@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta, timezone
 
@@ -216,6 +217,32 @@ class Collector:
     @property
     def delay_between_channels_sec(self) -> int:
         return self._config.delay_between_channels_sec
+
+    def stats_worker_count(self) -> int:
+        configured = max(1, int(getattr(self._config, "stats_worker_count", 3) or 1))
+        connected = len(getattr(self._pool, "clients", {}) or {})
+        if connected <= 0:
+            return configured
+        return max(1, min(configured, connected))
+
+    async def available_stats_worker_count(self) -> int:
+        configured = max(1, int(getattr(self._config, "stats_worker_count", 3) or 1))
+        counter = getattr(self._pool, "available_stats_client_count", None)
+        if callable(counter):
+            try:
+                count = counter()
+                if asyncio.iscoroutine(count):
+                    count = await count
+                available = int(count)
+                if available > 0:
+                    return max(1, min(configured, available))
+                return 1
+            except Exception:
+                logger.debug("Failed to read available stats client count", exc_info=True)
+        return self.stats_worker_count()
+
+    def set_stats_all_running(self, running: bool) -> None:
+        self._stats_all_running = running
 
     async def get_stats_availability(self):
         return await self.get_collection_availability()
@@ -1353,6 +1380,9 @@ class Collector:
             finally:
                 self._stats_running = False
 
+    async def collect_channel_stats_unlocked(self, channel: Channel) -> ChannelStats | None:
+        return await self._collect_channel_stats(channel)
+
     async def _collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
         while True:
             result = await self._pool.get_available_client()
@@ -1517,30 +1547,55 @@ class Collector:
             try:
                 channels = await self._db.get_channels(active_only=True, include_filtered=False)
                 stats = {"channels": 0, "errors": 0}
-                for idx, channel in enumerate(channels):
-                    while True:
-                        try:
-                            async with self._stats_lock:
-                                await self._collect_channel_stats(channel)
-                            stats["channels"] += 1
-                            break
-                        except AllStatsClientsFloodedError as e:
-                            logger.warning(
-                                "All clients are flood-waited for stats. " "Waiting %ds until %s",
-                                e.retry_after_sec,
-                                e.next_available_at.isoformat(),
-                            )
-                            await asyncio.sleep(e.retry_after_sec)
-                        except NoActiveStatsClientsError:
-                            logger.error("No active connected clients for stats collection")
-                            stats["errors"] += len(channels) - idx
-                            return stats
-                        except Exception as e:
-                            logger.error("Stats error for %s: %s", channel.channel_id, e)
-                            stats["errors"] += 1
-                            break
-                    if idx < len(channels) - 1:
-                        await asyncio.sleep(self._config.delay_between_channels_sec)
+                if not channels:
+                    return stats
+
+                queue = deque(channels)
+                state_lock = asyncio.Lock()
+
+                async def _worker() -> None:
+                    while not self._cancel_event.is_set():
+                        async with state_lock:
+                            if not queue:
+                                return
+                            channel = queue.popleft()
+                        while True:
+                            try:
+                                result = await self._collect_channel_stats(channel)
+                                async with state_lock:
+                                    if result is None:
+                                        stats["errors"] += 1
+                                    else:
+                                        stats["channels"] += 1
+                                break
+                            except AllStatsClientsFloodedError as e:
+                                logger.warning(
+                                    "All clients are flood-waited for stats. Waiting %ds until %s",
+                                    e.retry_after_sec,
+                                    e.next_available_at.isoformat(),
+                                )
+                                await asyncio.sleep(e.retry_after_sec)
+                            except NoActiveStatsClientsError:
+                                logger.error("No active connected clients for stats collection")
+                                async with state_lock:
+                                    stats["errors"] += 1 + len(queue)
+                                    queue.clear()
+                                return
+                            except Exception as e:
+                                logger.error("Stats error for %s: %s", channel.channel_id, e)
+                                async with state_lock:
+                                    stats["errors"] += 1
+                                break
+                        async with state_lock:
+                            has_more = bool(queue)
+                        if has_more:
+                            await asyncio.sleep(self._config.delay_between_channels_sec)
+
+                workers = [
+                    asyncio.create_task(_worker())
+                    for _ in range(min(await self.available_stats_worker_count(), len(channels)))
+                ]
+                await asyncio.gather(*workers)
                 return stats
             finally:
                 self._stats_all_running = False
