@@ -143,17 +143,30 @@ async def test_chat_streaming_idle_timeout_cancels_with_bounded_wait(client, db,
     mock_mgr = client._transport_app.state.agent_manager
     mock_mgr.cancel_stream = AsyncMock(return_value=True)
     monkeypatch.setattr(handlers, "_SSE_IDLE_TIMEOUT", 0.01)
+    cleanup_started = asyncio.Event()
+    cleanup_release = asyncio.Event()
 
     async def _hung_stream(*a, **kw):
-        await asyncio.sleep(1)
-        yield 'data: {"done": true, "full_text": "late"}\n\n'
+        try:
+            await asyncio.Event().wait()
+            yield 'data: {"done": true, "full_text": "late"}\n\n'
+        finally:
+            cleanup_started.set()
+            await cleanup_release.wait()
 
     mock_mgr.chat_stream = _hung_stream
 
-    resp = await client.post(
-        f"/agent/threads/{thread_id}/chat",
-        json={"message": "hello"},
-    )
+    try:
+        resp = await asyncio.wait_for(
+            client.post(
+                f"/agent/threads/{thread_id}/chat",
+                json={"message": "hello"},
+            ),
+            timeout=0.2,
+        )
+        await asyncio.wait_for(cleanup_started.wait(), timeout=0.2)
+    finally:
+        cleanup_release.set()
 
     assert resp.status_code == 200
     assert "Agent response timed out" in resp.text
