@@ -62,7 +62,7 @@ def test_proc_agent_chat_oneshot(run_cli, assert_cli_ok, cli_real_cli_env):
             for tid in new_ids:
                 try:
                     cleanup = cli_run_direct(
-                        cli_real_cli_env, "agent", "thread-delete", "--thread-id", tid
+                        cli_real_cli_env, "agent", "thread-delete", tid
                     )
                 except subprocess.TimeoutExpired:
                     leak_msg = f"agent thread {tid} leaked: thread-delete timed out"
