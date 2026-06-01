@@ -14,9 +14,6 @@ from src.agent.tools._photo_loader_runtime import (
 from src.agent.tools._registry import (
     _text_response,
     require_confirmation,
-    require_phone_permission,
-    require_pool,
-    resolve_phone,
 )
 from src.agent.tools.photo_loader_schemas import (
     CANCEL_PHOTO_ITEM_SCHEMA,
@@ -34,7 +31,7 @@ from src.services import photo_task_service as photo_task_module
 from src.utils.datetime import parse_required_schedule_datetime
 
 
-def register_send_tools(db: Any, client_pool: Any) -> list[Any]:
+def register_send_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
     tools: list[Any] = []
 
     @tool(
@@ -46,13 +43,13 @@ def register_send_tools(db: Any, client_pool: Any) -> list[Any]:
         SEND_PHOTOS_NOW_SCHEMA,
     )
     async def send_photos_now(args):
-        pool_gate = require_pool(client_pool, "Отправка фото")
+        pool_gate = ctx.require_pool("Отправка фото")
         if pool_gate:
             return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "send_photos_now")
+        perm_gate = await ctx.require_phone_permission(phone, "send_photos_now")
         if perm_gate:
             return perm_gate
         gate = require_confirmation("отправит фото в Telegram-диалог", args)
@@ -89,13 +86,13 @@ def register_send_tools(db: Any, client_pool: Any) -> list[Any]:
         SCHEDULE_PHOTOS_SCHEMA,
     )
     async def schedule_photos(args):
-        pool_gate = require_pool(client_pool, "Планирование фото")
+        pool_gate = ctx.require_pool("Планирование фото")
         if pool_gate:
             return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "schedule_photos")
+        perm_gate = await ctx.require_phone_permission(phone, "schedule_photos")
         if perm_gate:
             return perm_gate
         gate = require_confirmation("запланирует отправку фото", args)
@@ -150,7 +147,7 @@ def register_send_tools(db: Any, client_pool: Any) -> list[Any]:
     return tools
 
 
-def register_batch_write_tools(db: Any, client_pool: Any) -> list[Any]:
+def register_batch_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
     tools: list[Any] = []
 
     @tool(
@@ -161,13 +158,13 @@ def register_batch_write_tools(db: Any, client_pool: Any) -> list[Any]:
         CREATE_PHOTO_BATCH_SCHEMA,
     )
     async def create_photo_batch(args):
-        pool_gate = require_pool(client_pool, "Создание батча фото")
+        pool_gate = ctx.require_pool("Создание батча фото")
         if pool_gate:
             return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "create_photo_batch")
+        perm_gate = await ctx.require_phone_permission(phone, "create_photo_batch")
         if perm_gate:
             return perm_gate
         target = args.get("target", "")
@@ -202,7 +199,7 @@ def register_batch_write_tools(db: Any, client_pool: Any) -> list[Any]:
         RUN_PHOTO_DUE_SCHEMA,
     )
     async def run_photo_due(args):
-        pool_gate = require_pool(client_pool, "Обработка фото")
+        pool_gate = ctx.require_pool("Обработка фото")
         if pool_gate:
             return pool_gate
         gate = require_confirmation("отправит все запланированные фото в Telegram", args)
@@ -221,7 +218,7 @@ def register_batch_write_tools(db: Any, client_pool: Any) -> list[Any]:
     return tools
 
 
-def register_auto_write_tools(db: Any, client_pool: Any) -> list[Any]:
+def register_auto_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
     tools: list[Any] = []
 
     @tool(
@@ -276,13 +273,13 @@ def register_auto_write_tools(db: Any, client_pool: Any) -> list[Any]:
         CREATE_AUTO_UPLOAD_SCHEMA,
     )
     async def create_auto_upload(args):
-        pool_gate = require_pool(client_pool, "Создание автозагрузки")
+        pool_gate = ctx.require_pool("Создание автозагрузки")
         if pool_gate:
             return pool_gate
-        phone, err = await resolve_phone(db, args.get("phone", ""))
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
         if err:
             return err
-        perm_gate = await require_phone_permission(db, phone, "create_auto_upload")
+        perm_gate = await ctx.require_phone_permission(phone, "create_auto_upload")
         if perm_gate:
             return perm_gate
         folder_path = args.get("folder_path", "")
