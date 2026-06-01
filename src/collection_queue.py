@@ -53,21 +53,19 @@ class CollectionQueue:
         self._resume_gate = asyncio.Event()
         self._resume_gate.set()
 
-    async def enqueue(self, channel: Channel, force: bool = False, full: bool = True) -> int | None:
+    async def enqueue(self, channel: Channel, force: bool = False, full: bool = False) -> int | None:
         """Enqueue a channel for collection, atomically skipping duplicates.
 
         Returns the new task ID, or ``None`` if an active task already exists.
         """
-        payload = {}
+        payload = {"full": full}
         if force:
             payload["force"] = True
-        if not full:
-            payload["full"] = False
         task_id = await self._channels.create_collection_task_if_not_active(
             channel.channel_id,
             channel.title,
             channel_username=channel.username,
-            payload=payload or None,
+            payload=payload,
         )
         if task_id is None:
             return None
@@ -495,7 +493,7 @@ class CollectionQueue:
                 )
                 continue
             force = bool((task.payload or {}).get("force", False))
-            full = bool((task.payload or {}).get("full", True))
+            full = bool((task.payload or {}).get("full", False))
             if task.run_after is not None and task.run_after.timestamp() > time.time():
                 self._schedule_requeue_after_delay(
                     task_id=task.id,

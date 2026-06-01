@@ -47,6 +47,12 @@ async def test_enqueue_channel_by_pk_force_filtered():
     svc = CollectionService(channels, collector)
     result = await svc.enqueue_channel_by_pk(pk=1, force=True)
     assert result == "queued"
+    channels.create_collection_task_if_not_active.assert_awaited_once_with(
+        ch.channel_id,
+        ch.title,
+        channel_username=ch.username,
+        payload={"full": False, "force": True},
+    )
 
 
 @pytest.mark.anyio
@@ -60,6 +66,31 @@ async def test_enqueue_channel_by_pk_success():
     svc = CollectionService(channels, collector)
     result = await svc.enqueue_channel_by_pk(pk=1)
     assert result == "queued"
+    channels.create_collection_task_if_not_active.assert_awaited_once_with(
+        ch.channel_id,
+        ch.title,
+        channel_username=ch.username,
+        payload={"full": False},
+    )
+
+
+@pytest.mark.anyio
+async def test_enqueue_channel_by_pk_explicit_full():
+    ch = _make_channel()
+    channels = MagicMock()
+    channels.get_by_pk = AsyncMock(return_value=ch)
+    channels.create_collection_task_if_not_active = AsyncMock(return_value=42)
+    collector = MagicMock()
+
+    svc = CollectionService(channels, collector)
+    result = await svc.enqueue_channel_by_pk(pk=1, force=True, full=True)
+    assert result == "queued"
+    channels.create_collection_task_if_not_active.assert_awaited_once_with(
+        ch.channel_id,
+        ch.title,
+        channel_username=ch.username,
+        payload={"full": True, "force": True},
+    )
 
 
 @pytest.mark.anyio
@@ -132,7 +163,7 @@ async def test_enqueue_with_queue():
     svc = CollectionService(channels, collector, collection_queue=queue)
     result = await svc.enqueue_channel_by_pk(pk=1)
     assert result == "queued"
-    queue.enqueue.assert_called_once()
+    queue.enqueue.assert_awaited_once_with(ch, force=False, full=False)
 
 
 @pytest.mark.anyio

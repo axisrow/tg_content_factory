@@ -31,7 +31,11 @@ import logging
 
 from src.config import AppConfig
 from src.database.repositories.accounts import AccountSessionDecryptError
-from src.runtime.worker import _publish_snapshots, _publish_worker_down_snapshot
+from src.runtime.worker import (
+    _current_task_is_cancelling,
+    _publish_snapshots,
+    _publish_worker_down_snapshot,
+)
 from src.web.bootstrap import build_worker_container, start_container, stop_container
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
@@ -101,9 +105,16 @@ class EmbeddedWorker:
             return
         self._stop_event.set()
         try:
-            await asyncio.wait_for(self._task, timeout=timeout)
+            await asyncio.wait_for(asyncio.shield(self._task), timeout=timeout)
         except asyncio.TimeoutError:
             logger.warning("[embedded-worker] did not stop within %.1fs; cancelling", timeout)
+            self._task.cancel()
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):
+                pass
+        except asyncio.CancelledError:
+            logger.warning("[embedded-worker] stop was cancelled; cancelling worker task")
             self._task.cancel()
             try:
                 await self._task
@@ -150,8 +161,15 @@ class EmbeddedWorker:
         try:
             while not self._stop_event.is_set():
                 try:
-                    await _publish_snapshots(self._container)
+                    await _publish_snapshots(self._container, stop_event=self._stop_event)
                     self._ready_event.set()
+                except asyncio.CancelledError:
+                    if _current_task_is_cancelling():
+                        raise
+                    if self._stop_event.is_set():
+                        logger.info("[embedded-worker] stopping during snapshot publish")
+                        break
+                    logger.warning("[embedded-worker] snapshot publish was cancelled; continuing")
                 except Exception:
                     # Snapshot publishing must never crash the loop — the worker
                     # is still processing queued tasks even if snapshots fail.
@@ -162,6 +180,8 @@ class EmbeddedWorker:
                     )
                 except asyncio.TimeoutError:
                     continue
+        except asyncio.CancelledError:
+            logger.info("[embedded-worker] cancelled")
         finally:
             logger.info("[embedded-worker] stopping")
             try:

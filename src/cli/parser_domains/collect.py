@@ -9,7 +9,12 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         "--channel-id",
         type=int,
         default=None,
-        help="Collect single channel by channel_id (full mode)",
+        help="Collect single channel by channel_id (incremental by default)",
+    )
+    collect_parser.add_argument(
+        "--full",
+        action="store_true",
+        help="For --channel-id, explicitly backfill the full channel history",
     )
     collect_sub = collect_parser.add_subparsers(dest="collect_action")
     collect_sample = collect_sub.add_parser(
