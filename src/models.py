@@ -165,6 +165,7 @@ class StatsAllTaskPayload(BaseModel):
     next_index: int = 0
     channels_ok: int = 0
     channels_err: int = 0
+    remaining_channel_ids: list[int] | None = None
 
 
 class SqStatsTaskPayload(BaseModel):

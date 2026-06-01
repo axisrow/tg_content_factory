@@ -7,6 +7,13 @@ from typing import TYPE_CHECKING
 from src.database import Database
 from src.database.bundles import ChannelBundle
 from src.models import Channel
+from src.services.channel_onboarding import (
+    channel_from_resolved_info,
+    channel_with_meta,
+    enqueue_stats_for_new_channels,
+    fetch_channel_meta,
+    get_existing_channel,
+)
 from src.telegram.client_pool import ClientPool
 
 if TYPE_CHECKING:
@@ -40,21 +47,16 @@ class ChannelService:
         info = await self._pool.resolve_channel(identifier.strip())
         if not info:
             return False
-        meta = await self._pool.fetch_channel_meta(
-            info["channel_id"], info.get("channel_type")
-        )
-        channel = Channel(
-            channel_id=info["channel_id"],
-            title=info["title"],
-            username=info["username"],
-            channel_type=info.get("channel_type"),
-            is_active=not info.get("deactivate", False),
-            about=meta.get("about") if meta else None,
-            linked_chat_id=meta.get("linked_chat_id") if meta else None,
-            has_comments=meta.get("has_comments", False) if meta else False,
-            created_at=info.get("created_at"),
-        )
+        existing = await get_existing_channel(self._channels, int(info["channel_id"]))
+        meta = await fetch_channel_meta(self._pool, int(info["channel_id"]), info.get("channel_type"))
+        channel = channel_from_resolved_info(info, meta)
         await self._channels.add_channel(channel)
+        if existing is None and channel.is_active:
+            await enqueue_stats_for_new_channels(
+                self._channels.create_stats_task,
+                [channel.channel_id],
+                context="channel add",
+            )
         return True
 
     async def get_dialogs_with_added_flags(self) -> list[dict]:
@@ -78,20 +80,33 @@ class ChannelService:
         else:
             dialogs = await self._pool.get_dialogs()
         dialogs_map = {str(d["channel_id"]): d for d in dialogs}
+        stats_channel_ids: list[int] = []
         for cid in channel_ids:
             if cid not in dialogs_map:
                 continue
             dialog = dialogs_map[cid]
-            await self._channels.add_channel(
-                Channel(
-                    channel_id=dialog["channel_id"],
-                    title=dialog["title"],
-                    username=dialog["username"],
-                    channel_type=dialog.get("channel_type"),
-                    is_active=not dialog.get("deactivate", False),
-                    created_at=dialog.get("created_at"),
-                )
+            channel_id = int(dialog["channel_id"])
+            existing = await get_existing_channel(self._channels, channel_id)
+            meta = await fetch_channel_meta(
+                self._pool, channel_id, dialog.get("channel_type")
             )
+            channel = Channel(
+                channel_id=channel_id,
+                title=dialog["title"],
+                username=dialog["username"],
+                channel_type=dialog.get("channel_type"),
+                is_active=not dialog.get("deactivate", False),
+                created_at=dialog.get("created_at"),
+            )
+            channel = channel_with_meta(channel, meta)
+            await self._channels.add_channel(channel)
+            if existing is None and channel.is_active:
+                stats_channel_ids.append(channel.channel_id)
+        await enqueue_stats_for_new_channels(
+            self._channels.create_stats_task,
+            stats_channel_ids,
+            context="bulk dialog add",
+        )
 
     async def get_my_dialogs(self, phone: str, refresh: bool = False) -> list[dict]:
         """Get all dialogs for a specific account, enriched with already_added flag."""

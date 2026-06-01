@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -207,6 +208,7 @@ async def test_handle_stats_all_stops_after_cancelled_result(
 
     mock_collector.collect_channel_stats.assert_awaited_once()
     mock_tasks_repo.persist_stats_progress.assert_not_called()
+    mock_tasks_repo.reschedule_stats_task.assert_not_called()
     mock_tasks_repo.update_collection_task.assert_not_called()
 
 
@@ -320,6 +322,127 @@ async def test_handle_stats_all_processes_batch(
 
     # Should process all 3 channels, no continuation
     assert mock_collector.collect_channel_stats.call_count == 3
+
+
+@pytest.mark.anyio
+async def test_handle_stats_all_respects_worker_count(
+    mock_collector, mock_channel_bundle, mock_tasks_repo
+):
+    """_handle_stats_all processes stats with bounded concurrency."""
+    active = 0
+    max_active = 0
+    mock_collector.delay_between_channels_sec = 0
+
+    async def collect(_channel):
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return MagicMock(subscriber_count=100)
+
+    mock_collector.collect_channel_stats = AsyncMock(side_effect=collect)
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.STATS_ALL,
+        status=CollectionTaskStatus.RUNNING,
+        payload=StatsAllTaskPayload(channel_ids=[100, 101, 102, 103]),
+    )
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+        config=SimpleNamespace(scheduler=SimpleNamespace(stats_worker_count=2)),
+    )
+
+    await dispatcher._handle_stats_all(task)
+
+    assert max_active == 2
+
+
+@pytest.mark.anyio
+async def test_handle_stats_all_uses_available_stats_worker_count(
+    mock_channel_bundle, mock_tasks_repo
+):
+    """Stats-all concurrency follows non-flooded available stats account count."""
+    active = 0
+    max_active = 0
+
+    class Collector:
+        is_running = False
+        delay_between_channels_sec = 0
+
+        async def available_stats_worker_count(self):
+            return 1
+
+        async def collect_channel_stats(self, _channel):
+            nonlocal active, max_active
+            active += 1
+            max_active = max(max_active, active)
+            await asyncio.sleep(0.01)
+            active -= 1
+            return MagicMock(subscriber_count=100)
+
+        async def get_stats_availability(self):
+            return MagicMock(state="available", next_available_at_utc=None)
+
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.STATS_ALL,
+        status=CollectionTaskStatus.RUNNING,
+        payload=StatsAllTaskPayload(channel_ids=[100, 101, 102]),
+    )
+
+    dispatcher = UnifiedDispatcher(
+        Collector(),
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+        config=SimpleNamespace(scheduler=SimpleNamespace(stats_worker_count=3)),
+    )
+
+    await dispatcher._handle_stats_all(task)
+
+    assert max_active == 1
+
+
+@pytest.mark.anyio
+async def test_handle_stats_all_marks_collector_stats_running(
+    mock_collector, mock_channel_bundle, mock_tasks_repo
+):
+    """Stats-all keeps collector status true while unlocked per-channel stats run."""
+    seen_running: list[bool] = []
+    mock_collector.delay_between_channels_sec = 0
+    mock_collector._stats_all_running = False
+    mock_collector.set_stats_all_running.side_effect = (
+        lambda running: setattr(mock_collector, "_stats_all_running", running)
+    )
+
+    async def collect(_channel):
+        seen_running.append(mock_collector._stats_all_running)
+        return MagicMock(subscriber_count=100)
+
+    mock_collector.collect_channel_stats = AsyncMock(side_effect=collect)
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.STATS_ALL,
+        status=CollectionTaskStatus.RUNNING,
+        payload=StatsAllTaskPayload(channel_ids=[100]),
+    )
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+    )
+
+    await dispatcher._handle_stats_all(task)
+
+    assert seen_running == [True]
+    assert mock_collector._stats_all_running is False
 
 
 @pytest.mark.anyio

@@ -1473,6 +1473,33 @@ async def test_is_running_initially_false():
 
 
 @pytest.mark.anyio
+async def test_set_stats_all_running_updates_running_properties():
+    pool = make_mock_pool()
+    collector = Collector(pool, MagicMock(), SchedulerConfig())
+
+    collector.set_stats_all_running(True)
+
+    assert collector.is_running is True
+    assert collector.is_stats_running is True
+
+    collector.set_stats_all_running(False)
+
+    assert collector.is_running is False
+    assert collector.is_stats_running is False
+
+
+@pytest.mark.anyio
+async def test_available_stats_worker_count_uses_available_stats_clients():
+    pool = make_mock_pool(
+        clients={"+7001": object(), "+7002": object(), "+7003": object()},
+        available_stats_client_count=AsyncMock(return_value=1),
+    )
+    collector = Collector(pool, MagicMock(), SchedulerConfig(stats_worker_count=3))
+
+    assert await collector.available_stats_worker_count() == 1
+
+
+@pytest.mark.anyio
 async def test_delay_between_channels_sec():
     pool = make_mock_pool()
     config = SchedulerConfig(delay_between_channels_sec=5)

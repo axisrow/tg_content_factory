@@ -25,12 +25,18 @@ class SearchEngine:
         *,
         config=None,
     ):
+        create_stats_task = None
         if isinstance(search, Database):
+            create_stats_task = search.create_stats_task
             search = SearchBundle.from_database(search)
+        fetch_channel_meta = getattr(pool, "fetch_channel_meta", None) if pool else None
         self._search_bundle = search
         embedding_service = EmbeddingService(search, config=config)
         self._local = LocalSearch(search, embedding_service=embedding_service)
-        self._telegram = TelegramSearch(pool, SearchPersistence(search))
+        self._telegram = TelegramSearch(
+            pool,
+            SearchPersistence(search, create_stats_task, fetch_channel_meta),
+        )
 
     @property
     def semantic_available(self) -> bool:
