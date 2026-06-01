@@ -154,6 +154,17 @@ async def _publish_snapshots(container) -> None:
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(snapshot_type="scheduler_jobs", payload={"jobs": jobs})
     )
+    queue = getattr(container, "collection_queue", None)
+    await container.db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="collection_queue_status",
+            payload={
+                "paused": bool(getattr(queue, "is_paused", False)) if queue is not None else False,
+                "current_task_id": getattr(queue, "_current_task_id", None) if queue is not None else None,
+                "timestamp": now.isoformat(),
+            },
+        )
+    )
     target_status = await container.notification_target_service.describe_target()
     bot_payload = {"configured": False}
     if target_status.state == "available":
