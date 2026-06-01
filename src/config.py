@@ -28,6 +28,9 @@ class SchedulerConfig(BaseModel):
     delay_between_requests_sec: int = 1
     max_flood_wait_sec: int = 300
     stats_worker_count: int = 3
+    stats_all_max_channels_per_run: int = 10
+    stats_all_cooldown_sec: int = 600
+    stats_all_worker_count: int = 1
 
 
 class NotificationsConfig(BaseModel):

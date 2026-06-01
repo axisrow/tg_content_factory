@@ -12,6 +12,9 @@ scheduler:
   delay_between_channels_sec: 2
   delay_between_requests_sec: 1
   max_flood_wait_sec: 300
+  stats_all_max_channels_per_run: 10
+  stats_all_cooldown_sec: 600
+  stats_all_worker_count: 1
 
 notifications:
   admin_chat_id: null

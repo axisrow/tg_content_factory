@@ -231,6 +231,13 @@ class Collector:
             return configured
         return max(1, min(configured, connected))
 
+    def stats_all_worker_count(self) -> int:
+        configured = max(1, int(getattr(self._config, "stats_all_worker_count", 1) or 1))
+        connected = len(getattr(self._pool, "clients", {}) or {})
+        if connected <= 0:
+            return configured
+        return max(1, min(configured, connected))
+
     async def available_stats_worker_count(self) -> int:
         configured = max(1, int(getattr(self._config, "stats_worker_count", 3) or 1))
         counter = getattr(self._pool, "available_stats_client_count", None)
@@ -246,6 +253,22 @@ class Collector:
             except Exception:
                 logger.debug("Failed to read available stats client count", exc_info=True)
         return self.stats_worker_count()
+
+    async def available_stats_all_worker_count(self) -> int:
+        configured = max(1, int(getattr(self._config, "stats_all_worker_count", 1) or 1))
+        counter = getattr(self._pool, "available_stats_client_count", None)
+        if callable(counter):
+            try:
+                count = counter()
+                if asyncio.iscoroutine(count):
+                    count = await count
+                available = int(count)
+                if available > 0:
+                    return max(1, min(configured, available))
+                return 1
+            except Exception:
+                logger.debug("Failed to read available stats-all client count", exc_info=True)
+        return self.stats_all_worker_count()
 
     def set_stats_all_running(self, running: bool) -> None:
         self._stats_all_running = running
@@ -1571,61 +1594,115 @@ class Collector:
             finally:
                 await self._pool.release_client(phone)
 
-    async def collect_all_stats(self) -> dict:
+    def _stats_all_channel_limit(self, max_channels: int | None = None) -> int:
+        configured = max_channels
+        if configured is None:
+            configured = int(getattr(self._config, "stats_all_max_channels_per_run", 10) or 10)
+        return max(1, int(configured))
+
+    async def collect_all_stats(self, *, max_channels: int | None = None) -> dict:
         async with self._stats_all_lock:
             self._stats_all_running = True
             try:
                 channels = await self._db.get_channels(active_only=True, include_filtered=False)
-                stats = {"channels": 0, "errors": 0}
+                channel_limit = self._stats_all_channel_limit(max_channels)
+                total_channels = len(channels)
+                selected_channels = channels[:channel_limit]
+                initial_remaining = max(0, total_channels - len(selected_channels))
+                stats = {
+                    "channels": 0,
+                    "errors": 0,
+                    "remaining": initial_remaining,
+                    "limited": initial_remaining > 0,
+                    "total": total_channels,
+                    "max_channels": channel_limit,
+                }
                 if not channels:
                     return stats
 
-                queue = deque(channels)
+                queue = deque(selected_channels)
+                in_flight: list[Channel] = []
+                deferred_front: deque[Channel] = deque()
                 state_lock = asyncio.Lock()
+                stop_workers = False
+
+                def _remaining_count_unlocked() -> int:
+                    seen: set[int] = set()
+                    remaining = 0
+                    for channel in [*deferred_front, *in_flight, *queue]:
+                        if channel.channel_id in seen:
+                            continue
+                        seen.add(channel.channel_id)
+                        remaining += 1
+                    return remaining
+
+                async def _defer_batch(channel: Channel, exc: AllStatsClientsFloodedError) -> None:
+                    nonlocal stop_workers
+                    async with state_lock:
+                        stop_workers = True
+                        if channel in in_flight:
+                            in_flight.remove(channel)
+                        deferred_front.appendleft(channel)
+                        stats["flood_wait_until"] = exc.next_available_at.isoformat()
+                        stats["flood_wait_retry_after_sec"] = exc.retry_after_sec
+                        stats["limited"] = True
 
                 async def _worker() -> None:
+                    nonlocal stop_workers
                     while not self._cancel_event.is_set():
                         async with state_lock:
-                            if not queue:
+                            if stop_workers or not queue:
                                 return
                             channel = queue.popleft()
-                        while True:
-                            try:
-                                result = await self._collect_channel_stats(channel)
-                                async with state_lock:
-                                    if result is None:
-                                        stats["errors"] += 1
-                                    else:
-                                        stats["channels"] += 1
-                                break
-                            except AllStatsClientsFloodedError as e:
-                                logger.warning(
-                                    "All clients are flood-waited for stats. Waiting %ds until %s",
-                                    e.retry_after_sec,
-                                    e.next_available_at.isoformat(),
-                                )
-                                await asyncio.sleep(e.retry_after_sec)
-                            except NoActiveStatsClientsError:
-                                logger.error("No active connected clients for stats collection")
-                                async with state_lock:
-                                    stats["errors"] += 1 + len(queue)
-                                    queue.clear()
-                                return
-                            except Exception as e:
-                                logger.error("Stats error for %s: %s", channel.channel_id, e)
-                                async with state_lock:
+                            in_flight.append(channel)
+                        try:
+                            result = await self._collect_channel_stats(channel)
+                            async with state_lock:
+                                if channel in in_flight:
+                                    in_flight.remove(channel)
+                                if result is None:
                                     stats["errors"] += 1
-                                break
+                                else:
+                                    stats["channels"] += 1
+                        except AllStatsClientsFloodedError as e:
+                            logger.warning(
+                                "All clients are flood-waited for stats. Deferring %d queued channels until %s",
+                                1 + len(queue),
+                                e.next_available_at.isoformat(),
+                            )
+                            await _defer_batch(channel, e)
+                            return
+                        except NoActiveStatsClientsError:
+                            logger.error("No active connected clients for stats collection")
+                            async with state_lock:
+                                if channel in in_flight:
+                                    in_flight.remove(channel)
+                                stats["errors"] += 1 + len(queue)
+                                queue.clear()
+                                stop_workers = True
+                            return
+                        except Exception as e:
+                            logger.error("Stats error for %s: %s", channel.channel_id, e)
+                            async with state_lock:
+                                if channel in in_flight:
+                                    in_flight.remove(channel)
+                                stats["errors"] += 1
                         async with state_lock:
-                            has_more = bool(queue)
+                            has_more = bool(queue) and not stop_workers
                         if has_more:
                             await asyncio.sleep(self._config.delay_between_channels_sec)
 
                 workers = [
                     asyncio.create_task(_worker())
-                    for _ in range(min(await self.available_stats_worker_count(), len(channels)))
+                    for _ in range(
+                        min(await self.available_stats_all_worker_count(), len(selected_channels))
+                    )
                 ]
-                await asyncio.gather(*workers)
+                if workers:
+                    await asyncio.gather(*workers)
+                async with state_lock:
+                    stats["remaining"] = initial_remaining + _remaining_count_unlocked()
+                    stats["limited"] = bool(stats["remaining"])
                 return stats
             finally:
                 self._stats_all_running = False

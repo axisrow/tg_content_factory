@@ -354,7 +354,7 @@ async def test_handle_stats_all_respects_worker_count(
         mock_channel_bundle,
         mock_tasks_repo,
         poll_interval_sec=0.01,
-        config=SimpleNamespace(scheduler=SimpleNamespace(stats_worker_count=2)),
+        config=SimpleNamespace(scheduler=SimpleNamespace(stats_all_worker_count=2)),
     )
 
     await dispatcher._handle_stats_all(task)
@@ -363,7 +363,7 @@ async def test_handle_stats_all_respects_worker_count(
 
 
 @pytest.mark.anyio
-async def test_handle_stats_all_uses_available_stats_worker_count(
+async def test_handle_stats_all_uses_available_stats_all_worker_count(
     mock_channel_bundle, mock_tasks_repo
 ):
     """Stats-all concurrency follows non-flooded available stats account count."""
@@ -374,7 +374,7 @@ async def test_handle_stats_all_uses_available_stats_worker_count(
         is_running = False
         delay_between_channels_sec = 0
 
-        async def available_stats_worker_count(self):
+        async def available_stats_all_worker_count(self):
             return 1
 
         async def collect_channel_stats(self, _channel):
@@ -400,12 +400,56 @@ async def test_handle_stats_all_uses_available_stats_worker_count(
         mock_channel_bundle,
         mock_tasks_repo,
         poll_interval_sec=0.01,
-        config=SimpleNamespace(scheduler=SimpleNamespace(stats_worker_count=3)),
+        config=SimpleNamespace(scheduler=SimpleNamespace(stats_all_worker_count=3)),
     )
 
     await dispatcher._handle_stats_all(task)
 
     assert max_active == 1
+
+
+@pytest.mark.anyio
+async def test_handle_stats_all_reschedules_after_batch_limit(
+    mock_collector, mock_channel_bundle, mock_tasks_repo
+):
+    """Stats-all processes only the configured batch and defers the rest."""
+    mock_collector.delay_between_channels_sec = 0
+    mock_collector.collect_channel_stats = AsyncMock(return_value=MagicMock(subscriber_count=100))
+    mock_tasks_repo.get_collection_task = AsyncMock(return_value=None)
+    task = CollectionTask(
+        id=1,
+        task_type=CollectionTaskType.STATS_ALL,
+        status=CollectionTaskStatus.RUNNING,
+        payload=StatsAllTaskPayload(channel_ids=[100, 101, 102]),
+    )
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+        config=SimpleNamespace(
+            scheduler=SimpleNamespace(
+                stats_all_max_channels_per_run=2,
+                stats_all_cooldown_sec=600,
+                stats_all_worker_count=1,
+            )
+        ),
+    )
+
+    before = datetime.now(timezone.utc)
+    await dispatcher._handle_stats_all(task)
+
+    assert mock_collector.collect_channel_stats.await_count == 2
+    mock_tasks_repo.reschedule_stats_task.assert_called_once()
+    args, kwargs = mock_tasks_repo.reschedule_stats_task.call_args
+    assert args[0] == 1
+    assert kwargs["payload"].next_index == 2
+    assert kwargs["payload"].channels_ok == 2
+    assert kwargs["payload"].remaining_channel_ids == [102]
+    assert kwargs["messages_collected"] == 2
+    assert 590 <= (kwargs["run_after"] - before).total_seconds() <= 610
+    mock_tasks_repo.update_collection_task.assert_not_called()
 
 
 @pytest.mark.anyio

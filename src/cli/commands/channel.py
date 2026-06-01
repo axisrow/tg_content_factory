@@ -245,7 +245,11 @@ def run(args: argparse.Namespace) -> None:
                 collector = Collector(pool, db, config.scheduler)
 
                 if args.all:
-                    result = await collector.collect_all_stats()
+                    max_channels = getattr(args, "max_channels", None)
+                    if max_channels is not None and max_channels <= 0:
+                        print("--max-channels must be a positive integer")
+                        return
+                    result = await collector.collect_all_stats(max_channels=max_channels)
                     print(f"Stats collected: {result}")
                 elif not args.identifier:
                     print("Specify a channel identifier or use --all")
