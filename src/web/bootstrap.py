@@ -107,6 +107,19 @@ async def _retry_telegram_pool_until_connected(container: AppContainer) -> None:
                 return
 
 
+def _log_task_exception(task: asyncio.Task) -> None:
+    """Done-callback that surfaces a fire-and-forget task's failure as a log line.
+
+    Without this, an exception in a background task is only reported by CPython
+    as a "Task exception was never retrieved" warning at GC time (#633 bug #31).
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("startup background task %s failed", task.get_name(), exc_info=exc)
+
+
 def _schedule_telegram_pool_retry(container: AppContainer) -> None:
     bg_tasks = getattr(container, "bg_tasks", None)
     if not isinstance(bg_tasks, set):
@@ -415,6 +428,7 @@ async def start_container(container: AppContainer) -> None:
             _warm_task = asyncio.create_task(
                 container.pool.warm_all_dialogs(), name="warm_all_dialogs_startup"
             )
+            _warm_task.add_done_callback(_log_task_exception)
             container.pool._warming_task = _warm_task
     logger.info("startup: telegram pool done (%.1fs)", time.monotonic() - t_start)
     if _is_dev:
