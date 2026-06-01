@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from datetime import date, datetime, timezone
 
 from src.models import (
@@ -47,10 +48,10 @@ class StatsTaskHandler:
         channel_ids = payload.channel_ids
         channels_ok = payload.channels_ok or 0
         channels_err = payload.channels_err or 0
-        remaining_ids = (
-            list(payload.remaining_channel_ids)
+        remaining_ids = deque(
+            payload.remaining_channel_ids
             if payload.remaining_channel_ids is not None
-            else list(channel_ids[payload.next_index:])
+            else channel_ids[payload.next_index:]
         )
         next_index = len(channel_ids) - len(remaining_ids)
 
@@ -91,7 +92,7 @@ class StatsTaskHandler:
                 next_index=len(channel_ids) - len(remaining_ids),
                 channels_ok=channels_ok,
                 channels_err=channels_err,
-                remaining_channel_ids=remaining_ids,
+                remaining_channel_ids=list(remaining_ids),
             )
             await ctx.tasks.reschedule_stats_task(
                 task.id,
@@ -107,7 +108,7 @@ class StatsTaskHandler:
         cancelled = False
         reschedule_at: datetime | None = None
         fail_error: str | None = None
-        deferred_front: list[int] = []
+        deferred_front: deque[int] = deque()
 
         type_collect_unlocked = getattr(type(ctx.collector), "collect_channel_stats_unlocked", None)
         collect_stats = (
@@ -142,7 +143,7 @@ class StatsTaskHandler:
                 stop_workers = True
                 if channel_id in in_flight:
                     in_flight.remove(channel_id)
-                deferred_front.insert(0, channel_id)
+                deferred_front.appendleft(channel_id)
                 if run_after is not None:
                     reschedule_at = run_after
                 if error is not None:
@@ -172,7 +173,7 @@ class StatsTaskHandler:
                 async with state_lock:
                     if stop_workers or not remaining_ids:
                         return
-                    channel_id = remaining_ids.pop(0)
+                    channel_id = remaining_ids.popleft()
                     in_flight.append(channel_id)
 
                 channel = await ctx.channel_bundle.get_by_channel_id(channel_id)
@@ -231,9 +232,13 @@ class StatsTaskHandler:
                 if has_more:
                     await asyncio.sleep(ctx.collector.delay_between_channels_sec)
 
-        worker_count = self._stats_worker_count(len(remaining_ids))
-        workers = [asyncio.create_task(_worker()) for _ in range(worker_count)]
-        await asyncio.gather(*workers)
+        self._set_stats_all_running(True)
+        try:
+            worker_count = await self._stats_worker_count(len(remaining_ids))
+            workers = [asyncio.create_task(_worker()) for _ in range(worker_count)]
+            await asyncio.gather(*workers)
+        finally:
+            self._set_stats_all_running(False)
 
         if cancelled:
             return
@@ -264,23 +269,38 @@ class StatsTaskHandler:
             messages_collected=channels_ok + channels_err,
         )
 
-    def _stats_worker_count(self, remaining_count: int) -> int:
+    def _set_stats_all_running(self, running: bool) -> None:
+        setter = getattr(self._context.collector, "set_stats_all_running", None)
+        if callable(setter):
+            setter(running)
+        elif hasattr(self._context.collector, "_stats_all_running"):
+            setattr(self._context.collector, "_stats_all_running", running)
+
+    async def _stats_worker_count(self, remaining_count: int) -> int:
         ctx = self._context
         configured = 3
         config = ctx.config
         scheduler_config = getattr(config, "scheduler", config)
         if scheduler_config is not None:
             configured = int(getattr(scheduler_config, "stats_worker_count", configured) or configured)
-        collector_counter = getattr(ctx.collector, "stats_worker_count", None)
-        type_counter = getattr(type(ctx.collector), "stats_worker_count", None)
+        collector_counter = getattr(ctx.collector, "available_stats_worker_count", None)
+        type_counter = getattr(type(ctx.collector), "available_stats_worker_count", None)
         if callable(collector_counter) and callable(type_counter):
             try:
-                configured = int(collector_counter())
+                counter_result = collector_counter()
+                if asyncio.iscoroutine(counter_result):
+                    counter_result = await counter_result
+                configured = int(counter_result)
             except Exception:
                 logger.debug("Failed to read collector stats worker count", exc_info=True)
-        connected_count = len(getattr(ctx.client_pool, "clients", {}) or {})
-        if connected_count > 0:
-            configured = min(configured, connected_count)
+        else:
+            collector_counter = getattr(ctx.collector, "stats_worker_count", None)
+            type_counter = getattr(type(ctx.collector), "stats_worker_count", None)
+            if callable(collector_counter) and callable(type_counter):
+                try:
+                    configured = int(collector_counter())
+                except Exception:
+                    logger.debug("Failed to read collector stats worker count", exc_info=True)
         return max(1, min(configured, max(1, remaining_count)))
 
     async def handle_sq_stats(self, task: CollectionTask) -> None:

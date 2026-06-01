@@ -62,6 +62,26 @@ class AccountLeasePool:
 
             return None
 
+    async def available_exclusive_count(self, connected_phones: set[str]) -> int:
+        async with self._lock:
+            now = datetime.now(timezone.utc)
+            accounts = await load_live_usable_accounts(self._db, active_only=True)
+            count = 0
+            for account in accounts:
+                flood_until = normalize_utc(account.flood_wait_until)
+                if flood_until is not None and flood_until <= now:
+                    await self._db.update_account_flood(account.phone, None)
+                    account.flood_wait_until = None
+                    flood_until = None
+                if account.phone not in connected_phones:
+                    continue
+                if account.phone in self._in_use:
+                    continue
+                if flood_until is not None and flood_until > now:
+                    continue
+                count += 1
+            return count
+
     async def acquire_by_phone(self, phone: str, connected_phones: set[str]) -> AccountLease | None:
         async with self._lock:
             account = await self._get_account(phone)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta, timezone
 
@@ -223,6 +224,25 @@ class Collector:
         if connected <= 0:
             return configured
         return max(1, min(configured, connected))
+
+    async def available_stats_worker_count(self) -> int:
+        configured = max(1, int(getattr(self._config, "stats_worker_count", 3) or 1))
+        counter = getattr(self._pool, "available_stats_client_count", None)
+        if callable(counter):
+            try:
+                count = counter()
+                if asyncio.iscoroutine(count):
+                    count = await count
+                available = int(count)
+                if available > 0:
+                    return max(1, min(configured, available))
+                return 1
+            except Exception:
+                logger.debug("Failed to read available stats client count", exc_info=True)
+        return self.stats_worker_count()
+
+    def set_stats_all_running(self, running: bool) -> None:
+        self._stats_all_running = running
 
     async def get_stats_availability(self):
         return await self.get_collection_availability()
@@ -1530,7 +1550,7 @@ class Collector:
                 if not channels:
                     return stats
 
-                queue = list(channels)
+                queue = deque(channels)
                 state_lock = asyncio.Lock()
 
                 async def _worker() -> None:
@@ -1538,7 +1558,7 @@ class Collector:
                         async with state_lock:
                             if not queue:
                                 return
-                            channel = queue.pop(0)
+                            channel = queue.popleft()
                         while True:
                             try:
                                 result = await self._collect_channel_stats(channel)
@@ -1573,7 +1593,7 @@ class Collector:
 
                 workers = [
                     asyncio.create_task(_worker())
-                    for _ in range(min(self.stats_worker_count(), len(channels)))
+                    for _ in range(min(await self.available_stats_worker_count(), len(channels)))
                 ]
                 await asyncio.gather(*workers)
                 return stats

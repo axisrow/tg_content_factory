@@ -60,6 +60,20 @@ async def test_acquire_available_returns_non_flooded_when_one_flooded(db):
 
 
 @pytest.mark.anyio
+async def test_available_exclusive_count_skips_flooded_disconnected_and_in_use(db):
+    phones = ["+70031", "+70032", "+70033", "+70034"]
+    for phone in phones:
+        await db.add_account(Account(phone=phone, session_string=phone, is_active=True))
+    await db.update_account_flood("+70032", datetime.now(timezone.utc) + timedelta(hours=1))
+
+    pool = AccountLeasePool(db, {"+70033"})
+
+    count = await pool.available_exclusive_count({"+70031", "+70032", "+70033"})
+
+    assert count == 1
+
+
+@pytest.mark.anyio
 async def test_is_flood_waited_returns_false_for_expired(db):
     """_is_flood_waited correctly ignores expired timestamps."""
     past = datetime.now(timezone.utc) - timedelta(seconds=1)

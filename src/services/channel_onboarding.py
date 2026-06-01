@@ -79,6 +79,8 @@ async def get_existing_channel(store: Any, channel_id: int) -> Channel | None:
             result = getter(channel_id)
             if inspect.isawaitable(result):
                 return await result
+            if result is None or isinstance(result, Channel):
+                return result
         except (AttributeError, TypeError):
             continue
     return None
