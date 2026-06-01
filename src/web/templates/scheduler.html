@@ -298,6 +298,11 @@
     <div class="card-header fw-semibold">Задачи</div>
     <div class="card-body p-0">
         <p class="px-3 pt-3"><small class="text-muted">Все задачи: сбор каналов, статистика, фото.</small></p>
+        {% if has_active_tasks %}
+        <div id="autoreload-paused" class="alert alert-warning mx-3" style="display:none">
+            Автообновление приостановлено после долгого ожидания. Обновите страницу вручную, чтобы продолжить.
+        </div>
+        {% endif %}
 
         <!-- Filter tabs -->
         <div class="px-3 pb-2">
@@ -440,9 +445,36 @@
 
 <script>
 {% if has_active_tasks %}
-setTimeout(function() {
-    window.location.reload();
-}, 5000);
+// Auto-refresh while tasks are active, but cap the number of automatic reloads
+// so a stuck/hung task can't make the page reload forever (#633 bug #24).
+(function() {
+    var MAX_AUTO_RELOADS = 60;  // ~5 min at 5s; then stop and let the user refresh
+    var COUNT_KEY = 'scheduler-autoreload-count';
+    var FLAG_KEY = 'scheduler-autoreloading';
+    var count = 0;
+    try {
+        if (sessionStorage.getItem(FLAG_KEY) === '1') {
+            // This load was triggered by our own auto-reload — count it.
+            count = parseInt(sessionStorage.getItem(COUNT_KEY) || '0', 10) + 1;
+            sessionStorage.removeItem(FLAG_KEY);
+        } else {
+            // Fresh navigation by the user — reset the counter.
+            count = 0;
+        }
+        sessionStorage.setItem(COUNT_KEY, String(count));
+    } catch (e) {
+        count = 0;  // sessionStorage unavailable — fall back to a single cycle
+    }
+    if (count >= MAX_AUTO_RELOADS) {
+        var note = document.getElementById('autoreload-paused');
+        if (note) { note.style.display = ''; }
+        return;
+    }
+    setTimeout(function() {
+        try { sessionStorage.setItem(FLAG_KEY, '1'); } catch (e) {}
+        window.location.reload();
+    }, 5000);
+})();
 {% endif %}
 
 function dryRunNotifications() {

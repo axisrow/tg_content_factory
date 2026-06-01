@@ -168,6 +168,22 @@ async def test_scheduler_page_shows_tasks(client):
 
 
 @pytest.mark.anyio
+async def test_scheduler_autoreload_is_capped(client):
+    """#633 bug #24: auto-reload while tasks are active must be bounded."""
+    db = client._transport.app.state.db
+    await db.create_collection_task(channel_id=-1001234567890, channel_title="Active")
+
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    text = resp.text
+    # Active tasks => the reload script is present, but bounded by a counter.
+    assert "window.location.reload" in text
+    assert "MAX_AUTO_RELOADS" in text
+    assert "scheduler-autoreload-count" in text
+    assert 'id="autoreload-paused"' in text
+
+
+@pytest.mark.anyio
 async def test_scheduler_page_shows_processed_message_label_for_pipeline_runs(client):
     db = client._transport.app.state.db
 
