@@ -11,6 +11,12 @@ from inspect import isawaitable
 from typing import Any
 
 from src.agent.runtime_context import AgentRuntimeContext
+from src.telegram.flood_wait import (
+    flood_wait_remaining_seconds,
+    is_blocking_flood_wait_until,
+    is_transient_flood_wait_until,
+    sleep_for_flood_wait_seconds,
+)
 from src.utils.datetime import try_parse_utc_datetime
 
 logger = logging.getLogger(__name__)
@@ -211,6 +217,12 @@ def is_flood_wait_active(account: object, now: datetime | None = None) -> bool:
     now = now or datetime.now(timezone.utc)
     flood_until = normalize_flood_wait_until(getattr(account, "flood_wait_until", None))
     return flood_until is not None and flood_until > now
+
+
+def is_blocking_flood_wait_active(account: object, now: datetime | None = None) -> bool:
+    """True when a flood wait is too long for inline tool-level waiting."""
+    now = now or datetime.now(timezone.utc)
+    return is_blocking_flood_wait_until(getattr(account, "flood_wait_until", None), now=now)
 
 
 def connected_phones_from_pool(client_pool: object | None) -> set[str]:
@@ -417,6 +429,76 @@ async def resolve_live_read_phone(
     pool_available = available_phones_from_pool(client_pool)
     connected = pool_available or connected_all
     trust_connected = _pool_reports_connections(client_pool)
+
+    async def _wait_for_transient_flood_once() -> bool:
+        connected_filter = connected if trust_connected or connected else active_phones
+        if not phone:
+            immediate = [
+                account
+                for account in accounts
+                if getattr(account, "is_active", True)
+                and account_session_status(account) == "ok"
+                and str(getattr(account, "phone", "")) in connected_filter
+                and not is_flood_wait_active(account, now)
+            ]
+            if immediate:
+                return False
+        candidates: list[tuple[int, str]] = []
+        for account in accounts:
+            account_phone = str(getattr(account, "phone", ""))
+            if not account_phone:
+                continue
+            if phone and account_phone != phone:
+                continue
+            if not getattr(account, "is_active", True):
+                continue
+            if account_session_status(account) != "ok":
+                continue
+            if account_phone not in connected_filter:
+                continue
+            flood_until = getattr(account, "flood_wait_until", None)
+            if not is_transient_flood_wait_until(flood_until, now=now):
+                continue
+            remaining = flood_wait_remaining_seconds(flood_until, now=now)
+            if remaining is not None and remaining > 0:
+                candidates.append((remaining, account_phone))
+        if phone:
+            wait = next((remaining for remaining, _ in candidates), None)
+        else:
+            blocking = [
+                account
+                for account in accounts
+                if getattr(account, "is_active", True)
+                and account_session_status(account) == "ok"
+                and str(getattr(account, "phone", "")) in connected_filter
+                and is_blocking_flood_wait_active(account, now)
+            ]
+            wait = min((remaining for remaining, _ in candidates), default=None)
+            if blocking:
+                wait = None
+        if wait is None:
+            return False
+        await sleep_for_flood_wait_seconds(
+            wait,
+            operation=f"agent_{tool_name}_transient_flood_wait",
+            phone=phone or None,
+            logger_=logger,
+        )
+        return True
+
+    active_phones = {str(getattr(account, "phone", "")) for account in accounts if str(getattr(account, "phone", ""))}
+    if await _wait_for_transient_flood_once():
+        now = datetime.now(timezone.utc)
+        accounts = await get_accounts_with_flood_cleanup(db, active_only=True, now=now)
+        connected_all = connected_phones_from_pool(client_pool)
+        pool_available = available_phones_from_pool(client_pool)
+        connected = pool_available or connected_all
+        active_phones = {
+            str(getattr(account, "phone", ""))
+            for account in accounts
+            if str(getattr(account, "phone", ""))
+        }
+
     available = available_live_read_phones(
         accounts,
         connected,
@@ -427,10 +509,9 @@ async def resolve_live_read_phone(
     flood_waited = {
         str(getattr(account, "phone", ""))
         for account in accounts
-        if is_flood_wait_active(account, now)
+        if is_blocking_flood_wait_active(account, now)
     }
     flood_waited |= flood_waited_phones_from_pool(client_pool)
-    active_phones = {str(getattr(account, "phone", "")) for account in accounts if str(getattr(account, "phone", ""))}
     connected_for_errors = connected_all if trust_connected else active_phones
 
     if phone:

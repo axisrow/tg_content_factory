@@ -207,6 +207,21 @@ async def test_dashboard_all_connected_flooded(route_client, base_app):
 
 
 @pytest.mark.anyio
+async def test_dashboard_ignores_transient_flood_wait(route_client, base_app):
+    """Short flood waits are handled inline and should not trigger collector attention."""
+    _app, db, _pool = base_app
+    future_time = datetime.now(tz=timezone.utc) + timedelta(seconds=30)
+    accounts = await db.get_accounts(active_only=False)
+    for acc in accounts:
+        await db.update_account_flood(acc.phone, future_time)
+
+    resp = await route_client.get("/dashboard/")
+    assert resp.status_code == 200
+    assert "Коллектор ограничен" not in resp.text
+    assert "flood-wait" not in resp.text
+
+
+@pytest.mark.anyio
 async def test_dashboard_flood_wait_naive_datetime(route_client, base_app):
     """Dashboard handles flood_wait_until with naive datetime (no tzinfo)."""
     app, db, pool = base_app

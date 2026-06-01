@@ -297,7 +297,11 @@ def register(db, client_pool, embedding_service, **kwargs):
                 state = avail["state"]
                 guidance = _AVAILABILITY_GUIDANCE.get(state, state)
                 extra = ""
-                if state == "flood":
+                if avail.get("transient_flood_wait"):
+                    remaining = _remaining_seconds(a)
+                    if remaining is not None:
+                        extra = f" (короткий flood-wait ~{remaining}s; tools wait inline)"
+                elif state == "flood":
                     remaining = _remaining_seconds(a)
                     if remaining is not None:
                         extra = f" (осталось ~{remaining}s)"

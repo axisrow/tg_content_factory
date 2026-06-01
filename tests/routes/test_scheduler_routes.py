@@ -944,6 +944,8 @@ async def test_scheduler_hides_countdown_if_too_short(client):
     assert resp.status_code == 200
     # Countdown should not appear for very short waits
     assert "(0 мин)" not in resp.text
+    assert "Все аккаунты во Flood Wait" not in resp.text
+    assert "Частичная деградация" not in resp.text
 
 
 @pytest.mark.anyio
