@@ -317,6 +317,14 @@ async def chat(request: Request, thread_id: int):
     session_id = request.cookies.get("session", "web")
 
     async def generate():
+        def _consume_abandoned_next_chunk(task: asyncio.Task) -> None:
+            try:
+                task.result()
+            except (asyncio.CancelledError, StopAsyncIteration):
+                pass
+            except Exception:
+                logger.debug("Abandoned agent stream chunk task failed", exc_info=True)
+
         stream = agent_manager.chat_stream(
             thread_id,
             message,
@@ -326,13 +334,21 @@ async def chat(request: Request, thread_id: int):
         )
         agen = stream.__aiter__()
         waiting_for_permission = False
+        pending_chunk_task: asyncio.Task | None = None
         try:
             while True:
                 try:
                     if waiting_for_permission:
                         chunk = await agen.__anext__()
                     else:
-                        chunk = await asyncio.wait_for(agen.__anext__(), timeout=_SSE_IDLE_TIMEOUT)
+                        next_chunk_task = asyncio.create_task(agen.__anext__())
+                        done, _ = await asyncio.wait({next_chunk_task}, timeout=_SSE_IDLE_TIMEOUT)
+                        if not done:
+                            pending_chunk_task = next_chunk_task
+                            next_chunk_task.cancel()
+                            next_chunk_task.add_done_callback(_consume_abandoned_next_chunk)
+                            raise asyncio.TimeoutError
+                        chunk = next_chunk_task.result()
                 except StopAsyncIteration:
                     break
                 except asyncio.TimeoutError:
@@ -368,9 +384,10 @@ async def chat(request: Request, thread_id: int):
                     logger.exception("Failed to process agent message for thread %d", thread_id)
                 yield chunk
         finally:
-            try:
-                await agen.aclose()
-            except Exception:
-                logger.debug("Error closing agent stream for thread %d", thread_id, exc_info=True)
+            if pending_chunk_task is None or pending_chunk_task.done():
+                try:
+                    await agen.aclose()
+                except Exception:
+                    logger.debug("Error closing agent stream for thread %d", thread_id, exc_info=True)
 
     return AgentStream(generate())
