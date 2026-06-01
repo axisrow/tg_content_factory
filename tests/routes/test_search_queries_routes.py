@@ -130,7 +130,7 @@ async def test_run_search_query(route_client):
         data={"query": "run test", "interval_minutes": "60"},
     )
 
-    with patch("src.web.routes.search_queries.deps.search_query_service") as mock_svc:
+    with patch("src.web.search_queries.handlers.deps.search_query_service") as mock_svc:
         mock_svc.return_value.run_once = AsyncMock()
         resp = await route_client.post("/search-queries/1/run", follow_redirects=False)
         assert resp.status_code == 303
@@ -143,7 +143,7 @@ async def test_scheduler_synced_after_add(route_client):
     route_client._transport_app.state.scheduler._running = True
 
     with patch(
-        "src.web.routes.search_queries.deps.get_scheduler"
+        "src.web.search_queries.handlers.deps.get_scheduler"
     ) as mock_get_scheduler:
         mock_scheduler = MagicMock()
         mock_scheduler.is_running = True
@@ -168,7 +168,7 @@ async def test_scheduler_synced_after_toggle(route_client):
     )
 
     with patch(
-        "src.web.routes.search_queries.deps.get_scheduler"
+        "src.web.search_queries.handlers.deps.get_scheduler"
     ) as mock_get_scheduler:
         mock_scheduler = MagicMock()
         mock_scheduler.is_running = True

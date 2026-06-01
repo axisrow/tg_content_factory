@@ -55,9 +55,11 @@ def run(args: argparse.Namespace) -> None:
             elif args.scheduler_action == "status":
                 interval = config.scheduler.collect_interval_minutes
                 autostart = await db.get_setting("scheduler_autostart") or "0"
+                queue_paused = await db.get_setting("collection_queue_paused") or "0"
                 print("Scheduler config:")
                 print(f"  Interval: {interval} min")
                 print(f"  Autostart: {'yes' if autostart == '1' else 'no'}")
+                print(f"  Queue paused: {'yes' if queue_paused == '1' else 'no'}")
                 settings = await db.repos.settings.list_all()
                 disabled_jobs = [
                     (k.removeprefix("scheduler_job_disabled:"), v)
@@ -103,6 +105,17 @@ def run(args: argparse.Namespace) -> None:
             elif args.scheduler_action == "clear-pending":
                 deleted = await db.repos.tasks.delete_pending_channel_tasks()
                 print(f"Cleared {deleted} pending collection tasks.")
+
+            elif args.scheduler_action == "queue-pause":
+                await db.set_setting("collection_queue_paused", "1")
+                print(
+                    "Collection queue paused. The running worker stops pulling new tasks; "
+                    "queued tasks remain pending."
+                )
+
+            elif args.scheduler_action == "queue-resume":
+                await db.set_setting("collection_queue_paused", "0")
+                print("Collection queue resumed.")
         finally:
             await pool.disconnect_all()
             await db.close()

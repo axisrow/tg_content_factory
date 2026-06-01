@@ -19,6 +19,14 @@ class PipelineRedirect:
 
 
 @dataclass(frozen=True)
+class PipelineUrlRedirect:
+    """Redirect to an explicit URL (e.g. /pipelines/{id}/edit), not the flash list page."""
+
+    url: str
+    status_code: int = 303
+
+
+@dataclass(frozen=True)
 class PipelineTemplate:
     name: str
     context: dict[str, Any]
@@ -43,7 +51,14 @@ class PipelineFile:
     media_type: str = "application/json"
 
 
-PipelineResult = PipelineRedirect | PipelineTemplate | PipelineJson | PipelineStream | PipelineFile | Response | Any
+PipelineResult = (
+    PipelineRedirect
+    | PipelineUrlRedirect
+    | PipelineTemplate
+    | PipelineJson
+    | PipelineStream
+    | PipelineFile
+)
 
 
 def pipeline_redirect_response(result: PipelineRedirect) -> RedirectResponse:
@@ -51,9 +66,11 @@ def pipeline_redirect_response(result: PipelineRedirect) -> RedirectResponse:
     return redirect_see_other("/pipelines", {key: result.code, "phone": result.phone})
 
 
-def pipeline_response(request: Request, result: PipelineResult):
+def pipeline_response(request: Request, result: PipelineResult) -> Response:
     if isinstance(result, PipelineRedirect):
         return pipeline_redirect_response(result)
+    if isinstance(result, PipelineUrlRedirect):
+        return RedirectResponse(url=result.url, status_code=result.status_code)
     if isinstance(result, PipelineTemplate):
         return deps.get_templates(request).TemplateResponse(request, result.name, result.context)
     if isinstance(result, PipelineJson):
@@ -66,4 +83,3 @@ def pipeline_response(request: Request, result: PipelineResult):
             media_type=result.media_type,
             headers={"Content-Disposition": f'attachment; filename="{result.filename}"'},
         )
-    return result

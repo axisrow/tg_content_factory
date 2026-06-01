@@ -5,7 +5,6 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 
-from src.web import deps
 from src.web.settings.forms import (
     AgentSettingsForm,
     CredentialsForm,
@@ -127,8 +126,7 @@ def _form_error_response(form: object):
 
 @router.get("/", response_class=HTMLResponse)
 async def settings_page(request: Request):
-    context = await handle_settings_page(request)
-    return deps.get_templates(request).TemplateResponse(request, "settings.html", context)
+    return settings_result_response(request, await handle_settings_page(request))
 
 
 @router.post("/save-scheduler")
@@ -234,7 +232,7 @@ async def save_credentials(request: Request, form: CredentialsFormDep):
 
 @router.post("/notifications/setup")
 async def setup_notification_bot(request: Request):
-    return settings_result_response(await handle_setup_notification_bot(request))
+    return settings_result_response(request, await handle_setup_notification_bot(request))
 
 
 @router.get("/notifications/status")
@@ -244,12 +242,12 @@ async def notification_bot_status(request: Request):
 
 @router.post("/notifications/delete")
 async def delete_notification_bot(request: Request):
-    return settings_result_response(await handle_delete_notification_bot(request))
+    return settings_result_response(request, await handle_delete_notification_bot(request))
 
 
 @router.post("/notifications/test")
 async def test_notification(request: Request):
-    return settings_result_response(await handle_test_notification(request))
+    return settings_result_response(request, await handle_test_notification(request))
 
 
 @router.post("/image-providers/add")
