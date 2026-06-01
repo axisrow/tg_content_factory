@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from src.telegram.client_pool import ClientPool
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
@@ -88,6 +89,13 @@ class CreateChannelResult:
 
 
 @dataclass(frozen=True)
+class JoinDialogResult:
+    phone: str
+    target: str
+    via_invite: bool
+
+
+@dataclass(frozen=True)
 class DownloadMediaResult:
     phone: str
     path: str
@@ -140,6 +148,73 @@ class TelegramActionService:
         if stripped[0] in ("+", "-"):
             return stripped[1:].isdigit()
         return stripped.isdigit()
+
+    @staticmethod
+    def _strip_tg_url_noise(value: str) -> str:
+        return value.strip().split("?", 1)[0].split("#", 1)[0].rstrip("/")
+
+    @classmethod
+    def _extract_invite_hash(cls, value: Any) -> str | None:
+        if not isinstance(value, str):
+            return None
+        raw = value.strip()
+        if not raw:
+            return None
+
+        if raw.startswith("tg://join"):
+            parsed = urlparse(raw)
+            invite = parse_qs(parsed.query).get("invite", [""])[0].strip()
+            return invite or None
+
+        cleaned = cls._strip_tg_url_noise(raw)
+        parsed = urlparse(cleaned if "://" in cleaned else f"https://{cleaned}")
+        if parsed.netloc.lower() in {"t.me", "www.t.me", "telegram.me", "www.telegram.me"}:
+            parts = [part for part in parsed.path.split("/") if part]
+            if not parts:
+                return None
+            if parts[0] == "joinchat" and len(parts) >= 2:
+                return parts[1] or None
+            if parts[0].startswith("+"):
+                return parts[0].lstrip("+") or None
+
+        if raw.startswith("+") and len(raw) > 1 and "/" not in raw:
+            return raw.lstrip("+") or None
+        return None
+
+    @classmethod
+    def _normalize_public_join_target(cls, value: Any) -> str:
+        raw = str(value or "").strip()
+        cleaned = cls._strip_tg_url_noise(raw)
+        if "://" in cleaned:
+            parse_value = cleaned
+        elif cleaned.startswith(("t.me/", "www.t.me/", "telegram.me/", "www.telegram.me/")):
+            parse_value = f"https://{cleaned}"
+        else:
+            parse_value = ""
+        parsed = urlparse(parse_value)
+        if parsed.netloc.lower() in {"t.me", "www.t.me", "telegram.me", "www.telegram.me"}:
+            parts = [part for part in parsed.path.split("/") if part]
+            if parts and parts[0] == "s":
+                parts = parts[1:]
+            if parts:
+                username = parts[0].strip()
+                if username and username not in {"c", "joinchat"} and not username.startswith("+"):
+                    return username if username.startswith("@") else f"@{username}"
+        return raw
+
+    async def _invalidate_dialog_cache(self, phone: str) -> None:
+        invalidate = getattr(self._pool, "invalidate_dialogs_cache", None)
+        if callable(invalidate):
+            result = invalidate(phone)
+            if inspect.isawaitable(result):
+                await result
+        db = getattr(self._pool, "_db", None)
+        repo = getattr(getattr(db, "repos", None), "dialog_cache", None)
+        clear_dialogs = getattr(repo, "clear_dialogs", None)
+        if callable(clear_dialogs):
+            result = clear_dialogs(phone)
+            if inspect.isawaitable(result):
+                await result
 
     @asynccontextmanager
     async def _client(
@@ -551,3 +626,24 @@ class TelegramActionService:
                 invite_link=f"https://t.me/{channel_username}" if channel_username else "",
                 username_error=username_error,
             )
+
+    async def join_dialog(
+        self,
+        *,
+        phone: str,
+        target: Any,
+    ) -> JoinDialogResult:
+        invite_hash = self._extract_invite_hash(target)
+        async with self._client(phone=phone, native=True) as (client, acquired_phone):
+            if invite_hash:
+                import_chat_invite = self._require_explicit_operation(client, "import_chat_invite")
+                await import_chat_invite(invite_hash)
+                await self._invalidate_dialog_cache(acquired_phone)
+                return JoinDialogResult(phone=acquired_phone, target=str(target), via_invite=True)
+
+            public_target = self._normalize_public_join_target(target)
+            entity = await self._resolve_entity(client, phone=acquired_phone, identifier=public_target)
+            join_channel = self._require_explicit_operation(client, "join_channel")
+            await join_channel(entity)
+            await self._invalidate_dialog_cache(acquired_phone)
+            return JoinDialogResult(phone=acquired_phone, target=public_target, via_invite=False)

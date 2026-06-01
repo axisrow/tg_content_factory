@@ -86,6 +86,46 @@ async def test_create_channel_sets_username_and_returns_link():
 
 
 @pytest.mark.anyio
+async def test_join_dialog_public_resolves_entity_joins_and_clears_cache():
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value="entity")
+    client.join_channel = AsyncMock()
+    pool = _pool_with_client(client)
+    pool.invalidate_dialogs_cache = MagicMock()
+
+    result = await TelegramActionService(pool).join_dialog(
+        phone="+1",
+        target="https://t.me/prog_ai/1290",
+    )
+
+    assert result.phone == "+1"
+    assert result.target == "@prog_ai"
+    assert result.via_invite is False
+    client.get_entity.assert_awaited_once_with("@prog_ai")
+    client.join_channel.assert_awaited_once_with("entity")
+    pool.invalidate_dialogs_cache.assert_called_once_with("+1")
+    pool.release_client.assert_awaited_once_with("+1")
+
+
+@pytest.mark.anyio
+async def test_join_dialog_private_invite_uses_import_hash():
+    client = AsyncMock()
+    client.get_entity = AsyncMock()
+    client.import_chat_invite = AsyncMock()
+    pool = _pool_with_client(client)
+
+    result = await TelegramActionService(pool).join_dialog(
+        phone="+1",
+        target="https://t.me/+AAAAExampleHash",
+    )
+
+    assert result.via_invite is True
+    client.import_chat_invite.assert_awaited_once_with("AAAAExampleHash")
+    client.get_entity.assert_not_awaited()
+    pool.release_client.assert_awaited_once_with("+1")
+
+
+@pytest.mark.anyio
 async def test_download_media_looks_up_message_checks_path_and_releases_client(tmp_path):
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")

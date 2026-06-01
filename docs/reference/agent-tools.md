@@ -180,6 +180,9 @@
 | `search_dialogs` | READ | Поиск диалогов по названию (search, type, limit) |
 | `refresh_dialogs` | WRITE | Обновить кеш |
 | `leave_dialogs` | DELETE | Покинуть диалоги |
+| `join_channel` | WRITE | Подписаться/вступить в канал или группу |
+| `join_chat` | WRITE | Alias: вступить в группу/чат |
+| `subscribe_channel` | WRITE | Alias: подписаться на канал |
 | `create_telegram_channel` | WRITE | Создать канал |
 | `get_forum_topics` | READ | Топики форума |
 | `clear_dialog_cache` | WRITE | Очистить кеш |
