@@ -8,7 +8,11 @@ from src.cli import runtime
 from src.database.bundles import ChannelBundle
 from src.services.collection_service import CollectionService
 from src.services.task_enqueuer import TaskEnqueuer
-from src.telegram.collector import Collector, UsernameResolveFloodWaitDeferredError
+from src.telegram.collector import (
+    Collector,
+    UsernameResolveFloodWaitDeferredError,
+    UsernameResolveRateLimitedError,
+)
 
 
 def run(args: argparse.Namespace) -> None:
@@ -45,6 +49,13 @@ def run(args: argparse.Namespace) -> None:
                 except UsernameResolveFloodWaitDeferredError as exc:
                     retry_at = exc.next_available_at.astimezone().isoformat()
                     print(f"Username resolve Flood Wait active until {retry_at}; try again later.")
+                    return
+                except UsernameResolveRateLimitedError as exc:
+                    retry_at = exc.run_after_with_buffer().astimezone().isoformat()
+                    print(
+                        "resolve_username rate-limited "
+                        f"on {exc.phone}; deferred until {retry_at}."
+                    )
                     return
                 print(f"Collected {count} messages from channel {args.channel_id}")
             else:

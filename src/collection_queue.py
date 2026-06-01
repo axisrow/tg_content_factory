@@ -14,6 +14,7 @@ from src.telegram.collector import (
     Collector,
     NoActiveCollectionClientsError,
     UsernameResolveFloodWaitDeferredError,
+    UsernameResolveRateLimitedError,
 )
 
 logger = logging.getLogger(__name__)
@@ -357,6 +358,33 @@ class CollectionQueue:
                     task_id,
                     channel.channel_id,
                     run_after.isoformat(),
+                )
+            except UsernameResolveRateLimitedError as exc:
+                run_after = exc.run_after_with_buffer()
+                note = (
+                    "Отложено: resolve_username rate-limited до "
+                    f"{run_after.astimezone(timezone.utc).isoformat()}"
+                )
+                self._retried_tasks.discard(task_id)
+                await self._channels.reschedule_collection_task(
+                    task_id,
+                    run_after=run_after,
+                    note=note,
+                )
+                self._schedule_requeue_after_delay(
+                    task_id=task_id,
+                    channel=channel,
+                    force=force,
+                    full=full,
+                    run_after=run_after,
+                )
+                logger.warning(
+                    "Rescheduled collection task %d for channel %d until %s: "
+                    "username resolve rate-limited on %s",
+                    task_id,
+                    channel.channel_id,
+                    run_after.isoformat(),
+                    exc.phone,
                 )
             except NoActiveCollectionClientsError:
                 run_after = datetime.now(timezone.utc) + timedelta(

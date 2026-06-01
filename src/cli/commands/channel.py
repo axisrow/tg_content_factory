@@ -17,7 +17,7 @@ from src.services.channel_onboarding import (
 )
 from src.services.channel_service import ChannelService
 from src.telegram.backends import adapt_transport_session
-from src.telegram.collector import Collector
+from src.telegram.collector import Collector, UsernameResolveRateLimitedError
 
 
 async def _handle_tag(args: argparse.Namespace, db) -> None:
@@ -463,6 +463,17 @@ def run(args: argparse.Namespace) -> None:
                         messages_collected=count,
                     )
                     print(f"Collected {count} messages from channel {ch.channel_id}")
+                except UsernameResolveRateLimitedError as exc:
+                    run_after = exc.run_after_with_buffer()
+                    note = (
+                        "Отложено: resolve_username rate-limited до "
+                        f"{run_after.astimezone().isoformat()}"
+                    )
+                    await db.reschedule_collection_task(task_id, run_after=run_after, note=note)
+                    print(
+                        "Collection deferred: resolve_username rate-limited "
+                        f"on {exc.phone} until {run_after.astimezone().isoformat()}"
+                    )
                 except Exception as exc:
                     await db.update_collection_task(
                         task_id,
