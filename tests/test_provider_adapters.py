@@ -467,6 +467,9 @@ async def test_replicate_image_adapter_success(monkeypatch):
     )
 
     class SessionWithPoll:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -492,6 +495,9 @@ async def test_replicate_image_adapter_create_error(monkeypatch):
     resp = FakeResp(status=401, text_data="Unauthorized")
 
     class SessionSingle:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -514,6 +520,9 @@ async def test_replicate_image_adapter_missing_poll_url(monkeypatch):
     resp = FakeResp(status=201, json_data={"urls": {}})
 
     class SessionSingle:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -543,6 +552,9 @@ async def test_replicate_image_adapter_prediction_failed(monkeypatch):
     )
 
     class SessionWithPoll:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -575,6 +587,9 @@ async def test_replicate_image_adapter_prediction_canceled(monkeypatch):
     )
 
     class SessionWithPoll:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -609,6 +624,9 @@ async def test_replicate_image_adapter_warns_no_slash(monkeypatch, caplog):
     )
 
     class SessionWithPoll:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -645,6 +663,9 @@ async def test_replicate_image_adapter_list_output(monkeypatch):
     )
 
     class SessionWithPoll:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
@@ -680,6 +701,9 @@ async def test_replicate_image_adapter_timeout(monkeypatch):
     )
 
     class SessionWithPoll:
+        def __init__(self, *args, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
