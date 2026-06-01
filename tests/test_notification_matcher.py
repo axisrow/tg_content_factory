@@ -325,13 +325,31 @@ def test_make_message_link_with_username():
     assert link == "https://t.me/mychannel/456"
 
 
-def test_make_message_link_without_username():
-    """t.me/c/{bare_id}/{message_id} when no channel_username."""
+def test_make_message_link_legacy_marked_id():
+    """Telethon marked form -100<bare> is normalised to the bare id."""
     msg = make_message("test", channel_id=-1001234567890, message_id=789)
     link = _make_message_link(msg)
 
-    # -1001234567890 -> bare_id = 1234567890 (strip -100 prefix)
+    # -1001234567890 -> bare_id = 1234567890 (strip -100 marker)
     assert link == "https://t.me/c/1234567890/789"
+
+
+def test_make_message_link_bare_positive_id():
+    """Bare-positive stored ids are used verbatim (storage convention)."""
+    msg = make_message("test", channel_id=1234567890, message_id=789)
+    link = _make_message_link(msg)
+
+    assert link == "https://t.me/c/1234567890/789"
+
+
+def test_make_message_link_bare_id_starting_with_100():
+    """Regression #633-9: ids starting with 100 must NOT be truncated."""
+    # 1005551782 is a real-shaped bare id; the old code stripped the leading
+    # "100" and produced a broken https://t.me/c/5551782/... link.
+    msg = make_message("test", channel_id=1005551782, message_id=789)
+    link = _make_message_link(msg)
+
+    assert link == "https://t.me/c/1005551782/789"
 
 
 # === _fts_query_matches pure function tests ===

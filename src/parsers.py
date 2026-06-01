@@ -129,3 +129,22 @@ def deduplicate_identifiers(identifiers: list[str]) -> list[str]:
             seen.add(key)
             result.append(ident)
     return result
+
+
+# Telegram marks supergroup/channel peers as ``-100<bare>`` (e.g. ``-1001234567890``).
+_MTPROTO_CHANNEL_MARKER = 1_000_000_000_000
+
+
+def bare_channel_id(channel_id: int) -> int:
+    """Return the bare (positive, no ``-100`` marker) channel id for a t.me/c link.
+
+    Storage convention is bare-positive (e.g. ``1001079551``), but a value may
+    also arrive in Telethon's marked form ``-100<bare>`` (e.g.
+    ``-1001234567890``). Only the marked form carries the ``100`` prefix that
+    must be stripped; a bare-positive id is already correct and must be left
+    untouched — stripping ``100`` from ``1001079551`` would corrupt the link.
+    """
+    cid = abs(channel_id)
+    if channel_id < 0 and cid > _MTPROTO_CHANNEL_MARKER:
+        return cid - _MTPROTO_CHANNEL_MARKER
+    return cid

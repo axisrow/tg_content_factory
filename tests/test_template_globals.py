@@ -1,8 +1,13 @@
 from datetime import datetime, timezone
 
+from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
-from src.web.template_globals import FILTER_FLAG_EMOJI, local_dt_filter
+from src.web.template_globals import (
+    FILTER_FLAG_EMOJI,
+    configure_template_globals,
+    local_dt_filter,
+)
 
 
 def test_none_returns_dash():
@@ -100,6 +105,20 @@ def test_fallback_text_present_for_string():
     result = str(local_dt_filter("2024-03-15T10:30:00"))
     # fallback is str(value)[:16] of original string
     assert "2024-03-15T10:30" in result
+
+
+def test_tme_channel_id_filter_registered_and_renders_link():
+    """The tme_channel_id filter is wired up and builds a correct t.me/c link."""
+    from src.web.paths import TEMPLATES_DIR
+
+    templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+    configure_template_globals(templates)
+
+    assert "tme_channel_id" in templates.env.filters
+    rendered = templates.env.from_string(
+        "https://t.me/c/{{ cid | tme_channel_id }}/{{ mid }}"
+    ).render(cid=1005551782, mid=789)
+    assert rendered == "https://t.me/c/1005551782/789"
 
 
 def test_filter_flag_emoji_uses_bootstrap_icons():
