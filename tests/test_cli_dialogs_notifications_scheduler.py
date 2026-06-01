@@ -983,5 +983,23 @@ class TestCollectCommand:
         assert "try again later" in out
 
 
+    def test_collect_single_channel_username_rate_limited(self, cli_env_with_pool, capsys):
+        from src.telegram.collector import Collector, UsernameResolveRateLimitedError
+
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+70001112233": AsyncMock()}
+        _add_channel(cli_env, channel_id=101, title="Rate Limited Channel")
+
+        exc = UsernameResolveRateLimitedError("+7001", 28)
+        with patch.object(Collector, "collect_single_channel", new_callable=AsyncMock, side_effect=exc):
+            from src.cli.commands.collect import run
+
+            run(_ns(channel_id=101, full=True))
+
+        out = capsys.readouterr().out
+        assert "resolve_username rate-limited" in out
+        assert "Collected" not in out
+
+
 def _add_channel(db: Database, channel_id: int = 100, title: str = "TestCh") -> int:
     return asyncio.run(db.add_channel(Channel(channel_id=channel_id, title=title)))

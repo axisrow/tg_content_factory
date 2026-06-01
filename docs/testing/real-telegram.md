@@ -80,7 +80,13 @@ wait — 60 секунд. Для плохой сети можно поднять
 
 - `CLI_REAL_TG_CONNECT_WAIT_SECONDS=60` — общий лимит ожидания active account + успешного probe;
 - `CLI_REAL_TG_CONNECT_POLL_SECONDS=2` — пауза между проверками DB/probe;
-- `CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_SECONDS=60` — timeout одного `account info --phone` probe.
+- `CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_SECONDS=60` — timeout одного `account info --phone` probe;
+- `CLI_REAL_TG_PHONE=+...` — опционально фиксирует конкретный active account для readiness probe и live CLI
+  inventory. Используйте это, когда старые active accounts еще имеют `flood_wait_until`, а проверять нужно свежий
+  подключенный аккаунт.
+
+Без `CLI_REAL_TG_PHONE` fixture сначала пробует active accounts без актуального `flood_wait_until`, и только потом
+flood-waited accounts.
 
 ## CLI Folders And Gates
 
@@ -165,6 +171,14 @@ Manual heavy inventory:
 
 ```bash
 RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_SAFE=1 RUN_CLI_REAL_TG_HEAVY=1 \
+python3 -m pytest tests/cli_real_tg_integration/heavy -v
+```
+
+Чтобы прогнать heavy inventory через конкретный свежий аккаунт:
+
+```bash
+RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_SAFE=1 RUN_CLI_REAL_TG_HEAVY=1 \
+CLI_REAL_TG_PHONE=+70000000000 \
 python3 -m pytest tests/cli_real_tg_integration/heavy -v
 ```
 

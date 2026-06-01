@@ -34,6 +34,15 @@ async def fetch_message_reaction_users_raw(client: Any, peer: Any, message_id: i
     )
 
 
+async def _disconnect_client_safely(client: Any, *, phone: str) -> None:
+    try:
+        result = client.disconnect()
+        if inspect.isawaitable(result):
+            await result
+    except Exception:
+        logger.debug("Failed to disconnect partially acquired client for %s", phone, exc_info=True)
+
+
 class BackendAcquireError(RuntimeError):
     """Raised when a backend cannot provide a usable authorized client."""
 
@@ -638,14 +647,16 @@ class TelethonCliBackend(TelegramBackend):
             password=None,
             env_file=env_file,
         )
+        client: TelegramClient | None = None
         try:
-            client: TelegramClient = telethon_cli_runtime.create_client(namespace)
+            client = telethon_cli_runtime.create_client(namespace)
             client._connection_retries = None
             client._retry_delay = 2
             client.flood_sleep_threshold = 0
             await client.connect()
             if not await client.is_user_authorized():
-                await client.disconnect()
+                await _disconnect_client_safely(client, phone=account.phone)
+                client = None
                 raise BackendAcquireError(f"Session is no longer valid for {account.phone}")
             return BackendClientLease(
                 phone=account.phone,
@@ -653,7 +664,13 @@ class TelethonCliBackend(TelegramBackend):
                 backend_name=self.name,
             )
         except CLIError as exc:
+            if client is not None:
+                await _disconnect_client_safely(client, phone=account.phone)
             raise BackendAcquireError(str(exc)) from exc
+        except Exception:
+            if client is not None:
+                await _disconnect_client_safely(client, phone=account.phone)
+            raise
 
 
 class BackendRouter:

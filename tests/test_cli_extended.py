@@ -471,7 +471,7 @@ class TestCLIChannelExtended:
         assert "missing type: 1" in out
 
     def test_collect_error(self, cli_env_with_mock_pool, capsys):
-        db, pool = cli_env_with_mock_pool
+        db, _pool = cli_env_with_mock_pool
         ch_id = asyncio.run(
             db.add_channel(
                 Channel(channel_id=103, title="CollectMe"),
@@ -497,6 +497,87 @@ class TestCLIChannelExtended:
         tasks = asyncio.run(db.get_collection_tasks(limit=1))
         assert tasks[0].status == CollectionTaskStatus.FAILED
         assert "collect fail" in tasks[0].error
+
+    def test_collect_username_resolve_rate_limited_reschedules(self, cli_env_with_mock_pool, capsys):
+        db, _pool = cli_env_with_mock_pool
+        ch_id = asyncio.run(
+            db.add_channel(
+                Channel(channel_id=104, title="CollectRateLimited"),
+            )
+        )
+
+        from src.telegram.collector import UsernameResolveRateLimitedError
+
+        inst = None
+        with patch("src.cli.commands.channel.Collector") as mock_collector:
+            inst = mock_collector.return_value
+            inst.collect_single_channel = AsyncMock(
+                side_effect=UsernameResolveRateLimitedError("+7001", 28)
+            )
+            from src.cli.commands.channel import run
+
+            run(
+                _ns(
+                    channel_action="collect",
+                    identifier=str(ch_id),
+                )
+            )
+
+        out = capsys.readouterr().out
+        assert "resolve_username rate-limited" in out
+        assert inst is not None
+        inst.collect_single_channel.assert_awaited_once()
+        _ensure_db_open(db)
+        tasks = asyncio.run(db.get_collection_tasks(limit=1))
+        assert tasks[0].status == CollectionTaskStatus.PENDING
+        assert tasks[0].run_after is not None
+        assert "resolve_username rate-limited" in (tasks[0].note or "")
+
+    def test_collect_username_resolve_flood_wait_reschedules(self, cli_env_with_mock_pool, capsys):
+        # A long resolve FloodWait raises UsernameResolveFloodWaitDeferredError out of
+        # collect_single_channel; the collect handler must defer (PENDING + run_after),
+        # not fall into the broad Exception handler and mark the task FAILED.
+        from datetime import datetime, timedelta, timezone
+
+        db, _pool = cli_env_with_mock_pool
+        ch_id = asyncio.run(
+            db.add_channel(
+                Channel(channel_id=105, title="CollectFloodWaitDeferred"),
+            )
+        )
+
+        from src.telegram.collector import UsernameResolveFloodWaitDeferredError
+
+        next_available_at = datetime.now(timezone.utc) + timedelta(minutes=30)
+        inst = None
+        with patch("src.cli.commands.channel.Collector") as mock_collector:
+            inst = mock_collector.return_value
+            inst.collect_single_channel = AsyncMock(
+                side_effect=UsernameResolveFloodWaitDeferredError(
+                    wait_seconds=1800,
+                    next_available_at=next_available_at,
+                )
+            )
+            from src.cli.commands.channel import run
+
+            run(
+                _ns(
+                    channel_action="collect",
+                    identifier=str(ch_id),
+                )
+            )
+
+        out = capsys.readouterr().out
+        assert "resolve_username Flood Wait" in out
+        assert inst is not None
+        inst.collect_single_channel.assert_awaited_once()
+        _ensure_db_open(db)
+        tasks = asyncio.run(db.get_collection_tasks(limit=1))
+        assert tasks[0].status == CollectionTaskStatus.PENDING
+        assert tasks[0].error is None
+        assert tasks[0].run_after is not None
+        assert tasks[0].run_after >= next_available_at
+        assert "Flood Wait на resolve_username" in (tasks[0].note or "")
 
 
 class TestCLITestExtended:

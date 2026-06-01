@@ -19,6 +19,7 @@ from src.config import load_config
 CLI_REAL_TG_LIVE_GATE_ENV = "RUN_CLI_REAL_TG_LIVE"
 CLI_REAL_TG_ROOT_ENV = "CLI_REAL_TG_ROOT"
 CLI_REAL_TG_CONFIG_ENV = "CLI_REAL_TG_CONFIG"
+CLI_REAL_TG_PHONE_ENV = "CLI_REAL_TG_PHONE"
 CLI_REAL_TG_MUTATION_CHAT_ENV = "CLI_REAL_TG_MUTATION_CHAT"
 CLI_REAL_TG_MUTATION_PHONE_ENV = "CLI_REAL_TG_MUTATION_PHONE"
 CLI_REAL_TG_CONNECT_WAIT_ENV = "CLI_REAL_TG_CONNECT_WAIT_SECONDS"
@@ -123,17 +124,42 @@ def _resolve_db_path(live_root: Path, db_path: str) -> Path:
 
 
 def _fetch_live_accounts(db_path: Path) -> tuple[str, ...]:
+    requested_phone = os.environ.get(CLI_REAL_TG_PHONE_ENV, "").strip()
+    now = datetime.now(timezone.utc)
+
+    def _parse_flood_wait_until(raw: object) -> datetime | None:
+        if raw is None or raw == "":
+            return None
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _sort_key(row: sqlite3.Row) -> tuple[int, int, int]:
+        flood_wait_until = _parse_flood_wait_until(row["flood_wait_until"])
+        blocked = int(flood_wait_until is not None and flood_wait_until > now)
+        is_primary = int(row["is_primary"] or 0)
+        account_id = int(row["id"] or 0)
+        return blocked, -is_primary, account_id
+
     with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
-            SELECT phone
+            SELECT id, phone, COALESCE(is_primary, 0) AS is_primary, flood_wait_until
             FROM accounts
             WHERE COALESCE(is_active, 1) = 1
               AND COALESCE(session_string, '') != ''
-            ORDER BY COALESCE(is_primary, 0) DESC, id ASC
             """
         ).fetchall()
-    return tuple(str(row[0]) for row in rows if row[0])
+    accounts = [row for row in rows if row["phone"]]
+    if requested_phone:
+        accounts = [row for row in accounts if str(row["phone"]) == requested_phone]
+    accounts.sort(key=_sort_key)
+    return tuple(str(row["phone"]) for row in accounts)
 
 
 def _fetch_live_channel(db_path: Path) -> tuple[str | None, int | None, str | None]:

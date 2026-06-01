@@ -6,6 +6,7 @@ import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta, timezone
+from math import ceil
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import (
@@ -125,12 +126,22 @@ class UsernameResolveRateLimitedError(RuntimeError):
     this is a short, preventive reschedule — the channel is skipped this run and
     retried shortly, not paused for hours."""
 
-    def __init__(self, phone: str, retry_after_sec: float):
+    def __init__(self, phone: str, retry_after_sec: float, *, now: datetime | None = None):
+        retry_after_sec = max(0.0, float(retry_after_sec))
+        retry_after_seconds = ceil(retry_after_sec)
+        next_available_at = (now or datetime.now(timezone.utc)) + timedelta(
+            seconds=retry_after_seconds
+        )
         super().__init__(
-            f"resolve_username rate-limited for {phone}; retry in {int(retry_after_sec)}s"
+            f"resolve_username rate-limited for {phone}; retry in {retry_after_seconds}s"
         )
         self.phone = phone
         self.retry_after_sec = retry_after_sec
+        self.retry_after_seconds = retry_after_seconds
+        self.next_available_at = next_available_at
+
+    def run_after_with_buffer(self, buffer_sec: int = RESOLVE_USERNAME_BACKOFF_BUFFER_SEC) -> datetime:
+        return self.next_available_at + timedelta(seconds=buffer_sec)
 
 
 class Collector:
@@ -604,6 +615,15 @@ class Collector:
                         )
                         stats["deferred"] = stats.get("deferred", 0) + 1
                         continue
+                    except UsernameResolveRateLimitedError as e:
+                        logger.warning(
+                            "Channel %s deferred until %s: resolve_username rate-limited on %s",
+                            channel.channel_id,
+                            e.run_after_with_buffer().isoformat(),
+                            e.phone,
+                        )
+                        stats["deferred"] = stats.get("deferred", 0) + 1
+                        continue
                     except Exception as e:
                         logger.error("Error collecting channel %s: %s", channel.channel_id, e)
                         stats["errors"] += 1
@@ -827,19 +847,6 @@ class Collector:
                         logger.warning(
                             "get_input_entity timed out for channel %d, skipping",
                             channel_id,
-                        )
-                        return total_collected
-                    except UsernameResolveRateLimitedError as exc:
-                        # Preventive throttle (#551): defer this channel briefly
-                        # rather than firing a resolve that would flood the
-                        # account. The next scheduler tick picks it up again.
-                        logger.warning(
-                            "Channel %d (%s): resolve_username rate-limited on %s, "
-                            "deferring ~%ss",
-                            channel_id,
-                            channel.username,
-                            exc.phone,
-                            int(exc.retry_after_sec),
                         )
                         return total_collected
                     except HandledFloodWaitError as exc:
