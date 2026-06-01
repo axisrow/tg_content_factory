@@ -135,13 +135,13 @@ async def _reload_llm_providers(request: Request) -> None:
 async def _semantic_settings_context(request: Request) -> dict[str, object]:
     db = deps.get_db(request)
     last_embedded_id = parse_int_setting(
-        await db.get_setting(LAST_EMBEDDED_ID_SETTING),
+        await db.repos.settings.get_setting(LAST_EMBEDDED_ID_SETTING),
         setting_name=LAST_EMBEDDED_ID_SETTING,
         default=0,
         logger=logger,
     )
     batch_size = parse_int_setting(
-        await db.get_setting(EMBEDDINGS_BATCH_SIZE_SETTING),
+        await db.repos.settings.get_setting(EMBEDDINGS_BATCH_SIZE_SETTING),
         setting_name=EMBEDDINGS_BATCH_SIZE_SETTING,
         default=DEFAULT_EMBEDDINGS_BATCH_SIZE,
         logger=logger,
@@ -150,15 +150,15 @@ async def _semantic_settings_context(request: Request) -> dict[str, object]:
     embeddings_count = await db.repos.messages.count_embeddings()
     return {
         "semantic_embeddings_provider": (
-            await db.get_setting(EMBEDDINGS_PROVIDER_SETTING) or DEFAULT_EMBEDDINGS_PROVIDER
+            await db.repos.settings.get_setting(EMBEDDINGS_PROVIDER_SETTING) or DEFAULT_EMBEDDINGS_PROVIDER
         ),
         "semantic_embeddings_model": (
-            await db.get_setting(EMBEDDINGS_MODEL_SETTING) or DEFAULT_EMBEDDINGS_MODEL
+            await db.repos.settings.get_setting(EMBEDDINGS_MODEL_SETTING) or DEFAULT_EMBEDDINGS_MODEL
         ),
         "semantic_embeddings_api_key": (
-            CREDENTIALS_MASK if await db.get_setting(EMBEDDINGS_API_KEY_SETTING) else ""
+            CREDENTIALS_MASK if await db.repos.settings.get_setting(EMBEDDINGS_API_KEY_SETTING) else ""
         ),
-        "semantic_embeddings_base_url": await db.get_setting(EMBEDDINGS_BASE_URL_SETTING) or "",
+        "semantic_embeddings_base_url": await db.repos.settings.get_setting(EMBEDDINGS_BASE_URL_SETTING) or "",
         "semantic_embeddings_batch_size": batch_size,
         "semantic_last_embedded_id": last_embedded_id,
         "semantic_embedding_dimensions": embedding_dimensions,
@@ -175,7 +175,7 @@ def _settings_agent_manager(request: Request) -> tuple[AgentManager, bool]:
 
 
 async def _dev_mode_enabled(request: Request) -> bool:
-    return (await deps.get_db(request).get_setting("agent_dev_mode_enabled") or "0") == "1"
+    return (await deps.get_db(request).repos.settings.get_setting("agent_dev_mode_enabled") or "0") == "1"
 
 
 async def _require_agent_dev_mode(
@@ -432,21 +432,21 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
     auth = deps.get_auth(request)
     db = deps.get_db(request)
     pool = deps.get_pool(request)
-    api_id_raw = await db.get_setting("tg_api_id") or ""
-    api_hash_raw = await db.get_setting("tg_api_hash") or ""
+    api_id_raw = await db.repos.settings.get_setting("tg_api_id") or ""
+    api_hash_raw = await db.repos.settings.get_setting("tg_api_hash") or ""
     min_subscribers_filter = parse_int_setting(
-        await db.get_setting("min_subscribers_filter"),
+        await db.repos.settings.get_setting("min_subscribers_filter"),
         setting_name="min_subscribers_filter",
         default=0,
         logger=logger,
     )
-    auto_delete_filtered = (await db.get_setting("auto_delete_filtered") or "0") == "1"
-    auto_delete_on_collect = (await db.get_setting("auto_delete_on_collect") or "0") == "1"
-    saved_interval = await db.get_setting("collect_interval_minutes")
-    agent_dev_mode_enabled = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
-    agent_backend_override = await db.get_setting("agent_backend_override") or "auto"
+    auto_delete_filtered = (await db.repos.settings.get_setting("auto_delete_filtered") or "0") == "1"
+    auto_delete_on_collect = (await db.repos.settings.get_setting("auto_delete_on_collect") or "0") == "1"
+    saved_interval = await db.repos.settings.get_setting("collect_interval_minutes")
+    agent_dev_mode_enabled = (await db.repos.settings.get_setting("agent_dev_mode_enabled") or "0") == "1"
+    agent_backend_override = await db.repos.settings.get_setting("agent_backend_override") or "auto"
     agent_prompt_template = (
-        await db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) or DEFAULT_AGENT_PROMPT_TEMPLATE
+        await db.repos.settings.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) or DEFAULT_AGENT_PROMPT_TEMPLATE
     )
     if agent_backend_override not in {"auto", "claude", "deepagents"}:
         agent_backend_override = "auto"
@@ -468,7 +468,7 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
     # it is enforced rather than silently shown as the default. Render as int when
     # the value is whole (the typed CLI/web write paths only ever emit integers).
     reaction_min_interval_value = parse_float_setting(
-        await db.get_setting(REACTION_MIN_INTERVAL_SETTING),
+        await db.repos.settings.get_setting(REACTION_MIN_INTERVAL_SETTING),
         setting_name=REACTION_MIN_INTERVAL_SETTING,
         default=DEFAULT_REACTION_MIN_INTERVAL_SEC,
         logger=logger,
@@ -535,11 +535,11 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
     ]
     semantic_context = await _semantic_settings_context(request)
 
-    translation_provider = await db.get_setting("translation_provider") or ""
-    translation_model = await db.get_setting("translation_model") or ""
-    translation_target_lang = await db.get_setting("translation_target_lang") or ""
-    translation_source_filter = await db.get_setting("translation_source_filter") or ""
-    translation_auto_on_collect = await db.get_setting("translation_auto_on_collect") or "0"
+    translation_provider = await db.repos.settings.get_setting("translation_provider") or ""
+    translation_model = await db.repos.settings.get_setting("translation_model") or ""
+    translation_target_lang = await db.repos.settings.get_setting("translation_target_lang") or ""
+    translation_source_filter = await db.repos.settings.get_setting("translation_source_filter") or ""
+    translation_auto_on_collect = await db.repos.settings.get_setting("translation_auto_on_collect") or "0"
     language_stats = await db.repos.messages.get_language_stats()
 
     from src.agent.tools.permissions import (
@@ -585,7 +585,7 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
         "img_provider_writes_enabled": img_provider_service.writes_enabled,
         "img_provider_views": img_provider_views,
         "img_provider_options": available_img_options,
-        "default_image_model": await db.get_setting("default_image_model") or "",
+        "default_image_model": await db.repos.settings.get_setting("default_image_model") or "",
         **semantic_context,
         "phone_perm_contexts": phone_perm_contexts,
         "translation_provider": translation_provider,
@@ -603,8 +603,8 @@ async def handle_save_scheduler_settings(
     form: SchedulerSettingsForm,
 ) -> SettingsFlash:
     db = deps.get_db(request)
-    await db.set_setting("collect_interval_minutes", str(form.interval_minutes))
-    await db.set_setting(REACTION_MIN_INTERVAL_SETTING, str(form.reaction_min_interval_sec))
+    await db.repos.settings.set_setting("collect_interval_minutes", str(form.interval_minutes))
+    await db.repos.settings.set_setting(REACTION_MIN_INTERVAL_SETTING, str(form.reaction_min_interval_sec))
     scheduler = getattr(request.app.state, "scheduler", None)
     if scheduler:
         scheduler.update_interval(form.interval_minutes)
@@ -617,24 +617,24 @@ async def handle_save_semantic_search_settings(
 ) -> SettingsFlash:
     db = deps.get_db(request)
     current_values = {
-        EMBEDDINGS_PROVIDER_SETTING: await db.get_setting(EMBEDDINGS_PROVIDER_SETTING)
+        EMBEDDINGS_PROVIDER_SETTING: await db.repos.settings.get_setting(EMBEDDINGS_PROVIDER_SETTING)
         or DEFAULT_EMBEDDINGS_PROVIDER,
-        EMBEDDINGS_MODEL_SETTING: await db.get_setting(EMBEDDINGS_MODEL_SETTING)
+        EMBEDDINGS_MODEL_SETTING: await db.repos.settings.get_setting(EMBEDDINGS_MODEL_SETTING)
         or DEFAULT_EMBEDDINGS_MODEL,
-        EMBEDDINGS_BASE_URL_SETTING: await db.get_setting(EMBEDDINGS_BASE_URL_SETTING) or "",
-        EMBEDDINGS_API_KEY_SETTING: await db.get_setting(EMBEDDINGS_API_KEY_SETTING) or "",
+        EMBEDDINGS_BASE_URL_SETTING: await db.repos.settings.get_setting(EMBEDDINGS_BASE_URL_SETTING) or "",
+        EMBEDDINGS_API_KEY_SETTING: await db.repos.settings.get_setting(EMBEDDINGS_API_KEY_SETTING) or "",
     }
     changed = (
         current_values[EMBEDDINGS_PROVIDER_SETTING] != form.provider
         or current_values[EMBEDDINGS_MODEL_SETTING] != form.model
         or current_values[EMBEDDINGS_BASE_URL_SETTING] != form.base_url
     )
-    await db.set_setting(EMBEDDINGS_PROVIDER_SETTING, form.provider)
-    await db.set_setting(EMBEDDINGS_MODEL_SETTING, form.model)
-    await db.set_setting(EMBEDDINGS_BASE_URL_SETTING, form.base_url)
-    await db.set_setting(EMBEDDINGS_BATCH_SIZE_SETTING, str(form.batch_size))
+    await db.repos.settings.set_setting(EMBEDDINGS_PROVIDER_SETTING, form.provider)
+    await db.repos.settings.set_setting(EMBEDDINGS_MODEL_SETTING, form.model)
+    await db.repos.settings.set_setting(EMBEDDINGS_BASE_URL_SETTING, form.base_url)
+    await db.repos.settings.set_setting(EMBEDDINGS_BATCH_SIZE_SETTING, str(form.batch_size))
     if form.api_key is not None and form.api_key != CREDENTIALS_MASK:
-        await db.set_setting(EMBEDDINGS_API_KEY_SETTING, form.api_key)
+        await db.repos.settings.set_setting(EMBEDDINGS_API_KEY_SETTING, form.api_key)
     if changed or form.reset_index:
         await db.repos.messages.reset_embeddings_index()
         deps.get_search_engine(request).invalidate_numpy_index()
@@ -668,10 +668,10 @@ async def handle_save_agent_settings(request: Request, form: AgentSettingsForm) 
         )
         return SettingsFlash(msg="tool_permissions_saved", fragment="pane-tool-permissions")
 
-    current_dev_mode = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
-    current_backend_override = await db.get_setting("agent_backend_override") or "auto"
+    current_dev_mode = (await db.repos.settings.get_setting("agent_dev_mode_enabled") or "0") == "1"
+    current_backend_override = await db.repos.settings.get_setting("agent_backend_override") or "auto"
     current_prompt_template = (
-        await db.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) or DEFAULT_AGENT_PROMPT_TEMPLATE
+        await db.repos.settings.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) or DEFAULT_AGENT_PROMPT_TEMPLATE
     )
 
     if form.backend_override is None:
@@ -727,9 +727,9 @@ async def handle_save_agent_settings(request: Request, form: AgentSettingsForm) 
                 )
                 return SettingsFlash(error="agent_backend_claude_unavailable")
 
-    await db.set_setting("agent_dev_mode_enabled", "1" if dev_mode_enabled else "0")
-    await db.set_setting("agent_backend_override", backend_override)
-    await db.set_setting(AGENT_PROMPT_TEMPLATE_SETTING, prompt_template)
+    await db.repos.settings.set_setting("agent_dev_mode_enabled", "1" if dev_mode_enabled else "0")
+    await db.repos.settings.set_setting("agent_backend_override", backend_override)
+    await db.repos.settings.set_setting(AGENT_PROMPT_TEMPLATE_SETTING, prompt_template)
     agent_manager = deps.get_agent_manager(request)
     if agent_manager is not None:
         await agent_manager.refresh_settings_cache(preflight=True)
@@ -1023,12 +1023,12 @@ async def handle_test_all_agent_provider_models_status(request: Request) -> Sett
 
 async def handle_save_filters(request: Request, form: FiltersForm) -> SettingsFlash:
     db = deps.get_db(request)
-    await db.set_setting("min_subscribers_filter", form.min_subscribers)
-    await db.set_setting(
+    await db.repos.settings.set_setting("min_subscribers_filter", form.min_subscribers)
+    await db.repos.settings.set_setting(
         "auto_delete_filtered",
         "1" if form.auto_delete_filtered else "0",
     )
-    await db.set_setting(
+    await db.repos.settings.set_setting(
         "auto_delete_on_collect",
         "1" if form.auto_delete_on_collect else "0",
     )
@@ -1071,13 +1071,13 @@ async def handle_save_credentials(request: Request, form: CredentialsForm) -> Se
         return SettingsFlash(error="invalid_api_id")
 
     if id_changed:
-        await db.set_setting("tg_api_id", form.api_id)
+        await db.repos.settings.set_setting("tg_api_id", form.api_id)
     if hash_changed:
-        await db.set_setting("tg_api_hash", form.api_hash)
+        await db.repos.settings.set_setting("tg_api_hash", form.api_hash)
 
     if id_changed or hash_changed:
-        actual_id = form.api_id if id_changed else (await db.get_setting("tg_api_id") or "")
-        actual_hash = form.api_hash if hash_changed else (await db.get_setting("tg_api_hash") or "")
+        actual_id = form.api_id if id_changed else (await db.repos.settings.get_setting("tg_api_id") or "")
+        actual_hash = form.api_hash if hash_changed else (await db.repos.settings.get_setting("tg_api_hash") or "")
         if actual_id and actual_hash:
             if not actual_id.isdigit():
                 return SettingsFlash(error="invalid_api_id")
@@ -1172,7 +1172,7 @@ async def handle_save_image_providers(
         if not has_key and not has_env:
             return SettingsFlash(error="image_provider_missing_key")
     await service.save_provider_configs(configs)
-    await deps.get_db(request).set_setting("default_image_model", form.default_model)
+    await deps.get_db(request).repos.settings.set_setting("default_image_model", form.default_model)
     return SettingsFlash(msg="image_saved")
 
 
@@ -1191,11 +1191,11 @@ async def handle_save_translation_settings(
     form: TranslationSettingsForm,
 ) -> SettingsFlash:
     db = deps.get_db(request)
-    await db.set_setting("translation_provider", form.provider)
-    await db.set_setting("translation_model", form.model)
-    await db.set_setting("translation_target_lang", form.target_lang)
-    await db.set_setting("translation_source_filter", form.source_filter)
-    await db.set_setting("translation_auto_on_collect", "1" if form.auto_on_collect else "0")
+    await db.repos.settings.set_setting("translation_provider", form.provider)
+    await db.repos.settings.set_setting("translation_model", form.model)
+    await db.repos.settings.set_setting("translation_target_lang", form.target_lang)
+    await db.repos.settings.set_setting("translation_source_filter", form.source_filter)
+    await db.repos.settings.set_setting("translation_auto_on_collect", "1" if form.auto_on_collect else "0")
     return SettingsFlash(msg="translation_saved", fragment="pane-translation")
 
 
@@ -1214,7 +1214,7 @@ async def handle_translation_run_batch(
     form: TranslationRunForm,
 ) -> SettingsFlash:
     db = deps.get_db(request)
-    source_filter_raw = await db.get_setting("translation_source_filter") or ""
+    source_filter_raw = await db.repos.settings.get_setting("translation_source_filter") or ""
     source_filter = [source.strip() for source in source_filter_raw.split(",") if source.strip()]
 
     from src.models import CollectionTaskType, TranslateBatchTaskPayload

@@ -22,7 +22,7 @@ from src.web.filter.responses import (
 
 
 async def _dev_mode_enabled(request: Request) -> bool:
-    return (await deps.get_db(request).get_setting("agent_dev_mode_enabled") or "0") == "1"
+    return (await deps.get_db(request).repos.settings.get_setting("agent_dev_mode_enabled") or "0") == "1"
 
 
 async def filter_manage(request: Request) -> FilterTemplate:
@@ -147,7 +147,7 @@ async def analyze_channels(request: Request) -> FilterRedirect:
     await analyzer.apply_filters(report)
 
     purged_count = 0
-    auto_delete = await db.get_setting("auto_delete_filtered")
+    auto_delete = await db.repos.settings.get_setting("auto_delete_filtered")
     if auto_delete == "1" and report.filtered_count > 0:
         channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
         pk_map = {ch.channel_id: ch.id for ch in channels if ch.id is not None}
@@ -182,7 +182,7 @@ async def apply_filters(request: Request) -> FilterRedirect:
 
 async def has_stats(request: Request) -> dict:
     db = deps.get_db(request)
-    channels = await db.get_channels(active_only=True, include_filtered=False)
+    channels = await db.repos.channels.get_channels(active_only=True, include_filtered=False)
     if not channels:
         return {"has_stats": True}
     stats_map = await db.get_latest_stats_for_all()

@@ -160,7 +160,7 @@ async def collect_all_stats(request: Request):
     if existing:
         return RedirectResponse(url="/channels?error=stats_running", status_code=303)
 
-    channels = await db.get_channels(active_only=True, include_filtered=False)
+    channels = await db.repos.channels.get_channels(active_only=True, include_filtered=False)
     latest_stats = await db.get_latest_stats_for_all()
     channels_without_stats = [ch for ch in channels if ch.channel_id not in latest_stats]
     channels_with_stats = [ch for ch in channels if ch.channel_id in latest_stats]

@@ -133,8 +133,8 @@ async def save_credentials(
     db = request.app.state.db
     auth = request.app.state.auth
 
-    await db.set_setting("tg_api_id", str(api_id))
-    await db.set_setting("tg_api_hash", api_hash)
+    await db.repos.settings.set_setting("tg_api_id", str(api_id))
+    await db.repos.settings.set_setting("tg_api_hash", api_hash)
     auth.update_credentials(api_id, api_hash)
 
     return RedirectResponse(url="/auth/login", status_code=303)
