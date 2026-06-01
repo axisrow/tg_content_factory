@@ -213,14 +213,32 @@ async def test_update_channel_last_id(channels_repo):
     assert channel.last_collected_id == 500
 
 
-async def test_update_channel_last_id_overwrites(channels_repo):
-    """Test that update_channel_last_id overwrites previous value."""
+async def test_update_channel_last_id_advances_monotonically(channels_repo):
+    """update_channel_last_id advances to newer IDs."""
     await channels_repo.add_channel(make_channel(12345))
     await channels_repo.update_channel_last_id(12345, 100)
     await channels_repo.update_channel_last_id(12345, 200)
 
     channel = await channels_repo.get_channel_by_channel_id(12345)
     assert channel.last_collected_id == 200
+
+
+async def test_update_channel_last_id_does_not_rewind(channels_repo):
+    """update_channel_last_id must not move the durable cursor backwards."""
+    await channels_repo.add_channel(make_channel(12345))
+    await channels_repo.update_channel_last_id(12345, 500)
+    await channels_repo.update_channel_last_id(12345, 100)
+
+    channel = await channels_repo.get_channel_by_channel_id(12345)
+    assert channel.last_collected_id == 500
+
+
+async def test_update_channel_last_id_missing_channel_noop(channels_repo):
+    """Updating a missing channel is a no-op."""
+    await channels_repo.update_channel_last_id(99999, 500)
+
+    channel = await channels_repo.get_channel_by_channel_id(99999)
+    assert channel is None
 
 
 # set_channel_active tests

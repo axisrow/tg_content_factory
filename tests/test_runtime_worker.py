@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from src.database.repositories.accounts import AccountSessionDecryptError
-from src.runtime.worker import _publish_snapshots, _publish_worker_down_snapshot
+from src.runtime.worker import _publish_snapshots, _publish_worker_down_snapshot, _run_worker_async
 from src.services.notification_target_service import NotificationTargetStatus
+from src.web.embedded_worker import EmbeddedWorker
 
 
 def _make_container(**overrides):
@@ -190,6 +194,23 @@ async def test_publish_snapshots_notification_bot_exception():
     assert bot_payload["configured"] is False
 
 
+async def test_publish_snapshots_notification_bot_cancelled_is_nonfatal(caplog):
+    container = _make_container(target_state="available")
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif = MagicMock()
+        mock_notif.get_status = AsyncMock(side_effect=asyncio.CancelledError)
+        mock_notif_svc.return_value = mock_notif
+
+        caplog.set_level("WARNING", logger="src.runtime.worker")
+        await _publish_snapshots(container)
+
+    calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
+    notif_call = [c for c in calls if c[0][0].snapshot_type == "notification_target_status"][0]
+    bot_payload = notif_call[0][0].payload["bot"]
+    assert bot_payload["configured"] is False
+    assert "Notification bot snapshot refresh was cancelled; continuing worker" in caplog.text
+
+
 async def test_publish_worker_down_snapshot_for_decrypt_failure():
     container = _make_container()
     exc = AccountSessionDecryptError(phone="+1234", status="key_mismatch")
@@ -202,3 +223,58 @@ async def test_publish_worker_down_snapshot_for_decrypt_failure():
     assert snapshot.payload["reason"] == "telegram_session_decrypt_failed"
     assert snapshot.payload["decrypt_status"] == "key_mismatch"
     assert snapshot.payload["action"] == "restore_key_or_relogin"
+
+
+async def test_worker_loop_continues_after_transient_snapshot_cancel():
+    container = MagicMock()
+    publish_calls = 0
+
+    async def publish_snapshot(_container, *, stop_event=None):
+        nonlocal publish_calls
+        publish_calls += 1
+        if publish_calls == 1:
+            raise asyncio.CancelledError
+        task = asyncio.current_task()
+        assert task is not None
+        task.cancel()
+        raise asyncio.CancelledError
+
+    with (
+        patch("src.runtime.worker.build_worker_container", AsyncMock(return_value=container)),
+        patch("src.runtime.worker.start_container", AsyncMock()),
+        patch("src.runtime.worker.stop_container", AsyncMock()) as stop_container,
+        patch("src.runtime.worker._publish_snapshots", new=publish_snapshot),
+        patch("src.runtime.worker.HEARTBEAT_INTERVAL_SEC", 0.001),
+    ):
+        worker_task = asyncio.create_task(_run_worker_async(MagicMock()))
+        with pytest.raises(asyncio.CancelledError):
+            await worker_task
+
+    assert publish_calls == 2
+    stop_container.assert_awaited_once_with(container)
+
+
+async def test_embedded_worker_stop_suppresses_cancelled_snapshot_publish():
+    container = MagicMock()
+    worker = EmbeddedWorker(MagicMock())
+
+    with (
+        patch("src.web.embedded_worker.build_worker_container", AsyncMock(return_value=container)),
+        patch("src.web.embedded_worker.start_container", AsyncMock()),
+        patch("src.web.embedded_worker.stop_container", AsyncMock()) as stop_container,
+        patch(
+            "src.web.embedded_worker._publish_snapshots",
+            AsyncMock(side_effect=asyncio.CancelledError),
+        ) as publish_snapshots,
+    ):
+        await worker.start()
+        for _ in range(10):
+            if publish_snapshots.await_count:
+                break
+            await asyncio.sleep(0)
+
+        stop_container.assert_not_awaited()
+        await worker.stop(timeout=1.0)
+
+    stop_container.assert_awaited_once_with(container)
+    assert worker.container is None

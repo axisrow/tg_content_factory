@@ -39,7 +39,18 @@
           hx-swap="outerHTML"
           hx-disabled-elt="find button"
           class="d-inline">
-        <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Загрузить">{{ icon("collect") }}</button>
+        <button type="submit" class="btn btn-outline-primary btn-sm emoji-btn" title="Загрузить новые сообщения">{{ icon("collect") }}</button>
+    </form>
+</span>
+<span id="collect-full-btn-{{ prefix }}{{ ch.id }}">
+    <form action="/channels/{{ ch.id }}/collect/full" method="post"
+          hx-post="/channels/{{ ch.id }}/collect/full"
+          hx-target="#collect-full-btn-{{ prefix }}{{ ch.id }}"
+          hx-swap="outerHTML"
+          hx-disabled-elt="find button"
+          data-confirm="Запустить полный обход истории канала? Это может занять долго."
+          class="d-inline">
+        <button type="submit" class="btn btn-outline-warning btn-sm emoji-btn" title="Полный обход истории">{{ icon("warning") }}</button>
     </form>
 </span>
 <form method="post" action="/channels/{{ ch.id }}/stats" class="d-inline" data-busy>

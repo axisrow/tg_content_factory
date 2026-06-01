@@ -27,6 +27,7 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "has_comments": "has_comments INTEGER DEFAULT 0",
         "created_at": "created_at TEXT",
         "preferred_phone": "preferred_phone TEXT",
+        "last_collected_id": "last_collected_id INTEGER DEFAULT 0",
     },
     "messages": {
         "sender_first_name": "sender_first_name TEXT",
@@ -291,6 +292,28 @@ async def _ensure_fts5_available(db: aiosqlite.Connection) -> bool:
     return True
 
 
+async def _repair_channel_last_collected_ids_from_messages(db: aiosqlite.Connection) -> None:
+    """Raise channel cursors to the newest message already stored locally."""
+    if not await table_exists(db, "channels") or not await table_exists(db, "messages"):
+        return
+
+    await db.execute(
+        """
+        UPDATE channels
+        SET last_collected_id = COALESCE((
+            SELECT MAX(m.message_id)
+            FROM messages m
+            WHERE m.channel_id = channels.channel_id
+        ), last_collected_id)
+        WHERE COALESCE(last_collected_id, 0) < COALESCE((
+            SELECT MAX(m.message_id)
+            FROM messages m
+            WHERE m.channel_id = channels.channel_id
+        ), 0)
+        """
+    )
+
+
 async def run_migrations(db: aiosqlite.Connection) -> bool:
     """Repair the SQLite schema without rewriting existing user data.
 
@@ -312,6 +335,16 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
 
     await ensure_indexes(db, SCHEMA_REPAIR_INDEXES)
     fts_available = await _ensure_fts5_available(db)
+
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_channel_cursor_repair_v1' LIMIT 1"
+    )
+    if not await cur.fetchone():
+        await _repair_channel_last_collected_ids_from_messages(db)
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) "
+            "VALUES ('_migration_channel_cursor_repair_v1', '1')"
+        )
 
     legacy_dialog_search_key = "_".join(("search", "my", "telegram"))
     await _migrate_tool_permission_key(db, "list_dialogs", legacy_dialog_search_key)

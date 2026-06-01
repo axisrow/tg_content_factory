@@ -55,6 +55,17 @@ RESOLVE_USERNAME_BACKOFF_BUFFER_SEC = 5
 # Telegram flood cannot brick all collection for hours.
 GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC = 300
 GLOBAL_RESOLVE_BACKOFF_CAP_SEC = 3600
+MESSAGE_FLUSH_BATCH_SIZE = 500
+PERSISTED_ID_VERIFY_CHUNK_SIZE = 500
+
+
+def _format_channel_log_name(channel: Channel) -> str:
+    username = (channel.username or "").strip().lstrip("@")
+    if username:
+        return f"@{username}"
+
+    title = (channel.title or "").strip()
+    return title or "no username"
 
 
 class NoActiveStatsClientsError(RuntimeError):
@@ -669,10 +680,11 @@ class Collector:
             is_first_run = channel.last_collected_id == 0
             should_notify = self._notifier is not None and not is_first_run
             limit = None
+            channel_log_name = _format_channel_log_name(channel)
             logger.info(
                 "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s",
                 channel_id,
-                channel.username or channel.title,
+                channel_log_name,
                 is_first_run,
                 min_id,
                 limit,
@@ -683,24 +695,29 @@ class Collector:
                 if not batch:
                     return True
 
-                await self._db.insert_messages_batch(batch)
                 expected_ids = {message.message_id for message in batch}
-                placeholders = ",".join("?" for _ in expected_ids)
-                cur = await self._db.execute(
-                    f"SELECT message_id FROM messages WHERE channel_id = ? "
-                    f"AND message_id IN ({placeholders})",
-                    (channel_id, *expected_ids),
-                )
-                rows = await cur.fetchall()
-                persisted_ids = {row["message_id"] for row in rows}
+                await self._db.insert_messages_batch(batch)
+                persisted_ids: set[int] = set()
+                expected_id_list = list(expected_ids)
+                for start in range(0, len(expected_id_list), PERSISTED_ID_VERIFY_CHUNK_SIZE):
+                    chunk = expected_id_list[start : start + PERSISTED_ID_VERIFY_CHUNK_SIZE]
+                    placeholders = ",".join("?" for _ in chunk)
+                    cur = await self._db.execute(
+                        f"SELECT message_id FROM messages WHERE channel_id = ? "
+                        f"AND message_id IN ({placeholders})",
+                        (channel_id, *chunk),
+                    )
+                    rows = await cur.fetchall()
+                    persisted_ids.update(row["message_id"] for row in rows)
                 missing_ids = expected_ids - persisted_ids
                 if missing_ids:
                     logger.error(
-                        "Failed to persist %d/%d messages for channel %d; "
+                        "Failed to persist %d/%d messages for channel %d (%s); "
                         "last persisted id remains %d",
                         len(missing_ids),
                         len(expected_ids),
                         channel_id,
+                        channel_log_name,
                         persisted_max_msg_id,
                     )
                     return False
@@ -713,8 +730,9 @@ class Collector:
                 if should_notify:
                     all_messages.extend(batch)
                 logger.info(
-                    "Channel %d: persisted %d messages, total %d",
+                    "Channel %d (%s): persisted %d messages, total %d",
                     channel_id,
+                    channel_log_name,
                     len(batch),
                     collected_count,
                 )
@@ -1010,7 +1028,7 @@ class Collector:
                             logger.info("Channel %d collection interrupted", channel_id)
                             break
 
-                        if is_first_run and len(messages_batch) >= 500:
+                        if len(messages_batch) >= MESSAGE_FLUSH_BATCH_SIZE:
                             if not await self._channel_still_exists(channel_id):
                                 messages_batch = []
                                 break

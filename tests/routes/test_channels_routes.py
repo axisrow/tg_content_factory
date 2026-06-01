@@ -210,22 +210,55 @@ async def test_collect_all_shutting_down_htmx(route_client):
 async def test_collect_channel(route_client, db):
     """Test collect single channel."""
     with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
-        mock_svc.return_value.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
         resp = await route_client.post("/channels/1/collect", follow_redirects=False)
         assert resp.status_code == 303
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=False)
 
 
 @pytest.mark.anyio
 async def test_collect_channel_htmx(route_client, db):
     """Test collect single channel with HTMX."""
     with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
-        mock_svc.return_value.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
         resp = await route_client.post(
             "/channels/1/collect",
             headers={"HX-Request": "true"},
         )
         assert resp.status_code == 200
         assert "collect-btn-1" in resp.text
+        assert "collect-btn-m-1" in resp.text
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=False)
+
+
+@pytest.mark.anyio
+async def test_collect_channel_full(route_client, db):
+    """Test explicit full backfill route."""
+    with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        resp = await route_client.post("/channels/1/collect/full", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "collect_full" in resp.headers["location"]
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=True)
+
+
+@pytest.mark.anyio
+async def test_collect_channel_full_htmx(route_client, db):
+    """Explicit full backfill HTMX response updates desktop and mobile buttons."""
+    with patch("src.web.routes.channel_collection.deps.collection_service") as mock_svc:
+        svc = mock_svc.return_value
+        svc.enqueue_channel_by_pk = AsyncMock(return_value="queued")
+        resp = await route_client.post(
+            "/channels/1/collect/full",
+            headers={"HX-Request": "true"},
+        )
+        assert resp.status_code == 200
+        assert "collect-full-btn-1" in resp.text
+        assert "collect-full-btn-m-1" in resp.text
+        svc.enqueue_channel_by_pk.assert_awaited_once_with(1, force=True, full=True)
 
 
 @pytest.mark.anyio
