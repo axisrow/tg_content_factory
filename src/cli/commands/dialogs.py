@@ -146,6 +146,35 @@ def run_with_dependencies(
                 failed = result.failed_count
                 print(f"\nDone: {left} left, {failed} failed.")
 
+            elif args.dialogs_action == "join":
+                accounts = sorted(pool.clients.keys())
+                if not accounts:
+                    print("No connected accounts.")
+                    return
+                phone = args.phone or accounts[0]
+                if phone not in pool.clients:
+                    print(f"Account {phone} not connected.")
+                    return
+
+                if not args.yes:
+                    print(f"Join/subscribe account {phone} to {args.target}")
+                    answer = input("Continue? [y/N] ").strip().lower()
+                    if answer != "y":
+                        print("Aborted.")
+                        return
+
+                try:
+                    result = await TelegramActionService(pool).join_dialog(
+                        phone=phone,
+                        target=args.target,
+                    )
+                    mode = "invite" if result.via_invite else "public"
+                    print(f"Joined/subscribed to {result.target} as {result.phone} ({mode}).")
+                except TelegramActionClientUnavailableError:
+                    print(f"Client for {phone} unavailable (flood-wait or not connected).")
+                except Exception as exc:
+                    print(f"Error joining channel/group: {exc}")
+
             elif args.dialogs_action == "topics":
                 channel_id = args.channel_id
                 topics = await pool.get_forum_topics(channel_id)

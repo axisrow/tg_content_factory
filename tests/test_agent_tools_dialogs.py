@@ -206,6 +206,65 @@ class TestDialogsToolLeaveDialogs:
         assert "Подтвердите" in _text(result)
 
 
+JOIN_TOOL_NAMES = ("join_channel", "join_chat", "subscribe_channel")
+
+
+class TestDialogsToolJoinChannel:
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("tool_name", JOIN_TOOL_NAMES)
+    async def test_no_pool(self, mock_db, tool_name):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers[tool_name]({"phone": "+7123456", "target": "@prog_ai"})
+        assert "CLI-режиме" in _text(result)
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("tool_name", JOIN_TOOL_NAMES)
+    async def test_missing_target(self, mock_db, tool_name):
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        mock_db.get_setting = AsyncMock(return_value=None)
+        handlers = _get_tool_handlers(mock_db, client_pool=MagicMock())
+        result = await handlers[tool_name]({"phone": "+79001234567", "confirm": True})
+        assert "target обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("tool_name", JOIN_TOOL_NAMES)
+    async def test_requires_confirmation(self, mock_db, tool_name):
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        mock_db.get_setting = AsyncMock(return_value=None)
+        handlers = _get_tool_handlers(mock_db, client_pool=MagicMock())
+        result = await handlers[tool_name](
+            {"phone": "+79001234567", "target": "@prog_ai", "confirm": False}
+        )
+        assert "Подтвердите" in _text(result)
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("tool_name", JOIN_TOOL_NAMES)
+    async def test_with_confirm_success(self, mock_db, tool_name):
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        mock_db.get_setting = AsyncMock(return_value=None)
+        mock_client = AsyncMock()
+        mock_client.get_entity = AsyncMock(return_value="entity")
+        mock_client.join_channel = AsyncMock()
+        mock_pool = MagicMock()
+        mock_pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+79001234567"))
+        mock_pool.release_client = AsyncMock()
+
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers[tool_name](
+            {"phone": "+79001234567", "target": "@prog_ai", "confirm": True}
+        )
+
+        text = _text(result)
+        assert "подписан/вступил" in text
+        mock_client.join_channel.assert_awaited_once_with("entity")
+
+
 class TestDialogsToolGetForumTopics:
     @pytest.mark.anyio
     async def test_missing_channel_id(self, mock_db):

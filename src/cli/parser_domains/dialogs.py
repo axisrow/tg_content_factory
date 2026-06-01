@@ -32,6 +32,11 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     )
     dialogs_leave.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
+    dialogs_join = dialogs_sub.add_parser("join", help="Join/subscribe to a channel or group")
+    dialogs_join.add_argument("target", help="@username, t.me link, or invite link")
+    dialogs_join.add_argument("--phone", default=None, help="Account phone (default: first connected)")
+    dialogs_join.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
     my_tg_topics = dialogs_sub.add_parser("topics", help="List forum topics for a channel")
     my_tg_topics.add_argument(
         "--channel-id",

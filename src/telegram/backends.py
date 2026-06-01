@@ -291,6 +291,18 @@ class TelegramTransportSession:
 
         return await self.invoke_request(UpdateUsernameRequest(channel, username))
 
+    async def join_channel(self, channel: Any) -> Any:
+        """Join a public channel or megagroup using the Telethon raw API."""
+        from telethon.tl.functions.channels import JoinChannelRequest
+
+        return await self.invoke_request(JoinChannelRequest(channel))
+
+    async def import_chat_invite(self, invite_hash: str) -> Any:
+        """Join a private chat/channel through an invite hash."""
+        from telethon.tl.functions.messages import ImportChatInviteRequest
+
+        return await self.invoke_request(ImportChatInviteRequest(invite_hash))
+
     async def download_media(self, message: Any, *, file: Any = None) -> Any:
         return await self._run(
             "telegram_download_media",

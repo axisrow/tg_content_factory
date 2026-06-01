@@ -179,6 +179,7 @@
 | Список диалогов | `dialogs list` | `GET /dialogs/` | `search_dialogs` |
 | Обновить кеш | `dialogs refresh` | `POST /dialogs/refresh` | `refresh_dialogs` |
 | Покинуть диалоги | `dialogs leave` | `POST /dialogs/leave` | `leave_dialogs` |
+| Подписаться/вступить | `dialogs join` | — | `join_channel`, `join_chat`, `subscribe_channel` |
 | Resolve entity | `dialogs resolve` | — | `resolve_entity` |
 | Статус кеша | `dialogs cache-status` | `GET /dialogs/cache-status` | `get_cache_status` |
 | Очистить кеш | `dialogs cache-clear` | `POST /dialogs/cache-clear` | `clear_dialog_cache` |
