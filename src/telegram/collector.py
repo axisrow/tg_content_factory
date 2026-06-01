@@ -1600,11 +1600,31 @@ class Collector:
             configured = int(getattr(self._config, "stats_all_max_channels_per_run", 10) or 10)
         return max(1, int(configured))
 
+    async def _order_stats_all_channels(self, channels: list[Channel]) -> list[Channel]:
+        try:
+            latest_stats = await self._db.get_latest_stats_for_all()
+        except Exception:
+            logger.debug("Failed to load latest channel stats for stats-all ordering", exc_info=True)
+            return channels
+
+        def _sort_key(item: tuple[int, Channel]) -> tuple[int, datetime, int]:
+            index, channel = item
+            latest = latest_stats.get(channel.channel_id)
+            if latest is None:
+                return (0, datetime.min.replace(tzinfo=timezone.utc), index)
+            collected_at = latest.collected_at or datetime.min.replace(tzinfo=timezone.utc)
+            if collected_at.tzinfo is None:
+                collected_at = collected_at.replace(tzinfo=timezone.utc)
+            return (1, collected_at, index)
+
+        return [channel for _index, channel in sorted(enumerate(channels), key=_sort_key)]
+
     async def collect_all_stats(self, *, max_channels: int | None = None) -> dict:
         async with self._stats_all_lock:
             self._stats_all_running = True
             try:
                 channels = await self._db.get_channels(active_only=True, include_filtered=False)
+                channels = await self._order_stats_all_channels(channels)
                 channel_limit = self._stats_all_channel_limit(max_channels)
                 total_channels = len(channels)
                 selected_channels = channels[:channel_limit]

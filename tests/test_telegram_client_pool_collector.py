@@ -1858,6 +1858,41 @@ async def test_collect_all_stats_respects_max_channels():
 
 
 @pytest.mark.anyio
+async def test_collect_all_stats_prioritizes_channels_without_or_stale_stats():
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    new = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    pool = make_mock_pool()
+    db = MagicMock()
+    db.get_channels = AsyncMock(
+        return_value=[
+            Channel(channel_id=1, title="Fresh"),
+            Channel(channel_id=2, title="Missing"),
+            Channel(channel_id=3, title="Stale"),
+        ]
+    )
+    db.get_latest_stats_for_all = AsyncMock(
+        return_value={
+            1: ChannelStats(channel_id=1, subscriber_count=10, collected_at=new),
+            3: ChannelStats(channel_id=3, subscriber_count=10, collected_at=old),
+        }
+    )
+
+    collector = Collector(pool, db, SchedulerConfig(stats_all_worker_count=1))
+    seen: list[int] = []
+
+    async def _collect_stats(channel):
+        seen.append(channel.channel_id)
+        return ChannelStats(channel_id=channel.channel_id, subscriber_count=10)
+
+    collector._collect_channel_stats = _collect_stats
+
+    stats = await collector.collect_all_stats(max_channels=2)
+    assert seen == [2, 3]
+    assert stats["remaining"] == 1
+    assert stats["limited"] is True
+
+
+@pytest.mark.anyio
 async def test_collect_all_stats_generic_error():
     pool = make_mock_pool()
     db = MagicMock()
