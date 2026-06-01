@@ -33,10 +33,15 @@ async def _json_object_body(request: Request) -> dict:
 
 
 def _coerce_int(value: object, field: str) -> int:
-    try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail=f"{field} must be an integer") from None
+    if isinstance(value, bool):
+        raise HTTPException(status_code=400, detail=f"{field} must be an integer")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if text and (text.isdecimal() or (text[0] in "+-" and text[1:].isdecimal())):
+            return int(text)
+    raise HTTPException(status_code=400, detail=f"{field} must be an integer")
 
 
 def _agent_unavailable_copy(runtime_state: deps.AgentRuntimeState) -> tuple[str, str]:
@@ -320,10 +325,14 @@ async def chat(request: Request, thread_id: int):
             interactive_permissions=True,
         )
         agen = stream.__aiter__()
+        waiting_for_permission = False
         try:
             while True:
                 try:
-                    chunk = await asyncio.wait_for(agen.__anext__(), timeout=_SSE_IDLE_TIMEOUT)
+                    if waiting_for_permission:
+                        chunk = await agen.__anext__()
+                    else:
+                        chunk = await asyncio.wait_for(agen.__anext__(), timeout=_SSE_IDLE_TIMEOUT)
                 except StopAsyncIteration:
                     break
                 except asyncio.TimeoutError:
@@ -333,7 +342,7 @@ async def chat(request: Request, thread_id: int):
                         _SSE_IDLE_TIMEOUT,
                     )
                     try:
-                        await agent_manager.cancel_stream(thread_id)
+                        await agent_manager.cancel_stream(thread_id, wait_timeout=5.0)
                     except Exception:
                         logger.debug("cancel_stream after SSE timeout failed", exc_info=True)
                     yield 'data: {"error": "Agent response timed out."}\n\n'
@@ -341,6 +350,7 @@ async def chat(request: Request, thread_id: int):
                 try:
                     data_str = chunk.removeprefix("data: ").strip()
                     data = json.loads(data_str)
+                    waiting_for_permission = data.get("type") == "permission_request"
                     if data.get("done") and data.get("full_text"):
                         try:
                             await db.save_agent_message(thread_id, "assistant", data["full_text"])
@@ -352,6 +362,7 @@ async def chat(request: Request, thread_id: int):
                         except sqlite3.IntegrityError:
                             pass
                 except json.JSONDecodeError:
+                    waiting_for_permission = False
                     pass
                 except Exception:
                     logger.exception("Failed to process agent message for thread %d", thread_id)
