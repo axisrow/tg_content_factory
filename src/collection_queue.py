@@ -270,6 +270,7 @@ class CollectionQueue:
                 continue
 
             stop_after_no_clients = False
+            keep_known_task_id = False
             try:
                 self._current_task_id = task_id
                 await self._channels.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
@@ -326,6 +327,7 @@ class CollectionQueue:
                     full=full,
                     run_after=run_after,
                 )
+                keep_known_task_id = True
                 logger.warning(
                     "Rescheduled collection task %d for channel %d until %s: all clients flooded",
                     task_id,
@@ -353,6 +355,7 @@ class CollectionQueue:
                     full=full,
                     run_after=run_after,
                 )
+                keep_known_task_id = True
                 logger.warning(
                     "Rescheduled collection task %d for channel %d until %s: username resolve flood wait",
                     task_id,
@@ -378,6 +381,7 @@ class CollectionQueue:
                     full=full,
                     run_after=run_after,
                 )
+                keep_known_task_id = True
                 logger.warning(
                     "Rescheduled collection task %d for channel %d until %s: "
                     "username resolve rate-limited on %s",
@@ -410,6 +414,7 @@ class CollectionQueue:
                 )
             except ConnectionError as exc:
                 requeued = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
+                keep_known_task_id = requeued
                 if not requeued:
                     self._retried_tasks.discard(task_id)
                     await self._channels.update_collection_task(
@@ -430,7 +435,8 @@ class CollectionQueue:
                 self._retried_tasks.discard(task_id)
             finally:
                 self._current_task_id = None
-                self._known_task_ids.discard(task_id)
+                if not keep_known_task_id:
+                    self._known_task_ids.discard(task_id)
                 self._queue.task_done()
                 if stop_after_no_clients:
                     break

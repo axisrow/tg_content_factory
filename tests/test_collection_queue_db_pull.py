@@ -232,6 +232,15 @@ async def test_username_resolve_rate_limit_keeps_task_pending(tmp_path):
         assert task.run_after is not None
         assert task.run_after >= before + timedelta(seconds=33)
         assert "resolve_username rate-limited" in (task.note or "")
+
+        queue.start_db_pull(interval=0.02)
+        try:
+            await asyncio.sleep(0.12)
+        finally:
+            await queue.stop_db_pull()
+
+        assert task_id in queue._known_task_ids
+        assert len(queue._delayed_requeues) == 1
     finally:
         await queue.shutdown()
         await db.close()
