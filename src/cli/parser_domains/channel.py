@@ -37,6 +37,12 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         action="store_true",
         help="Collect stats for all active channels",
     )
+    ch_stats.add_argument(
+        "--max-channels",
+        type=int,
+        default=None,
+        help="Maximum active channels to process in this bounded stats-all run",
+    )
 
     ch_sub.add_parser("refresh-types", help="Fill missing channel_type for existing channels")
 

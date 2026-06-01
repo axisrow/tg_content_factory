@@ -202,6 +202,25 @@ class TestCLIChannelExtended:
         out = capsys.readouterr().out
         assert "Stats collected: {'channels': 5, 'errors': 0}" in out
 
+    def test_stats_all_passes_max_channels(self, cli_env_with_mock_pool, capsys):
+        db, pool = cli_env_with_mock_pool
+        with patch(
+            "src.cli.commands.channel.Collector",
+        ) as mock_collector:
+            inst = mock_collector.return_value
+            inst.collect_all_stats = AsyncMock(
+                return_value={"channels": 3, "errors": 0, "remaining": 7, "limited": True},
+            )
+
+            from src.cli.commands.channel import run
+
+            run(_ns(channel_action="stats", identifier=None, all=True, max_channels=3))
+
+        inst.collect_all_stats.assert_awaited_once_with(max_channels=3)
+        out = capsys.readouterr().out
+        assert "'remaining': 7" in out
+        assert "'limited': True" in out
+
     def test_refresh_types_success(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
         asyncio.run(

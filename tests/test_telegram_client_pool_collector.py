@@ -1795,29 +1795,103 @@ async def test_collect_stats_updates_channel_type():
 
 
 @pytest.mark.anyio
-async def test_collect_all_stats_waits_on_flood():
+async def test_collect_all_stats_defers_on_flood_without_sleep(monkeypatch):
     pool = make_mock_pool()
     db = MagicMock()
     db.get_channels = AsyncMock(return_value=[Channel(channel_id=1, title="Ch")])
+    db.get_latest_stats_for_all = AsyncMock(return_value={})
 
     config = SchedulerConfig()
     collector = Collector(pool, db, config)
 
-    next_at = datetime.now(timezone.utc) + timedelta(seconds=1)
+    sleep = AsyncMock()
+    monkeypatch.setattr("src.telegram.collector.asyncio.sleep", sleep)
+
+    next_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
     call_count = {"n": 0}
 
     async def _collect_stats(channel):
         call_count["n"] += 1
-        if call_count["n"] == 1:
-            raise AllStatsClientsFloodedError(retry_after_sec=0, next_available_at=next_at)
-        return ChannelStats(channel_id=1, subscriber_count=10)
+        raise AllStatsClientsFloodedError(retry_after_sec=3600, next_available_at=next_at)
 
     collector._collect_channel_stats = _collect_stats
 
     stats = await collector.collect_all_stats()
-    assert stats["channels"] == 1
+    assert call_count["n"] == 1
+    assert stats["channels"] == 0
     assert stats["errors"] == 0
+    assert stats["remaining"] == 1
+    assert stats["limited"] is True
+    assert stats["flood_wait_until"] == next_at.isoformat()
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_collect_all_stats_respects_max_channels():
+    pool = make_mock_pool()
+    db = MagicMock()
+    db.get_channels = AsyncMock(
+        return_value=[
+            Channel(channel_id=1, title="Ch1"),
+            Channel(channel_id=2, title="Ch2"),
+            Channel(channel_id=3, title="Ch3"),
+        ]
+    )
+    db.get_latest_stats_for_all = AsyncMock(return_value={})
+
+    collector = Collector(pool, db, SchedulerConfig(stats_all_worker_count=1))
+    seen: list[int] = []
+
+    async def _collect_stats(channel):
+        seen.append(channel.channel_id)
+        return ChannelStats(channel_id=channel.channel_id, subscriber_count=10)
+
+    collector._collect_channel_stats = _collect_stats
+
+    stats = await collector.collect_all_stats(max_channels=2)
+    assert seen == [1, 2]
+    assert stats["channels"] == 2
+    assert stats["errors"] == 0
+    assert stats["remaining"] == 1
+    assert stats["limited"] is True
+    assert stats["total"] == 3
+    assert stats["max_channels"] == 2
+
+
+@pytest.mark.anyio
+async def test_collect_all_stats_prioritizes_channels_without_or_stale_stats():
+    old = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    new = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    pool = make_mock_pool()
+    db = MagicMock()
+    db.get_channels = AsyncMock(
+        return_value=[
+            Channel(channel_id=1, title="Fresh"),
+            Channel(channel_id=2, title="Missing"),
+            Channel(channel_id=3, title="Stale"),
+        ]
+    )
+    db.get_latest_stats_for_all = AsyncMock(
+        return_value={
+            1: ChannelStats(channel_id=1, subscriber_count=10, collected_at=new),
+            3: ChannelStats(channel_id=3, subscriber_count=10, collected_at=old),
+        }
+    )
+
+    collector = Collector(pool, db, SchedulerConfig(stats_all_worker_count=1))
+    seen: list[int] = []
+
+    async def _collect_stats(channel):
+        seen.append(channel.channel_id)
+        return ChannelStats(channel_id=channel.channel_id, subscriber_count=10)
+
+    collector._collect_channel_stats = _collect_stats
+
+    stats = await collector.collect_all_stats(max_channels=2)
+    assert seen == [2, 3]
+    assert stats["remaining"] == 1
+    assert stats["limited"] is True
 
 
 @pytest.mark.anyio
