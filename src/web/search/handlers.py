@@ -116,7 +116,7 @@ async def render_search_page(
         min_length, max_length = None, None
 
     service = deps.search_service(request)
-    channels = await db.get_channels()
+    channels = await db.repos.channels.get_channels()
     runtime_mode = getattr(request.app.state, "runtime_mode", "web")
 
     # Browse mode: channel_id without query shows latest messages from that channel
@@ -260,8 +260,8 @@ async def translate_message(request: Request, message_db_id: int) -> SearchJson:
 
     translated = await translation_service.translate_message(
         msg.text, detected, target_lang,
-        provider_name=await db.get_setting("translation_provider"),
-        model=await db.get_setting("translation_model"),
+        provider_name=await db.repos.settings.get_setting("translation_provider"),
+        model=await db.repos.settings.get_setting("translation_model"),
     )
     if translated:
         target = "en" if target_lang == "en" else "custom"

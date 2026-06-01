@@ -162,7 +162,7 @@ async def rename_thread(request: Request, thread_id: int) -> AgentJson:
 
 async def get_channels_json(request: Request) -> AgentJson:
     db = deps.get_db(request)
-    channels = await db.get_channels(active_only=True, include_filtered=False)
+    channels = await db.repos.channels.get_channels(active_only=True, include_filtered=False)
     return AgentJson(
         [
             {

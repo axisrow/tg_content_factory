@@ -207,7 +207,7 @@ async def set_job_interval(request: Request, job_id: str) -> SchedulerRedirect:
 async def start_scheduler(request: Request) -> SchedulerRedirect:
     if _shutting_down(request):
         return SchedulerRedirect(error="shutting_down")
-    await deps.get_db(request).set_setting("scheduler_autostart", "1")
+    await deps.get_db(request).repos.settings.set_setting("scheduler_autostart", "1")
     return await enqueue_scheduler_command(
         request,
         "scheduler.reconcile",
@@ -216,7 +216,7 @@ async def start_scheduler(request: Request) -> SchedulerRedirect:
 
 
 async def stop_scheduler(request: Request) -> SchedulerRedirect:
-    await deps.get_db(request).set_setting("scheduler_autostart", "0")
+    await deps.get_db(request).repos.settings.set_setting("scheduler_autostart", "0")
     return await enqueue_scheduler_command(
         request,
         "scheduler.reconcile",
@@ -227,7 +227,7 @@ async def stop_scheduler(request: Request) -> SchedulerRedirect:
 async def pause_collection_queue(request: Request) -> SchedulerRedirect:
     if _shutting_down(request):
         return SchedulerRedirect(error="shutting_down")
-    await deps.get_db(request).set_setting("collection_queue_paused", "1")
+    await deps.get_db(request).repos.settings.set_setting("collection_queue_paused", "1")
     return await enqueue_scheduler_command(
         request,
         "collection.pause",
@@ -238,7 +238,7 @@ async def pause_collection_queue(request: Request) -> SchedulerRedirect:
 async def resume_collection_queue(request: Request) -> SchedulerRedirect:
     if _shutting_down(request):
         return SchedulerRedirect(error="shutting_down")
-    await deps.get_db(request).set_setting("collection_queue_paused", "0")
+    await deps.get_db(request).repos.settings.set_setting("collection_queue_paused", "0")
     return await enqueue_scheduler_command(
         request,
         "collection.resume",

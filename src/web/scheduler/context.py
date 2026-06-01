@@ -260,7 +260,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
     if not isinstance(availability_retry_after, int):
         availability_retry_after = None
     available_accounts_now = max(0, len(connected_active_accounts) - len(flooded_accounts))
-    active_unfiltered_channels = len(await db.get_channels(active_only=True, include_filtered=False))
+    active_unfiltered_channels = len(await db.repos.channels.get_channels(active_only=True, include_filtered=False))
     recent_tasks = await db.get_collection_tasks(limit=200)
     recent_zero_collect_count = sum(
         1
