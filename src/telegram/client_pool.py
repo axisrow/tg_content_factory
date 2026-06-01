@@ -34,7 +34,13 @@ from src.telegram.backends import (
     TelethonCliBackend,
     adapt_transport_session,
 )
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.telegram.flood_wait import (
+    HandledFloodWaitError,
+    is_blocking_flood_wait_until,
+    is_transient_flood_wait_seconds,
+    run_with_flood_wait,
+    run_with_flood_wait_retry,
+)
 from src.telegram.session_materializer import SessionMaterializer
 from src.telegram.utils import normalize_utc
 
@@ -159,8 +165,10 @@ class ClientPool:
             flood_waited = {
                 account.phone
                 for account in accounts
-                if normalize_utc(getattr(account, "flood_wait_until", None)) is not None
-                and normalize_utc(getattr(account, "flood_wait_until", None)) > now
+                if is_blocking_flood_wait_until(
+                    normalize_utc(getattr(account, "flood_wait_until", None)),
+                    now=now,
+                )
             }
         except Exception:
             logger.debug("warm_all_dialogs: failed to load flood-wait status", exc_info=True)
@@ -173,7 +181,14 @@ class ClientPool:
                 continue
             session, p = result
             try:
-                dialogs = await asyncio.wait_for(session.warm_dialog_cache(), timeout=60.0)
+                dialogs = await run_with_flood_wait_retry(
+                    lambda: session.warm_dialog_cache(),
+                    operation="telegram_warm_dialog_cache",
+                    phone=p,
+                    pool=self,
+                    logger_=logger,
+                    timeout=60.0,
+                )
                 self.mark_dialogs_fetched(p)
                 for dialog in dialogs or []:
                     entity = getattr(dialog, "entity", None)
@@ -582,7 +597,8 @@ class ClientPool:
         """Mark account as flood-waited."""
         until = datetime.now(timezone.utc) + timedelta(seconds=wait_seconds)
         await self._db.update_account_flood(phone, until)
-        logger.warning("Flood wait for %s: %d seconds (until %s)", phone, wait_seconds, until)
+        level = logging.INFO if is_transient_flood_wait_seconds(wait_seconds) else logging.WARNING
+        logger.log(level, "Flood wait for %s: %d seconds (until %s)", phone, wait_seconds, until)
 
     async def report_premium_flood(self, phone: str, wait_seconds: int) -> None:
         """Mark account as premium-search flood-waited without touching generic account state."""

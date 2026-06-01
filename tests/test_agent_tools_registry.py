@@ -272,6 +272,24 @@ class TestResolveLiveReadPhone:
         assert account.flood_wait_until is None
         db.update_account_flood.assert_awaited_once_with("+111", None)
 
+    @pytest.mark.anyio
+    async def test_explicit_transient_flood_wait_is_waited_inline(self, monkeypatch):
+        future = datetime.now(timezone.utc) + timedelta(seconds=30)
+        account = SimpleNamespace(phone="+111", is_primary=True, is_active=True, flood_wait_until=future)
+        available_account = SimpleNamespace(phone="+111", is_primary=True, is_active=True, flood_wait_until=None)
+        db = MagicMock()
+        db.get_accounts = AsyncMock(side_effect=[[account], [available_account]])
+        pool = SimpleNamespace(clients={"+111": object()})
+        sleep = AsyncMock()
+        monkeypatch.setattr("src.agent.tools._registry.sleep_for_flood_wait_seconds", sleep)
+
+        phone, err = await resolve_live_read_phone(db, pool, "+111", tool_name="read_messages")
+
+        assert phone == "+111"
+        assert err is None
+        sleep.assert_awaited_once()
+        assert 1 <= sleep.await_args.args[0] <= 30
+
 
 # ── require_phone_permission ──────────────────────────────────────────────────
 

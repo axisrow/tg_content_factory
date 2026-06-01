@@ -1236,6 +1236,60 @@ async def test_collect_channel_retries_after_short_flood_wait(db):
 
 
 @pytest.mark.anyio
+async def test_collect_channel_waits_when_all_clients_transient_flooded(db, monkeypatch):
+    ch = Channel(channel_id=-100174, title="TransientAllFlood", username="transientall", last_collected_id=5)
+    ch_id = await db.add_channel(ch)
+    await db.update_channel_last_id(ch.channel_id, 5)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("src.telegram.flood_wait.asyncio.sleep", fake_sleep)
+
+    client1 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    client2 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+
+    async def _flooding_generator():
+        yield _make_mock_message(6, text="msg 6")
+        raise FloodWaitError(request=None, capture=3)
+
+    client1.iter_messages = MagicMock(return_value=_flooding_generator())
+    client2.iter_messages = MagicMock(return_value=_AsyncIterMessages([_make_mock_message(7, text="msg 7")]))
+
+    pool = make_mock_pool(
+        get_available_client=AsyncMock(
+            side_effect=[
+                (client1, "+70001"),
+                None,
+                (client2, "+70002"),
+            ]
+        ),
+        get_stats_availability=AsyncMock(
+            return_value=SimpleNamespace(
+                state="all_flooded",
+                retry_after_sec=3,
+                next_available_at_utc=datetime.now(timezone.utc) + timedelta(seconds=3),
+            )
+        ),
+    )
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
+    )
+
+    count = await collector._collect_channel(stored)
+
+    assert count == 2
+    assert sleeps == [4.0]
+    pool.report_flood.assert_awaited_once()
+
+
+@pytest.mark.anyio
 async def test_collect_channel_rotates_on_long_flood_wait(db):
     """FloodWait > max_flood_wait_sec still rotates to the next available account."""
     ch = Channel(channel_id=-100172, title="LongFlood", username="longflood", last_collected_id=5)

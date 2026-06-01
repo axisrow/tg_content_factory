@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 
 from src.models import AccountSessionStatus
+from src.telegram.flood_wait import is_blocking_flood_wait_until
 from src.web import deps
 
 router = APIRouter()
@@ -50,7 +51,7 @@ async def dashboard(request: Request):
             until = a.flood_wait_until
             if until.tzinfo is None:
                 until = until.replace(tzinfo=timezone.utc)
-            if until > now:
+            if is_blocking_flood_wait_until(until, now=now):
                 flood_wait_count += 1
         if (
             a.is_active
@@ -63,7 +64,7 @@ async def dashboard(request: Request):
             else:
                 if until.tzinfo is None:
                     until = until.replace(tzinfo=timezone.utc)
-                if until <= now:
+                if not is_blocking_flood_wait_until(until, now=now):
                     all_connected_flooded = False
     if connected_count == 0:
         all_connected_flooded = False

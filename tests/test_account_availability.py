@@ -50,6 +50,14 @@ def test_flood_reports_remaining():
     assert avail["remaining_minutes"] >= 1
 
 
+def test_transient_flood_is_available_with_marker():
+    future = datetime.now(timezone.utc) + timedelta(seconds=30)
+    avail = compute_account_availability(_acc(flood_wait_until=future), connected=True)
+    assert avail["state"] == "available"
+    assert avail["transient_flood_wait"] is True
+    assert avail["remaining_seconds"] > 0
+
+
 def test_expired_flood_is_available():
     past = datetime.now(timezone.utc) - timedelta(minutes=10)
     avail = compute_account_availability(_acc(flood_wait_until=past), connected=True)

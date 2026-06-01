@@ -21,6 +21,10 @@ from src.services.runtime_diagnostics import (
     WORKER_HEARTBEAT_STALE_AFTER_SEC as WORKER_HEARTBEAT_STALE_AFTER_SEC_SVC,
 )
 from src.services.runtime_diagnostics import evaluate_worker_heartbeat
+from src.telegram.flood_wait import (
+    is_blocking_flood_wait_until,
+    is_transient_flood_wait_seconds,
+)
 from src.web import deps
 
 logger = logging.getLogger(__name__)
@@ -241,7 +245,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
             continue
         if flood_until.tzinfo is None:
             flood_until = flood_until.replace(tzinfo=timezone.utc)
-        if flood_until <= now:
+        if flood_until <= now or not is_blocking_flood_wait_until(flood_until, now=now):
             continue
         flooded_accounts.append({"phone": acc.phone, "until": flood_until})
         if next_available_at is None or flood_until < next_available_at:
@@ -259,6 +263,9 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         availability_next = None
     if not isinstance(availability_retry_after, int):
         availability_retry_after = None
+    availability_all_flooded_blocking = availability_state == "all_flooded" and not (
+        is_transient_flood_wait_seconds(availability_retry_after)
+    )
     available_accounts_now = max(0, len(connected_active_accounts) - len(flooded_accounts))
     active_unfiltered_channels = len(await db.repos.channels.get_channels(active_only=True, include_filtered=False))
     recent_tasks = await db.get_collection_tasks(limit=200)
@@ -289,7 +296,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         state = "session_degraded"
     elif not connected_active_accounts:
         state = "no_clients"
-    elif availability_state == "all_flooded" or available_accounts_now == 0:
+    elif availability_all_flooded_blocking or available_accounts_now == 0:
         state = "all_flooded"
     elif flooded_accounts:
         state = "degraded"

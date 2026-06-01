@@ -9,7 +9,10 @@ from src.telegram.flood_wait import (
     HandledFloodWaitError,
     format_flood_wait_detail,
     handle_flood_wait,
+    is_blocking_flood_wait_until,
+    is_transient_flood_wait_seconds,
     run_with_flood_wait,
+    run_with_flood_wait_retry,
 )
 
 
@@ -191,3 +194,47 @@ async def test_run_with_flood_wait_with_timeout(monkeypatch):
 
     assert result == "ok"
     assert captured == {"timeout": 0.5}
+
+
+def test_transient_flood_wait_policy():
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+    assert is_transient_flood_wait_seconds(30)
+    assert is_transient_flood_wait_seconds(60)
+    assert not is_transient_flood_wait_seconds(61)
+    assert not is_blocking_flood_wait_until(now + timedelta(seconds=60), now=now)
+    assert is_blocking_flood_wait_until(now + timedelta(seconds=61), now=now)
+
+
+@pytest.mark.anyio
+async def test_run_with_flood_wait_retry_waits_for_transient_flood(monkeypatch):
+    err = FloodWaitError(request=None, capture=0)
+    err.seconds = 3
+    calls = {"count": 0}
+    sleeps = []
+    pool = AsyncMock()
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("src.telegram.flood_wait.asyncio.sleep", fake_sleep)
+
+    async def _call():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise err
+        return "ok"
+
+    result = await run_with_flood_wait_retry(
+        _call,
+        operation="retry_op",
+        phone="+7000",
+        pool=pool,
+    )
+
+    assert result == "ok"
+    assert calls["count"] == 2
+    assert sleeps == [4.0]
+    pool.report_flood.assert_awaited_once_with("+7000", 3)

@@ -40,7 +40,13 @@ from src.services.translation_service import TranslationService
 from src.settings_utils import parse_int_setting
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
-from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.telegram.flood_wait import (
+    HandledFloodWaitError,
+    is_transient_flood_wait_seconds,
+    run_with_flood_wait,
+    run_with_flood_wait_retry,
+    sleep_for_flood_wait_seconds,
+)
 from src.telegram.identity import extract_message_sender_identity
 from src.telegram.notifier import Notifier
 from src.telegram.rate_limiter import ResolveRateLimiter
@@ -299,8 +305,22 @@ class Collector:
     def _reset_collection_unavailability_log(self) -> None:
         self._last_unavailability_log = None
 
-    async def _raise_collection_unavailability(self) -> None:
-        availability = await self.get_collection_availability()
+    async def _wait_for_transient_collection_flood(self, availability) -> bool:
+        retry_after_sec = getattr(availability, "retry_after_sec", None)
+        if getattr(availability, "state", None) != "all_flooded":
+            return False
+        if not is_transient_flood_wait_seconds(retry_after_sec):
+            return False
+        await sleep_for_flood_wait_seconds(
+            int(retry_after_sec),
+            operation="collect_channel_all_clients_transient_flood_wait",
+            logger_=logger,
+        )
+        self._reset_collection_unavailability_log()
+        return True
+
+    async def _raise_collection_unavailability(self, availability=None) -> None:
+        availability = availability or await self.get_collection_availability()
         self._log_collection_unavailability_once(
             state=availability.state,
             retry_after_sec=availability.retry_after_sec,
@@ -666,7 +686,10 @@ class Collector:
                 result = await self._pool.get_available_client()
 
             if result is None:
-                await self._raise_collection_unavailability()
+                availability = await self.get_collection_availability()
+                if await self._wait_for_transient_collection_flood(availability):
+                    continue
+                await self._raise_collection_unavailability(availability)
 
             session, phone = result
             self._reset_collection_unavailability_log()
@@ -677,8 +700,8 @@ class Collector:
             # the in-memory cache persists.
             if not channel.username and not self._pool.is_dialogs_fetched(phone):
                 try:
-                    await run_with_flood_wait(
-                        session.warm_dialog_cache(),
+                    await run_with_flood_wait_retry(
+                        lambda: session.warm_dialog_cache(),
                         operation="collect_channel_warm_dialog_cache",
                         phone=phone,
                         pool=self._pool,
@@ -1129,10 +1152,17 @@ class Collector:
             # Only skip the channel if the channel no longer exists in DB.
             if flood_wait_sec is not None:
                 if flood_wait_operation == RESOLVE_USERNAME_OPERATION:
+                    if is_transient_flood_wait_seconds(flood_wait_sec):
+                        await sleep_for_flood_wait_seconds(
+                            flood_wait_sec,
+                            operation=RESOLVE_USERNAME_OPERATION,
+                            phone=phone,
+                            logger_=logger,
+                        )
+                        continue
                     # Only a *long* resolve flood freezes live resolves for every
-                    # account (#552). A short flood is transient — skip just this
-                    # channel and let the run continue with other accounts so one
-                    # blip does not stall the whole pool.
+                    # account (#552). A medium resolve flood skips just this
+                    # channel so one blip does not stall the whole pool.
                     if flood_wait_sec <= GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC:
                         logger.warning(
                             "%s short FloodWait %ss on %s; skipping channel %d "

@@ -48,6 +48,7 @@ from src.services.telegram_command_dispatcher import (
     REACTION_MIN_INTERVAL_SETTING,
 )
 from src.settings_utils import parse_float_setting, parse_int_setting
+from src.telegram.flood_wait import is_blocking_flood_wait_until
 from src.utils.datetime import parse_datetime
 from src.web import deps
 from src.web.settings.forms import (
@@ -502,7 +503,8 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
             flood_until = account.flood_wait_until
             if flood_until.tzinfo is None:
                 flood_until = flood_until.replace(tzinfo=UTC)
-            flooded_connected.append(flood_until)
+            if is_blocking_flood_wait_until(flood_until, now=now):
+                flooded_connected.append(flood_until)
         account_status[account.phone] = availability
     all_accounts_flooded = bool(flooded_connected) and len(flooded_connected) == len(
         [
