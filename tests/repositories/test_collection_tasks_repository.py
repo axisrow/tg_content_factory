@@ -513,6 +513,24 @@ async def test_reset_collection_task_to_pending_does_not_overwrite_cancelled(col
     assert task.note == "user cancel"
 
 
+async def test_reschedule_collection_task_does_not_overwrite_cancelled(collection_tasks_repo):
+    task_id = await collection_tasks_repo.create_collection_task(1, "Channel 1")
+    await collection_tasks_repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
+    await collection_tasks_repo.cancel_collection_task(task_id, note="user cancel")
+
+    await collection_tasks_repo.reschedule_collection_task(
+        task_id,
+        run_after=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        note="flood wait",
+        messages_collected=10,
+    )
+
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task.status == CollectionTaskStatus.CANCELLED
+    assert task.note == "user cancel"
+    assert task.messages_collected == 0
+
+
 # fail_running_collection_tasks_on_startup tests
 
 

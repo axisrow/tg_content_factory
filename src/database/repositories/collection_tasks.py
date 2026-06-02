@@ -310,8 +310,11 @@ class CollectionTasksRepository:
             params.append(note)
         params.append(task_id)
         await self._database.execute_write(
-            f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",
-            tuple(params),
+            f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ? AND status != ?",
+            (
+                *params,
+                CollectionTaskStatus.CANCELLED.value,
+            ),
         )
 
     async def reset_collection_task_to_pending(
