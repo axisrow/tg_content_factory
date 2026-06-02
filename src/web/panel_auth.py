@@ -49,6 +49,12 @@ def set_session_cookie(response: Response, request: Request) -> None:
 
 
 def is_public_path(path: str) -> bool:
+    # /rss.xml and /atom.xml are intentionally public: RSS/Atom readers cannot do
+    # interactive Basic-auth, so the feeds must be reachable without a session.
+    # NOTE: this means collected message text in the feeds is world-readable — do
+    # not expose the panel publicly if the feed content must stay confidential
+    # (front it with a reverse-proxy token or keep the deployment private). See
+    # docs/reference/rss-feeds.md (#633 bug #38).
     return path in ("/health", "/logout", "/rss.xml", "/atom.xml", LOGIN_PATH) or path.startswith("/static/")
 
 
