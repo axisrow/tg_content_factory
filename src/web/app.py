@@ -14,6 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.config import AppConfig, load_config
 from src.database import DatabaseBusyError
@@ -35,6 +36,7 @@ from src.web.panel_auth import (
     set_session_cookie,
 )
 from src.web.paths import TEMPLATES_DIR
+from src.web.routes.import_channels import MAX_IMPORT_FILE_BYTES
 from src.web.snapshot_refresher import SnapshotRefresher
 from src.web.template_globals import configure_template_globals
 
@@ -86,6 +88,82 @@ def _resolve_action_label(path: str) -> str:
 
 
 _PROFILING_ENABLED = os.environ.get("ENV", "PROD").upper() == "DEV"
+# Multipart adds headers/boundaries around the file bytes. Keep the request cap
+# slightly above the file cap so an exactly-at-limit file is still accepted.
+IMPORT_UPLOAD_REQUEST_LIMIT_BYTES = MAX_IMPORT_FILE_BYTES + 64 * 1024
+_IMPORT_UPLOAD_PATH = "/channels/import"
+
+
+class ImportUploadLimitMiddleware:
+    """Reject oversized channel-import requests before multipart parsing."""
+
+    def __init__(self, app: ASGIApp, max_request_bytes: int = IMPORT_UPLOAD_REQUEST_LIMIT_BYTES):
+        self.app = app
+        self.max_request_bytes = max_request_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if not self._should_limit(scope):
+            await self.app(scope, receive, send)
+            return
+
+        content_length = self._content_length(scope)
+        if content_length is not None and content_length > self.max_request_bytes:
+            await self._send_rejected(send)
+            return
+
+        messages: list[Message] = []
+        total = 0
+        while True:
+            message = await receive()
+            messages.append(message)
+            if message["type"] != "http.request":
+                break
+
+            total += len(message.get("body", b""))
+            if total > self.max_request_bytes:
+                await self._send_rejected(send)
+                return
+            if not message.get("more_body", False):
+                break
+
+        replay = iter(messages)
+
+        async def replay_receive() -> Message:
+            try:
+                return next(replay)
+            except StopIteration:
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+        await self.app(scope, replay_receive, send)
+
+    @staticmethod
+    def _should_limit(scope: Scope) -> bool:
+        return (
+            scope.get("type") == "http"
+            and scope.get("method") == "POST"
+            and scope.get("path") == _IMPORT_UPLOAD_PATH
+        )
+
+    @staticmethod
+    def _content_length(scope: Scope) -> int | None:
+        for name, value in scope.get("headers", ()):
+            if name.lower() == b"content-length":
+                try:
+                    return int(value)
+                except ValueError:
+                    return None
+        return None
+
+    @staticmethod
+    async def _send_rejected(send: Send) -> None:
+        limit_mb = MAX_IMPORT_FILE_BYTES // (1024 * 1024)
+        body = f"Файл слишком большой. Максимум {limit_mb} МБ.".encode()
+        await send({
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [(b"content-type", b"text/plain; charset=utf-8")],
+        })
+        await send({"type": "http.response.body", "body": body})
 
 
 class TimingMiddleware(BaseHTTPMiddleware):
@@ -314,6 +392,7 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     app.add_middleware(ActionLogMiddleware)
     app.add_middleware(ErrorRedirectLogMiddleware)
     app.add_middleware(TimingMiddleware)
+    app.add_middleware(ImportUploadLimitMiddleware)
 
     @app.exception_handler(DatabaseBusyError)
     async def database_busy_exception_handler(request: Request, exc: DatabaseBusyError):

@@ -22,6 +22,10 @@
 </div>
 
 
+{% if error is defined and error %}
+<div class="alert alert-danger" role="alert">{{ error }}</div>
+{% endif %}
+
 {% if results is not none %}
 <div class="card">
     <div class="card-header fw-semibold">Результаты импорта</div>

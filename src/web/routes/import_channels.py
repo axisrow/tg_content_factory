@@ -12,6 +12,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# Channel-import files are plain identifier lists (txt/csv/xlsx); a few MiB is
+# already far more than any realistic list, so cap the upload to avoid reading an
+# unbounded blob into memory (#633 bug #20).
+MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024
+
 
 @router.get("/import", response_class=HTMLResponse)
 async def import_page(request: Request):
@@ -34,7 +39,20 @@ async def import_channels(
         identifiers.extend(parse_identifiers(text_input))
 
     if file and file.filename:
-        content = await file.read()
+        # Read at most MAX_IMPORT_FILE_BYTES + 1 so an oversized upload is
+        # rejected without pulling the whole blob into memory.
+        content = await file.read(MAX_IMPORT_FILE_BYTES + 1)
+        if len(content) > MAX_IMPORT_FILE_BYTES:
+            limit_mb = MAX_IMPORT_FILE_BYTES // (1024 * 1024)
+            return request.app.state.templates.TemplateResponse(
+                request,
+                "import_channels.html",
+                {
+                    "results": None,
+                    "error": f"Файл слишком большой. Максимум {limit_mb} МБ.",
+                },
+                status_code=413,
+            )
         if content:
             identifiers.extend(parse_file(content, file.filename or ""))
 
