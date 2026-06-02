@@ -41,6 +41,20 @@ class TelegramAuthTimeoutError(TimeoutError):
     """Raised when a Telegram auth operation exceeds its explicit timeout."""
 
 
+class TwoFactorRequiredError(ValueError):
+    """Raised when sign-in needs a 2FA password that was not supplied.
+
+    Subclasses ``ValueError`` and keeps the ``"2FA password required"`` message
+    so existing callers that branch on ``isinstance(exc, ValueError)`` or on the
+    ``"2FA"``/``"password"`` substring keep working. It exists so the auth flow
+    can log this *expected* outcome at info level instead of as an ERROR
+    stack trace (#633 bug #27).
+    """
+
+    def __init__(self, message: str = "2FA password required") -> None:
+        super().__init__(message)
+
+
 def _format_timeout(seconds: float) -> str:
     if float(seconds).is_integer():
         return f"{int(seconds)}s"
@@ -258,7 +272,7 @@ class TelegramAuth:
             except SessionPasswordNeededError:
                 if not password_2fa:
                     needs_2fa = True
-                    raise ValueError("2FA password required")
+                    raise TwoFactorRequiredError()
                 logger.info(
                     "auth.verify_code rpc start phone=%s rpc=sign_in_2fa timeout_s=%s",
                     phone,
@@ -270,6 +284,10 @@ class TelegramAuth:
                     AUTH_RPC_TIMEOUT_SECONDS,
                 )
             session_string = client.session.save()
+        except TwoFactorRequiredError:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            logger.info("auth.verify_code needs 2FA password phone=%s duration_ms=%d", phone, duration_ms)
+            raise
         except Exception:
             duration_ms = int((time.monotonic() - started_at) * 1000)
             logger.exception("auth.verify_code error phone=%s duration_ms=%d", phone, duration_ms)
@@ -312,7 +330,7 @@ class TelegramAuth:
             await _with_auth_timeout(client.connect(), "connect", AUTH_CONNECT_TIMEOUT_SECONDS)
             if code_consumed:
                 if not password_2fa:
-                    raise ValueError("2FA password required")
+                    raise TwoFactorRequiredError()
                 logger.info(
                     "auth.sign_in_fresh rpc start phone=%s rpc=sign_in_2fa timeout_s=%s",
                     phone,
@@ -337,7 +355,7 @@ class TelegramAuth:
                     )
                 except SessionPasswordNeededError:
                     if not password_2fa:
-                        raise ValueError("2FA password required")
+                        raise TwoFactorRequiredError()
                     logger.info(
                         "auth.sign_in_fresh rpc start phone=%s rpc=sign_in_2fa timeout_s=%s",
                         phone,
@@ -349,6 +367,10 @@ class TelegramAuth:
                         AUTH_RPC_TIMEOUT_SECONDS,
                     )
             session_string = client.session.save()
+        except TwoFactorRequiredError:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            logger.info("auth.sign_in_fresh needs 2FA password phone=%s duration_ms=%d", phone, duration_ms)
+            raise
         except Exception:
             duration_ms = int((time.monotonic() - started_at) * 1000)
             logger.exception("auth.sign_in_fresh error phone=%s duration_ms=%d", phone, duration_ms)
