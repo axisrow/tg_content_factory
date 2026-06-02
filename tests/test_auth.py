@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telethon.errors import SessionPasswordNeededError
 
-from src.telegram.auth import TelegramAuth, _describe_code_type, _describe_next_type
+from src.telegram.auth import (
+    TelegramAuth,
+    TwoFactorRequiredError,
+    _describe_code_type,
+    _describe_next_type,
+)
 
 pytestmark = pytest.mark.native_backend_allowed
 
@@ -170,3 +177,25 @@ class TestVerifyCode:
         )
         mock_client.disconnect.assert_awaited_once()
         assert "+1234567890" not in auth._pending
+
+    @pytest.mark.anyio
+    async def test_verify_code_2fa_required_logs_info_not_error(self, caplog):
+        """#633 bug #27: needing a 2FA password is expected, not an ERROR."""
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        mock_client = AsyncMock()
+        mock_client.session = SimpleNamespace(save=lambda: "session123")
+        mock_client.sign_in.side_effect = SessionPasswordNeededError(request=None)
+        auth._pending["+1234567890"] = (mock_client, "hash123")
+
+        with caplog.at_level(logging.INFO, logger="src.telegram.auth"):
+            with pytest.raises(TwoFactorRequiredError):
+                await auth.verify_code("+1234567890", "11111", "hash123")
+
+        # Expected outcome must not be logged as an ERROR with a stack trace.
+        assert not any(r.levelno >= logging.ERROR for r in caplog.records)
+        assert any(
+            "needs 2FA password" in r.getMessage() and r.levelno == logging.INFO
+            for r in caplog.records
+        )
+        # needs_2fa keeps the pending client alive for the follow-up password step.
+        assert "+1234567890" in auth._pending
