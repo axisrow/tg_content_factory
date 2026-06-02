@@ -68,4 +68,5 @@ nav:
     - Web API Reference: reference/web-api.md
     - CLI / Web Parity: reference/parity.md
     - Agent Tools: reference/agent-tools.md
+    - RSS / Atom Feeds: reference/rss-feeds.md
   - Architecture: architecture.md
