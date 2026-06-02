@@ -344,6 +344,86 @@ async def test_chat_streaming_generic_exception(client, db):
         pass
 
 
+@pytest.mark.anyio
+async def test_chat_save_failure_warns_inside_done_payload(client, db):
+    """A non-IntegrityError on assistant save still streams the reply, and carries the warning
+    INSIDE the done payload so the client can render it before tearing down (#676/#729)."""
+    thread_id = await db.create_agent_thread("Chat")
+
+    mock_mgr = client._transport_app.state.agent_manager
+
+    async def _fake_stream(*a, **kw):
+        yield 'data: {"done": true, "full_text": "the answer"}\n\n'
+
+    mock_mgr.chat_stream = _fake_stream
+
+    real_save = db.save_agent_message
+
+    async def _failing_save(*args, **kwargs):
+        if args[1] == "assistant":
+            raise DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+        return await real_save(*args, **kwargs)
+
+    with patch.object(db, "save_agent_message", side_effect=_failing_save):
+        resp = await client.post(
+            f"/agent/threads/{thread_id}/chat",
+            content=json.dumps({"message": "hello"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 200
+        chunks = [chunk async for chunk in resp.aiter_text()]
+    body = "".join(chunks)
+
+    payloads = [
+        json.loads(seg[len("data: "):])
+        for seg in body.split("\n\n")
+        if seg.startswith("data: ")
+    ]
+    # Exactly one done payload, carrying both the reply and the save_warning field.
+    done_payloads = [p for p in payloads if p.get("done")]
+    assert len(done_payloads) == 1
+    done = done_payloads[0]
+    assert done["full_text"] == "the answer"
+    assert "save_warning" in done
+    assert "сохранить" in done["save_warning"]
+    # No stray separate warning event was emitted (it would be dropped by the client).
+    assert not [p for p in payloads if p.get("type") == "warning"]
+
+    # And the assistant message is genuinely absent from the DB.
+    messages = await db.get_agent_messages(thread_id)
+    assert [m for m in messages if m["role"] == "assistant"] == []
+
+
+@pytest.mark.anyio
+async def test_chat_successful_save_has_no_warning(client, db):
+    """The happy path leaves no save_warning on the done payload (#729 regression guard)."""
+    thread_id = await db.create_agent_thread("Chat")
+
+    mock_mgr = client._transport_app.state.agent_manager
+
+    async def _fake_stream(*a, **kw):
+        yield 'data: {"done": true, "full_text": "ok"}\n\n'
+
+    mock_mgr.chat_stream = _fake_stream
+
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/chat",
+        content=json.dumps({"message": "hello"}),
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 200
+    body = "".join([chunk async for chunk in resp.aiter_text()])
+
+    payloads = [
+        json.loads(seg[len("data: "):])
+        for seg in body.split("\n\n")
+        if seg.startswith("data: ")
+    ]
+    done_payloads = [p for p in payloads if p.get("done")]
+    assert len(done_payloads) == 1
+    assert "save_warning" not in done_payloads[0]
+
+
 # === chat: no model parameter (line 232-233) ===
 
 

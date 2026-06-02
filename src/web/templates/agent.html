@@ -1230,6 +1230,15 @@
                                 statusTracker.destroy();
                                 aiBubble.innerHTML = renderMd(fullText);
                             }
+                            // Persistence warning travels inside the done payload (#676/#729):
+                            // appended AFTER fullText render so the innerHTML reset above can't
+                            // wipe it, and not subject to the destroyed-tracker onWarning guard.
+                            if (data.save_warning) {
+                                var saveWarnEl = document.createElement('div');
+                                saveWarnEl.className = 'alert alert-warning mt-2 mb-0 py-1 px-2 small';
+                                saveWarnEl.textContent = data.save_warning;
+                                aiBubble.appendChild(saveWarnEl);
+                            }
                             container.scrollTop = container.scrollHeight;
                         }
                     } catch(e) { /* skip bad JSON */ }
