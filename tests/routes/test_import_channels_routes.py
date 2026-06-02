@@ -177,7 +177,8 @@ async def test_import_file_at_limit_accepted(client):
 
     line = b"@channel1\n"
     content = line * (MAX_IMPORT_FILE_BYTES // len(line))
-    assert len(content) <= MAX_IMPORT_FILE_BYTES
+    content += b" " * (MAX_IMPORT_FILE_BYTES - len(content))
+    assert len(content) == MAX_IMPORT_FILE_BYTES
     file = ("ok.txt", io.BytesIO(content), "text/plain")
 
     resp = await client.post("/channels/import", files={"file": file})
