@@ -277,3 +277,35 @@ class TestTestNotificationTool:
             result = await handlers["test_notification"]({})
         text = _text(result)
         assert "отправлено" in text
+
+    @pytest.mark.anyio
+    async def test_sends_custom_text(self, mock_db):
+        pool = MagicMock()
+        bot = SimpleNamespace(bot_username="testbot", bot_id=1, tg_user_id=111)
+        with (
+            patch("src.services.notification_service.NotificationService") as mock_ns,
+            patch("src.services.notification_target_service.NotificationTargetService"),
+        ):
+            inst = mock_ns.return_value
+            inst.get_status = AsyncMock(return_value=bot)
+            inst.send_notification = AsyncMock()
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["test_notification"]({"text": "Привет от агента"})
+        assert "отправлено" in _text(result)
+        inst.send_notification.assert_awaited_once_with("Привет от агента")
+
+    @pytest.mark.anyio
+    async def test_sends_default_text_when_omitted(self, mock_db):
+        pool = MagicMock()
+        bot = SimpleNamespace(bot_username="testbot", bot_id=1, tg_user_id=111)
+        with (
+            patch("src.services.notification_service.NotificationService") as mock_ns,
+            patch("src.services.notification_target_service.NotificationTargetService"),
+        ):
+            inst = mock_ns.return_value
+            inst.get_status = AsyncMock(return_value=bot)
+            inst.send_notification = AsyncMock()
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["test_notification"]({})
+        assert "отправлено" in _text(result)
+        inst.send_notification.assert_awaited_once_with("🔔 Тестовое уведомление от агента")

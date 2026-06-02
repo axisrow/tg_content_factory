@@ -9,7 +9,7 @@ from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
 from src.agent.tools._formatters import format_notification_status
-from src.agent.tools._registry import _text_response, require_confirmation, require_pool
+from src.agent.tools._registry import _text_response, arg_str, require_confirmation, require_pool
 
 
 async def _describe_target(target_service):
@@ -98,7 +98,12 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(delete_notification_bot)
 
-    @tool("test_notification", "Send a test notification message via the bot", {})
+    @tool(
+        "test_notification",
+        "Send a test notification message via the bot. "
+        "Optionally pass custom text; if omitted, a default test message is used.",
+        {"text": Annotated[str, "Опционально: текст уведомления (пусто — дефолтное тестовое сообщение)"]},
+    )
     async def test_notification(args):
         pool_gate = require_pool(client_pool, "Тестовое уведомление")
         if pool_gate:
@@ -111,7 +116,8 @@ def register(db, client_pool, embedding_service, **kwargs):
             bot = await svc.get_status()
             if bot is None:
                 return _text_response("Бот уведомлений не настроен. Сначала вызовите setup_notification_bot.")
-            await svc.send_notification("🔔 Тестовое уведомление от агента")
+            text = arg_str(args, "text", "🔔 Тестовое уведомление от агента")
+            await svc.send_notification(text)
             return _text_response("Тестовое уведомление отправлено.")
         except Exception as e:
             return _text_response(f"Ошибка отправки уведомления: {e}")
