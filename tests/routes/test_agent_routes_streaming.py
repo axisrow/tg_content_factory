@@ -344,6 +344,52 @@ async def test_chat_streaming_generic_exception(client, db):
         pass
 
 
+@pytest.mark.anyio
+async def test_chat_save_failure_emits_warning_event(client, db):
+    """A non-IntegrityError on assistant save still streams the reply, then warns the user (#676)."""
+    thread_id = await db.create_agent_thread("Chat")
+
+    mock_mgr = client._transport_app.state.agent_manager
+
+    async def _fake_stream(*a, **kw):
+        yield 'data: {"done": true, "full_text": "the answer"}\n\n'
+
+    mock_mgr.chat_stream = _fake_stream
+
+    real_save = db.save_agent_message
+
+    async def _failing_save(*args, **kwargs):
+        if args[1] == "assistant":
+            raise DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+        return await real_save(*args, **kwargs)
+
+    with patch.object(db, "save_agent_message", side_effect=_failing_save):
+        resp = await client.post(
+            f"/agent/threads/{thread_id}/chat",
+            content=json.dumps({"message": "hello"}),
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 200
+        chunks = [chunk async for chunk in resp.aiter_text()]
+    body = "".join(chunks)
+
+    # The reply itself still reached the client...
+    assert "the answer" in body
+    # ...followed by exactly one warning SSE event so the user knows it was not persisted.
+    warning_payloads = [
+        json.loads(seg[len("data: "):])
+        for seg in body.split("\n\n")
+        if seg.startswith("data: ")
+    ]
+    warnings = [p for p in warning_payloads if p.get("type") == "warning"]
+    assert len(warnings) == 1
+    assert "сохранить" in warnings[0]["text"]
+
+    # And the assistant message is genuinely absent from the DB.
+    messages = await db.get_agent_messages(thread_id)
+    assert [m for m in messages if m["role"] == "assistant"] == []
+
+
 # === chat: no model parameter (line 232-233) ===
 
 

@@ -20,6 +20,16 @@ logger = logging.getLogger(__name__)
 # abort it. This prevents a hung LLM/backend from holding the connection open.
 _SSE_IDLE_TIMEOUT = 180.0
 
+_SAVE_FAILED_WARNING = (
+    "❗ Ответ не удалось сохранить — он пропадёт при перезагрузке страницы."
+)
+
+
+def _save_failed_warning_event() -> str:
+    """SSE warning event shown when the assistant reply streamed but was not persisted."""
+    payload = json.dumps({"type": "warning", "text": _SAVE_FAILED_WARNING}, ensure_ascii=False)
+    return f"data: {payload}\n\n"
+
 
 async def _json_object_body(request: Request) -> dict:
     """Return the request body as a JSON object, or raise HTTP 400."""
@@ -363,6 +373,7 @@ async def chat(request: Request, thread_id: int):
                         logger.debug("cancel_stream after SSE timeout failed", exc_info=True)
                     yield 'data: {"error": "Agent response timed out."}\n\n'
                     break
+                save_failed = False
                 try:
                     data_str = chunk.removeprefix("data: ").strip()
                     data = json.loads(data_str)
@@ -372,6 +383,14 @@ async def chat(request: Request, thread_id: int):
                             await db.save_agent_message(thread_id, "assistant", data["full_text"])
                         except sqlite3.IntegrityError:
                             logger.debug("Thread %d deleted during response; skipping save", thread_id)
+                        except Exception:
+                            # DB lock/disk/etc — the reply streamed fine but was not persisted.
+                            # Surface it so the user knows it will be gone on reload, instead of
+                            # silently dropping the assistant turn (#676).
+                            logger.exception(
+                                "Failed to persist assistant message for thread %d", thread_id
+                            )
+                            save_failed = True
                     elif data.get("error"):
                         try:
                             await db.delete_last_agent_exchange(thread_id)
@@ -383,6 +402,8 @@ async def chat(request: Request, thread_id: int):
                 except Exception:
                     logger.exception("Failed to process agent message for thread %d", thread_id)
                 yield chunk
+                if save_failed:
+                    yield _save_failed_warning_event()
         finally:
             if pending_chunk_task is None or pending_chunk_task.done():
                 try:
