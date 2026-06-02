@@ -53,10 +53,12 @@ class QualityScoringService:
         db: Database,
         default_threshold: float = 0.7,
         provider_service=None,
+        config=None,
     ):
         self._db = db
         self._default_threshold = default_threshold
         self._provider_service = provider_service
+        self._config = config
 
     async def score_content(
         self,
@@ -81,13 +83,13 @@ class QualityScoringService:
             issues=["Scoring failed"],
         )
         try:
-            from src.services.provider_service import RuntimeProviderRegistry
+            from src.services.provider_service import build_provider_service
         except ImportError:
             logger.warning("Provider service not available for quality scoring")
             return _default_score
 
         try:
-            provider_service = self._provider_service or RuntimeProviderRegistry(self._db)
+            provider_service = self._provider_service or await build_provider_service(self._db, self._config)
             provider_callable = provider_service.get_provider_callable(model)
 
             prompt = f"{QUALITY_RUBRIC}\n\nКонтент для оценки:\n{text}"
