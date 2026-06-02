@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -284,6 +285,25 @@ async def test_generate_page_renders(client):
 
 
 @pytest.mark.anyio
+async def test_generate_page_warns_when_llm_pipeline_has_no_provider(client):
+    """#386: an LLM-requiring pipeline with no provider configured must show a
+    warning banner and disable the preview controls (instead of failing only on
+    click). The _ADD_DATA pipeline uses the legacy chain backend ⇒ needs_llm, and
+    the test fixture has no LLM provider registered."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    resp = await client.get("/pipelines/1/generate")
+    assert resp.status_code == 200
+    # LLM fields are still rendered (it IS an LLM pipeline) but gated:
+    assert 'name="model"' in resp.text
+    assert "ни один провайдер не настроен" in resp.text
+    assert "disabled" in resp.text
+    # The warning says "Превью и запуск недоступны" — the "Run now" button must
+    # actually be disabled to match it, not just Preview/Stream (#735 review).
+    assert re.search(r'btn btn-success[^>]*disabled[^>]*>\s*<i class="bi bi-play-fill"', resp.text)
+
+
+@pytest.mark.anyio
 async def test_generate_page_not_found(client):
     """Test generate page with invalid pipeline."""
     resp = await client.get("/pipelines/999999/generate", follow_redirects=False)
@@ -383,6 +403,57 @@ async def test_generate_pipeline_failure(client):
         )
         assert resp.status_code == 200
         assert "Generation failed" in resp.text
+
+
+@pytest.mark.anyio
+async def test_generate_pipeline_error_render_hides_llm_fields_for_non_llm(client):
+    """#735 review (Bug 2): on a POST that re-renders generate.html, the handler must
+    propagate needs_llm/llm_configured. For a non-LLM pipeline the LLM model field must
+    stay hidden instead of defaulting to shown."""
+    from unittest.mock import patch
+
+    from src.models import (
+        PipelineEdge,
+        PipelineGenerationBackend,
+        PipelineGraph,
+        PipelineNode,
+        PipelineNodeType,
+    )
+
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    non_llm_pipeline = MagicMock(
+        id=1,
+        name="non-llm",
+        is_active=True,
+        pipeline_json=PipelineGraph(
+            nodes=[
+                PipelineNode(id="src", type=PipelineNodeType.SOURCE, name="src"),
+                PipelineNode(id="pub", type=PipelineNodeType.PUBLISH, name="pub"),
+            ],
+            edges=[PipelineEdge(from_node="src", to_node="pub")],
+        ),
+    )
+    non_llm_pipeline.generation_backend = PipelineGenerationBackend.CHAIN
+
+    with patch("src.web.pipelines.handlers.deps.pipeline_service") as mock_svc:
+        mock_svc.return_value.get = AsyncMock(return_value=non_llm_pipeline)
+        with patch(
+            "src.services.content_generation_service.ContentGenerationService"
+        ) as mock_gen:
+            mock_gen.return_value.generate = AsyncMock(side_effect=Exception("boom"))
+            resp = await client.post(
+                "/pipelines/1/generate",
+                data={"model": "", "max_tokens": "256", "temperature": "0.0"},
+            )
+            assert resp.status_code == 200
+            assert "Generation failed" in resp.text
+            # non-LLM pipeline ⇒ the LLM parameter block (model/max_tokens/temperature
+            # inputs + Preview button) must not be rendered. The "model" string still
+            # appears in the always-present <script>, so match the unique LLM markers.
+            assert ">Max tokens<" not in resp.text
+            assert ">Temperature<" not in resp.text
+            assert "не использует LLM" in resp.text
 
 
 @pytest.mark.anyio
