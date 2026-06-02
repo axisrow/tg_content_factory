@@ -126,6 +126,7 @@ _CLI_CLEANUP_COMMAND_PRODUCERS = {
         ("pipeline", "publish"),
     },
     ("dialogs", "edit-message"): {("dialogs", "edit-message")},
+    ("dialogs", "leave"): {("dialogs", "create-channel")},
     ("dialogs", "pin-message"): {("dialogs", "unpin-message")},
     ("dialogs", "react"): {("dialogs", "react")},
     ("dialogs", "unarchive"): {("dialogs", "archive")},
