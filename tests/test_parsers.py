@@ -3,12 +3,33 @@ from __future__ import annotations
 import pytest
 
 from src.parsers import (
+    bare_channel_id,
     deduplicate_identifiers,
     extract_identifiers,
     normalize_identifier,
     parse_file,
     parse_identifiers,
 )
+
+
+class TestBareChannelId:
+    @pytest.mark.parametrize(
+        "channel_id,expected",
+        [
+            # Bare-positive storage convention — used verbatim.
+            (1234567890, 1234567890),
+            # Regression #633-9: a bare id starting with 100 must NOT be truncated.
+            (1005551782, 1005551782),
+            (1001079551, 1001079551),
+            # Telethon marked form -100<bare> is normalised to the bare id.
+            (-1001234567890, 1234567890),
+            (-1001005551782, 1005551782),
+            # A plain negative id without the -100 marker just loses the sign.
+            (-1234567890, 1234567890),
+        ],
+    )
+    def test_bare_channel_id(self, channel_id, expected):
+        assert bare_channel_id(channel_id) == expected
 
 
 class TestParseIdentifiers:

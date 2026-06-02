@@ -70,6 +70,43 @@ async def test_content_analytics_pipeline_links_use_edit_route(route_client):
 
 
 @pytest.mark.anyio
+async def test_analytics_top_message_link_uses_bare_channel_id(route_client):
+    """Regression #633-9: t.me/c link for a no-username channel keeps the bare id.
+
+    The id starts with ``100`` (1005551782); the old template truncated it via
+    ``(channel_id | abs) - 1000000000000`` producing a broken/negative link.
+    """
+    from datetime import datetime, timezone
+
+    from src.models import Channel, Message
+
+    db = route_client._transport_app.state.db
+    channel_id = 1005551782
+    await db.add_channel(
+        Channel(channel_id=channel_id, title="No Username Channel", username=None)
+    )
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=channel_id,
+                message_id=789,
+                text="top reacted message",
+                reactions_json='[{"emoji": "👍", "count": 42}]',
+                date=datetime(2024, 6, 1, 12, 0, tzinfo=timezone.utc),
+            )
+        ]
+    )
+
+    resp = await route_client.get("/analytics")
+
+    assert resp.status_code == 200
+    assert "https://t.me/c/1005551782/789" in resp.text
+    # The broken legacy forms must be gone.
+    assert "t.me/c/5551782/" not in resp.text
+    assert "-998994448218" not in resp.text
+
+
+@pytest.mark.anyio
 async def test_api_content_summary_returns_json(route_client):
     """Test content summary API returns JSON."""
     resp = await route_client.get("/analytics/content/api/summary")

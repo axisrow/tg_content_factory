@@ -4,6 +4,7 @@ import logging
 import re
 
 from src.models import Channel, Message, SearchQuery
+from src.parsers import bare_channel_id
 from src.telegram.notifier import Notifier
 from src.utils.search_query_chat_filter import chat_filter_matches_message
 
@@ -77,8 +78,7 @@ def _make_message_link(msg: Message) -> str:
     """Build a t.me link for the message."""
     if msg.channel_username:
         return f"https://t.me/{msg.channel_username}/{msg.message_id}"
-    bare_id = str(msg.channel_id).lstrip("-").removeprefix("100")
-    return f"https://t.me/c/{bare_id}/{msg.message_id}"
+    return f"https://t.me/c/{bare_channel_id(msg.channel_id)}/{msg.message_id}"
 
 
 def _fts_query_matches(fts_query: str, text: str) -> bool:

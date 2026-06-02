@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
 from src.config import AppConfig, is_provider_model_ref
+from src.parsers import bare_channel_id
 from src.web.paths import TEMPLATES_DIR
 
 logger = logging.getLogger(__name__)
@@ -283,4 +284,5 @@ def configure_template_globals(
     templates.env.globals["flash_messages"] = FLASH_MESSAGES
     templates.env.globals["flash_errors"] = FLASH_ERRORS
     templates.env.filters["local_dt"] = local_dt_filter
+    templates.env.filters["tme_channel_id"] = bare_channel_id
     return templates
