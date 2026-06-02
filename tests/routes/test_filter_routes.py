@@ -52,7 +52,9 @@ async def test_purge_selected_success(route_client, db):
     pk = await _add_filtered_channel(db, channel_id=400, title="To Purge")
 
     with patch("src.web.filter.handlers.deps.filter_deletion_service") as mock_svc:
-        mock_svc.return_value.purge_channels_by_pks = AsyncMock()
+        mock_svc.return_value.purge_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=1)
+        )
         resp = await route_client.post(
             "/channels/filter/purge-selected",
             data={"pks": [str(pk)]},
@@ -68,7 +70,9 @@ async def test_purge_selected_removes_messages(route_client, db):
     pk = await _add_filtered_channel(db, channel_id=500, title="Purge Messages")
 
     with patch("src.web.filter.handlers.deps.filter_deletion_service") as mock_svc:
-        mock_svc.return_value.purge_channels_by_pks = AsyncMock()
+        mock_svc.return_value.purge_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=1)
+        )
         resp = await route_client.post(
             "/channels/filter/purge-selected",
             data={"pks": [str(pk)]},
@@ -78,6 +82,26 @@ async def test_purge_selected_removes_messages(route_client, db):
     assert resp.status_code == 303
     assert "msg=purged_selected" in resp.headers["location"]
     mock_svc.return_value.purge_channels_by_pks.assert_awaited_once_with([pk])
+
+
+@pytest.mark.anyio
+async def test_purge_selected_partial_failure_surfaces_error(route_client, db):
+    """A purge that records errors must report purge_partial, not success (#676)."""
+    pk = await _add_filtered_channel(db, channel_id=600, title="Boom")
+
+    with patch("src.web.filter.handlers.deps.filter_deletion_service") as mock_svc:
+        mock_svc.return_value.purge_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(skipped_count=1, errors=[f"pk={pk}: DB error"])
+        )
+        resp = await route_client.post(
+            "/channels/filter/purge-selected",
+            data={"pks": [str(pk)]},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    assert "error=purge_partial" in resp.headers["location"]
+    assert "msg=purged_selected" not in resp.headers["location"]
 
 
 @pytest.mark.anyio
@@ -106,6 +130,19 @@ async def test_purge_all_success(route_client, db):
         resp = await route_client.post("/channels/filter/purge-all", follow_redirects=False)
         assert resp.status_code == 303
         assert "msg=purged_all_filtered" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_purge_all_partial_failure_surfaces_error(route_client, db):
+    """purge-all with a real per-channel error must report purge_partial, not success (#676 review)."""
+    with patch("src.web.filter.handlers.deps.filter_deletion_service") as mock_svc:
+        mock_svc.return_value.purge_all_filtered = AsyncMock(
+            return_value=PurgeResult(purged_count=1, skipped_count=1, errors=["pk=2: DB error"])
+        )
+        resp = await route_client.post("/channels/filter/purge-all", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "error=purge_partial" in resp.headers["location"]
+        assert "msg=purged_all_filtered" not in resp.headers["location"]
 
 
 @pytest.mark.anyio
@@ -789,7 +826,9 @@ async def test_purge_selected_with_multiple_pks(route_client, db):
     pk2 = await _add_filtered_channel(db, channel_id=3201, title="Purge 2")
 
     with patch("src.web.filter.handlers.deps.filter_deletion_service") as mock_svc:
-        mock_svc.return_value.purge_channels_by_pks = AsyncMock()
+        mock_svc.return_value.purge_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=2)
+        )
         resp = await route_client.post(
             "/channels/filter/purge-selected",
             data={"pks": [str(pk1), str(pk2), "invalid"]},  # Invalid PK is skipped

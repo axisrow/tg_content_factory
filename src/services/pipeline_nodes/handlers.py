@@ -891,7 +891,16 @@ class AgentLoopHandler(BaseNodeHandler):
                 call = _json.loads(json_str)
                 tool_name = call.get("tool", "")
                 tool_args = call.get("args") or {}
-            except (_json.JSONDecodeError, AttributeError):
+            except (_json.JSONDecodeError, AttributeError) as exc:
+                # Malformed tool-call JSON ends the loop with an empty answer. The
+                # max_steps path below logs the same outcome; do the same here (#676).
+                logger.warning(
+                    "AgentLoop step %d/%d: malformed tool-call JSON (%s); ending loop. Payload: %r",
+                    step + 1,
+                    max_steps,
+                    exc,
+                    json_str[:200],
+                )
                 break
 
             # Execute tool

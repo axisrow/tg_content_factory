@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import Request
 
 from src.filters.analyzer import ChannelAnalyzer
@@ -19,6 +21,8 @@ from src.web.filter.responses import (
     channels_redirect,
     manage_redirect,
 )
+
+logger = logging.getLogger(__name__)
 
 
 async def _dev_mode_enabled(request: Request) -> bool:
@@ -48,15 +52,25 @@ async def purge_selected_filtered(request: Request) -> FilterRedirect:
     if not pks:
         return manage_redirect(error="no_filtered_channels")
     svc = deps.filter_deletion_service(request)
-    await svc.purge_channels_by_pks(pks)
+    result = await svc.purge_channels_by_pks(pks)
+    # A purge that hit an exception increments skipped_count AND records an error
+    # message. Surface real failures instead of always reporting success (#676);
+    # benign skips (a pk that is no longer filtered) carry no error and stay quiet.
+    if result.errors:
+        return manage_redirect(error="purge_partial")
     return manage_redirect(msg="purged_selected")
 
 
 async def purge_all_filtered(request: Request) -> FilterRedirect:
     svc = deps.filter_deletion_service(request)
     result = await svc.purge_all_filtered()
-    if result.purged_count == 0:
+    if result.purged_count == 0 and not result.errors:
         return manage_redirect(error="no_filtered_channels")
+    # Same partial-failure surfacing as purge_selected_filtered (#676 review): a real
+    # per-channel exception must not be hidden behind a success message just because
+    # other channels purged fine.
+    if result.errors:
+        return manage_redirect(error="purge_partial")
     return manage_redirect(msg="purged_all_filtered", count=result.purged_count)
 
 
@@ -158,6 +172,14 @@ async def analyze_channels(request: Request) -> FilterRedirect:
             svc = deps.filter_deletion_service(request)
             result = await svc.purge_channels_by_pks(filtered_pks)
             purged_count = result.purged_count
+            # Auto-purge runs in the background of analysis; there's no dedicated flash
+            # slot for it, but a partial failure must not vanish (#676 review).
+            if result.errors:
+                logger.warning(
+                    "analyze_channels auto-purge: %d channel(s) failed: %s",
+                    len(result.errors),
+                    "; ".join(result.errors),
+                )
 
     msg = "purged_all_filtered" if purged_count else "filter_applied"
     return manage_redirect(msg=msg)

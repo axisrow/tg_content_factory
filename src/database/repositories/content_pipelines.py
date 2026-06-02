@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING
 
 import aiosqlite
@@ -17,6 +18,8 @@ from src.utils.datetime import parse_datetime
 
 if TYPE_CHECKING:
     from src.database.facade import Database
+
+logger = logging.getLogger(__name__)
 
 
 class ContentPipelinesRepository:
@@ -38,6 +41,13 @@ class ContentPipelinesRepository:
             try:
                 pipeline_graph = PipelineGraph.from_json(pipeline_json_raw)
             except Exception:
+                # A malformed graph silently falls back to legacy RAG, ignoring every
+                # configured DAG node. Log it so the misconfiguration is diagnosable (#676).
+                logger.warning(
+                    "Pipeline %s: failed to deserialize pipeline_json; falling back to legacy RAG",
+                    row["id"] if "id" in keys else "?",
+                    exc_info=True,
+                )
                 pipeline_graph = None
         return ContentPipeline(
             id=row["id"],

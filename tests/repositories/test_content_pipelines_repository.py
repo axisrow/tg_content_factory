@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from src.models import ContentPipeline, PipelineTarget
 
 
@@ -104,3 +106,26 @@ async def test_delete_cascades_relations(content_pipelines_repo):
     assert await content_pipelines_repo.get_by_id(pipeline_id) is None
     assert await content_pipelines_repo.list_sources(pipeline_id) == []
     assert await content_pipelines_repo.list_targets(pipeline_id) == []
+
+
+async def test_malformed_pipeline_json_logs_and_falls_back(content_pipelines_repo, db, caplog):
+    """A malformed pipeline_json must log a warning, not silently fall back to RAG (#676)."""
+    pipeline_id = await content_pipelines_repo.add(make_pipeline(), [1001], [])
+
+    # Corrupt the stored graph so PipelineGraph.from_json() raises.
+    await db.execute_write(
+        "UPDATE content_pipelines SET pipeline_json = ? WHERE id = ?",
+        ("{not valid json", pipeline_id),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="src.database.repositories.content_pipelines"):
+        pipeline = await content_pipelines_repo.get_by_id(pipeline_id)
+
+    # Graceful fallback is preserved (graph is None -> legacy RAG)...
+    assert pipeline is not None
+    assert pipeline.pipeline_json is None
+    # ...but the misconfiguration is now visible in the logs.
+    assert any(
+        "failed to deserialize pipeline_json" in rec.message and str(pipeline_id) in rec.message
+        for rec in caplog.records
+    )
