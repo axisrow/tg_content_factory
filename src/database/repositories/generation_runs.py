@@ -85,6 +85,12 @@ class GenerationRunsRepository:
             (status, run_id),
         )
 
+    async def set_image_url(self, run_id: int, image_url: str) -> None:
+        await self._database.execute_write(
+            "UPDATE generation_runs SET image_url = ?, updated_at = datetime('now') WHERE id = ?",
+            (image_url, run_id),
+        )
+
     async def set_published_at(self, run_id: int) -> None:
         await self._database.execute_write(
             ("UPDATE generation_runs SET published_at = datetime('now'), "

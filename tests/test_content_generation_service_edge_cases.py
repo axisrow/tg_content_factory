@@ -76,6 +76,10 @@ class FakeGenerationRunsRepo:
             self._runs[run_id].generated_text = generated_text
             self._runs[run_id].metadata = metadata
 
+    async def set_image_url(self, run_id, image_url):
+        if run_id in self._runs:
+            self._runs[run_id].image_url = image_url
+
     async def get(self, run_id):
         return self._runs.get(run_id)
 
@@ -306,10 +310,9 @@ async def test_generate_image_url_from_graph_executor():
     try:
         run = await service.generate(pipeline)
         assert run is not None
-        # Verify the UPDATE for image_url was issued
-        img_updates = [(s, p) for s, p in db.executed if "image_url" in s]
-        assert len(img_updates) == 1
-        assert img_updates[0][1] == ("https://img.example/graph.png", run.id)
+        # image_url from the graph executor is persisted on the run via the repo.
+        saved = await db.repos.generation_runs.get(run.id)
+        assert saved.image_url == "https://img.example/graph.png"
     finally:
         _restore_provider(orig)
         if original_execute:
