@@ -208,6 +208,41 @@ def test_run_thread_rename(capsys):
 
 
 # ---------------------------------------------------------------------------
+# run() — thread-stop
+# ---------------------------------------------------------------------------
+
+
+def test_run_thread_stop_cancels_active_stream(capsys):
+    db = make_cli_db()
+    config = make_cli_config()
+    mgr = _make_mgr(cancel_stream=AsyncMock(return_value=True))
+    with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("src.agent.manager.AgentManager", return_value=mgr), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(agent_action="thread-stop", thread_id=9))
+    mgr.cancel_stream.assert_awaited_once_with(9)
+    db.delete_last_agent_exchange.assert_awaited_once_with(9)
+    out = capsys.readouterr().out
+    assert "#9" in out
+    assert "остановлена" in out
+
+
+def test_run_thread_stop_no_active_stream(capsys):
+    db = make_cli_db()
+    config = make_cli_config()
+    mgr = _make_mgr(cancel_stream=AsyncMock(return_value=False))
+    with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("src.agent.manager.AgentManager", return_value=mgr), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(agent_action="thread-stop", thread_id=4))
+    mgr.cancel_stream.assert_awaited_once_with(4)
+    db.delete_last_agent_exchange.assert_awaited_once_with(4)
+    out = capsys.readouterr().out
+    assert "#4" in out
+    assert "удалён" in out
+
+
+# ---------------------------------------------------------------------------
 # run() — messages
 # ---------------------------------------------------------------------------
 

@@ -24,6 +24,11 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     agent_rename.add_argument("thread_id", type=int, help="Thread ID")
     agent_rename.add_argument("title", help="New title")
 
+    agent_stop = agent_sub.add_parser(
+        "thread-stop", help="Stop/cancel an ongoing agent response for a thread"
+    )
+    agent_stop.add_argument("thread_id", type=int, help="Thread ID")
+
     agent_msgs = agent_sub.add_parser("messages", help="Show thread messages")
     agent_msgs.add_argument("thread_id", type=int, help="Thread ID")
     agent_msgs.add_argument("--limit", type=int, default=None, help="Last N messages")

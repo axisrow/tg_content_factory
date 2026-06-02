@@ -20,7 +20,7 @@
 | Удалить тег | `channel tag delete` | `DELETE /channels/tags/{name}` | `delete_tag` |
 | Получить теги канала | `channel tag get` | `GET /channels/{pk}/tags` | — |
 | Обновить теги канала | `channel tag set` | `POST /channels/{pk}/tags` | `set_channel_tags` |
-| Список диалогов для импорта | — | `GET /channels/dialogs` | — |
+| Список диалогов для импорта | `channel list-for-import` | `GET /channels/dialogs` | — |
 
 ## Сбор сообщений
 
@@ -112,7 +112,7 @@
 | AI edit | `pipeline ai-edit` | `POST /pipelines/{id}/ai-edit` | `ai_edit_pipeline` |
 | Страница модерации | `pipeline moderation-list` | `GET /moderation/` | `list_pending_moderation` |
 | Просмотр модерации | `pipeline moderation-view` | `GET /moderation/{id}/view` | `view_moderation_run` |
-| Стрим генерации | — | `GET /pipelines/{id}/generate-stream` | — |
+| Стрим генерации | `pipeline generate-stream` | `GET /pipelines/{id}/generate-stream` | — |
 
 ## Планировщик
 
@@ -133,10 +133,9 @@
 | Настроить бота | `notification setup` | `POST /settings/notifications/setup` | `setup_notification_bot` |
 | Статус | `notification status` | `GET /settings/notifications/status` | `get_notification_status` |
 | Удалить | `notification delete` | `POST /settings/notifications/delete` | `delete_notification_bot` |
-| Тест | `notification test` | `POST /settings/notifications/test` | `test_notification` |
+| Тест | `notification test` | `POST /settings/notifications/test`, `POST /scheduler/test-notification` | `test_notification` |
 | Dry-run | `notification dry-run` | `POST /scheduler/dry-run-notifications` | `notification_dry_run` |
 | Выбрать аккаунт | `notification set-account` | `POST /settings/save-notification-account` | — |
-| Тест из scheduler | — | `POST /scheduler/test-notification` | — |
 
 ## Аккаунты
 
@@ -255,7 +254,7 @@
 | Отменить задание очереди | `dialogs queue cancel` | `POST /dialogs/queue/{id}/cancel` | `cancel_telegram_command` |
 | Очистить ожидающие в очереди | `dialogs queue clear-pending` | `POST /dialogs/queue/clear-pending` | `clear_pending_telegram_commands` |
 | Контекст | `agent context` | `POST /agent/threads/{id}/context` | — |
-| Остановить | — | `POST /agent/threads/{id}/stop` | — |
+| Остановить | `agent thread-stop` | `POST /agent/threads/{id}/stop` | — |
 
 > **Многоходовой чат (паритет CLI ↔ Web).** Обе стороны идут через единый
 > `AgentManager.chat_stream`, который на каждом ходе загружает полную историю треда

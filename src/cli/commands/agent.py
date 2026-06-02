@@ -263,6 +263,17 @@ def run(args: argparse.Namespace) -> None:
                 await db.rename_agent_thread(args.thread_id, args.title[:100])
                 print(f"Тред #{args.thread_id} переименован: {args.title[:100]}")
 
+            elif action == "thread-stop":
+                from src.agent.manager import AgentManager
+
+                mgr = AgentManager(db, config)
+                cancelled = await mgr.cancel_stream(args.thread_id)
+                await db.delete_last_agent_exchange(args.thread_id)
+                if cancelled:
+                    print(f"Тред #{args.thread_id}: генерация остановлена.")
+                else:
+                    print(f"Тред #{args.thread_id}: активной генерации не было; последний обмен удалён.")
+
             elif action == "messages":
                 msgs = await db.get_agent_messages(args.thread_id)
                 if args.limit:

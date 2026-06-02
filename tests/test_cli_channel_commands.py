@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import argparse
-from unittest.mock import AsyncMock, MagicMock
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.cli.commands.channel import _handle_tag, run
 from tests.helpers import cli_add_channel as _add_channel
 from tests.helpers import cli_ns as _ns
+from tests.helpers import fake_asyncio_run, make_cli_config, make_cli_db
 
 # ---------------------------------------------------------------------------
 # _handle_tag (pure logic + db mock)
@@ -204,3 +206,69 @@ class TestChannelStatsNoAccounts:
         # The command will try to init_pool, which fails gracefully
         # Just ensure no crash
         _ = capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# channel list-for-import — mirrors web GET /channels/dialogs (mocked service)
+# ---------------------------------------------------------------------------
+
+
+class TestChannelListForImport:
+    _DIALOGS = [
+        {
+            "channel_id": 111,
+            "title": "Added Ch",
+            "username": "added",
+            "channel_type": "channel",
+            "already_added": True,
+        },
+        {
+            "channel_id": 222,
+            "title": "New Ch",
+            "username": None,
+            "channel_type": "supergroup",
+            "already_added": False,
+        },
+    ]
+
+    def _run(self, args, dialogs=None):
+        db = make_cli_db()
+        pool = MagicMock()
+        pool.disconnect_all = AsyncMock()
+        config = make_cli_config()
+        svc = MagicMock()
+        svc.get_dialogs_with_added_flags = AsyncMock(
+            return_value=self._DIALOGS if dialogs is None else dialogs
+        )
+        with patch(
+            "src.cli.commands.channel.runtime.init_db",
+            AsyncMock(return_value=(config, db)),
+        ), patch(
+            "src.cli.commands.channel.runtime.init_pool",
+            AsyncMock(return_value=(MagicMock(), pool)),
+        ), patch(
+            "src.cli.commands.channel.ChannelService", return_value=svc
+        ), patch("asyncio.run", fake_asyncio_run):
+            run(args)
+        return svc
+
+    def test_table_output(self, capsys):
+        svc = self._run(_ns(channel_action="list-for-import", json=False))
+        svc.get_dialogs_with_added_flags.assert_awaited_once_with()
+        out = capsys.readouterr().out
+        assert "Added Ch" in out
+        assert "New Ch" in out
+        assert "111" in out
+        assert "222" in out
+        # already_added column rendered as Yes/No
+        assert "Yes" in out
+        assert "No" in out
+
+    def test_json_output(self, capsys):
+        self._run(_ns(channel_action="list-for-import", json=True))
+        payload = json.loads(capsys.readouterr().out.strip())
+        assert {d["channel_id"] for d in payload} == {111, 222}
+
+    def test_empty(self, capsys):
+        self._run(_ns(channel_action="list-for-import", json=False), dialogs=[])
+        assert "No dialogs found." in capsys.readouterr().out
