@@ -16,6 +16,8 @@ class PublishResult:
     success: bool
     message_id: int | None = None
     error: str | None = None
+    phone: str | None = None
+    dialog_id: int | None = None
 
 
 def _target_key(target: PipelineTarget) -> str:
@@ -152,6 +154,8 @@ class PublishService:
             return PublishResult(
                 success=True,
                 message_id=msg.id if hasattr(msg, "id") else None,
+                phone=acquired_phone,
+                dialog_id=target.dialog_id,
             )
 
         except asyncio.TimeoutError:

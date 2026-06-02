@@ -119,6 +119,12 @@ _CLI_CLEANUP_COMMAND_PRODUCERS = {
     ("agent", "thread-delete"): {("agent", "chat")},
     ("agent", "threads"): {("agent", "chat")},
     ("dialogs", "archive"): {("dialogs", "unarchive")},
+    ("dialogs", "delete-message"): {
+        ("dialogs", "send"),
+        ("dialogs", "forward"),
+        ("photo-loader", "send"),
+        ("pipeline", "publish"),
+    },
     ("dialogs", "edit-message"): {("dialogs", "edit-message")},
     ("dialogs", "pin-message"): {("dialogs", "unpin-message")},
     ("dialogs", "react"): {("dialogs", "react")},
@@ -130,6 +136,7 @@ _CLI_CLEANUP_COMMAND_PRODUCERS = {
     ("my-telegram", "react"): {("my-telegram", "react")},
     ("my-telegram", "unarchive"): {("my-telegram", "archive")},
     ("my-telegram", "unpin-message"): {("my-telegram", "pin-message")},
+    ("photo-loader", "batch-cancel"): {("photo-loader", "schedule-send")},
     ("scheduler", "clear-pending"): {("collect",), ("scheduler", "trigger")},
 }
 _AUDIT_EXCLUDED_FILES = {"test_real_telegram_policy.py"}
@@ -1091,6 +1098,7 @@ def test_cli_real_tg_mutation_safe_commands_are_bounded():
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: react must be noninteractive")
             if command_case in {
                 ("dialogs", "edit-message"),
+                ("dialogs", "forward"),
                 ("dialogs", "send"),
                 ("my-telegram", "edit-message"),
                 ("my-telegram", "send"),
@@ -1112,6 +1120,7 @@ def test_cli_real_tg_mutation_safe_commands_are_bounded():
             if command_case in {
                 ("dialogs", "archive"),
                 ("dialogs", "edit-message"),
+                ("dialogs", "forward"),
                 ("dialogs", "mark-read"),
                 ("dialogs", "pin-message"),
                 ("dialogs", "react"),
@@ -1126,6 +1135,8 @@ def test_cli_real_tg_mutation_safe_commands_are_bounded():
                 ("my-telegram", "send"),
                 ("my-telegram", "unarchive"),
                 ("my-telegram", "unpin-message"),
+                ("photo-loader", "schedule-send"),
+                ("photo-loader", "send"),
             } and "--phone" not in strings:
                 violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: mutation-safe command must pin --phone")
 
