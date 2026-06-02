@@ -3,12 +3,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import inspect
+import logging
 
 from pydantic import ValidationError
 
 from src.cli import runtime
 from src.database.bundles import SearchQueryBundle
 from src.services.search_query_service import SearchQueryService
+
+logger = logging.getLogger(__name__)
 
 
 async def _chat_filter_warning(svc: SearchQueryService, chat_filter: str) -> str:
@@ -22,6 +25,9 @@ async def _chat_filter_warning(svc: SearchQueryService, chat_filter: str) -> str
         text = warning_text() if callable(warning_text) else ""
         return text if isinstance(text, str) else ""
     except Exception:
+        # Returning "" silently hides a validation failure as "no warning". Log so the
+        # operator can tell a clean filter from a broken validator (#676).
+        logger.warning("Failed to validate chat filter %r", chat_filter, exc_info=True)
         return ""
 
 

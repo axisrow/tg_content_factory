@@ -179,10 +179,16 @@ async def test_get_provider_api_key_env_fallback(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_get_provider_api_key_exception_returns_empty():
-    """Returns empty string on any exception."""
+async def test_get_provider_api_key_exception_returns_empty(caplog):
+    """Returns empty string on any exception — and logs it instead of swallowing (#676)."""
+    import logging
+
     from src.web.images.handlers import _get_provider_api_key
 
     with patch("src.services.image_provider_service.ImageProviderService", side_effect=Exception("boom")):
-        result = await _get_provider_api_key(MagicMock(), "anything")
+        with caplog.at_level(logging.WARNING, logger="src.web.images.handlers"):
+            result = await _get_provider_api_key(MagicMock(), "anything")
     assert result == ""
+    assert any(
+        "Failed to load API key for provider anything" in rec.message for rec in caplog.records
+    )
