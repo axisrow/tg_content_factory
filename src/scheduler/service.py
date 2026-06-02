@@ -12,6 +12,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from src.config import SchedulerConfig
 from src.database.bundles import PipelineBundle, SchedulerBundle, SearchQueryBundle
 from src.settings_utils import parse_int_setting
+from src.utils.asyncio import make_log_task_exception_callback
 
 if TYPE_CHECKING:
     from src.services.task_enqueuer import TaskEnqueuer
@@ -19,13 +20,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _log_task_exception(task: asyncio.Task) -> None:
-    """Done-callback that logs unhandled exceptions from fire-and-forget tasks."""
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.error("Background task %s failed: %s", task.get_name(), exc)
+_log_task_exception = make_log_task_exception_callback(
+    logger,
+    level="error",
+    message="Background task %s failed: %s",
+    include_exception_in_message=True,
+    exc_info=False,
+)
 
 
 class SchedulerManager:

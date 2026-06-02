@@ -40,6 +40,7 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
+from src.utils.asyncio import make_log_task_exception_callback
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
 from src.web.paths import TEMPLATES_DIR
@@ -53,6 +54,11 @@ _POOL_INIT_TIMEOUT = 20
 _POOL_RETRY_INTERVAL_SEC = 60.0
 _SHUTDOWN_DEFAULT_TIMEOUT = 15.0
 _SHUTDOWN_COLLECTION_QUEUE_TIMEOUT = 140.0
+_log_task_exception = make_log_task_exception_callback(
+    logger,
+    level="warning",
+    message="startup background task %s failed",
+)
 
 
 def _connected_pool_count(pool: object) -> int:
@@ -415,6 +421,7 @@ async def start_container(container: AppContainer) -> None:
             _warm_task = asyncio.create_task(
                 container.pool.warm_all_dialogs(), name="warm_all_dialogs_startup"
             )
+            _warm_task.add_done_callback(_log_task_exception)
             container.pool._warming_task = _warm_task
     logger.info("startup: telegram pool done (%.1fs)", time.monotonic() - t_start)
     if _is_dev:
