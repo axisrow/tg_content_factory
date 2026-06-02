@@ -71,17 +71,24 @@ async def test_rss_feed_with_messages(route_client, base_app):
     msg = Message(channel_id=100, message_id=1, text="Hello world", date=NOW)
     await db.insert_message(msg)
 
-    # db.get_messages() doesn't exist on Database facade; monkeypatch it
-    async def _get_messages(channel_id=None, limit=50):
-        rows, _ = await db.search_messages("", channel_id=channel_id, limit=limit)
-        return rows
-
-    db.get_messages = _get_messages
-
     resp = await route_client.get("/rss.xml")
     assert resp.status_code == 200
     assert "Hello world" in resp.text
     assert "<item>" in resp.text
+
+
+@pytest.mark.anyio
+async def test_rss_feed_channel_filter(route_client, base_app):
+    """A channel_id query must scope the feed to that channel only (#676)."""
+    _, db, _ = base_app
+
+    await db.insert_message(Message(channel_id=100, message_id=1, text="From channel 100", date=NOW))
+    await db.insert_message(Message(channel_id=200, message_id=2, text="From channel 200", date=NOW))
+
+    resp = await route_client.get("/rss.xml?channel_id=100")
+    assert resp.status_code == 200
+    assert "From channel 100" in resp.text
+    assert "From channel 200" not in resp.text
 
 
 # --- Atom feed route tests ---
@@ -103,12 +110,6 @@ async def test_atom_feed_with_messages(route_client, base_app):
 
     msg = Message(channel_id=100, message_id=1, text="Atom test message", date=NOW)
     await db.insert_message(msg)
-
-    async def _get_messages(channel_id=None, limit=50):
-        rows, _ = await db.search_messages("", channel_id=channel_id, limit=limit)
-        return rows
-
-    db.get_messages = _get_messages
 
     resp = await route_client.get("/atom.xml")
     assert resp.status_code == 200

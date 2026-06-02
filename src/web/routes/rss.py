@@ -45,10 +45,7 @@ async def rss_feed(
     limit = max(1, min(limit, 200))
 
     try:
-        if channel_id is not None:
-            messages = await db.get_messages(channel_id=channel_id, limit=limit)
-        else:
-            messages = await db.get_messages(limit=limit)
+        messages, _ = await db.search_messages(query="", channel_id=channel_id, limit=limit)
     except Exception:
         logger.exception("Failed to fetch messages for RSS feed")
         messages = []
@@ -104,10 +101,7 @@ async def atom_feed(
     limit = max(1, min(limit, 200))
 
     try:
-        if channel_id is not None:
-            messages = await db.get_messages(channel_id=channel_id, limit=limit)
-        else:
-            messages = await db.get_messages(limit=limit)
+        messages, _ = await db.search_messages(query="", channel_id=channel_id, limit=limit)
     except Exception:
         logger.exception("Failed to fetch messages for Atom feed")
         messages = []
