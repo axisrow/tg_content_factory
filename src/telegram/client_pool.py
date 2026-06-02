@@ -208,7 +208,16 @@ class ClientPool:
                                     eid, p
                                 )
                         except Exception:
-                            pass
+                            # Best-effort warming hint; the in-memory map is already set.
+                            # The except covers both the read and the write, so the message
+                            # says "read or persist". exc_info keeps the traceback for
+                            # DB-lock diagnosis, matching collector.py (#676 review).
+                            logger.debug(
+                                "warm_all_dialogs: failed to read or persist preferred_phone "
+                                "for channel %d",
+                                eid,
+                                exc_info=True,
+                            )
                 logger.info(
                     "warm_all_dialogs: warmed %s (%d dialogs)", p, len(dialogs or [])
                 )

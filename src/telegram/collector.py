@@ -927,7 +927,13 @@ class Collector:
                                     channel_id, None
                                 )
                             except Exception:
-                                pass
+                                # Pool is already cleared; a stale DB value just causes the
+                                # same rediscovery next restart. Log so the loop is visible.
+                                logger.warning(
+                                    "Channel %d: failed to clear stale preferred_phone in DB",
+                                    channel_id,
+                                    exc_info=True,
+                                )
                         found = await self._discover_phone_for_channel(
                             channel_id, exclude=phone
                         )
@@ -938,7 +944,14 @@ class Collector:
                                     channel_id, found
                                 )
                             except Exception:
-                                pass
+                                # Pool already knows the right phone; a failed DB write only
+                                # means the rediscovery repeats next restart. Log it.
+                                logger.warning(
+                                    "Channel %d: failed to persist rediscovered preferred_phone=%s",
+                                    channel_id,
+                                    found,
+                                    exc_info=True,
+                                )
                             logger.info(
                                 "Channel %d: rediscovered on %s, retrying",
                                 channel_id,
