@@ -33,6 +33,11 @@ from src.telegram.reactions import (
     normalize_outgoing_reaction_emoji,
 )
 
+# Upper bound on a single send_reactions batch. Each item issues at least one DB
+# read + write while holding the connection write-lock; an unbounded batch from a
+# runaway/injected prompt could starve all other writers (#736 review).
+MAX_REACTION_BATCH = 100
+
 
 def _command_status_text(status: object) -> str:
     value = getattr(status, "value", status)
@@ -318,6 +323,11 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
             return _text_response("Ошибка: items_json должен быть корректным JSON-массивом.")
         if not isinstance(items, list) or not items:
             return _text_response("Ошибка: items_json должен быть непустым JSON-массивом объектов {message_id, emoji}.")
+        if len(items) > MAX_REACTION_BATCH:
+            return _text_response(
+                f"Ошибка: батч не может превышать {MAX_REACTION_BATCH} реакций "
+                f"(передано {len(items)}). Разбейте на несколько вызовов."
+            )
 
         # Validate every item up front so a single bad entry doesn't leave a
         # half-enqueued batch. Each validated item is (message_id, normalized_emoji).
@@ -368,7 +378,11 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
             except Exception as e:  # noqa: BLE001 — report per-item failure, keep batching
                 failed.append(f"#{message_id_int} {emoji}: {e}")
 
-        lines = [f"Принято в очередь реакций: {enqueued} из {len(validated)} (чат {chat_id})."]
+        # deduplicate=True returns the existing command id without raising, so this
+        # count covers items that were newly queued OR already pending (#736 review).
+        lines = [
+            f"Поставлено или уже было в очереди реакций: {enqueued} из {len(validated)} (чат {chat_id})."
+        ]
         if failed:
             lines.append("Не удалось поставить в очередь:")
             lines.extend(f"- {entry}" for entry in failed)

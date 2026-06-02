@@ -1,6 +1,7 @@
 """Tests for agent tools: messaging.py."""
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -222,9 +223,31 @@ class TestSendReactions:
                 "confirm": True,
             }
         )
-        assert "Принято в очередь реакций: 2 из 2" in _text(result)
+        assert "Поставлено или уже было в очереди реакций: 2 из 2" in _text(result)
         assert repo.create_command.await_count == 2
         mock_client.send_reaction.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_batch_over_limit_aborts_before_enqueue(self, mock_db):
+        """A batch larger than MAX_REACTION_BATCH is rejected before any enqueue
+        so a runaway/injected prompt cannot starve the DB write-lock (#736)."""
+        from src.agent.tools.messaging_write import MAX_REACTION_BATCH
+
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        repo = _setup_command_queue(mock_db)
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        oversized = [{"message_id": i, "emoji": "👍"} for i in range(MAX_REACTION_BATCH + 1)]
+        result = await handlers["send_reactions"](
+            {
+                "phone": "+79001234567",
+                "chat_id": "@chat",
+                "items_json": json.dumps(oversized),
+                "confirm": True,
+            }
+        )
+        assert f"не может превышать {MAX_REACTION_BATCH}" in _text(result)
+        repo.create_command.assert_not_awaited()
 
 
 class TestEditMessage:
