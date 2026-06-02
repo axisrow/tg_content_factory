@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -84,3 +85,21 @@ async def test_run_collection_enqueuer_error():
 
     assert stats["errors"] == 1
     assert stats["enqueued"] == 0
+
+
+@pytest.mark.anyio
+async def test_get_all_jobs_next_run_logs_on_apscheduler_error(caplog):
+    """A get_jobs() failure must log, not silently return {} (#676)."""
+    manager = SchedulerManager(SchedulerConfig())
+    scheduler = MagicMock()
+    scheduler.get_jobs = MagicMock(side_effect=RuntimeError("scheduler down"))
+    manager._scheduler = scheduler
+    manager._jobs_cache_ts = -1e9  # force a fresh (non-cached) read
+
+    with caplog.at_level(logging.ERROR, logger="src.scheduler.service"):
+        result = manager.get_all_jobs_next_run()
+
+    # Safe fallback preserved...
+    assert result == {}
+    # ...but the failure is now logged.
+    assert any("failed to list APScheduler jobs" in rec.message for rec in caplog.records)

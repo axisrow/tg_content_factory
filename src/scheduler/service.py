@@ -283,6 +283,9 @@ class SchedulerManager:
             self._jobs_cache_ts = now
             return self._jobs_cache
         except Exception:
+            # Empty dict renders an empty scheduler page; without a log the APScheduler
+            # failure is invisible. The warm-dialogs path in this file already logs (#676).
+            logger.exception("Scheduler: failed to list APScheduler jobs")
             return {}
 
     async def trigger_now(self) -> dict:

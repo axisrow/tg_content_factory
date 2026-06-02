@@ -52,7 +52,8 @@ async def _get_provider_api_key(request: Request, provider: str) -> str:
                 if val:
                     return val
     except Exception:
-        pass
+        # Consistent with the sibling _get_image_service above, which logs the same way (#676).
+        logger.warning("Failed to load API key for provider %s", provider, exc_info=True)
     return ""
 
 

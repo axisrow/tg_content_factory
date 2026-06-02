@@ -266,7 +266,14 @@ class TrendService:
         )
         try:
             tfidf_matrix = vectorizer.fit_transform(tokenized_texts)
-        except ValueError:
+        except ValueError as exc:
+            # min_df=2 can prune the entire vocabulary on tiny corpora — empty result
+            # is expected, but log it so an unexpectedly empty trend list is diagnosable.
+            logger.debug(
+                "TF-IDF trending: empty vocabulary after pruning (%d texts): %s",
+                len(tokenized_texts),
+                exc,
+            )
             return []
 
         feature_names = vectorizer.get_feature_names_out()

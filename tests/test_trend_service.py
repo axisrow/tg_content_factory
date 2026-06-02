@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -42,6 +43,22 @@ async def test_get_trending_topics_empty_db(service, mock_db):
     result = await service.get_trending_topics(days=7, limit=20)
 
     assert result == []
+
+
+@pytest.mark.anyio
+async def test_get_trending_topics_logs_empty_vocabulary(service, mock_db, caplog):
+    """min_df pruning the whole vocabulary returns [] but is logged at debug (#676)."""
+    # Each token appears in exactly one document, so min_df=2 prunes everything and
+    # TfidfVectorizer.fit_transform raises ValueError("empty vocabulary").
+    mock_db.execute_fetchall = AsyncMock(
+        return_value=[{"text": "alphaword"}, {"text": "bravoword"}, {"text": "charlieword"}]
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="src.services.trend_service"):
+        result = await service.get_trending_topics(days=7, limit=20)
+
+    assert result == []
+    assert any("empty vocabulary" in rec.message for rec in caplog.records)
 
 
 @pytest.mark.anyio
