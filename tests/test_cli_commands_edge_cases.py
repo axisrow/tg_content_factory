@@ -11,12 +11,14 @@ Covers:
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.cli.commands.filter import _build_deletion_service, _parse_pks, _print_result
 from src.cli.commands.messages import _print_live_messages, _print_messages
+from src.cli.commands.search_query import _chat_filter_warning
 from src.models import Account, Channel, Message, SearchQuery, SearchQueryDailyStat
 from tests.helpers import AsyncIterMessages, cli_ns
 
@@ -1726,3 +1728,29 @@ class TestMessagesReadLiveMode:
         assert "reaction users: 👍 @ivan" in out
         assert client.await_args.args[0].id == 10
         assert client.await_args.args[0].limit == 10
+
+
+# ---------------------------------------------------------------------------
+# search_query.py — _chat_filter_warning (#676: log instead of swallowing)
+# ---------------------------------------------------------------------------
+
+
+async def test_chat_filter_warning_logs_on_validator_error(caplog):
+    """A validator that raises must be logged, not silently turned into "" (#676)."""
+    svc = MagicMock()
+    svc.validate_chat_filter = MagicMock(side_effect=RuntimeError("validator boom"))
+
+    with caplog.at_level(logging.WARNING, logger="src.cli.commands.search_query"):
+        result = await _chat_filter_warning(svc, "@somechat")
+
+    # Behaviour unchanged for the caller (empty warning text)...
+    assert result == ""
+    # ...but the failure is now visible in the logs.
+    assert any("Failed to validate chat filter" in rec.message for rec in caplog.records)
+
+
+async def test_chat_filter_warning_no_validator_returns_empty():
+    """When the service has no validator, returns "" without logging."""
+    svc = MagicMock(spec=[])  # no validate_chat_filter attribute
+    result = await _chat_filter_warning(svc, "@somechat")
+    assert result == ""
