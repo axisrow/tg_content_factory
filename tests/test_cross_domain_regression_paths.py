@@ -3823,6 +3823,59 @@ class TestCollectionQueueExtraCoverage:
         ]
         assert completed_calls == []
 
+    async def test_worker_does_not_requeue_user_cancel_during_shutdown(self):
+        """A persisted user CANCELLED must not be reset to PENDING by shutdown."""
+        from src.collection_queue import CollectionQueue
+        from src.models import Channel, CollectionTask, CollectionTaskStatus
+
+        channels = MagicMock()
+        running_task = CollectionTask(
+            id=1,
+            channel_id=100,
+            title="ch",
+            status=CollectionTaskStatus.RUNNING,
+        )
+        cancelled_task = CollectionTask(
+            id=1,
+            channel_id=100,
+            title="ch",
+            status=CollectionTaskStatus.CANCELLED,
+        )
+        channels.get_collection_task = AsyncMock(side_effect=[running_task, cancelled_task])
+        channels.get_by_pk = AsyncMock(return_value=Channel(id=1, channel_id=100, title="test"))
+        channels.update_collection_task = AsyncMock()
+        channels.cancel_collection_task = AsyncMock()
+        channels.reset_collection_task_to_pending = AsyncMock()
+        collector = MagicMock()
+        collector.is_cancelled = False
+
+        queue = CollectionQueue(collector, channels)
+
+        async def collect_then_shutdown(*args, **kwargs):
+            queue._shutdown_requested = True
+            return 7
+
+        collector.collect_single_channel = AsyncMock(side_effect=collect_then_shutdown)
+        queue._queue.put_nowait((1, Channel(id=1, channel_id=100, title="test"), False, True))
+
+        worker = asyncio.create_task(queue._run_worker())
+        await asyncio.sleep(0.3)
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
+
+        channels.cancel_collection_task.assert_awaited_once()
+        channels.reset_collection_task_to_pending.assert_not_awaited()
+        completed_calls = [
+            c
+            for c in channels.update_collection_task.call_args_list
+            if CollectionTaskStatus.COMPLETED in c.args
+            or c.kwargs.get("status") == CollectionTaskStatus.COMPLETED
+        ]
+        assert completed_calls == []
+
     async def test_worker_generic_exception(self):
         """Lines 174-181: generic exception during collection."""
         from src.collection_queue import CollectionQueue

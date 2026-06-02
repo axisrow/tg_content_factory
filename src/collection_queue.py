@@ -289,12 +289,14 @@ class CollectionQueue:
                 # cancel is the source of truth and we never clobber it with
                 # COMPLETED (#633 bug #30).
                 persisted = await self._channels.get_collection_task(task_id)
-                cancelled = self._collector.is_cancelled or (
+                persisted_cancelled = (
                     persisted is not None
                     and persisted.status == CollectionTaskStatus.CANCELLED
                 )
+                collector_cancelled = self._collector.is_cancelled
+                cancelled = collector_cancelled or persisted_cancelled
                 if cancelled:
-                    if self._shutdown_requested:
+                    if self._shutdown_requested and not persisted_cancelled:
                         await self._reset_task_to_pending_after_shutdown(task_id)
                         logger.info("Task %d requeued after service shutdown interrupted collection", task_id)
                     else:

@@ -501,6 +501,18 @@ async def test_reset_collection_task_to_pending(collection_tasks_repo):
     assert task.note == "shutdown"
 
 
+async def test_reset_collection_task_to_pending_does_not_overwrite_cancelled(collection_tasks_repo):
+    task_id = await collection_tasks_repo.create_collection_task(1, "Channel 1")
+    await collection_tasks_repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
+    await collection_tasks_repo.cancel_collection_task(task_id, note="user cancel")
+
+    await collection_tasks_repo.reset_collection_task_to_pending(task_id, note="shutdown")
+
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task.status == CollectionTaskStatus.CANCELLED
+    assert task.note == "user cancel"
+
+
 # fail_running_collection_tasks_on_startup tests
 
 
