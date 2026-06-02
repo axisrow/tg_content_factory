@@ -12,10 +12,28 @@ Two env vars are required to run these tests:
 from __future__ import annotations
 
 import os
+import zlib
+from pathlib import Path
 
 import pytest
 
 GATE_ENV = "RUN_REAL_TELEGRAM_MUTATION_SAFE"
+
+
+def make_minimal_png(path: Path) -> None:
+    """Write a valid 1x1 white pixel PNG to *path* for use in photo-loader tests."""
+    import struct
+
+    def _chunk(chunk_type: bytes, data: bytes) -> bytes:
+        c = chunk_type + data
+        return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+
+    header = b"\x89PNG\r\n\x1a\n"
+    ihdr = _chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+    raw_pixel = b"\x00\xFF\xFF\xFF"
+    idat = _chunk(b"IDAT", zlib.compress(raw_pixel))
+    iend = _chunk(b"IEND", b"")
+    path.write_bytes(header + ihdr + idat + iend)
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
