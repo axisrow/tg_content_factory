@@ -40,6 +40,7 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
+from src.utils.asyncio import make_log_task_exception_callback
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
 from src.web.paths import TEMPLATES_DIR
@@ -53,6 +54,11 @@ _POOL_INIT_TIMEOUT = 20
 _POOL_RETRY_INTERVAL_SEC = 60.0
 _SHUTDOWN_DEFAULT_TIMEOUT = 15.0
 _SHUTDOWN_COLLECTION_QUEUE_TIMEOUT = 140.0
+_log_task_exception = make_log_task_exception_callback(
+    logger,
+    level="warning",
+    message="startup background task %s failed",
+)
 
 
 def _connected_pool_count(pool: object) -> int:
@@ -105,19 +111,6 @@ async def _retry_telegram_pool_until_connected(container: AppContainer) -> None:
                     connected_count,
                 )
                 return
-
-
-def _log_task_exception(task: asyncio.Task) -> None:
-    """Done-callback that surfaces a fire-and-forget task's failure as a log line.
-
-    Without this, an exception in a background task is only reported by CPython
-    as a "Task exception was never retrieved" warning at GC time (#633 bug #31).
-    """
-    if task.cancelled():
-        return
-    exc = task.exception()
-    if exc is not None:
-        logger.warning("startup background task %s failed", task.get_name(), exc_info=exc)
 
 
 def _schedule_telegram_pool_retry(container: AppContainer) -> None:
