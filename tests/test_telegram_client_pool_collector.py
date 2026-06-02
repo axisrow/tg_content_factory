@@ -286,9 +286,11 @@ async def test_warm_all_dialogs_logs_when_preferred_phone_persist_fails(
     assert pool.get_phone_for_channel(12345) == "+7001"
     # ...and the failure is surfaced in the logs instead of being swallowed.
     assert any(
-        "failed to persist preferred_phone" in rec.message and "12345" in rec.message
+        "read or persist preferred_phone" in rec.message and "12345" in rec.message
         for rec in caplog.records
     )
+    # The traceback is preserved via exc_info, matching collector.py (#676 review).
+    assert any(rec.exc_info for rec in caplog.records if "12345" in rec.message)
 
 
 @pytest.mark.anyio
