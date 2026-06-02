@@ -196,6 +196,7 @@
 | `read_messages` | READ | Читать сообщения из чата |
 | `send_message` | WRITE | Отправить сообщение |
 | `send_reaction` | WRITE | Поставить emoji-реакцию на сообщение |
+| `send_reactions` | WRITE | Поставить emoji-реакции на несколько сообщений одного чата (batch) |
 | `get_telegram_queue_status` | READ | Статус очереди Telegram-заданий и реакций |
 | `cancel_telegram_command` | WRITE | Отменить ожидающее задание очереди по id |
 | `clear_pending_telegram_commands` | WRITE | Массовая отмена ожидающих заданий очереди (по типу/телефону) |
