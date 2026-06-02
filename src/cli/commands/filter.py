@@ -29,7 +29,12 @@ def _parse_pks(raw: str) -> list[int]:
 
 
 def _print_result(result, verb: str = "Purged") -> None:
-    if result.purged_count == 0 and not getattr(result, "errors", None):
+    # Normalize to a concrete list first: a bare attribute access on some mocks/objects
+    # yields a truthy non-list, which would otherwise print a bogus "Errors (0):" and
+    # suppress the benign "No filtered channels affected." message (#676 review, Codex P2).
+    raw_errors = getattr(result, "errors", None)
+    errors = list(raw_errors) if isinstance(raw_errors, (list, tuple)) else []
+    if result.purged_count == 0 and not errors:
         print("No filtered channels affected.")
     else:
         if result.purged_count:
@@ -40,7 +45,6 @@ def _print_result(result, verb: str = "Purged") -> None:
             print(f"Skipped: {result.skipped_count}")
     # Real per-channel failures (not benign skips) — surface them so a CLI user can
     # tell a failure from a skip (#676 review).
-    errors = getattr(result, "errors", None)
     if errors:
         print(f"Errors ({len(errors)}):")
         for err in errors:
