@@ -1,6 +1,7 @@
 """Tests for agent tools: messaging.py."""
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -155,6 +156,117 @@ class TestSendReaction:
         assert "статус running" in _text(result)
         repo.create_command.assert_not_awaited()
         mock_client.send_reaction.assert_not_awaited()
+
+
+class TestSendReactions:
+    @pytest.mark.anyio
+    async def test_no_pool_returns_gate(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["send_reactions"](
+            {"phone": "+79001234567", "chat_id": "@chat", "items_json": '[{"message_id": 1, "emoji": "👍"}]'}
+        )
+        assert "CLI-режиме" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_invalid_json_returns_error(self, mock_db):
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["send_reactions"](
+            {"phone": "+79001234567", "chat_id": "@chat", "items_json": "not-json", "confirm": True}
+        )
+        assert "корректным JSON" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_invalid_emoji_aborts_batch(self, mock_db):
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        repo = _setup_command_queue(mock_db)
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["send_reactions"](
+            {
+                "phone": "+79001234567",
+                "chat_id": "@chat",
+                "items_json": '[{"message_id": 1, "emoji": "👍"}, {"message_id": 2, "emoji": "not-an-emoji"}]',
+                "confirm": True,
+            }
+        )
+        # A single invalid item aborts the whole batch before any enqueue.
+        assert "не принимает реакцию" in _text(result)
+        repo.create_command.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_no_confirm_returns_gate(self, mock_db):
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["send_reactions"](
+            {
+                "phone": "+79001234567",
+                "chat_id": "@chat",
+                "items_json": '[{"message_id": 1, "emoji": "👍"}, {"message_id": 2, "emoji": "🔥"}]',
+            }
+        )
+        assert "confirm=true" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_confirm_enqueues_each_item(self, mock_db):
+        mock_pool, mock_client = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        repo = _setup_command_queue(mock_db)
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["send_reactions"](
+            {
+                "phone": "+79001234567",
+                "chat_id": "@chat",
+                "items_json": '[{"message_id": 10, "emoji": "👍"}, {"message_id": 11, "emoji": "🔥"}]',
+                "confirm": True,
+            }
+        )
+        assert "Поставлено или уже было в очереди реакций: 2 из 2" in _text(result)
+        assert repo.create_command.await_count == 2
+        mock_client.send_reaction.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_batch_over_limit_aborts_before_enqueue(self, mock_db):
+        """A batch larger than MAX_REACTION_BATCH is rejected before any enqueue
+        so a runaway/injected prompt cannot starve the DB write-lock (#736)."""
+        from src.agent.tools.messaging_write import MAX_REACTION_BATCH
+
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        repo = _setup_command_queue(mock_db)
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        oversized = [{"message_id": i, "emoji": "👍"} for i in range(MAX_REACTION_BATCH + 1)]
+        result = await handlers["send_reactions"](
+            {
+                "phone": "+79001234567",
+                "chat_id": "@chat",
+                "items_json": json.dumps(oversized),
+                "confirm": True,
+            }
+        )
+        assert f"не может превышать {MAX_REACTION_BATCH}" in _text(result)
+        repo.create_command.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_fractional_message_id_aborts_batch(self, mock_db):
+        """A fractional JSON number must not be silently truncated to a different
+        message id — the batch is rejected before any enqueue (#736 Codex review)."""
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        repo = _setup_command_queue(mock_db)
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["send_reactions"](
+            {
+                "phone": "+79001234567",
+                "chat_id": "@chat",
+                "items_json": '[{"message_id": 10.9, "emoji": "👍"}]',
+                "confirm": True,
+            }
+        )
+        assert "должен быть целым числом" in _text(result)
+        repo.create_command.assert_not_awaited()
 
 
 class TestEditMessage:

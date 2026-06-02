@@ -67,6 +67,17 @@ SEND_REACTION_SCHEMA = {
     "confirm": CONFIRM_ARG,
 }
 
+SEND_REACTIONS_SCHEMA = {
+    "phone": PHONE_ARG,
+    "chat_id": CHAT_ID_ARG,
+    "items_json": Annotated[
+        str,
+        'JSON-массив реакций для одного чата, например '
+        '[{"message_id": 10, "emoji": "👍"}, {"message_id": 11, "emoji": "🔥"}]',
+    ],
+    "confirm": CONFIRM_ARG,
+}
+
 DOWNLOAD_MEDIA_SCHEMA = {
     "phone": PHONE_ARG,
     "chat_id": CHAT_ID_ARG,
