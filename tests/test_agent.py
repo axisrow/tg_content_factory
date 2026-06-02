@@ -13,6 +13,7 @@ from src.agent.context import format_context
 from src.agent.manager import AgentManager
 from src.agent.prompt_template import (
     AGENT_PROMPT_TEMPLATE_SETTING,
+    DEFAULT_AGENT_PROMPT_TEMPLATE,
     PromptTemplateError,
     validate_prompt_template,
 )
@@ -1442,6 +1443,21 @@ def test_format_context_unknown_topic_in_grouping():
 def test_validate_prompt_template_rejects_unknown_variable():
     with pytest.raises(PromptTemplateError, match="Недопустимая переменная"):
         validate_prompt_template("Канал: {unknown}")
+
+
+def test_default_prompt_points_to_get_account_availability():
+    """Regression #529: availability/reconnect guidance must steer the agent to the
+    get_account_availability tool (same source of truth as Settings UI), not the
+    legacy get_account_info tool."""
+    assert "get_account_availability" in DEFAULT_AGENT_PROMPT_TEMPLATE
+    # The reconnect/availability guidance line must not tell the agent to use
+    # get_account_info for availability questions.
+    availability_line = next(
+        line
+        for line in DEFAULT_AGENT_PROMPT_TEMPLATE.splitlines()
+        if "доступность" in line or "reconnect" in line
+    )
+    assert "get_account_info" not in availability_line
 
 
 # ── DeepagentsBackend property tests ───────────────────────────────────────────────
