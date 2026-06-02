@@ -67,6 +67,13 @@ class CountActionResult:
 
 
 @dataclass(frozen=True)
+class ForwardMessagesResult:
+    phone: str
+    count: int
+    message_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True)
 class ParticipantsResult:
     phone: str
     participants: list[Any]
@@ -380,7 +387,7 @@ class TelegramActionService:
         native: bool = True,
         resolve_entities: bool = True,
         collapse_single_message_id: bool = False,
-    ) -> CountActionResult:
+    ) -> ForwardMessagesResult:
         async with self._client(phone=phone, native=native) as (client, acquired_phone):
             from_entity = (
                 await self._resolve_entity(client, phone=acquired_phone, identifier=from_chat)
@@ -394,8 +401,11 @@ class TelegramActionService:
             )
             ids = [int(value) for value in message_ids]
             messages: Any = ids[0] if collapse_single_message_id and len(ids) == 1 else ids
-            await client.forward_messages(to_entity, messages, from_entity)
-            return CountActionResult(phone=acquired_phone, count=len(ids))
+            forwarded = await client.forward_messages(to_entity, messages, from_entity)
+            if not isinstance(forwarded, (list, tuple)):
+                forwarded = [forwarded] if forwarded is not None else []
+            forwarded_ids = tuple(int(m.id) for m in forwarded if m is not None and hasattr(m, "id"))
+            return ForwardMessagesResult(phone=acquired_phone, count=len(ids), message_ids=forwarded_ids)
 
     async def pin_message(
         self,

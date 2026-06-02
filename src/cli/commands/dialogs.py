@@ -255,13 +255,16 @@ def run_with_dependencies(
                         print("Aborted.")
                         return
                 try:
-                    await TelegramActionService(pool).forward_messages(
+                    fwd_result = await TelegramActionService(pool).forward_messages(
                         phone=phone,
                         from_chat=args.from_chat,
                         to_chat=args.to_chat,
                         message_ids=ids,
                     )
-                    print(f"Forwarded {len(ids)} message(s) from {args.from_chat} to {args.to_chat}.")
+                    id_suffix = ""
+                    if fwd_result.message_ids:
+                        id_suffix = " forwarded_ids=" + ",".join(str(i) for i in fwd_result.message_ids)
+                    print(f"Forwarded {len(ids)} message(s) from {args.from_chat} to {args.to_chat}.{id_suffix}")
                 except TelegramActionClientUnavailableError:
                     print(f"Client for {phone} unavailable (flood-wait or not connected).")
                 except Exception as exc:
