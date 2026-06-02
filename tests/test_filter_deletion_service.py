@@ -68,6 +68,8 @@ async def test_purge_channels_by_pks_not_filtered(db):
     result = await service.purge_channels_by_pks([1])
     assert result.purged_count == 0
     assert result.skipped_count == 1
+    # A benign skip is NOT an error — errors stays empty so callers don't false-alarm (#676).
+    assert result.errors == []
 
 
 @pytest.mark.anyio
@@ -114,6 +116,9 @@ async def test_purge_channels_by_pks_exception_handling(db):
     result = await service.purge_channels_by_pks([1])
     assert result.purged_count == 0
     assert result.skipped_count == 1
+    # A real exception IS recorded so callers can distinguish it from a benign skip (#676).
+    assert len(result.errors) == 1
+    assert "DB error" in result.errors[0]
 
 
 @pytest.mark.anyio
@@ -186,6 +191,7 @@ async def test_hard_delete_not_filtered(db, channel_service):
     result = await service.hard_delete_channels_by_pks([1])
     assert result.purged_count == 0
     assert result.skipped_count == 1
+    assert result.errors == []
 
 
 @pytest.mark.anyio
@@ -224,3 +230,5 @@ async def test_hard_delete_exception_handling(db, channel_service):
     result = await service.hard_delete_channels_by_pks([1])
     assert result.purged_count == 0
     assert result.skipped_count == 1
+    assert len(result.errors) == 1
+    assert "DB error" in result.errors[0]

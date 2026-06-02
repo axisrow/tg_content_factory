@@ -48,7 +48,12 @@ async def purge_selected_filtered(request: Request) -> FilterRedirect:
     if not pks:
         return manage_redirect(error="no_filtered_channels")
     svc = deps.filter_deletion_service(request)
-    await svc.purge_channels_by_pks(pks)
+    result = await svc.purge_channels_by_pks(pks)
+    # A purge that hit an exception increments skipped_count AND records an error
+    # message. Surface real failures instead of always reporting success (#676);
+    # benign skips (a pk that is no longer filtered) carry no error and stay quiet.
+    if result.errors:
+        return manage_redirect(error="purge_partial")
     return manage_redirect(msg="purged_selected")
 
 
