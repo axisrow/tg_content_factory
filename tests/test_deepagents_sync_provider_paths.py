@@ -1624,15 +1624,6 @@ class TestAgentManagerCancelStream:
         assert thread_id not in mgr._active_tasks
 
 
-async def _consume_stream(mgr, thread_id, msg):
-    """Helper to consume a stream."""
-    try:
-        async for _ in mgr.chat_stream(thread_id, msg):
-            pass
-    except Exception:
-        pass
-
-
 # ===========================================================================
 # agent_provider_service — compatibility record methods
 # ===========================================================================
