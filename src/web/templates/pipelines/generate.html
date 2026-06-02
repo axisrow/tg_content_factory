@@ -40,7 +40,7 @@
 {% endif %}
 
 <form method="post" action="/pipelines/{{ pipeline.id }}/run" data-busy class="mt-3">
-    <button type="submit" class="btn btn-success"><i class="bi bi-play-fill"></i> Run now</button>
+    <button type="submit" class="btn btn-success" {{ "disabled" if _needs_llm and not _llm_configured }}><i class="bi bi-play-fill"></i> Run now</button>
 </form>
 
 <pre id="stream-output" style="white-space: pre-wrap; margin-top: 1rem;"></pre>

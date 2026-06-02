@@ -583,11 +583,24 @@ async def generate_pipeline(
         runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id)
         return PipelineTemplate(
             "pipelines/generate.html",
-            {"pipeline": pipeline, "runs": runs, "error": "Generation failed", "request": request},
+            {
+                "pipeline": pipeline,
+                "runs": runs,
+                "error": "Generation failed",
+                "needs_llm": pipeline_needs_llm(pipeline),
+                "llm_configured": provider_service.has_providers(),
+                "request": request,
+            },
         )
     return PipelineTemplate(
         "pipelines/generate.html",
-        {"pipeline": pipeline, "run": run, "request": request},
+        {
+            "pipeline": pipeline,
+            "run": run,
+            "needs_llm": pipeline_needs_llm(pipeline),
+            "llm_configured": provider_service.has_providers(),
+            "request": request,
+        },
     )
 
 
