@@ -13,6 +13,7 @@ async def test_set_image_url_updates_row_and_timestamp(db):
     before = await repo.get(run_id)
     assert before is not None
     assert before.image_url is None
+    assert before.updated_at is None
 
     await repo.set_image_url(run_id, "https://example.com/pic.png")
 
