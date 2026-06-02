@@ -284,6 +284,22 @@ async def test_generate_page_renders(client):
 
 
 @pytest.mark.anyio
+async def test_generate_page_warns_when_llm_pipeline_has_no_provider(client):
+    """#386: an LLM-requiring pipeline with no provider configured must show a
+    warning banner and disable the preview controls (instead of failing only on
+    click). The _ADD_DATA pipeline uses the legacy chain backend ⇒ needs_llm, and
+    the test fixture has no LLM provider registered."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    resp = await client.get("/pipelines/1/generate")
+    assert resp.status_code == 200
+    # LLM fields are still rendered (it IS an LLM pipeline) but gated:
+    assert 'name="model"' in resp.text
+    assert "ни один провайдер не настроен" in resp.text
+    assert "disabled" in resp.text
+
+
+@pytest.mark.anyio
 async def test_generate_page_not_found(client):
     """Test generate page with invalid pipeline."""
     resp = await client.get("/pipelines/999999/generate", follow_redirects=False)
