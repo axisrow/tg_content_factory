@@ -11,7 +11,7 @@ from src.config import AppConfig, DatabaseConfig
 from src.database import Database
 from src.database.repositories.accounts import AccountSessionDecryptError
 from src.search.engine import SearchEngine
-from src.web.bootstrap import build_web_container, start_container
+from src.web.bootstrap import _log_task_exception, build_web_container, start_container
 from src.web.log_handler import LogBuffer
 from src.web.runtime_shims import SnapshotClientPool
 
@@ -284,3 +284,57 @@ async def test_build_web_container_does_not_connect_telethon(tmp_path, monkeypat
         )
     finally:
         await container.db.close()
+
+
+@pytest.mark.anyio
+async def test_log_task_exception_logs_failed_task(caplog):
+    """#633 bug #31: a failed background task is surfaced as a warning log."""
+
+    async def _boom():
+        raise RuntimeError("warm failed")
+
+    task = asyncio.create_task(_boom(), name="warm_all_dialogs_startup")
+    with pytest.raises(RuntimeError):
+        await task
+
+    with caplog.at_level("WARNING", logger="src.web.bootstrap"):
+        _log_task_exception(task)
+
+    assert any(
+        "warm_all_dialogs_startup" in r.getMessage() and r.exc_info is not None
+        for r in caplog.records
+    )
+
+
+@pytest.mark.anyio
+async def test_log_task_exception_silent_on_success(caplog):
+    """A successful task produces no warning."""
+
+    async def _ok():
+        return 1
+
+    task = asyncio.create_task(_ok())
+    await task
+
+    with caplog.at_level("WARNING", logger="src.web.bootstrap"):
+        _log_task_exception(task)
+
+    assert caplog.records == []
+
+
+@pytest.mark.anyio
+async def test_log_task_exception_silent_on_cancel(caplog):
+    """A cancelled task is not treated as a failure."""
+
+    async def _sleep():
+        await asyncio.sleep(10)
+
+    task = asyncio.create_task(_sleep())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    with caplog.at_level("WARNING", logger="src.web.bootstrap"):
+        _log_task_exception(task)
+
+    assert caplog.records == []
