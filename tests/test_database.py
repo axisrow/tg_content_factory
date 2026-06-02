@@ -78,6 +78,33 @@ async def test_account_upsert_reactivates_without_overwriting_primary(db):
 
 
 @pytest.mark.anyio
+async def test_add_account_second_primary_is_demoted(db):
+    """#733: when a primary already exists, a second account requesting primary
+    is stored as non-primary (atomic derivation), so the single-primary invariant
+    holds even if two callers both pass is_primary=True."""
+    await db.add_account(Account(phone="+70000000001", session_string="s1", is_primary=True))
+    await db.add_account(Account(phone="+70000000002", session_string="s2", is_primary=True))
+
+    accounts = await db.get_accounts()
+    primaries = [a for a in accounts if a.is_primary]
+    assert len(primaries) == 1
+    assert primaries[0].phone == "+70000000001"
+
+
+@pytest.mark.anyio
+async def test_single_primary_partial_index_rejects_raw_double_primary(db):
+    """#733: the partial unique index idx_accounts_single_primary is the hard
+    backstop — a raw write that forces a second is_primary=1 row must fail even
+    if it bypasses add_account's atomic derivation."""
+    await db.add_account(Account(phone="+70000000003", session_string="s1", is_primary=True))
+    with pytest.raises(sqlite3.IntegrityError):
+        await db.execute_write(
+            "INSERT INTO accounts (phone, session_string, is_primary) VALUES (?, ?, 1)",
+            ("+70000000004", "s2"),
+        )
+
+
+@pytest.mark.anyio
 async def test_agent_message_write_retries_when_database_is_locked_once(db, monkeypatch):
     thread_id = await db.create_agent_thread("Retry")
     assert db.db is not None

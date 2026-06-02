@@ -15,6 +15,7 @@ ColumnSpec = Mapping[str, str]
 
 SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
     "accounts": {
+        "is_primary": "is_primary INTEGER DEFAULT 0",
         "flood_wait_until": "flood_wait_until TEXT",
         "is_premium": "is_premium INTEGER DEFAULT 0",
     },
@@ -166,6 +167,13 @@ SCHEMA_REPAIR_INDEXES: Sequence[str] = (
     CREATE INDEX IF NOT EXISTS idx_pipeline_action_log_lookup
     ON pipeline_action_log(pipeline_id, node_id, action)
     """,
+    # Enforce at-most-one primary account (#733). Partial unique index: at most
+    # one row may have is_primary = 1. Existing duplicate primaries are collapsed
+    # by _dedupe_primary_accounts() before this index is created.
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_single_primary
+    ON accounts(is_primary) WHERE is_primary = 1
+    """,
 )
 
 
@@ -196,6 +204,31 @@ async def ensure_columns(db: aiosqlite.Connection, table: str, columns: ColumnSp
 async def ensure_indexes(db: aiosqlite.Connection, index_statements: Sequence[str]) -> None:
     for statement in index_statements:
         await db.execute(statement)
+
+
+async def _dedupe_primary_accounts(db: aiosqlite.Connection) -> None:
+    """Collapse multiple primary accounts to a single one (#733).
+
+    A pre-existing race (two accounts both reading an empty table and both
+    inserting is_primary=1) could leave more than one primary row. Before the
+    partial unique index idx_accounts_single_primary can be created, any such
+    duplicates must be demoted — otherwise the CREATE UNIQUE INDEX fails. Keep
+    the lowest-id primary, demote the rest. No-op when the table is absent or
+    already has <=1 primary.
+    """
+    if not await table_exists(db, "accounts"):
+        return
+    if "is_primary" not in await table_columns(db, "accounts"):
+        return
+    cur = await db.execute("SELECT id FROM accounts WHERE is_primary = 1 ORDER BY id ASC")
+    rows = await cur.fetchall()
+    if len(rows) <= 1:
+        return
+    keep_id = rows[0][0]
+    await db.execute(
+        "UPDATE accounts SET is_primary = 0 WHERE is_primary = 1 AND id != ?",
+        (keep_id,),
+    )
 
 
 async def _rebuild_collection_tasks_if_channel_id_notnull(db: aiosqlite.Connection) -> None:
@@ -327,6 +360,11 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
 
     for table, columns in SCHEMA_REPAIR_COLUMNS.items():
         await ensure_columns(db, table, columns)
+
+    # Collapse any pre-existing duplicate primary accounts (#733) BEFORE applying
+    # SCHEMA_SQL — it contains the single-primary partial unique index, whose
+    # creation would fail on a DB that already has >1 primary row.
+    await _dedupe_primary_accounts(db)
 
     await db.executescript(SCHEMA_SQL)
 

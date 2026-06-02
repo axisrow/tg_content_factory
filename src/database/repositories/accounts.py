@@ -48,9 +48,21 @@ class AccountsRepository:
         if self._session_cipher:
             session_string = self._session_cipher.encrypt(session_string)
 
+        # Derive is_primary atomically (#733): the requested primary flag only
+        # takes effect when no primary account exists yet. Two concurrent inserts
+        # that each pass is_primary=1 can no longer both win — the subquery is
+        # evaluated against the table at insert time, so the second insert sees
+        # the first's primary row and stores 0. The partial unique index
+        # idx_accounts_single_primary is the hard backstop behind this.
+        want_primary = int(account.is_primary)
         cur = await self._database.execute_write(
             """INSERT INTO accounts (phone, session_string, is_primary, is_active, is_premium)
-               VALUES (?, ?, ?, ?, ?)
+               VALUES (
+                   ?, ?,
+                   CASE WHEN ? = 1 AND NOT EXISTS (SELECT 1 FROM accounts WHERE is_primary = 1)
+                        THEN 1 ELSE 0 END,
+                   ?, ?
+               )
                ON CONFLICT(phone) DO UPDATE SET
                    session_string=excluded.session_string,
                    is_active=excluded.is_active,
@@ -58,7 +70,7 @@ class AccountsRepository:
             (
                 account.phone,
                 session_string,
-                int(account.is_primary),
+                want_primary,
                 int(account.is_active),
                 int(account.is_premium),
             ),

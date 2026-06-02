@@ -116,7 +116,13 @@ async def test_run_migrations_adds_missing_columns_and_indexes(tmp_path):
         await run_migrations(conn)
         await run_migrations(conn)
 
-        assert {"is_premium", "flood_wait_until"} <= await _columns(conn, "accounts")
+        assert {"is_primary", "is_premium", "flood_wait_until"} <= await _columns(conn, "accounts")
+        # #733: single-primary partial unique index is created on legacy DBs.
+        cur = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+            ("idx_accounts_single_primary",),
+        )
+        assert await cur.fetchone() is not None
         assert {"preferred_phone", "channel_type", "is_filtered"} <= await _columns(conn, "channels")
         assert {
             "forward_from_channel_id",
@@ -143,6 +149,46 @@ async def test_run_migrations_adds_missing_columns_and_indexes(tmp_path):
         cur = await conn.execute("SELECT value FROM settings WHERE key = 'agent_prompt_template'")
         row = await cur.fetchone()
         assert row["value"] == "legacy"
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_run_migrations_dedupes_multiple_primary_accounts(tmp_path):
+    """#733: a legacy DB corrupted with >1 primary account is collapsed to a
+    single primary (lowest id wins) before the single-primary unique index is
+    created — otherwise the index creation would fail."""
+    conn = await _connect(str(tmp_path / "double_primary.db"))
+    try:
+        await conn.executescript("""
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT UNIQUE NOT NULL,
+                session_string TEXT NOT NULL,
+                is_primary INTEGER DEFAULT 0
+            );
+        """)
+        await conn.execute(
+            "INSERT INTO accounts (id, phone, session_string, is_primary) VALUES (1, '+71', 's1', 1)"
+        )
+        await conn.execute(
+            "INSERT INTO accounts (id, phone, session_string, is_primary) VALUES (2, '+72', 's2', 1)"
+        )
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        cur = await conn.execute("SELECT id FROM accounts WHERE is_primary = 1")
+        primaries = [row["id"] for row in await cur.fetchall()]
+        assert primaries == [1], "lowest-id primary kept, others demoted"
+
+        cur = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+            ("idx_accounts_single_primary",),
+        )
+        assert await cur.fetchone() is not None
     finally:
         await conn.close()
 

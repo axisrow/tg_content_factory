@@ -10,6 +10,10 @@ CREATE TABLE IF NOT EXISTS accounts (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- At most one primary account (#733): partial unique index on is_primary = 1.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_single_primary
+    ON accounts(is_primary) WHERE is_primary = 1;
+
 CREATE TABLE IF NOT EXISTS channels (
     id INTEGER PRIMARY KEY,
     channel_id INTEGER UNIQUE NOT NULL,
