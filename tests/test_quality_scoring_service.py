@@ -266,3 +266,45 @@ def test_quality_score_max_values():
         issues=[],
     )
     assert score.overall == 1.0
+
+
+# === provider-service plumbing tests (issue #437/#447) ===
+
+
+@pytest.mark.anyio
+async def test_score_content_builds_provider_service_with_config(mock_db):
+    """When no provider_service is injected, the registry is built WITH config so DB providers load."""
+    import json
+    from unittest.mock import AsyncMock, patch
+
+    cfg = MagicMock()
+    service = QualityScoringService(mock_db, config=cfg)
+
+    mock_registry = MagicMock()
+    mock_registry.get_provider_callable.return_value = AsyncMock(
+        return_value=json.dumps(
+            {
+                "relevance": 0.9,
+                "language_quality": 0.9,
+                "informativeness": 0.9,
+                "structure": 0.9,
+                "overall": 0.9,
+                "issues": [],
+            }
+        )
+    )
+    builder = AsyncMock(return_value=mock_registry)
+
+    with patch("src.services.provider_service.build_provider_service", builder):
+        score = await service.score_content("text")
+
+    builder.assert_awaited_once_with(mock_db, cfg)
+    assert score.overall == 0.9
+
+
+@pytest.mark.anyio
+async def test_score_content_fallback_without_config_uses_default(mock_db):
+    """Without config or provider_service the default-stub path is unchanged (overall 0.5)."""
+    service = QualityScoringService(mock_db)
+    score = await service.score_content("text")
+    assert score.overall == 0.5

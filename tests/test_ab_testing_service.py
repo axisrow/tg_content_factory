@@ -183,3 +183,55 @@ async def test_ab_testing_service_auto_select_without_scoring_picks_longest(db):
     best_index = await service.auto_select_best(run_id, scoring_service=None)
 
     assert best_index == 2  # Index of "the longest one here"
+
+
+@pytest.mark.anyio
+async def test_generate_variants_builds_provider_service_with_config(db):
+    """When no provider_service is injected, the registry is built WITH config so DB providers load."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    cfg = MagicMock()
+    service = ABTestingService(db, config=cfg)
+    pipeline = ContentPipeline(
+        id=1,
+        name="Digest",
+        prompt_template="Summarize {source_messages}",
+        llm_model="test-model",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        publish_mode=PipelinePublishMode.MODERATED,
+    )
+
+    mock_registry = MagicMock()
+    mock_registry.get_provider_callable.return_value = AsyncMock(return_value="variant-x")
+    builder = AsyncMock(return_value=mock_registry)
+
+    with patch("src.services.provider_service.build_provider_service", builder):
+        variants = await service.generate_variants(pipeline, "base", num_variants=2)
+
+    builder.assert_awaited_once_with(db, cfg)
+    assert variants == ["base", "variant-x"]
+
+
+@pytest.mark.anyio
+async def test_generate_variants_accepts_injected_provider_service(db):
+    """An injected provider_service short-circuits the builder entirely."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    injected = MagicMock()
+    injected.get_provider_callable.return_value = AsyncMock(return_value="variant-y")
+    service = ABTestingService(db, provider_service=injected)
+    pipeline = ContentPipeline(
+        id=1,
+        name="Digest",
+        prompt_template="Summarize {source_messages}",
+        llm_model="test-model",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        publish_mode=PipelinePublishMode.MODERATED,
+    )
+
+    builder = AsyncMock()
+    with patch("src.services.provider_service.build_provider_service", builder):
+        variants = await service.generate_variants(pipeline, "base", num_variants=2)
+
+    builder.assert_not_awaited()
+    assert variants == ["base", "variant-y"]

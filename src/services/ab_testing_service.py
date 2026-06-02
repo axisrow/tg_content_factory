@@ -31,9 +31,17 @@ class ABTestingService:
     Generates multiple variants and allows selection of the best one.
     """
 
-    def __init__(self, db: Database, default_variants: int = 3):
+    def __init__(
+        self,
+        db: Database,
+        default_variants: int = 3,
+        provider_service=None,
+        config=None,
+    ):
         self._db = db
         self._default_variants = default_variants
+        self._provider_service = provider_service
+        self._config = config
 
     async def generate_variants(
         self,
@@ -55,13 +63,13 @@ class ABTestingService:
         variants: list[str] = [base_text]
 
         try:
-            from src.services.provider_service import RuntimeProviderRegistry
+            from src.services.provider_service import build_provider_service
         except ImportError:
             logger.warning("Provider service not available for variant generation")
             return variants
 
         try:
-            provider_service = RuntimeProviderRegistry(self._db)
+            provider_service = self._provider_service or await build_provider_service(self._db, self._config)
 
             for i in range(1, num_variants):
                 prompt = (
