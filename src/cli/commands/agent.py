@@ -263,6 +263,26 @@ def run(args: argparse.Namespace) -> None:
                 await db.rename_agent_thread(args.thread_id, args.title[:100])
                 print(f"Тред #{args.thread_id} переименован: {args.title[:100]}")
 
+            elif action == "thread-stop":
+                from src.agent.manager import AgentManager
+
+                mgr = AgentManager(db, config)
+                cancelled = await mgr.cancel_stream(args.thread_id)
+                if cancelled:
+                    # Only safe to delete once we've actually cancelled the in-process
+                    # task. A fresh CLI AgentManager has an empty _active_tasks, so a
+                    # stream running in the web/worker process is NOT cancelled here;
+                    # deleting the last exchange then races that stream, which could
+                    # persist an assistant reply with no preceding user message. (#737)
+                    await db.delete_last_agent_exchange(args.thread_id)
+                    print(f"Тред #{args.thread_id}: генерация остановлена; последний обмен удалён.")
+                else:
+                    print(
+                        f"Тред #{args.thread_id}: активной генерации в этом процессе нет "
+                        "(возможно, выполняется в worker/web). Обмен не удалён, чтобы не "
+                        "осиротить ответ всё ещё работающего стрима."
+                    )
+
             elif action == "messages":
                 msgs = await db.get_agent_messages(args.thread_id)
                 if args.limit:

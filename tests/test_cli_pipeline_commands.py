@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -34,6 +35,18 @@ def _read_run_moderation(db_path: str, run_id: int) -> str | None:
         cur = conn.execute("SELECT moderation_status FROM generation_runs WHERE id = ?", (run_id,))
         row = cur.fetchone()
         return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def _read_run_status(db_path: str, run_id: int) -> tuple[str | None, str | None]:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.execute(
+            "SELECT status, generated_text FROM generation_runs WHERE id = ?", (run_id,)
+        )
+        row = cur.fetchone()
+        return (row[0], row[1]) if row else (None, None)
     finally:
         conn.close()
 
@@ -900,3 +913,147 @@ class TestPipelineExportRW:
         )
 
         assert json.loads(out_file.read_text(encoding="utf-8"))["name"] == "Exp"
+
+
+# ---------------------------------------------------------------------------
+# pipeline generate-stream — mirrors web GET /pipelines/{id}/generate-stream
+# ---------------------------------------------------------------------------
+
+
+def _max_run_id(db_path: str) -> int | None:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.execute("SELECT MAX(id) FROM generation_runs")
+        row = cur.fetchone()
+        return row[0] if row and row[0] is not None else None
+    finally:
+        conn.close()
+
+
+def _gen_stream_ns(**overrides):
+    defaults = {
+        "pipeline_action": "generate-stream",
+        "model": None,
+        "max_tokens": 256,
+        "temperature": 0.0,
+        "limit": 8,
+    }
+    defaults.update(overrides)
+    return _ns(**defaults)
+
+
+class _FakeGenerationService:
+    """Async-generator double for GenerationService used by generate-stream."""
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def generate_stream(self, *args, **kwargs):
+        yield {"delta": "Hello", "generated_text": "Hello", "citations": []}
+        yield {
+            "delta": " world",
+            "generated_text": "Hello world",
+            "citations": [{"message_id": 1}],
+        }
+
+
+class TestPipelineGenerateStream:
+    def test_not_found(self, cli_env, capsys):
+        run(_gen_stream_ns(id=99999))
+        assert "not found" in capsys.readouterr().out
+
+    def test_streams_jsonlines_and_persists_run(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_gen_stream.db")
+        pid = _seed_pipeline_with_graph(db_path, name="StreamDAG")
+
+        provider = MagicMock()
+        provider.load_db_providers = AsyncMock()
+        provider.has_providers = MagicMock(return_value=True)
+        provider.get_provider_callable = MagicMock(return_value=AsyncMock())
+
+        db = _open_db(db_path)
+        try:
+            with cli_init_patch(db, _PIPELINE_INIT_DB_TARGET, fresh_database=True), patch(
+                "src.services.provider_service.RuntimeProviderRegistry",
+                return_value=provider,
+            ), patch(
+                "src.services.generation_service.GenerationService",
+                _FakeGenerationService,
+            ):
+                run(_gen_stream_ns(id=pid))
+        finally:
+            _close_db(db)
+
+        out = capsys.readouterr().out
+        lines = [json.loads(ln) for ln in out.strip().splitlines() if ln.strip()]
+        # Two delta updates + a final done event.
+        assert lines[0]["delta"] == "Hello"
+        assert lines[1]["text"] == "Hello world"
+        assert lines[-1]["event"] == "done"
+        run_id = lines[-1]["run_id"]
+
+        status, generated = _read_run_status(db_path, run_id)
+        assert status == "completed"
+        assert generated == "Hello world"
+
+    def test_cancellation_marks_run_failed(self, tmp_path, cli_init_patch, capsys):
+        """Ctrl+C raises CancelledError (a BaseException, not Exception). The run
+        must be flipped to "failed" and the exception re-raised, not left dangling
+        in "running" forever. (#737)"""
+
+        class _CancellingGenerationService:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def generate_stream(self, *args, **kwargs):
+                yield {"delta": "Hi", "generated_text": "Hi", "citations": []}
+                raise asyncio.CancelledError()
+
+        db_path = _empty_db_path(tmp_path, "pipeline_gen_stream_cancel.db")
+        pid = _seed_pipeline_with_graph(db_path, name="CancelDAG")
+
+        provider = MagicMock()
+        provider.load_db_providers = AsyncMock()
+        provider.has_providers = MagicMock(return_value=True)
+        provider.get_provider_callable = MagicMock(return_value=AsyncMock())
+
+        db = _open_db(db_path)
+        try:
+            with cli_init_patch(db, _PIPELINE_INIT_DB_TARGET, fresh_database=True), patch(
+                "src.services.provider_service.RuntimeProviderRegistry",
+                return_value=provider,
+            ), patch(
+                "src.services.generation_service.GenerationService",
+                _CancellingGenerationService,
+            ):
+                with pytest.raises(asyncio.CancelledError):
+                    run(_gen_stream_ns(id=pid))
+        finally:
+            _close_db(db)
+
+        run_id = _max_run_id(db_path)
+        assert run_id is not None
+        status, _ = _read_run_status(db_path, run_id)
+        assert status == "failed"
+
+    def test_no_llm_provider_aborts(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_gen_stream_noprov.db")
+        pid = _seed_pipeline_with_graph(db_path, name="NoProv")
+
+        provider = MagicMock()
+        provider.load_db_providers = AsyncMock()
+        provider.has_providers = MagicMock(return_value=False)
+
+        db = _open_db(db_path)
+        try:
+            with cli_init_patch(db, _PIPELINE_INIT_DB_TARGET, fresh_database=True), patch(
+                "src.services.provider_service.RuntimeProviderRegistry",
+                return_value=provider,
+            ):
+                run(_gen_stream_ns(id=pid))
+        finally:
+            _close_db(db)
+
+        assert "LLM provider is not configured" in capsys.readouterr().out
+        # No run should have been created.
+        assert _max_run_id(db_path) is None
