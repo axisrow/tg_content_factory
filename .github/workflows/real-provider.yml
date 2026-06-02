@@ -1,0 +1,45 @@
+name: Real Provider Smoke Tests
+
+# Manual trigger only — never runs in default CI.
+# Usage: Actions → Real Provider Smoke Tests → Run workflow
+# Requires secrets: ZAI_API_KEY, SESSION_ENCRYPTION_KEY, and optionally
+# ANTHROPIC_API_KEY / TOGETHER_API_KEY / REPLICATE_API_TOKEN / HF_TOKEN.
+on:
+  workflow_dispatch:
+    inputs:
+      pytest_extra_args:
+        description: "Extra pytest arguments (e.g. -k test_provider_probe_zai)"
+        required: false
+        default: ""
+
+jobs:
+  real-provider-smoke:
+    runs-on: ubuntu-latest
+
+    env:
+      RUN_REAL_PROVIDER_SMOKE: "1"
+      ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+      REPLICATE_API_TOKEN: ${{ secrets.REPLICATE_API_TOKEN }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run real-provider smoke tests
+        run: |
+          pytest tests/cli_real_provider_integration -v ${{ github.event.inputs.pytest_extra_args }}
