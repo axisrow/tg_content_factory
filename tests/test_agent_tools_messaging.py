@@ -249,6 +249,25 @@ class TestSendReactions:
         assert f"не может превышать {MAX_REACTION_BATCH}" in _text(result)
         repo.create_command.assert_not_awaited()
 
+    @pytest.mark.anyio
+    async def test_fractional_message_id_aborts_batch(self, mock_db):
+        """A fractional JSON number must not be silently truncated to a different
+        message id — the batch is rejected before any enqueue (#736 Codex review)."""
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        repo = _setup_command_queue(mock_db)
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["send_reactions"](
+            {
+                "phone": "+79001234567",
+                "chat_id": "@chat",
+                "items_json": '[{"message_id": 10.9, "emoji": "👍"}]',
+                "confirm": True,
+            }
+        )
+        assert "должен быть целым числом" in _text(result)
+        repo.create_command.assert_not_awaited()
+
 
 class TestEditMessage:
     @pytest.mark.anyio

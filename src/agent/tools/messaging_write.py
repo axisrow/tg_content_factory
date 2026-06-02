@@ -44,6 +44,29 @@ def _command_status_text(status: object) -> str:
     return str(value or "unknown")
 
 
+def _coerce_exact_int(value: Any) -> int | None:
+    """Return ``value`` as an int only if it is an exact integer, else None.
+
+    Guards against silent truncation of a fractional JSON number like 10.9 (which
+    ``int(10.9)`` would coerce to 10, reacting to the wrong message). Accepts a real
+    int (not bool), an integral float, or a string representing an integer (#736
+    Codex review). Booleans are rejected since JSON ``true``/``false`` is never a
+    valid message id.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def _explicit_pool_method(client_pool: Any, name: str) -> Any | None:
     instance_attrs = getattr(client_pool, "__dict__", {})
     if isinstance(instance_attrs, dict) and name in instance_attrs:
@@ -335,9 +358,8 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         for index, item in enumerate(items):
             if not isinstance(item, dict):
                 return _text_response(f"Ошибка: элемент #{index + 1} должен быть объектом {{message_id, emoji}}.")
-            try:
-                message_id_int = int(item.get("message_id"))
-            except (TypeError, ValueError):
+            message_id_int = _coerce_exact_int(item.get("message_id"))
+            if message_id_int is None:
                 return _text_response(f"Ошибка: message_id в элементе #{index + 1} должен быть целым числом.")
             try:
                 emoji = normalize_outgoing_reaction_emoji(str(item.get("emoji", "")))
