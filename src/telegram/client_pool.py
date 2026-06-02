@@ -207,8 +207,13 @@ class ClientPool:
                                 await self._db.repos.channels.update_channel_preferred_phone(
                                     eid, p
                                 )
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # Best-effort warming hint; the in-memory map is already set.
+                            logger.debug(
+                                "warm_all_dialogs: failed to persist preferred_phone for channel %d: %s",
+                                eid,
+                                e,
+                            )
                 logger.info(
                     "warm_all_dialogs: warmed %s (%d dialogs)", p, len(dialogs or [])
                 )

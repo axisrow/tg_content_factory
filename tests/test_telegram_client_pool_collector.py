@@ -258,6 +258,40 @@ async def test_warm_all_dialogs_registers_channel_phones(mock_auth, mock_db):
 
 
 @pytest.mark.anyio
+async def test_warm_all_dialogs_logs_when_preferred_phone_persist_fails(
+    mock_auth, mock_db, caplog
+):
+    """A failed DB persist must not crash warming and must be logged (#676)."""
+    pool = ClientPool(mock_auth, mock_db)
+
+    entity = MagicMock(spec=TLChannel)
+    entity.id = 12345
+    dialog = MagicMock()
+    dialog.entity = entity
+
+    raw_client = AsyncMock()
+    raw_client.get_dialogs = AsyncMock(return_value=[dialog])
+    session = TelegramTransportSession(raw_client, disconnect_on_close=False)
+    pool.clients["+7001"] = session
+
+    mock_db.repos.channels.update_channel_preferred_phone = AsyncMock(
+        side_effect=RuntimeError("db locked")
+    )
+
+    with patch.object(pool, "get_client_by_phone", return_value=(session, "+7001")):
+        with caplog.at_level(logging.DEBUG, logger="src.telegram.client_pool"):
+            await pool.warm_all_dialogs()
+
+    # In-memory map is still updated despite the DB failure...
+    assert pool.get_phone_for_channel(12345) == "+7001"
+    # ...and the failure is surfaced in the logs instead of being swallowed.
+    assert any(
+        "failed to persist preferred_phone" in rec.message and "12345" in rec.message
+        for rec in caplog.records
+    )
+
+
+@pytest.mark.anyio
 async def test_warm_all_dialogs_skips_non_channel_entities(mock_auth, mock_db):
     pool = ClientPool(mock_auth, mock_db)
 
@@ -2138,6 +2172,92 @@ async def test_collect_channel_private_group_invalidates_bad_phone():
     pool.clear_channel_phone.assert_called_once_with(123)
     db.repos.channels.update_channel_preferred_phone.assert_called_once_with(123, None)
     db.set_channel_active.assert_awaited_once_with(7, False)
+
+
+@pytest.mark.anyio
+async def test_collect_channel_logs_when_clearing_preferred_phone_fails(caplog):
+    """A failed DB clear during phone invalidation must be logged, not swallowed (#676)."""
+    channel = Channel(id=7, channel_id=123, title="Test", preferred_phone="+7001")
+    client = AsyncMock()
+    client.get_entity = AsyncMock(side_effect=ValueError("not found"))
+
+    pool = make_mock_pool(
+        get_available_client=AsyncMock(return_value=(client, "+7001")),
+        get_client_by_phone=AsyncMock(side_effect=[(client, "+7001"), None]),
+    )
+    pool.get_phone_for_channel = MagicMock(return_value=None)
+    pool.clear_channel_phone = MagicMock()
+    pool.connected_phones = MagicMock(return_value={"+7001", "+7002"})
+
+    db = MagicMock()
+    db.get_channel_by_channel_id = AsyncMock(return_value=channel)
+    db.get_channel_stats = AsyncMock(return_value=[])
+    db.get_setting = AsyncMock(return_value=None)
+    db.set_channel_active = AsyncMock()
+    db.repos.channels.update_channel_preferred_phone = AsyncMock(
+        side_effect=RuntimeError("db locked")
+    )
+
+    collector = Collector(pool, db, SchedulerConfig())
+    with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
+        result = await collector._collect_channel(channel)
+
+    # Collection still degrades gracefully (no crash, channel deactivated)...
+    assert result == 0
+    db.set_channel_active.assert_awaited_once_with(7, False)
+    # ...and the swallowed DB write is now visible in the logs.
+    assert any(
+        "failed to clear stale preferred_phone" in rec.message and "123" in rec.message
+        for rec in caplog.records
+    )
+
+
+@pytest.mark.anyio
+async def test_collect_channel_logs_when_persisting_rediscovered_phone_fails(caplog):
+    """A failed DB persist of the rediscovered phone must be logged, not swallowed (#676)."""
+    channel = Channel(id=7, channel_id=123, title="Test", preferred_phone="+7001")
+    client = AsyncMock()
+    # Numeric resolve fails so the bad phone is invalidated and a rediscovery is attempted.
+    client.get_entity = AsyncMock(side_effect=ValueError("not found"))
+
+    pool = make_mock_pool(
+        get_available_client=AsyncMock(return_value=(client, "+7001")),
+        get_client_by_phone=AsyncMock(side_effect=[
+            (client, "+7001"),  # initial resolve attempt on the preferred phone
+            None,  # second iteration after the rediscovery `continue` -> stop the loop
+        ]),
+    )
+    pool.get_phone_for_channel = MagicMock(return_value="+7001")
+    pool.clear_channel_phone = MagicMock()
+    pool.register_channel_phone = MagicMock()
+    pool.connected_phones = MagicMock(return_value={"+7001", "+7002"})
+
+    db = MagicMock()
+    db.get_channel_by_channel_id = AsyncMock(return_value=channel)
+    db.get_channel_stats = AsyncMock(return_value=[])
+    db.get_setting = AsyncMock(return_value=None)
+    db.set_channel_active = AsyncMock()
+    db.repos.channels.update_channel_preferred_phone = AsyncMock(
+        side_effect=RuntimeError("db locked")
+    )
+
+    collector = Collector(pool, db, SchedulerConfig())
+    with patch.object(collector, "_discover_phone_for_channel", AsyncMock(return_value="+7002")):
+        with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
+            # The rediscovery `continue` retries; with no further client the loop ultimately
+            # raises. We only care that the persist failure was logged before that.
+            with pytest.raises(NoActiveCollectionClientsError):
+                await collector._collect_channel(channel)
+
+    # The pool learned the rediscovered phone even though the DB write failed...
+    pool.register_channel_phone.assert_called_once_with(123, "+7002")
+    # ...and the failure is logged rather than silently dropped.
+    assert any(
+        "failed to persist rediscovered preferred_phone" in rec.message
+        and "123" in rec.message
+        and "+7002" in rec.message
+        for rec in caplog.records
+    )
 
 
 @pytest.mark.anyio
