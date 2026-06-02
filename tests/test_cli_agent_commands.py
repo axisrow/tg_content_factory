@@ -227,7 +227,10 @@ def test_run_thread_stop_cancels_active_stream(capsys):
     assert "остановлена" in out
 
 
-def test_run_thread_stop_no_active_stream(capsys):
+def test_run_thread_stop_no_active_stream_does_not_delete(capsys):
+    # When cancel_stream returns False the stream is NOT ours to cancel (e.g. it
+    # runs in the web/worker process). Deleting the last exchange would race that
+    # stream and could orphan an assistant reply, so we must leave the DB intact. (#737)
     db = make_cli_db()
     config = make_cli_config()
     mgr = _make_mgr(cancel_stream=AsyncMock(return_value=False))
@@ -236,10 +239,10 @@ def test_run_thread_stop_no_active_stream(capsys):
          patch("asyncio.run", fake_asyncio_run):
         run(_args(agent_action="thread-stop", thread_id=4))
     mgr.cancel_stream.assert_awaited_once_with(4)
-    db.delete_last_agent_exchange.assert_awaited_once_with(4)
+    db.delete_last_agent_exchange.assert_not_awaited()
     out = capsys.readouterr().out
     assert "#4" in out
-    assert "удалён" in out
+    assert "не удал" in out
 
 
 # ---------------------------------------------------------------------------

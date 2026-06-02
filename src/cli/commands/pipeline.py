@@ -541,6 +541,12 @@ def run(args: argparse.Namespace) -> None:
                 except Exception as exc:
                     await db.repos.generation_runs.set_status(run_id, "failed")
                     print(safe_json_dumps({"event": "error", "error": str(exc)}), flush=True)
+                except BaseException:
+                    # Ctrl+C raises CancelledError (a BaseException, not Exception in
+                    # py3.11), which would otherwise leave the run stuck in "running".
+                    # Mirror the web handler: mark failed, then re-raise to abort. (#737)
+                    await db.repos.generation_runs.set_status(run_id, "failed")
+                    raise
 
             elif args.pipeline_action == "runs":
                 pipeline = await svc.get(args.id)

@@ -83,7 +83,9 @@ class NotificationService:
         Mirrors the worker's ``notifications.test`` command handler: routes through
         :class:`~src.telegram.notifier.Notifier`, which prefers the personal bot
         (delivers push notifications) and falls back to a self-message otherwise.
-        Returns ``True`` when the message was delivered.
+        Always returns ``True`` on success; raises
+        ``RuntimeError('notification_test_failed')`` if delivery fails (it never
+        returns ``False``).
         """
         from src.telegram.notifier import Notifier
 

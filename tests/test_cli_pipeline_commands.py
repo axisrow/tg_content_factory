@@ -996,6 +996,46 @@ class TestPipelineGenerateStream:
         assert status == "completed"
         assert generated == "Hello world"
 
+    def test_cancellation_marks_run_failed(self, tmp_path, cli_init_patch, capsys):
+        """Ctrl+C raises CancelledError (a BaseException, not Exception). The run
+        must be flipped to "failed" and the exception re-raised, not left dangling
+        in "running" forever. (#737)"""
+
+        class _CancellingGenerationService:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def generate_stream(self, *args, **kwargs):
+                yield {"delta": "Hi", "generated_text": "Hi", "citations": []}
+                raise asyncio.CancelledError()
+
+        db_path = _empty_db_path(tmp_path, "pipeline_gen_stream_cancel.db")
+        pid = _seed_pipeline_with_graph(db_path, name="CancelDAG")
+
+        provider = MagicMock()
+        provider.load_db_providers = AsyncMock()
+        provider.has_providers = MagicMock(return_value=True)
+        provider.get_provider_callable = MagicMock(return_value=AsyncMock())
+
+        db = _open_db(db_path)
+        try:
+            with cli_init_patch(db, _PIPELINE_INIT_DB_TARGET, fresh_database=True), patch(
+                "src.services.provider_service.RuntimeProviderRegistry",
+                return_value=provider,
+            ), patch(
+                "src.services.generation_service.GenerationService",
+                _CancellingGenerationService,
+            ):
+                with pytest.raises(asyncio.CancelledError):
+                    run(_gen_stream_ns(id=pid))
+        finally:
+            _close_db(db)
+
+        run_id = _max_run_id(db_path)
+        assert run_id is not None
+        status, _ = _read_run_status(db_path, run_id)
+        assert status == "failed"
+
     def test_no_llm_provider_aborts(self, tmp_path, cli_init_patch, capsys):
         db_path = _empty_db_path(tmp_path, "pipeline_gen_stream_noprov.db")
         pid = _seed_pipeline_with_graph(db_path, name="NoProv")
