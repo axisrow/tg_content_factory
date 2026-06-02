@@ -336,6 +336,19 @@ class TestPrintResultExtra:
         assert "No filtered channels affected." not in out
         assert "pk=2: DB error" in out
 
+    def test_bare_mock_without_errors_attr_prints_no_bogus_errors(self, capsys):
+        """A result whose `errors` is not a real list must not print a bogus Errors section
+        (#676 review, Codex P2): a bare MagicMock's `.errors` is a truthy child mock."""
+        result = MagicMock()
+        result.purged_count = 0
+        result.purged_titles = []
+        result.skipped_count = 0
+        # NOTE: intentionally do NOT set result.errors — it stays a child MagicMock.
+        _print_result(result)
+        out = capsys.readouterr().out
+        assert "No filtered channels affected." in out
+        assert "Errors" not in out
+
 
 # ---------------------------------------------------------------------------
 # filter.py — _build_deletion_service
