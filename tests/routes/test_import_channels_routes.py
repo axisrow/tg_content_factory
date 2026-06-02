@@ -171,6 +171,82 @@ async def test_import_file_too_large_rejected(client):
 
 
 @pytest.mark.anyio
+async def test_import_request_content_length_over_cap_rejected_before_app():
+    """Oversized import requests with Content-Length are rejected before route parsing."""
+    from src.web.app import ImportUploadLimitMiddleware
+
+    called = False
+
+    async def app(scope, receive, send):
+        nonlocal called
+        called = True
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    middleware = ImportUploadLimitMiddleware(app, max_request_bytes=16)
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/channels/import",
+        "headers": [(b"content-length", b"17")],
+    }
+    sent = []
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        sent.append(message)
+
+    await middleware(scope, receive, send)
+
+    assert called is False
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 413
+    assert "слишком большой" in sent[1]["body"].decode()
+
+
+@pytest.mark.anyio
+async def test_import_request_stream_over_cap_rejected_before_app():
+    """Import requests without Content-Length are capped while reading ASGI chunks."""
+    from src.web.app import ImportUploadLimitMiddleware
+
+    called = False
+
+    async def app(scope, receive, send):
+        nonlocal called
+        called = True
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    middleware = ImportUploadLimitMiddleware(app, max_request_bytes=16)
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/channels/import",
+        "headers": [],
+    }
+    messages = iter([
+        {"type": "http.request", "body": b"x" * 9, "more_body": True},
+        {"type": "http.request", "body": b"x" * 8, "more_body": False},
+    ])
+    sent = []
+
+    async def receive():
+        return next(messages)
+
+    async def send(message):
+        sent.append(message)
+
+    await middleware(scope, receive, send)
+
+    assert called is False
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 413
+    assert "слишком большой" in sent[1]["body"].decode()
+
+
+@pytest.mark.anyio
 async def test_import_file_at_limit_accepted(client):
     """A file exactly at the size limit is still accepted."""
     from src.web.routes.import_channels import MAX_IMPORT_FILE_BYTES
