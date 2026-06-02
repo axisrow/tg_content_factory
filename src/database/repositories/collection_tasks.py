@@ -272,8 +272,15 @@ class CollectionTasksRepository:
             sets.append("run_after = ?")
             params.append(run_after.astimezone(timezone.utc).isoformat())
         params.append(task_id)
+        # Defense in depth (#633 bug #30): a user-issued CANCELLED is terminal and
+        # must not be silently overwritten by a late RUNNING/COMPLETED/FAILED from a
+        # worker that lost the in-memory cancel flag in the task-startup race.
+        where = "WHERE id = ?"
+        if status_value != CollectionTaskStatus.CANCELLED.value:
+            where += " AND status != ?"
+            params.append(CollectionTaskStatus.CANCELLED.value)
         await self._database.execute_write(
-            f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",
+            f"UPDATE collection_tasks SET {', '.join(sets)} {where}",
             tuple(params),
         )
 
@@ -303,8 +310,11 @@ class CollectionTasksRepository:
             params.append(note)
         params.append(task_id)
         await self._database.execute_write(
-            f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",
-            tuple(params),
+            f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ? AND status != ?",
+            (
+                *params,
+                CollectionTaskStatus.CANCELLED.value,
+            ),
         )
 
     async def reset_collection_task_to_pending(
@@ -325,8 +335,11 @@ class CollectionTasksRepository:
             params.append(note)
         params.append(task_id)
         await self._database.execute_write(
-            f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ?",
-            tuple(params),
+            f"UPDATE collection_tasks SET {', '.join(sets)} WHERE id = ? AND status != ?",
+            (
+                *params,
+                CollectionTaskStatus.CANCELLED.value,
+            ),
         )
 
     async def get_collection_task(self, task_id: int) -> CollectionTask | None:
