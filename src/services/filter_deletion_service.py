@@ -18,6 +18,10 @@ class PurgeResult:
     skipped_count: int = 0
     purged_titles: list[str] = field(default_factory=list)
     total_messages_deleted: int = 0
+    # Per-channel error messages from exceptions during purge. Distinct from
+    # skipped_count, which also counts legitimate skips (channel missing /
+    # not filtered). Lets callers tell a real failure from a benign skip (#676).
+    errors: list[str] = field(default_factory=list)
 
 
 class FilterDeletionService:
@@ -47,9 +51,10 @@ class FilterDeletionService:
                 result.purged_count += 1
                 result.purged_titles.append(title)
                 result.total_messages_deleted += deleted
-            except Exception:
+            except Exception as exc:
                 logger.exception("Failed to purge channel pk=%d", pk)
                 result.skipped_count += 1
+                result.errors.append(f"pk={pk}: {exc}")
         return result
 
     async def purge_all_filtered(self) -> PurgeResult:
@@ -81,7 +86,8 @@ class FilterDeletionService:
                 await self._channel_service.delete(pk)
                 result.purged_count += 1
                 result.purged_titles.append(title)
-            except Exception:
+            except Exception as exc:
                 logger.exception("Failed to hard-delete channel pk=%d", pk)
                 result.skipped_count += 1
+                result.errors.append(f"pk={pk}: {exc}")
         return result

@@ -127,10 +127,14 @@ def register(db, client_pool, embedding_service, **kwargs):
                 result = await svc.purge_channels_by_pks(pks)
             else:
                 result = await svc.purge_all_filtered()
-            return _text_response(
+            msg = (
                 f"Очистка завершена: {result.purged_count} каналов очищено, "
                 f"{result.total_messages_deleted} сообщений удалено."
             )
+            # Surface real per-channel failures instead of reporting full success (#676 review).
+            if result.errors:
+                msg += f"\n⚠️ Ошибки ({len(result.errors)}): " + "; ".join(result.errors)
+            return _text_response(msg)
         except Exception as e:
             return _text_response(f"Ошибка очистки каналов: {e}")
 
@@ -160,9 +164,10 @@ def register(db, client_pool, embedding_service, **kwargs):
             svc = FilterDeletionService(db)
             pks = [int(x.strip()) for x in pks_str.split(",") if x.strip()]
             result = await svc.hard_delete_channels_by_pks(pks)
-            return _text_response(
-                f"Удаление завершено: {result.purged_count} каналов удалено безвозвратно."
-            )
+            msg = f"Удаление завершено: {result.purged_count} каналов удалено безвозвратно."
+            if result.errors:
+                msg += f"\n⚠️ Ошибки ({len(result.errors)}): " + "; ".join(result.errors)
+            return _text_response(msg)
         except Exception as e:
             return _text_response(f"Ошибка удаления каналов: {e}")
 

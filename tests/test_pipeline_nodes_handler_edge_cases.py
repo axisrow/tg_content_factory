@@ -1,6 +1,7 @@
 """Tests for pipeline node handler edge cases."""
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -618,8 +619,8 @@ async def test_agent_loop_tool_description_in_prompt():
 
 
 @pytest.mark.anyio
-async def test_agent_loop_invalid_json_tool_call():
-    """Agent returns malformed JSON in tool call block → loop breaks, text preserved."""
+async def test_agent_loop_invalid_json_tool_call(caplog):
+    """Agent returns malformed JSON in tool call block → loop breaks, and it is logged (#676)."""
     ctx = NodeContext()
     ctx.set_global("context_messages", [_msg(text="test")])
 
@@ -633,11 +634,15 @@ async def test_agent_loop_invalid_json_tool_call():
         return "recovered"
 
     services = {"provider_callable": provider, "agent_tools": {}}
-    await AgentLoopHandler().execute({"max_steps": 3}, ctx, services)
+    with caplog.at_level(logging.WARNING, logger="src.services.pipeline_nodes.handlers"):
+        await AgentLoopHandler().execute({"max_steps": 3}, ctx, services)
     # JSON parse fails → loop breaks on step 1
     assert call_count == 1
-    # Malformed JSON causes break before final answer
-    # The text is the raw tool call output which gets discarded
+    # Malformed JSON causes break before final answer — and is now logged rather than
+    # silently discarded, matching the max_steps-exhaustion path.
+    assert any(
+        "malformed tool-call JSON" in rec.message for rec in caplog.records
+    )
 
 
 @pytest.mark.anyio

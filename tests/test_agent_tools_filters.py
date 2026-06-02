@@ -9,10 +9,11 @@ from src.filters.models import ChannelFilterResult
 from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
-def _make_purge_result(purged=2, deleted=50):
+def _make_purge_result(purged=2, deleted=50, errors=None):
     r = MagicMock()
     r.purged_count = purged
     r.total_messages_deleted = deleted
+    r.errors = errors or []
     return r
 
 
@@ -239,6 +240,18 @@ class TestPurgeFilteredChannelsTool:
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["purge_filtered_channels"]({"confirm": True})
         assert "Ошибка очистки каналов" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_partial_failure_surfaces_errors(self, mock_db):
+        """A partial purge failure must be reported to the agent, not hidden (#676 review)."""
+        purge_result = _make_purge_result(purged=1, deleted=10, errors=["pk=2: DB error"])
+        with patch("src.services.filter_deletion_service.FilterDeletionService") as mock_svc:
+            mock_svc.return_value.purge_channels_by_pks = AsyncMock(return_value=purge_result)
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["purge_filtered_channels"]({"pks": "1,2", "confirm": True})
+        text = _text(result)
+        assert "Ошибки" in text
+        assert "pk=2: DB error" in text
 
 
 class TestHardDeleteChannelsTool:
