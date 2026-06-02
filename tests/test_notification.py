@@ -485,3 +485,43 @@ async def test_notification_service_uses_selected_account(db, real_pool_harness_
 
     assert bot.tg_user_id == 222
     assert selected_client.disconnect.await_count == 1
+
+
+# ---------------------------------------------------------------------------
+# send_notification — backs CLI `notification test` and agent test_notification
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_send_notification_delivers_via_notifier():
+    target_service = MagicMock()
+    svc = NotificationService(MagicMock(), target_service)
+    notifier = MagicMock()
+    notifier.notify = AsyncMock(return_value=True)
+    with patch("src.telegram.notifier.Notifier", return_value=notifier) as mock_notifier:
+        ok = await svc.send_notification("Custom message")
+    assert ok is True
+    notifier.notify.assert_awaited_once_with("Custom message")
+    # Notifier wired with the service's target_service and notification bundle.
+    assert mock_notifier.call_args.args[0] is target_service
+
+
+@pytest.mark.anyio
+async def test_send_notification_defaults_blank_message():
+    svc = NotificationService(MagicMock(), MagicMock())
+    notifier = MagicMock()
+    notifier.notify = AsyncMock(return_value=True)
+    with patch("src.telegram.notifier.Notifier", return_value=notifier):
+        await svc.send_notification("   ")
+    sent = notifier.notify.await_args.args[0]
+    assert sent.strip() != ""
+
+
+@pytest.mark.anyio
+async def test_send_notification_raises_on_failure():
+    svc = NotificationService(MagicMock(), MagicMock())
+    notifier = MagicMock()
+    notifier.notify = AsyncMock(return_value=False)
+    with patch("src.telegram.notifier.Notifier", return_value=notifier):
+        with pytest.raises(RuntimeError, match="notification_test_failed"):
+            await svc.send_notification("boom")

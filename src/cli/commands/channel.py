@@ -441,6 +441,32 @@ def run(args: argparse.Namespace) -> None:
                 )
                 print(f"\nAdded: {added}, Skipped: {skipped}, Failed: {failed}")
 
+            elif args.channel_action == "list-for-import":
+                _, pool = await runtime.init_pool(config, db)
+                svc = ChannelService(db, pool, None)  # type: ignore[arg-type]
+                dialogs = await svc.get_dialogs_with_added_flags()
+                if getattr(args, "json", False):
+                    import json as _json
+
+                    print(_json.dumps(dialogs, ensure_ascii=False, default=str))
+                    return
+                if not dialogs:
+                    print("No dialogs found.")
+                    return
+                fmt = "{:<15} {:<35} {:<20} {:<8} {:<12}"
+                print(fmt.format("Channel ID", "Title", "Username", "Added", "Type"))
+                print("-" * 92)
+                for d in dialogs:
+                    print(
+                        fmt.format(
+                            str(d.get("channel_id", "—")),
+                            str(d.get("title") or "—")[:35],
+                            str(d.get("username") or "—")[:20],
+                            "Yes" if d.get("already_added") else "No",
+                            str(d.get("channel_type") or "—")[:12],
+                        )
+                    )
+
             elif args.channel_action == "tag":
                 await _handle_tag(args, db)
 

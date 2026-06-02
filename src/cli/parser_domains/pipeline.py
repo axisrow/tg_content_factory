@@ -202,6 +202,22 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         "--preview", action="store_true", default=False, help="Print generated text to stdout"
     )
 
+    pipeline_gen_stream = pipeline_sub.add_parser(
+        "generate-stream",
+        help="Stream RAG generation updates (JSON-Lines) using GenerationService",
+    )
+    pipeline_gen_stream.add_argument("id", type=int, help="Pipeline id")
+    pipeline_gen_stream.add_argument("--model", default=None, help="Override LLM model")
+    pipeline_gen_stream.add_argument(
+        "--max-tokens", type=int, default=256, help="Max tokens for LLM generation"
+    )
+    pipeline_gen_stream.add_argument(
+        "--temperature", type=float, default=0.0, help="Sampling temperature for generation"
+    )
+    pipeline_gen_stream.add_argument(
+        "--limit", type=int, default=8, help="Number of context messages to fetch"
+    )
+
     pipeline_runs = pipeline_sub.add_parser("runs", help="List generation runs for a pipeline")
     pipeline_runs.add_argument("id", type=int, help="Pipeline id")
     pipeline_runs.add_argument("--limit", type=int, default=20, help="Max runs to show")

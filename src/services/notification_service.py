@@ -77,6 +77,25 @@ class NotificationService:
             me = await asyncio.wait_for(client.get_me(), timeout=15.0)
         return await self._notifications.get_bot(me.id)
 
+    async def send_notification(self, message: str) -> bool:
+        """Send a one-off notification via the configured bot (or direct message fallback).
+
+        Mirrors the worker's ``notifications.test`` command handler: routes through
+        :class:`~src.telegram.notifier.Notifier`, which prefers the personal bot
+        (delivers push notifications) and falls back to a self-message otherwise.
+        Always returns ``True`` on success; raises
+        ``RuntimeError('notification_test_failed')`` if delivery fails (it never
+        returns ``False``).
+        """
+        from src.telegram.notifier import Notifier
+
+        notifier = Notifier(self._target_service, None, self._notifications)
+        text = (message or "").strip() or "✅ Тест уведомлений: соединение установлено"
+        ok = await notifier.notify(text)
+        if not ok:
+            raise RuntimeError("notification_test_failed")
+        return True
+
     async def teardown_bot(self) -> None:
         """Delete the notification bot via BotFather and remove it from DB."""
         async with self._target_service.use_client() as (client, _phone):

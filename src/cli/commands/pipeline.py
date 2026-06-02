@@ -480,6 +480,74 @@ def run(args: argparse.Namespace) -> None:
                 except Exception as exc:
                     print(f"Generation failed: {exc}")
 
+            elif args.pipeline_action == "generate-stream":
+                pipeline = await svc.get(args.id)
+                if pipeline is None:
+                    print(f"Pipeline id={args.id} not found")
+                    return
+
+                from src.services.generation_service import GenerationService
+                from src.services.provider_service import RuntimeProviderRegistry
+                from src.utils.json import safe_json_dumps
+
+                provider_service = RuntimeProviderRegistry(db, config)
+                await provider_service.load_db_providers()
+                if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
+                    print(
+                        "LLM provider is not configured. Add one in /settings or set an API key "
+                        "env var (e.g. OPENAI_API_KEY)."
+                    )
+                    return
+                if not pipeline_needs_llm(pipeline):
+                    print("Pipeline has no LLM nodes; nothing to stream.")
+                    return
+
+                provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
+                engine = SearchEngine(db)
+                gen = GenerationService(engine, provider_callable=provider_callable)
+                scope = await svc.get_retrieval_scope(pipeline)
+
+                run_id = await db.repos.generation_runs.create_run(
+                    pipeline.id, pipeline.prompt_template
+                )
+                await db.repos.generation_runs.set_status(run_id, "running")
+                last = None
+                try:
+                    async for update in gen.generate_stream(
+                        query=scope.query,
+                        prompt_template=pipeline.prompt_template,
+                        model=(args.model or pipeline.llm_model),
+                        max_tokens=args.max_tokens,
+                        temperature=args.temperature,
+                        limit=args.limit,
+                        channel_id=scope.channel_id,
+                    ):
+                        last = update
+                        print(
+                            safe_json_dumps(
+                                {
+                                    "delta": update.get("delta"),
+                                    "text": update.get("generated_text"),
+                                    "citations": update.get("citations"),
+                                }
+                            ),
+                            flush=True,
+                        )
+                    final_text = last.get("generated_text") if last else ""
+                    metadata = {"citations": last.get("citations", []) if last else []}
+                    await db.repos.generation_runs.save_result(run_id, final_text, metadata)
+                    await db.repos.generation_runs.set_status(run_id, "completed")
+                    print(safe_json_dumps({"event": "done", "run_id": run_id}), flush=True)
+                except Exception as exc:
+                    await db.repos.generation_runs.set_status(run_id, "failed")
+                    print(safe_json_dumps({"event": "error", "error": str(exc)}), flush=True)
+                except BaseException:
+                    # Ctrl+C raises CancelledError (a BaseException, not Exception in
+                    # py3.11), which would otherwise leave the run stuck in "running".
+                    # Mirror the web handler: mark failed, then re-raise to abort. (#737)
+                    await db.repos.generation_runs.set_status(run_id, "failed")
+                    raise
+
             elif args.pipeline_action == "runs":
                 pipeline = await svc.get(args.id)
                 if pipeline is None:

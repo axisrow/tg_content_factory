@@ -69,6 +69,13 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         help="Comma-separated dialog IDs to add as channels",
     )
 
+    ch_list_import = ch_sub.add_parser(
+        "list-for-import", help="List account dialogs with already-added flags (import candidates)"
+    )
+    ch_list_import.add_argument(
+        "--json", action="store_true", help="Output as JSON instead of a table"
+    )
+
     # ── channel tag ──
     ch_tag_parser = ch_sub.add_parser("tag", help="Manage channel tags")
     ch_tag_sub = ch_tag_parser.add_subparsers(dest="tag_action")
