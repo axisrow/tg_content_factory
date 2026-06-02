@@ -133,6 +133,19 @@ async def test_purge_all_success(route_client, db):
 
 
 @pytest.mark.anyio
+async def test_purge_all_partial_failure_surfaces_error(route_client, db):
+    """purge-all with a real per-channel error must report purge_partial, not success (#676 review)."""
+    with patch("src.web.filter.handlers.deps.filter_deletion_service") as mock_svc:
+        mock_svc.return_value.purge_all_filtered = AsyncMock(
+            return_value=PurgeResult(purged_count=1, skipped_count=1, errors=["pk=2: DB error"])
+        )
+        resp = await route_client.post("/channels/filter/purge-all", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "error=purge_partial" in resp.headers["location"]
+        assert "msg=purged_all_filtered" not in resp.headers["location"]
+
+
+@pytest.mark.anyio
 async def test_hard_delete_blocked_without_dev_mode(route_client, db):
     """Test hard delete blocked without dev mode."""
     pk = await _add_filtered_channel(db, channel_id=700, title="Hard Delete")

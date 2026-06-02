@@ -278,6 +278,7 @@ class TestPrintResultExtra:
         result.purged_count = 0
         result.purged_titles = []
         result.skipped_count = 0
+        result.errors = []
         _print_result(result)
         assert "No filtered channels affected." in capsys.readouterr().out
 
@@ -286,6 +287,7 @@ class TestPrintResultExtra:
         result.purged_count = 2
         result.purged_titles = ["A", "B"]
         result.skipped_count = 0
+        result.errors = []
         _print_result(result, "Cleaned")
         out = capsys.readouterr().out
         assert "Cleaned 2 channels" in out
@@ -295,6 +297,7 @@ class TestPrintResultExtra:
         result.purged_count = 1
         result.purged_titles = ["X"]
         result.skipped_count = 5
+        result.errors = []
         _print_result(result)
         out = capsys.readouterr().out
         assert "Skipped: 5" in out
@@ -304,9 +307,34 @@ class TestPrintResultExtra:
         result.purged_count = 1
         result.purged_titles = ["Y"]
         result.skipped_count = 0
+        result.errors = []
         _print_result(result)
         out = capsys.readouterr().out
         assert "Skipped" not in out
+
+    def test_errors_are_surfaced(self, capsys):
+        """A real per-channel failure prints an Errors section (#676 review)."""
+        result = MagicMock()
+        result.purged_count = 1
+        result.purged_titles = ["Ok"]
+        result.skipped_count = 1
+        result.errors = ["pk=2: DB error"]
+        _print_result(result)
+        out = capsys.readouterr().out
+        assert "Errors (1)" in out
+        assert "pk=2: DB error" in out
+
+    def test_only_errors_no_benign_message(self, capsys):
+        """When everything failed, do not print 'No filtered channels affected.' (#676 review)."""
+        result = MagicMock()
+        result.purged_count = 0
+        result.purged_titles = []
+        result.skipped_count = 1
+        result.errors = ["pk=2: DB error"]
+        _print_result(result)
+        out = capsys.readouterr().out
+        assert "No filtered channels affected." not in out
+        assert "pk=2: DB error" in out
 
 
 # ---------------------------------------------------------------------------

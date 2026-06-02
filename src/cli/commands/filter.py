@@ -29,14 +29,22 @@ def _parse_pks(raw: str) -> list[int]:
 
 
 def _print_result(result, verb: str = "Purged") -> None:
-    if result.purged_count == 0:
+    if result.purged_count == 0 and not getattr(result, "errors", None):
         print("No filtered channels affected.")
     else:
-        print(f"{verb} {result.purged_count} channels:")
-        for title in result.purged_titles:
-            print(f"  - {title}")
+        if result.purged_count:
+            print(f"{verb} {result.purged_count} channels:")
+            for title in result.purged_titles:
+                print(f"  - {title}")
         if result.skipped_count:
             print(f"Skipped: {result.skipped_count}")
+    # Real per-channel failures (not benign skips) — surface them so a CLI user can
+    # tell a failure from a skip (#676 review).
+    errors = getattr(result, "errors", None)
+    if errors:
+        print(f"Errors ({len(errors)}):")
+        for err in errors:
+            print(f"  ✗ {err}")
 
 
 def run(args: argparse.Namespace) -> None:
