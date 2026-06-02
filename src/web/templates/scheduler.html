@@ -456,7 +456,8 @@
     try {
         if (sessionStorage.getItem(FLAG_KEY) === '1') {
             // This load was triggered by our own auto-reload — count it.
-            count = parseInt(sessionStorage.getItem(COUNT_KEY) || '0', 10) + 1;
+            var raw = parseInt(sessionStorage.getItem(COUNT_KEY), 10);
+            count = isNaN(raw) ? 0 : raw + 1;
             sessionStorage.removeItem(FLAG_KEY);
         } else {
             // Fresh navigation by the user — reset the counter.
