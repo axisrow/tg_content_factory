@@ -60,6 +60,7 @@ PHONE_BINDED_TOOLS: frozenset[str] = frozenset({
     "send_message",
     "send_photos_now",
     "send_reaction",
+    "send_reactions",
     "subscribe_channel",
     "unarchive_chat",
     "unpin_message",
@@ -233,6 +234,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     # Messaging
     "send_message": ToolCategory.WRITE,
     "send_reaction": ToolCategory.WRITE,
+    "send_reactions": ToolCategory.WRITE,
     "get_telegram_queue_status": ToolCategory.READ,
     "cancel_telegram_command": ToolCategory.WRITE,
     "clear_pending_telegram_commands": ToolCategory.WRITE,
@@ -345,7 +347,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "get_forum_topics", "clear_dialog_cache", "get_cache_status", "resolve_entity",
     ]),
     ("Сообщения", [
-        "send_message", "send_reaction", "forward_messages", "edit_message", "delete_message",
+        "send_message", "send_reaction", "send_reactions", "forward_messages", "edit_message", "delete_message",
         "pin_message", "unpin_message", "download_media", "read_messages",
         "get_telegram_queue_status", "cancel_telegram_command", "clear_pending_telegram_commands",
     ]),

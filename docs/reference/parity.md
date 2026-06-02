@@ -191,7 +191,7 @@
 | Удалить | `dialogs delete-message` | `POST /dialogs/delete-message` | `delete_message` |
 | Закрепить | `dialogs pin-message` | `POST /dialogs/pin-message` | `pin_message` |
 | Открепить | `dialogs unpin-message` | `POST /dialogs/unpin-message` | `unpin_message` |
-| Реакция | `dialogs react` | `POST /dialogs/react` | `send_reaction` |
+| Реакция | `dialogs react` | `POST /dialogs/react` | `send_reaction`, `send_reactions` |
 | Скачать медиа | `dialogs download-media` | `POST /dialogs/download-media` | `download_media` |
 | Отметить прочитанным | `dialogs mark-read` | `POST /dialogs/mark-read` | `mark_read` |
 | Список участников | `dialogs participants` | `GET /dialogs/participants` | `get_participants` |
