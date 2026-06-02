@@ -452,6 +452,7 @@
     var COUNT_KEY = 'scheduler-autoreload-count';
     var FLAG_KEY = 'scheduler-autoreloading';
     var count = 0;
+    var storageAvailable = true;
     try {
         if (sessionStorage.getItem(FLAG_KEY) === '1') {
             // This load was triggered by our own auto-reload — count it.
@@ -463,9 +464,12 @@
         }
         sessionStorage.setItem(COUNT_KEY, String(count));
     } catch (e) {
-        count = 0;  // sessionStorage unavailable — fall back to a single cycle
+        // sessionStorage is the only reload-persistent state we can trust here.
+        // If it is unavailable, disable auto-reload instead of recreating the
+        // original infinite reload loop.
+        storageAvailable = false;
     }
-    if (count >= MAX_AUTO_RELOADS) {
+    if (!storageAvailable || count >= MAX_AUTO_RELOADS) {
         var note = document.getElementById('autoreload-paused');
         if (note) { note.style.display = ''; }
         return;

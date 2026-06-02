@@ -180,6 +180,8 @@ async def test_scheduler_autoreload_is_capped(client):
     assert "window.location.reload" in text
     assert "MAX_AUTO_RELOADS" in text
     assert "scheduler-autoreload-count" in text
+    assert "storageAvailable = false" in text
+    assert "!storageAvailable || count >= MAX_AUTO_RELOADS" in text
     assert 'id="autoreload-paused"' in text
 
 
