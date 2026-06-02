@@ -730,6 +730,11 @@ def run(args: argparse.Namespace) -> None:
                 print(
                     f"Published run id={args.run_id} to {len(results)} target(s)"
                 )
+                for r in results:
+                    if r.message_id is not None:
+                        phone_part = f" phone={r.phone}" if r.phone else ""
+                        dialog_part = f" dialog_id={r.dialog_id}" if r.dialog_id is not None else ""
+                        print(f"  published_message_id={r.message_id}{phone_part}{dialog_part}")
             elif args.pipeline_action == "refinement-steps":
                 pipeline = await svc.get(args.id)
                 if pipeline is None:
