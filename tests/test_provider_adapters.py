@@ -788,3 +788,228 @@ async def test_replicate_image_adapter_timeout(monkeypatch):
     adapter = make_replicate_image_adapter("fake-token", timeout=2.0)
     with pytest.raises(RuntimeError, match="timed out"):
         await adapter("a cat")
+
+
+# === Codex SDK image adapter ===
+
+
+def test_build_codex_image_prompt_has_imagegen_and_path():
+    from src.services.provider_adapters import _build_codex_image_prompt
+
+    prompt = _build_codex_image_prompt("a sunset", "/tmp/out/abc.png")
+    assert "$imagegen" in prompt
+    assert "a sunset" in prompt
+    assert "/tmp/out/abc.png" in prompt
+
+
+def test_codex_saved_path_from_image_generation_item():
+    from types import SimpleNamespace
+
+    from src.services.provider_adapters import _codex_saved_path_from_result
+
+    result = SimpleNamespace(
+        items=[SimpleNamespace(type="imageGeneration", saved_path="/tmp/img.png")]
+    )
+    assert _codex_saved_path_from_result(result) == "/tmp/img.png"
+
+
+def test_codex_saved_path_from_image_view_item():
+    from types import SimpleNamespace
+
+    from src.services.provider_adapters import _codex_saved_path_from_result
+
+    result = SimpleNamespace(items=[SimpleNamespace(type="imageView", path="/tmp/view.png")])
+    assert _codex_saved_path_from_result(result) == "/tmp/view.png"
+
+
+def test_codex_saved_path_none_when_no_image_item():
+    from types import SimpleNamespace
+
+    from src.services.provider_adapters import _codex_saved_path_from_result
+
+    result = SimpleNamespace(items=[SimpleNamespace(type="agentMessage")])
+    assert _codex_saved_path_from_result(result) is None
+
+
+def _install_fake_codex(
+    monkeypatch,
+    *,
+    status="completed",
+    write_target=True,
+    item_path=True,
+    rogue_saved_path=None,
+    hang_seconds=0.0,
+):
+    """Install a fake ``openai_codex`` module that simulates one image turn.
+
+    When ``write_target`` is True the fake writes a PNG to the cwd-resolved path
+    Codex was asked to save to (parsed out of the instruction), mimicking the
+    real engine writing the file. ``item_path`` controls whether the returned
+    result echoes the saved path back in its items. ``rogue_saved_path`` echoes a
+    *different* path in the items (simulating a prompt-injected turn reporting a
+    file outside the requested output dir); the file there is created so it
+    exists, to prove the adapter rejects it on directory grounds, not existence.
+    """
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    captured = {}
+
+    import threading
+
+    closed_event = threading.Event()
+
+    class FakeThread:
+        def run(self, instruction):
+            if hang_seconds:
+                # Block as the real SDK does inside a blocking queue.get(); the
+                # only way out is close() firing closed_event (mirrors the SDK's
+                # reader thread fail_all()ing the queue on subprocess kill).
+                if closed_event.wait(timeout=hang_seconds):
+                    raise RuntimeError("Codex image: subprocess closed")
+            # The instruction embeds the absolute save path on its own line.
+            save_path = None
+            for line in instruction.splitlines():
+                line = line.strip()
+                if line.endswith(".png"):
+                    save_path = line
+            captured["save_path"] = save_path
+            if write_target and save_path:
+                with open(save_path, "wb") as fh:
+                    fh.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+            items = []
+            if rogue_saved_path is not None:
+                with open(rogue_saved_path, "wb") as fh:
+                    fh.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+                items.append(SimpleNamespace(type="imageGeneration", saved_path=str(rogue_saved_path)))
+            elif item_path and save_path:
+                items.append(SimpleNamespace(type="imageGeneration", saved_path=save_path))
+            return SimpleNamespace(status=SimpleNamespace(value=status), items=items, final_response="done")
+
+    class FakeCodex:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def thread_start(self, **kwargs):
+            captured["start_kwargs"] = kwargs
+            return FakeThread()
+
+        def close(self):
+            # Real Codex.close() terminate()/kill()s the subprocess; here it
+            # releases the blocked run() and records that it was called.
+            captured["closed"] = True
+            closed_event.set()
+
+    fake_mod = ModuleType("openai_codex")
+    fake_mod.Codex = FakeCodex
+    fake_mod.Sandbox = SimpleNamespace(workspace_write="workspace-write")
+    monkeypatch.setitem(sys.modules, "openai_codex", fake_mod)
+    return captured
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_returns_saved_path(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    captured = _install_fake_codex(monkeypatch)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path))
+    result = await adapter("a robot painting", "gpt-5.4")
+
+    assert result is not None
+    assert result.endswith(".png")
+    assert Path(result).exists()
+    assert Path(result).read_bytes().startswith(b"\x89PNG")
+    # default cwd is the resolved output dir; requested model is threaded through
+    assert captured["start_kwargs"]["model"] == "gpt-5.4"
+    assert captured["start_kwargs"]["sandbox"] == "workspace-write"
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_default_model(monkeypatch, tmp_path):
+    from src.services.provider_adapters import CODEX_DEFAULT_IMAGE_MODEL, make_codex_image_adapter
+
+    captured = _install_fake_codex(monkeypatch)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path))
+    await adapter("a cat", "")  # empty model → default
+
+    assert captured["start_kwargs"]["model"] == CODEX_DEFAULT_IMAGE_MODEL
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_falls_back_to_target_when_no_item(monkeypatch, tmp_path):
+    """Codex wrote the file but did not echo the path in items → use the target."""
+    from pathlib import Path
+
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    _install_fake_codex(monkeypatch, item_path=False)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path))
+    result = await adapter("a dog", "gpt-5.4")
+
+    assert result is not None
+    assert Path(result).exists()
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_times_out_and_kills_subprocess(monkeypatch, tmp_path):
+    """A stalled Codex turn times out AND closes the subprocess to free the thread."""
+    import asyncio
+
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    captured = _install_fake_codex(monkeypatch, hang_seconds=5.0)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path), image_timeout=0.05)
+    with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+        await adapter("x", "gpt-5.4")
+    # close() was called on timeout — without it the worker thread would leak.
+    assert captured.get("closed") is True
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_rejects_path_outside_output_dir(monkeypatch, tmp_path):
+    """A reported saved_path outside the requested output dir is not returned.
+
+    The prompt is user/pipeline-controlled, so a turn that echoes a path outside
+    `output_dir` must not redirect the returned file. Here Codex reports a file
+    in a sibling dir and writes no file to the target → the adapter rejects the
+    rogue path and, with no target file, raises rather than leaking it.
+    """
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    rogue = tmp_path.parent / "rogue.png"
+    out = tmp_path / "out"
+    out.mkdir()
+    _install_fake_codex(monkeypatch, write_target=False, rogue_saved_path=rogue)
+    adapter = make_codex_image_adapter(output_dir=str(out))
+    try:
+        with pytest.raises(RuntimeError, match="no image file"):
+            await adapter("x", "gpt-5.4")
+    finally:
+        if rogue.exists():
+            rogue.unlink()
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_raises_on_failed_status(monkeypatch, tmp_path):
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    _install_fake_codex(monkeypatch, status="failed", write_target=False)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path))
+    with pytest.raises(RuntimeError, match="did not complete"):
+        await adapter("x", "gpt-5.4")
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_raises_when_no_file(monkeypatch, tmp_path):
+    """Status completed but no file written and no item path → error, not silent None."""
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    _install_fake_codex(monkeypatch, write_target=False, item_path=False)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path))
+    with pytest.raises(RuntimeError, match="no image file"):
+        await adapter("x", "gpt-5.4")

@@ -8,3 +8,11 @@ CLAUDE_MODELS: tuple[tuple[str, str], ...] = (
 )
 
 CLAUDE_MODEL_IDS: frozenset[str] = frozenset(m[0] for m in CLAUDE_MODELS)
+
+# Only the IDs are consumed (model-validation in manager dispatch); unlike
+# CLAUDE_MODELS, codex has no UI model picker, so no display-name table.
+CODEX_MODEL_IDS: frozenset[str] = frozenset({"gpt-5.4"})
+
+# Valid values for the ``agent_backend_override`` setting. "auto" lets
+# get_runtime_status pick; the rest force a specific backend (dev-mode only).
+VALID_AGENT_BACKENDS: frozenset[str] = frozenset({"auto", "claude", "deepagents", "codex"})

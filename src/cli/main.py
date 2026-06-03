@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 
 from src.cli.commands import (
@@ -8,6 +9,7 @@ from src.cli.commands import (
     collect,
     export,
     image,
+    mcp_server,
     messages,
     notification,
     photo_loader,
@@ -37,6 +39,15 @@ def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
 
+    # Export the resolved config path so subprocess-spawning backends inherit it.
+    # CodexSdkBackend spawns `python -m src.main --config <path> mcp-server`; it
+    # learns <path> only via TG_CONFIG_PATH (AppConfig doesn't carry its source).
+    # Without this, a non-default `--config /srv/prod.yaml` would silently spawn
+    # the MCP server against the default config.yaml / data/tg_search.db — the
+    # wrong DB for write-capable tool calls. abspath so a differing subprocess
+    # CWD still resolves it.
+    os.environ["TG_CONFIG_PATH"] = os.path.abspath(args.config)
+
     load_cli_dotenv(args.config)
     setup_logging()
     ensure_data_dirs()
@@ -44,6 +55,7 @@ def main() -> None:
     commands = {
         "serve": serve.run,
         "worker": worker.run,
+        "mcp-server": mcp_server.run,
         "stop": server_control.run_stop,
         "restart": server_control.run_restart,
         "collect": collect.run,

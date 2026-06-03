@@ -236,6 +236,76 @@ async def test_build_adapters_disabled_blocks_env(db, monkeypatch):
     assert "together" not in adapters
 
 
+@pytest.mark.anyio
+async def test_build_adapters_registers_codex_when_available(db, pin_codex):
+    """Keyless codex is wired into build_adapters output on detection, no DB/env config."""
+    pin_codex(True)
+    svc = _make_service(db)
+    adapters = svc.build_adapters([])
+    assert "codex" in adapters
+    assert callable(adapters["codex"])
+
+
+@pytest.mark.anyio
+async def test_build_adapters_disabled_db_blocks_codex(db, pin_codex):
+    """A disabled codex DB config turns it off even though it is keyless."""
+    pin_codex(True)
+    svc = _make_service(db)
+    configs = [ImageProviderConfig(provider="codex", enabled=False, api_key="")]
+    adapters = svc.build_adapters(configs)
+    assert "codex" not in adapters
+
+
+@pytest.mark.anyio
+async def test_build_adapters_warns_enabled_but_undetected(db, pin_codex, caplog):
+    """Enabled-in-UI keyless provider that fails detect() logs a visible warning.
+
+    detect() is cached for the process lifetime, so authenticating after startup
+    needs a restart — without a log the absent adapter is a silent mystery.
+    """
+    pin_codex(False)
+    svc = _make_service(db)
+    configs = [ImageProviderConfig(provider="codex", enabled=True, api_key="")]
+    with caplog.at_level(logging.WARNING):
+        adapters = svc.build_adapters(configs)
+    assert "codex" not in adapters
+    assert any("codex" in r.message and "unavailable" in r.message for r in caplog.records)
+
+
+# ── table-model guardrails ──
+
+
+def test_every_spec_is_keyed_xor_keyless():
+    """Each provider is exactly one of keyed (env+factory) or keyless (detect+factory).
+
+    This is the guardrail that keeps new providers declarative — a future
+    addition must be a well-formed spec, not a bolt-on special case.
+    """
+    from src.services.image_provider_service import IMAGE_PROVIDER_ORDER, IMAGE_PROVIDER_SPECS
+
+    assert set(IMAGE_PROVIDER_SPECS) == set(IMAGE_PROVIDER_ORDER)
+    for name, spec in IMAGE_PROVIDER_SPECS.items():
+        if spec.keyless:
+            assert spec.detect is not None, name
+            assert spec.keyless_factory is not None, name
+            assert spec.keyed_factory is None, name
+            assert spec.env_vars == [], name
+        else:
+            assert spec.detect is None, name
+            assert spec.keyed_factory is not None, name
+            assert spec.keyless_factory is None, name
+            assert spec.env_vars, name  # keyed providers declare at least one env var
+
+
+@pytest.mark.anyio
+async def test_build_adapters_keyless_skipped_when_undetected(db, pin_codex):
+    """A keyless provider whose detect() is False is simply not registered."""
+    pin_codex(False)
+    svc = _make_service(db)
+    adapters = svc.build_adapters([])
+    assert "codex" not in adapters
+
+
 # ── create_empty_config ──
 
 

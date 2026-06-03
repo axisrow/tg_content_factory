@@ -364,6 +364,35 @@ class TestMainDispatch:
     @patch("src.cli.main.setup_logging")
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
+    def test_main_exports_config_path_to_env(
+        self, mock_build, mock_dirs, mock_log, mock_dotenv, monkeypatch
+    ):
+        """main() exports the resolved --config as an absolute TG_CONFIG_PATH.
+
+        Subprocess-spawning backends (CodexSdkBackend's mcp-server) learn the
+        config path only via this env var, so a non-default --config must reach
+        them — otherwise the MCP server runs against the wrong DB.
+        """
+        import os
+
+        monkeypatch.delenv("TG_CONFIG_PATH", raising=False)
+        parser = MagicMock()
+        args = MagicMock()
+        args.command = "stop"
+        args.config = "custom-config.yaml"
+        parser.parse_args.return_value = args
+        mock_build.return_value = parser
+
+        with patch("src.cli.main.server_control") as mock_mod:
+            mock_mod.run_stop = MagicMock()
+            main()
+
+        assert os.environ["TG_CONFIG_PATH"] == os.path.abspath("custom-config.yaml")
+
+    @patch("src.cli.main.load_cli_dotenv")
+    @patch("src.cli.main.setup_logging")
+    @patch("src.cli.main.ensure_data_dirs")
+    @patch("src.cli.main.build_parser")
     def test_main_missing_subaction_prints_help(self, mock_build, mock_dirs, mock_log, mock_dotenv):
         """main() prints help when subcommand action is missing for commands that require it."""
         parser = MagicMock()
