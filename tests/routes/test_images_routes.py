@@ -60,6 +60,32 @@ async def test_generate_success(route_client, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_generate_file_path_mapped_to_data_image_url(route_client, monkeypatch):
+    """A saved file path (gpt-image-1 b64 / HuggingFace) must become a /data/image URL."""
+    mock_svc = MagicMock()
+    mock_svc.is_available = AsyncMock(return_value=True)
+    mock_svc.generate = AsyncMock(return_value="data/image/abc123.png")
+    monkeypatch.setattr(
+        "src.web.images.handlers._get_image_service",
+        AsyncMock(return_value=mock_svc),
+    )
+    resp = await route_client.post("/images/generate", data={"prompt": "a cat", "model": "openai:gpt-image-1"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["url"] == "/data/image/abc123.png"
+
+
+def test_to_image_url_passthrough_and_mapping():
+    from src.web.images.handlers import _to_image_url
+
+    assert _to_image_url("https://s3.example.com/x.png") == "https://s3.example.com/x.png"
+    assert _to_image_url("http://cdn/x.png") == "http://cdn/x.png"
+    assert _to_image_url("data/image/abc.png") == "/data/image/abc.png"
+    assert _to_image_url("/abs/path/data/image/zzz.png") == "/data/image/zzz.png"
+
+
+@pytest.mark.anyio
 async def test_generate_failure(route_client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.is_available = AsyncMock(return_value=True)
@@ -100,6 +126,28 @@ async def test_search_models_success(route_client, monkeypatch):
         body = resp.json()
         assert body["ok"] is True
         assert len(body["models"]) == 1
+
+
+@pytest.mark.anyio
+async def test_search_models_refresh_param_passed_through(route_client, monkeypatch):
+    """?refresh=1 must reach ImageGenerationService.search_models(refresh=True)."""
+    monkeypatch.setattr(
+        "src.web.images.handlers._get_provider_api_key",
+        AsyncMock(return_value="fake-key"),
+    )
+    with patch("src.web.images.handlers.ImageGenerationService") as mock_cls:
+        instance = MagicMock()
+        instance.search_models = AsyncMock(return_value=[])
+        mock_cls.return_value = instance
+
+        resp = await route_client.get("/images/models/search?provider=openai&refresh=1")
+        assert resp.status_code == 200
+        _, kwargs = instance.search_models.call_args
+        assert kwargs["refresh"] is True
+
+        await route_client.get("/images/models/search?provider=openai")
+        _, kwargs2 = instance.search_models.call_args
+        assert kwargs2["refresh"] is False
 
 
 @pytest.mark.anyio

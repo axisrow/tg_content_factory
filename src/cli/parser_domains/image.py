@@ -15,6 +15,11 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     image_models = image_sub.add_parser("models", help="Search available models")
     image_models.add_argument("--provider", required=True, help="Provider name (replicate, together, openai)")
     image_models.add_argument("--query", default="", help="Search query")
+    image_models.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Fetch the live model list from the provider (OpenAI: /v1/models)",
+    )
 
     image_sub.add_parser("providers", help="List configured image providers")
 

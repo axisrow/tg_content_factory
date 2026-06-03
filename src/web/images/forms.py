@@ -25,10 +25,12 @@ async def parse_generate_form(request: Request) -> GenerateImageForm:
 class ModelsSearchQuery:
     provider: str
     query: str
+    refresh: bool
 
 
 def parse_models_search(request: Request) -> ModelsSearchQuery:
     return ModelsSearchQuery(
         provider=request.query_params.get("provider", "").strip(),
         query=request.query_params.get("q", "").strip(),
+        refresh=request.query_params.get("refresh", "").strip() in ("1", "true", "yes"),
     )
