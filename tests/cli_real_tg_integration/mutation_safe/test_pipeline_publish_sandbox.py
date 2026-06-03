@@ -13,8 +13,35 @@ pytestmark = pytest.mark.real_tg_mutation_safe
 _PUBLISHED_MSG_RE = re.compile(r"published_message_id=(\d+)\s+phone=(\S+)\s+dialog_id=(\d+)")
 
 
+def _pipeline_has_targets(run_cli, assert_cli_ok, pipeline_id: str) -> bool:
+    """Return True if `pipeline show` lists at least one publish target.
+
+    `pipeline show` prints a `targets:` header followed by one ` - <phone>:<id>`
+    line per target. A pipeline without targets has nowhere to publish, so the
+    publish run is a no-op rather than a product bug.
+    """
+    result = run_cli("pipeline", "show", pipeline_id)
+    assert_cli_ok(result)
+    in_targets = False
+    for line in result.stdout.splitlines():
+        if line.rstrip() == "targets:":
+            in_targets = True
+            continue
+        if in_targets:
+            if line.startswith(" - "):
+                return True
+            if line and not line.startswith(" "):
+                break
+    return False
+
+
 @pytest.mark.timeout(180)
-def test_pipeline_publish_sandbox(run_cli, assert_cli_ok, cli_real_cli_env, discover_first_run_id):
+def test_pipeline_publish_sandbox(
+    run_cli, assert_cli_ok, cli_real_cli_env, discover_first_pipeline_id, discover_first_run_id
+):
+    pipeline_id = discover_first_pipeline_id()
+    if not _pipeline_has_targets(run_cli, assert_cli_ok, pipeline_id):
+        pytest.skip(f"pipeline id={pipeline_id} has no publish targets; nothing to publish")
     run_id = discover_first_run_id()
     leak_msg: str | None = None
     published_entries: list[tuple[str, str, str]] = []  # (message_id, phone, dialog_id)

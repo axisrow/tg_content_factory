@@ -347,6 +347,24 @@ async def _repair_channel_last_collected_ids_from_messages(db: aiosqlite.Connect
     )
 
 
+async def _drop_legacy_pipelines_table_if_empty(db: aiosqlite.Connection) -> None:
+    """Remove the obsolete denormalized ``pipelines`` table (schema v1).
+
+    It was superseded by ``content_pipelines`` (+ ``pipeline_sources`` /
+    ``pipeline_targets``) and is never read or written by the app. Older
+    databases still carry an empty leftover copy. We only drop it when it holds
+    no rows, so a database that somehow still has v1 data is left untouched
+    instead of silently losing it.
+    """
+    if not await table_exists(db, "pipelines"):
+        return
+    cur = await db.execute("SELECT COUNT(*) FROM pipelines")
+    row = await cur.fetchone()
+    count = (row[0] if row is not None else 0) or 0
+    if count == 0:
+        await db.execute("DROP TABLE pipelines")
+
+
 async def run_migrations(db: aiosqlite.Connection) -> bool:
     """Repair the SQLite schema without rewriting existing user data.
 
@@ -367,6 +385,9 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     await _dedupe_primary_accounts(db)
 
     await db.executescript(SCHEMA_SQL)
+
+    # Drop the obsolete v1 ``pipelines`` table left behind in older databases.
+    await _drop_legacy_pipelines_table_if_empty(db)
 
     for table, columns in SCHEMA_REPAIR_COLUMNS.items():
         await ensure_columns(db, table, columns)
