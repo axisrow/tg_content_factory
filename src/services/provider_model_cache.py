@@ -24,6 +24,34 @@ logger = logging.getLogger(__name__)
 
 MODEL_CACHE_SETTINGS_KEY = "agent_deepagents_model_cache_v1"
 
+_MODELS_HTTP_TIMEOUT = aiohttp.ClientTimeout(total=20)
+
+
+async def fetch_json(url: str, headers: dict[str, str] | None = None) -> Any:
+    """GET *url* and return parsed JSON. Shared by LLM and image model listing."""
+    async with aiohttp.ClientSession(timeout=_MODELS_HTTP_TIMEOUT) as session:
+        async with session.get(url, headers=headers) as response:
+            response.raise_for_status()
+            return await response.json()
+
+
+def _parse_openai_model_ids(payload: Any) -> list[str]:
+    """Extract ``data[].id`` from an OpenAI-compatible ``/models`` response."""
+    data = payload.get("data", []) if isinstance(payload, dict) else []
+    return [str(item.get("id", "")).strip() for item in data if item.get("id")]
+
+
+async def fetch_openai_model_ids(base_url: str, api_key: str) -> list[str]:
+    """Fetch model ids from an OpenAI-compatible ``/models`` endpoint.
+
+    Standalone helper (no DB / provider-config dependency) so both the LLM
+    provider cache and the image-generation service share one request path —
+    the single source of truth for "ask OpenAI which models exist".
+    """
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    payload = await fetch_json(base_url.rstrip("/") + "/models", headers=headers)
+    return _parse_openai_model_ids(payload)
+
 
 @dataclass(slots=True)
 class ProviderModelCacheEntry:
@@ -220,9 +248,7 @@ class ProviderModelCacheMixin:
     async def _fetch_openai_models(self, base_url: str, api_key: str) -> list[str]:
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         payload = await self._fetch_json(base_url.rstrip("/") + "/models", headers=headers)
-        return [
-            str(item.get("id", "")).strip() for item in payload.get("data", []) if item.get("id")
-        ]
+        return _parse_openai_model_ids(payload)
 
     async def _fetch_anthropic_models(self, api_key: str) -> list[str]:
         headers = {

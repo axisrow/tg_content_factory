@@ -30,7 +30,8 @@ def run(args: argparse.Namespace) -> None:
         elif action == "models":
             provider = args.provider
             query = args.query or ""
-            models = await svc.search_models(provider, query)
+            refresh = getattr(args, "refresh", False)
+            models = await svc.search_models(provider, query, refresh=refresh)
             if not models:
                 print(f"No models found for provider={provider} query={query!r}")
                 return
