@@ -484,8 +484,15 @@ _FLOOD_OR_READ_ERROR_RE = re.compile(
     r"unavailable|not connected|Account .* not connected",
     re.IGNORECASE,
 )
-# `messages read --live` prints one header line per message: "[<date>] #<id> <sender>".
-_LIVE_MESSAGE_HEADER_RE = re.compile(r"^\[.*?\]\s+#(\d+)\b")
+# `messages read --live` prints one header line per message as
+# `print(f"[{date}] #{msg.id}{sender}...")` where `sender` is `" name last".strip()`
+# (src/cli/commands/messages.py:84). So the sender is concatenated DIRECTLY after
+# the id with NO separating space (e.g. `[2026-06-03 02:42:48] #611404Alexey`), and
+# is empty when there is no sender. The id is therefore terminated by a non-digit
+# (a letter, reactions suffix, or end of line), NOT by whitespace — matching on a
+# space here would silently fail to parse every real header. `(?!\d)` ends the id
+# at the last digit without consuming the following char.
+_LIVE_MESSAGE_HEADER_RE = re.compile(r"^\[.*?\]\s+#(\d+)(?!\d)")
 
 
 def _capture_cli(
