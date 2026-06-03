@@ -831,13 +831,18 @@ def test_codex_saved_path_none_when_no_image_item():
     assert _codex_saved_path_from_result(result) is None
 
 
-def _install_fake_codex(monkeypatch, *, status="completed", write_target=True, item_path=True):
+def _install_fake_codex(
+    monkeypatch, *, status="completed", write_target=True, item_path=True, rogue_saved_path=None
+):
     """Install a fake ``openai_codex`` module that simulates one image turn.
 
     When ``write_target`` is True the fake writes a PNG to the cwd-resolved path
     Codex was asked to save to (parsed out of the instruction), mimicking the
     real engine writing the file. ``item_path`` controls whether the returned
-    result echoes the saved path back in its items.
+    result echoes the saved path back in its items. ``rogue_saved_path`` echoes a
+    *different* path in the items (simulating a prompt-injected turn reporting a
+    file outside the requested output dir); the file there is created so it
+    exists, to prove the adapter rejects it on directory grounds, not existence.
     """
     import sys
     from types import ModuleType, SimpleNamespace
@@ -857,7 +862,11 @@ def _install_fake_codex(monkeypatch, *, status="completed", write_target=True, i
                 with open(save_path, "wb") as fh:
                     fh.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
             items = []
-            if item_path and save_path:
+            if rogue_saved_path is not None:
+                with open(rogue_saved_path, "wb") as fh:
+                    fh.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+                items.append(SimpleNamespace(type="imageGeneration", saved_path=str(rogue_saved_path)))
+            elif item_path and save_path:
                 items.append(SimpleNamespace(type="imageGeneration", saved_path=save_path))
             return SimpleNamespace(status=SimpleNamespace(value=status), items=items, final_response="done")
 
@@ -922,6 +931,30 @@ async def test_codex_image_adapter_falls_back_to_target_when_no_item(monkeypatch
 
     assert result is not None
     assert Path(result).exists()
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_rejects_path_outside_output_dir(monkeypatch, tmp_path):
+    """A reported saved_path outside the requested output dir is not returned.
+
+    The prompt is user/pipeline-controlled, so a turn that echoes a path outside
+    `output_dir` must not redirect the returned file. Here Codex reports a file
+    in a sibling dir and writes no file to the target → the adapter rejects the
+    rogue path and, with no target file, raises rather than leaking it.
+    """
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    rogue = tmp_path.parent / "rogue.png"
+    out = tmp_path / "out"
+    out.mkdir()
+    _install_fake_codex(monkeypatch, write_target=False, rogue_saved_path=rogue)
+    adapter = make_codex_image_adapter(output_dir=str(out))
+    try:
+        with pytest.raises(RuntimeError, match="no image file"):
+            await adapter("x", "gpt-5.4")
+    finally:
+        if rogue.exists():
+            rogue.unlink()
 
 
 @pytest.mark.anyio

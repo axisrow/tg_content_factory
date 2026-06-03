@@ -330,6 +330,16 @@ class ImageProviderService:
             if spec.keyless:
                 if spec.detect() and spec.keyless_factory is not None:
                     adapters[name] = spec.keyless_factory()
+                elif cfg is not None and cfg.enabled:
+                    # Enabled in the UI but detection failed (SDK missing or not
+                    # authenticated). detect() results are cached for the process
+                    # lifetime, so authenticating after startup needs a restart —
+                    # log it rather than silently leaving the adapter absent.
+                    logger.warning(
+                        "Image provider %r is enabled but unavailable (SDK missing or "
+                        "not authenticated); adapter skipped. Restart after authenticating.",
+                        name,
+                    )
             else:
                 key = (cfg.api_key.strip() if cfg else "") or _env_key(spec.env_vars)
                 if key and spec.keyed_factory is not None:

@@ -116,37 +116,62 @@ class CodexSdkBackend:
         full_text_parts: list[str] = []
         usage: dict | None = None
 
-        async with AsyncCodex() as codex:
-            thread = await codex.thread_start(
-                base_instructions=system_prompt or None,
-                config=codex_config,
-                model=model_id,
-                sandbox=Sandbox.workspace_write,
+        async def _drain() -> dict | None:
+            nonlocal usage
+            async with AsyncCodex() as codex:
+                thread = await codex.thread_start(
+                    base_instructions=system_prompt or None,
+                    config=codex_config,
+                    model=model_id,
+                    # read_only, not workspace_write: the agent's real work
+                    # (DB/Telegram/search) runs in the out-of-process mcp-server
+                    # subprocess, which is unaffected by Codex's own sandbox. The
+                    # Codex process itself never needs to write the project tree,
+                    # so don't grant it write access to whatever CWD the web
+                    # process started in.
+                    sandbox=Sandbox.read_only,
+                )
+                handle = await thread.turn(full_prompt)
+                async for note in handle.stream():
+                    method = getattr(note, "method", None)
+                    payload = getattr(note, "payload", None)
+                    if method == NOTE_AGENT_MESSAGE_DELTA:
+                        text = getattr(payload, "delta", None)
+                        if text:
+                            full_text_parts.append(text)
+                            chunk = safe_json_dumps({"text": text}, ensure_ascii=False)
+                            await queue.put(f"data: {chunk}\n\n")
+                    elif method == NOTE_ITEM_STARTED:
+                        event = _tool_start_event(payload)
+                        if event:
+                            await queue.put(f"data: {safe_json_dumps(event, ensure_ascii=False)}\n\n")
+                    elif method == NOTE_ITEM_COMPLETED:
+                        event = _tool_end_event(payload)
+                        if event:
+                            await queue.put(f"data: {safe_json_dumps(event, ensure_ascii=False)}\n\n")
+                    elif method == NOTE_TOKEN_USAGE_UPDATED:
+                        usage = _usage_from_payload(payload) or usage
+                    elif method == NOTE_TURN_COMPLETED:
+                        # Terminal event — stop draining rather than waiting for
+                        # the async iterator to close on its own.
+                        break
+            return usage
+
+        # Hard total-turn deadline, mirroring ClaudeSdkBackend's total_timeout.
+        # Without it a stalled Codex subprocess (auth expiry, model overload)
+        # would block this coroutine — and the SSE stream — until the client or
+        # server gives up. On timeout, surface an error frame to the queue.
+        total_timeout = self._config.agent.total_timeout
+        try:
+            await asyncio.wait_for(_drain(), timeout=total_timeout)
+        except (TimeoutError, asyncio.TimeoutError):
+            logger.error("Codex turn exceeded total_timeout=%ss", total_timeout)
+            error_payload = safe_json_dumps(
+                {"error": f"Codex не ответил за {total_timeout}с (таймаут)"},
+                ensure_ascii=False,
             )
-            handle = await thread.turn(full_prompt)
-            async for note in handle.stream():
-                method = getattr(note, "method", None)
-                payload = getattr(note, "payload", None)
-                if method == NOTE_AGENT_MESSAGE_DELTA:
-                    text = getattr(payload, "delta", None)
-                    if text:
-                        full_text_parts.append(text)
-                        chunk = safe_json_dumps({"text": text}, ensure_ascii=False)
-                        await queue.put(f"data: {chunk}\n\n")
-                elif method == NOTE_ITEM_STARTED:
-                    event = _tool_start_event(payload)
-                    if event:
-                        await queue.put(f"data: {safe_json_dumps(event, ensure_ascii=False)}\n\n")
-                elif method == NOTE_ITEM_COMPLETED:
-                    event = _tool_end_event(payload)
-                    if event:
-                        await queue.put(f"data: {safe_json_dumps(event, ensure_ascii=False)}\n\n")
-                elif method == NOTE_TOKEN_USAGE_UPDATED:
-                    usage = _usage_from_payload(payload) or usage
-                elif method == NOTE_TURN_COMPLETED:
-                    # Terminal event — stop draining rather than waiting for the
-                    # async iterator to close on its own.
-                    break
+            await queue.put(f"data: {error_payload}\n\n")
+            return
 
         full_text = "".join(full_text_parts)
         done_payload = safe_json_dumps(

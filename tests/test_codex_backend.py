@@ -18,7 +18,9 @@ import pytest
 pytestmark = pytest.mark.anyio
 
 
-def _install_fake_codex(monkeypatch, *, deltas, usage=None, tool=None, tool_error=False, noise_item=False):
+def _install_fake_codex(
+    monkeypatch, *, deltas, usage=None, tool=None, tool_error=False, noise_item=False, hang=False
+):
     """Install a fake ``openai_codex`` whose turn streams *deltas* then *usage*.
 
     Notifications mirror the real SDK shape (verified against ``openai_codex``
@@ -46,6 +48,10 @@ def _install_fake_codex(monkeypatch, *, deltas, usage=None, tool=None, tool_erro
 
     class FakeHandle:
         async def stream(self):
+            if hang:
+                # Never emit turn/completed — simulate a stalled Codex subprocess
+                # so the backend's total_timeout wrapper must fire.
+                await asyncio.Event().wait()
             if noise_item:
                 # A reasoning item: real shape has no tool/server — must be ignored.
                 reasoning = SimpleNamespace(text="thinking", type="reasoning")
@@ -85,7 +91,7 @@ def _install_fake_codex(monkeypatch, *, deltas, usage=None, tool=None, tool_erro
 
     fake = ModuleType("openai_codex")
     fake.AsyncCodex = FakeAsyncCodex
-    fake.Sandbox = SimpleNamespace(workspace_write="workspace-write")
+    fake.Sandbox = SimpleNamespace(workspace_write="workspace-write", read_only="read-only")
     monkeypatch.setitem(sys.modules, "openai_codex", fake)
     return captured
 
@@ -158,6 +164,36 @@ async def test_chat_stream_wires_project_mcp_server(monkeypatch):
     server = cfg["mcp_servers"]["telegram_db"]
     assert server["args"][:2] == ["-m", "src.main"]
     assert "mcp-server" in server["args"]
+
+
+async def test_chat_stream_uses_read_only_sandbox(monkeypatch):
+    """Agent chat runs Codex read-only — tool work happens in the mcp-server subprocess."""
+    captured = _install_fake_codex(monkeypatch, deltas=["ok"])
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="x", system_prompt="", stats={}, model=None, queue=queue
+    )
+
+    assert captured["start_kwargs"]["sandbox"] == "read-only"
+
+
+async def test_chat_stream_times_out(monkeypatch):
+    """A stalled Codex turn surfaces an error frame instead of hanging forever."""
+    _install_fake_codex(monkeypatch, deltas=[], hang=True)
+    backend = _make_backend()
+    backend._config.agent.total_timeout = 0  # fire the deadline immediately
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="x", system_prompt="", stats={}, model="gpt-5.4", queue=queue
+    )
+
+    events = await _drain(queue)
+    assert any("error" in e for e in events), events
+    # No done frame on the timeout path.
+    assert not any(e.get("done") for e in events)
 
 
 async def test_chat_stream_emits_tool_events(monkeypatch):

@@ -443,10 +443,15 @@ def make_codex_image_adapter(output_dir: str = DEFAULT_IMAGE_OUTPUT_DIR) -> Imag
             return _codex_saved_path_from_result(result)
 
         saved = await asyncio.to_thread(_run_codex)
-        # Prefer the path Codex reported; fall back to the requested target if it
-        # wrote there without echoing the path back in the result items.
-        if saved and Path(saved).exists():
-            return saved
+        # Prefer the path Codex reported (it may pick its own filename inside our
+        # output dir), but confine it to the requested directory: the prompt is
+        # user/pipeline-controlled, so a reported path must not redirect the
+        # returned/uploaded file outside `out`. Fall back to the requested target
+        # if Codex wrote there without echoing the path back.
+        if saved:
+            saved_path = Path(saved).resolve()
+            if saved_path.exists() and saved_path.parent == target.parent:
+                return str(saved_path)
         if target.exists():
             return str(target)
         raise RuntimeError("Codex image: no image file produced")

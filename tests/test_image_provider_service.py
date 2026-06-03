@@ -256,6 +256,22 @@ async def test_build_adapters_disabled_db_blocks_codex(db, pin_codex):
     assert "codex" not in adapters
 
 
+@pytest.mark.anyio
+async def test_build_adapters_warns_enabled_but_undetected(db, pin_codex, caplog):
+    """Enabled-in-UI keyless provider that fails detect() logs a visible warning.
+
+    detect() is cached for the process lifetime, so authenticating after startup
+    needs a restart — without a log the absent adapter is a silent mystery.
+    """
+    pin_codex(False)
+    svc = _make_service(db)
+    configs = [ImageProviderConfig(provider="codex", enabled=True, api_key="")]
+    with caplog.at_level(logging.WARNING):
+        adapters = svc.build_adapters(configs)
+    assert "codex" not in adapters
+    assert any("codex" in r.message and "unavailable" in r.message for r in caplog.records)
+
+
 # ── table-model guardrails ──
 
 

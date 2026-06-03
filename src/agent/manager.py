@@ -2007,6 +2007,11 @@ class AgentManager:
             elif selected_backend == "codex" and not codex_available:
                 error = "Codex SDK не установлен или Codex CLI не авторизован."
         else:
+            # Codex is intentionally NOT in the auto-fallback chain: each turn
+            # runs a blocking `codex` CLI subprocess and spawns an mcp-server
+            # subprocess (slow, heavy), so it must be opt-in via the dev-mode
+            # `agent_backend_override`, never silently auto-selected — the same
+            # rationale that makes the codex image adapter explicit_only.
             if deepagents_available and self._deepagents_backend.has_usable_db_provider_configs:
                 selected_backend = "deepagents"
             elif claude_available:
