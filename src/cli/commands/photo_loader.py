@@ -18,13 +18,21 @@ from src.utils.datetime import parse_required_schedule_datetime
 
 async def _resolve_self_target(pool, phone: str | None) -> PhotoTarget:
     """Resolve "me"/"self" to the account's own Saved Messages dialog id."""
-    result = None
     if phone:
+        # A specific account was requested. Its Saved Messages id is account-specific,
+        # and deferred paths (schedule-send/batch-create/auto-create) persist `phone`
+        # separately from this dialog_id. Falling back to another account here would
+        # store *that* account's self-id against the requested phone, so a later
+        # publish would deliver to the wrong account's chat. Fail instead.
         result = await pool.get_client_by_phone(phone)
-    if result is None:
+        if result is None:
+            raise ValueError(
+                f"Could not resolve target 'me': account {phone} is not connected/available"
+            )
+    else:
         result = await pool.get_available_client()
-    if result is None:
-        raise ValueError("Could not resolve target 'me': no connected Telegram account")
+        if result is None:
+            raise ValueError("Could not resolve target 'me': no connected Telegram account")
     session, _acquired_phone = result
     session = adapt_transport_session(session, disconnect_on_close=False)
     me = await session.fetch_me()
