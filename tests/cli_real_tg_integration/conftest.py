@@ -33,6 +33,14 @@ CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_ENV = "CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_SECON
 CLI_REAL_TG_CONNECT_WAIT_DEFAULT_SECONDS = 60.0
 CLI_REAL_TG_CONNECT_POLL_DEFAULT_SECONDS = 2.0
 CLI_REAL_TG_CONNECT_PROBE_TIMEOUT_DEFAULT_SECONDS = 60.0
+# Write-path tests pin a concrete --phone. If that account is flood-waited the
+# write resolver (get_client_by_phone) refuses it outright, so the test must wait
+# for the flood to expire rather than fail. This budget is counted separately from
+# the CLI call / pytest timeouts: the per-test pytest timeout is raised to cover it.
+CLI_REAL_TG_FLOOD_WAIT_TIMEOUT_ENV = "CLI_REAL_TG_FLOOD_WAIT_TIMEOUT"
+CLI_REAL_TG_FLOOD_WAIT_POLL_ENV = "CLI_REAL_TG_FLOOD_WAIT_POLL_SECONDS"
+CLI_REAL_TG_FLOOD_WAIT_TIMEOUT_DEFAULT_SECONDS = 600.0
+CLI_REAL_TG_FLOOD_WAIT_POLL_DEFAULT_SECONDS = 5.0
 RUN_CLI_DEFAULT_TIMEOUT_SECONDS = 120
 LIVE_CLI_DEFAULT_PYTEST_TIMEOUT_SECONDS = RUN_CLI_DEFAULT_TIMEOUT_SECONDS + 60
 
@@ -130,20 +138,21 @@ def _resolve_db_path(live_root: Path, db_path: str) -> Path:
     return path if path.is_absolute() else (live_root / path).resolve()
 
 
+def _parse_flood_wait_until(raw: object) -> datetime | None:
+    if raw is None or raw == "":
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _fetch_live_accounts(db_path: Path) -> tuple[str, ...]:
     requested_phone = os.environ.get(CLI_REAL_TG_PHONE_ENV, "").strip()
     now = datetime.now(timezone.utc)
-
-    def _parse_flood_wait_until(raw: object) -> datetime | None:
-        if raw is None or raw == "":
-            return None
-        try:
-            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-        except ValueError:
-            return None
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
 
     def _sort_key(row: sqlite3.Row) -> tuple[int, int, int]:
         flood_wait_until = _parse_flood_wait_until(row["flood_wait_until"])
@@ -167,6 +176,105 @@ def _fetch_live_accounts(db_path: Path) -> tuple[str, ...]:
         accounts = [row for row in accounts if str(row["phone"]) == requested_phone]
     accounts.sort(key=_sort_key)
     return tuple(str(row["phone"]) for row in accounts)
+
+
+def _first_premium_phone(db_path: Path, connected: tuple[str, ...]) -> str | None:
+    """First connected, non-flood-waited Telegram Premium account phone, or None.
+
+    Reactions (SendReactionRequest) require Telegram Premium, so react tests must
+    run under a premium account. Order matches _fetch_live_accounts (non-flood,
+    primary, lowest id first) and is restricted to phones the live env actually
+    connected. Returns None on any sqlite error or when no premium account exists.
+    """
+    now = datetime.now(timezone.utc)
+    try:
+        with sqlite3.connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, phone, COALESCE(is_primary, 0) AS is_primary, flood_wait_until
+                FROM accounts
+                WHERE COALESCE(is_active, 1) = 1
+                  AND COALESCE(session_string, '') != ''
+                  AND COALESCE(is_premium, 0) = 1
+                """
+            ).fetchall()
+    except sqlite3.Error:
+        return None
+
+    def _sort_key(row: sqlite3.Row) -> tuple[int, int, int]:
+        flood_until = _parse_flood_wait_until(row["flood_wait_until"])
+        blocked = int(flood_until is not None and flood_until > now)
+        return blocked, -int(row["is_primary"] or 0), int(row["id"] or 0)
+
+    candidates = sorted((row for row in rows if row["phone"]), key=_sort_key)
+    for row in candidates:
+        phone = str(row["phone"])
+        if phone in connected:
+            return phone
+    return None
+
+
+def _phone_flood_remaining_seconds(db_path: Path, phone: str) -> float:
+    """Seconds until ``phone``'s flood_wait_until expires (0 if clear/unknown)."""
+    try:
+        with sqlite3.connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT flood_wait_until FROM accounts WHERE phone = ?", (phone,)
+            ).fetchone()
+    except sqlite3.Error:
+        return 0.0
+    flood_until = _parse_flood_wait_until(row[0] if row else None)
+    if flood_until is None:
+        return 0.0
+    return max(0.0, (flood_until - datetime.now(timezone.utc)).total_seconds())
+
+
+def wait_for_phone_flood_clear(
+    db_path: Path,
+    phone: str,
+    *,
+    timeout: float = CLI_REAL_TG_FLOOD_WAIT_TIMEOUT_DEFAULT_SECONDS,
+    poll: float = CLI_REAL_TG_FLOOD_WAIT_POLL_DEFAULT_SECONDS,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    remaining: Callable[[Path, str], float] = _phone_flood_remaining_seconds,
+) -> bool:
+    """Block until ``phone``'s Telegram flood-wait clears, up to ``timeout`` seconds.
+
+    Returns True once the account is no longer flood-waited (immediately if it
+    never was), False if the flood outlasts ``timeout`` — callers should then skip
+    rather than fail, since the wait would exceed the test budget. Never raises.
+    """
+    deadline = monotonic() + timeout
+    while True:
+        flood_remaining = remaining(db_path, phone)
+        if flood_remaining <= 0:
+            return True
+        now = monotonic()
+        if now >= deadline:
+            return False
+        sleep(min(poll, flood_remaining, max(0.0, deadline - now)))
+
+
+def _await_phone_flood_or_skip(cli_env: CliEnv, phone: str) -> None:
+    """Wait for ``phone``'s flood-wait to clear before a write op, or skip.
+
+    Write CLI commands pin a concrete --phone, so a flood-waited account makes them
+    fail. Wait up to CLI_REAL_TG_FLOOD_WAIT_TIMEOUT; if the flood outlasts that
+    budget, skip (the wait would blow the test budget). Call before the first write.
+    """
+    timeout = _env_float(
+        CLI_REAL_TG_FLOOD_WAIT_TIMEOUT_ENV,
+        CLI_REAL_TG_FLOOD_WAIT_TIMEOUT_DEFAULT_SECONDS,
+    )
+    poll = _env_float(
+        CLI_REAL_TG_FLOOD_WAIT_POLL_ENV,
+        CLI_REAL_TG_FLOOD_WAIT_POLL_DEFAULT_SECONDS,
+        min_value=0.1,
+    )
+    if not wait_for_phone_flood_clear(cli_env.db_path, phone, timeout=timeout, poll=poll):
+        pytest.skip(f"account {phone} flood-waited longer than {timeout:g}s; skipping write test")
 
 
 def _fetch_live_channel(db_path: Path) -> tuple[str | None, int | None, str | None]:
@@ -420,12 +528,34 @@ def cli_env(cli_real_cli_env: CliRealCliEnv) -> CliEnv:
     return cli_real_cli_env
 
 
+# Fixtures that wait out a flood-wait before their first write (see
+# _await_phone_flood_or_skip). A test using any of them may block for up to the
+# flood-wait budget, so its pytest timeout must cover that on top of the CLI call.
+_FLOOD_AWAITING_FIXTURES = frozenset(
+    {"live_scratch_message", "live_scratch_premium_message", "live_scratch_group"}
+)
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     root = Path(__file__).resolve().parent
     default_timeout_marker = pytest.mark.timeout(LIVE_CLI_DEFAULT_PYTEST_TIMEOUT_SECONDS)
+    flood_timeout = _env_float(
+        CLI_REAL_TG_FLOOD_WAIT_TIMEOUT_ENV,
+        CLI_REAL_TG_FLOOD_WAIT_TIMEOUT_DEFAULT_SECONDS,
+    )
+    flood_aware_seconds = int(flood_timeout + LIVE_CLI_DEFAULT_PYTEST_TIMEOUT_SECONDS)
     for item in items:
         item_path = Path(str(item.fspath)).resolve()
         if root not in item_path.parents:
+            continue
+        waits_for_flood = _FLOOD_AWAITING_FIXTURES.intersection(
+            getattr(item, "fixturenames", ())
+        )
+        if waits_for_flood:
+            # Override any smaller explicit timeout so the flood-wait fits.
+            # append=False prepends it so pytest-timeout (which honours the first
+            # timeout marker) picks this one over a function-level @timeout(90).
+            item.add_marker(pytest.mark.timeout(flood_aware_seconds), append=False)
             continue
         if item.get_closest_marker("timeout"):
             continue
@@ -1310,8 +1440,58 @@ def live_scratch_message(
 ) -> LiveCliMessageTarget:
     chat_ref = live_scratch_message_dialog.chat_ref
     phone = live_scratch_message_dialog.phone
+    _await_phone_flood_or_skip(cli_real_cli_env, phone)
     nonce = make_cli_nonce()
     text = f"codex live cli scratch message {nonce}"
+    result = _capture_cli(
+        cli_real_cli_env,
+        "dialogs",
+        "send",
+        "--yes",
+        "--phone",
+        phone,
+        chat_ref,
+        text,
+        timeout=60,
+    )
+    _assert_cli_result_ok(result)
+    match = _SENT_MESSAGE_ID_RE.search(result.stdout or "")
+    if match is None:
+        pytest.fail(f"send stdout did not include message_id: {result.stdout!r}", pytrace=False)
+    message_id = match.group(1)
+
+    yield LiveCliMessageTarget(chat_ref=chat_ref, message_id=message_id, phone=phone, nonce=nonce)
+
+    leak_msg = cleanup_verified_messages(
+        cli_real_cli_env,
+        phone=phone,
+        chat_ref=chat_ref,
+        candidates=[int(message_id)],
+        nonce=nonce,
+    )
+    if leak_msg:
+        pytest.fail(leak_msg, pytrace=False)
+
+
+@pytest.fixture
+def live_scratch_premium_message(
+    cli_real_cli_env: CliRealCliEnv,
+) -> LiveCliMessageTarget:
+    """Scratch message in a Premium account's Saved Messages, for react tests.
+
+    Reactions require Telegram Premium. If no premium account is connected, warn
+    and skip — the reaction would otherwise fail with PremiumAccountRequiredError.
+    The reaction must be sent by the account that owns the message, so the message
+    is created under the premium phone (not the default mutation phone).
+    """
+    phone = _first_premium_phone(cli_real_cli_env.db_path, cli_real_cli_env.phones)
+    if phone is None:
+        pytest.skip("no connected Telegram Premium account; reactions require Telegram Premium")
+
+    _await_phone_flood_or_skip(cli_real_cli_env, phone)
+    chat_ref = "me"
+    nonce = make_cli_nonce()
+    text = f"codex live cli premium scratch message {nonce}"
     result = _capture_cli(
         cli_real_cli_env,
         "dialogs",
@@ -1348,6 +1528,7 @@ def live_scratch_group(cli_real_cli_env: CliRealCliEnv) -> LiveCliDialogTarget:
     if phone and phone not in cli_real_cli_env.phones:
         pytest.skip(f"{CLI_REAL_TG_MUTATION_PHONE_ENV} is not a connected live CLI account")
     phone = phone or cli_real_cli_env.primary_phone
+    _await_phone_flood_or_skip(cli_real_cli_env, phone)
 
     title = f"sbx-tmp-group-{make_cli_nonce()}"
     result = _capture_cli(

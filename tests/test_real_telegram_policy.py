@@ -27,7 +27,9 @@ from tests.cli_real_tg_integration.conftest import (
     LiveCliAccountWaitTimeoutError,
     _assert_cli_result_ok,
     _fetch_live_accounts,
+    _first_premium_phone,
     account_info_probe_failure,
+    wait_for_phone_flood_clear,
     wait_for_ready_live_cli_accounts,
 )
 from tests.conftest import (
@@ -224,6 +226,119 @@ def test_fetch_live_accounts_can_pin_requested_phone(tmp_path, monkeypatch):
     monkeypatch.setenv(CLI_REAL_TG_PHONE_ENV, "+fresh")
 
     assert _fetch_live_accounts(db_path) == ("+fresh",)
+
+
+def _create_premium_accounts_db(path: Path, rows: tuple) -> None:
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY,
+                phone TEXT,
+                session_string TEXT,
+                is_active INTEGER,
+                is_primary INTEGER,
+                is_premium INTEGER,
+                flood_wait_until TEXT
+            )
+            """
+        )
+        conn.executemany(
+            "INSERT INTO accounts "
+            "(id, phone, session_string, is_active, is_primary, is_premium, flood_wait_until) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+
+
+def test_first_premium_phone_returns_connected_premium(tmp_path):
+    db_path = tmp_path / "live.db"
+    _create_premium_accounts_db(
+        db_path,
+        (
+            (1, "+nonpremium", "s", 1, 1, 0, None),
+            (2, "+premium", "s", 1, 0, 1, None),
+        ),
+    )
+
+    assert _first_premium_phone(db_path, ("+nonpremium", "+premium")) == "+premium"
+
+
+def test_first_premium_phone_none_when_no_premium(tmp_path):
+    db_path = tmp_path / "live.db"
+    _create_premium_accounts_db(db_path, ((1, "+nonpremium", "s", 1, 1, 0, None),))
+
+    assert _first_premium_phone(db_path, ("+nonpremium",)) is None
+
+
+def test_first_premium_phone_skips_unconnected_premium(tmp_path):
+    db_path = tmp_path / "live.db"
+    _create_premium_accounts_db(db_path, ((1, "+premium", "s", 1, 1, 1, None),))
+
+    # Premium exists in DB but the live env never connected it.
+    assert _first_premium_phone(db_path, ("+other",)) is None
+
+
+def test_first_premium_phone_missing_db_returns_none(tmp_path):
+    assert _first_premium_phone(tmp_path / "nope.db", ("+x",)) is None
+
+
+def test_wait_for_phone_flood_clear_returns_true_when_clear(tmp_path):
+    db_path = tmp_path / "live.db"
+    _create_live_accounts_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO accounts (id, phone, session_string, is_active, is_primary, flood_wait_until)"
+            " VALUES (1, '+p', 's', 1, 1, NULL)"
+        )
+
+    assert wait_for_phone_flood_clear(db_path, "+p", timeout=1, poll=0.1, sleep=lambda _s: None)
+
+
+def test_wait_for_phone_flood_clear_polls_until_expiry():
+    # remaining() reports flood for two polls, then clears; sleep is captured, not real.
+    remaining_values = iter([30.0, 10.0, 0.0])
+    slept: list[float] = []
+    now = [0.0]
+
+    def remaining(_db, _phone):
+        return next(remaining_values)
+
+    def sleep(seconds):
+        slept.append(seconds)
+        now[0] += seconds
+
+    ok = wait_for_phone_flood_clear(
+        Path("ignored.db"),
+        "+p",
+        timeout=600,
+        poll=5,
+        monotonic=lambda: now[0],
+        sleep=sleep,
+        remaining=remaining,
+    )
+
+    assert ok is True
+    assert slept == [5, 5]  # poll-capped waits while flood remained
+
+
+def test_wait_for_phone_flood_clear_times_out():
+    now = [0.0]
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    ok = wait_for_phone_flood_clear(
+        Path("ignored.db"),
+        "+p",
+        timeout=10,
+        poll=5,
+        monotonic=lambda: now[0],
+        sleep=sleep,
+        remaining=lambda _db, _phone: 999.0,  # flood far longer than timeout
+    )
+
+    assert ok is False
 
 
 def test_live_cli_account_readiness_retries_until_active_account_appears(tmp_path: Path):

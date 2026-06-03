@@ -718,7 +718,7 @@ async def test_forward_get_client_returns_none_skips():
     pool.get_client_by_phone = AsyncMock(return_value=None)
     targets = [{"phone": "+123", "dialog_id": -1}]
     await ForwardHandler().execute({"targets": targets}, ctx, {"client_pool": pool})
-    pool.get_client_by_phone.assert_awaited_once_with("+123")
+    pool.get_client_by_phone.assert_awaited_once_with("+123", wait_for_flood=True)
 
 
 # ── Issue #463: ForwardHandler records structured node errors ────────────────

@@ -53,7 +53,7 @@ class FakeClientPool:
         self._clients = {}
         self.released = []
 
-    async def get_client_by_phone(self, phone):
+    async def get_client_by_phone(self, phone, *, wait_for_flood=False):
         if not self._should_succeed or phone in self._fail_phones:
             return None
         client = self._clients.setdefault(phone, FakeClient())
@@ -444,7 +444,7 @@ async def test_publish_service_timeout():
     import asyncio
 
     class TimeoutPool(FakeClientPool):
-        async def get_client_by_phone(self, phone):
+        async def get_client_by_phone(self, phone, *, wait_for_flood=False):
             raise asyncio.TimeoutError()
 
     pool = TimeoutPool(should_succeed=True)
@@ -527,7 +527,7 @@ async def test_publish_service_general_exception():
     )
 
     class ExceptionPool(FakeClientPool):
-        async def get_client_by_phone(self, phone):
+        async def get_client_by_phone(self, phone, *, wait_for_flood=False):
             raise ValueError("unexpected error")
 
     pool = ExceptionPool(should_succeed=True)

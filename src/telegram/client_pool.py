@@ -36,6 +36,8 @@ from src.telegram.backends import (
     adapt_transport_session,
 )
 from src.telegram.flood_wait import (
+    FLOOD_WAIT_RETRY_BUFFER_SEC,
+    TRANSIENT_FLOOD_WAIT_MAX_SEC,
     HandledFloodWaitError,
     is_blocking_flood_wait_until,
     is_transient_flood_wait_seconds,
@@ -344,6 +346,56 @@ class ClientPool:
                 self._dialogs_cache.pop((phone, "full"), None)
         return await self._db.repos.dialog_cache.get_dialog(phone, dialog_id)
 
+    async def resolve_entity_with_warm(
+        self,
+        session: TelegramTransportSession | object,
+        phone: str,
+        peer: object,
+        *,
+        operation: str = "resolve_entity_with_warm",
+        timeout: float = 30.0,
+        warm_timeout: float = 60.0,
+        use_input_entity: bool = False,
+    ) -> object:
+        """Resolve a Telegram entity, warming the dialog cache once on a cache miss.
+
+        A peer referenced by numeric id may not be in the cold entity cache yet
+        (e.g. a freshly created group not in get_dialogs). The single source of
+        truth for the warm-then-retry pattern: resolve → on (ValueError, TypeError)
+        warm_dialog_cache() + mark_dialogs_fetched() → retry once. Flood-aware via
+        run_with_flood_wait. Set use_input_entity=True to return an InputPeer
+        (resolve_input_entity) instead of a full entity.
+        """
+        session = adapt_transport_session(session, disconnect_on_close=False)
+        resolver = session.resolve_input_entity if use_input_entity else session.resolve_entity
+        try:
+            return await run_with_flood_wait(
+                resolver(peer),
+                operation=operation,
+                phone=phone,
+                pool=self,
+                logger_=logger,
+                timeout=timeout,
+            )
+        except (ValueError, TypeError):
+            await run_with_flood_wait(
+                session.warm_dialog_cache(),
+                operation=f"{operation}_warm_dialog_cache",
+                phone=phone,
+                pool=self,
+                logger_=logger,
+                timeout=warm_timeout,
+            )
+            self.mark_dialogs_fetched(phone)
+            return await run_with_flood_wait(
+                resolver(peer),
+                operation=f"{operation}_after_warm",
+                phone=phone,
+                pool=self,
+                logger_=logger,
+                timeout=timeout,
+            )
+
     async def resolve_dialog_entity(
         self,
         session: TelegramTransportSession | object,
@@ -365,34 +417,12 @@ class ClientPool:
         else:
             peer = PeerChannel(abs(dialog_id))
         try:
-            return await run_with_flood_wait(
-                session.resolve_input_entity(peer),
+            return await self.resolve_entity_with_warm(
+                session,
+                phone,
+                peer,
                 operation="resolve_dialog_entity_peer",
-                phone=phone,
-                pool=self,
-                logger_=logger,
-                timeout=30.0,
-            )
-        except (ValueError, TypeError):
-            pass
-
-        try:
-            await run_with_flood_wait(
-                session.warm_dialog_cache(),
-                operation="resolve_dialog_entity_warm_dialog_cache",
-                phone=phone,
-                pool=self,
-                logger_=logger,
-                timeout=60.0,
-            )
-            self.mark_dialogs_fetched(phone)
-            return await run_with_flood_wait(
-                session.resolve_input_entity(peer),
-                operation="resolve_dialog_entity_peer_after_warm",
-                phone=phone,
-                pool=self,
-                logger_=logger,
-                timeout=30.0,
+                use_input_entity=True,
             )
         except (ValueError, TypeError):
             pass
@@ -491,9 +521,15 @@ class ClientPool:
     async def get_client_by_phone(
         self,
         phone: str,
+        *,
+        wait_for_flood: bool = False,
     ) -> tuple[TelegramTransportSession, str] | None:
-        """Get a specific active connected client when it is not flood-waited."""
-        lease = await self._acquire_phone_lease(phone)
+        """Get a specific active connected client when it is not flood-waited.
+
+        wait_for_flood=True sleeps out a transient (<=60s) flood-wait on the phone
+        instead of returning None immediately — for write callers that pin a phone.
+        """
+        lease = await self._acquire_phone_lease(phone, wait_for_flood=wait_for_flood)
         if lease is None:
             return None
         return await self._acquire_from_lease(lease)
@@ -501,9 +537,11 @@ class ClientPool:
     async def get_native_client_by_phone(
         self,
         phone: str,
+        *,
+        wait_for_flood: bool = False,
     ) -> tuple[TelegramTransportSession, str] | None:
         """Get a specific flood-aware client through the native backend for stateful flows."""
-        lease = await self._acquire_phone_lease(phone)
+        lease = await self._acquire_phone_lease(phone, wait_for_flood=wait_for_flood)
         if lease is None:
             return None
         result = await self._acquire_from_lease(lease, force_native=True)
@@ -750,7 +788,12 @@ class ClientPool:
             return None
         return Account(phone=phone, session_string=session_string, is_active=True)
 
-    async def _acquire_phone_lease(self, phone: str) -> AccountLease | None:
+    async def _acquire_phone_lease(
+        self, phone: str, *, wait_for_flood: bool = False
+    ) -> AccountLease | None:
+        if wait_for_flood:
+            await self._await_transient_flood(phone)
+
         lease = await self._lease_pool.acquire_by_phone(phone, self._connected_phones())
         if lease is not None:
             return lease
@@ -768,6 +811,29 @@ class ClientPool:
                 self._in_use.add(phone)
                 return AccountLease(account=account, shared=False)
         return AccountLease(account=account, shared=True)
+
+    async def _await_transient_flood(self, phone: str) -> None:
+        """Sleep out a transient (<=60s) flood-wait on *phone* before acquiring.
+
+        Centralizes "flood before the operation" handling for the by-phone write
+        path: get_available_client rotates past flood, but a pinned phone cannot,
+        so without this it fails outright. Only waits transient floods (matching
+        run_with_flood_wait_retry's threshold); longer floods fall through and the
+        caller still gets None. Re-reads the account after sleeping in case the
+        flood was cleared meanwhile.
+        """
+        account = await self._get_account_for_phone(phone)
+        if account is None:
+            return
+        flood_until = normalize_utc(account.flood_wait_until)
+        now = datetime.now(timezone.utc)
+        if not flood_until or flood_until <= now:
+            return
+        remaining = (flood_until - now).total_seconds()
+        if remaining > TRANSIENT_FLOOD_WAIT_MAX_SEC:
+            return  # too long to wait inline; let the caller get None as before
+        logger.info("Waiting %.1fs for transient flood-wait on %s", remaining, phone)
+        await asyncio.sleep(remaining + FLOOD_WAIT_RETRY_BUFFER_SEC)
 
     async def _acquire_from_lease(
         self,
@@ -960,15 +1026,9 @@ class ClientPool:
                 logger.warning("resolve_channel: no available client for '%s'", identifier)
                 raise RuntimeError("no_client")
             session, phone = result
-            session = adapt_transport_session(session, disconnect_on_close=False)
             try:
-                entity = await run_with_flood_wait(
-                    session.resolve_entity(peer),
-                    operation="resolve_channel",
-                    phone=phone,
-                    pool=self,
-                    logger_=logger,
-                    timeout=30.0,
+                entity = await self.resolve_entity_with_warm(
+                    session, phone, peer, operation="resolve_channel"
                 )
                 if not hasattr(entity, "title"):
                     logger.info("resolve_channel: '%s' is a user, not a channel/group", identifier)
@@ -1046,42 +1106,13 @@ class ClientPool:
                     raise last_flood_error
                 raise RuntimeError("no_client")
             session, used_phone = result
-            session = adapt_transport_session(session, disconnect_on_close=False)
             try:
-                entity = await run_with_flood_wait(
-                    session.resolve_entity(peer),
-                    operation="resolve_any_entity",
-                    phone=used_phone,
-                    pool=self,
-                    logger_=logger,
-                    timeout=30.0,
+                entity = await self.resolve_entity_with_warm(
+                    session, used_phone, peer, operation="resolve_any_entity"
                 )
                 if isinstance(entity, ChannelForbidden):
                     return None
-                # Determine type and title
-                if hasattr(entity, "title"):
-                    # Channel or Chat
-                    channel_type, deactivate = self._classify_entity(entity)
-                    return {
-                        "channel_id": entity.id,
-                        "title": entity.title,
-                        "username": getattr(entity, "username", None),
-                        "channel_type": channel_type,
-                        "deactivate": deactivate,
-                    }
-                else:
-                    # User or Bot
-                    first = getattr(entity, "first_name", "") or ""
-                    last = getattr(entity, "last_name", "") or ""
-                    title = (first + " " + last).strip() or str(entity.id)
-                    is_bot = getattr(entity, "bot", False)
-                    return {
-                        "channel_id": entity.id,
-                        "title": title,
-                        "username": getattr(entity, "username", None),
-                        "channel_type": "bot" if is_bot else "dm",
-                        "deactivate": False,
-                    }
+                return self._entity_to_dict(entity)
             except asyncio.TimeoutError:
                 logger.warning("resolve_any_entity: timed out for '%s'", identifier)
                 return None
@@ -1099,6 +1130,31 @@ class ClientPool:
         if last_flood_error is not None:
             raise last_flood_error
         return None
+
+    def _entity_to_dict(self, entity) -> dict:
+        """Map a resolved Telegram entity to the resolve_any_entity result dict."""
+        if hasattr(entity, "title"):
+            # Channel or Chat
+            channel_type, deactivate = self._classify_entity(entity)
+            return {
+                "channel_id": entity.id,
+                "title": entity.title,
+                "username": getattr(entity, "username", None),
+                "channel_type": channel_type,
+                "deactivate": deactivate,
+            }
+        # User or Bot
+        first = getattr(entity, "first_name", "") or ""
+        last = getattr(entity, "last_name", "") or ""
+        title = (first + " " + last).strip() or str(entity.id)
+        is_bot = getattr(entity, "bot", False)
+        return {
+            "channel_id": entity.id,
+            "title": title,
+            "username": getattr(entity, "username", None),
+            "channel_type": "bot" if is_bot else "dm",
+            "deactivate": False,
+        }
 
     @staticmethod
     def _classify_entity(entity) -> tuple[str, bool]:
@@ -1144,13 +1200,8 @@ class ClientPool:
         session, phone = result
         session = adapt_transport_session(session, disconnect_on_close=False)
         try:
-            entity = await run_with_flood_wait(
-                session.resolve_entity(PeerChannel(channel_id)),
-                operation="fetch_channel_meta",
-                phone=phone,
-                pool=self,
-                logger_=logger,
-                timeout=30.0,
+            entity = await self.resolve_entity_with_warm(
+                session, phone, PeerChannel(channel_id), operation="fetch_channel_meta"
             )
             full = await run_with_flood_wait(
                 session.fetch_full_channel(entity),

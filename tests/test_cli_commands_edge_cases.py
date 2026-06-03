@@ -1740,6 +1740,12 @@ class TestMessagesReadLiveMode:
         pool = MagicMock()
         pool.clients = {"+79001234567": object()}
         pool.get_native_client_by_phone = AsyncMock(return_value=(client, None))
+        # Live read now resolves through the centralized warm-aware resolver.
+        async def _resolve_with_warm(session, phone, peer, **_kw):
+            return await session.get_entity(peer)
+
+        pool.resolve_entity_with_warm = AsyncMock(side_effect=_resolve_with_warm)
+        pool.mark_dialogs_fetched = MagicMock()
         pool.disconnect_all = AsyncMock()
 
         db = MagicMock()

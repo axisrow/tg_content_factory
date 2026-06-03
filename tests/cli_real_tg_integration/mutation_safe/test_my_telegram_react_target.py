@@ -12,10 +12,12 @@ pytestmark = pytest.mark.real_tg_mutation_safe
 
 
 @pytest.mark.timeout(90)
-def test_my_telegram_react_scratch_message(run_cli, assert_cli_ok, cli_real_cli_env, live_scratch_message):
-    chat_id = live_scratch_message.chat_ref
-    message_id = live_scratch_message.message_id
-    phone = live_scratch_message.phone
+def test_my_telegram_react_scratch_message(
+    run_cli, assert_cli_ok, cli_real_cli_env, live_scratch_premium_message
+):
+    chat_id = live_scratch_premium_message.chat_ref
+    message_id = live_scratch_premium_message.message_id
+    phone = live_scratch_premium_message.phone
     emoji = os.environ.get("CLI_REAL_TG_REACT_EMOJI", "👍")
     leak_msg: str | None = None
 

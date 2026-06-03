@@ -860,13 +860,11 @@ class Collector:
                             channel.username,
                         )
                         try:
-                            fallback_entity = await run_with_flood_wait(
-                                session.resolve_entity(PeerChannel(channel_id)),
+                            fallback_entity = await self._pool.resolve_entity_with_warm(
+                                session,
+                                phone,
+                                PeerChannel(channel_id),
                                 operation="collect_channel_resolve_channel_id",
-                                phone=phone,
-                                pool=self._pool,
-                                logger_=logger,
-                                timeout=30.0,
                             )
                         except HandledFloodWaitError as exc:
                             flood_wait_sec = exc.info.wait_seconds
@@ -896,13 +894,11 @@ class Collector:
                         return total_collected
                 else:
                     try:
-                        entity = await run_with_flood_wait(
-                            session.resolve_entity(PeerChannel(channel_id)),
+                        entity = await self._pool.resolve_entity_with_warm(
+                            session,
+                            phone,
+                            PeerChannel(channel_id),
                             operation="collect_channel_resolve_numeric",
-                            phone=phone,
-                            pool=self._pool,
-                            logger_=logger,
-                            timeout=30.0,
                         )
                     except asyncio.TimeoutError:
                         logger.warning(
