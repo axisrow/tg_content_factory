@@ -94,6 +94,30 @@ def pool(mock_auth, mock_db):
 
 
 @pytest.mark.anyio
+async def test_initialize_filters_requested_phones(pool, mock_db):
+    accounts = [
+        Account(phone="+111", session_string="s1", is_active=True),
+        Account(phone="+222", session_string="s2", is_active=True),
+    ]
+    mock_db.get_accounts.return_value = accounts
+    connected: list[str] = []
+
+    async def connect_account(account: Account):
+        connected.append(account.phone)
+        lease = MagicMock()
+        lease.session.fetch_me = AsyncMock(return_value=MagicMock(premium=False))
+        return lease
+
+    pool._connect_account = AsyncMock(side_effect=connect_account)  # type: ignore[method-assign]
+    pool._backend_router.release = AsyncMock()
+
+    await pool.initialize(phones=("+222",))
+
+    assert connected == ["+222"]
+    pool._backend_router.release.assert_awaited_once()
+
+
+@pytest.mark.anyio
 async def test_resolve_dialog_entity_uses_cached_dm_type_before_warm(pool, mock_db):
     client = AsyncMock()
     client.get_input_entity = AsyncMock(return_value="dm-entity")

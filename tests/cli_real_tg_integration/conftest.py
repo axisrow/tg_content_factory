@@ -72,6 +72,7 @@ class CliRealCliEnv:
 class LiveCliDialogTarget:
     chat_ref: str
     phone: str
+    title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +80,7 @@ class LiveCliMessageTarget:
     chat_ref: str
     message_id: str
     phone: str
+    nonce: str | None = None
 
 
 class LiveCliAccountWaitTimeoutError(RuntimeError):
@@ -484,8 +486,18 @@ _FLOOD_OR_READ_ERROR_RE = re.compile(
     r"unavailable|not connected|Account .* not connected",
     re.IGNORECASE,
 )
-# `messages read --live` prints one header line per message: "[<date>] #<id> <sender>".
-_LIVE_MESSAGE_HEADER_RE = re.compile(r"^\[.*?\]\s+#(\d+)\b")
+# `messages read --live` prints one header line per message as
+# `print(f"[{date}] #{msg.id}{sender}...")` where `sender` is `" name last".strip()`
+# (src/cli/commands/messages.py:84). So the sender is concatenated DIRECTLY after
+# the id with NO separating space (e.g. `[2026-06-03 02:42:48] #611404Alexey`), and
+# is empty when there is no sender. The id is therefore terminated by a non-digit
+# (a letter, reactions suffix, or end of line), NOT by whitespace — matching on a
+# space here would silently fail to parse every real header. `(?!\d)` ends the id
+# at the last digit without consuming the following char.
+_LIVE_MESSAGE_HEADER_RE = re.compile(r"^\[.*?\]\s+#(\d+)(?!\d)")
+_SENT_MESSAGE_ID_RE = re.compile(r"\bmessage_id=(\d+)\b")
+_CREATED_GROUP_ID_RE = re.compile(r"\bCreated group id=(-?\d+)\b")
+_RESOLVE_ID_RE = re.compile(r"^ID:\s*(-?\d+)\s*$", re.MULTILINE)
 
 
 def _capture_cli(
@@ -728,6 +740,62 @@ def cli_verify_channel_title(
     )
 
 
+def resolve_saved_messages_dialog_id(cli_env: CliEnv, *, phone: str) -> int | None:
+    """Return the current account's Saved Messages dialog id, or None on failure."""
+    result = _capture_cli(
+        cli_env,
+        "dialogs",
+        "resolve",
+        "me",
+        "--phone",
+        phone,
+        timeout=60,
+    )
+    if cli_result_failure_summary(result) is not None:
+        return None
+    match = _RESOLVE_ID_RE.search(result.stdout or "")
+    return int(match.group(1)) if match else None
+
+
+def cleanup_verified_messages(
+    cli_env: CliEnv,
+    *,
+    phone: str,
+    chat_ref: str,
+    candidates: list[int],
+    nonce: str,
+) -> str | None:
+    """Delete only candidate messages that live-read verification proves are ours."""
+    verified_ids, verify_leak = assert_safe_to_delete(
+        cli_env,
+        phone=phone,
+        chat_ref=chat_ref,
+        candidates=candidates,
+        nonce=nonce,
+    )
+    if not verified_ids:
+        return verify_leak
+
+    try:
+        cleanup = _capture_cli(
+            cli_env,
+            "dialogs",
+            "delete-message",
+            "--yes",
+            "--phone",
+            phone,
+            chat_ref,
+            *[str(mid) for mid in verified_ids],
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return f"message(s) {verified_ids} in {chat_ref} may be left: cleanup timed out"
+    cleanup_failure = cli_result_failure_summary(cleanup)
+    if cleanup_failure is not None:
+        return f"message(s) {verified_ids} in {chat_ref} may be left: {cleanup_failure}"
+    return verify_leak
+
+
 def snapshot_pending_collection_task_ids(db_path: Path) -> tuple[set[int], bool]:
     """Return (pending channel-collect task ids, ok) currently in the DB.
 
@@ -794,6 +862,23 @@ def _run_account_info_probe(
     )
 
 
+def _timeout_stream_excerpt(exc: subprocess.TimeoutExpired, *, limit: int = 500) -> str:
+    parts: list[str] = []
+    for name in ("stdout", "stderr"):
+        raw = getattr(exc, name, None)
+        if not raw:
+            continue
+        if isinstance(raw, bytes):
+            text = raw.decode("utf-8", errors="replace")
+        else:
+            text = str(raw)
+        text = " ".join(text.split())
+        if len(text) > limit:
+            text = f"{text[:limit]}..."
+        parts.append(f"{name}: {text}")
+    return "; ".join(parts)
+
+
 def account_info_probe_failure(phone: str, result: subprocess.CompletedProcess) -> str | None:
     failure_summary = cli_result_failure_summary(result)
     if failure_summary is not None:
@@ -845,11 +930,14 @@ def wait_for_ready_live_cli_accounts(
                         timeout=effective_probe_timeout_seconds,
                         runner=runner,
                     )
-                except subprocess.TimeoutExpired:
+                except subprocess.TimeoutExpired as exc:
+                    detail = _timeout_stream_excerpt(exc)
                     last_probe_failure = (
                         f"`account info --phone {phone}` timed out after "
                         f"{effective_probe_timeout_seconds:g}s"
                     )
+                    if detail:
+                        last_probe_failure += f" ({detail})"
                     continue
 
                 failure = account_info_probe_failure(phone, result)
@@ -1202,6 +1290,139 @@ def live_scratch_message_dialog(cli_real_cli_env: CliRealCliEnv) -> LiveCliDialo
     # would raise ChatAdminRequiredError on SendMessageRequest. Override the target
     # via the CLI_REAL_TG_MUTATION_CHAT env var when a specific chat is required.
     return LiveCliDialogTarget(chat_ref="me", phone=phone or cli_real_cli_env.primary_phone)
+
+
+@pytest.fixture
+def live_scratch_message(
+    cli_real_cli_env: CliRealCliEnv,
+    live_scratch_message_dialog: LiveCliDialogTarget,
+) -> LiveCliMessageTarget:
+    chat_ref = live_scratch_message_dialog.chat_ref
+    phone = live_scratch_message_dialog.phone
+    nonce = make_cli_nonce()
+    text = f"codex live cli scratch message {nonce}"
+    result = _capture_cli(
+        cli_real_cli_env,
+        "dialogs",
+        "send",
+        "--yes",
+        "--phone",
+        phone,
+        chat_ref,
+        text,
+        timeout=60,
+    )
+    _assert_cli_result_ok(result)
+    match = _SENT_MESSAGE_ID_RE.search(result.stdout or "")
+    if match is None:
+        pytest.fail(f"send stdout did not include message_id: {result.stdout!r}", pytrace=False)
+    message_id = match.group(1)
+
+    yield LiveCliMessageTarget(chat_ref=chat_ref, message_id=message_id, phone=phone, nonce=nonce)
+
+    leak_msg = cleanup_verified_messages(
+        cli_real_cli_env,
+        phone=phone,
+        chat_ref=chat_ref,
+        candidates=[int(message_id)],
+        nonce=nonce,
+    )
+    if leak_msg:
+        pytest.fail(leak_msg, pytrace=False)
+
+
+@pytest.fixture
+def live_scratch_group(cli_real_cli_env: CliRealCliEnv) -> LiveCliDialogTarget:
+    phone = os.environ.get(CLI_REAL_TG_MUTATION_PHONE_ENV)
+    if phone and phone not in cli_real_cli_env.phones:
+        pytest.skip(f"{CLI_REAL_TG_MUTATION_PHONE_ENV} is not a connected live CLI account")
+    phone = phone or cli_real_cli_env.primary_phone
+
+    title = f"sbx-tmp-group-{make_cli_nonce()}"
+    result = _capture_cli(
+        cli_real_cli_env,
+        "dialogs",
+        "create-group",
+        "--title",
+        title,
+        "--phone",
+        phone,
+        timeout=90,
+    )
+    _assert_cli_result_ok(result)
+    match = _CREATED_GROUP_ID_RE.search(result.stdout or "")
+    if match is None:
+        pytest.fail(f"create-group stdout did not include group id: {result.stdout!r}", pytrace=False)
+    group_id = match.group(1)
+
+    yield LiveCliDialogTarget(chat_ref=group_id, phone=phone, title=title)
+
+    verdict = cli_verify_channel_title(
+        cli_real_cli_env,
+        phone=phone,
+        channel_id=group_id,
+        expected_title=title,
+    )
+    if not verdict.ok:
+        pytest.fail(f"group {group_id} left in place: {verdict.reason}", pytrace=False)
+    try:
+        cleanup = _capture_cli(
+            cli_real_cli_env,
+            "dialogs",
+            "leave",
+            group_id,
+            "--phone",
+            phone,
+            "--yes",
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"group {group_id} may still exist: cleanup leave timed out", pytrace=False)
+    cleanup_failure = cli_result_failure_summary(cleanup)
+    if cleanup_failure is not None:
+        pytest.fail(f"group {group_id} may still exist: {cleanup_failure}", pytrace=False)
+
+
+@pytest.fixture
+def live_scratch_group_message(
+    cli_real_cli_env: CliRealCliEnv,
+    live_scratch_group: LiveCliDialogTarget,
+) -> LiveCliMessageTarget:
+    nonce = make_cli_nonce()
+    text = f"codex live cli group message {nonce}"
+    result = _capture_cli(
+        cli_real_cli_env,
+        "dialogs",
+        "send",
+        "--yes",
+        "--phone",
+        live_scratch_group.phone,
+        live_scratch_group.chat_ref,
+        text,
+        timeout=60,
+    )
+    _assert_cli_result_ok(result)
+    match = _SENT_MESSAGE_ID_RE.search(result.stdout or "")
+    if match is None:
+        pytest.fail(f"group send stdout did not include message_id: {result.stdout!r}", pytrace=False)
+    message_id = match.group(1)
+
+    yield LiveCliMessageTarget(
+        chat_ref=live_scratch_group.chat_ref,
+        message_id=message_id,
+        phone=live_scratch_group.phone,
+        nonce=nonce,
+    )
+
+    leak_msg = cleanup_verified_messages(
+        cli_real_cli_env,
+        phone=live_scratch_group.phone,
+        chat_ref=live_scratch_group.chat_ref,
+        candidates=[int(message_id)],
+        nonce=nonce,
+    )
+    if leak_msg:
+        pytest.fail(leak_msg, pytrace=False)
 
 
 @pytest.fixture

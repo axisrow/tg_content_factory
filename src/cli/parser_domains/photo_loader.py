@@ -73,4 +73,5 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     photo_auto_delete = photo_sub.add_parser("auto-delete", help="Delete auto-upload job")
     photo_auto_delete.add_argument("id", type=int, help="Job id")
 
-    photo_sub.add_parser("run-due", help="Run due photo items and auto jobs now")
+    photo_run_due = photo_sub.add_parser("run-due", help="Run due photo items and auto jobs now")
+    photo_run_due.add_argument("--item-id", type=int, default=None, help="Run only one due photo item")

@@ -101,6 +101,12 @@ _OBSOLETE_MUTATION_SAFE_TARGET_ENV_NAMES = (
     "CLI_REAL_TG_UNPIN_MESSAGE_ID",
     "CLI_REAL_TG_UNPIN_PHONE",
 )
+_OBSOLETE_MUTATION_SAFE_TARGET_FIXTURE_NAMES = (
+    "live_mutation_dialog",
+    "live_mutation_message",
+    "live_owned_mutation_message",
+    "live_pin_mutation_message",
+)
 _LIVE_POLICY_MARKER_USAGES = (
     _SAFE_MARKER_USAGES
     + _MUTATION_SAFE_MARKER_USAGES
@@ -112,8 +118,9 @@ _CLI_CATEGORY_REQUIRED_MARKERS = {
     "heavy": _SAFE_MARKER_USAGES,
     "mutating": _SAFE_MARKER_USAGES,
     "mutation_safe": _MUTATION_SAFE_MARKER_USAGES,
-    "destructive": _MANUAL_MARKER_USAGES,
+    "process_control": _MANUAL_MARKER_USAGES,
     "manual": _MANUAL_MARKER_USAGES,
+    "dangerous": _NEVER_MARKER_USAGES,
 }
 _CLI_CLEANUP_COMMAND_PRODUCERS = {
     ("agent", "thread-delete"): {("agent", "chat")},
@@ -126,7 +133,7 @@ _CLI_CLEANUP_COMMAND_PRODUCERS = {
         ("pipeline", "publish"),
     },
     ("dialogs", "edit-message"): {("dialogs", "edit-message")},
-    ("dialogs", "leave"): {("dialogs", "create-channel")},
+    ("dialogs", "leave"): {("dialogs", "create-channel"), ("dialogs", "create-group")},
     ("dialogs", "pin-message"): {("dialogs", "unpin-message")},
     ("dialogs", "react"): {("dialogs", "react")},
     ("dialogs", "unarchive"): {("dialogs", "archive")},
@@ -340,6 +347,39 @@ def test_live_cli_account_readiness_fails_on_zero_exit_no_account_probe(tmp_path
             monotonic=monotonic,
             sleep=sleep,
         )
+
+
+def test_live_cli_account_readiness_timeout_reports_probe_streams(tmp_path: Path):
+    cli_env = _live_cli_probe_env(tmp_path)
+    now = 0.0
+
+    def monotonic() -> float:
+        return now
+
+    def runner(args, **kwargs) -> subprocess.CompletedProcess:
+        nonlocal now
+        now += kwargs["timeout"]
+        raise subprocess.TimeoutExpired(
+            args,
+            kwargs["timeout"],
+            output="",
+            stderr="PermissionError: [Errno 1] Operation not permitted",
+        )
+
+    with pytest.raises(LiveCliAccountReadinessError) as exc_info:
+        wait_for_ready_live_cli_accounts(
+            cli_env,
+            wait_seconds=1,
+            poll_seconds=1,
+            fetch_accounts=lambda _db_path: ("+123",),
+            runner=runner,
+            monotonic=monotonic,
+            sleep=lambda _seconds: None,
+        )
+
+    message = str(exc_info.value)
+    assert "timed out after 1s" in message
+    assert "Operation not permitted" in message
 
 
 def test_account_info_probe_requires_requested_phone_in_stdout():
@@ -1014,6 +1054,8 @@ def test_cli_real_tg_inventory_uses_live_cli_runner_fixture():
 
     for path in sorted(_CLI_REAL_TG_DIR.rglob("test_*.py")):
         content = path.read_text(encoding="utf-8")
+        if any(marker in content for marker in _NEVER_MARKER_USAGES):
+            continue
         if not any(marker in content for marker in _LIVE_POLICY_MARKER_USAGES):
             violations.append(f"{path.relative_to(_REPO_ROOT)}: missing real Telegram marker")
             continue
@@ -1046,6 +1088,9 @@ def test_cli_real_tg_mutation_safe_inventory_discovers_live_targets():
         for env_name in _OBSOLETE_MUTATION_SAFE_TARGET_ENV_NAMES:
             if env_name in content:
                 violations.append(f"{path.relative_to(_REPO_ROOT)}: {env_name}")
+        for fixture_name in _OBSOLETE_MUTATION_SAFE_TARGET_FIXTURE_NAMES:
+            if fixture_name in content:
+                violations.append(f"{path.relative_to(_REPO_ROOT)}: {fixture_name}")
 
     assert violations == []
 
@@ -1098,6 +1143,7 @@ def test_cli_real_tg_mutation_safe_commands_are_bounded():
                 if "--yes" not in strings:
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: react must be noninteractive")
             if command_case in {
+                ("dialogs", "delete-message"),
                 ("dialogs", "edit-message"),
                 ("dialogs", "forward"),
                 ("dialogs", "send"),
@@ -1120,9 +1166,11 @@ def test_cli_real_tg_mutation_safe_commands_are_bounded():
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: unpin-message must be noninteractive")
             if command_case in {
                 ("dialogs", "archive"),
+                ("dialogs", "delete-message"),
                 ("dialogs", "edit-message"),
                 ("dialogs", "forward"),
                 ("dialogs", "mark-read"),
+                ("dialogs", "participants"),
                 ("dialogs", "pin-message"),
                 ("dialogs", "react"),
                 ("dialogs", "send"),
@@ -1140,6 +1188,10 @@ def test_cli_real_tg_mutation_safe_commands_are_bounded():
                 ("photo-loader", "send"),
             } and "--phone" not in strings:
                 violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: mutation-safe command must pin --phone")
+            if command_case == ("notification", "test") and "--message" not in strings:
+                violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: notification test must set --message")
+            if command_case == ("photo-loader", "run-due") and "--item-id" not in strings:
+                violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: run-due must set --item-id")
 
     assert violations == []
 
