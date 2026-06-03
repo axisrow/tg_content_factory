@@ -855,12 +855,18 @@ def _install_fake_codex(
 
     captured = {}
 
+    import threading
+
+    closed_event = threading.Event()
+
     class FakeThread:
         def run(self, instruction):
             if hang_seconds:
-                import time
-
-                time.sleep(hang_seconds)  # simulate a stalled Codex subprocess
+                # Block as the real SDK does inside a blocking queue.get(); the
+                # only way out is close() firing closed_event (mirrors the SDK's
+                # reader thread fail_all()ing the queue on subprocess kill).
+                if closed_event.wait(timeout=hang_seconds):
+                    raise RuntimeError("Codex image: subprocess closed")
             # The instruction embeds the absolute save path on its own line.
             save_path = None
             for line in instruction.splitlines():
@@ -890,6 +896,12 @@ def _install_fake_codex(
         def thread_start(self, **kwargs):
             captured["start_kwargs"] = kwargs
             return FakeThread()
+
+        def close(self):
+            # Real Codex.close() terminate()/kill()s the subprocess; here it
+            # releases the blocked run() and records that it was called.
+            captured["closed"] = True
+            closed_event.set()
 
     fake_mod = ModuleType("openai_codex")
     fake_mod.Codex = FakeCodex
@@ -944,16 +956,18 @@ async def test_codex_image_adapter_falls_back_to_target_when_no_item(monkeypatch
 
 
 @pytest.mark.anyio
-async def test_codex_image_adapter_times_out(monkeypatch, tmp_path):
-    """A stalled Codex image turn raises TimeoutError instead of hanging forever."""
+async def test_codex_image_adapter_times_out_and_kills_subprocess(monkeypatch, tmp_path):
+    """A stalled Codex turn times out AND closes the subprocess to free the thread."""
     import asyncio
 
     from src.services.provider_adapters import make_codex_image_adapter
 
-    _install_fake_codex(monkeypatch, hang_seconds=5.0)
+    captured = _install_fake_codex(monkeypatch, hang_seconds=5.0)
     adapter = make_codex_image_adapter(output_dir=str(tmp_path), image_timeout=0.05)
     with pytest.raises((asyncio.TimeoutError, TimeoutError)):
         await adapter("x", "gpt-5.4")
+    # close() was called on timeout — without it the worker thread would leak.
+    assert captured.get("closed") is True
 
 
 @pytest.mark.anyio

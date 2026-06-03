@@ -351,9 +351,10 @@ def make_replicate_image_adapter(api_token: str, timeout: float = 60.0) -> Image
 # the Codex agent itself via the ``$imagegen`` tool, which writes a PNG to a
 # path we hand it — so this adapter, like HuggingFace, returns a local file path.
 CODEX_DEFAULT_IMAGE_MODEL = "gpt-5.4"
-# Deadline for one Codex image turn. Bounds the caller's wait; the orphaned
-# worker thread still runs to completion (to_thread cannot be cancelled), but
-# this prevents a stuck Codex subprocess from hanging generate()/the SSE stream.
+# Deadline for one Codex image turn. On timeout the adapter kills the Codex
+# subprocess (Codex.close() → terminate()/kill()), which unblocks the stuck
+# worker thread, so the executor slot is freed shortly after — not leaked for
+# the process lifetime.
 CODEX_IMAGE_TIMEOUT_SECONDS = 180.0
 
 
@@ -435,10 +436,19 @@ def make_codex_image_adapter(
         model_id = model or CODEX_DEFAULT_IMAGE_MODEL
         instruction = _build_codex_image_prompt(prompt, str(target))
 
+        # Share the live Codex handle with the event loop so a timeout can kill
+        # the subprocess. thread.run() blocks the worker with no cancellation
+        # token; wait_for cancels only the awaiting coroutine, so without an
+        # out-of-band close() the worker thread would stay parked in the SDK's
+        # blocking queue.get() and never free its executor slot.
+        codex_box: dict = {}
+
         def _run_codex() -> Optional[str]:
             from openai_codex import Codex, Sandbox
 
-            with Codex() as codex:
+            codex = Codex()
+            codex_box["codex"] = codex
+            with codex:
                 thread = codex.thread_start(
                     cwd=str(out.resolve()),
                     model=model_id,
@@ -450,7 +460,18 @@ def make_codex_image_adapter(
                 raise RuntimeError(f"Codex image: thread did not complete (status={status})")
             return _codex_saved_path_from_result(result)
 
-        saved = await asyncio.wait_for(asyncio.to_thread(_run_codex), timeout=image_timeout)
+        try:
+            saved = await asyncio.wait_for(asyncio.to_thread(_run_codex), timeout=image_timeout)
+        except (TimeoutError, asyncio.TimeoutError):
+            codex = codex_box.get("codex")
+            if codex is not None:
+                # close() → terminate()/kill(); the SDK's reader thread then
+                # fail_all()s the blocked queue.get(), unwinding the worker.
+                try:
+                    await asyncio.to_thread(codex.close)
+                except Exception:
+                    logger.warning("Codex image: failed to close stalled subprocess", exc_info=True)
+            raise
         # Prefer the path Codex reported (it may pick its own filename inside our
         # output dir), but confine it to the requested directory: the prompt is
         # user/pipeline-controlled, so a reported path must not redirect the
