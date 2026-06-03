@@ -8,6 +8,7 @@ import importlib.util
 import logging
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
@@ -415,6 +416,31 @@ def codex_available() -> bool:
     return (Path.home() / ".codex" / "auth.json").exists()
 
 
+# Dedicated thread pools for the Codex image path, kept OFF the default asyncio
+# loop executor (the one `asyncio.to_thread` / `run_in_executor(None, ...)` use).
+# Two separate pools, created once at import time (not per call):
+#
+#   * ``_CODEX_RUN_EXECUTOR`` runs the blocking ``thread.run`` turn. Keeping it
+#     off the default pool means a hung Codex turn cannot starve the default
+#     pool's slots, which S3 upload (s3_store.py), the debug log-tail
+#     (routes/debug.py) and AI search also schedule onto.
+#   * ``_CODEX_CLOSE_EXECUTOR`` runs only ``codex.close()``. It MUST be a
+#     separate pool: when every ``_CODEX_RUN_EXECUTOR`` slot is occupied by hung
+#     turns, the timeout handler still needs a free slot to submit close() —
+#     and close() is what terminates the subprocess and unwinds the parked run
+#     thread (the SDK reader thread fail_all()s the blocked queue.get()).
+#     Submitting close() onto the same saturated run pool would queue it behind
+#     the very hangs it is meant to clear, so the kill never happens.
+#
+# Lifecycle note: ThreadPoolExecutor worker threads are non-daemon, so a thread
+# still parked inside a hung Codex turn at interpreter shutdown would block exit
+# via the executor's atexit join. In practice the timeout handler calls close()
+# which unblocks the parked run thread, draining the slot; the pools are
+# intentionally small so at most a few threads can ever be parked at once.
+_CODEX_RUN_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="codex-image-run")
+_CODEX_CLOSE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="codex-image-close")
+
+
 def make_codex_image_adapter(
     output_dir: str = DEFAULT_IMAGE_OUTPUT_DIR,
     image_timeout: float = CODEX_IMAGE_TIMEOUT_SECONDS,
@@ -460,15 +486,24 @@ def make_codex_image_adapter(
                 raise RuntimeError(f"Codex image: thread did not complete (status={status})")
             return _codex_saved_path_from_result(result)
 
+        loop = asyncio.get_running_loop()
         try:
-            saved = await asyncio.wait_for(asyncio.to_thread(_run_codex), timeout=image_timeout)
+            # Run on the dedicated codex-run pool, NOT the default loop executor,
+            # so a hung turn can't starve the default pool shared by S3 upload /
+            # log-tail / AI search.
+            saved = await asyncio.wait_for(
+                loop.run_in_executor(_CODEX_RUN_EXECUTOR, _run_codex), timeout=image_timeout
+            )
         except (TimeoutError, asyncio.TimeoutError):
             codex = codex_box.get("codex")
             if codex is not None:
                 # close() → terminate()/kill(); the SDK's reader thread then
                 # fail_all()s the blocked queue.get(), unwinding the worker.
+                # Submit on the SEPARATE close pool: when the run pool is
+                # saturated by hangs, close() still gets a free slot — it's what
+                # kills the subprocess and frees the parked run slot.
                 try:
-                    await asyncio.to_thread(codex.close)
+                    await loop.run_in_executor(_CODEX_CLOSE_EXECUTOR, codex.close)
                 except Exception:
                     logger.warning("Codex image: failed to close stalled subprocess", exc_info=True)
             raise
