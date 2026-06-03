@@ -234,9 +234,9 @@ class TelegramActionService:
         acquired_phone: str | None = None
         if phone:
             if native and self._has_explicit_pool_operation(self._pool, "get_native_client_by_phone"):
-                result = await self._pool.get_native_client_by_phone(phone)
+                result = await self._pool.get_native_client_by_phone(phone, wait_for_flood=True)
             elif self._has_explicit_pool_operation(self._pool, "get_client_by_phone"):
-                result = await self._pool.get_client_by_phone(phone)
+                result = await self._pool.get_client_by_phone(phone, wait_for_flood=True)
             else:
                 result = None
         elif allow_any and self._has_explicit_pool_operation(self._pool, "get_available_client"):
@@ -295,6 +295,12 @@ class TelegramActionService:
                     return entity
 
         try:
+            if self._has_explicit_pool_operation(self._pool, "resolve_entity_with_warm"):
+                # Centralized cache-warming resolve so a freshly created chat
+                # (cold entity cache) resolves on retry instead of failing.
+                return await self._pool.resolve_entity_with_warm(
+                    client, phone, identifier, operation="telegram_actions_resolve"
+                )
             return await client.get_entity(identifier)
         except HandledFloodWaitError:
             raise

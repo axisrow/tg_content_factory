@@ -18,12 +18,12 @@ class _LiveSandboxPool:
     def clients(self) -> dict[str, object]:
         return {self.phone: self.client}
 
-    async def get_native_client_by_phone(self, phone: str):
+    async def get_native_client_by_phone(self, phone: str, *, wait_for_flood: bool = False):
         if phone != self.phone:
             return None
         return self.client, self.phone
 
-    async def get_client_by_phone(self, phone: str):
+    async def get_client_by_phone(self, phone: str, *, wait_for_flood: bool = False):
         if phone != self.phone:
             return None
         return self.client, self.phone

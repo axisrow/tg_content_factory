@@ -454,7 +454,7 @@ async def test_forward_empty_messages():
     pool.release_client = AsyncMock()
     targets = [{"phone": "+123", "dialog_id": -1}]
     await ForwardHandler().execute({"targets": targets}, ctx, {"client_pool": pool})
-    pool.get_client_by_phone.assert_awaited_once_with("+123")
+    pool.get_client_by_phone.assert_awaited_once_with("+123", wait_for_flood=True)
     session.forward_messages.assert_not_awaited()
     pool.release_client.assert_awaited_once_with("+123")
 

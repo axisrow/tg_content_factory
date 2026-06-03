@@ -294,7 +294,7 @@ async def test_react_handler_tracks_successful_reactions():
         def __init__(self, session):
             self._session = session
 
-        async def get_client_by_phone(self, phone):
+        async def get_client_by_phone(self, phone, *, wait_for_flood=False):
             return self._session, phone
 
         async def release_client(self, phone):

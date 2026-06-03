@@ -113,7 +113,7 @@ class PublishService:
             return PublishResult(success=False, error="client_pool not configured")
         acquired_phone: str | None = None
         try:
-            result = await pool.get_client_by_phone(target.phone)
+            result = await pool.get_client_by_phone(target.phone, wait_for_flood=True)
             if result is None:
                 return PublishResult(
                     success=False,

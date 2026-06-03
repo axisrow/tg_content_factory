@@ -117,12 +117,17 @@ def run(args: argparse.Namespace) -> None:
                         return
                     client, _ = result
                     try:
-                        # Try numeric ID first
+                        # Try numeric ID first; a freshly created chat may not be in
+                        # the cold entity cache yet, so warm dialogs once and retry
+                        # via the centralized resolver.
                         try:
                             entity_id = int(identifier)
-                            entity = await client.get_entity(entity_id)
                         except ValueError:
-                            entity = await client.get_entity(identifier)
+                            entity_id = None
+                        resolve_target = entity_id if entity_id is not None else identifier
+                        entity = await pool.resolve_entity_with_warm(
+                            client, phone, resolve_target, operation="cli_messages_read_resolve"
+                        )
                         kwargs = {"limit": args.limit}
                         if args.offset_id:
                             kwargs["offset_id"] = args.offset_id

@@ -472,6 +472,13 @@ class FakeClientPool(MagicMock):
 
         return ClientPool._classify_entity(entity)
 
+    async def resolve_entity_with_warm(self, session, phone, peer, **kwargs):
+        # Delegate to the real centralized resolver so the warm-then-retry path
+        # is exercised against the fake session/cache state.
+        from src.telegram.client_pool import ClientPool
+
+        return await ClientPool.resolve_entity_with_warm(self, session, phone, peer, **kwargs)
+
 
 def make_mock_reactions(items: list[tuple[str, int]]) -> SimpleNamespace:
     """Create a mock MessageReactions object.
