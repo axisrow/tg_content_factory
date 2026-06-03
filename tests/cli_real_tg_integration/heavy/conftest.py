@@ -4,15 +4,17 @@ import os
 
 import pytest
 
+from tests.cli_real_tg_integration._live_readiness import _gate_enabled
+
 HEAVY_GATE_ENV = "RUN_CLI_REAL_TG_HEAVY"
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if os.environ.get(HEAVY_GATE_ENV) == "1":
+    if _gate_enabled(HEAVY_GATE_ENV):
         return
 
     skip_marker = pytest.mark.skip(
-        reason=f"heavy CLI tests disabled; set {HEAVY_GATE_ENV}=1 to run them"
+        reason=f"heavy CLI tests disabled; set {HEAVY_GATE_ENV}=1 to force on, =0 to force off"
     )
     here = os.path.dirname(os.path.abspath(__file__))
     for item in items:

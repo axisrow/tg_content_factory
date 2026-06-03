@@ -21,17 +21,19 @@ import os
 
 import pytest
 
+from tests.cli_real_tg_integration._live_readiness import _gate_enabled
+
 GATE_ENV = "RUN_CLI_PROCESS_CONTROL"
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if os.environ.get(GATE_ENV) == "1":
+    if _gate_enabled(GATE_ENV):
         return
 
     skip_marker = pytest.mark.skip(
         reason=(
-            f"process-control CLI tests disabled; set {GATE_ENV}=1 "
-            "AND RUN_REAL_TELEGRAM_MANUAL=1 to run them"
+            f"process-control CLI tests disabled; set {GATE_ENV}=1 (or =0 to force off) "
+            "and RUN_REAL_TELEGRAM_MANUAL — auto-enabled on a live-ready project"
         )
     )
     here = os.path.dirname(os.path.abspath(__file__))

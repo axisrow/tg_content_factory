@@ -177,8 +177,22 @@ def _evaluate_real_tg_policy(
     mode: str | None,
     fixturenames: Collection[str],
     environ: Mapping[str, str],
+    gate_enabled: Callable[[str, Mapping[str, str]], bool] | None = None,
 ) -> tuple[str | None, str | None]:
+    if gate_enabled is None:
+        from tests.cli_real_tg_integration._live_readiness import _gate_enabled as gate_enabled
+
     uses_live_fixture = any(fixture in fixturenames for fixture in REAL_TG_LIVE_FIXTURES)
+    cli_live = CLI_REAL_TG_LIVE_FIXTURE in fixturenames
+
+    def _gate(env_name: str) -> bool:
+        # Auto-enable (project-readiness) applies only to the CLI-live fixture.
+        # The real_telegram_sandbox fixture additionally needs REAL_TG_* env that
+        # auto-readiness can't supply, so keep it strictly env-gated to avoid
+        # firing sandbox tests "into the void" on a live-CLI-ready dev machine.
+        if cli_live:
+            return gate_enabled(env_name, environ)
+        return environ.get(env_name) == "1"
 
     if uses_live_fixture and mode is None:
         return (
@@ -203,23 +217,20 @@ def _evaluate_real_tg_policy(
             f"@{REAL_TG_NEVER_MARK} tests cannot request real Telegram fixtures.",
         )
 
-    if mode == REAL_TG_SAFE_MARK and environ.get(REAL_TG_SAFE_GATE_ENV) != "1":
+    if mode == REAL_TG_SAFE_MARK and not _gate(REAL_TG_SAFE_GATE_ENV):
         return (
             "skip",
             f"real Telegram safe tests are disabled; set {REAL_TG_SAFE_GATE_ENV}=1 to run them.",
         )
 
-    if (
-        mode == REAL_TG_MUTATION_SAFE_MARK
-        and environ.get(REAL_TG_MUTATION_SAFE_GATE_ENV) != "1"
-    ):
+    if mode == REAL_TG_MUTATION_SAFE_MARK and not _gate(REAL_TG_MUTATION_SAFE_GATE_ENV):
         return (
             "skip",
             "real Telegram mutation-safe tests are disabled; "
             f"set {REAL_TG_MUTATION_SAFE_GATE_ENV}=1 to run them.",
         )
 
-    if mode == REAL_TG_MANUAL_MARK and environ.get(REAL_TG_MANUAL_GATE_ENV) != "1":
+    if mode == REAL_TG_MANUAL_MARK and not _gate(REAL_TG_MANUAL_GATE_ENV):
         return (
             "skip",
             "real Telegram manual tests are disabled; "

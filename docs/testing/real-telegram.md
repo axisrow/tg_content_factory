@@ -14,7 +14,7 @@
 - `real_tg_mutation_safe` означает bounded Telegram-visible mutation по явно выбранной оператором цели, например реакция на конкретное сообщение.
 - CLI inventory из `tests/cli_real_tg_integration/` предназначен для ручного запуска время от времени оператором на своей live-среде.
 - High-risk Telegram-visible write actions остаются `real_tg_manual` и требуют отдельного ручного gate.
-- Локальные DB writes допустимы только в явно выделенных CLI folders (`safe_write`, `mutating`, `destructive`) и должны быть idempotent, cleanup-backed или осознанно операторскими.
+- Локальные DB writes допустимы только в явно выделенных CLI folders (`safe_write`, `mutating`, `process_control`) и должны быть idempotent, cleanup-backed или осознанно операторскими.
 
 ## Pytest markers
 
@@ -29,11 +29,32 @@
 
 - live Telegram test обязан иметь `real_tg_safe`, `real_tg_mutation_safe` или `real_tg_manual`;
 - live Telegram test обязан использовать `real_telegram_sandbox` или `cli_real_cli_env`;
-- `real_tg_safe` требует `RUN_REAL_TELEGRAM_SAFE=1`;
-- `real_tg_mutation_safe` требует `RUN_REAL_TELEGRAM_MUTATION_SAFE=1`;
-- `real_tg_manual` требует `RUN_REAL_TELEGRAM_MANUAL=1`;
+- `real_tg_safe` требует `RUN_REAL_TELEGRAM_SAFE=1` (или авто, см. ниже);
+- `real_tg_mutation_safe` требует `RUN_REAL_TELEGRAM_MUTATION_SAFE=1` (или авто);
+- `real_tg_manual` требует `RUN_REAL_TELEGRAM_MANUAL=1` (или авто);
 - `real_tg_never` несовместим с live fixtures;
 - без marker + live fixture доступ к real Telegram считается ошибкой конфигурации теста.
+
+### Авто-включение по готовности проекта
+
+CLI live-инвентарь (`cli_real_cli_env`-тесты) теперь авто-включается, когда проект реально
+настроен для live, без ручного выставления `RUN_*`-гейтов. Предикат
+`live_cli_project_ready()` (`tests/cli_real_tg_integration/_live_readiness.py`) истинен,
+когда: есть `config.yaml`, существует и не пуста DB из `database.path`, заданы `api_id`/`api_hash`
+(в config/env **или** в settings-таблице DB по ключам `tg_api_id`/`tg_api_hash`), и в DB есть
+хотя бы один active account с `session_string`.
+
+Все `RUN_*`-гейты остаются опциональным override через единый помощник `_gate_enabled`:
+
+- env задан в `1/true/yes/on` → форс-вкл;
+- env задан в `0/false/no/off` → форс-выкл (kill switch даже на готовом проекте);
+- env не задан → авто по `live_cli_project_ready()`.
+
+Категория выбирается путём (подкаталогом) в команде pytest; запуск родительской папки
+`tests/cli_real_tg_integration/` на готовом проекте собирает все категории. В CI (нет
+заполненной DB/accounts) предикат ложен → все гейты закрыты → graceful skip, без обращений
+к Telegram. Авто-включение применяется только к CLI-live fixture; sandbox-fixture
+(`real_telegram_sandbox`) остаётся строго env-gated.
 
 ## Sandbox pytest tests
 
@@ -66,10 +87,12 @@ python -m src.main --config <real config.yaml> ...
 
 Перед запуском fixture проверяет:
 
-- `RUN_CLI_REAL_TG_LIVE=1`;
+- гейт `RUN_CLI_REAL_TG_LIVE` открыт (`=1`, либо не задан и проект live-ready — см.
+  «Авто-включение по готовности проекта»);
 - существует `config.yaml`;
 - существует и не пустая DB из `database.path`;
-- в config есть Telegram `api_id`/`api_hash`;
+- заданы Telegram `api_id`/`api_hash` — в config/env **или** в settings-таблице DB
+  (`tg_api_id`/`tg_api_hash`), тем же fallback-порядком, что и продовый `init_pool`;
 - в DB есть active accounts с `session_string`;
 - хотя бы один active account проходит read-only readiness probe:
   `python -m src.main --config <config.yaml> account info --phone <phone>`.
@@ -89,6 +112,11 @@ wait — 60 секунд. Для плохой сети можно поднять
 flood-waited accounts.
 
 ## CLI Folders And Gates
+
+Гейты ниже — это override: на live-ready проекте они авто-открываются без env (см.
+«Авто-включение по готовности проекта»). Перечисленные `RUN_*=1` нужны только чтобы
+форсировать запуск на не-готовом проекте или в CI; `RUN_*=0` форсирует skip даже на
+готовом проекте.
 
 `safe_ro/`
 
@@ -117,16 +145,21 @@ flood-waited accounts.
   send/edit with final edit cleanup.
 - Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MUTATION_SAFE=1`.
 
-`destructive/`
+`process_control/`
 
 - Process-control commands such as `serve`, `worker`, `stop`, `restart`.
-- Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MANUAL=1 RUN_CLI_DESTRUCTIVE=1`.
+- Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MANUAL=1 RUN_CLI_PROCESS_CONTROL=1`.
 
 `manual/`
 
 - High-risk Telegram-visible mutations: unbounded sends, auth, BotFather, leave/delete/admin/permissions/photo publish.
 - Pin/unpin are only mutation-safe for own cached dialogs with `--notify` forbidden and cleanup-backed tests.
 - Gate: `RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MANUAL=1`.
+
+`dangerous/`
+
+- Account/data-destruction commands, маркированы `real_tg_never` — никогда не запрашивают live
+  fixture и не имеют env-гейта (только статический policy-аудит).
 
 ## Coverage Contract
 
@@ -213,11 +246,11 @@ If the test account was just toggled/authenticated from the UI, the fixture wait
 `CLI_REAL_TG_CONNECT_WAIT_SECONDS` for a real `account info --phone` probe before running mutation-safe commands.
 Use `CLI_REAL_TG_CONNECT_WAIT_SECONDS=180` only as an explicit poor-network override, not as the default.
 
-Manual destructive process-control inventory:
+Manual process-control inventory:
 
 ```bash
-RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MANUAL=1 RUN_CLI_DESTRUCTIVE=1 \
-python3 -m pytest tests/cli_real_tg_integration/destructive -v
+RUN_CLI_REAL_TG_LIVE=1 RUN_REAL_TELEGRAM_MANUAL=1 RUN_CLI_PROCESS_CONTROL=1 \
+python3 -m pytest tests/cli_real_tg_integration/process_control -v
 ```
 
 Manual Telegram-visible scenarios:

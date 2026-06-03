@@ -16,6 +16,10 @@ import pytest
 
 from src.cli.dotenv import load_cli_dotenv
 from src.config import load_config
+from tests.cli_real_tg_integration._live_readiness import (
+    _gate_enabled,
+    _resolve_api_credentials,
+)
 
 CLI_REAL_TG_LIVE_GATE_ENV = "RUN_CLI_REAL_TG_LIVE"
 CLI_REAL_TG_ROOT_ENV = "CLI_REAL_TG_ROOT"
@@ -331,8 +335,11 @@ def _fetch_live_message_target(
 
 @pytest.fixture(scope="session")
 def cli_real_cli_env() -> CliRealCliEnv:
-    if os.environ.get(CLI_REAL_TG_LIVE_GATE_ENV) != "1":
-        pytest.skip(f"live CLI tests disabled; set {CLI_REAL_TG_LIVE_GATE_ENV}=1 to run them")
+    if not _gate_enabled(CLI_REAL_TG_LIVE_GATE_ENV):
+        pytest.skip(
+            f"live CLI tests disabled; project is not live-ready "
+            f"(set {CLI_REAL_TG_LIVE_GATE_ENV}=1 to force on, =0 to force off)"
+        )
 
     live_root = _resolve_live_root()
     config_path = _resolve_config_path(live_root)
@@ -343,14 +350,18 @@ def cli_real_cli_env() -> CliRealCliEnv:
 
     load_cli_dotenv(config_path)
     config = load_config(config_path)
-    if config.telegram.api_id == 0 or not config.telegram.api_hash:
-        pytest.skip("live CLI config has no Telegram api_id/api_hash")
 
     db_path = _resolve_db_path(live_root, config.database.path)
     if not db_path.exists():
         pytest.skip(f"live CLI database not found at {db_path}")
     if db_path.stat().st_size == 0:
         pytest.skip(f"live CLI database at {db_path} is empty")
+
+    # api_id/api_hash may live in config.yaml/env OR the settings table — mirror
+    # production's fallback (src/cli/runtime.py:init_pool), hence the DB check first.
+    api_id, api_hash = _resolve_api_credentials(config, db_path)
+    if not api_id or not api_hash:
+        pytest.skip("live CLI config/DB has no Telegram api_id/api_hash")
 
     probe_env = CliRealCliEnv(
         source_root=_SOURCE_ROOT,

@@ -4,15 +4,17 @@ import os
 
 import pytest
 
+from tests.cli_real_tg_integration._live_readiness import _gate_enabled
+
 MANUAL_GATE_ENV = "RUN_REAL_TELEGRAM_MANUAL"
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if os.environ.get(MANUAL_GATE_ENV) == "1":
+    if _gate_enabled(MANUAL_GATE_ENV):
         return
 
     skip_marker = pytest.mark.skip(
-        reason=f"manual Telegram-visible CLI tests disabled; set {MANUAL_GATE_ENV}=1 to run them"
+        reason=f"manual Telegram-visible CLI tests disabled; set {MANUAL_GATE_ENV}=1 to force on, =0 to force off"
     )
     here = os.path.dirname(os.path.abspath(__file__))
     for item in items:
