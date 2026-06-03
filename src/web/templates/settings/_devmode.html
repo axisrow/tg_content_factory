@@ -36,6 +36,7 @@
             <option value="auto" {{ 'selected' if agent_backend_override == 'auto' else '' }}>Авто</option>
             <option value="claude" {{ 'selected' if agent_backend_override == 'claude' else '' }}>claude-agent-sdk</option>
             <option value="deepagents" {{ 'selected' if agent_backend_override == 'deepagents' else '' }}>deepagents</option>
+            <option value="codex" {{ 'selected' if agent_backend_override == 'codex' else '' }}>codex-sdk</option>
         </select>
         <div class="form-text">
             Override применяется только при включённом режиме разработчика. В обычном режиме используется Claude, а при его отсутствии — deepagents fallback.

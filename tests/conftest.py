@@ -472,3 +472,20 @@ def mock_db():
     db.set_setting = AsyncMock()
     db.get_stats = AsyncMock(return_value={"channels": 10, "messages": 1000})
     return db
+
+
+@pytest.fixture
+def pin_codex(monkeypatch):
+    """Force the keyless-codex detection result for a test.
+
+    Registration flows through ``provider_adapters.codex_available`` (an
+    lru_cache'd predicate), so patch it at the source and drop the cache.
+    Returns a ``pin(available: bool)`` callable.
+    """
+    from src.services import provider_adapters
+
+    def _pin(available: bool) -> None:
+        provider_adapters.codex_available.cache_clear()
+        monkeypatch.setattr(provider_adapters, "codex_available", lambda: available)
+
+    return _pin

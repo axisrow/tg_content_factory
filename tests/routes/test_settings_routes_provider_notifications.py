@@ -1076,6 +1076,7 @@ async def test_save_image_providers_missing_key(route_client, db):
 
         mock_spec_obj = MagicMock()
         mock_spec_obj.env_vars = ["TOGETHER_API_KEY"]
+        mock_spec_obj.keyless = False  # keyed provider → missing-key check applies
         mock_spec.return_value = mock_spec_obj
 
         with patch.dict(os.environ, {}, clear=False):

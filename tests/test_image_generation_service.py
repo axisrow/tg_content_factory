@@ -243,12 +243,15 @@ def test_init_with_empty_adapters():
     assert svc.adapter_names == []
 
 
-def test_init_with_none_calls_register_from_env(monkeypatch):
+def test_init_with_none_calls_register_from_env(monkeypatch, pin_codex):
     monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
     monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
     monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+    # codex is keyless and registers on detection; pin it off so this test stays
+    # about env-keyed providers regardless of whether the SDK is installed.
+    pin_codex(False)
     svc = ImageGenerationService(adapters=None)
     assert svc.adapter_names == []  # no env vars set
 
@@ -305,6 +308,39 @@ def test_resolve_adapter_returns_none_when_no_adapters():
     svc = _make_clean_service()
     assert svc._resolve_adapter("anything") is None
     assert svc._resolve_adapter(None) is None
+
+
+def test_resolve_adapter_skips_codex_in_implicit_fallback():
+    """Codex spawns a blocking subprocess, so it must never be the default adapter.
+
+    An unqualified generate() (no provider) must fall through to a non-codex
+    adapter; codex is reachable only by explicit ``codex:model`` selection.
+    """
+
+    async def _keyed(prompt: str, model: str) -> str:
+        return "keyed.png"
+
+    async def _codex(prompt: str, model: str) -> str:  # pragma: no cover - must not run
+        raise AssertionError("codex must not be picked as the implicit fallback")
+
+    svc = _make_clean_service()
+    # codex first in insertion order — the old `next(iter(...))` would pick it.
+    svc._adapters = {"codex": _codex, "together": _keyed}
+    assert svc._resolve_adapter(None) is _keyed
+    # but explicit selection still resolves codex
+    assert svc._resolve_adapter("codex") is _codex
+
+
+def test_resolve_adapter_none_when_only_codex():
+    """With codex the sole adapter, an implicit request resolves to nothing."""
+
+    async def _codex(prompt: str, model: str) -> str:  # pragma: no cover
+        raise AssertionError("must not run")
+
+    svc = _make_clean_service()
+    svc._adapters = {"codex": _codex}
+    assert svc._resolve_adapter(None) is None
+    assert svc._resolve_adapter("codex") is _codex
 
 
 # ── generate() S3 upload ──
@@ -443,6 +479,88 @@ def test_register_from_env_replicate(monkeypatch):
     monkeypatch.setenv("REPLICATE_API_TOKEN", "test-token")
     svc = ImageGenerationService(adapters=None)
     assert "replicate" in svc.adapter_names
+
+
+# ── codex provider (keyless, detection-based) ──
+
+
+def test_register_codex_when_available(monkeypatch, pin_codex):
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+    pin_codex(True)
+    svc = ImageGenerationService(adapters=None)
+    assert "codex" in svc.adapter_names
+
+
+def test_no_codex_when_unavailable(monkeypatch, pin_codex):
+    monkeypatch.delenv("TOGETHER_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("REPLICATE_API_TOKEN", raising=False)
+    pin_codex(False)
+    svc = ImageGenerationService(adapters=None)
+    assert "codex" not in svc.adapter_names
+
+
+def test_codex_available_false_without_sdk(monkeypatch):
+    """The detection predicate returns False when the SDK is not importable."""
+    import importlib.util
+
+    from src.services import provider_adapters
+
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, *a, **k):
+        if name == "openai_codex":
+            return None
+        return real_find_spec(name, *a, **k)
+
+    monkeypatch.setattr(importlib.util, "find_spec", fake_find_spec)
+    provider_adapters.codex_available.cache_clear()
+    assert provider_adapters.codex_available() is False
+    provider_adapters.codex_available.cache_clear()
+
+
+@pytest.mark.anyio
+async def test_search_models_codex_static_catalog():
+    svc = _make_clean_service()
+    models = await svc.search_models("codex")
+    ids = [m["id"] for m in models]
+    assert "gpt-5.4" in ids
+    assert all(m["model_string"].startswith("codex:") for m in models)
+
+
+@pytest.mark.anyio
+async def test_search_models_codex_refresh_uses_sdk(monkeypatch):
+    svc = _make_clean_service()
+
+    async def _fake_fetch():
+        return [
+            {"id": "gpt-5.5", "model_string": "codex:gpt-5.5", "description": "x", "run_count": 0},
+            {"id": "gpt-5.4", "model_string": "codex:gpt-5.4", "description": "y", "run_count": 0},
+        ]
+
+    monkeypatch.setattr(svc, "_fetch_codex_models", staticmethod(_fake_fetch))
+    models = await svc.search_models("codex", refresh=True)
+    ids = [m["id"] for m in models]
+    assert ids == ["gpt-5.5", "gpt-5.4"]
+
+
+@pytest.mark.anyio
+async def test_search_models_codex_refresh_falls_back_to_static(monkeypatch):
+    """When the SDK listing is empty/unavailable, refresh falls back to the static catalog."""
+    svc = _make_clean_service()
+
+    async def _empty():
+        return []
+
+    monkeypatch.setattr(svc, "_fetch_codex_models", staticmethod(_empty))
+    models = await svc.search_models("codex", refresh=True)
+    assert any(m["id"] == "gpt-5.4" for m in models)
 
 
 # ── search_models static catalogs ──

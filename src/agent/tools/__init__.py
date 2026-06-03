@@ -140,7 +140,7 @@ def build_agent_tool_registry(
     return all_tools
 
 
-def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
+def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None, access_policy=None):
     """Create an in-process MCP server with all agent tools.
 
     Args:
@@ -149,6 +149,15 @@ def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
             If None (CLI mode), pool-dependent tools return an error message.
         scheduler_manager: Optional live SchedulerManager instance.
             If None, scheduler tools return an error message.
+        access_policy: Optional tri-state tool ACL (``{bare_name: ToolAccessState}``,
+            from :func:`load_tool_access_policy`). When provided, tools not visible
+            under it are NOT registered — this is the only ACL enforcement available
+            to the out-of-process ``mcp-server`` path, where the call-time session
+            gate (a ContextVar) cannot reach across the process boundary. The
+            in-process backends leave this ``None`` because they filter via the
+            SDK ``allowed_tools`` allow-list instead. Filtering uses
+            ``gate_active=False`` (unattended): DENIED and REQUESTABLE tools are
+            both hidden, since a headless subprocess cannot prompt for a grant.
     """
     all_tools = build_agent_tool_registry(
         db,
@@ -156,6 +165,15 @@ def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None):
         scheduler_manager=scheduler_manager,
         config=config,
     )
+
+    if access_policy is not None:
+        from src.agent.tools.permissions import is_tool_visible_for_llm
+
+        all_tools = [
+            tool_obj
+            for tool_obj in all_tools
+            if is_tool_visible_for_llm(tool_obj.name, access_policy, gate_active=False)
+        ]
 
     return create_sdk_mcp_server(
         name="telegram_db",

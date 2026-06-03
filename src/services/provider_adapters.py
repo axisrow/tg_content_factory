@@ -3,9 +3,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import functools
+import importlib.util
 import logging
 import os
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, Optional
 
@@ -24,18 +27,28 @@ ImageAdapter = Callable[[str, str], Awaitable[Optional[str]]]
 DEFAULT_IMAGE_OUTPUT_DIR = "data/image"
 
 
+def _image_target_path(output_dir: str | None = None) -> Path:
+    """Return a fresh ``<output_dir>/<uuid>.png`` path, creating the dir.
+
+    Single source of the on-disk naming convention, shared by every image
+    adapter — both those that already hold the bytes (:func:`save_image_bytes`)
+    and the Codex adapter, which must hand the path to the engine *before* the
+    file exists. ``output_dir`` defaults to :data:`DEFAULT_IMAGE_OUTPUT_DIR`,
+    resolved at call time so the module-level default stays overridable.
+    """
+    out = Path(output_dir or DEFAULT_IMAGE_OUTPUT_DIR)
+    out.mkdir(parents=True, exist_ok=True)
+    return out / f"{uuid.uuid4().hex}.png"
+
+
 async def save_image_bytes(image_bytes: bytes, output_dir: str | None = None) -> str:
     """Persist raw image *bytes* to *output_dir* and return the file path.
 
     Single place every image adapter uses to land binary results on disk, so
     naming/flush behaviour stays consistent.  Downstream (``ImageGenerationService``)
     uploads non-URL results to S3 when configured, so returning a path is enough.
-    ``output_dir`` defaults to :data:`DEFAULT_IMAGE_OUTPUT_DIR`, resolved at call
-    time so the module-level default stays overridable.
     """
-    out = Path(output_dir or DEFAULT_IMAGE_OUTPUT_DIR)
-    out.mkdir(parents=True, exist_ok=True)
-    filepath = out / f"{uuid.uuid4().hex}.png"
+    filepath = _image_target_path(output_dir)
     await asyncio.to_thread(filepath.write_bytes, image_bytes)
     return str(filepath)
 
@@ -327,5 +340,184 @@ def make_replicate_image_adapter(api_token: str, timeout: float = 60.0) -> Image
                         error = result.get("error", "unknown error")
                         raise RuntimeError(f"Replicate prediction failed: {error}")
             raise RuntimeError(f"Replicate prediction timed out after {timeout}s")
+
+    return adapter
+
+
+# ── Codex SDK image generation ──
+#
+# Unlike the HTTP providers above, Codex does not use an API key: the
+# ``openai_codex`` SDK drives a local Codex engine that reuses the existing
+# Codex CLI authentication (``~/.codex/auth.json``).  The image is produced by
+# the Codex agent itself via the ``$imagegen`` tool, which writes a PNG to a
+# path we hand it — so this adapter, like HuggingFace, returns a local file path.
+CODEX_DEFAULT_IMAGE_MODEL = "gpt-5.4"
+# Deadline for one Codex image turn. On timeout the adapter kills the Codex
+# subprocess (Codex.close() → terminate()/kill()), which unblocks the stuck
+# worker thread, so the executor slot is freed shortly after — not leaked for
+# the process lifetime.
+CODEX_IMAGE_TIMEOUT_SECONDS = 180.0
+
+
+def _build_codex_image_prompt(prompt: str, output_path: str) -> str:
+    """Build the ``$imagegen`` instruction that tells Codex to save a PNG.
+
+    Kept as a pure function so the prompt shape is unit-testable without the SDK.
+    """
+    return (
+        "$imagegen\n\n"
+        "Generate one high-quality image from this prompt:\n\n"
+        f"{prompt}\n\n"
+        "Save the generated PNG to this exact local path:\n\n"
+        f"{output_path}\n\n"
+        "After generating it, reply briefly with what was created and the saved file path."
+    )
+
+
+def _codex_saved_path_from_result(result: Any) -> Optional[str]:
+    """Extract the saved image path from a Codex ``TurnResult``.
+
+    Walks ``result.items`` for an ``imageGeneration`` item (``saved_path``) or an
+    ``imageView`` item (``path``).  Mirrors the result shape of openai_codex's
+    generated thread-item models.  Returns ``None`` when no image item is present.
+    """
+    for wrapped in getattr(result, "items", None) or []:
+        item = wrapped.root if hasattr(wrapped, "root") else wrapped
+        item_type = getattr(item, "type", None)
+        if item_type == "imageGeneration":
+            saved = getattr(item, "saved_path", None)
+            if saved:
+                return str(saved)
+        elif item_type == "imageView":
+            path = getattr(item, "path", None)
+            if path:
+                return str(path)
+    return None
+
+
+def _codex_sdk_installed() -> bool:
+    """True when the ``openai_codex`` SDK importable in this environment."""
+    return importlib.util.find_spec("openai_codex") is not None
+
+
+@functools.lru_cache(maxsize=1)
+def codex_available() -> bool:
+    """True when the Codex SDK is installed and the Codex CLI is authenticated.
+
+    Single source of truth for "is the keyless codex provider usable", shared by
+    both registration paths (``ImageGenerationService._register_from_env`` and
+    ``ImageProviderService.build_adapters``). Cached because the inputs — a
+    package being installed and ``~/.codex/auth.json`` existing — are static for
+    the process lifetime, and the check otherwise runs an import-machinery scan
+    plus a filesystem stat on every image request.
+    """
+    if not _codex_sdk_installed():
+        return False
+    return (Path.home() / ".codex" / "auth.json").exists()
+
+
+# Dedicated thread pools for the Codex image path, kept OFF the default asyncio
+# loop executor (the one `asyncio.to_thread` / `run_in_executor(None, ...)` use).
+# Two separate pools, created once at import time (not per call):
+#
+#   * ``_CODEX_RUN_EXECUTOR`` runs the blocking ``thread.run`` turn. Keeping it
+#     off the default pool means a hung Codex turn cannot starve the default
+#     pool's slots, which S3 upload (s3_store.py), the debug log-tail
+#     (routes/debug.py) and AI search also schedule onto.
+#   * ``_CODEX_CLOSE_EXECUTOR`` runs only ``codex.close()``. It MUST be a
+#     separate pool: when every ``_CODEX_RUN_EXECUTOR`` slot is occupied by hung
+#     turns, the timeout handler still needs a free slot to submit close() —
+#     and close() is what terminates the subprocess and unwinds the parked run
+#     thread (the SDK reader thread fail_all()s the blocked queue.get()).
+#     Submitting close() onto the same saturated run pool would queue it behind
+#     the very hangs it is meant to clear, so the kill never happens.
+#
+# Lifecycle note: ThreadPoolExecutor worker threads are non-daemon, so a thread
+# still parked inside a hung Codex turn at interpreter shutdown would block exit
+# via the executor's atexit join. In practice the timeout handler calls close()
+# which unblocks the parked run thread, draining the slot; the pools are
+# intentionally small so at most a few threads can ever be parked at once.
+_CODEX_RUN_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="codex-image-run")
+_CODEX_CLOSE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="codex-image-close")
+
+
+def make_codex_image_adapter(
+    output_dir: str = DEFAULT_IMAGE_OUTPUT_DIR,
+    image_timeout: float = CODEX_IMAGE_TIMEOUT_SECONDS,
+) -> ImageAdapter:
+    """Codex SDK image generation — drives the local Codex engine, saves a file.
+
+    No API key: authentication comes from the Codex CLI (``~/.codex/auth.json``).
+    The ``openai_codex`` import is lazy so this module loads without the SDK
+    installed (the adapter is only registered when the SDK is actually present).
+    The blocking ``thread.run`` call runs in a worker thread (so the event loop
+    is not stalled) under an ``image_timeout`` deadline, so a hung Codex turn
+    surfaces a ``TimeoutError`` to the caller instead of blocking indefinitely.
+    """
+
+    async def adapter(prompt: str, model: str = "") -> Optional[str]:
+        target_path = _image_target_path(output_dir)
+        out = target_path.parent
+        target = target_path.resolve()
+        model_id = model or CODEX_DEFAULT_IMAGE_MODEL
+        instruction = _build_codex_image_prompt(prompt, str(target))
+
+        # Share the live Codex handle with the event loop so a timeout can kill
+        # the subprocess. thread.run() blocks the worker with no cancellation
+        # token; wait_for cancels only the awaiting coroutine, so without an
+        # out-of-band close() the worker thread would stay parked in the SDK's
+        # blocking queue.get() and never free its executor slot.
+        codex_box: dict = {}
+
+        def _run_codex() -> Optional[str]:
+            from openai_codex import Codex, Sandbox
+
+            codex = Codex()
+            codex_box["codex"] = codex
+            with codex:
+                thread = codex.thread_start(
+                    cwd=str(out.resolve()),
+                    model=model_id,
+                    sandbox=Sandbox.workspace_write,
+                )
+                result = thread.run(instruction)
+            status = getattr(getattr(result, "status", None), "value", None)
+            if status != "completed":
+                raise RuntimeError(f"Codex image: thread did not complete (status={status})")
+            return _codex_saved_path_from_result(result)
+
+        loop = asyncio.get_running_loop()
+        try:
+            # Run on the dedicated codex-run pool, NOT the default loop executor,
+            # so a hung turn can't starve the default pool shared by S3 upload /
+            # log-tail / AI search.
+            saved = await asyncio.wait_for(
+                loop.run_in_executor(_CODEX_RUN_EXECUTOR, _run_codex), timeout=image_timeout
+            )
+        except (TimeoutError, asyncio.TimeoutError):
+            codex = codex_box.get("codex")
+            if codex is not None:
+                # close() → terminate()/kill(); the SDK's reader thread then
+                # fail_all()s the blocked queue.get(), unwinding the worker.
+                # Submit on the SEPARATE close pool: when the run pool is
+                # saturated by hangs, close() still gets a free slot — it's what
+                # kills the subprocess and frees the parked run slot.
+                try:
+                    await loop.run_in_executor(_CODEX_CLOSE_EXECUTOR, codex.close)
+                except Exception:
+                    logger.warning("Codex image: failed to close stalled subprocess", exc_info=True)
+            raise
+        # Prefer the path Codex reported (it may pick its own filename inside our
+        # output dir), but confine it to the requested directory: the prompt is
+        # user/pipeline-controlled, so a reported path must not redirect the
+        # returned/uploaded file outside `out`. Fall back to the requested target
+        # if Codex wrote there without echoing the path back.
+        if saved:
+            saved_path = Path(saved).resolve()
+            if saved_path.exists() and saved_path.parent == target.parent:
+                return str(saved_path)
+        if target.exists():
+            return str(target)
+        raise RuntimeError("Codex image: no image file produced")
 
     return adapter
