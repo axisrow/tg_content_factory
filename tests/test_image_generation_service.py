@@ -525,6 +525,78 @@ def test_codex_available_false_without_sdk(monkeypatch):
     provider_adapters.codex_available.cache_clear()
 
 
+def test_codex_available_true_with_writable_codex_home(monkeypatch, tmp_path):
+    """A usable Codex home needs SDK, auth, and writable runtime state."""
+    from src.services import provider_adapters
+
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "auth.json").write_text("{}", encoding="utf-8")
+    (codex_home / "state_5.sqlite").write_bytes(b"")
+
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(provider_adapters, "_codex_sdk_installed", lambda: True)
+    provider_adapters.codex_available.cache_clear()
+    try:
+        assert provider_adapters.codex_available() is True
+    finally:
+        provider_adapters.codex_available.cache_clear()
+
+
+def test_codex_available_false_without_auth_in_codex_home(monkeypatch, tmp_path):
+    """CODEX_HOME is authoritative; missing auth there means unavailable."""
+    from src.services import provider_adapters
+
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(provider_adapters, "_codex_sdk_installed", lambda: True)
+    provider_adapters.codex_available.cache_clear()
+    try:
+        assert provider_adapters.codex_available() is False
+    finally:
+        provider_adapters.codex_available.cache_clear()
+
+
+def test_codex_available_false_when_codex_home_not_writable(monkeypatch, tmp_path):
+    """Sandboxed readonly Codex homes should not register the provider."""
+    from src.services import provider_adapters
+
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "auth.json").write_text("{}", encoding="utf-8")
+
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(provider_adapters, "_codex_sdk_installed", lambda: True)
+    monkeypatch.setattr(provider_adapters, "_codex_path_writable", lambda path: path != codex_home)
+    provider_adapters.codex_available.cache_clear()
+    try:
+        assert provider_adapters.codex_available() is False
+    finally:
+        provider_adapters.codex_available.cache_clear()
+
+
+def test_codex_available_false_when_state_db_not_writable(monkeypatch, tmp_path):
+    """Existing Codex state DB files must be writable before live SDK use."""
+    from src.services import provider_adapters
+
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    state_db = codex_home / "state_5.sqlite"
+    (codex_home / "auth.json").write_text("{}", encoding="utf-8")
+    state_db.write_bytes(b"")
+
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setattr(provider_adapters, "_codex_sdk_installed", lambda: True)
+    monkeypatch.setattr(provider_adapters, "_codex_path_writable", lambda path: path != state_db)
+    provider_adapters.codex_available.cache_clear()
+    try:
+        assert provider_adapters.codex_available() is False
+    finally:
+        provider_adapters.codex_available.cache_clear()
+
+
 @pytest.mark.anyio
 async def test_search_models_codex_static_catalog():
     svc = _make_clean_service()

@@ -400,20 +400,51 @@ def _codex_sdk_installed() -> bool:
     return importlib.util.find_spec("openai_codex") is not None
 
 
+def _codex_home_path() -> Path:
+    """Return the Codex runtime home used by the CLI/SDK."""
+    configured = os.environ.get("CODEX_HOME", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / ".codex"
+
+
+def _codex_path_writable(path: Path) -> bool:
+    """True when *path* can be written by this process."""
+    try:
+        return os.access(path, os.W_OK)
+    except OSError:
+        return False
+
+
+def _codex_runtime_state_writable(codex_home: Path) -> bool:
+    """True when Codex can initialize/update runtime state under *codex_home*."""
+    try:
+        if not codex_home.is_dir() or not _codex_path_writable(codex_home):
+            return False
+        for path in codex_home.glob("state*.sqlite*"):
+            if not _codex_path_writable(path):
+                return False
+    except OSError:
+        return False
+    return True
+
+
 @functools.lru_cache(maxsize=1)
 def codex_available() -> bool:
-    """True when the Codex SDK is installed and the Codex CLI is authenticated.
+    """True when the Codex SDK is installed and its CLI runtime is usable.
 
     Single source of truth for "is the keyless codex provider usable", shared by
     both registration paths (``ImageGenerationService._register_from_env`` and
-    ``ImageProviderService.build_adapters``). Cached because the inputs — a
-    package being installed and ``~/.codex/auth.json`` existing — are static for
-    the process lifetime, and the check otherwise runs an import-machinery scan
-    plus a filesystem stat on every image request.
+    ``ImageProviderService.build_adapters``). Cached because the inputs — SDK
+    install state, ``$CODEX_HOME``/``~/.codex`` auth, and runtime-state
+    writability — are static for the process lifetime, and the check otherwise
+    runs import-machinery and filesystem probes on every image request.
     """
     if not _codex_sdk_installed():
         return False
-    return (Path.home() / ".codex" / "auth.json").exists()
+    codex_home = _codex_home_path()
+    return (codex_home / "auth.json").exists() and _codex_runtime_state_writable(codex_home)
+
 
 
 # Dedicated thread pools for the Codex image path, kept OFF the default asyncio
