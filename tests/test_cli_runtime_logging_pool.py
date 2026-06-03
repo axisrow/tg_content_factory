@@ -217,3 +217,28 @@ class TestInitPool:
                 assert auth_arg._api_id == 0
         finally:
             loop.close()
+
+    def test_init_pool_passes_requested_phones_to_pool_initialize(self, tmp_path):
+        """init_pool can initialize only the requested live account."""
+        from src.cli.runtime import init_pool
+        from src.config import AppConfig, TelegramRuntimeConfig
+
+        config = AppConfig()
+        config.telegram.api_id = 12345
+        config.telegram.api_hash = "test_hash_123"
+        config.telegram_runtime = TelegramRuntimeConfig()
+
+        db = MagicMock()
+        db.get_setting = AsyncMock(return_value=None)
+
+        mock_pool = MagicMock()
+        mock_pool.initialize = AsyncMock()
+
+        loop = asyncio.new_event_loop()
+        try:
+            with patch("src.cli.runtime.ClientPool", return_value=mock_pool):
+                loop.run_until_complete(init_pool(config, db, phones=("+1000",)))
+
+                mock_pool.initialize.assert_awaited_once_with(phones=("+1000",))
+        finally:
+            loop.close()

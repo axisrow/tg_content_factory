@@ -11,9 +11,9 @@ pytestmark = pytest.mark.real_tg_mutation_safe
 
 
 @pytest.mark.timeout(120)
-def test_my_telegram_archive_live_dialog(run_cli, assert_cli_ok, cli_real_cli_env, live_mutation_dialog):
-    chat_id = live_mutation_dialog.chat_ref
-    phone = live_mutation_dialog.phone
+def test_my_telegram_archive_scratch_group(run_cli, assert_cli_ok, cli_real_cli_env, live_scratch_group):
+    chat_id = live_scratch_group.chat_ref
+    phone = live_scratch_group.phone
     leak_msg: str | None = None
 
     try:

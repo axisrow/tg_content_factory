@@ -94,6 +94,24 @@ def test_cli_parser_registers_all_top_level_domains() -> None:
             },
         ),
         (
+            ["photo-loader", "run-due", "--item-id", "77"],
+            {
+                "command": "photo-loader",
+                "photo_loader_action": "run-due",
+                "item_id": 77,
+            },
+        ),
+        (
+            ["dialogs", "create-group", "--phone", "+1", "--title", "Scratch", "--about", "test"],
+            {
+                "command": "dialogs",
+                "dialogs_action": "create-group",
+                "phone": "+1",
+                "title": "Scratch",
+                "about": "test",
+            },
+        ),
+        (
             ["settings", "agent", "--backend", "deepagents", "--prompt-template", "default"],
             {
                 "command": "settings",

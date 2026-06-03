@@ -483,6 +483,42 @@ def test_run_due_action(tmp_path, cli_init_patch, capsys):
     assert "auto_jobs=2" in out
 
 
+def test_run_due_action_with_item_id_skips_auto_jobs(tmp_path, cli_init_patch, capsys):
+    """Test run-due --item-id only processes the requested item."""
+    db_path = str(tmp_path / "photo_run_due_item.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _setup_photo_db(db)
+
+    async def fake_init_pool(_config, _db):
+        pool = MagicMock()
+        pool.disconnect_all = AsyncMock()
+        return MagicMock(), pool
+
+    run_due = AsyncMock(return_value=1)
+    auto_run_due = AsyncMock(return_value=2)
+    fake_task, fake_auto = _create_fake_services(
+        task_methods={"run_due": run_due},
+        auto_methods={"run_due": auto_run_due},
+    )
+
+    with (
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
+        patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
+    ):
+        from src.cli.commands.photo_loader import run
+
+        run(_ns(photo_loader_action="run-due", item_id=77))
+
+    out = capsys.readouterr().out
+    assert "items=1" in out
+    assert "auto_jobs=0" in out
+    run_due.assert_awaited_once_with(item_id=77)
+    auto_run_due.assert_not_awaited()
+
+
 def test_auto_delete_action(tmp_path, cli_init_patch, capsys):
     """Test auto-delete action deletes job."""
     db_path = str(tmp_path / "photo_auto_delete.db")

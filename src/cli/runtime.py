@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -85,7 +86,7 @@ async def init_db(config_path: str):
     return config, db
 
 
-async def init_pool(config, db: Database):
+async def init_pool(config, db: Database, *, phones: Iterable[str] | None = None):
     api_id = config.telegram.api_id
     api_hash = config.telegram.api_hash
     if api_id == 0 or not api_hash:
@@ -107,5 +108,5 @@ async def init_pool(config, db: Database):
         config.scheduler.max_flood_wait_sec,
         runtime_config=config.telegram_runtime,
     )
-    await pool.initialize()
+    await pool.initialize(phones=phones)
     return auth, pool

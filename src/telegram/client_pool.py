@@ -7,6 +7,7 @@ import logging
 import re
 import time
 from collections import defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -417,9 +418,12 @@ class ClientPool:
             timeout=30.0,
         )
 
-    async def initialize(self) -> None:
+    async def initialize(self, *, phones: Iterable[str] | None = None) -> None:
         """Load active accounts and validate that their sessions are usable."""
         accounts = await load_live_usable_accounts(self._db, active_only=True)
+        if phones is not None:
+            allowed_phones = {str(phone) for phone in phones if str(phone)}
+            accounts = [acc for acc in accounts if acc.phone in allowed_phones]
         new_accounts = [acc for acc in accounts if acc.phone not in self.clients]
         if not new_accounts:
             return
