@@ -4,14 +4,14 @@ These tests touch user-visible data (channels/messages/pipelines/settings) on
 the real project DB. They are opt-in only and never auto-enable — they act on a
 real account and must be run deliberately, by hand.
 
-**Two env vars are required** to run these tests:
+**Three env vars are required** to run these tests:
 - RUN_CLI_MUTATING=1 — this folder-level gate (set below).
 - RUN_REAL_TELEGRAM_SAFE=1 — required by the root conftest's
   `real_tg_safe` marker policy (every test in this folder inherits the
   marker via its own pytestmark assignment).
+- RUN_CLI_REAL_TG_LIVE=1 — required by the live CLI fixture (`cli_real_cli_env`).
 
-Setting only RUN_CLI_MUTATING=1 will still skip with the root conftest's
-"real Telegram safe tests are disabled" message — both vars are needed.
+Setting only some of them will still skip — all three are needed.
 """
 from __future__ import annotations
 

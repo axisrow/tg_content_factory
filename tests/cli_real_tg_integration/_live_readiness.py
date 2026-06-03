@@ -21,9 +21,9 @@ import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
 
-# Tokens that explicitly force a gate on/off when the env var is set.
+# A gate opens only when its env var is set to one of these true tokens.
+# Anything else — a false token (0/false/no/off), garbage, or unset — keeps it closed.
 TRUE_TOKENS = frozenset({"1", "true", "yes", "on"})
-FALSE_TOKENS = frozenset({"0", "false", "no", "off"})
 
 
 def _resolve_api_credentials(config, db_path: Path) -> tuple[int | None, str | None]:
@@ -79,9 +79,6 @@ def _gate_enabled(env_name: str, environ: Mapping[str, str] = os.environ) -> boo
     raw = environ.get(env_name)
     if raw is None:
         return False
-    token = raw.strip().lower()
-    if token in TRUE_TOKENS:
-        return True
-    if token in FALSE_TOKENS:
-        return False
-    return False
+    # Only an explicit true token opens the gate; everything else (false token,
+    # garbage, empty) skips.
+    return raw.strip().lower() in TRUE_TOKENS
