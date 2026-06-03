@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import logging
 import os
 import uuid
@@ -13,6 +15,52 @@ logger = logging.getLogger(__name__)
 
 # Type alias for image generation adapters
 ImageAdapter = Callable[[str, str], Awaitable[Optional[str]]]
+
+# Default directory where binary / base64 image results are persisted.
+DEFAULT_IMAGE_OUTPUT_DIR = "data/images"
+
+
+async def save_image_bytes(image_bytes: bytes, output_dir: str | None = None) -> str:
+    """Persist raw image *bytes* to *output_dir* and return the file path.
+
+    Single place every image adapter uses to land binary results on disk, so
+    naming/flush behaviour stays consistent.  Downstream (``ImageGenerationService``)
+    uploads non-URL results to S3 when configured, so returning a path is enough.
+    ``output_dir`` defaults to :data:`DEFAULT_IMAGE_OUTPUT_DIR`, resolved at call
+    time so the module-level default stays overridable.
+    """
+    out = Path(output_dir or DEFAULT_IMAGE_OUTPUT_DIR)
+    out.mkdir(parents=True, exist_ok=True)
+    filepath = out / f"{uuid.uuid4().hex}.png"
+    await asyncio.to_thread(filepath.write_bytes, image_bytes)
+    return str(filepath)
+
+
+async def save_image_b64(b64_data: str, output_dir: str | None = None) -> str:
+    """Decode a base64 image payload and persist it via :func:`save_image_bytes`."""
+    try:
+        image_bytes = base64.b64decode(b64_data, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise RuntimeError(f"image: invalid base64 payload: {exc}") from exc
+    return await save_image_bytes(image_bytes, output_dir)
+
+
+async def finalize_image_result(
+    item: dict[str, Any], output_dir: str | None = None
+) -> Optional[str]:
+    """Normalise one provider result entry to a URL or a saved file path.
+
+    Providers return either a hosted ``url`` (kept as-is) or an inline
+    ``b64_json`` payload (decoded and saved to disk).  Centralising this keeps
+    every adapter's output shape identical.
+    """
+    url = item.get("url")
+    if url:
+        return str(url)
+    b64_data = item.get("b64_json")
+    if b64_data:
+        return await save_image_b64(str(b64_data), output_dir)
+    return None
 
 # Default network timeout for outbound HTTP calls to LLM / image providers.
 # Without it aiohttp waits indefinitely and a stalled upstream hangs the calling
@@ -153,12 +201,14 @@ def make_together_image_adapter(api_key: str) -> ImageAdapter:
                 items = data.get("data")
                 if not items:
                     raise RuntimeError(f"Together image: empty 'data' in response: {data}")
-                return items[0].get("url") or items[0].get("b64_json")
+                return await finalize_image_result(items[0])
 
     return adapter
 
 
-def make_huggingface_image_adapter(api_token: str, output_dir: str = "data/images") -> ImageAdapter:
+def make_huggingface_image_adapter(
+    api_token: str, output_dir: str = DEFAULT_IMAGE_OUTPUT_DIR
+) -> ImageAdapter:
     """HuggingFace Inference API — returns binary image, saved to local file."""
 
     async def adapter(prompt: str, model: str = "") -> Optional[str]:
@@ -181,29 +231,38 @@ def make_huggingface_image_adapter(api_token: str, output_dir: str = "data/image
                         f"HuggingFace image: expected image/* content-type, got {content_type}: {body_preview}"
                     )
                 image_bytes = await resp.read()
-                out = Path(output_dir)
-                out.mkdir(parents=True, exist_ok=True)
-                filename = f"{uuid.uuid4().hex}.png"
-                filepath = out / filename
-                await asyncio.to_thread(filepath.write_bytes, image_bytes)
-                return str(filepath)
+                return await save_image_bytes(image_bytes, output_dir)
 
     return adapter
 
 
+OPENAI_DEFAULT_IMAGE_MODEL = "gpt-image-1"
+
+
+def _build_openai_image_payload(prompt: str, model_id: str) -> Dict[str, Any]:
+    """Assemble the images/generations payload, varying params by model family.
+
+    ``gpt-image-1*`` rejects DALL·E-only fields (``response_format``), so only
+    the parameters each family accepts are sent.  ``gpt-image-1`` always returns
+    ``b64_json``; legacy ``dall-e-*`` returns a hosted ``url``.
+    """
+    payload: Dict[str, Any] = {"model": model_id, "prompt": prompt, "n": 1}
+    if model_id.startswith("gpt-image"):
+        payload["size"] = "auto"
+        payload["quality"] = "auto"
+    else:  # legacy dall-e-* family
+        payload["size"] = "1024x1024"
+    return payload
+
+
 def make_openai_image_adapter(api_key: str) -> ImageAdapter:
-    """OpenAI DALL-E image generation."""
+    """OpenAI image generation (gpt-image-1, with legacy DALL-E support)."""
 
     async def adapter(prompt: str, model: str = "") -> Optional[str]:
         base = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
         url = f"{base.rstrip('/')}/images/generations"
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload: Dict[str, Any] = {
-            "model": model or "dall-e-3",
-            "prompt": prompt,
-            "n": 1,
-            "size": "1024x1024",
-        }
+        payload = _build_openai_image_payload(prompt, model or OPENAI_DEFAULT_IMAGE_MODEL)
         async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
@@ -213,7 +272,7 @@ def make_openai_image_adapter(api_key: str) -> ImageAdapter:
                 items = data.get("data")
                 if not items:
                     raise RuntimeError(f"OpenAI image: empty 'data' in response: {data}")
-                return items[0].get("url") or items[0].get("b64_json")
+                return await finalize_image_result(items[0])
 
     return adapter
 

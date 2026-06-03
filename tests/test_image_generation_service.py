@@ -460,8 +460,56 @@ async def test_search_models_together_catalog():
 async def test_search_models_openai_catalog():
     svc = _make_clean_service()
     models = await svc.search_models("openai")
-    assert len(models) == 2
-    assert any("dall-e-3" in m["id"] for m in models)
+    ids = [m["id"] for m in models]
+    # gpt-image-1 is the current default and listed first; legacy dall-e-* still present
+    assert ids[0] == "gpt-image-1"
+    assert "gpt-image-1-mini" in ids
+    assert "dall-e-3" in ids  # legacy kept for backward compatibility
+
+
+@pytest.mark.anyio
+async def test_search_models_openai_refresh_uses_live_list(monkeypatch):
+    svc = _make_clean_service()
+
+    async def _fake_fetch(api_key):
+        assert api_key == "sk-test"
+        return [
+            {"id": "gpt-image-1", "model_string": "openai:gpt-image-1", "description": "x", "run_count": 0},
+            {"id": "gpt-image-9", "model_string": "openai:gpt-image-9", "description": "x", "run_count": 0},
+        ]
+
+    monkeypatch.setattr(svc, "_fetch_openai_image_models", staticmethod(_fake_fetch))
+    models = await svc.search_models("openai", api_key="sk-test", refresh=True)
+    ids = [m["id"] for m in models]
+    assert ids == ["gpt-image-1", "gpt-image-9"]
+
+
+@pytest.mark.anyio
+async def test_search_models_openai_refresh_falls_back_on_empty(monkeypatch):
+    svc = _make_clean_service()
+
+    async def _fake_fetch(api_key):
+        return []  # fetch failure / no image models
+
+    monkeypatch.setattr(svc, "_fetch_openai_image_models", staticmethod(_fake_fetch))
+    models = await svc.search_models("openai", api_key="sk-test", refresh=True)
+    # falls through to static catalog
+    assert any(m["id"] == "gpt-image-1" for m in models)
+    assert any(m["id"] == "dall-e-3" for m in models)
+
+
+@pytest.mark.anyio
+async def test_fetch_openai_image_models_filters_image_only(monkeypatch):
+    """The image fetch helper keeps only gpt-image*/dall-e* ids from /v1/models."""
+    from src.services import provider_model_cache
+
+    async def _fake_ids(base_url, api_key):
+        return ["gpt-4o", "gpt-image-1", "dall-e-3", "text-embedding-3-small", "gpt-image-1-mini"]
+
+    monkeypatch.setattr(provider_model_cache, "fetch_openai_model_ids", _fake_ids)
+    models = await ImageGenerationService._fetch_openai_image_models("sk-test")
+    ids = [m["id"] for m in models]
+    assert ids == ["dall-e-3", "gpt-image-1", "gpt-image-1-mini"]  # sorted, image-only
 
 
 @pytest.mark.anyio

@@ -226,6 +226,7 @@
 |----------|-----|-------------|------------|
 | Генерация | `image generate` | `POST /images/generate` | `generate_image` |
 | Поиск моделей | `image models` | `GET /images/models/search` | `list_image_models` |
+| Поиск моделей (живой запрос) | `image models --refresh` | `GET /images/models/search?refresh=1` | `list_image_models` |
 | Список провайдеров | `image providers` | `GET /images/` | `list_image_providers` |
 | Список генераций | `image generated` | — | `list_generated_images` |
 

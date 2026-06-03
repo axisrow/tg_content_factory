@@ -103,6 +103,28 @@ async def test_search_models_success(route_client, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_search_models_refresh_param_passed_through(route_client, monkeypatch):
+    """?refresh=1 must reach ImageGenerationService.search_models(refresh=True)."""
+    monkeypatch.setattr(
+        "src.web.images.handlers._get_provider_api_key",
+        AsyncMock(return_value="fake-key"),
+    )
+    with patch("src.web.images.handlers.ImageGenerationService") as mock_cls:
+        instance = MagicMock()
+        instance.search_models = AsyncMock(return_value=[])
+        mock_cls.return_value = instance
+
+        resp = await route_client.get("/images/models/search?provider=openai&refresh=1")
+        assert resp.status_code == 200
+        _, kwargs = instance.search_models.call_args
+        assert kwargs["refresh"] is True
+
+        await route_client.get("/images/models/search?provider=openai")
+        _, kwargs2 = instance.search_models.call_args
+        assert kwargs2["refresh"] is False
+
+
+@pytest.mark.anyio
 async def test_search_models_no_api_key(route_client, monkeypatch):
     """Test search models when no API key is found."""
     monkeypatch.setattr(

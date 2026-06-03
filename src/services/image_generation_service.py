@@ -121,8 +121,15 @@ class ImageGenerationService:
 
     # ── model catalog ──
 
-    async def search_models(self, provider: str, query: str = "", *, api_key: str = "") -> list[dict]:
-        """Search available models for a provider. Returns list of dicts with name, description, etc."""
+    async def search_models(
+        self, provider: str, query: str = "", *, api_key: str = "", refresh: bool = False
+    ) -> list[dict]:
+        """Search available models for a provider. Returns list of dicts with name, description, etc.
+
+        For OpenAI, ``refresh=True`` fetches the live model list from ``/v1/models``
+        (filtered to image models) via the shared model-listing helper; otherwise the
+        static fallback catalog is returned.
+        """
         import aiohttp
 
         if provider == "replicate":
@@ -200,13 +207,53 @@ class ImageGenerationService:
                 _m("black-forest-labs/FLUX.1-schnell", "together", "FLUX.1 Schnell — fast"),
                 _m("black-forest-labs/FLUX.1-dev", "together", "FLUX.1 Dev — high quality"),
             ],
+            # gpt-image-1 is the current default; dall-e-* kept as legacy so saved
+            # selections keep resolving in the UI.
             "openai": [
-                _m("dall-e-3", "openai", "DALL-E 3 — OpenAI image generation"),
-                _m("dall-e-2", "openai", "DALL-E 2 — OpenAI image generation"),
+                _m("gpt-image-1", "openai", "GPT Image 1 — OpenAI image generation"),
+                _m("gpt-image-1-mini", "openai", "GPT Image 1 Mini — faster/cheaper"),
+                _m("gpt-image-1.5", "openai", "GPT Image 1.5 — higher quality"),
+                _m("dall-e-3", "openai", "DALL-E 3 — legacy"),
+                _m("dall-e-2", "openai", "DALL-E 2 — legacy"),
             ],
         }
+
+        if provider == "openai" and refresh:
+            token = api_key or os.environ.get("OPENAI_API_KEY", "")
+            live = await self._fetch_openai_image_models(token) if token else []
+            if live:
+                models = live
+                if query:
+                    q = query.lower()
+                    models = [m for m in models if q in m["id"].lower() or q in m["description"].lower()]
+                return models
+            # fall through to static catalog on missing key / fetch failure
+
         models = catalogs.get(provider, [])
         if query:
             q = query.lower()
             models = [m for m in models if q in m["id"].lower() or q in m["description"].lower()]
         return models
+
+    @staticmethod
+    async def _fetch_openai_image_models(api_key: str) -> list[dict]:
+        """Fetch live OpenAI models via the shared helper, filtered to image models."""
+        from src.services.provider_model_cache import fetch_openai_model_ids
+
+        base_url = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
+        try:
+            ids = await fetch_openai_model_ids(base_url, api_key)
+        except Exception:
+            logger.warning("Failed to fetch OpenAI image models", exc_info=True)
+            return []
+        image_ids = [m for m in ids if m.startswith("gpt-image") or m.startswith("dall-e")]
+        image_ids.sort()
+        return [
+            {
+                "id": mid,
+                "model_string": f"openai:{mid}",
+                "description": "OpenAI image model",
+                "run_count": 0,
+            }
+            for mid in image_ids
+        ]

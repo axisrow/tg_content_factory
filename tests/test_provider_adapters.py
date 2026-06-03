@@ -453,6 +453,74 @@ async def test_openai_image_adapter_empty_data(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_openai_image_adapter_gpt_image_saves_b64(monkeypatch, tmp_path):
+    """gpt-image-1 returns b64_json — adapter must decode and persist it to a file."""
+    import base64
+
+    from src.services import provider_adapters
+    from src.services.provider_adapters import make_openai_image_adapter
+
+    fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    b64 = base64.b64encode(fake_png).decode()
+    resp = FakeResp(status=200, json_data={"data": [{"b64_json": b64}]})
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    monkeypatch.setattr(provider_adapters, "DEFAULT_IMAGE_OUTPUT_DIR", str(tmp_path))
+
+    adapter = make_openai_image_adapter("fake-key")
+    result = await adapter("a sunset", "")  # empty model → default gpt-image-1
+
+    from pathlib import Path
+
+    assert result is not None
+    assert result.startswith(str(tmp_path))
+    assert result.endswith(".png")
+    assert Path(result).read_bytes() == fake_png
+
+
+def test_openai_payload_gpt_image_omits_dalle_only_params():
+    from src.services.provider_adapters import _build_openai_image_payload
+
+    payload = _build_openai_image_payload("p", "gpt-image-1")
+    assert payload["model"] == "gpt-image-1"
+    assert payload["size"] == "auto"
+    assert payload["quality"] == "auto"
+    assert "response_format" not in payload
+    assert "style" not in payload
+
+
+def test_openai_payload_legacy_dalle_uses_fixed_size():
+    from src.services.provider_adapters import _build_openai_image_payload
+
+    payload = _build_openai_image_payload("p", "dall-e-3")
+    assert payload["model"] == "dall-e-3"
+    assert payload["size"] == "1024x1024"
+    assert "quality" not in payload
+
+
+@pytest.mark.anyio
+async def test_finalize_image_result_prefers_url():
+    from src.services.provider_adapters import finalize_image_result
+
+    result = await finalize_image_result({"url": "https://x/y.png", "b64_json": "ignored"})
+    assert result == "https://x/y.png"
+
+
+@pytest.mark.anyio
+async def test_finalize_image_result_none_when_empty():
+    from src.services.provider_adapters import finalize_image_result
+
+    assert await finalize_image_result({}) is None
+
+
+@pytest.mark.anyio
+async def test_save_image_b64_rejects_invalid_payload(tmp_path):
+    from src.services.provider_adapters import save_image_b64
+
+    with pytest.raises(RuntimeError, match="invalid base64"):
+        await save_image_b64("not-valid-base64!!!", output_dir=str(tmp_path))
+
+
+@pytest.mark.anyio
 async def test_replicate_image_adapter_success(monkeypatch):
     from src.services.provider_adapters import make_replicate_image_adapter
 

@@ -85,5 +85,5 @@ async def search_models(request: Request) -> ImagesJson:
 
     api_key = await _get_provider_api_key(request, q.provider)
     svc = ImageGenerationService()
-    models = await svc.search_models(q.provider, q.query, api_key=api_key)
+    models = await svc.search_models(q.provider, q.query, api_key=api_key, refresh=q.refresh)
     return ImagesJson({"ok": True, "models": models, "provider": q.provider})
