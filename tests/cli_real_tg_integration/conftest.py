@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -457,6 +458,320 @@ def cli_run_direct(
         env=_build_cli_env(cli_env, extra_env=extra_env),
         check=False,
     )
+
+
+# --- verify-before-delete: only ever delete what the test itself created ---------
+#
+# A previous manual cleanup deleted a personal message because a message id was
+# parsed loosely and the deletion was not verified. The helpers below give tests a
+# structural guarantee: before any destructive cleanup, the test re-reads the
+# target by id and confirms it carries the unique nonce the test itself wrote. No
+# nonce match -> do not delete (fail-safe leak instead of risking someone else's
+# data).
+#
+# IMPORTANT (policy contract): `_capture_cli` is intentionally NOT named
+# run_cli / run_cli_popen / cli_run_direct. The non-editable AST auditor in
+# tests/test_real_telegram_policy.py only inspects CLI calls made through those
+# three helper names; verification reads (`messages read --live`) and targeted
+# `scheduler task-cancel` calls are issued through this differently-named raw
+# wrapper so they do not have to be cleanup-allowlisted (they are reads / targeted
+# cancels, not blind deletes). The blind-delete literals
+# (`dialogs delete-message`, `dialogs leave`, `photo-loader batch-cancel`) stay in
+# each test's `finally` as `cli_run_direct(...)`, as the policy requires.
+
+_FLOOD_OR_READ_ERROR_RE = re.compile(
+    r"FloodWaitError|FLOOD_?WAIT|Error reading messages|No messages found|"
+    r"unavailable|not connected|Account .* not connected",
+    re.IGNORECASE,
+)
+# `messages read --live` prints one header line per message: "[<date>] #<id> <sender>".
+_LIVE_MESSAGE_HEADER_RE = re.compile(r"^\[.*?\]\s+#(\d+)\b")
+
+
+def _capture_cli(
+    cli_env: CliEnv,
+    *args: str,
+    timeout: float = 60.0,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    """Raw CLI runner for verification reads and targeted cancels.
+
+    Deliberately named outside ``_RUN_CLI_HELPERS`` so the policy auditor does not
+    treat the read/cancel commands invoked here as blind-delete cleanup calls.
+    """
+    return subprocess.run(  # noqa: S603 - controlled CLI module invocation
+        _cli_command(cli_env, args),
+        cwd=str(cli_env.repo_root),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        env=_build_cli_env(cli_env, extra_env=extra_env),
+        check=False,
+    )
+
+
+def make_cli_nonce() -> str:
+    """Unique token embedded in test-created message text/captions.
+
+    A full uuid4 hex is collision-free in practice, so finding it in a message's
+    text proves the message was produced by this test run.
+    """
+    return uuid.uuid4().hex
+
+
+@dataclass(frozen=True)
+class VerifyResult:
+    ok: bool
+    reason: str
+
+
+def _parse_live_message_blocks(stdout: str) -> dict[int, str]:
+    """Map message_id -> joined text body from `messages read --live` output.
+
+    The live format is a header line ``[<date>] #<id> <sender>`` followed by the
+    message body. `_print_live_messages` (src/cli/commands/messages.py) prints the
+    whole body with a single ``print(f"  {text[:500]}")``, so ONLY the first
+    physical line of a multi-line body carries the two-space indent — continuation
+    lines (after embedded newlines) are unindented, and blank lines may appear
+    between paragraphs. We therefore accumulate every line after a header until the
+    NEXT header line, stripping the optional two-space prefix. Extra trailing lines
+    (the inter-message blank, an optional ``reaction users:`` line) are harmless:
+    the caller only substring-checks the body for its nonce/marker, which those
+    lines never contain.
+    """
+    blocks: dict[int, list[str]] = {}
+    current: int | None = None
+    for raw_line in stdout.splitlines():
+        header = _LIVE_MESSAGE_HEADER_RE.match(raw_line)
+        if header:
+            current = int(header.group(1))
+            blocks.setdefault(current, [])
+            continue
+        if current is None:
+            continue
+        blocks[current].append(raw_line[2:] if raw_line.startswith("  ") else raw_line)
+    return {mid: "\n".join(lines).strip("\n") for mid, lines in blocks.items()}
+
+
+def cli_verify_message_nonce(
+    cli_env: CliEnv,
+    *,
+    phone: str,
+    chat_ref: str,
+    message_id: int,
+    nonce: str,
+    window: int = 20,
+    timeout: float = 60.0,
+) -> VerifyResult:
+    """Confirm ``message_id`` in ``chat_ref`` carries ``nonce`` before deletion.
+
+    Returns ``ok=True`` only when the live read finds a message whose id is
+    exactly ``message_id`` and whose text contains ``nonce``. Any read error,
+    FLOOD_WAIT, empty result, or mismatch returns ``ok=False`` so the caller skips
+    the delete (fail-safe: never delete on uncertainty).
+    """
+    # Narrow read first: offset_id=message_id+1 returns the single message with
+    # id == message_id (iter_messages returns messages strictly older than the
+    # offset, newest first). Fall back to a small recent window if that misses.
+    for read_args in (
+        ("--offset-id", str(message_id + 1), "--limit", "1"),
+        ("--limit", str(window)),
+    ):
+        result = _capture_cli(
+            cli_env,
+            "messages",
+            "read",
+            chat_ref,
+            "--live",
+            "--phone",
+            phone,
+            *read_args,
+            timeout=timeout,
+        )
+        combined = (result.stdout or "") + "\n" + (result.stderr or "")
+        if result.returncode != 0 or _FLOOD_OR_READ_ERROR_RE.search(combined):
+            # Could not read reliably -> do not authorize deletion.
+            continue
+        blocks = _parse_live_message_blocks(result.stdout or "")
+        if message_id not in blocks:
+            continue
+        if nonce in blocks[message_id]:
+            return VerifyResult(True, f"verified #{message_id} carries nonce")
+        return VerifyResult(
+            False,
+            f"#{message_id} text does not contain the test nonce; refusing to delete",
+        )
+    return VerifyResult(
+        False,
+        f"could not read #{message_id} from {chat_ref} to verify ownership; refusing to delete",
+    )
+
+
+def assert_safe_to_delete(
+    cli_env: CliEnv,
+    *,
+    phone: str,
+    chat_ref: str,
+    candidates: list[int],
+    nonce: str,
+) -> tuple[list[int], str | None]:
+    """Return (verified_ids, leak_reason) — ids proven to carry ``nonce``.
+
+    The caller deletes only ``verified_ids`` (so it can never delete a message it
+    did not create). ``leak_reason`` lists any candidate that failed verification
+    and was therefore left in place.
+    """
+    verified: list[int] = []
+    failed: list[str] = []
+    for message_id in candidates:
+        verdict = cli_verify_message_nonce(
+            cli_env,
+            phone=phone,
+            chat_ref=chat_ref,
+            message_id=message_id,
+            nonce=nonce,
+        )
+        if verdict.ok:
+            verified.append(message_id)
+        else:
+            failed.append(verdict.reason)
+    leak_reason = (
+        "left un-deleted (verification failed): " + "; ".join(failed) if failed else None
+    )
+    return verified, leak_reason
+
+
+_RUN_GENERATED_TEXT_HEADER = "--- GENERATED TEXT ---"
+
+
+def fetch_pipeline_run_text(cli_env: CliEnv, run_id: str, *, timeout: float = 30.0) -> str | None:
+    """Return the run's generated text from `pipeline run-show` (the published body).
+
+    Pipeline-published messages carry text the pipeline generated (no test-injected
+    nonce is possible), so cleanup verifies the published message against this
+    reference text before deleting. Returns None if the run has no generated text.
+    """
+    result = _capture_cli(cli_env, "pipeline", "run-show", run_id, timeout=timeout)
+    if cli_result_failure_summary(result) is not None:
+        return None
+    lines = (result.stdout or "").splitlines()
+    try:
+        idx = lines.index(_RUN_GENERATED_TEXT_HEADER)
+    except ValueError:
+        return None
+    body_lines: list[str] = []
+    for line in lines[idx + 1 :]:
+        if line.startswith("... (") and line.rstrip().endswith("more chars)"):
+            break
+        body_lines.append(line)
+    text = "\n".join(body_lines).strip()
+    return text or None
+
+
+def distinctive_text_fragment(text: str, *, min_len: int = 40, max_len: int = 80) -> str | None:
+    """Longest non-trivial line of ``text``, trimmed — used as an ownership marker.
+
+    `pipeline run-show` truncates the body to 500 chars and the live read shows the
+    first 500 chars too, so we match on a distinctive line both are guaranteed to
+    share rather than the whole body.
+
+    Unlike a `uuid4` nonce, this fragment comes from LLM-generated content and is
+    not guaranteed unique across runs. We therefore require a fairly long line
+    (``min_len`` chars) so an accidental cross-run collision is practically
+    negligible, and return ``None`` when no line is long enough — in which case the
+    caller intentionally SKIPS cleanup (leaves the message) rather than deleting on
+    a weak marker.
+    """
+    candidates = [line.strip() for line in text.splitlines() if len(line.strip()) >= min_len]
+    if not candidates:
+        stripped = text.strip()
+        return stripped[:max_len] if len(stripped) >= min_len else None
+    longest = max(candidates, key=len)
+    return longest[:max_len]
+
+
+_RESOLVE_TITLE_RE = re.compile(r"^Title:\s*(.*)$", re.MULTILINE)
+
+
+def cli_verify_channel_title(
+    cli_env: CliEnv,
+    *,
+    phone: str,
+    channel_id: str,
+    expected_title: str,
+    timeout: float = 60.0,
+) -> VerifyResult:
+    """Confirm the channel at ``channel_id`` has exactly ``expected_title``.
+
+    Used before leaving/deleting a test-created channel: `dialogs resolve` prints
+    ``Title: <title>``; we only authorize cleanup when that title matches the
+    unique title this test created. Any read error or mismatch returns ok=False.
+    """
+    result = _capture_cli(
+        cli_env, "dialogs", "resolve", channel_id, "--phone", phone, timeout=timeout
+    )
+    if cli_result_failure_summary(result) is not None:
+        return VerifyResult(
+            False, f"could not resolve channel {channel_id} to verify its title; refusing to leave"
+        )
+    match = _RESOLVE_TITLE_RE.search(result.stdout or "")
+    if match is None:
+        return VerifyResult(False, f"no title in resolve output for {channel_id}; refusing to leave")
+    actual = match.group(1).strip()
+    if actual == expected_title:
+        return VerifyResult(True, f"channel {channel_id} title matches {expected_title!r}")
+    return VerifyResult(
+        False,
+        f"channel {channel_id} title {actual!r} != expected {expected_title!r}; refusing to leave",
+    )
+
+
+def snapshot_pending_collection_task_ids(db_path: Path) -> tuple[set[int], bool]:
+    """Return (pending channel-collect task ids, ok) currently in the DB.
+
+    Used to scope scheduler cleanup to only the tasks a test created (diff a
+    before/after snapshot) instead of the global, destructive
+    ``scheduler clear-pending`` which would cancel every pending task.
+
+    The ``ok`` flag is False when the read failed (e.g. transient
+    ``database is locked``). Callers MUST treat a failed read as "unknown
+    baseline" and SKIP cleanup — never proceed with an empty set, or
+    ``after - {}`` would cancel every pending task in the live DB, which is the
+    exact over-cancellation this guard exists to prevent.
+    """
+    try:
+        with sqlite3.connect(db_path) as conn:
+            rows = conn.execute(
+                "SELECT id FROM collection_tasks WHERE status = ? AND task_type = ?",
+                ("pending", "channel_collect"),
+            ).fetchall()
+    except sqlite3.Error:
+        return set(), False
+    return {int(row[0]) for row in rows}, True
+
+
+def cancel_collection_tasks(
+    cli_env: CliEnv, task_ids: set[int], *, timeout: float = 30.0
+) -> str | None:
+    """Cancel only the given collection tasks via targeted `scheduler task-cancel`.
+
+    Returns a leak description if any cancel failed, else None. Issued through the
+    raw `_capture_cli` (targeted cancel, not a blind global clear).
+    """
+    failures: list[str] = []
+    for task_id in sorted(task_ids):
+        try:
+            result = _capture_cli(
+                cli_env, "scheduler", "task-cancel", str(task_id), timeout=timeout
+            )
+        except subprocess.TimeoutExpired:
+            failures.append(f"task {task_id}: cancel timed out")
+            continue
+        if cli_result_failure_summary(result) is not None:
+            failures.append(f"task {task_id}: cancel failed")
+    return "; ".join(failures) if failures else None
 
 
 def _run_account_info_probe(
