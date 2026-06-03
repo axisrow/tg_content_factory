@@ -28,7 +28,7 @@ pytestmark = pytest.mark.real_tg_safe
 @pytest.mark.timeout(360)
 def test_collect_default_enqueues_all(run_cli, assert_cli_ok, cli_env):
     leak_msg: str | None = None
-    before_ids = snapshot_pending_collection_task_ids(cli_env.db_path)
+    before_ids, before_ok = snapshot_pending_collection_task_ids(cli_env.db_path)
     try:
         result = run_cli("collect", timeout=300)
         assert_cli_ok(result)
@@ -37,16 +37,28 @@ def test_collect_default_enqueues_all(run_cli, assert_cli_ok, cli_env):
         # requires a configured account, so this smoke must prove enqueue works.
         assert "Enqueued" in combined, f"unexpected bare `collect` output: {combined!r}"
     finally:
-        # Cancel only the tasks this collect run created, by id.
-        after_ids = snapshot_pending_collection_task_ids(cli_env.db_path)
-        new_ids = after_ids - before_ids
-        if new_ids:
-            cancel_leak = cancel_collection_tasks(cli_env, new_ids)
-            if cancel_leak is not None:
+        # Cancel only the tasks this collect run created, by id. The suite runs
+        # sequentially (shared session strings) and these live CLI tests do not run
+        # a worker, so within the test window `collect` is the only enqueuer — a
+        # before/after id diff is the set this run created.
+        # If either snapshot read failed we do NOT fall back to an empty baseline
+        # (that would diff to "all pending" and over-cancel); we skip and leak.
+        after_ids, after_ok = snapshot_pending_collection_task_ids(cli_env.db_path)
+        if not (before_ok and after_ok):
+            if sys.exc_info()[0] is None:
                 leak_msg = (
-                    f"cleanup could not cancel test-created collection tasks "
-                    f"{sorted(new_ids)}: {cancel_leak}"
+                    "could not snapshot pending collection_tasks reliably; skipping cleanup to "
+                    "avoid over-cancelling tasks this test did not create"
                 )
+        else:
+            new_ids = after_ids - before_ids
+            if new_ids:
+                cancel_leak = cancel_collection_tasks(cli_env, new_ids)
+                if cancel_leak is not None:
+                    leak_msg = (
+                        f"cleanup could not cancel test-created collection tasks "
+                        f"{sorted(new_ids)}: {cancel_leak}"
+                    )
 
         # Only raise on cleanup if the try block didn't already raise.
         if leak_msg and sys.exc_info()[0] is None:

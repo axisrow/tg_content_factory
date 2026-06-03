@@ -546,8 +546,12 @@ def _parse_live_message_blocks(stdout: str) -> dict[int, str]:
         if raw_line.startswith("  "):
             blocks[current].append(raw_line[2:])
         elif raw_line.strip() == "":
-            current = None
-    return {mid: "\n".join(lines) for mid, lines in blocks.items()}
+            # A blank line is part of a multi-paragraph body, not a block
+            # terminator: keep accumulating so a nonce in a later paragraph is
+            # still found. Only a new header line (handled above) starts a new
+            # block. Trailing blank lines are stripped by the join+strip below.
+            blocks[current].append("")
+    return {mid: "\n".join(lines).strip("\n") for mid, lines in blocks.items()}
 
 
 def cli_verify_message_nonce(
@@ -665,17 +669,24 @@ def fetch_pipeline_run_text(cli_env: CliEnv, run_id: str, *, timeout: float = 30
     return text or None
 
 
-def distinctive_text_fragment(text: str, *, max_len: int = 60) -> str | None:
+def distinctive_text_fragment(text: str, *, min_len: int = 40, max_len: int = 80) -> str | None:
     """Longest non-trivial line of ``text``, trimmed — used as an ownership marker.
 
     `pipeline run-show` truncates the body to 500 chars and the live read shows the
     first 500 chars too, so we match on a distinctive line both are guaranteed to
     share rather than the whole body.
+
+    Unlike a `uuid4` nonce, this fragment comes from LLM-generated content and is
+    not guaranteed unique across runs. We therefore require a fairly long line
+    (``min_len`` chars) so an accidental cross-run collision is practically
+    negligible, and return ``None`` when no line is long enough — in which case the
+    caller intentionally SKIPS cleanup (leaves the message) rather than deleting on
+    a weak marker.
     """
-    candidates = [line.strip() for line in text.splitlines() if len(line.strip()) >= 12]
+    candidates = [line.strip() for line in text.splitlines() if len(line.strip()) >= min_len]
     if not candidates:
         stripped = text.strip()
-        return stripped[:max_len] if len(stripped) >= 12 else None
+        return stripped[:max_len] if len(stripped) >= min_len else None
     longest = max(candidates, key=len)
     return longest[:max_len]
 
@@ -716,12 +727,18 @@ def cli_verify_channel_title(
     )
 
 
-def snapshot_pending_collection_task_ids(db_path: Path) -> set[int]:
-    """Set of pending channel-collect task ids currently in the DB.
+def snapshot_pending_collection_task_ids(db_path: Path) -> tuple[set[int], bool]:
+    """Return (pending channel-collect task ids, ok) currently in the DB.
 
     Used to scope scheduler cleanup to only the tasks a test created (diff a
     before/after snapshot) instead of the global, destructive
     ``scheduler clear-pending`` which would cancel every pending task.
+
+    The ``ok`` flag is False when the read failed (e.g. transient
+    ``database is locked``). Callers MUST treat a failed read as "unknown
+    baseline" and SKIP cleanup — never proceed with an empty set, or
+    ``after - {}`` would cancel every pending task in the live DB, which is the
+    exact over-cancellation this guard exists to prevent.
     """
     try:
         with sqlite3.connect(db_path) as conn:
@@ -730,8 +747,8 @@ def snapshot_pending_collection_task_ids(db_path: Path) -> set[int]:
                 ("pending", "channel_collect"),
             ).fetchall()
     except sqlite3.Error:
-        return set()
-    return {int(row[0]) for row in rows}
+        return set(), False
+    return {int(row[0]) for row in rows}, True
 
 
 def cancel_collection_tasks(
