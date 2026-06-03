@@ -33,9 +33,15 @@ async def _resolve_self_target(pool, phone: str | None) -> PhotoTarget:
         result = await pool.get_available_client()
         if result is None:
             raise ValueError("Could not resolve target 'me': no connected Telegram account")
-    session, _acquired_phone = result
+    session, acquired_phone = result
     session = adapt_transport_session(session, disconnect_on_close=False)
-    me = await session.fetch_me()
+    try:
+        me = await session.fetch_me()
+    finally:
+        # Release the lease promptly (mirrors channel.py); the subsequent send/
+        # schedule call re-acquires it. disconnect_all() in run()'s finally is the
+        # backstop, but explicit release keeps the pool tidy for other callers.
+        await pool.release_client(acquired_phone)
     self_id = getattr(me, "id", None)
     if self_id is None:
         raise ValueError("Could not resolve target 'me': failed to fetch account id")
