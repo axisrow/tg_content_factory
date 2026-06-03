@@ -186,10 +186,11 @@ def _evaluate_real_tg_policy(
     cli_live = CLI_REAL_TG_LIVE_FIXTURE in fixturenames
 
     def _gate(env_name: str) -> bool:
-        # Auto-enable (project-readiness) applies only to the CLI-live fixture.
-        # The real_telegram_sandbox fixture additionally needs REAL_TG_* env that
-        # auto-readiness can't supply, so keep it strictly env-gated to avoid
-        # firing sandbox tests "into the void" on a live-CLI-ready dev machine.
+        # Every live-Telegram gate is opt-in only. CLI-live tests route through
+        # the shared _gate_enabled helper (true/false-token aware); the
+        # real_telegram_sandbox fixture keeps the strict "must be 1" check.
+        # Neither auto-enables — these tests act on a real account and must never
+        # start without an explicit RUN_*=1.
         if cli_live:
             return gate_enabled(env_name, environ)
         return environ.get(env_name) == "1"

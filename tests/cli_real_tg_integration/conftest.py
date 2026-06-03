@@ -337,8 +337,8 @@ def _fetch_live_message_target(
 def cli_real_cli_env() -> CliRealCliEnv:
     if not _gate_enabled(CLI_REAL_TG_LIVE_GATE_ENV):
         pytest.skip(
-            f"live CLI tests disabled; project is not live-ready "
-            f"(set {CLI_REAL_TG_LIVE_GATE_ENV}=1 to force on, =0 to force off)"
+            f"live CLI tests disabled; set {CLI_REAL_TG_LIVE_GATE_ENV}=1 to run "
+            "— opt-in only, never auto-enabled"
         )
 
     live_root = _resolve_live_root()

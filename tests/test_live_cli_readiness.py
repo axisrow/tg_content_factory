@@ -1,9 +1,9 @@
-"""Unit tests for the live-CLI readiness predicate and env-gate helper.
+"""Unit tests for the live-CLI env-gate helper and credential resolution.
 
 These are deterministic and network-free: they never touch a real Telegram
-account. They cover the auto-enable logic that lets
-``pytest tests/cli_real_tg_integration/...`` run without manual ``RUN_*`` env
-vars when the project is genuinely live-ready, while staying skipped in CI.
+account. They cover the opt-in-only gate policy — live CLI tests run solely when
+their ``RUN_*`` env var is explicitly truthy, and never auto-enable — plus the
+``api_id``/``api_hash`` resolution used by the live CLI fixture.
 """
 from __future__ import annotations
 
@@ -13,20 +13,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.cli_real_tg_integration import _live_readiness
 from tests.cli_real_tg_integration._live_readiness import (
     _gate_enabled,
     _resolve_api_credentials,
-    live_cli_project_ready,
 )
-
-
-@pytest.fixture(autouse=True)
-def _clear_readiness_cache():
-    """Keep the process-wide lru_cache from leaking tmp_path state to other tests."""
-    live_cli_project_ready.cache_clear()
-    yield
-    live_cli_project_ready.cache_clear()
 
 
 def _make_config(api_id: int = 0, api_hash: str = "") -> SimpleNamespace:
@@ -94,106 +84,35 @@ def test_resolve_api_credentials_broken_db_returns_none(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# live_cli_project_ready
-# --------------------------------------------------------------------------- #
-
-
-def _point_readiness_at(monkeypatch, tmp_path, *, write_config: bool, db_kwargs: dict | None):
-    monkeypatch.setenv("CLI_REAL_TG_ROOT", str(tmp_path))
-    monkeypatch.delenv("CLI_REAL_TG_CONFIG", raising=False)
-    monkeypatch.delenv("CLI_REAL_TG_PHONE", raising=False)
-    monkeypatch.delenv("TG_API_ID", raising=False)
-    monkeypatch.delenv("TG_API_HASH", raising=False)
-    if write_config:
-        (tmp_path / "config.yaml").write_text(
-            "telegram:\n"
-            "  api_id: 123456\n"
-            "  api_hash: abcdef0123456789abcdef0123456789\n"
-            "database:\n"
-            "  path: data.db\n",
-            encoding="utf-8",
-        )
-    if db_kwargs is not None:
-        _make_db(tmp_path / "data.db", **db_kwargs)
-    live_cli_project_ready.cache_clear()
-
-
-def test_live_cli_project_ready_false_without_config(monkeypatch, tmp_path):
-    _point_readiness_at(monkeypatch, tmp_path, write_config=False, db_kwargs=None)
-    assert live_cli_project_ready() is False
-
-
-def test_live_cli_project_ready_false_without_db(monkeypatch, tmp_path):
-    _point_readiness_at(monkeypatch, tmp_path, write_config=True, db_kwargs=None)
-    assert live_cli_project_ready() is False
-
-
-def test_live_cli_project_ready_false_without_accounts(monkeypatch, tmp_path):
-    _point_readiness_at(monkeypatch, tmp_path, write_config=True, db_kwargs={"accounts": False})
-    assert live_cli_project_ready() is False
-
-
-def test_live_cli_project_ready_true_when_fully_configured(monkeypatch, tmp_path):
-    _point_readiness_at(monkeypatch, tmp_path, write_config=True, db_kwargs={"accounts": True})
-    assert live_cli_project_ready() is True
-
-
-def test_live_cli_project_ready_true_with_settings_table_credentials(monkeypatch, tmp_path):
-    monkeypatch.setenv("CLI_REAL_TG_ROOT", str(tmp_path))
-    monkeypatch.delenv("CLI_REAL_TG_CONFIG", raising=False)
-    monkeypatch.delenv("CLI_REAL_TG_PHONE", raising=False)
-    monkeypatch.delenv("TG_API_ID", raising=False)
-    monkeypatch.delenv("TG_API_HASH", raising=False)
-    # config.yaml has no creds; they live only in the settings table.
-    (tmp_path / "config.yaml").write_text("database:\n  path: data.db\n", encoding="utf-8")
-    _make_db(
-        tmp_path / "data.db",
-        accounts=True,
-        settings={"tg_api_id": "123456", "tg_api_hash": "abcdef0123456789abcdef0123456789"},
-    )
-    live_cli_project_ready.cache_clear()
-
-    assert live_cli_project_ready() is True
-
-
-# --------------------------------------------------------------------------- #
-# _gate_enabled
+# _gate_enabled — opt-in only, no auto-enable
 # --------------------------------------------------------------------------- #
 
 
 @pytest.mark.parametrize("token", ["1", "true", "TRUE", "yes", "on"])
-def test_gate_enabled_true_tokens_force_on(token, monkeypatch):
-    monkeypatch.setattr(_live_readiness, "live_cli_project_ready", lambda: False)
+def test_gate_enabled_true_tokens_run(token):
     assert _gate_enabled("ANY_GATE", {"ANY_GATE": token}) is True
 
 
 @pytest.mark.parametrize("token", ["0", "false", "no", "off"])
-def test_gate_enabled_false_tokens_force_off(token, monkeypatch):
-    monkeypatch.setattr(_live_readiness, "live_cli_project_ready", lambda: True)
+def test_gate_enabled_false_tokens_skip(token):
     assert _gate_enabled("ANY_GATE", {"ANY_GATE": token}) is False
 
 
-def test_gate_enabled_garbage_is_off(monkeypatch):
-    monkeypatch.setattr(_live_readiness, "live_cli_project_ready", lambda: True)
+def test_gate_enabled_garbage_is_off():
     assert _gate_enabled("ANY_GATE", {"ANY_GATE": "maybe"}) is False
 
 
-def test_gate_enabled_unset_follows_predicate_true(monkeypatch):
-    monkeypatch.setattr(_live_readiness, "live_cli_project_ready", lambda: True)
-    assert _gate_enabled("ANY_GATE", {}) is True
-
-
-def test_gate_enabled_unset_follows_predicate_false(monkeypatch):
-    monkeypatch.setattr(_live_readiness, "live_cli_project_ready", lambda: False)
+def test_gate_enabled_unset_is_off():
+    """The core safety guarantee: an unset gate never runs (no auto-enable)."""
     assert _gate_enabled("ANY_GATE", {}) is False
 
 
 # --------------------------------------------------------------------------- #
-# integration with _evaluate_real_tg_policy (cli-live auto branch vs sandbox)
+# integration with _evaluate_real_tg_policy — opt-in only
 # --------------------------------------------------------------------------- #
 
 
-def test_policy_auto_enables_cli_live_when_project_ready():
+def test_policy_runs_cli_live_when_gate_explicitly_set():
     from tests.conftest import (
         CLI_REAL_TG_LIVE_FIXTURE,
         REAL_TG_SAFE_MARK,
@@ -204,14 +123,14 @@ def test_policy_auto_enables_cli_live_when_project_ready():
         mode=REAL_TG_SAFE_MARK,
         fixturenames=(CLI_REAL_TG_LIVE_FIXTURE,),
         environ={},
-        gate_enabled=lambda name, environ: True,
+        gate_enabled=lambda name, environ: True,  # env explicitly truthy
     )
 
     assert action is None
     assert message is None
 
 
-def test_policy_skips_cli_live_when_project_not_ready():
+def test_policy_skips_cli_live_when_gate_unset():
     from tests.conftest import (
         CLI_REAL_TG_LIVE_FIXTURE,
         REAL_TG_SAFE_GATE_ENV,
@@ -223,15 +142,32 @@ def test_policy_skips_cli_live_when_project_not_ready():
         mode=REAL_TG_SAFE_MARK,
         fixturenames=(CLI_REAL_TG_LIVE_FIXTURE,),
         environ={},
-        gate_enabled=lambda name, environ: False,
+        gate_enabled=lambda name, environ: False,  # env unset → off
     )
 
     assert action == "skip"
     assert REAL_TG_SAFE_GATE_ENV in message
 
 
+def test_policy_cli_live_unset_env_skips_via_real_gate():
+    """End-to-end with the real _gate_enabled: unset env on cli-live → skip."""
+    from tests.conftest import (
+        CLI_REAL_TG_LIVE_FIXTURE,
+        REAL_TG_SAFE_MARK,
+        _evaluate_real_tg_policy,
+    )
+
+    action, _message = _evaluate_real_tg_policy(
+        mode=REAL_TG_SAFE_MARK,
+        fixturenames=(CLI_REAL_TG_LIVE_FIXTURE,),
+        environ={},  # no gate set → real _gate_enabled returns False
+    )
+
+    assert action == "skip"
+
+
 def test_policy_does_not_auto_enable_sandbox_fixture():
-    """Sandbox fixture stays strictly env-gated even when the predicate is True."""
+    """Sandbox fixture stays strictly env-gated."""
     from tests.conftest import (
         REAL_TG_LIVE_FIXTURE,
         REAL_TG_SAFE_MARK,

@@ -29,32 +29,27 @@
 
 - live Telegram test обязан иметь `real_tg_safe`, `real_tg_mutation_safe` или `real_tg_manual`;
 - live Telegram test обязан использовать `real_telegram_sandbox` или `cli_real_cli_env`;
-- `real_tg_safe` требует `RUN_REAL_TELEGRAM_SAFE=1` (или авто, см. ниже);
-- `real_tg_mutation_safe` требует `RUN_REAL_TELEGRAM_MUTATION_SAFE=1` (или авто);
-- `real_tg_manual` требует `RUN_REAL_TELEGRAM_MANUAL=1` (или авто);
+- `real_tg_safe` требует `RUN_REAL_TELEGRAM_SAFE=1`;
+- `real_tg_mutation_safe` требует `RUN_REAL_TELEGRAM_MUTATION_SAFE=1`;
+- `real_tg_manual` требует `RUN_REAL_TELEGRAM_MANUAL=1`;
 - `real_tg_never` несовместим с live fixtures;
 - без marker + live fixture доступ к real Telegram считается ошибкой конфигурации теста.
 
-### Авто-включение по готовности проекта
+### Гейты — только явный opt-in
 
-CLI live-инвентарь (`cli_real_cli_env`-тесты) теперь авто-включается, когда проект реально
-настроен для live, без ручного выставления `RUN_*`-гейтов. Предикат
-`live_cli_project_ready()` (`tests/cli_real_tg_integration/_live_readiness.py`) истинен,
-когда: есть `config.yaml`, существует и не пуста DB из `database.path`, заданы `api_id`/`api_hash`
-(в config/env **или** в settings-таблице DB по ключам `tg_api_id`/`tg_api_hash`), и в DB есть
-хотя бы один active account с `session_string`.
+Живые Telegram-тесты запускаются **только вручную**: каждый бакет открывается лишь когда
+его `RUN_*`-гейт явно выставлен в истинное значение. Авто-включения нет — эти тесты работают
+с реальным аккаунтом и не должны стартовать сами (например, просто потому что машина настроена
+под live Telegram). Единый помощник `_gate_enabled`
+(`tests/cli_real_tg_integration/_live_readiness.py`):
 
-Все `RUN_*`-гейты остаются опциональным override через единый помощник `_gate_enabled`:
+- env задан в `1/true/yes/on` → запуск;
+- env задан в `0/false/no/off` → skip (kill switch);
+- env не задан → skip (по умолчанию выключено).
 
-- env задан в `1/true/yes/on` → форс-вкл;
-- env задан в `0/false/no/off` → форс-выкл (kill switch даже на готовом проекте);
-- env не задан → авто по `live_cli_project_ready()`.
-
-Категория выбирается путём (подкаталогом) в команде pytest; запуск родительской папки
-`tests/cli_real_tg_integration/` на готовом проекте собирает все категории. В CI (нет
-заполненной DB/accounts) предикат ложен → все гейты закрыты → graceful skip, без обращений
-к Telegram. Авто-включение применяется только к CLI-live fixture; sandbox-fixture
-(`real_telegram_sandbox`) остаётся строго env-gated.
+Категория выбирается путём (подкаталогом) в команде pytest. По умолчанию (CI или обычный
+прогон без `RUN_*`) все категории закрыты → graceful skip, без обращений к Telegram.
+Sandbox-fixture (`real_telegram_sandbox`) также строго env-gated.
 
 ## Sandbox pytest tests
 
@@ -87,8 +82,7 @@ python -m src.main --config <real config.yaml> ...
 
 Перед запуском fixture проверяет:
 
-- гейт `RUN_CLI_REAL_TG_LIVE` открыт (`=1`, либо не задан и проект live-ready — см.
-  «Авто-включение по готовности проекта»);
+- гейт `RUN_CLI_REAL_TG_LIVE` открыт (`=1`);
 - существует `config.yaml`;
 - существует и не пустая DB из `database.path`;
 - заданы Telegram `api_id`/`api_hash` — в config/env **или** в settings-таблице DB
@@ -113,10 +107,9 @@ flood-waited accounts.
 
 ## CLI Folders And Gates
 
-Гейты ниже — это override: на live-ready проекте они авто-открываются без env (см.
-«Авто-включение по готовности проекта»). Перечисленные `RUN_*=1` нужны только чтобы
-форсировать запуск на не-готовом проекте или в CI; `RUN_*=0` форсирует skip даже на
-готовом проекте.
+Гейты ниже — opt-in only: каждый бакет запускается только при явно выставленном `RUN_*=1`.
+Авто-включения нет. `RUN_*=0` (или любое не-истинное значение) форсирует skip. По умолчанию
+(env не задан) бакет пропускается.
 
 `safe_ro/`
 

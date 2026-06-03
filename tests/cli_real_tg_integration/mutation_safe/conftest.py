@@ -43,7 +43,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
         return
 
     skip_marker = pytest.mark.skip(
-        reason=f"mutation-safe Telegram CLI tests disabled; set {GATE_ENV}=1 to force on, =0 to force off"
+        reason=f"mutation-safe Telegram CLI tests disabled; set {GATE_ENV}=1 to run — opt-in only, never auto-enabled"
     )
     here = os.path.dirname(os.path.abspath(__file__))
     for item in items:
