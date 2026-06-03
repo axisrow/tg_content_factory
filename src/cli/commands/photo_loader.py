@@ -39,7 +39,10 @@ async def _resolve_self_target(pool, phone: str | None) -> PhotoTarget:
     self_id = getattr(me, "id", None)
     if self_id is None:
         raise ValueError("Could not resolve target 'me': failed to fetch account id")
-    return PhotoTarget(dialog_id=int(self_id), title="Saved Messages", target_type="user")
+    # target_type="saved" so PhotoPublishService → resolve_dialog_entity maps it to
+    # PeerUser (Saved Messages). Any other value (e.g. "user") falls through to
+    # PeerChannel(abs(id)), which mis-resolves the self user-id as a channel.
+    return PhotoTarget(dialog_id=int(self_id), title="Saved Messages", target_type="saved")
 
 
 async def _resolve_target(raw: str, pool, phone: str | None = None) -> PhotoTarget:
