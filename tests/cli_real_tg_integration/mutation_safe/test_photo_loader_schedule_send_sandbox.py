@@ -10,7 +10,11 @@ from pathlib import Path
 
 import pytest
 
-from tests.cli_real_tg_integration.conftest import cli_result_failure_summary, cli_run_direct
+from tests.cli_real_tg_integration.conftest import (
+    cli_result_failure_summary,
+    cli_run_direct,
+    make_cli_nonce,
+)
 from tests.cli_real_tg_integration.mutation_safe.conftest import make_minimal_png
 
 pytestmark = pytest.mark.real_tg_mutation_safe
@@ -56,7 +60,7 @@ def test_photo_loader_schedule_send_sandbox(run_cli, assert_cli_ok, cli_real_cli
             "--at",
             future_at,
             "--caption",
-            "codex live cli schedule-send test",
+            f"codex live cli schedule-send test {make_cli_nonce()}",
             timeout=90,
         )
         assert_cli_ok(result)
@@ -76,7 +80,21 @@ def test_photo_loader_schedule_send_sandbox(run_cli, assert_cli_ok, cli_real_cli
     finally:
         tmpdir_obj.cleanup()
 
-        if item_id is not None:
+        # batch-cancel is a DB-only status flip scoped to the row with id==item_id
+        # (it never deletes a Telegram message — the photo is scheduled 24h out and
+        # was not sent). We only cancel when item_id came from THIS call's output
+        # and the row is still our `scheduled` item, so cleanup cannot touch
+        # anything this test did not create.
+        item_is_ours = (
+            item_id is not None
+            and _fetch_item_status(cli_real_cli_env.db_path, item_id) == "scheduled"
+        )
+        if item_id is not None and not item_is_ours and sys.exc_info()[0] is None:
+            leak_msg = (
+                f"scheduled photo item #{item_id} not in expected `scheduled` state at cleanup; "
+                "left as-is to avoid cancelling an unexpected row"
+            )
+        if item_is_ours:
             try:
                 cleanup = cli_run_direct(
                     cli_real_cli_env,

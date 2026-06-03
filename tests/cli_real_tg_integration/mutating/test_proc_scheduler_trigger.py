@@ -1,21 +1,26 @@
 """`scheduler trigger` — one-shot enqueue of all eligible channels.
 
-Writes collection_tasks rows (pending) for every non-filtered channel. This
-is reversible via `scheduler clear-pending`, which the test runs in finally
-to leave the queue as it was before.
+Writes collection_tasks rows (pending) for every non-filtered channel. Cleanup
+cancels ONLY the tasks this test created (diff of a before/after snapshot of
+pending channel-collect task ids), never the global `scheduler clear-pending`
+which would cancel every pending task in the queue — including ones another
+process may have enqueued.
 """
-import subprocess
 import sys
 
 import pytest
 
-from tests.cli_real_tg_integration.conftest import cli_run_direct
+from tests.cli_real_tg_integration.conftest import (
+    cancel_collection_tasks,
+    snapshot_pending_collection_task_ids,
+)
 
 pytestmark = pytest.mark.real_tg_safe
 
 
 def test_proc_scheduler_trigger_enqueues(run_cli, assert_cli_ok, cli_real_cli_env):
     leak_msg: str | None = None
+    before_ids = snapshot_pending_collection_task_ids(cli_real_cli_env.db_path)
     try:
         result = run_cli("scheduler", "trigger")
         assert_cli_ok(result, allow_error_text=("No connected accounts",))
@@ -29,21 +34,15 @@ def test_proc_scheduler_trigger_enqueues(run_cli, assert_cli_ok, cli_real_cli_en
             or "no channels" in combined.lower()
         ), f"unexpected `scheduler trigger` output: {combined!r}"
     finally:
-        # Cleanup uses cli_run_direct (not run_cli) so a TimeoutExpired here
-        # raises explicitly instead of pytest.skip(), which would replace any
-        # in-flight AssertionError from the try block.
-        try:
-            cleanup = cli_run_direct(cli_real_cli_env, "scheduler", "clear-pending", timeout=30)
-        except subprocess.TimeoutExpired:
-            leak_msg = (
-                "cleanup `scheduler clear-pending` timed out; pending "
-                "collection_tasks rows may be leaked — inspect the DB manually."
-            )
-        else:
-            if cleanup.returncode != 0:
+        # Cancel only the tasks created by this trigger run, by id.
+        after_ids = snapshot_pending_collection_task_ids(cli_real_cli_env.db_path)
+        new_ids = after_ids - before_ids
+        if new_ids:
+            cancel_leak = cancel_collection_tasks(cli_real_cli_env, new_ids)
+            if cancel_leak is not None:
                 leak_msg = (
-                    f"cleanup `scheduler clear-pending` failed; pending "
-                    f"collection tasks may be leaked: stderr={cleanup.stderr!r}"
+                    f"cleanup could not cancel test-created collection tasks "
+                    f"{sorted(new_ids)}: {cancel_leak}"
                 )
 
         # Only raise on cleanup if the try block didn't already fail.
