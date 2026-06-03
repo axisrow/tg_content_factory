@@ -530,8 +530,16 @@ class VerifyResult:
 def _parse_live_message_blocks(stdout: str) -> dict[int, str]:
     """Map message_id -> joined text body from `messages read --live` output.
 
-    The live format is a header line ``[<date>] #<id> <sender>`` followed by
-    indented (two-space) body/text lines until the next header or a blank line.
+    The live format is a header line ``[<date>] #<id> <sender>`` followed by the
+    message body. `_print_live_messages` (src/cli/commands/messages.py) prints the
+    whole body with a single ``print(f"  {text[:500]}")``, so ONLY the first
+    physical line of a multi-line body carries the two-space indent — continuation
+    lines (after embedded newlines) are unindented, and blank lines may appear
+    between paragraphs. We therefore accumulate every line after a header until the
+    NEXT header line, stripping the optional two-space prefix. Extra trailing lines
+    (the inter-message blank, an optional ``reaction users:`` line) are harmless:
+    the caller only substring-checks the body for its nonce/marker, which those
+    lines never contain.
     """
     blocks: dict[int, list[str]] = {}
     current: int | None = None
@@ -543,14 +551,7 @@ def _parse_live_message_blocks(stdout: str) -> dict[int, str]:
             continue
         if current is None:
             continue
-        if raw_line.startswith("  "):
-            blocks[current].append(raw_line[2:])
-        elif raw_line.strip() == "":
-            # A blank line is part of a multi-paragraph body, not a block
-            # terminator: keep accumulating so a nonce in a later paragraph is
-            # still found. Only a new header line (handled above) starts a new
-            # block. Trailing blank lines are stripped by the join+strip below.
-            blocks[current].append("")
+        blocks[current].append(raw_line[2:] if raw_line.startswith("  ") else raw_line)
     return {mid: "\n".join(lines).strip("\n") for mid, lines in blocks.items()}
 
 
