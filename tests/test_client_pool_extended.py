@@ -372,3 +372,170 @@ async def test_get_dialogs_for_phone_sets_is_own(mock_db, mock_auth):
 
     assert dialogs[0]["is_own"] is True
     assert dialogs[1]["is_own"] is False
+
+
+def _make_group_entity(channel_id: int, title: str):
+    return MagicMock(
+        id=channel_id,
+        title=title,
+        username=None,
+        creator=True,
+        megagroup=True,
+        broadcast=False,
+        gigagroup=False,
+        forum=False,
+        monoforum=False,
+        scam=False,
+        fake=False,
+        restricted=False,
+    )
+
+
+@pytest.mark.anyio
+async def test_resolve_any_entity_warms_cache_on_cold_lookup(mock_db, mock_auth):
+    """A freshly created group (cold entity cache) resolves after warming dialogs."""
+    entity = _make_group_entity(777, "sbx-tmp-group")
+
+    session = MagicMock()
+    # First resolve raises (cache miss), warm succeeds, second resolve returns entity.
+    session.resolve_entity = AsyncMock(side_effect=[ValueError("no entity"), entity])
+    session.warm_dialog_cache = AsyncMock(return_value=None)
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.get_client_by_phone = AsyncMock(return_value=(session, "+7001"))
+    pool.release_client = AsyncMock()
+    pool.mark_dialogs_fetched = MagicMock()
+
+    with patch(
+        "src.telegram.client_pool.adapt_transport_session",
+        side_effect=lambda candidate, **_kwargs: candidate,
+    ):
+        result = await pool.resolve_any_entity("-100777", phone="+7001")
+
+    assert result is not None
+    assert result["channel_id"] == 777
+    assert result["title"] == "sbx-tmp-group"
+    assert session.resolve_entity.await_count == 2
+    session.warm_dialog_cache.assert_awaited_once()
+    pool.mark_dialogs_fetched.assert_called_once_with("+7001")
+
+
+@pytest.mark.anyio
+async def test_resolve_any_entity_no_warm_on_direct_hit(mock_db, mock_auth):
+    """When the entity resolves immediately, the cache is not warmed (regression)."""
+    entity = _make_group_entity(888, "already-cached")
+
+    session = MagicMock()
+    session.resolve_entity = AsyncMock(return_value=entity)
+    session.warm_dialog_cache = AsyncMock(return_value=None)
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.get_client_by_phone = AsyncMock(return_value=(session, "+7001"))
+    pool.release_client = AsyncMock()
+    pool.mark_dialogs_fetched = MagicMock()
+
+    with patch(
+        "src.telegram.client_pool.adapt_transport_session",
+        side_effect=lambda candidate, **_kwargs: candidate,
+    ):
+        result = await pool.resolve_any_entity("-100888", phone="+7001")
+
+    assert result is not None
+    assert result["channel_id"] == 888
+    assert session.resolve_entity.await_count == 1
+    session.warm_dialog_cache.assert_not_awaited()
+    pool.mark_dialogs_fetched.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_resolve_entity_with_warm_retries_after_warm(mock_db, mock_auth):
+    """Centralized resolver: cache miss -> warm -> retry returns the entity."""
+    entity = _make_group_entity(555, "fresh")
+    session = MagicMock()
+    session.resolve_entity = AsyncMock(side_effect=[ValueError("cold"), entity])
+    session.warm_dialog_cache = AsyncMock(return_value=None)
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.mark_dialogs_fetched = MagicMock()
+
+    with patch(
+        "src.telegram.client_pool.adapt_transport_session",
+        side_effect=lambda candidate, **_kwargs: candidate,
+    ):
+        result = await pool.resolve_entity_with_warm(session, "+7001", object())
+
+    assert result is entity
+    assert session.resolve_entity.await_count == 2
+    session.warm_dialog_cache.assert_awaited_once()
+    pool.mark_dialogs_fetched.assert_called_once_with("+7001")
+
+
+@pytest.mark.anyio
+async def test_resolve_entity_with_warm_uses_input_entity_resolver(mock_db, mock_auth):
+    """use_input_entity=True routes through resolve_input_entity (for dialog peers)."""
+    input_peer = MagicMock()
+    session = MagicMock()
+    session.resolve_input_entity = AsyncMock(return_value=input_peer)
+    session.resolve_entity = AsyncMock()
+    session.warm_dialog_cache = AsyncMock(return_value=None)
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.mark_dialogs_fetched = MagicMock()
+
+    with patch(
+        "src.telegram.client_pool.adapt_transport_session",
+        side_effect=lambda candidate, **_kwargs: candidate,
+    ):
+        result = await pool.resolve_entity_with_warm(
+            session, "+7001", object(), use_input_entity=True
+        )
+
+    assert result is input_peer
+    session.resolve_input_entity.assert_awaited_once()
+    session.resolve_entity.assert_not_awaited()
+    session.warm_dialog_cache.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_await_transient_flood_sleeps_for_short_flood(mock_db, mock_auth):
+    """A transient (<=60s) flood is slept out before acquiring a pinned phone."""
+    until = datetime.now(timezone.utc) + timedelta(seconds=20)
+    acc = Account(phone="+7001", is_active=True, session_string="s", flood_wait_until=until)
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool._get_account_for_phone = AsyncMock(return_value=acc)
+
+    with patch("src.telegram.client_pool.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+        await pool._await_transient_flood("+7001")
+
+    sleep_mock.assert_awaited_once()
+    assert sleep_mock.await_args.args[0] >= 20  # waits the remaining flood + buffer
+
+
+@pytest.mark.anyio
+async def test_await_transient_flood_skips_long_flood(mock_db, mock_auth):
+    """A long (>60s) flood is not slept out — caller still gets None as before."""
+    until = datetime.now(timezone.utc) + timedelta(seconds=600)
+    acc = Account(phone="+7001", is_active=True, session_string="s", flood_wait_until=until)
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool._get_account_for_phone = AsyncMock(return_value=acc)
+
+    with patch("src.telegram.client_pool.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+        await pool._await_transient_flood("+7001")
+
+    sleep_mock.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_await_transient_flood_noop_when_clear(mock_db, mock_auth):
+    """No flood -> no sleep."""
+    acc = Account(phone="+7001", is_active=True, session_string="s", flood_wait_until=None)
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool._get_account_for_phone = AsyncMock(return_value=acc)
+
+    with patch("src.telegram.client_pool.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+        await pool._await_transient_flood("+7001")
+
+    sleep_mock.assert_not_awaited()

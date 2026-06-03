@@ -15,7 +15,7 @@ from src.services.telegram_actions import (
     TelegramActionService,
 )
 from src.services.telegram_command_service import TelegramCommandService
-from src.telegram.flood_wait import HandledFloodWaitError
+from src.telegram.flood_wait import HandledFloodWaitError, is_blocking_flood_wait_until
 from src.telegram.reactions import (
     SUPPORTED_REACTION_EMOJIS_DISPLAY,
     TelegramReactionInvalidError,
@@ -343,19 +343,20 @@ def run_with_dependencies(
                 if phone not in pool.clients:
                     print(f"Account {phone} not connected.")
                     return
-                # Surface flood-wait state explicitly instead of silently failing
-                # lease acquisition (issue #463 observability).
+                # Surface only a long (non-transient) flood-wait explicitly; a
+                # transient (<=60s) flood is now waited out centrally inside the
+                # by-phone write resolver (get_*_client_by_phone wait_for_flood).
                 acc = await pool._get_account_for_phone(phone)
-                if acc is not None and acc.flood_wait_until is not None:
-                    from datetime import datetime
-                    from datetime import timezone as _tz
-
-                    if acc.flood_wait_until > datetime.now(_tz.utc):
-                        print(
-                            f"Account {phone} is flood-waited until "
-                            f"{acc.flood_wait_until.isoformat()}."
-                        )
-                        return
+                if (
+                    acc is not None
+                    and acc.flood_wait_until is not None
+                    and is_blocking_flood_wait_until(acc.flood_wait_until)
+                ):
+                    print(
+                        f"Account {phone} is flood-waited until "
+                        f"{acc.flood_wait_until.isoformat()}."
+                    )
+                    return
                 if args.clear:
                     emoji = None
                 else:

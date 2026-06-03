@@ -27,7 +27,7 @@ class PhotoPublishService:
         caption: str | None = None,
         schedule_at: datetime | None = None,
     ) -> list[int]:
-        result = await self._pool.get_client_by_phone(phone)
+        result = await self._pool.get_client_by_phone(phone, wait_for_flood=True)
         if result is None:
             raise RuntimeError("no_client")
         session, acquired_phone = result
