@@ -351,6 +351,10 @@ def make_replicate_image_adapter(api_token: str, timeout: float = 60.0) -> Image
 # the Codex agent itself via the ``$imagegen`` tool, which writes a PNG to a
 # path we hand it — so this adapter, like HuggingFace, returns a local file path.
 CODEX_DEFAULT_IMAGE_MODEL = "gpt-5.4"
+# Deadline for one Codex image turn. Bounds the caller's wait; the orphaned
+# worker thread still runs to completion (to_thread cannot be cancelled), but
+# this prevents a stuck Codex subprocess from hanging generate()/the SSE stream.
+CODEX_IMAGE_TIMEOUT_SECONDS = 180.0
 
 
 def _build_codex_image_prompt(prompt: str, output_path: str) -> str:
@@ -410,14 +414,18 @@ def codex_available() -> bool:
     return (Path.home() / ".codex" / "auth.json").exists()
 
 
-def make_codex_image_adapter(output_dir: str = DEFAULT_IMAGE_OUTPUT_DIR) -> ImageAdapter:
+def make_codex_image_adapter(
+    output_dir: str = DEFAULT_IMAGE_OUTPUT_DIR,
+    image_timeout: float = CODEX_IMAGE_TIMEOUT_SECONDS,
+) -> ImageAdapter:
     """Codex SDK image generation — drives the local Codex engine, saves a file.
 
     No API key: authentication comes from the Codex CLI (``~/.codex/auth.json``).
     The ``openai_codex`` import is lazy so this module loads without the SDK
     installed (the adapter is only registered when the SDK is actually present).
-    The blocking ``thread.run`` call runs in a worker thread so the event loop
-    is not stalled.
+    The blocking ``thread.run`` call runs in a worker thread (so the event loop
+    is not stalled) under an ``image_timeout`` deadline, so a hung Codex turn
+    surfaces a ``TimeoutError`` to the caller instead of blocking indefinitely.
     """
 
     async def adapter(prompt: str, model: str = "") -> Optional[str]:
@@ -442,7 +450,7 @@ def make_codex_image_adapter(output_dir: str = DEFAULT_IMAGE_OUTPUT_DIR) -> Imag
                 raise RuntimeError(f"Codex image: thread did not complete (status={status})")
             return _codex_saved_path_from_result(result)
 
-        saved = await asyncio.to_thread(_run_codex)
+        saved = await asyncio.wait_for(asyncio.to_thread(_run_codex), timeout=image_timeout)
         # Prefer the path Codex reported (it may pick its own filename inside our
         # output dir), but confine it to the requested directory: the prompt is
         # user/pipeline-controlled, so a reported path must not redirect the

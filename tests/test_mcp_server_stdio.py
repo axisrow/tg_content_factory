@@ -50,3 +50,42 @@ async def test_mcp_server_lists_project_tools(_mcp_config: Path):
     assert "search_messages" in names
     assert "list_channels" in names
     assert len(names) > 50
+
+
+async def _seed_tool_acl(db_path: Path, acl: dict[str, bool]) -> None:
+    """Persist the agent_tool_permissions ACL into the throwaway DB, then close it.
+
+    Closing matters: the subprocess opens its own connection, so the write must
+    be committed and the WAL flushed before the server starts.
+    """
+    import json
+
+    from src.database import Database
+
+    db = Database(str(db_path))
+    await db.initialize()
+    try:
+        await db.repos.settings.set_setting("agent_tool_permissions", json.dumps(acl))
+    finally:
+        await db.close()
+
+
+async def test_mcp_server_enforces_tool_acl(_mcp_config: Path):
+    """A DENIED tool is not registered in the out-of-process server.
+
+    The call-time session gate (a ContextVar) cannot cross the process boundary,
+    so registration-time ACL filtering is the only thing standing between an
+    external agent (Codex) and a write/delete tool the admin disabled. Here we
+    deny one destructive tool and allow two read tools, then assert the denied
+    one is absent from tools/list while the allowed ones remain.
+    """
+    db_path = _mcp_config.parent / "mcp_test.db"
+    await _seed_tool_acl(
+        db_path,
+        {"delete_pipeline": False, "list_channels": True, "search_messages": True},
+    )
+
+    names = await _list_tool_names(_mcp_config)
+    assert "delete_pipeline" not in names, "DENIED tool leaked into the standalone MCP server"
+    assert "list_channels" in names
+    assert "search_messages" in names

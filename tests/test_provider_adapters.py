@@ -832,7 +832,13 @@ def test_codex_saved_path_none_when_no_image_item():
 
 
 def _install_fake_codex(
-    monkeypatch, *, status="completed", write_target=True, item_path=True, rogue_saved_path=None
+    monkeypatch,
+    *,
+    status="completed",
+    write_target=True,
+    item_path=True,
+    rogue_saved_path=None,
+    hang_seconds=0.0,
 ):
     """Install a fake ``openai_codex`` module that simulates one image turn.
 
@@ -851,6 +857,10 @@ def _install_fake_codex(
 
     class FakeThread:
         def run(self, instruction):
+            if hang_seconds:
+                import time
+
+                time.sleep(hang_seconds)  # simulate a stalled Codex subprocess
             # The instruction embeds the absolute save path on its own line.
             save_path = None
             for line in instruction.splitlines():
@@ -931,6 +941,19 @@ async def test_codex_image_adapter_falls_back_to_target_when_no_item(monkeypatch
 
     assert result is not None
     assert Path(result).exists()
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_times_out(monkeypatch, tmp_path):
+    """A stalled Codex image turn raises TimeoutError instead of hanging forever."""
+    import asyncio
+
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    _install_fake_codex(monkeypatch, hang_seconds=5.0)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path), image_timeout=0.05)
+    with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+        await adapter("x", "gpt-5.4")
 
 
 @pytest.mark.anyio

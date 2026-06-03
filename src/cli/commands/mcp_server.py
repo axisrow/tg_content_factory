@@ -39,6 +39,7 @@ async def _serve(config_path: str, *, with_pool: bool) -> None:
     from mcp.server.stdio import stdio_server
 
     from src.agent.tools import make_mcp_server
+    from src.agent.tools.permissions import load_tool_access_policy
 
     config, db = await init_db(config_path)
     pool = None
@@ -49,9 +50,15 @@ async def _serve(config_path: str, *, with_pool: bool) -> None:
             logger.warning("Telegram pool init failed; pool-dependent tools will error", exc_info=True)
             pool = None
 
-    server_config = make_mcp_server(db, client_pool=pool, config=config)
+    # Enforce the agent tool ACL at registration time. The call-time session gate
+    # lives in a ContextVar set only inside AgentManager's process, so it cannot
+    # reach this subprocess — without this filter Codex would see every write/
+    # delete tool regardless of the admin's deny/requestable settings. gate_active
+    # is False here (headless): DENIED and REQUESTABLE tools are both withheld.
+    access_policy = await load_tool_access_policy(db, use_cache=False)
+    server_config = make_mcp_server(db, client_pool=pool, config=config, access_policy=access_policy)
     server = server_config["instance"]  # the underlying mcp.server.Server
-    logger.info("MCP server ready over stdio (pool=%s)", "on" if pool else "off")
+    logger.info("MCP server ready over stdio (pool=%s, ACL enforced)", "on" if pool else "off")
 
     try:
         async with stdio_server() as (read_stream, write_stream):
