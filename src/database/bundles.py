@@ -600,8 +600,10 @@ class PhotoLoaderBundle:
     async def cancel_item(self, item_id: int) -> bool:
         return await self.photo_loader.cancel_item(item_id)
 
-    async def claim_next_due_item(self, now: datetime) -> PhotoBatchItem | None:
-        return await self.photo_loader.claim_next_due_item(now)
+    async def claim_next_due_item(
+        self, now: datetime, *, item_id: int | None = None
+    ) -> PhotoBatchItem | None:
+        return await self.photo_loader.claim_next_due_item(now, item_id=item_id)
 
     async def requeue_running_items_on_startup(self, now: datetime) -> int:
         return await self.photo_loader.requeue_running_items_on_startup(now)

@@ -249,41 +249,52 @@ class PhotoLoaderRepository:
         )
         return (cur.rowcount or 0) > 0
 
-    async def claim_next_due_item(self, now: datetime) -> PhotoBatchItem | None:
+    async def claim_next_due_item(
+        self, now: datetime, *, item_id: int | None = None
+    ) -> PhotoBatchItem | None:
+        """Atomically claim a PENDING due item, transitioning it to RUNNING.
+
+        Without ``item_id`` the earliest due item is picked; with ``item_id`` only
+        that specific item is claimed (and only if it is itself due). Returns the
+        claimed row, or ``None`` if nothing matched.
+        """
         assert self._database is not None, (
             "PhotoLoaderRepository.claim_next_due_item requires a Database reference"
         )
         now_iso = now.astimezone(timezone.utc).isoformat()
         async with self._database.transaction() as conn:
+            if item_id is None:
+                # Pick which row to claim; the targeted variant already knows its id.
+                cur = await conn.execute(
+                    """
+                    SELECT id FROM photo_batch_items
+                    WHERE status = ? AND (schedule_at IS NULL OR schedule_at <= ?)
+                    ORDER BY COALESCE(schedule_at, ''), id ASC
+                    LIMIT 1
+                    """,
+                    (PhotoBatchStatus.PENDING.value, now_iso),
+                )
+                row = await cur.fetchone()
+                if row is None:
+                    return None
+                target_id = row["id"]
+            else:
+                target_id = int(item_id)
             cur = await conn.execute(
-                """
-                SELECT id FROM photo_batch_items
-                WHERE status = ? AND (schedule_at IS NULL OR schedule_at <= ?)
-                ORDER BY COALESCE(schedule_at, ''), id ASC
-                LIMIT 1
-                """,
-                (PhotoBatchStatus.PENDING.value, now_iso),
-            )
-            row = await cur.fetchone()
-            if row is None:
-                return None
-            item_id = row["id"]
-            updated = await conn.execute(
                 """
                 UPDATE photo_batch_items
                 SET status = ?, started_at = ?, completed_at = NULL, error = NULL
-                WHERE id = ? AND status = ?
+                WHERE id = ? AND status = ? AND (schedule_at IS NULL OR schedule_at <= ?)
+                RETURNING *
                 """,
                 (
                     PhotoBatchStatus.RUNNING.value,
                     now_iso,
-                    item_id,
+                    target_id,
                     PhotoBatchStatus.PENDING.value,
+                    now_iso,
                 ),
             )
-            if (updated.rowcount or 0) == 0:
-                return None
-            cur = await conn.execute("SELECT * FROM photo_batch_items WHERE id = ?", (item_id,))
             claimed = await cur.fetchone()
         return self._to_item(claimed) if claimed else None
 

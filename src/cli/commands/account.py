@@ -153,9 +153,12 @@ def run(args: argparse.Namespace) -> None:
                 return
 
             elif args.account_action == "info":
-                _, pool = await runtime.init_pool(config, db)
+                phone_filter = getattr(args, "phone", None) or None
+                _, pool = await runtime.init_pool(
+                    config, db, phones=(phone_filter,) if phone_filter else None
+                )
                 ctx = AgentRuntimeContext.build(db=db, config=config, client_pool=pool)
-                print(await get_live_account_info_text(ctx, getattr(args, "phone", None) or ""))
+                print(await get_live_account_info_text(ctx, phone_filter or ""))
                 return
             if args.account_action == "list":
                 accounts = await db.get_account_summaries(active_only=False)

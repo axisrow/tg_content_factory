@@ -741,7 +741,7 @@ def run_with_dependencies(
                     await db.repos.dialog_cache.clear_all_dialogs()
                     print("Cache cleared for all accounts.")
 
-            elif args.dialogs_action == "create-channel":
+            elif args.dialogs_action in {"create-channel", "create-group"}:
                 accounts = sorted(pool.clients.keys())
                 if not accounts:
                     print("No connected accounts.")
@@ -750,26 +750,32 @@ def run_with_dependencies(
                 if phone not in pool.clients:
                     print(f"Account {phone} not connected.")
                     return
+                is_group = args.dialogs_action == "create-group"
+                noun = "group" if is_group else "channel"
+                username = "" if is_group else args.username or ""
                 try:
                     result = await TelegramActionService(pool).create_channel(
                         phone=phone,
                         title=args.title,
                         about=args.about or "",
-                        username=args.username or "",
+                        username=username,
+                        broadcast=not is_group,
+                        megagroup=is_group,
                     )
                 except TelegramActionClientUnavailableError:
                     print(f"Client for {phone} unavailable.")
                     return
                 except RuntimeError as exc:
                     if "Telegram returned empty response" in str(exc):
-                        print("Error: Telegram returned empty response — channel may not have been created.")
+                        print(f"Error: Telegram returned empty response — {noun} may not have been created.")
                         return
                     raise
-                print(f"Created channel id={result.channel_id} title={args.title!r}")
-                if args.username and result.channel_username == args.username:
-                    print(f"Username set: @{result.channel_username}")
-                elif args.username and result.username_error:
-                    print(f"Could not set username: {result.username_error}")
+                print(f"Created {noun} id={result.channel_id} title={args.title!r}")
+                if username:
+                    if result.channel_username == username:
+                        print(f"Username set: @{result.channel_username}")
+                    elif result.username_error:
+                        print(f"Could not set username: {result.username_error}")
                 if result.channel_username:
                     print(f"Channel link: {result.invite_link}")
 

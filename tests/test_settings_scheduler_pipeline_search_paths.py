@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -1381,6 +1381,42 @@ class TestPhotoTaskServiceRunDue:
         svc = PhotoTaskService(bundle, publish)
         processed = await svc.run_due()
         assert processed == 1
+
+    @pytest.mark.anyio
+    async def test_run_due_with_item_id_claims_only_that_item(self, tmp_path):
+        from src.services.photo_task_service import PhotoTaskService
+
+        img = tmp_path / "photo.jpg"
+        img.write_bytes(b"\xff\xd8\xff")
+
+        item = MagicMock(spec=PhotoBatchItem)
+        item.id = 7
+        item.batch_id = 1
+        item.phone = "+1"
+        item.target_dialog_id = 100
+        item.target_type = "saved"
+        item.file_paths = [str(img)]
+        item.send_mode = PhotoSendMode.SEPARATE
+        item.caption = "caption"
+
+        completed_item = MagicMock(spec=PhotoBatchItem)
+        completed_item.status = PhotoBatchStatus.COMPLETED
+
+        bundle = MagicMock()
+        bundle.claim_next_due_item = AsyncMock(return_value=item)
+        bundle.update_item = AsyncMock()
+        bundle.list_items_for_batch = AsyncMock(return_value=[completed_item])
+        bundle.update_batch = AsyncMock()
+
+        publish = MagicMock()
+        publish.send_now = AsyncMock(return_value=[42])
+
+        svc = PhotoTaskService(bundle, publish)
+        processed = await svc.run_due(item_id=7)
+
+        assert processed == 1
+        bundle.claim_next_due_item.assert_awaited_once_with(ANY, item_id=7)
+        publish.send_now.assert_awaited_once()
 
     @pytest.mark.anyio
     async def test_run_due_handles_item_failure(self, tmp_path):

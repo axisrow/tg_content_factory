@@ -600,14 +600,16 @@ class TelegramActionService:
         title: str,
         about: str = "",
         username: str = "",
+        broadcast: bool = True,
+        megagroup: bool = False,
     ) -> CreateChannelResult:
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             create_channel = self._require_explicit_operation(client, "create_channel")
             result = await create_channel(
                 title=title,
                 about=about or "",
-                broadcast=True,
-                megagroup=False,
+                broadcast=broadcast,
+                megagroup=megagroup,
             )
             channel = result.chats[0] if getattr(result, "chats", None) else None
             if channel is None:

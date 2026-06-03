@@ -863,6 +863,27 @@ class TestCliCreateChannel:
         out = capsys.readouterr().out
         assert "Created channel" in out
 
+    def test_create_group_ok(self, cli_db, capsys):
+        pool, client = _mock_pool()
+        group = SimpleNamespace(id=54321, username="")
+        mock_result = SimpleNamespace(chats=[group])
+        client.create_channel = AsyncMock(return_value=mock_result)
+        client.update_channel_username = AsyncMock()
+
+        with patch("src.cli.commands.dialogs.pool", pool, create=True):
+            _run_cli("create-group", pool, cli_db, {
+                "phone": _PHONE, "title": "New Group", "about": "test",
+            })
+        out = capsys.readouterr().out
+        assert "Created group" in out
+        client.create_channel.assert_awaited_once_with(
+            title="New Group",
+            about="test",
+            broadcast=False,
+            megagroup=True,
+        )
+        client.update_channel_username.assert_not_awaited()
+
     def test_create_channel_no_accounts(self, cli_db, capsys):
         pool, _ = _mock_pool(clients={})
         _run_cli("create-channel", pool, cli_db, {

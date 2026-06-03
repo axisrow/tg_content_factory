@@ -216,8 +216,9 @@ def run(args: argparse.Namespace) -> None:
                 return
 
             if action == "run-due":
-                items = await tasks.run_due()
-                jobs = await auto.run_due()
+                item_id = getattr(args, "item_id", None)
+                items = await tasks.run_due(item_id=item_id)
+                jobs = 0 if item_id is not None else await auto.run_due()
                 print(f"Processed due photo items={items} auto_jobs={jobs}")
                 return
         except ValueError as exc:

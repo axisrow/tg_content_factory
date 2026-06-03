@@ -6,10 +6,10 @@ pytestmark = pytest.mark.real_tg_mutation_safe
 
 
 @pytest.mark.timeout(90)
-def test_dialogs_mark_read_collected_message(run_cli, assert_cli_ok, live_mutation_message):
-    chat_id = live_mutation_message.chat_ref
-    max_id = live_mutation_message.message_id
-    phone = live_mutation_message.phone
+def test_dialogs_mark_read_scratch_message(run_cli, assert_cli_ok, live_scratch_message):
+    chat_id = live_scratch_message.chat_ref
+    max_id = live_scratch_message.message_id
+    phone = live_scratch_message.phone
 
     result = run_cli(
         "dialogs",

@@ -240,7 +240,14 @@ class PhotoTaskService:
     async def list_items(self, limit: int = 100) -> list[PhotoBatchItem]:
         return await self._bundle.list_items(limit)
 
-    async def run_due(self, limit: int = 20) -> int:
+    async def run_due(self, limit: int = 20, item_id: int | None = None) -> int:
+        if item_id is not None:
+            item = await self._bundle.claim_next_due_item(datetime.now(timezone.utc), item_id=item_id)
+            if item is None:
+                return 0
+            await self._run_claimed_item(item)
+            return 1
+
         processed = 0
         while processed < limit:
             item = await self._bundle.claim_next_due_item(datetime.now(timezone.utc))

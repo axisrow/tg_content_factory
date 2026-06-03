@@ -86,6 +86,33 @@ async def test_create_channel_sets_username_and_returns_link():
 
 
 @pytest.mark.anyio
+async def test_create_group_passes_megagroup_flags_without_username_update():
+    client = AsyncMock()
+    group = SimpleNamespace(id=456, username="")
+    client.create_channel = AsyncMock(return_value=SimpleNamespace(chats=[group]))
+    client.update_channel_username = AsyncMock()
+    pool = _pool_with_client(client)
+
+    result = await TelegramActionService(pool).create_channel(
+        phone="+1",
+        title="Group",
+        about="About",
+        broadcast=False,
+        megagroup=True,
+    )
+
+    assert result.channel_id == 456
+    assert result.channel_username == ""
+    client.create_channel.assert_awaited_once_with(
+        title="Group",
+        about="About",
+        broadcast=False,
+        megagroup=True,
+    )
+    client.update_channel_username.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_join_dialog_public_resolves_entity_joins_and_clears_cache():
     client = AsyncMock()
     client.get_entity = AsyncMock(return_value="entity")

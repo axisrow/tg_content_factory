@@ -87,6 +87,11 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     my_tg_create.add_argument("--about", default="", help="Channel description")
     my_tg_create.add_argument("--username", default="", help="Public username (leave empty for private)")
 
+    my_tg_create_group = dialogs_sub.add_parser("create-group", help="Create a new Telegram group")
+    my_tg_create_group.add_argument("--phone", default=None, help="Account phone (default: first connected)")
+    my_tg_create_group.add_argument("--title", required=True, help="Group title")
+    my_tg_create_group.add_argument("--about", default="", help="Group description")
+
     my_tg_pin = dialogs_sub.add_parser("pin-message", help="Pin a message in a chat")
     my_tg_pin.add_argument("chat_id", help="Chat ID or @username")
     my_tg_pin.add_argument("message_id", type=int, help="Message ID to pin")
