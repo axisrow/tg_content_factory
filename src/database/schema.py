@@ -368,18 +368,11 @@ CREATE INDEX IF NOT EXISTS idx_message_reactions_emoji
     ON message_reactions(emoji);
 CREATE INDEX IF NOT EXISTS idx_messages_collected_at ON messages(collected_at);
 
-CREATE TABLE IF NOT EXISTS pipelines (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    phone TEXT NOT NULL,
-    source_channel_ids TEXT,
-    targets TEXT,
-    prompt_template TEXT,
-    llm_model TEXT,
-    publish_mode TEXT NOT NULL DEFAULT 'draft',
-    is_active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT DEFAULT (datetime('now'))
-);
+-- NOTE: the legacy denormalized `pipelines` table (schema v1, with JSON
+-- `source_channel_ids`/`targets` columns) was superseded by the normalized
+-- `content_pipelines` + `pipeline_sources` + `pipeline_targets` tables above and
+-- is no longer created here. `run_migrations()` drops the empty leftover table
+-- from older databases (see src/database/migrations.py).
 
 CREATE TABLE IF NOT EXISTS message_embeddings (
     message_id INTEGER PRIMARY KEY,

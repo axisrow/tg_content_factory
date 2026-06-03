@@ -67,9 +67,11 @@ def test_photo_loader_schedule_send_sandbox(run_cli, assert_cli_ok, cli_real_cli
         assert match is not None, f"schedule-send stdout did not include item id: {combined!r}"
         item_id = match.group(1)
 
-        # Verify the DB row was created with expected status.
+        # Verify the DB row was created with the scheduled status (schedule_send
+        # creates the batch with PhotoBatchStatus.SCHEDULED; run-due flips it to
+        # running/completed later, which we avoid by scheduling 24h out).
         status = _fetch_item_status(cli_real_cli_env.db_path, item_id)
-        assert status == "pending", f"expected pending status for scheduled item #{item_id}, got {status!r}"
+        assert status == "scheduled", f"expected scheduled status for scheduled item #{item_id}, got {status!r}"
 
     finally:
         tmpdir_obj.cleanup()

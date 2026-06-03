@@ -181,6 +181,45 @@ def _fetch_live_channel(db_path: Path) -> tuple[str | None, int | None, str | No
     return pk, channel_id, username
 
 
+def _fetch_live_owned_broadcast_channel(
+    db_path: Path, phones: tuple[str, ...]
+) -> tuple[str, str] | None:
+    """Return a (chat_ref, phone) for a broadcast channel the account administers.
+
+    ``dialogs broadcast-stats`` (GetBroadcastStatsRequest) requires channel admin
+    rights, so the first arbitrary active channel is unusable. We pick a cached
+    own (``is_own=1``) broadcast ``channel`` that has a username and a connected
+    account recorded in ``dialog_cache`` — the account that cached an own channel
+    is the one able to request its stats.
+    """
+    phone_set = set(phones)
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT
+                NULLIF(c.username, '') AS username,
+                d.phone AS dialog_phone
+            FROM dialog_cache d
+            JOIN channels c ON c.channel_id = d.dialog_id
+            WHERE COALESCE(d.is_own, 0) = 1
+              AND COALESCE(d.deactivate, 0) = 0
+              AND LOWER(COALESCE(NULLIF(d.channel_type, ''), '')) = 'channel'
+              AND NULLIF(c.username, '') IS NOT NULL
+              AND d.phone IS NOT NULL
+            ORDER BY d.dialog_id ASC
+            """
+        ).fetchall()
+    for row in rows:
+        username = str(row["username"]) if row["username"] else None
+        dialog_phone = str(row["dialog_phone"]) if row["dialog_phone"] else None
+        if not username or dialog_phone not in phone_set:
+            continue
+        chat_ref = username if username.startswith("@") else f"@{username}"
+        return chat_ref, dialog_phone
+    return None
+
+
 def _normalize_chat_ref(raw: object) -> str | None:
     chat_ref = str(raw) if raw else None
     if (
@@ -775,6 +814,25 @@ def live_channel_username(cli_real_cli_env: CliRealCliEnv) -> str:
 
 
 @pytest.fixture
+def live_owned_broadcast_channel(cli_real_cli_env: CliRealCliEnv) -> LiveCliDialogTarget:
+    try:
+        target = _fetch_live_owned_broadcast_channel(
+            cli_real_cli_env.db_path, cli_real_cli_env.phones
+        )
+    except sqlite3.Error as exc:
+        pytest.skip(
+            f"failed to discover an own broadcast channel from {cli_real_cli_env.db_path}: {exc}"
+        )
+    if target is None:
+        pytest.skip(
+            "live CLI database has no cached own broadcast channel with a username; "
+            "`dialogs broadcast-stats` requires channel admin rights"
+        )
+    chat_ref, phone = target
+    return LiveCliDialogTarget(chat_ref=chat_ref, phone=phone)
+
+
+@pytest.fixture
 def live_phone(cli_real_cli_env: CliRealCliEnv) -> str:
     return cli_real_cli_env.primary_phone
 
@@ -822,20 +880,13 @@ def live_scratch_message_dialog(cli_real_cli_env: CliRealCliEnv) -> LiveCliDialo
     if chat_ref is not None:
         return LiveCliDialogTarget(chat_ref=chat_ref, phone=phone or cli_real_cli_env.primary_phone)
 
-    try:
-        target = _fetch_live_message_target(
-            cli_real_cli_env.db_path,
-            cli_real_cli_env.phones,
-            require_own_dialog=True,
-        )
-    except sqlite3.Error as exc:
-        pytest.skip(f"failed to discover live scratch-message dialog from {cli_real_cli_env.db_path}: {exc}")
-    if target is None:
-        pytest.skip(
-            f"set {CLI_REAL_TG_MUTATION_CHAT_ENV} or cache an own live dialog "
-            "before running scratch-message mutation tests"
-        )
-    return LiveCliDialogTarget(chat_ref=target.chat_ref, phone=phone or target.phone)
+    # Default to "Saved Messages" (`me`): the account can always send/edit/forward/
+    # delete there, so scratch-message mutation tests do not depend on the live DB
+    # happening to cache an own dialog the account is *also* allowed to post in.
+    # A cached own dialog (e.g. a broadcast channel the account merely follows)
+    # would raise ChatAdminRequiredError on SendMessageRequest. Override the target
+    # via the CLI_REAL_TG_MUTATION_CHAT env var when a specific chat is required.
+    return LiveCliDialogTarget(chat_ref="me", phone=phone or cli_real_cli_env.primary_phone)
 
 
 @pytest.fixture
