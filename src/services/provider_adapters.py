@@ -422,7 +422,7 @@ def _codex_runtime_state_writable(codex_home: Path) -> bool:
         if not codex_home.is_dir() or not _codex_path_writable(codex_home):
             return False
         for path in codex_home.glob("state*.sqlite*"):
-            if path.exists() and not _codex_path_writable(path):
+            if not _codex_path_writable(path):
                 return False
     except OSError:
         return False
