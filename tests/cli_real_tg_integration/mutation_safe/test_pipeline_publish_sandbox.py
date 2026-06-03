@@ -6,7 +6,13 @@ import sys
 
 import pytest
 
-from tests.cli_real_tg_integration.conftest import cli_result_failure_summary, cli_run_direct
+from tests.cli_real_tg_integration.conftest import (
+    cli_result_failure_summary,
+    cli_run_direct,
+    cli_verify_message_nonce,
+    distinctive_text_fragment,
+    fetch_pipeline_run_text,
+)
 
 pytestmark = pytest.mark.real_tg_mutation_safe
 
@@ -56,7 +62,37 @@ def test_pipeline_publish_sandbox(
             published_entries.append((match.group(1), match.group(2), match.group(3)))
 
     finally:
+        # A pipeline-published message carries text the pipeline generated, not a
+        # test-injected nonce, so cleanup verifies each published message against
+        # the run's own generated text (a distinctive line of it) before deleting.
+        # No reference text or no match -> leave the message in place (fail-safe).
+        run_text = fetch_pipeline_run_text(cli_real_cli_env, run_id)
+        marker = distinctive_text_fragment(run_text) if run_text else None
+
         for message_id, phone, dialog_id in published_entries:
+            if not marker:
+                if sys.exc_info()[0] is None:
+                    leak_msg = (
+                        f"published message {message_id} in dialog {dialog_id} left un-deleted: "
+                        "could not derive a verification marker from the run's generated text"
+                    )
+                continue
+
+            verdict = cli_verify_message_nonce(
+                cli_real_cli_env,
+                phone=phone,
+                chat_ref=dialog_id,
+                message_id=int(message_id),
+                nonce=marker,
+            )
+            if not verdict.ok:
+                if sys.exc_info()[0] is None:
+                    leak_msg = (
+                        f"published message {message_id} in dialog {dialog_id} left un-deleted: "
+                        f"{verdict.reason}"
+                    )
+                continue
+
             try:
                 cleanup = cli_run_direct(
                     cli_real_cli_env,
@@ -70,25 +106,16 @@ def test_pipeline_publish_sandbox(
                     timeout=60,
                 )
             except subprocess.TimeoutExpired:
-                entry_msg = (
-                    f"published message {message_id} in dialog {dialog_id} "
-                    "may be left: cleanup timed out"
-                )
                 if sys.exc_info()[0] is None:
-                    leak_msg = entry_msg
-                else:
-                    print(entry_msg, file=sys.stderr)
+                    leak_msg = (
+                        f"published message {message_id} in dialog {dialog_id} may be left: cleanup timed out"
+                    )
             else:
                 cleanup_failure = cli_result_failure_summary(cleanup)
-                if cleanup_failure is not None:
-                    entry_msg = (
-                        f"published message {message_id} in dialog {dialog_id} "
-                        f"may be left: {cleanup_failure}"
+                if cleanup_failure is not None and sys.exc_info()[0] is None:
+                    leak_msg = (
+                        f"published message {message_id} in dialog {dialog_id} may be left: {cleanup_failure}"
                     )
-                    if sys.exc_info()[0] is None:
-                        leak_msg = entry_msg
-                    else:
-                        print(entry_msg, file=sys.stderr)
 
         if leak_msg and sys.exc_info()[0] is None:
             pytest.fail(leak_msg)
