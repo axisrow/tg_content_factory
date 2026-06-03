@@ -464,6 +464,7 @@ def test_real_tg_policy_skips_safe_mode_without_gate():
         mode=REAL_TG_SAFE_MARK,
         fixturenames=(REAL_TG_LIVE_FIXTURE,),
         environ={},
+        gate_enabled=lambda name, environ: False,
     )
 
     assert action == "skip"
@@ -475,6 +476,7 @@ def test_real_tg_policy_skips_mutation_safe_mode_without_gate():
         mode=REAL_TG_MUTATION_SAFE_MARK,
         fixturenames=(REAL_TG_LIVE_FIXTURE,),
         environ={},
+        gate_enabled=lambda name, environ: False,
     )
 
     assert action == "skip"
@@ -486,6 +488,7 @@ def test_real_tg_policy_skips_manual_mode_without_gate():
         mode=REAL_TG_MANUAL_MARK,
         fixturenames=(REAL_TG_LIVE_FIXTURE,),
         environ={},
+        gate_enabled=lambda name, environ: False,
     )
 
     assert action == "skip"
