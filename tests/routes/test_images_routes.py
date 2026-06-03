@@ -60,6 +60,32 @@ async def test_generate_success(route_client, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_generate_file_path_mapped_to_data_image_url(route_client, monkeypatch):
+    """A saved file path (gpt-image-1 b64 / HuggingFace) must become a /data/image URL."""
+    mock_svc = MagicMock()
+    mock_svc.is_available = AsyncMock(return_value=True)
+    mock_svc.generate = AsyncMock(return_value="data/image/abc123.png")
+    monkeypatch.setattr(
+        "src.web.images.handlers._get_image_service",
+        AsyncMock(return_value=mock_svc),
+    )
+    resp = await route_client.post("/images/generate", data={"prompt": "a cat", "model": "openai:gpt-image-1"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["url"] == "/data/image/abc123.png"
+
+
+def test_to_image_url_passthrough_and_mapping():
+    from src.web.images.handlers import _to_image_url
+
+    assert _to_image_url("https://s3.example.com/x.png") == "https://s3.example.com/x.png"
+    assert _to_image_url("http://cdn/x.png") == "http://cdn/x.png"
+    assert _to_image_url("data/image/abc.png") == "/data/image/abc.png"
+    assert _to_image_url("/abs/path/data/image/zzz.png") == "/data/image/zzz.png"
+
+
+@pytest.mark.anyio
 async def test_generate_failure(route_client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.is_available = AsyncMock(return_value=True)

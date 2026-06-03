@@ -75,7 +75,24 @@ async def generate_image(request: Request) -> ImagesJson:
     if result is None:
         return ImagesJson({"ok": False, "error": "Generation failed — check server logs"}, status_code=500)
 
-    return ImagesJson({"ok": True, "url": result, "model": form.model, "prompt": form.prompt})
+    return ImagesJson(
+        {"ok": True, "url": _to_image_url(result), "model": form.model, "prompt": form.prompt}
+    )
+
+
+def _to_image_url(result: str) -> str:
+    """Map a generator result to a browser-usable URL.
+
+    Hosted results (S3, legacy DALL·E ``url``) start with ``http`` and pass
+    through unchanged. File results (gpt-image-1 b64, HuggingFace) are saved
+    under ``DATA_IMAGE_DIR`` and served at ``/data/image/<name>``; return that
+    URL so ``<img src>`` resolves instead of pointing at a raw filesystem path.
+    """
+    if result.startswith("http"):
+        return result
+    from pathlib import PurePath
+
+    return f"/data/image/{PurePath(result).name}"
 
 
 async def search_models(request: Request) -> ImagesJson:

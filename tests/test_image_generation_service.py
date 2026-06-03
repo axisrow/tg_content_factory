@@ -461,10 +461,12 @@ async def test_search_models_openai_catalog():
     svc = _make_clean_service()
     models = await svc.search_models("openai")
     ids = [m["id"] for m in models]
-    # gpt-image-1 is the current default and listed first; legacy dall-e-* still present
+    # gpt-image-1 is the current default and listed first; legacy dall-e-* still present.
+    # Unconfirmed variants (gpt-image-1-mini/1.5) are intentionally NOT in the static
+    # fallback — they only surface via the live refresh path.
     assert ids[0] == "gpt-image-1"
-    assert "gpt-image-1-mini" in ids
     assert "dall-e-3" in ids  # legacy kept for backward compatibility
+    assert "gpt-image-1-mini" not in ids
 
 
 @pytest.mark.anyio

@@ -207,12 +207,13 @@ class ImageGenerationService:
                 _m("black-forest-labs/FLUX.1-schnell", "together", "FLUX.1 Schnell — fast"),
                 _m("black-forest-labs/FLUX.1-dev", "together", "FLUX.1 Dev — high quality"),
             ],
-            # gpt-image-1 is the current default; dall-e-* kept as legacy so saved
+            # Only the confirmed model id goes in the static fallback; other
+            # gpt-image-* variants surface via the live `refresh` path if/when
+            # OpenAI actually reports them (offering a model that 400s would make
+            # generate() fail silently). dall-e-* kept as legacy so saved
             # selections keep resolving in the UI.
             "openai": [
                 _m("gpt-image-1", "openai", "GPT Image 1 — OpenAI image generation"),
-                _m("gpt-image-1-mini", "openai", "GPT Image 1 Mini — faster/cheaper"),
-                _m("gpt-image-1.5", "openai", "GPT Image 1.5 — higher quality"),
                 _m("dall-e-3", "openai", "DALL-E 3 — legacy"),
                 _m("dall-e-2", "openai", "DALL-E 2 — legacy"),
             ],
