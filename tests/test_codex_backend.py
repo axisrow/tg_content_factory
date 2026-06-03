@@ -18,15 +18,23 @@ import pytest
 pytestmark = pytest.mark.anyio
 
 
-def _install_fake_codex(monkeypatch, *, deltas, usage=None, tool=None):
+def _install_fake_codex(monkeypatch, *, deltas, usage=None, tool=None, tool_error=False, noise_item=False):
     """Install a fake ``openai_codex`` whose turn streams *deltas* then *usage*.
 
-    Notifications mirror the real SDK shape: each is ``Notification(method, payload)``
+    Notifications mirror the real SDK shape (verified against ``openai_codex``
+    0.1.0b2 ``notification_registry``): each is ``Notification(method, payload)``
     where an agent-message delta carries ``payload.delta``, a token-usage update
     carries ``payload.token_usage.last`` (a breakdown), an MCP tool call surfaces
     as ``item/started`` + ``item/completed`` wrapping a ``McpToolCallThreadItem``
-    (``payload.item.root`` with ``tool``/``server``/``duration_ms``), and the
-    stream ends with a ``turn/completed`` notification.
+    (``payload.item.root`` with ``tool``/``server``/``duration_ms``/``error``),
+    and the stream ends with a ``turn/completed`` notification.
+
+    - ``tool_error=True`` makes the tool-call carry an ``McpToolCallError``-shaped
+      object (``.message``), matching the real ``error: McpToolCallError | None``
+      field, so the ``is_error`` mapping is exercised on a non-None error.
+    - ``noise_item=True`` also emits a non-MCP ``item/started`` (a reasoning item
+      with no ``tool``/``server``), which the backend must ignore — the real SDK
+      emits ``item/*`` for many item types, not just tool calls.
     """
     captured: dict = {}
 
@@ -38,9 +46,15 @@ def _install_fake_codex(monkeypatch, *, deltas, usage=None, tool=None):
 
     class FakeHandle:
         async def stream(self):
+            if noise_item:
+                # A reasoning item: real shape has no tool/server — must be ignored.
+                reasoning = SimpleNamespace(text="thinking", type="reasoning")
+                yield _item_note("item/started", reasoning)
+                yield _item_note("item/completed", reasoning)
             if tool is not None:
+                error = SimpleNamespace(message="boom") if tool_error else None
                 tool_item = SimpleNamespace(
-                    tool=tool, server="telegram_db", duration_ms=1500, error=None
+                    tool=tool, server="telegram_db", duration_ms=1500, error=error
                 )
                 yield _item_note("item/started", tool_item)
                 yield _item_note("item/completed", tool_item)
@@ -168,6 +182,87 @@ async def test_chat_stream_emits_tool_events(monkeypatch):
     assert [e["tool"] for e in ends] == ["list_channels"]
     assert ends[0]["duration"] == 1.5
     assert ends[0]["is_error"] is False
+
+
+async def test_chat_stream_tool_error_sets_is_error(monkeypatch):
+    """A failed MCP tool call (error is an McpToolCallError-shaped object) → is_error True.
+
+    The real ``McpToolCallThreadItem.error`` is ``McpToolCallError | None`` (an
+    object with ``.message``), not a bare string — so the backend keys ``is_error``
+    off *presence*, not truthiness of a string. This guards the error path the
+    happy-path tool test never exercises.
+    """
+    _install_fake_codex(monkeypatch, deltas=["x"], tool="list_channels", tool_error=True)
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1,
+        prompt="list channels",
+        system_prompt="",
+        stats={},
+        model="gpt-5.4",
+        queue=queue,
+    )
+
+    events = await _drain(queue)
+    ends = [e for e in events if e.get("type") == "tool_end"]
+    assert ends and ends[0]["is_error"] is True
+
+
+async def test_chat_stream_ignores_non_mcp_items(monkeypatch):
+    """Non-MCP ``item/*`` notifications (e.g. reasoning) emit no tool events.
+
+    The SDK fires ``item/started``/``item/completed`` for many item types; only
+    ``McpToolCallThreadItem`` (has both ``tool`` and ``server``) is a tool call.
+    A reasoning item must not leak a spurious tool_start/tool_end.
+    """
+    _install_fake_codex(monkeypatch, deltas=["hi"], noise_item=True)
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1,
+        prompt="think",
+        system_prompt="",
+        stats={},
+        model="gpt-5.4",
+        queue=queue,
+    )
+
+    events = await _drain(queue)
+    assert not [e for e in events if e.get("type") in ("tool_start", "tool_end")]
+    # text still flows and the turn completes normally
+    assert [e["text"] for e in events if "text" in e] == ["hi"]
+
+
+def test_notification_methods_match_sdk_registry():
+    """Our consumed method strings are real keys in the SDK's notification registry.
+
+    This is the guard that would have caught the original streaming bug: the
+    backend used to parse an invented note shape. Here we assert every method
+    string the stream loop branches on actually exists in
+    ``openai_codex.generated.notification_registry.NOTIFICATION_MODELS`` — so a
+    rename or typo fails loudly instead of silently dropping every event.
+
+    Skipped when the optional ``openai_codex`` SDK is not installed (CI without
+    the ``[codex]`` extra).
+    """
+    pytest.importorskip("openai_codex")
+    from openai_codex.generated import notification_registry as nr
+
+    from src.agent import codex_backend as cb
+
+    registry = nr.NOTIFICATION_MODELS
+    consumed = {
+        cb.NOTE_AGENT_MESSAGE_DELTA,
+        cb.NOTE_ITEM_STARTED,
+        cb.NOTE_ITEM_COMPLETED,
+        cb.NOTE_TOKEN_USAGE_UPDATED,
+        cb.NOTE_TURN_COMPLETED,
+    }
+    missing = consumed - set(registry)
+    assert not missing, f"method strings not in SDK registry: {sorted(missing)}"
 
 
 async def test_chat_stream_prepends_history(monkeypatch):

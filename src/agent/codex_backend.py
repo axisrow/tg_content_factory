@@ -28,6 +28,17 @@ CODEX_DEFAULT_MODEL = "gpt-5.4"
 # Name the project MCP server is registered under inside Codex's config.
 PROJECT_MCP_SERVER_NAME = "telegram_db"
 
+# Stream-notification method strings we consume (openai_codex
+# ``notification_registry.NOTIFICATION_MODELS`` keys; verified by
+# ``test_codex_backend.test_notification_methods_match_sdk_registry`` when the
+# SDK is installed). Centralised so a rename in the SDK surfaces as one failing
+# guard rather than silent dead branches in the stream loop.
+NOTE_AGENT_MESSAGE_DELTA = "item/agentMessage/delta"
+NOTE_ITEM_STARTED = "item/started"
+NOTE_ITEM_COMPLETED = "item/completed"
+NOTE_TOKEN_USAGE_UPDATED = "thread/tokenUsage/updated"
+NOTE_TURN_COMPLETED = "turn/completed"
+
 
 def _project_mcp_server_config(config_path: str, *, with_pool: bool) -> dict:
     """Codex ``mcp_servers`` entry that spawns the project's stdio MCP server.
@@ -116,23 +127,23 @@ class CodexSdkBackend:
             async for note in handle.stream():
                 method = getattr(note, "method", None)
                 payload = getattr(note, "payload", None)
-                if method == "item/agentMessage/delta":
+                if method == NOTE_AGENT_MESSAGE_DELTA:
                     text = getattr(payload, "delta", None)
                     if text:
                         full_text_parts.append(text)
                         chunk = safe_json_dumps({"text": text}, ensure_ascii=False)
                         await queue.put(f"data: {chunk}\n\n")
-                elif method == "item/started":
+                elif method == NOTE_ITEM_STARTED:
                     event = _tool_start_event(payload)
                     if event:
                         await queue.put(f"data: {safe_json_dumps(event, ensure_ascii=False)}\n\n")
-                elif method == "item/completed":
+                elif method == NOTE_ITEM_COMPLETED:
                     event = _tool_end_event(payload)
                     if event:
                         await queue.put(f"data: {safe_json_dumps(event, ensure_ascii=False)}\n\n")
-                elif method == "thread/tokenUsage/updated":
+                elif method == NOTE_TOKEN_USAGE_UPDATED:
                     usage = _usage_from_payload(payload) or usage
-                elif method == "turn/completed":
+                elif method == NOTE_TURN_COMPLETED:
                     # Terminal event — stop draining rather than waiting for the
                     # async iterator to close on its own.
                     break
