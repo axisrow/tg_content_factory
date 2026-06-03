@@ -62,6 +62,14 @@
                         <option value="" {{ 'selected' if not item.enabled else '' }}>Disabled</option>
                     </select>
                 </div>
+                {% if item.keyless %}
+                <div class="col-12 col-md-5">
+                    <label class="form-label">Аутентификация</label>
+                    <div class="form-control-plaintext small text-muted">
+                        Через Codex CLI (<code>~/.codex/auth.json</code>) — API-ключ не требуется.
+                    </div>
+                </div>
+                {% else %}
                 <div class="col-12 col-md-5">
                     <label class="form-label" for="img_provider_secret__{{ item.provider }}__api_key">API Key</label>
                     <input type="password" class="form-control"
@@ -73,6 +81,7 @@
                         {% if item.requires_secret_reentry %}Сохранённый ключ требует повторного ввода.{% elif item.has_key %}Ключ сохранён и скрыт. Оставьте пустым, чтобы не менять.{% elif item.env_var_set %}Ключ из env будет использован как fallback.{% else %}Значение ещё не задано.{% endif %}
                     </div>
                 </div>
+                {% endif %}
             </div>
         </div>
     </div>

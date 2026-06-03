@@ -10,7 +10,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from src.config import AppConfig, resolve_session_encryption_secret
@@ -27,21 +28,113 @@ SETTINGS_KEY = "image_providers_v1"
 _IMAGE_SECRET_ACTION = "restore_key_or_reenter_secret"
 
 
+def _pa():  # noqa: ANN202 - tiny lazy-import shim
+    """Lazy access to provider_adapters (avoids an import cycle at module load)."""
+    import src.services.provider_adapters as provider_adapters
+
+    return provider_adapters
+
+
+def _m(mid: str, provider: str, desc: str) -> dict:
+    """Build one static-catalog model entry (``provider:model_id`` convention)."""
+    return {"id": mid, "model_string": f"{provider}:{mid}", "description": desc, "run_count": 0}
+
+
 @dataclass(slots=True)
 class ImageProviderSpec:
+    """Declarative description of one image provider.
+
+    Every per-provider behaviour is data here, so registration / refresh / UI
+    are one uniform loop rather than per-provider branches. A provider is
+    *keyless* iff it carries a ``detect`` callable (auth comes from elsewhere,
+    e.g. the Codex CLI); otherwise it is *keyed* and registered from a DB key or
+    an env var listed in ``env_vars``.
+    """
+
     name: str
     display_name: str
     env_vars: list[str]
+    # keyed providers: build from an API key/token (first positional arg)
+    keyed_factory: Callable[[str], "ImageAdapter"] | None = None
+    # keyless providers: build with no key; registered iff ``detect()`` is True
+    keyless_factory: Callable[[], "ImageAdapter"] | None = None
+    detect: Callable[[], bool] | None = None
+    # search_models() fallback catalog (providers without a live search API)
+    static_catalog: list[dict] = field(default_factory=list)
+    # search_models(refresh=True) live fetch; receives the service so instance
+    # monkeypatching of the underlying _fetch_* methods is honoured
+    fetch_models: Callable[..., Awaitable[list[dict]]] | None = None
+    # When True, never chosen as the implicit default adapter — only on explicit
+    # ``provider:model`` selection. Set for adapters that are slow/expensive to
+    # invoke (Codex spawns a blocking subprocess), so an unqualified generate()
+    # never silently triggers them.
+    explicit_only: bool = False
+
+    @property
+    def keyless(self) -> bool:
+        return self.detect is not None
 
 
 IMAGE_PROVIDER_SPECS: dict[str, ImageProviderSpec] = {
-    "together": ImageProviderSpec("together", "Together AI", ["TOGETHER_API_KEY"]),
-    "huggingface": ImageProviderSpec("huggingface", "HuggingFace", ["HUGGINGFACE_API_KEY", "HUGGINGFACE_TOKEN"]),
-    "openai": ImageProviderSpec("openai", "OpenAI", ["OPENAI_API_KEY"]),
-    "replicate": ImageProviderSpec("replicate", "Replicate", ["REPLICATE_API_TOKEN"]),
+    "together": ImageProviderSpec(
+        "together",
+        "Together AI",
+        ["TOGETHER_API_KEY"],
+        keyed_factory=lambda key: _pa().make_together_image_adapter(key),
+        static_catalog=[
+            _m("black-forest-labs/FLUX.1-schnell", "together", "FLUX.1 Schnell — fast"),
+            _m("black-forest-labs/FLUX.1-dev", "together", "FLUX.1 Dev — high quality"),
+        ],
+    ),
+    "huggingface": ImageProviderSpec(
+        "huggingface",
+        "HuggingFace",
+        ["HUGGINGFACE_API_KEY", "HUGGINGFACE_TOKEN"],
+        keyed_factory=lambda key: _pa().make_huggingface_image_adapter(key),
+    ),
+    "openai": ImageProviderSpec(
+        "openai",
+        "OpenAI",
+        ["OPENAI_API_KEY"],
+        keyed_factory=lambda key: _pa().make_openai_image_adapter(key),
+        # Only the confirmed model id goes in the static fallback; other
+        # gpt-image-* variants surface via the live `refresh` path if/when OpenAI
+        # actually reports them (offering a model that 400s would make generate()
+        # fail silently). dall-e-* kept as legacy so saved selections keep
+        # resolving in the UI.
+        static_catalog=[
+            _m("gpt-image-1", "openai", "GPT Image 1 — OpenAI image generation"),
+            _m("dall-e-3", "openai", "DALL-E 3 — legacy"),
+            _m("dall-e-2", "openai", "DALL-E 2 — legacy"),
+        ],
+        # openai resolves its token from the DB key or env; the fetcher returns
+        # [] without a network call when neither is present.
+        fetch_models=lambda svc, api_key="": svc._fetch_openai_image_models(
+            api_key or os.environ.get("OPENAI_API_KEY", "")
+        ),
+    ),
+    "replicate": ImageProviderSpec(
+        "replicate",
+        "Replicate",
+        ["REPLICATE_API_TOKEN"],
+        keyed_factory=lambda key: _pa().make_replicate_image_adapter(key),
+    ),
+    # Codex is keyless — auth comes from the Codex CLI (~/.codex/auth.json), so
+    # there are no env vars to configure; it is registered on detection and its
+    # live model list is pulled from the SDK on refresh.
+    "codex": ImageProviderSpec(
+        "codex",
+        "Codex SDK",
+        [],
+        keyless_factory=lambda: _pa().make_codex_image_adapter(),
+        detect=lambda: _pa().codex_available(),
+        static_catalog=[_m("gpt-5.4", "codex", "Codex gpt-5.4 — image via $imagegen")],
+        fetch_models=lambda svc, api_key="": svc._fetch_codex_models(),
+        explicit_only=True,
+    ),
 }
 
-IMAGE_PROVIDER_ORDER: list[str] = ["together", "huggingface", "openai", "replicate"]
+IMAGE_PROVIDER_ORDER: list[str] = ["together", "huggingface", "openai", "replicate", "codex"]
 
 
 @dataclass(slots=True)
@@ -55,6 +148,11 @@ class ImageProviderConfig:
 
 def image_provider_spec(name: str) -> ImageProviderSpec | None:
     return IMAGE_PROVIDER_SPECS.get(name)
+
+
+def _env_key(env_vars: list[str]) -> str:
+    """First non-empty environment value among *env_vars*, or empty string."""
+    return next((os.environ.get(v, "").strip() for v in env_vars if os.environ.get(v, "").strip()), "")
 
 
 class ImageProviderService:
@@ -166,6 +264,7 @@ class ImageProviderService:
                     "provider": cfg.provider,
                     "display_name": spec.display_name,
                     "enabled": cfg.enabled,
+                    "keyless": spec.keyless,
                     "has_key": bool(cfg.api_key.strip()),
                     "secret_status": cfg.secret_status,
                     "requires_secret_reentry": cfg.secret_status != "ok",
@@ -213,47 +312,27 @@ class ImageProviderService:
     # ── adapter construction ──
 
     def build_adapters(self, configs: list[ImageProviderConfig]) -> dict[str, "ImageAdapter"]:
-        """Build image adapters from DB configs with env-var fallback."""
-        from src.services.provider_adapters import (
-            make_huggingface_image_adapter,
-            make_openai_image_adapter,
-            make_replicate_image_adapter,
-            make_together_image_adapter,
-        )
+        """Build image adapters from the provider table.
 
-        _factories: dict[str, tuple[Any, list[str]]] = {
-            "together": (make_together_image_adapter, ["TOGETHER_API_KEY"]),
-            "huggingface": (make_huggingface_image_adapter, ["HUGGINGFACE_API_KEY", "HUGGINGFACE_TOKEN"]),
-            "openai": (make_openai_image_adapter, ["OPENAI_API_KEY"]),
-            "replicate": (make_replicate_image_adapter, ["REPLICATE_API_TOKEN"]),
-        }
-
+        One uniform loop over :data:`IMAGE_PROVIDER_ORDER`: a disabled DB config
+        skips the provider (keyed or keyless alike); keyed providers register
+        from a DB key falling back to env; keyless providers register on
+        ``detect()``. Adding a provider is one :class:`ImageProviderSpec` entry.
+        """
+        cfg_by_provider = {cfg.provider: cfg for cfg in configs}
         adapters: dict[str, "ImageAdapter"] = {}
-        configured_providers = {cfg.provider for cfg in configs}
 
-        # 1. DB-configured providers
-        for cfg in configs:
-            if not cfg.enabled:
+        for name in IMAGE_PROVIDER_ORDER:
+            spec = IMAGE_PROVIDER_SPECS[name]
+            cfg = cfg_by_provider.get(name)
+            if cfg is not None and not cfg.enabled:
                 continue
-            key = cfg.api_key.strip()
-            if not key:
-                # fallback to env var even for configured providers
-                spec = IMAGE_PROVIDER_SPECS.get(cfg.provider)
-                if spec:
-                    key = next(
-                        (os.environ.get(v, "").strip() for v in spec.env_vars if os.environ.get(v, "").strip()),
-                        "",
-                    )
-            if key and cfg.provider in _factories:
-                factory, _ = _factories[cfg.provider]
-                adapters[cfg.provider] = factory(key)
-
-        # 2. Env-var fallback for unconfigured providers
-        for name, (factory, env_vars) in _factories.items():
-            if name in configured_providers:
-                continue
-            key = next((os.environ.get(v, "").strip() for v in env_vars if os.environ.get(v, "").strip()), "")
-            if key:
-                adapters[name] = factory(key)
+            if spec.keyless:
+                if spec.detect() and spec.keyless_factory is not None:
+                    adapters[name] = spec.keyless_factory()
+            else:
+                key = (cfg.api_key.strip() if cfg else "") or _env_key(spec.env_vars)
+                if key and spec.keyed_factory is not None:
+                    adapters[name] = spec.keyed_factory(key)
 
         return adapters

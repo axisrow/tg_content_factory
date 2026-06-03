@@ -67,6 +67,9 @@ dev = [
     "pytest-cov>=7.1.0",
 ]
 docs = ["mkdocs-material>=9.7.6"]
+# Codex SDK image provider + agent backend. Optional: all imports are lazy, so
+# without this group the codex provider/backend simply don't register.
+codex = ["openai-codex>=0.1.0b2"]
 
 [project.urls]
 Homepage = "https://github.com/axisrow/tg_content_factory"
@@ -116,6 +119,8 @@ markers = [
     "real_materializer: test uses real SessionMaterializer instead of the fake stub",
     "real_provider_smoke: opt-in live provider API smoke test",
     "aiosqlite_serial: test must run without xdist parallelism because it exercises aiosqlite-backed database paths",
+    "codex_image_live: opt-in live Codex SDK image generation test; gate: RUN_CODEX_IMAGE_LIVE=1",
+    "codex_cli_live: opt-in live Codex CLI smoke (image + agent backend via real MCP); gate: RUN_CODEX_CLI_LIVE=1",
 ]
 
 [tool.coverage.run]

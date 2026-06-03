@@ -8,6 +8,7 @@ from src.cli.commands import (
     collect,
     export,
     image,
+    mcp_server,
     messages,
     notification,
     photo_loader,
@@ -44,6 +45,7 @@ def main() -> None:
     commands = {
         "serve": serve.run,
         "worker": worker.run,
+        "mcp-server": mcp_server.run,
         "stop": server_control.run_stop,
         "restart": server_control.run_restart,
         "collect": collect.run,

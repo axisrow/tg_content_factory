@@ -13,6 +13,7 @@ from src.cli.parser_domains import (
     export,
     filter,
     image,
+    mcp_server,
     messages,
     notification,
     photo_loader,
@@ -32,6 +33,7 @@ from src.cli.parser_domains import (
 _REGISTRARS = (
     serve.register,
     worker.register,
+    mcp_server.register,
     server_control.register,
     collect.register,
     search.register,

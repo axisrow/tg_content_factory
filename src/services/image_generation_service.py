@@ -75,28 +75,27 @@ class ImageGenerationService:
             logger.info("S3 image storage configured")
 
     def _register_from_env(self) -> None:
-        from src.services.provider_adapters import (
-            make_huggingface_image_adapter,
-            make_openai_image_adapter,
-            make_replicate_image_adapter,
-            make_together_image_adapter,
+        """Register adapters from the provider table, env-only (no DB configs).
+
+        Same uniform rule as :meth:`ImageProviderService.build_adapters`: keyed
+        providers come from their env vars, keyless providers (codex) from
+        ``detect()``.
+        """
+        from src.services.image_provider_service import (
+            IMAGE_PROVIDER_ORDER,
+            IMAGE_PROVIDER_SPECS,
+            _env_key,
         )
 
-        together_key = os.environ.get("TOGETHER_API_KEY")
-        if together_key:
-            self._adapters["together"] = make_together_image_adapter(together_key)
-
-        hf_key = os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HUGGINGFACE_TOKEN")
-        if hf_key:
-            self._adapters["huggingface"] = make_huggingface_image_adapter(hf_key)
-
-        openai_key = os.environ.get("OPENAI_API_KEY")
-        if openai_key:
-            self._adapters["openai"] = make_openai_image_adapter(openai_key)
-
-        replicate_token = os.environ.get("REPLICATE_API_TOKEN")
-        if replicate_token:
-            self._adapters["replicate"] = make_replicate_image_adapter(replicate_token)
+        for name in IMAGE_PROVIDER_ORDER:
+            spec = IMAGE_PROVIDER_SPECS[name]
+            if spec.keyless:
+                if spec.detect() and spec.keyless_factory is not None:
+                    self._adapters[name] = spec.keyless_factory()
+            else:
+                key = _env_key(spec.env_vars)
+                if key and spec.keyed_factory is not None:
+                    self._adapters[name] = spec.keyed_factory(key)
 
     @staticmethod
     def _parse_model_string(model: Optional[str]) -> tuple[Optional[str], str]:
@@ -115,8 +114,16 @@ class ImageGenerationService:
     def _resolve_adapter(self, provider_name: Optional[str]) -> Optional[ImageAdapter]:
         if provider_name and provider_name in self._adapters:
             return self._adapters[provider_name]
-        if self._adapters:
-            return next(iter(self._adapters.values()))
+        # Implicit fallback (no/unknown provider): first adapter that is allowed
+        # to be a default. Spec-flagged explicit-only providers (e.g. Codex,
+        # which spawns a blocking subprocess) are skipped so an unqualified
+        # generate() never silently triggers them.
+        from src.services.image_provider_service import image_provider_spec
+
+        for name, adapter in self._adapters.items():
+            spec = image_provider_spec(name)
+            if spec is None or not spec.explicit_only:
+                return adapter
         return None
 
     # ── model catalog ──
@@ -198,47 +205,41 @@ class ImageGenerationService:
                 logger.warning("Failed to search HuggingFace models", exc_info=True)
                 return []
 
-        # Static catalogs for providers without search API
-        def _m(mid: str, provider: str, desc: str) -> dict:
-            return {"id": mid, "model_string": f"{provider}:{mid}", "description": desc, "run_count": 0}
+        # Static catalogs + live-refresh fetchers are declared per provider on
+        # the spec table. replicate/huggingface keep dedicated live-search
+        # branches above (their API shapes differ enough that a fetch_models
+        # adapter would not simplify them); everything else dispatches off the
+        # spec here.
+        from src.services.image_provider_service import image_provider_spec
 
-        catalogs: dict[str, list[dict]] = {
-            "together": [
-                _m("black-forest-labs/FLUX.1-schnell", "together", "FLUX.1 Schnell — fast"),
-                _m("black-forest-labs/FLUX.1-dev", "together", "FLUX.1 Dev — high quality"),
-            ],
-            # Only the confirmed model id goes in the static fallback; other
-            # gpt-image-* variants surface via the live `refresh` path if/when
-            # OpenAI actually reports them (offering a model that 400s would make
-            # generate() fail silently). dall-e-* kept as legacy so saved
-            # selections keep resolving in the UI.
-            "openai": [
-                _m("gpt-image-1", "openai", "GPT Image 1 — OpenAI image generation"),
-                _m("dall-e-3", "openai", "DALL-E 3 — legacy"),
-                _m("dall-e-2", "openai", "DALL-E 2 — legacy"),
-            ],
-        }
-
-        if provider == "openai" and refresh:
-            token = api_key or os.environ.get("OPENAI_API_KEY", "")
-            live = await self._fetch_openai_image_models(token) if token else []
-            if live:
-                models = live
-                if query:
-                    q = query.lower()
-                    models = [m for m in models if q in m["id"].lower() or q in m["description"].lower()]
+        def _by_query(models: list[dict]) -> list[dict]:
+            if not query:
                 return models
-            # fall through to static catalog on missing key / fetch failure
-
-        models = catalogs.get(provider, [])
-        if query:
             q = query.lower()
-            models = [m for m in models if q in m["id"].lower() or q in m["description"].lower()]
-        return models
+            return [m for m in models if q in m["id"].lower() or q in m["description"].lower()]
+
+        spec = image_provider_spec(provider)
+        if spec is None:
+            return []
+
+        if refresh and spec.fetch_models is not None:
+            # A provider's live listing replaces the static catalog when available;
+            # on a missing key / empty / failed fetch we fall through to it.
+            live = await spec.fetch_models(self, api_key=api_key)
+            if live:
+                return _by_query(live)
+
+        return _by_query(spec.static_catalog)
 
     @staticmethod
     async def _fetch_openai_image_models(api_key: str) -> list[dict]:
-        """Fetch live OpenAI models via the shared helper, filtered to image models."""
+        """Fetch live OpenAI models via the shared helper, filtered to image models.
+
+        Returns ``[]`` without a network call when no key is available, so callers
+        can invoke it unconditionally.
+        """
+        if not api_key:
+            return []
         from src.services.provider_model_cache import fetch_openai_model_ids
 
         base_url = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
@@ -258,3 +259,39 @@ class ImageGenerationService:
             }
             for mid in image_ids
         ]
+
+    @staticmethod
+    async def _fetch_codex_models() -> list[dict]:
+        """Fetch the live model list from the Codex SDK (blocking call off-loop)."""
+        from src.services.provider_adapters import _codex_sdk_installed
+
+        if not _codex_sdk_installed():
+            return []
+
+        def _list() -> list[dict]:
+            from openai_codex import Codex
+
+            with Codex() as codex:
+                response = codex.models()
+            out: list[dict] = []
+            for m in getattr(response, "data", None) or []:
+                mid = getattr(m, "id", None)
+                if not mid:
+                    continue
+                out.append(
+                    {
+                        "id": str(mid),
+                        "model_string": f"codex:{mid}",
+                        "description": getattr(m, "description", None)
+                        or getattr(m, "display_name", None)
+                        or "Codex model",
+                        "run_count": 0,
+                    }
+                )
+            return out
+
+        try:
+            return await asyncio.to_thread(_list)
+        except Exception:
+            logger.warning("Failed to fetch Codex models", exc_info=True)
+            return []

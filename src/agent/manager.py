@@ -33,7 +33,8 @@ from claude_agent_sdk import (
     query,
 )
 
-from src.agent.models import CLAUDE_MODEL_IDS
+from src.agent.codex_backend import CodexSdkBackend
+from src.agent.models import CLAUDE_MODEL_IDS, CODEX_MODEL_IDS, VALID_AGENT_BACKENDS
 from src.agent.prompt_template import (
     AGENT_PROMPT_TEMPLATE_SETTING,
     DEFAULT_AGENT_PROMPT_TEMPLATE,
@@ -204,6 +205,7 @@ class AgentRuntimeStatus:
     fallback_provider: str
     using_override: bool
     error: str | None = None
+    codex_available: bool = False
 
 
 async def _await_with_countdown(
@@ -1664,8 +1666,9 @@ class DeepagentsBackend:
         model: str | None,
         queue: asyncio.Queue[str | None],
         history_msgs: list[dict] | None = None,
+        session_id: str = "web",
     ) -> None:
-        del thread_id, stats, model
+        del thread_id, stats, model, session_id
 
         from src.agent.permission_gate import get_gate, get_request_context
         from src.agent.tools.permissions import load_tool_access_policy, visible_tools_for_llm
@@ -1852,6 +1855,9 @@ class AgentManager:
         self._deepagents_backend = DeepagentsBackend(
             db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
         )
+        self._codex_backend = CodexSdkBackend(
+            db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
+        )
         self._active_tasks: dict[int, asyncio.Task] = {}
         self._active_task_sessions: dict[int, str] = {}
         self._active_task_cancel_events: dict[int, threading.Event] = {}
@@ -1904,7 +1910,11 @@ class AgentManager:
 
     @property
     def available(self) -> bool:
-        return self._claude_backend.available or self._deepagents_backend.available
+        return (
+            self._claude_backend.available
+            or self._deepagents_backend.available
+            or self._codex_backend.available
+        )
 
     def _build_prompt_stats_only(self, history: list[dict], message: str) -> dict:
         """Compute prompt statistics without building the full formatted string."""
@@ -1972,7 +1982,7 @@ class AgentManager:
 
     async def _backend_override(self) -> str:
         override = (await self._get_setting_cached("agent_backend_override", "auto")).strip()
-        if override not in {"auto", "claude", "deepagents"}:
+        if override not in VALID_AGENT_BACKENDS:
             return "auto"
         return override
 
@@ -1982,6 +1992,7 @@ class AgentManager:
         backend_override = await self._backend_override()
         claude_available = self._claude_backend.available
         deepagents_available = self._deepagents_backend.available
+        codex_available = self._codex_backend.available
         deepagents_error = self._deepagents_backend.init_error
 
         selected_backend: str | None
@@ -1993,6 +2004,8 @@ class AgentManager:
                 error = "claude-agent-sdk не сконфигурирован."
             elif selected_backend == "deepagents" and not deepagents_available:
                 error = deepagents_error or "deepagents fallback не сконфигурирован."
+            elif selected_backend == "codex" and not codex_available:
+                error = "Codex SDK не установлен или Codex CLI не авторизован."
         else:
             if deepagents_available and self._deepagents_backend.has_usable_db_provider_configs:
                 selected_backend = "deepagents"
@@ -2009,6 +2022,7 @@ class AgentManager:
         return AgentRuntimeStatus(
             claude_available=claude_available,
             deepagents_available=deepagents_available,
+            codex_available=codex_available,
             dev_mode_enabled=dev_mode_enabled,
             backend_override=backend_override,
             selected_backend=selected_backend,
@@ -2088,6 +2102,10 @@ class AgentManager:
         elif backend_name == "deepagents":
             backend = self._deepagents_backend
             model = None
+        elif backend_name == "codex":
+            backend = self._codex_backend
+            if model not in CODEX_MODEL_IDS:
+                model = None
         else:
             err_payload = safe_json_dumps(
                 {"error": "Ошибка агента: не удалось выбрать backend."},
@@ -2127,13 +2145,15 @@ class AgentManager:
             )
 
         async def _run_backend(
-            selected_backend: ClaudeSdkBackend | DeepagentsBackend,
+            selected_backend: ClaudeSdkBackend | DeepagentsBackend | CodexSdkBackend,
             failure_prefix: Callable[[str], str],
         ) -> None:
             # Set ContextVar here so token is created and reset in the same task context.
             _token = set_request_context(_req_ctx) if _req_ctx is not None else None
             try:
-                kwargs: dict = dict(
+                # All backends share one chat_stream signature; deepagents
+                # ignores session_id (del'd in its body) rather than omitting it.
+                await selected_backend.chat_stream(
                     thread_id=thread_id,
                     prompt=prompt,
                     system_prompt=system_prompt,
@@ -2141,10 +2161,8 @@ class AgentManager:
                     model=model,
                     queue=queue,
                     history_msgs=history_for_backend,
+                    session_id=session_id,
                 )
-                if isinstance(selected_backend, ClaudeSdkBackend):
-                    kwargs["session_id"] = session_id
-                await selected_backend.chat_stream(**kwargs)
             except Exception as exc:
                 logger.exception("Agent chat error for thread %d", thread_id)
                 error_text = str(exc)

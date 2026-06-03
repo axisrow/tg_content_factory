@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import functools
+import importlib.util
 import logging
 import os
 import uuid
@@ -24,18 +26,28 @@ ImageAdapter = Callable[[str, str], Awaitable[Optional[str]]]
 DEFAULT_IMAGE_OUTPUT_DIR = "data/image"
 
 
+def _image_target_path(output_dir: str | None = None) -> Path:
+    """Return a fresh ``<output_dir>/<uuid>.png`` path, creating the dir.
+
+    Single source of the on-disk naming convention, shared by every image
+    adapter — both those that already hold the bytes (:func:`save_image_bytes`)
+    and the Codex adapter, which must hand the path to the engine *before* the
+    file exists. ``output_dir`` defaults to :data:`DEFAULT_IMAGE_OUTPUT_DIR`,
+    resolved at call time so the module-level default stays overridable.
+    """
+    out = Path(output_dir or DEFAULT_IMAGE_OUTPUT_DIR)
+    out.mkdir(parents=True, exist_ok=True)
+    return out / f"{uuid.uuid4().hex}.png"
+
+
 async def save_image_bytes(image_bytes: bytes, output_dir: str | None = None) -> str:
     """Persist raw image *bytes* to *output_dir* and return the file path.
 
     Single place every image adapter uses to land binary results on disk, so
     naming/flush behaviour stays consistent.  Downstream (``ImageGenerationService``)
     uploads non-URL results to S3 when configured, so returning a path is enough.
-    ``output_dir`` defaults to :data:`DEFAULT_IMAGE_OUTPUT_DIR`, resolved at call
-    time so the module-level default stays overridable.
     """
-    out = Path(output_dir or DEFAULT_IMAGE_OUTPUT_DIR)
-    out.mkdir(parents=True, exist_ok=True)
-    filepath = out / f"{uuid.uuid4().hex}.png"
+    filepath = _image_target_path(output_dir)
     await asyncio.to_thread(filepath.write_bytes, image_bytes)
     return str(filepath)
 
@@ -327,5 +339,116 @@ def make_replicate_image_adapter(api_token: str, timeout: float = 60.0) -> Image
                         error = result.get("error", "unknown error")
                         raise RuntimeError(f"Replicate prediction failed: {error}")
             raise RuntimeError(f"Replicate prediction timed out after {timeout}s")
+
+    return adapter
+
+
+# ── Codex SDK image generation ──
+#
+# Unlike the HTTP providers above, Codex does not use an API key: the
+# ``openai_codex`` SDK drives a local Codex engine that reuses the existing
+# Codex CLI authentication (``~/.codex/auth.json``).  The image is produced by
+# the Codex agent itself via the ``$imagegen`` tool, which writes a PNG to a
+# path we hand it — so this adapter, like HuggingFace, returns a local file path.
+CODEX_DEFAULT_IMAGE_MODEL = "gpt-5.4"
+
+
+def _build_codex_image_prompt(prompt: str, output_path: str) -> str:
+    """Build the ``$imagegen`` instruction that tells Codex to save a PNG.
+
+    Kept as a pure function so the prompt shape is unit-testable without the SDK.
+    """
+    return (
+        "$imagegen\n\n"
+        "Generate one high-quality image from this prompt:\n\n"
+        f"{prompt}\n\n"
+        "Save the generated PNG to this exact local path:\n\n"
+        f"{output_path}\n\n"
+        "After generating it, reply briefly with what was created and the saved file path."
+    )
+
+
+def _codex_saved_path_from_result(result: Any) -> Optional[str]:
+    """Extract the saved image path from a Codex ``TurnResult``.
+
+    Walks ``result.items`` for an ``imageGeneration`` item (``saved_path``) or an
+    ``imageView`` item (``path``).  Mirrors the result shape of openai_codex's
+    generated thread-item models.  Returns ``None`` when no image item is present.
+    """
+    for wrapped in getattr(result, "items", None) or []:
+        item = wrapped.root if hasattr(wrapped, "root") else wrapped
+        item_type = getattr(item, "type", None)
+        if item_type == "imageGeneration":
+            saved = getattr(item, "saved_path", None)
+            if saved:
+                return str(saved)
+        elif item_type == "imageView":
+            path = getattr(item, "path", None)
+            if path:
+                return str(path)
+    return None
+
+
+def _codex_sdk_installed() -> bool:
+    """True when the ``openai_codex`` SDK importable in this environment."""
+    return importlib.util.find_spec("openai_codex") is not None
+
+
+@functools.lru_cache(maxsize=1)
+def codex_available() -> bool:
+    """True when the Codex SDK is installed and the Codex CLI is authenticated.
+
+    Single source of truth for "is the keyless codex provider usable", shared by
+    both registration paths (``ImageGenerationService._register_from_env`` and
+    ``ImageProviderService.build_adapters``). Cached because the inputs — a
+    package being installed and ``~/.codex/auth.json`` existing — are static for
+    the process lifetime, and the check otherwise runs an import-machinery scan
+    plus a filesystem stat on every image request.
+    """
+    if not _codex_sdk_installed():
+        return False
+    return (Path.home() / ".codex" / "auth.json").exists()
+
+
+def make_codex_image_adapter(output_dir: str = DEFAULT_IMAGE_OUTPUT_DIR) -> ImageAdapter:
+    """Codex SDK image generation — drives the local Codex engine, saves a file.
+
+    No API key: authentication comes from the Codex CLI (``~/.codex/auth.json``).
+    The ``openai_codex`` import is lazy so this module loads without the SDK
+    installed (the adapter is only registered when the SDK is actually present).
+    The blocking ``thread.run`` call runs in a worker thread so the event loop
+    is not stalled.
+    """
+
+    async def adapter(prompt: str, model: str = "") -> Optional[str]:
+        target_path = _image_target_path(output_dir)
+        out = target_path.parent
+        target = target_path.resolve()
+        model_id = model or CODEX_DEFAULT_IMAGE_MODEL
+        instruction = _build_codex_image_prompt(prompt, str(target))
+
+        def _run_codex() -> Optional[str]:
+            from openai_codex import Codex, Sandbox
+
+            with Codex() as codex:
+                thread = codex.thread_start(
+                    cwd=str(out.resolve()),
+                    model=model_id,
+                    sandbox=Sandbox.workspace_write,
+                )
+                result = thread.run(instruction)
+            status = getattr(getattr(result, "status", None), "value", None)
+            if status != "completed":
+                raise RuntimeError(f"Codex image: thread did not complete (status={status})")
+            return _codex_saved_path_from_result(result)
+
+        saved = await asyncio.to_thread(_run_codex)
+        # Prefer the path Codex reported; fall back to the requested target if it
+        # wrote there without echoing the path back in the result items.
+        if saved and Path(saved).exists():
+            return saved
+        if target.exists():
+            return str(target)
+        raise RuntimeError("Codex image: no image file produced")
 
     return adapter

@@ -788,3 +788,158 @@ async def test_replicate_image_adapter_timeout(monkeypatch):
     adapter = make_replicate_image_adapter("fake-token", timeout=2.0)
     with pytest.raises(RuntimeError, match="timed out"):
         await adapter("a cat")
+
+
+# === Codex SDK image adapter ===
+
+
+def test_build_codex_image_prompt_has_imagegen_and_path():
+    from src.services.provider_adapters import _build_codex_image_prompt
+
+    prompt = _build_codex_image_prompt("a sunset", "/tmp/out/abc.png")
+    assert "$imagegen" in prompt
+    assert "a sunset" in prompt
+    assert "/tmp/out/abc.png" in prompt
+
+
+def test_codex_saved_path_from_image_generation_item():
+    from types import SimpleNamespace
+
+    from src.services.provider_adapters import _codex_saved_path_from_result
+
+    result = SimpleNamespace(
+        items=[SimpleNamespace(type="imageGeneration", saved_path="/tmp/img.png")]
+    )
+    assert _codex_saved_path_from_result(result) == "/tmp/img.png"
+
+
+def test_codex_saved_path_from_image_view_item():
+    from types import SimpleNamespace
+
+    from src.services.provider_adapters import _codex_saved_path_from_result
+
+    result = SimpleNamespace(items=[SimpleNamespace(type="imageView", path="/tmp/view.png")])
+    assert _codex_saved_path_from_result(result) == "/tmp/view.png"
+
+
+def test_codex_saved_path_none_when_no_image_item():
+    from types import SimpleNamespace
+
+    from src.services.provider_adapters import _codex_saved_path_from_result
+
+    result = SimpleNamespace(items=[SimpleNamespace(type="agentMessage")])
+    assert _codex_saved_path_from_result(result) is None
+
+
+def _install_fake_codex(monkeypatch, *, status="completed", write_target=True, item_path=True):
+    """Install a fake ``openai_codex`` module that simulates one image turn.
+
+    When ``write_target`` is True the fake writes a PNG to the cwd-resolved path
+    Codex was asked to save to (parsed out of the instruction), mimicking the
+    real engine writing the file. ``item_path`` controls whether the returned
+    result echoes the saved path back in its items.
+    """
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    captured = {}
+
+    class FakeThread:
+        def run(self, instruction):
+            # The instruction embeds the absolute save path on its own line.
+            save_path = None
+            for line in instruction.splitlines():
+                line = line.strip()
+                if line.endswith(".png"):
+                    save_path = line
+            captured["save_path"] = save_path
+            if write_target and save_path:
+                with open(save_path, "wb") as fh:
+                    fh.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+            items = []
+            if item_path and save_path:
+                items.append(SimpleNamespace(type="imageGeneration", saved_path=save_path))
+            return SimpleNamespace(status=SimpleNamespace(value=status), items=items, final_response="done")
+
+    class FakeCodex:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def thread_start(self, **kwargs):
+            captured["start_kwargs"] = kwargs
+            return FakeThread()
+
+    fake_mod = ModuleType("openai_codex")
+    fake_mod.Codex = FakeCodex
+    fake_mod.Sandbox = SimpleNamespace(workspace_write="workspace-write")
+    monkeypatch.setitem(sys.modules, "openai_codex", fake_mod)
+    return captured
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_returns_saved_path(monkeypatch, tmp_path):
+    from pathlib import Path
+
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    captured = _install_fake_codex(monkeypatch)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path))
+    result = await adapter("a robot painting", "gpt-5.4")
+
+    assert result is not None
+    assert result.endswith(".png")
+    assert Path(result).exists()
+    assert Path(result).read_bytes().startswith(b"\x89PNG")
+    # default cwd is the resolved output dir; requested model is threaded through
+    assert captured["start_kwargs"]["model"] == "gpt-5.4"
+    assert captured["start_kwargs"]["sandbox"] == "workspace-write"
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_default_model(monkeypatch, tmp_path):
+    from src.services.provider_adapters import CODEX_DEFAULT_IMAGE_MODEL, make_codex_image_adapter
+
+    captured = _install_fake_codex(monkeypatch)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path))
+    await adapter("a cat", "")  # empty model → default
+
+    assert captured["start_kwargs"]["model"] == CODEX_DEFAULT_IMAGE_MODEL
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_falls_back_to_target_when_no_item(monkeypatch, tmp_path):
+    """Codex wrote the file but did not echo the path in items → use the target."""
+    from pathlib import Path
+
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    _install_fake_codex(monkeypatch, item_path=False)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path))
+    result = await adapter("a dog", "gpt-5.4")
+
+    assert result is not None
+    assert Path(result).exists()
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_raises_on_failed_status(monkeypatch, tmp_path):
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    _install_fake_codex(monkeypatch, status="failed", write_target=False)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path))
+    with pytest.raises(RuntimeError, match="did not complete"):
+        await adapter("x", "gpt-5.4")
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_raises_when_no_file(monkeypatch, tmp_path):
+    """Status completed but no file written and no item path → error, not silent None."""
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    _install_fake_codex(monkeypatch, write_target=False, item_path=False)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path))
+    with pytest.raises(RuntimeError, match="no image file"):
+        await adapter("x", "gpt-5.4")

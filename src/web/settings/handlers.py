@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from fastapi import Request
 
 from src.agent.manager import AgentManager
+from src.agent.models import VALID_AGENT_BACKENDS
 from src.agent.prompt_template import (
     AGENT_PROMPT_TEMPLATE_SETTING,
     ALLOWED_TEMPLATE_VARIABLES,
@@ -449,7 +450,7 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
     agent_prompt_template = (
         await db.repos.settings.get_setting(AGENT_PROMPT_TEMPLATE_SETTING) or DEFAULT_AGENT_PROMPT_TEMPLATE
     )
-    if agent_backend_override not in {"auto", "claude", "deepagents"}:
+    if agent_backend_override not in VALID_AGENT_BACKENDS:
         agent_backend_override = "auto"
     config = request.app.state.config
     provider_service = _agent_provider_service(request)
@@ -680,7 +681,7 @@ async def handle_save_agent_settings(request: Request, form: AgentSettingsForm) 
         backend_override = current_backend_override
     else:
         backend_override = form.backend_override
-    if backend_override not in {"auto", "claude", "deepagents"}:
+    if backend_override not in VALID_AGENT_BACKENDS:
         backend_override = "auto"
 
     if form.form_scope == "backend_override":
@@ -1167,7 +1168,8 @@ async def handle_save_image_providers(
         if not cfg.enabled:
             continue
         spec = image_provider_spec(cfg.provider)
-        if spec is None:
+        if spec is None or spec.keyless:
+            # Keyless providers (e.g. Codex via the CLI) need no key/env.
             continue
         has_key = bool(cfg.api_key.strip())
         has_env = any(os.environ.get(var) for var in spec.env_vars)
