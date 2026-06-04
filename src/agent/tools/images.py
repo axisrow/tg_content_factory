@@ -14,6 +14,42 @@ from src.web.paths import DATA_IMAGE_DIR
 logger = logging.getLogger(__name__)
 
 
+async def _read_image_setting(db, key: str) -> str:
+    if db is None:
+        return ""
+    try:
+        value = await db.get_setting(key)
+    except Exception:
+        logger.warning("Failed to read image setting %s", key, exc_info=True)
+        return ""
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _default_model_for_adapters(adapter_names) -> str:
+    from src.services.image_provider_service import IMAGE_PROVIDER_ORDER, image_provider_spec
+
+    available = set(adapter_names)
+    for provider in IMAGE_PROVIDER_ORDER:
+        if provider not in available:
+            continue
+        spec = image_provider_spec(provider)
+        if spec and spec.default_model:
+            return spec.default_model
+    return ""
+
+
+async def resolve_default_image_model(requested_model, db, image_service) -> str:
+    """Return the explicit image model to use for an agent generate_image call."""
+    if isinstance(requested_model, str) and requested_model.strip():
+        return requested_model.strip()
+
+    configured_model = await _read_image_setting(db, "default_image_model")
+    if configured_model:
+        return configured_model
+
+    return _default_model_for_adapters(image_service.adapter_names)
+
+
 def register(db, client_pool, embedding_service, **kwargs):
     config = kwargs.get("config")
     tools = []
@@ -37,12 +73,12 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "generate_image",
-        "Generate an image from a text prompt. Model format: 'provider:model_id' "
+        "Generate an image from a text prompt. Optional model format: 'provider:model_id' "
         "(e.g. 'together:black-forest-labs/FLUX.1-schnell'). "
-        "Use list_image_providers to see available providers, list_image_models for models.",
+        "When omitted, the configured/default image model is used automatically.",
         {
             "prompt": Annotated[str, "Текстовый промпт для генерации изображения"],
-            "model": Annotated[str, "Модель в формате provider:model_id (например together:FLUX.1-schnell)"],
+            "model": Annotated[str, "Необязательная модель в формате provider:model_id"],
         },
     )
     async def generate_image(args):
@@ -54,7 +90,14 @@ def register(db, client_pool, embedding_service, **kwargs):
             svc = await _build_image_service()
             if not await svc.is_available():
                 return _text_response("Генерация изображений не настроена. Добавьте провайдера в настройках.")
-            result = await svc.generate(model=model, text=prompt)
+            resolved_model = await resolve_default_image_model(model, db, svc)
+            if not resolved_model:
+                return _text_response(
+                    "Не удалось выбрать модель изображения автоматически. "
+                    "Задайте default_image_model в настройках или передайте model явно "
+                    "(например codex:gpt-5.4)."
+                )
+            result = await svc.generate(model=resolved_model, text=prompt)
             if result and (result.startswith("https://") or result.startswith("http://")):
                 import hashlib
                 from urllib.parse import urlparse
@@ -85,7 +128,7 @@ def register(db, client_pool, embedding_service, **kwargs):
                 logger.info("Image downloaded to %s", local_path)
                 if db:
                     await db.repos.generated_images.save(
-                        prompt=prompt, model=model, image_url=result, local_path=local_path,
+                        prompt=prompt, model=resolved_model, image_url=result, local_path=local_path,
                     )
                 return _text_response(
                     f"Изображение создано!\n\n"

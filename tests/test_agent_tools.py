@@ -689,6 +689,7 @@ class TestImageToolsDBProviders:
             # Setup image service mock
             img_instance = mock_img_svc.return_value
             img_instance.is_available = AsyncMock(return_value=True)
+            img_instance.adapter_names = ["together"]
             img_instance.generate = AsyncMock(return_value="/tmp/image.png")
 
             handlers = _get_tool_handlers(mock_db, config=fake_config)

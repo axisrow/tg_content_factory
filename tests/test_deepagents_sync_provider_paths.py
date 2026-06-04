@@ -864,7 +864,7 @@ class TestDeepagentsSyncGenerateImage:
         img_svc_mock = MagicMock()
         img_svc_mock.is_available = AsyncMock(return_value=True)
         img_svc_mock.generate = AsyncMock(return_value=None)
-        img_svc_mock.adapter_names = []
+        img_svc_mock.adapter_names = ["together"]
         with patch(
             "src.services.image_generation_service.ImageGenerationService",
             return_value=img_svc_mock,
@@ -877,7 +877,7 @@ class TestDeepagentsSyncGenerateImage:
         img_svc_mock = MagicMock()
         img_svc_mock.is_available = AsyncMock(return_value=True)
         img_svc_mock.generate = AsyncMock(side_effect=Exception("gen fail"))
-        img_svc_mock.adapter_names = []
+        img_svc_mock.adapter_names = ["together"]
         with patch(
             "src.services.image_generation_service.ImageGenerationService",
             return_value=img_svc_mock,
@@ -885,6 +885,21 @@ class TestDeepagentsSyncGenerateImage:
             tool_map = _build_sync_tools(mock_db)
             result = tool_map["generate_image"](prompt="error")
         assert "Ошибка" in result
+
+    def test_codex_only_omitted_model_uses_codex_default(self, mock_db):
+        img_svc_mock = MagicMock()
+        img_svc_mock.is_available = AsyncMock(return_value=True)
+        img_svc_mock.generate = AsyncMock(return_value="/generated/codex.png")
+        img_svc_mock.adapter_names = ["codex"]
+        with patch(
+            "src.services.image_generation_service.ImageGenerationService",
+            return_value=img_svc_mock,
+        ):
+            tool_map = _build_sync_tools(mock_db)
+            result = tool_map["generate_image"](prompt="a cat")
+        assert "не вернула результат" not in result
+        assert "/generated/codex.png" in result
+        img_svc_mock.generate.assert_awaited_once_with(model="codex:gpt-5.4", text="a cat")
 
 
 # ===========================================================================

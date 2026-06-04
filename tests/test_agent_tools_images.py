@@ -28,6 +28,7 @@ class TestImagesToolGenerateImage:
     async def test_local_path_result(self, mock_db):
         with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
             mock_svc.return_value.is_available = AsyncMock(return_value=True)
+            mock_svc.return_value.adapter_names = ["together"]
             mock_svc.return_value.generate = AsyncMock(return_value="/local/path/image.png")
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["generate_image"]({"prompt": "a dog"})
@@ -38,6 +39,7 @@ class TestImagesToolGenerateImage:
     async def test_no_result(self, mock_db):
         with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
             mock_svc.return_value.is_available = AsyncMock(return_value=True)
+            mock_svc.return_value.adapter_names = ["together"]
             mock_svc.return_value.generate = AsyncMock(return_value=None)
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["generate_image"]({"prompt": "something"})
@@ -50,6 +52,72 @@ class TestImagesToolGenerateImage:
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["generate_image"]({"prompt": "test"})
         assert "Ошибка" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_omitted_model_uses_db_default(self, mock_db):
+        mock_db.get_setting = AsyncMock(return_value="openai:gpt-image-1")
+        with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
+            mock_svc.return_value.is_available = AsyncMock(return_value=True)
+            mock_svc.return_value.adapter_names = ["codex"]
+            mock_svc.return_value.generate = AsyncMock(return_value="/local/path/image.png")
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["generate_image"]({"prompt": "a cat"})
+        assert "/local/path/image.png" in _text(result)
+        mock_svc.return_value.generate.assert_awaited_once_with(
+            model="openai:gpt-image-1", text="a cat"
+        )
+
+    @pytest.mark.anyio
+    async def test_none_model_codex_only_uses_codex_default(self, mock_db):
+        with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
+            mock_svc.return_value.is_available = AsyncMock(return_value=True)
+            mock_svc.return_value.adapter_names = ["codex"]
+            mock_svc.return_value.generate = AsyncMock(return_value="/local/path/image.png")
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["generate_image"]({"prompt": "a cat", "model": None})
+        assert "/local/path/image.png" in _text(result)
+        mock_svc.return_value.generate.assert_awaited_once_with(
+            model="codex:gpt-5.4", text="a cat"
+        )
+
+    @pytest.mark.anyio
+    async def test_blank_model_uses_adapter_default(self, mock_db):
+        with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
+            mock_svc.return_value.is_available = AsyncMock(return_value=True)
+            mock_svc.return_value.adapter_names = ["together"]
+            mock_svc.return_value.generate = AsyncMock(return_value="/local/path/image.png")
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["generate_image"]({"prompt": "a cat", "model": ""})
+        assert "/local/path/image.png" in _text(result)
+        mock_svc.return_value.generate.assert_awaited_once_with(
+            model="together:black-forest-labs/FLUX.1-schnell", text="a cat"
+        )
+
+    @pytest.mark.anyio
+    async def test_explicit_model_is_not_overwritten(self, mock_db):
+        mock_db.get_setting = AsyncMock(return_value="openai:gpt-image-1")
+        with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
+            mock_svc.return_value.is_available = AsyncMock(return_value=True)
+            mock_svc.return_value.adapter_names = ["codex"]
+            mock_svc.return_value.generate = AsyncMock(return_value="/local/path/image.png")
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["generate_image"]({"prompt": "a cat", "model": "codex:gpt-5.4"})
+        assert "/local/path/image.png" in _text(result)
+        mock_svc.return_value.generate.assert_awaited_once_with(
+            model="codex:gpt-5.4", text="a cat"
+        )
+
+    @pytest.mark.anyio
+    async def test_available_service_without_default_returns_actionable_message(self, mock_db):
+        with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
+            mock_svc.return_value.is_available = AsyncMock(return_value=True)
+            mock_svc.return_value.adapter_names = ["custom"]
+            mock_svc.return_value.generate = AsyncMock(return_value="/local/path/image.png")
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["generate_image"]({"prompt": "a cat"})
+        text = _text(result)
+        assert "default_image_model" in text
+        mock_svc.return_value.generate.assert_not_called()
 
 
 class TestImagesToolListImageModels:
