@@ -156,8 +156,21 @@ class UnifiedDispatcher:
                 raise
             except DatabaseBusyError:
                 # Transient lock — back off quietly. Logging a full traceback
-                # here floods the log on every contended write; the task stays
-                # claimable and is retried on the next poll.
+                # here floods the log on every contended write.
+                if task and task.id is not None:
+                    try:
+                        await self._tasks.reset_collection_task_to_pending(
+                            task.id,
+                            note="Retry after transient database lock",
+                        )
+                    except DatabaseBusyError:
+                        logger.warning(
+                            "Unified dispatcher: DB busy while requeueing task %s; "
+                            "it will be recovered on startup",
+                            task.id,
+                        )
+                    except Exception:
+                        logger.exception("Failed to requeue DB-busy task %s", task.id)
                 logger.warning("Unified dispatcher: DB busy; backing off %.1fs", current_interval)
                 await asyncio.sleep(current_interval)
                 continue
