@@ -811,6 +811,29 @@ async def test_premium_tag_not_applied_to_pre_existing_messages(messages_repo):
     assert await _premium_tag(messages_repo, 12, 2) == "тест"  # new row tagged
 
 
+async def test_normal_collection_clears_stale_premium_tag(messages_repo):
+    """A cache row becomes user data once normal collection sees the same message."""
+    await messages_repo.insert_messages_batch(
+        [make_message(12, 3, "from premium search")],
+        premium_search_query="тест",
+    )
+    assert await _premium_tag(messages_repo, 12, 3) == "тест"
+
+    inserted = await messages_repo.insert_messages_batch(
+        [make_message(12, 3, "collected by worker")]
+    )
+    assert inserted == 0
+    assert await _premium_tag(messages_repo, 12, 3) is None
+
+    assert await messages_repo.delete_premium_search_results("тест") == 0
+    cur = await messages_repo._db.execute(
+        "SELECT text FROM messages WHERE channel_id = ? AND message_id = ?",
+        (12, 3),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+
+
 async def test_delete_premium_search_results_removes_only_tagged(messages_repo):
     """Cleanup deletes only rows tagged with the query, leaving everything else."""
     await messages_repo.insert_message(make_message(13, 1, "user data with тест inside"))
