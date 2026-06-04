@@ -158,7 +158,7 @@ class MessagesRepository:
             )
             inserted = cur.rowcount > 0
             if not inserted:
-                await self._refresh_existing_messages([msg])
+                await self._refresh_existing_messages([msg], clear_premium_search_query=True)
             if msg.reactions_json:
                 await self._upsert_reactions(msg.channel_id, msg.message_id, msg.reactions_json)
             return inserted
@@ -191,7 +191,9 @@ class MessagesRepository:
                 message_id,
             )
 
-    async def insert_messages_batch(self, messages: list[Message]) -> int:
+    async def insert_messages_batch(
+        self, messages: list[Message], premium_search_query: str | None = None
+    ) -> int:
         if not messages:
             return 0
         data = [
@@ -218,6 +220,7 @@ class MessagesRepository:
                 m.date.isoformat(),
                 m.detected_lang,
                 getattr(m, "forward_from_channel_id", None),
+                premium_search_query,
             )
             for m in messages
         ]
@@ -239,8 +242,8 @@ class MessagesRepository:
                     service_action_semantic, service_action_payload_json, sender_kind,
                     topic_id, reactions_json,
                     views, forwards, reply_count, date, detected_lang,
-                    forward_from_channel_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    forward_from_channel_id, premium_search_query)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 data,
             )
             count = cur.rowcount if cur.rowcount >= 0 else len(messages)
@@ -251,7 +254,10 @@ class MessagesRepository:
         if existing_keys:
             duplicates = [m for m in messages if (m.channel_id, m.message_id) in existing_keys]
             if duplicates:
-                await self._refresh_existing_messages(duplicates)
+                await self._refresh_existing_messages(
+                    duplicates,
+                    clear_premium_search_query=premium_search_query is None,
+                )
 
         reactions_data = [
             (m.channel_id, m.message_id, r["emoji"], r.get("count", 0))
@@ -290,7 +296,12 @@ class MessagesRepository:
             existing.update((row["channel_id"], row["message_id"]) for row in rows)
         return existing
 
-    async def _refresh_existing_messages(self, messages: list[Message]) -> None:
+    async def _refresh_existing_messages(
+        self,
+        messages: list[Message],
+        *,
+        clear_premium_search_query: bool = False,
+    ) -> None:
         """Refresh mutable fields for already-known Telegram messages."""
         if not messages:
             return
@@ -306,6 +317,7 @@ class MessagesRepository:
                 m.reactions_json,
                 m.detected_lang,
                 m.detected_lang,
+                int(clear_premium_search_query),
                 m.channel_id,
                 m.message_id,
             )
@@ -318,7 +330,8 @@ class MessagesRepository:
                        forwards = CASE WHEN ? IS NOT NULL THEN ? ELSE forwards END,
                        reply_count = CASE WHEN ? IS NOT NULL THEN ? ELSE reply_count END,
                        reactions_json = CASE WHEN ? IS NOT NULL THEN ? ELSE reactions_json END,
-                       detected_lang = CASE WHEN ? IS NOT NULL THEN ? ELSE detected_lang END
+                       detected_lang = CASE WHEN ? IS NOT NULL THEN ? ELSE detected_lang END,
+                       premium_search_query = CASE WHEN ? = 1 THEN NULL ELSE premium_search_query END
                    WHERE channel_id = ? AND message_id = ?""",
                 data,
             )
@@ -1044,6 +1057,31 @@ class MessagesRepository:
             )
             cur = await conn.execute(
                 "DELETE FROM messages WHERE channel_id = ?", (channel_id,)
+            )
+            rowcount = cur.rowcount or 0
+        return rowcount
+
+    async def delete_premium_search_results(self, query: str) -> int:
+        """Delete messages cached solely by a Premium global search for *query*.
+
+        Only rows tagged with ``premium_search_query`` are removed — messages that
+        already existed (collected by the worker or a prior search) are skipped by
+        ``INSERT OR IGNORE`` and never receive the tag, and later normal collection
+        refreshes clear stale tags, so user data is never touched.
+        Used by the live Premium-search test to clean up after itself. Returns the
+        number of deleted rows.
+        """
+        assert self._database is not None, (
+            "MessagesRepository.delete_premium_search_results requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            await conn.execute(
+                "DELETE FROM message_embeddings_json WHERE message_id IN "
+                "(SELECT id FROM messages WHERE premium_search_query = ?)",
+                (query,),
+            )
+            cur = await conn.execute(
+                "DELETE FROM messages WHERE premium_search_query = ?", (query,)
             )
             rowcount = cur.rowcount or 0
         return rowcount
