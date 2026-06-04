@@ -45,6 +45,19 @@ HANDLED_TYPES = [
     for handler_cls in _HANDLER_CLASSES
     for task_type in handler_cls.task_types
 ]
+_DB_BUSY_REQUEUE_TASK_TYPES = (
+    CollectionTaskType.STATS_ALL,
+    CollectionTaskType.SQ_STATS,
+)
+_DB_BUSY_REQUEUE_TYPE_VALUES = [task_type.value for task_type in _DB_BUSY_REQUEUE_TASK_TYPES]
+_DB_BUSY_NON_RETRY_TYPE_VALUES = [
+    task_type for task_type in HANDLED_TYPES if task_type not in _DB_BUSY_REQUEUE_TYPE_VALUES
+]
+_DB_BUSY_NON_RETRY_ERROR = (
+    "Task hit a transient database lock after it started; not retried automatically "
+    "because it may have external side effects"
+)
+_DB_BUSY_NON_RETRY_NOTE = "Not retried after transient database lock"
 
 
 class UnifiedDispatcher:
@@ -117,11 +130,23 @@ class UnifiedDispatcher:
         if self._task and not self._task.done():
             return
         self._stop_event.clear()
+        now = datetime.now(timezone.utc)
         recovered = await self._tasks.requeue_running_generic_tasks_on_startup(
-            datetime.now(timezone.utc), HANDLED_TYPES
+            now, _DB_BUSY_REQUEUE_TYPE_VALUES
         )
         if recovered:
-            logger.warning("Recovered %d interrupted generic tasks on startup", recovered)
+            logger.warning("Recovered %d interrupted retry-safe generic tasks on startup", recovered)
+        failed = await self._tasks.fail_running_generic_tasks_on_startup(
+            now,
+            _DB_BUSY_NON_RETRY_TYPE_VALUES,
+            error=_DB_BUSY_NON_RETRY_ERROR,
+            note=_DB_BUSY_NON_RETRY_NOTE,
+        )
+        if failed:
+            logger.warning(
+                "Marked %d interrupted side-effecting generic tasks failed on startup",
+                failed,
+            )
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
@@ -157,20 +182,7 @@ class UnifiedDispatcher:
             except DatabaseBusyError:
                 # Transient lock — back off quietly. Logging a full traceback
                 # here floods the log on every contended write.
-                if task and task.id is not None:
-                    try:
-                        await self._tasks.reset_collection_task_to_pending(
-                            task.id,
-                            note="Retry after transient database lock",
-                        )
-                    except DatabaseBusyError:
-                        logger.warning(
-                            "Unified dispatcher: DB busy while requeueing task %s; "
-                            "it will be recovered on startup",
-                            task.id,
-                        )
-                    except Exception:
-                        logger.exception("Failed to requeue DB-busy task %s", task.id)
+                await self._handle_database_busy_after_claim(task)
                 logger.warning("Unified dispatcher: DB busy; backing off %.1fs", current_interval)
                 await asyncio.sleep(current_interval)
                 continue
@@ -188,6 +200,41 @@ class UnifiedDispatcher:
                     except Exception:
                         logger.exception("Failed to mark broken task as failed")
                 await asyncio.sleep(current_interval)
+
+    async def _handle_database_busy_after_claim(self, task: CollectionTask | None) -> None:
+        if task is None or task.id is None:
+            return
+        if task.task_type in _DB_BUSY_REQUEUE_TASK_TYPES:
+            try:
+                await self._tasks.reset_collection_task_to_pending(
+                    task.id,
+                    note="Retry after transient database lock",
+                )
+            except DatabaseBusyError:
+                logger.warning(
+                    "Unified dispatcher: DB busy while requeueing task %s; "
+                    "it will be recovered on startup",
+                    task.id,
+                )
+            except Exception:
+                logger.exception("Failed to requeue DB-busy task %s", task.id)
+            return
+
+        try:
+            await self._tasks.update_collection_task(
+                task.id,
+                CollectionTaskStatus.FAILED,
+                error=_DB_BUSY_NON_RETRY_ERROR,
+                note=_DB_BUSY_NON_RETRY_NOTE,
+            )
+        except DatabaseBusyError:
+            logger.warning(
+                "Unified dispatcher: DB busy while failing side-effecting task %s; "
+                "leaving it running for manual inspection",
+                task.id,
+            )
+        except Exception:
+            logger.exception("Failed to mark DB-busy side-effecting task %s as failed", task.id)
 
     def _handler_map(self) -> dict[CollectionTaskType, Callable[[CollectionTask], Awaitable[None]]]:
         try:

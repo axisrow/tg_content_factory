@@ -1078,6 +1078,58 @@ async def test_run_loop_cancelled():
     assert update_call[1]["status"] == TelegramCommandStatus.PENDING
 
 
+async def test_run_loop_success_update_busy_does_not_kill_loop():
+    from src.database import DatabaseBusyError
+    from src.models import TelegramCommand
+
+    db = _mock_db()
+    pool = _mock_pool()
+    cmd = TelegramCommand(id=4, command_type="dialogs.cache_clear", payload={})
+    d = _dispatcher(db=db, pool=pool)
+
+    calls = 0
+
+    async def claim_once_then_stop():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return cmd
+        d._stop_event.set()
+        return None
+
+    db.repos.telegram_commands.claim_next_command = claim_once_then_stop
+    db.repos.telegram_commands.update_command = AsyncMock(
+        side_effect=DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+    )
+    d._dispatch = AsyncMock(return_value={"result": {}, "payload_update": None})
+
+    with patch.object(mod.asyncio, "sleep", new_callable=AsyncMock):
+        await d._run_loop()
+
+    assert calls == 2
+    db.repos.telegram_commands.update_command.assert_awaited_once()
+
+
+async def test_run_loop_cancelled_reraises_when_update_busy():
+    from src.database import DatabaseBusyError
+    from src.models import TelegramCommand
+
+    db = _mock_db()
+    pool = _mock_pool()
+    cmd = TelegramCommand(id=5, command_type="dialogs.cache_clear", payload={})
+    d = _dispatcher(db=db, pool=pool)
+    db.repos.telegram_commands.claim_next_command = AsyncMock(return_value=cmd)
+    db.repos.telegram_commands.update_command = AsyncMock(
+        side_effect=DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+    )
+    d._dispatch = AsyncMock(side_effect=asyncio.CancelledError())
+
+    with pytest.raises(asyncio.CancelledError):
+        await d._run_loop()
+
+    db.repos.telegram_commands.update_command.assert_awaited_once()
+
+
 # ============================================================
 # Additional tests for handler edge paths
 # ============================================================

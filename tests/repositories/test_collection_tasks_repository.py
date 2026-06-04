@@ -6,7 +6,12 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from src.database.repositories.collection_tasks import CollectionTasksRepository
-from src.models import CollectionTaskStatus, CollectionTaskType, StatsAllTaskPayload
+from src.models import (
+    CollectionTaskStatus,
+    CollectionTaskType,
+    ContentPublishTaskPayload,
+    StatsAllTaskPayload,
+)
 
 # _deserialize_payload tests
 
@@ -604,6 +609,29 @@ async def test_requeue_running_stats_tasks_sets_run_after(collection_tasks_repo)
 
     task = await collection_tasks_repo.get_collection_task(stats_id)
     assert task.run_after is not None
+
+
+async def test_fail_running_side_effecting_tasks_on_startup(collection_tasks_repo):
+    """Running side-effecting generic tasks fail on startup instead of retrying."""
+    task_id = await collection_tasks_repo.create_generic_task(
+        CollectionTaskType.CONTENT_PUBLISH,
+        payload=ContentPublishTaskPayload(pipeline_id=None),
+    )
+    await collection_tasks_repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
+
+    count = await collection_tasks_repo.fail_running_generic_tasks_on_startup(
+        datetime.now(tz=timezone.utc),
+        [CollectionTaskType.CONTENT_PUBLISH.value],
+        error="not retried",
+        note="manual inspection",
+    )
+    assert count == 1
+
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task.status == CollectionTaskStatus.FAILED
+    assert task.completed_at is not None
+    assert task.error == "not retried"
+    assert task.note == "manual inspection"
 
 
 # cancel_collection_task tests

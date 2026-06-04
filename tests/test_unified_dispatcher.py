@@ -59,6 +59,7 @@ def mock_tasks_repo():
     repo.create_stats_continuation_task = AsyncMock(return_value=999)
     repo.reschedule_stats_task = AsyncMock()
     repo.reset_collection_task_to_pending = AsyncMock()
+    repo.fail_running_generic_tasks_on_startup = AsyncMock(return_value=0)
     return repo
 
 
@@ -163,6 +164,7 @@ async def test_stop_without_start(dispatcher):
 async def test_start_requeues_interrupted_tasks(mock_collector, mock_channel_bundle, mock_tasks_repo):
     """start() requeues interrupted tasks on startup."""
     mock_tasks_repo.requeue_running_generic_tasks_on_startup.return_value = 3
+    mock_tasks_repo.fail_running_generic_tasks_on_startup.return_value = 2
 
     dispatcher = UnifiedDispatcher(
         mock_collector,
@@ -175,6 +177,7 @@ async def test_start_requeues_interrupted_tasks(mock_collector, mock_channel_bun
     await dispatcher.stop()
 
     mock_tasks_repo.requeue_running_generic_tasks_on_startup.assert_called_once()
+    mock_tasks_repo.fail_running_generic_tasks_on_startup.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -315,6 +318,51 @@ async def test_run_loop_busy_after_claim_requeues_task(
     mock_tasks_repo.reset_collection_task_to_pending.assert_awaited_once_with(
         77,
         note="Retry after transient database lock",
+    )
+    assert [r for r in caplog.records if "loop failure" in r.message] == []
+
+
+@pytest.mark.anyio
+async def test_run_loop_busy_after_side_effecting_task_marks_failed_without_requeue(
+    mock_collector, mock_channel_bundle, mock_tasks_repo, caplog
+):
+    """Side-effecting task types must not be blindly retried after a DB lock."""
+    import logging
+
+    from src.database import DatabaseBusyError
+
+    task = CollectionTask(
+        id=88,
+        task_type=CollectionTaskType.CONTENT_PUBLISH,
+        status=CollectionTaskStatus.RUNNING,
+        payload=ContentPublishTaskPayload(pipeline_id=None),
+    )
+    mock_tasks_repo.claim_next_due_generic_task.side_effect = [task, None, None]
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+    )
+    dispatcher._dispatch = AsyncMock(  # type: ignore[method-assign]
+        side_effect=DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await dispatcher.start()
+        await asyncio.sleep(0.1)
+        await dispatcher.stop()
+
+    mock_tasks_repo.reset_collection_task_to_pending.assert_not_awaited()
+    mock_tasks_repo.update_collection_task.assert_any_await(
+        88,
+        CollectionTaskStatus.FAILED,
+        error=(
+            "Task hit a transient database lock after it started; not retried automatically "
+            "because it may have external side effects"
+        ),
+        note="Not retried after transient database lock",
     )
     assert [r for r in caplog.records if "loop failure" in r.message] == []
 

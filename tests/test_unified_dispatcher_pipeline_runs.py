@@ -42,6 +42,7 @@ def _make_dispatcher(**kw):
     channel_bundle = MagicMock()
     tasks = MagicMock()
     tasks.requeue_running_generic_tasks_on_startup = AsyncMock(return_value=0)
+    tasks.fail_running_generic_tasks_on_startup = AsyncMock(return_value=0)
     tasks.claim_next_due_generic_task = AsyncMock(return_value=None)
     tasks.update_collection_task = AsyncMock()
     tasks.update_collection_task_progress = AsyncMock()
@@ -758,6 +759,7 @@ async def test_start_recovered_tasks_logged():
     """start() recovers interrupted tasks and logs the count."""
     d = _make_dispatcher()
     d._tasks.requeue_running_generic_tasks_on_startup = AsyncMock(return_value=5)
+    d._tasks.fail_running_generic_tasks_on_startup = AsyncMock(return_value=0)
 
     await d.start()
     await asyncio.sleep(0.02)

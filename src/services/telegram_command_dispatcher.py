@@ -138,10 +138,11 @@ class TelegramCommandDispatcher:
             try:
                 result = await self._dispatch(command.command_type, command.payload)
             except asyncio.CancelledError:
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.PENDING,
                     error="cancelled while running; reset for retry",
+                    log_action="pending after cancellation",
                 )
                 raise
             except TelegramCommandRetryLaterError as exc:
@@ -152,13 +153,14 @@ class TelegramCommandDispatcher:
                     exc.run_after.isoformat(),
                     exc.reason,
                 )
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.PENDING,
                     error=exc.reason,
                     result_payload=exc.result_payload or {},
                     payload=command.payload,
                     run_after=exc.run_after,
+                    log_action="pending for retry",
                 )
             except HandledFloodWaitError as exc:
                 run_after = exc.info.next_available_at_utc + timedelta(seconds=1)
@@ -169,7 +171,7 @@ class TelegramCommandDispatcher:
                     run_after.isoformat(),
                     exc.info.detail,
                 )
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.PENDING,
                     error=exc.info.detail,
@@ -182,6 +184,7 @@ class TelegramCommandDispatcher:
                     },
                     payload=command.payload,
                     run_after=run_after,
+                    log_action="pending after flood-wait",
                 )
             except (TelegramReactionInvalidError, ReactionInvalidError) as exc:
                 logger.info(
@@ -190,7 +193,7 @@ class TelegramCommandDispatcher:
                     command.command_type,
                     str(exc),
                 )
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.FAILED,
                     error=str(exc),
@@ -199,6 +202,7 @@ class TelegramCommandDispatcher:
                         "emoji": command.payload.get("emoji"),
                     },
                     payload=command.payload,
+                    log_action="failed after invalid reaction",
                 )
             except Exception as exc:
                 duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -213,11 +217,12 @@ class TelegramCommandDispatcher:
                     )
                 else:
                     logger.exception("Telegram command failed: id=%s type=%s", command.id, command.command_type)
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.FAILED,
                     error=str(exc),
                     payload=command.payload,
+                    log_action="failed after dispatch error",
                 )
             else:
                 if is_auth_command:
@@ -229,12 +234,35 @@ class TelegramCommandDispatcher:
                         phone,
                         duration_ms,
                     )
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.SUCCEEDED,
                     result_payload=result.get("result") or {},
                     payload=result.get("payload_update"),
+                    log_action="succeeded",
                 )
+
+    async def _update_command_safely(
+        self,
+        command_id: int | None,
+        *,
+        status: TelegramCommandStatus,
+        log_action: str,
+        **kwargs: Any,
+    ) -> None:
+        try:
+            await self._db.repos.telegram_commands.update_command(
+                command_id,
+                status=status,
+                **kwargs,
+            )
+        except Exception as exc:
+            logger.warning(
+                "telegram_command_dispatcher: failed to mark command %s %s: %s",
+                command_id,
+                log_action,
+                exc,
+            )
 
     async def _dispatch(self, command_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         handler_name = f"_handle_{command_type.replace('.', '_')}"
