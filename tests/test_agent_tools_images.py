@@ -53,9 +53,29 @@ class TestImagesToolGenerateImage:
             mock_svc.return_value.is_available = AsyncMock(return_value=True)
             mock_svc.return_value.adapter_names = ["together"]
             mock_svc.return_value.generate = AsyncMock(return_value=None)
+            mock_svc.return_value.last_failure = None
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["generate_image"]({"prompt": "something"})
         assert "не вернула результат" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_timeout_failure_returns_specific_text(self, mock_db):
+        from src.services.image_generation_service import ImageGenerationFailure
+
+        with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
+            mock_svc.return_value.is_available = AsyncMock(return_value=True)
+            mock_svc.return_value.adapter_names = ["codex"]
+            mock_svc.return_value.generate = AsyncMock(return_value=None)
+            mock_svc.return_value.last_failure = ImageGenerationFailure(
+                kind="timeout", provider="codex", model="codex:gpt-5.4", message="timed out"
+            )
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["generate_image"]({"prompt": "a cat"})
+        text = _text(result)
+        assert "Генерация изображения через codex:gpt-5.4" in text
+        assert "180 секунд" in text
+        assert "Процесс Codex остановлен" in text
+        assert "не вернула результат" not in text
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):

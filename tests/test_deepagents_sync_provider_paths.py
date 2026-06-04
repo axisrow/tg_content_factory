@@ -865,6 +865,7 @@ class TestDeepagentsSyncGenerateImage:
         img_svc_mock.is_available = AsyncMock(return_value=True)
         img_svc_mock.generate = AsyncMock(return_value=None)
         img_svc_mock.adapter_names = ["together"]
+        img_svc_mock.last_failure = None
         with patch(
             "src.services.image_generation_service.ImageGenerationService",
             return_value=img_svc_mock,
@@ -900,6 +901,52 @@ class TestDeepagentsSyncGenerateImage:
         assert "не вернула результат" not in result
         assert "/generated/codex.png" in result
         img_svc_mock.generate.assert_awaited_once_with(model="codex:gpt-5.4", text="a cat")
+
+    @pytest.mark.anyio
+    async def test_codex_only_live_sync_uses_tool_specific_timeout(self, mock_db):
+        import asyncio
+
+        from src.agent.runtime_context import AgentRuntimeContext
+
+        img_svc_mock = MagicMock()
+        img_svc_mock.is_available = AsyncMock(return_value=True)
+        img_svc_mock.adapter_names = ["codex"]
+
+        async def _generate(*, model, text):
+            await asyncio.sleep(0.05)
+            return "/generated/codex.png"
+
+        img_svc_mock.generate = AsyncMock(side_effect=_generate)
+        runtime_context = AgentRuntimeContext.build(
+            db=mock_db,
+            client_pool=MagicMock(),
+            runtime_kind="live",
+            owner_loop=asyncio.get_running_loop(),
+        )
+        runtime_context.sync_timeout_sec = 0.02
+        runtime_context.tool_sync_timeout_sec = {"generate_image": 0.2}
+        with patch(
+            "src.services.image_generation_service.ImageGenerationService",
+            return_value=img_svc_mock,
+        ):
+            tool_map = _build_sync_tools(mock_db, runtime_context=runtime_context)
+            result = await asyncio.to_thread(tool_map["generate_image"], prompt="a cat")
+        assert "/generated/codex.png" in result
+        assert "runtime_error" not in result
+
+    def test_generate_image_runtime_error_uses_image_timeout_text(self):
+        from src.agent.runtime_context import AgentToolRuntimeError
+        from src.agent.tools.deepagents_sync import _tool_error_text
+
+        message = (
+            "Генерация изображения заняла больше 240 секунд и была остановлена. "
+            "Это не означает, что Telegram-аккаунт отключен."
+        )
+        payload = json.loads(_tool_error_text("generate_image", AgentToolRuntimeError(message)))
+
+        assert payload["message"] == message
+        assert payload["error_type"] == "runtime_error"
+        assert payload["retryable"] is True
 
 
 # ===========================================================================

@@ -112,11 +112,31 @@ class TestCLIImageCommand:
             svc = MagicMock()
             svc.is_available = AsyncMock(return_value=True)
             svc.generate = AsyncMock(return_value=None)
+            svc.last_failure = None
             mock_svc_cls.return_value = svc
 
             run(_run_ns(image_action="generate", model=None, prompt="a cat"))
             out = capsys.readouterr().out
             assert "Generation failed" in out
+
+    def test_generate_timeout_failure(self, capsys):
+        """generate action prints actionable timeout message when the service reports timeout."""
+        from src.cli.commands.image import run
+        from src.services.image_generation_service import ImageGenerationFailure
+
+        with patch("src.cli.commands.image.ImageGenerationService") as mock_svc_cls:
+            svc = MagicMock()
+            svc.is_available = AsyncMock(return_value=True)
+            svc.generate = AsyncMock(return_value=None)
+            svc.last_failure = ImageGenerationFailure(
+                kind="timeout", provider="codex", model="codex:gpt-5.4", message="timed out"
+            )
+            mock_svc_cls.return_value = svc
+
+            run(_run_ns(image_action="generate", model="codex:gpt-5.4", prompt="a cat"))
+            out = capsys.readouterr().out
+            assert "Generation timed out for model=codex:gpt-5.4 after 180s" in out
+            assert "choose another image provider/model" in out
 
     def test_models_no_results(self, capsys):
         """models action with no results prints message."""

@@ -154,6 +154,9 @@ def register(db, client_pool, embedding_service, **kwargs):
                 )
             if result:
                 return _text_response(f"Изображение сгенерировано:\n{result}")
+            failure = getattr(svc, "last_failure", None)
+            if failure is not None and getattr(failure, "is_timeout", False):
+                return _text_response(failure.user_message(lang="ru"))
             return _text_response("Генерация не вернула результат.")
         except Exception as e:
             return _text_response(f"Ошибка генерации изображения: {e}")
