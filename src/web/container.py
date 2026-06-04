@@ -21,6 +21,7 @@ from src.database.bundles import (
     SearchBundle,
     SearchQueryBundle,
 )
+from src.live_runtime_pause import LiveRuntimePauseGate
 from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -76,6 +77,7 @@ class AppContainer:
     timing_buffer: TimingBuffer | None
     session_secret: str
     bg_tasks: set[asyncio.Task]
+    live_runtime_pause_gate: LiveRuntimePauseGate | None = None
     agent_manager: AgentManager | None = None
     translation_service: TranslationService | None = None
     llm_provider_service: RuntimeProviderRegistry | None = None

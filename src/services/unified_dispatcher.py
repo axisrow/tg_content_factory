@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, TypeVar
 from src.database import DatabaseBusyError
 from src.database.bundles import ChannelBundle, PipelineBundle, SearchQueryBundle
 from src.database.repositories.collection_tasks import CollectionTasksRepository
+from src.live_runtime_pause import LiveRuntimePauseGate
 from src.models import CollectionTask, CollectionTaskStatus, CollectionTaskType
 from src.services.task_handlers import (
     ContentTaskHandler,
@@ -81,6 +82,7 @@ class UnifiedDispatcher:
         notifier: "Notifier | None" = None,
         config: object | None = None,
         llm_provider_service: object | None = None,
+        live_runtime_pause_gate: LiveRuntimePauseGate | None = None,
     ):
         self._collector = collector
         self._channel_bundle = channel_bundle
@@ -97,6 +99,7 @@ class UnifiedDispatcher:
         self._notifier = notifier
         self._config = config
         self._llm_provider_service = llm_provider_service
+        self._live_runtime_pause_gate = live_runtime_pause_gate
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
 
@@ -167,6 +170,12 @@ class UnifiedDispatcher:
         while not self._stop_event.is_set():
             task: CollectionTask | None = None
             try:
+                if self._live_runtime_pause_gate is not None:
+                    resumed = await self._live_runtime_pause_gate.wait_if_paused(
+                        stop_event=self._stop_event,
+                    )
+                    if not resumed:
+                        break
                 task = await self._tasks.claim_next_due_generic_task(
                     datetime.now(timezone.utc), HANDLED_TYPES
                 )

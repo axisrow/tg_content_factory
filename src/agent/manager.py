@@ -8,7 +8,7 @@ import shutil
 import threading
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, TypeVar
@@ -49,6 +49,7 @@ from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.zai_errors import format_provider_error
 from src.config import AppConfig
 from src.database import Database
+from src.live_runtime_pause import LiveRuntimePauseGate
 from src.services.agent_provider_service import (
     ProviderConfigService,
     ProviderModelCacheEntry,
@@ -1845,10 +1846,16 @@ class _SettingsCache:
 
 class AgentManager:
     def __init__(
-        self, db: Database, config: AppConfig | None = None, client_pool=None, scheduler_manager=None,
+        self,
+        db: Database,
+        config: AppConfig | None = None,
+        client_pool=None,
+        scheduler_manager=None,
+        live_runtime_pause_gate: LiveRuntimePauseGate | None = None,
     ) -> None:
         self._db = db
         self._config = config or AppConfig()
+        self._live_runtime_pause_gate = live_runtime_pause_gate
         self._claude_backend = ClaudeSdkBackend(
             db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
         )
@@ -2156,18 +2163,23 @@ class AgentManager:
             # Set ContextVar here so token is created and reset in the same task context.
             _token = set_request_context(_req_ctx) if _req_ctx is not None else None
             try:
-                # All backends share one chat_stream signature; deepagents
-                # ignores session_id (del'd in its body) rather than omitting it.
-                await selected_backend.chat_stream(
-                    thread_id=thread_id,
-                    prompt=prompt,
-                    system_prompt=system_prompt,
-                    stats=stats,
-                    model=model,
-                    queue=queue,
-                    history_msgs=history_for_backend,
-                    session_id=session_id,
-                )
+                # Pause background live-runtime work for the duration of the
+                # chat when a gate is present (worker mode); otherwise no-op.
+                gate = self._live_runtime_pause_gate
+                pause = gate.agent_request() if gate is not None else nullcontext()
+                async with pause:
+                    # All backends share one chat_stream signature; deepagents
+                    # ignores session_id (del'd in its body) rather than omitting it.
+                    await selected_backend.chat_stream(
+                        thread_id=thread_id,
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        stats=stats,
+                        model=model,
+                        queue=queue,
+                        history_msgs=history_for_backend,
+                        session_id=session_id,
+                    )
             except Exception as exc:
                 logger.exception("Agent chat error for thread %d", thread_id)
                 error_text = str(exc)
