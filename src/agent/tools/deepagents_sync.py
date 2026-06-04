@@ -189,10 +189,13 @@ def _tool_error_text(tool_name: str, exc: Exception) -> str:
     if isinstance(exc, AgentToolRuntimeError):
         error_type = "runtime_error"
         retryable = True
-        message = (
-            f"Ошибка runtime инструмента {tool_name}: {exc}. "
-            "Это не означает, что аккаунт отключён или чат не существует."
-        )
+        if tool_name == "generate_image":
+            message = str(exc)
+        else:
+            message = (
+                f"Ошибка runtime инструмента {tool_name}: {exc}. "
+                "Это не означает, что аккаунт отключён или чат не существует."
+            )
     elif isinstance(exc, RuntimeError):
         error_type = "runtime_error"
         retryable = True

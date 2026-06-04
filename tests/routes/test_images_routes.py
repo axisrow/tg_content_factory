@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -90,6 +91,7 @@ async def test_generate_failure(route_client, monkeypatch):
     mock_svc = MagicMock()
     mock_svc.is_available = AsyncMock(return_value=True)
     mock_svc.generate = AsyncMock(return_value=None)
+    mock_svc.last_failure = None
     monkeypatch.setattr(
         "src.web.images.handlers._get_image_service",
         AsyncMock(return_value=mock_svc),
@@ -99,6 +101,23 @@ async def test_generate_failure(route_client, monkeypatch):
     body = resp.json()
     assert body["ok"] is False
     assert "Generation failed" in body["error"]
+
+
+@pytest.mark.anyio
+async def test_generate_timeout_failure(route_client, monkeypatch):
+    mock_svc = MagicMock()
+    mock_svc.is_available = AsyncMock(return_value=True)
+    mock_svc.generate = AsyncMock(return_value=None)
+    mock_svc.last_failure = SimpleNamespace(kind="timeout")
+    monkeypatch.setattr(
+        "src.web.images.handlers._get_image_service",
+        AsyncMock(return_value=mock_svc),
+    )
+    resp = await route_client.post("/images/generate", data={"prompt": "a cat"})
+    assert resp.status_code == 500
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"] == "Image generation timed out. Try again later or choose another model."
 
 
 @pytest.mark.anyio

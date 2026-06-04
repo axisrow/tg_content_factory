@@ -1716,7 +1716,7 @@ class TestImageToolEdgeCases:
                     new_callable=AsyncMock, return_value=True), \
              patch("src.services.image_generation_service.ImageGenerationService.generate",
                    new_callable=AsyncMock, return_value="/local/path.png"):
-            result = await handlers["generate_image"]({"prompt": "cat"})
+            result = await handlers["generate_image"]({"prompt": "cat", "model": "together:flux"})
             assert "/local/path.png" in _text(result)
 
     async def test_generate_image_returns_none(self, image_setup):
@@ -1725,7 +1725,7 @@ class TestImageToolEdgeCases:
                     new_callable=AsyncMock, return_value=True), \
              patch("src.services.image_generation_service.ImageGenerationService.generate",
                    new_callable=AsyncMock, return_value=None):
-            result = await handlers["generate_image"]({"prompt": "cat"})
+            result = await handlers["generate_image"]({"prompt": "cat", "model": "together:flux"})
             assert "не вернул" in _text(result).lower()
 
     async def test_generate_image_exception(self, image_setup):
@@ -1734,7 +1734,7 @@ class TestImageToolEdgeCases:
                     new_callable=AsyncMock, return_value=True), \
              patch("src.services.image_generation_service.ImageGenerationService.generate",
                    new_callable=AsyncMock, side_effect=RuntimeError("fail")):
-            result = await handlers["generate_image"]({"prompt": "cat"})
+            result = await handlers["generate_image"]({"prompt": "cat", "model": "together:flux"})
             assert "ошибка" in _text(result).lower()
 
     async def test_list_image_models_empty_provider(self, image_setup):
@@ -2516,7 +2516,7 @@ class TestDeepagentsSyncExceptions:
             "src.services.image_generation_service.ImageGenerationService.generate",
             side_effect=RuntimeError("fail"),
         ):
-            result = tools["generate_image"]("test prompt")
+            result = tools["generate_image"]("test prompt", model="together:flux")
             assert "ошибка" in result.lower()
 
     def test_list_image_providers_exception(self, sync_tools):

@@ -992,7 +992,7 @@ class TestGenerateImageTool:
             patch(f"{_svc_path}.generate", new=AsyncMock(return_value="/local/path/img.png")),
         ):
             handlers = _get_channel_tool_handlers(mock_db)
-            result = await handlers["generate_image"]({"prompt": "a cat"})
+            result = await handlers["generate_image"]({"prompt": "a cat", "model": "together:flux"})
         text = _text(result)
         assert "/local/path/img.png" in text
 
@@ -1005,7 +1005,7 @@ class TestGenerateImageTool:
             patch(f"{_svc_path}.generate", new=AsyncMock(return_value=None)),
         ):
             handlers = _get_channel_tool_handlers(mock_db)
-            result = await handlers["generate_image"]({"prompt": "a cat"})
+            result = await handlers["generate_image"]({"prompt": "a cat", "model": "together:flux"})
         text = _text(result)
         assert "не вернула" in text
 
@@ -1018,7 +1018,7 @@ class TestGenerateImageTool:
             patch(f"{_svc_path}.generate", new=AsyncMock(side_effect=Exception("api down"))),
         ):
             handlers = _get_channel_tool_handlers(mock_db)
-            result = await handlers["generate_image"]({"prompt": "a cat"})
+            result = await handlers["generate_image"]({"prompt": "a cat", "model": "together:flux"})
         text = _text(result)
         assert "Ошибка" in text
 

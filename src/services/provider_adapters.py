@@ -357,6 +357,7 @@ CODEX_DEFAULT_IMAGE_MODEL = "gpt-5.4"
 # worker thread, so the executor slot is freed shortly after — not leaked for
 # the process lifetime.
 CODEX_IMAGE_TIMEOUT_SECONDS = 180.0
+CODEX_IMAGE_CLOSE_TIMEOUT_SECONDS = 15.0
 
 
 def _build_codex_image_prompt(prompt: str, output_path: str) -> str:
@@ -472,6 +473,26 @@ _CODEX_RUN_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="code
 _CODEX_CLOSE_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="codex-image-close")
 
 
+async def _close_codex_image_subprocess(
+    loop: asyncio.AbstractEventLoop,
+    codex: Any,
+    *,
+    reason: str,
+    image_timeout: float,
+) -> None:
+    if reason == "timeout":
+        logger.warning("Codex image generation timed out after %.0fs; closing Codex subprocess", image_timeout)
+    elif reason == "cancelled":
+        logger.warning("Codex image generation was cancelled by caller; closing Codex subprocess")
+    try:
+        await asyncio.wait_for(
+            loop.run_in_executor(_CODEX_CLOSE_EXECUTOR, codex.close),
+            timeout=CODEX_IMAGE_CLOSE_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        logger.warning("Codex image: failed to close stalled subprocess", exc_info=True)
+
+
 def make_codex_image_adapter(
     output_dir: str = DEFAULT_IMAGE_OUTPUT_DIR,
     image_timeout: float = CODEX_IMAGE_TIMEOUT_SECONDS,
@@ -525,7 +546,7 @@ def make_codex_image_adapter(
             saved = await asyncio.wait_for(
                 loop.run_in_executor(_CODEX_RUN_EXECUTOR, _run_codex), timeout=image_timeout
             )
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             codex = codex_box.get("codex")
             if codex is not None:
                 # close() → terminate()/kill(); the SDK's reader thread then
@@ -533,10 +554,14 @@ def make_codex_image_adapter(
                 # Submit on the SEPARATE close pool: when the run pool is
                 # saturated by hangs, close() still gets a free slot — it's what
                 # kills the subprocess and frees the parked run slot.
-                try:
-                    await loop.run_in_executor(_CODEX_CLOSE_EXECUTOR, codex.close)
-                except Exception:
-                    logger.warning("Codex image: failed to close stalled subprocess", exc_info=True)
+                await _close_codex_image_subprocess(loop, codex, reason="timeout", image_timeout=image_timeout)
+            raise
+        except asyncio.CancelledError:
+            codex = codex_box.get("codex")
+            if codex is not None:
+                await asyncio.shield(
+                    _close_codex_image_subprocess(loop, codex, reason="cancelled", image_timeout=image_timeout)
+                )
             raise
         # Prefer the path Codex reported (it may pick its own filename inside our
         # output dir), but confine it to the requested directory: the prompt is

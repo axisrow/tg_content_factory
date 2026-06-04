@@ -62,7 +62,10 @@ def _minimal_deepagents_kwargs(tool_name: str) -> dict[str, object]:
         "to_chat": "@to_chat",
         "user_id": "@user",
     }
-    return {name: samples.get(name, "contract") for name in _REQUIRED_ARGS_BY_TOOL.get(tool_name, frozenset())}
+    kwargs = {name: samples.get(name, "contract") for name in _REQUIRED_ARGS_BY_TOOL.get(tool_name, frozenset())}
+    if tool_name == "generate_image":
+        kwargs["model"] = "stub:contract"
+    return kwargs
 
 
 async def _seed_read_only_contract_data(db) -> None:

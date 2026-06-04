@@ -1088,7 +1088,11 @@ class TestAgentRuntimeContextRunSync:
         assert result == 42
 
     def test_sync_bridge_keeps_runtime_timeout_independent_from_permission_timeout(self):
-        from src.agent.runtime_context import DEFAULT_SYNC_TIMEOUT_SEC, AgentRuntimeContext
+        from src.agent.runtime_context import (
+            DEFAULT_SYNC_TIMEOUT_SEC,
+            DEFAULT_TOOL_SYNC_TIMEOUT_SEC,
+            AgentRuntimeContext,
+        )
 
         config = MagicMock()
         config.agent.permission_timeout = 77
@@ -1096,11 +1100,15 @@ class TestAgentRuntimeContextRunSync:
         ctx = AgentRuntimeContext.build(db=MagicMock(), config=config)
 
         assert ctx.sync_timeout_sec == DEFAULT_SYNC_TIMEOUT_SEC
+        assert DEFAULT_TOOL_SYNC_TIMEOUT_SEC["generate_image"] == 240.0
+        assert ctx._sync_timeout_for_tool("test_tool") == DEFAULT_SYNC_TIMEOUT_SEC
+        assert ctx._sync_timeout_for_tool("generate_image") == 240.0
 
         config.agent.permission_timeout = 130
         ctx = AgentRuntimeContext.build(db=MagicMock(), config=config)
 
         assert ctx.sync_timeout_sec == DEFAULT_SYNC_TIMEOUT_SEC
+        assert ctx._sync_timeout_for_tool("test_tool") == DEFAULT_SYNC_TIMEOUT_SEC
 
     @pytest.mark.anyio
     async def test_inside_event_loop_raises(self):
@@ -1182,6 +1190,28 @@ class TestAgentRuntimeContextRunSync:
         with pytest.raises(AgentToolRuntimeError, match="timed out"):
             await asyncio.wait_for(task, timeout=2.0)
         await asyncio.wait_for(cancelled.wait(), timeout=2.0)
+
+    @pytest.mark.anyio
+    async def test_generate_image_sync_bridge_allows_adapter_timeout_before_runtime_timeout(self):
+        from src.agent.runtime_context import AgentRuntimeContext
+
+        ctx = AgentRuntimeContext.build(
+            db=MagicMock(),
+            client_pool=MagicMock(),
+            runtime_kind="live",
+            owner_loop=asyncio.get_running_loop(),
+        )
+        ctx.sync_timeout_sec = 0.02
+        ctx.tool_sync_timeout_sec = {"generate_image": 0.2}
+
+        async def _op():
+            await asyncio.sleep(0.05)
+            raise TimeoutError("adapter timeout")
+
+        task = asyncio.create_task(asyncio.to_thread(ctx.run_sync, "generate_image", _op))
+
+        with pytest.raises(TimeoutError, match="adapter timeout"):
+            await asyncio.wait_for(task, timeout=2.0)
 
     @pytest.mark.anyio
     async def test_sync_bridge_excludes_permission_waits_from_runtime_timeout(self):

@@ -297,6 +297,16 @@ def test_every_spec_is_keyed_xor_keyless():
             assert spec.env_vars, name  # keyed providers declare at least one env var
 
 
+def test_every_spec_has_fully_qualified_default_model():
+    from src.services.image_provider_service import IMAGE_PROVIDER_SPECS
+
+    for name, spec in IMAGE_PROVIDER_SPECS.items():
+        provider, sep, model_id = spec.default_model.partition(":")
+        assert sep == ":", name
+        assert provider == name
+        assert model_id
+
+
 @pytest.mark.anyio
 async def test_build_adapters_keyless_skipped_when_undetected(db, pin_codex):
     """A keyless provider whose detect() is False is simply not registered."""
