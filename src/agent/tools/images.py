@@ -31,17 +31,6 @@ GENERATE_IMAGE_SCHEMA = {
 }
 
 
-async def _read_image_setting(db, key: str) -> str:
-    if db is None:
-        return ""
-    try:
-        value = await db.get_setting(key)
-    except Exception:
-        logger.warning("Failed to read image setting %s", key, exc_info=True)
-        return ""
-    return value.strip() if isinstance(value, str) else ""
-
-
 def _default_model_for_adapters(adapter_names) -> str:
     from src.services.image_provider_service import IMAGE_PROVIDER_ORDER, image_provider_spec
 
@@ -72,9 +61,16 @@ async def resolve_default_image_model(requested_model, db, image_service) -> str
     if isinstance(requested_model, str) and requested_model.strip():
         return requested_model.strip()
 
-    configured_model = await _read_image_setting(db, "default_image_model")
-    if configured_model:
-        return configured_model
+    if db is not None:
+        try:
+            value = await db.get_setting("default_image_model")
+        except Exception:
+            logger.warning("Failed to read default_image_model setting", exc_info=True)
+            value = None
+        # get_setting's contract is str | None; the isinstance guard also coerces
+        # bare-MagicMock returns to "" on the deepagents-sync test path.
+        if isinstance(value, str) and value.strip():
+            return value.strip()
 
     return _default_model_for_adapters(image_service.adapter_names)
 
