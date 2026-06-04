@@ -44,6 +44,7 @@
 | Поиск по чатам | `search --mode my_chats` | `GET /search?mode=my_chats` | `search_my_chats` |
 | Поиск в канале | `search --mode channel` | `GET /search?mode=channel` | `search_in_channel` |
 | Индексация | `search --index-now` | `POST /settings/semantic-index` | `index_messages` |
+| Очистка кэша Premium-поиска | `search --purge-cache` | `POST /search/purge-cache` | — |
 
 ## Сообщения
 

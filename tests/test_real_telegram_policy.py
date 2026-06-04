@@ -148,6 +148,7 @@ _CLI_CLEANUP_COMMAND_PRODUCERS = {
     ("my-telegram", "unpin-message"): {("my-telegram", "pin-message")},
     ("photo-loader", "batch-cancel"): {("photo-loader", "schedule-send")},
     ("scheduler", "clear-pending"): {("collect",), ("scheduler", "trigger")},
+    ("search",): {("search",)},
 }
 _AUDIT_EXCLUDED_FILES = {"test_real_telegram_policy.py"}
 

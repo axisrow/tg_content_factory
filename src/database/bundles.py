@@ -429,8 +429,10 @@ class CollectionBundle:
     async def insert_message(self, msg: Message) -> bool:
         return await self.messages.insert_message(msg)
 
-    async def insert_messages_batch(self, messages: list[Message]) -> int:
-        return await self.messages.insert_messages_batch(messages)
+    async def insert_messages_batch(
+        self, messages: list[Message], premium_search_query: str | None = None
+    ) -> int:
+        return await self.messages.insert_messages_batch(messages, premium_search_query)
 
     async def search_messages(
         self,
@@ -705,8 +707,10 @@ class SearchBundle:
     async def add_channel(self, channel: Channel) -> int:
         return await self.channels.add_channel(channel)
 
-    async def insert_messages_batch(self, messages: list[Message]) -> int:
-        return await self.messages.insert_messages_batch(messages)
+    async def insert_messages_batch(
+        self, messages: list[Message], premium_search_query: str | None = None
+    ) -> int:
+        return await self.messages.insert_messages_batch(messages, premium_search_query)
 
     async def log_search(self, phone: str, query: str, results_count: int) -> None:
         await self.search_log.log_search(phone, query, results_count)

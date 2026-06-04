@@ -36,7 +36,7 @@ class SearchPersistence:
         )
 
         if messages:
-            await self._search.insert_messages_batch(messages)
+            await self._search.insert_messages_batch(messages, premium_search_query=query)
 
         await self._search.log_search(phone, query, len(messages))
         return await self._load_persisted_messages(messages)

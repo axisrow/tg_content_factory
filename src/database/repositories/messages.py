@@ -191,7 +191,9 @@ class MessagesRepository:
                 message_id,
             )
 
-    async def insert_messages_batch(self, messages: list[Message]) -> int:
+    async def insert_messages_batch(
+        self, messages: list[Message], premium_search_query: str | None = None
+    ) -> int:
         if not messages:
             return 0
         data = [
@@ -218,6 +220,7 @@ class MessagesRepository:
                 m.date.isoformat(),
                 m.detected_lang,
                 getattr(m, "forward_from_channel_id", None),
+                premium_search_query,
             )
             for m in messages
         ]
@@ -239,8 +242,8 @@ class MessagesRepository:
                     service_action_semantic, service_action_payload_json, sender_kind,
                     topic_id, reactions_json,
                     views, forwards, reply_count, date, detected_lang,
-                    forward_from_channel_id)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    forward_from_channel_id, premium_search_query)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 data,
             )
             count = cur.rowcount if cur.rowcount >= 0 else len(messages)
@@ -1044,6 +1047,30 @@ class MessagesRepository:
             )
             cur = await conn.execute(
                 "DELETE FROM messages WHERE channel_id = ?", (channel_id,)
+            )
+            rowcount = cur.rowcount or 0
+        return rowcount
+
+    async def delete_premium_search_results(self, query: str) -> int:
+        """Delete messages cached solely by a Premium global search for *query*.
+
+        Only rows tagged with ``premium_search_query`` are removed — messages that
+        already existed (collected by the worker or a prior search) are skipped by
+        ``INSERT OR IGNORE`` and never receive the tag, so user data is never touched.
+        Used by the live Premium-search test to clean up after itself. Returns the
+        number of deleted rows.
+        """
+        assert self._database is not None, (
+            "MessagesRepository.delete_premium_search_results requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            await conn.execute(
+                "DELETE FROM message_embeddings_json WHERE message_id IN "
+                "(SELECT id FROM messages WHERE premium_search_query = ?)",
+                (query,),
+            )
+            cur = await conn.execute(
+                "DELETE FROM messages WHERE premium_search_query = ?", (query,)
             )
             rowcount = cur.rowcount or 0
         return rowcount

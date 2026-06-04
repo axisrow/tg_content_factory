@@ -217,6 +217,29 @@ async def render_search_page(
     )
 
 
+async def _json_body(request: Request) -> dict:
+    """Parse a JSON request body, tolerating a bodyless POST (returns ``{}``)."""
+    if request.headers.get("content-type", "").startswith("application/json"):
+        return await request.json()
+    return {}
+
+
+async def purge_premium_search_cache(request: Request) -> SearchJson:
+    """Delete messages cached by a previous Premium global search for a query.
+
+    JSON endpoint (no DOM swap), mirrors the CLI ``search <query> --purge-cache``.
+    Only rows tagged with ``premium_search_query`` are removed, so collected user
+    data is never touched.
+    """
+    db = deps.get_db(request)
+    body = await _json_body(request)
+    query = (body.get("query") or "").strip()
+    if not query:
+        return SearchJson({"ok": False, "error": "query is required"}, status_code=400)
+    deleted = await db.repos.messages.delete_premium_search_results(query)
+    return SearchJson({"ok": True, "deleted": deleted, "query": query})
+
+
 async def translate_message(request: Request, message_db_id: int) -> SearchJson:
     """Translate a single message on demand. Returns JSON."""
     db = deps.get_db(request)
@@ -224,7 +247,7 @@ async def translate_message(request: Request, message_db_id: int) -> SearchJson:
     if translation_service:
         translation_service = translation_service.translation_service
 
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_body(request)
     target_lang = body.get("target_lang", "en")
 
     # Get the message

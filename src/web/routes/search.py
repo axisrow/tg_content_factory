@@ -39,6 +39,11 @@ async def search_page(
     )
 
 
+@router.post("/search/purge-cache")
+async def purge_premium_search_cache_endpoint(request: Request):
+    return search_response(request, await handlers.purge_premium_search_cache(request))
+
+
 @router.post("/search/translate/{message_db_id}")
 async def translate_message_endpoint(message_db_id: int, request: Request):
     return search_response(request, await handlers.translate_message(request, message_db_id))

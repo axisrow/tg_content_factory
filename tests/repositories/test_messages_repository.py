@@ -766,3 +766,76 @@ async def test_get_recent_for_channels_joins_on_channel_id_not_pk(
 async def test_get_recent_for_channels_empty_ids(messages_repo):
     """Empty channel_ids returns [] without hitting the DB."""
     assert await messages_repo.get_recent_for_channels([], since_hours=24) == []
+
+
+# premium_search_query tag + cleanup tests
+
+
+async def _premium_tag(messages_repo, channel_id: int, message_id: int) -> str | None:
+    cur = await messages_repo._db.execute(
+        "SELECT premium_search_query FROM messages WHERE channel_id = ? AND message_id = ?",
+        (channel_id, message_id),
+    )
+    row = await cur.fetchone()
+    return row[0] if row else None
+
+
+async def test_insert_batch_tags_new_rows_with_premium_search_query(messages_repo):
+    """Premium search tags freshly inserted rows with the query string."""
+    msgs = [make_message(10, 1, "a"), make_message(10, 2, "b")]
+    inserted = await messages_repo.insert_messages_batch(msgs, premium_search_query="тест")
+    assert inserted == 2
+    assert await _premium_tag(messages_repo, 10, 1) == "тест"
+    assert await _premium_tag(messages_repo, 10, 2) == "тест"
+
+
+async def test_insert_batch_without_query_leaves_tag_null(messages_repo):
+    """A normal batch insert (no query) leaves premium_search_query NULL."""
+    await messages_repo.insert_messages_batch([make_message(11, 1, "a")])
+    assert await _premium_tag(messages_repo, 11, 1) is None
+
+
+async def test_premium_tag_not_applied_to_pre_existing_messages(messages_repo):
+    """INSERT OR IGNORE skips existing rows, so a later search never tags user data."""
+    # Pre-existing user message (e.g. collected by the worker), no tag.
+    await messages_repo.insert_message(make_message(12, 1, "collected by user"))
+    assert await _premium_tag(messages_repo, 12, 1) is None
+
+    # A Premium search returns the same message_id; it must NOT overwrite the row.
+    inserted = await messages_repo.insert_messages_batch(
+        [make_message(12, 1, "from search"), make_message(12, 2, "new from search")],
+        premium_search_query="тест",
+    )
+    assert inserted == 1  # only the genuinely new row was inserted
+    assert await _premium_tag(messages_repo, 12, 1) is None  # user row untouched
+    assert await _premium_tag(messages_repo, 12, 2) == "тест"  # new row tagged
+
+
+async def test_delete_premium_search_results_removes_only_tagged(messages_repo):
+    """Cleanup deletes only rows tagged with the query, leaving everything else."""
+    await messages_repo.insert_message(make_message(13, 1, "user data with тест inside"))
+    await messages_repo.insert_messages_batch(
+        [make_message(13, 2, "search hit"), make_message(14, 1, "search hit 2")],
+        premium_search_query="тест",
+    )
+    await messages_repo.insert_messages_batch(
+        [make_message(15, 1, "other search")], premium_search_query="другое"
+    )
+
+    deleted = await messages_repo.delete_premium_search_results("тест")
+    assert deleted == 2
+
+    # Tagged-by-"тест" rows gone; user row and the "другое" row survive.
+    assert await _premium_tag(messages_repo, 13, 2) is None
+    assert await _premium_tag(messages_repo, 14, 1) is None
+    cur = await messages_repo._db.execute("SELECT channel_id, message_id FROM messages ORDER BY channel_id, message_id")
+    remaining = {(r[0], r[1]) for r in await cur.fetchall()}
+    assert remaining == {(13, 1), (15, 1)}
+
+
+async def test_delete_premium_search_results_no_match_returns_zero(messages_repo):
+    """Purging an unknown query deletes nothing and reports zero."""
+    await messages_repo.insert_message(make_message(16, 1, "untagged"))
+    assert await messages_repo.delete_premium_search_results("nothing") == 0
+    cur = await messages_repo._db.execute("SELECT COUNT(*) FROM messages")
+    assert (await cur.fetchone())[0] == 1

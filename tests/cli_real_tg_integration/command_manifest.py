@@ -106,6 +106,7 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
         ("photo-loader", "schedule-send"),
         ("photo-loader", "send"),
         ("pipeline", "publish"),
+        ("search",),
     },
     "process_control": {
         ("restart",),
@@ -150,6 +151,7 @@ CLI_REAL_TG_CLEANUP_COMMAND_CASES: set[tuple[str, ...]] = {
     ("my-telegram", "unpin-message"),
     ("photo-loader", "batch-cancel"),
     ("scheduler", "clear-pending"),
+    ("search",),
 }
 
 CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
