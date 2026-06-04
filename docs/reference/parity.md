@@ -143,6 +143,7 @@
 |----------|-----|-------------|------------|
 | Список | `account list` | `GET /settings/` | `list_accounts` |
 | Вкл/выкл | `account toggle` | `POST /settings/{id}/toggle` | `toggle_account` |
+| Сделать Primary | `account set-primary` | `POST /settings/{id}/set-primary` | — |
 | Удалить | `account delete` | `POST /settings/{id}/delete` | `delete_account` |
 | Flood статус | `account flood-status` | `GET /settings/flood-status` | `get_flood_status` |
 | Сбросить flood | `account flood-clear` | `POST /settings/{id}/flood-clear` | `clear_flood_status` |

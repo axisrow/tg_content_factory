@@ -398,6 +398,105 @@ async def test_delete_primary_promotes_with_wrong_session_key(repo_with_cipher):
     assert summaries[0].session_status == AccountSessionStatus.DECRYPT_FAILED
 
 
+# set_account_primary tests
+
+
+async def test_set_account_primary_demotes_previous(accounts_repo):
+    """Setting a new primary demotes the old one; exactly one stays primary."""
+    old_primary = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))
+    new_primary = await accounts_repo.add_account(make_account("+2222222222", is_primary=False))
+
+    changed = await accounts_repo.set_account_primary(new_primary)
+    assert changed is True
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    by_id = {acc.id: acc.is_primary for acc in summaries}
+    assert by_id == {old_primary: False, new_primary: True}
+    assert sum(1 for acc in summaries if acc.is_primary) == 1
+
+
+async def test_set_account_primary_missing_id_is_noop(accounts_repo):
+    """Promoting a non-existent id returns False and leaves state untouched."""
+    primary_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))
+    other_id = await accounts_repo.add_account(make_account("+2222222222", is_primary=False))
+
+    changed = await accounts_repo.set_account_primary(999)
+    assert changed is False
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    assert {acc.id: acc.is_primary for acc in summaries} == {primary_id: True, other_id: False}
+
+
+async def test_set_account_primary_on_inactive_account(accounts_repo):
+    """An inactive account may still be promoted to primary (user choice)."""
+    active_primary = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))
+    inactive_id = await accounts_repo.add_account(make_account("+2222222222", is_active=False))
+
+    changed = await accounts_repo.set_account_primary(inactive_id)
+    assert changed is True
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    by_id = {acc.id: acc.is_primary for acc in summaries}
+    assert by_id == {active_primary: False, inactive_id: True}
+
+
+# set_account_active primary-demotion tests
+
+
+async def test_deactivate_primary_promotes_next_active(accounts_repo):
+    """Deactivating the primary promotes the lowest-id remaining active account."""
+    primary_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))
+    next_active = await accounts_repo.add_account(make_account("+2222222222", is_active=True))
+    later_active = await accounts_repo.add_account(make_account("+3333333333", is_active=True))
+
+    await accounts_repo.set_account_active(primary_id, False)
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    by_id = {acc.id: acc.is_primary for acc in summaries}
+    assert by_id[primary_id] is False
+    assert by_id[next_active] is True
+    assert by_id[later_active] is False
+
+
+async def test_deactivate_primary_skips_inactive_when_promoting(accounts_repo):
+    """Promotion on deactivation considers only active accounts."""
+    primary_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))
+    inactive_id = await accounts_repo.add_account(make_account("+2222222222", is_active=False))
+    active_id = await accounts_repo.add_account(make_account("+3333333333", is_active=True))
+
+    await accounts_repo.set_account_active(primary_id, False)
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    by_id = {acc.id: acc.is_primary for acc in summaries}
+    assert by_id[primary_id] is False
+    assert by_id[inactive_id] is False
+    assert by_id[active_id] is True
+
+
+async def test_deactivate_last_active_primary_leaves_zero_primary(accounts_repo):
+    """Disabling the only active account is allowed and leaves no primary."""
+    primary_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))
+    inactive_id = await accounts_repo.add_account(make_account("+2222222222", is_active=False))
+
+    await accounts_repo.set_account_active(primary_id, False)
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    assert all(acc.is_primary is False for acc in summaries)
+    assert {acc.id for acc in summaries} == {primary_id, inactive_id}
+
+
+async def test_deactivate_non_primary_keeps_primary(accounts_repo):
+    """Deactivating a secondary account does not touch the primary flag."""
+    primary_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))
+    secondary_id = await accounts_repo.add_account(make_account("+2222222222", is_active=True))
+
+    await accounts_repo.set_account_active(secondary_id, False)
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    by_id = {acc.id: acc.is_primary for acc in summaries}
+    assert by_id == {primary_id: True, secondary_id: False}
+
+
 # migrate_sessions tests
 
 

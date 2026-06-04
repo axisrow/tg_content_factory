@@ -14,6 +14,9 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     acc_toggle = acc_sub.add_parser("toggle", help="Toggle account active state")
     acc_toggle.add_argument("id", type=int, help="Account id")
 
+    acc_set_primary = acc_sub.add_parser("set-primary", help="Make account the primary one")
+    acc_set_primary.add_argument("id", type=int, help="Account id")
+
     acc_del = acc_sub.add_parser("delete", help="Delete account")
     acc_del.add_argument("id", type=int, help="Account id")
 

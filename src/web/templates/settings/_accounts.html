@@ -53,6 +53,13 @@
                     <i class="bi bi-arrow-repeat" aria-hidden="true"></i>
                 </a>
                 {% endif %}
+                {% if not acc.is_primary %}
+                <form method="post" action="/settings/{{ acc.id }}/set-primary" class="d-inline" data-busy>
+                    <button type="submit" class="btn btn-outline-warning btn-sm" aria-label="Сделать Primary" title="Сделать Primary">
+                        <i class="bi bi-star" aria-hidden="true"></i>
+                    </button>
+                </form>
+                {% endif %}
                 <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm"
                             aria-label="{{ 'Отключить' if acc.is_active else 'Включить' }}" title="{{ 'Отключить' if acc.is_active else 'Включить' }}">
@@ -94,6 +101,13 @@
                 <a href="/auth/login?phone={{ acc.phone|urlencode }}" class="btn btn-outline-primary btn-sm" title="Переподключить аккаунт" aria-label="Переподключить">
                     <i class="bi bi-arrow-repeat" aria-hidden="true"></i>
                 </a>
+                {% endif %}
+                {% if not acc.is_primary %}
+                <form method="post" action="/settings/{{ acc.id }}/set-primary" class="d-inline" data-busy>
+                    <button type="submit" class="btn btn-outline-warning btn-sm" aria-label="Сделать Primary" title="Сделать Primary">
+                        <i class="bi bi-star" aria-hidden="true"></i>
+                    </button>
+                </form>
                 {% endif %}
                 <form method="post" action="/settings/{{ acc.id }}/toggle" class="d-inline" data-busy>
                     <button type="submit" class="btn btn-outline-secondary btn-sm"
