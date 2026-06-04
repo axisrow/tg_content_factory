@@ -334,9 +334,61 @@ class AccountsRepository:
         )
 
     async def set_account_active(self, account_id: int, active: bool) -> None:
-        await self._database.execute_write(
-            "UPDATE accounts SET is_active = ? WHERE id = ?", (int(active), account_id)
+        assert self._database is not None, (
+            "AccountsRepository.set_account_active requires a Database reference"
         )
+        async with self._database.transaction() as conn:
+            cur = await conn.execute(
+                "UPDATE accounts SET is_active = ? WHERE id = ?", (int(active), account_id)
+            )
+            if (cur.rowcount or 0) == 0:
+                return
+            if active:
+                await conn.execute(
+                    """
+                    UPDATE accounts SET is_primary = 1
+                    WHERE id = ?
+                    AND NOT EXISTS (SELECT 1 FROM accounts WHERE is_primary = 1)
+                    """,
+                    (account_id,),
+                )
+            else:
+                # Deactivating the current primary: demote it and promote the
+                # lowest-id remaining ACTIVE account. If none stay active, leave
+                # zero primary (acceptable — the user may disable everything).
+                await conn.execute(
+                    "UPDATE accounts SET is_primary = 0 WHERE id = ? AND is_primary = 1",
+                    (account_id,),
+                )
+                await conn.execute(
+                    """
+                    UPDATE accounts SET is_primary = 1
+                    WHERE id = (
+                        SELECT id FROM accounts
+                        WHERE is_active = 1
+                        ORDER BY id ASC LIMIT 1
+                    )
+                    AND NOT EXISTS (SELECT 1 FROM accounts WHERE is_primary = 1)
+                    """
+                )
+
+    async def set_account_primary(self, account_id: int) -> bool:
+        """Atomically make *account_id* the sole primary, demoting the previous one.
+
+        Returns False if the account does not exist (no-op). The partial unique
+        index idx_accounts_single_primary (#733) is the hard backstop; doing both
+        UPDATEs inside one transaction keeps the intermediate state valid at COMMIT.
+        """
+        assert self._database is not None, (
+            "AccountsRepository.set_account_primary requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            cur = await conn.execute("SELECT 1 FROM accounts WHERE id = ?", (account_id,))
+            if await cur.fetchone() is None:
+                return False
+            await conn.execute("UPDATE accounts SET is_primary = 0 WHERE is_primary = 1")
+            await conn.execute("UPDATE accounts SET is_primary = 1 WHERE id = ?", (account_id,))
+        return True
 
     async def delete_account(self, account_id: int) -> None:
         assert self._database is not None, (

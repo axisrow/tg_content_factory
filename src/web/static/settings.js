@@ -331,6 +331,7 @@ async function bulkTestAgentProviders() {
 const FLASH_TAB_MAP = {
     account_connected: 'accounts',
     account_toggled: 'accounts',
+    account_set_primary: 'accounts',
     account_deleted: 'accounts',
     credentials_saved: 'credentials',
     scheduler_saved: 'scheduler',

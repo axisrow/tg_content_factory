@@ -634,6 +634,32 @@ class TestWebAccountsRoutes:
         assert resp.status_code == 303
         assert "settings" in resp.headers["location"]
 
+    @pytest.mark.anyio
+    async def test_set_primary_account(self, route_client, base_app):
+        """POST /settings/{id}/set-primary promotes the account and demotes the old primary."""
+        _, db, _ = base_app
+        await db.add_account(Account(phone="+1888888888", session_string="primary_session", is_primary=True))
+        await db.add_account(Account(phone="+1999999999", session_string="second_session"))
+        accounts = await db.get_account_summaries(active_only=False)
+        old_primary = next(a for a in accounts if a.is_primary)
+        target = next(a for a in accounts if not a.is_primary and a.id != old_primary.id)
+
+        resp = await route_client.post(f"/settings/{target.id}/set-primary", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "msg=account_set_primary" in resp.headers["location"]
+
+        after = {a.id: a.is_primary for a in await db.get_account_summaries(active_only=False)}
+        assert after[target.id] is True
+        assert after[old_primary.id] is False
+        assert sum(1 for v in after.values() if v) == 1
+
+    @pytest.mark.anyio
+    async def test_set_primary_account_not_found(self, route_client):
+        """POST /settings/999/set-primary for a missing account redirects with an error."""
+        resp = await route_client.post("/settings/999/set-primary", follow_redirects=False)
+        assert resp.status_code == 303
+        assert "error=invalid_account" in resp.headers["location"]
+
 
 # ---------------------------------------------------------------------------
 # Web: /calendar routes

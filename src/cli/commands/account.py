@@ -187,6 +187,12 @@ def run(args: argparse.Namespace) -> None:
                 new_state = not acc.is_active
                 await db.set_account_active(args.id, new_state)
                 print(f"Account id={args.id} ({acc.phone}): active={new_state}")
+            elif args.account_action == "set-primary":
+                changed = await db.repos.accounts.set_account_primary(args.id)
+                if changed:
+                    print(f"Account id={args.id} set as primary")
+                else:
+                    print(f"Account id={args.id} not found")
             elif args.account_action == "delete":
                 await db.delete_account(args.id)
                 print(f"Deleted account id={args.id}")
