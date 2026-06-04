@@ -1156,7 +1156,7 @@ class TestAgentRuntimeContextRunSync:
 
             cancel_event.set()
 
-            with pytest.raises(AgentToolRuntimeError, match="cancelled"):
+            with pytest.raises(AgentToolRuntimeError, match="отменён"):
                 await asyncio.wait_for(task, timeout=2.0)
             await asyncio.wait_for(cancelled.wait(), timeout=2.0)
         finally:
@@ -1187,7 +1187,7 @@ class TestAgentRuntimeContextRunSync:
         task = asyncio.create_task(asyncio.to_thread(ctx.run_sync, "test_tool", _op))
         await asyncio.wait_for(started.wait(), timeout=2.0)
 
-        with pytest.raises(AgentToolRuntimeError, match="timed out"):
+        with pytest.raises(AgentToolRuntimeError, match="был остановлен"):
             await asyncio.wait_for(task, timeout=2.0)
         await asyncio.wait_for(cancelled.wait(), timeout=2.0)
 

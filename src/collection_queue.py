@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 from src.database import Database
 from src.database.bundles import ChannelBundle
+from src.live_runtime_pause import LiveRuntimePauseGate
 from src.models import Channel, CollectionTaskStatus
 from src.telegram.collector import (
     RESOLVE_USERNAME_BACKOFF_BUFFER_SEC,
@@ -30,7 +31,13 @@ class CollectionQueue:
     SHUTDOWN_REQUEUE_NOTE = "Остановка сервиса во время сбора; задача будет продолжена после запуска."
     NO_CLIENTS_REQUEUE_NOTE = "Отложено: нет подключённых активных аккаунтов для сбора."
 
-    def __init__(self, collector: Collector, channels: ChannelBundle | Database):
+    def __init__(
+        self,
+        collector: Collector,
+        channels: ChannelBundle | Database,
+        *,
+        live_runtime_pause_gate: LiveRuntimePauseGate | None = None,
+    ):
         self._collector = collector
         if isinstance(channels, Database):
             channels = ChannelBundle.from_database(channels)
@@ -47,6 +54,10 @@ class CollectionQueue:
         self._pull_task: asyncio.Task | None = None
         self._pull_stop = asyncio.Event()
         self._shutdown_requested = False
+        # Event mirror of _shutdown_requested so coroutines can `await` on it
+        # (e.g. the live-runtime pause wait) instead of polling the bool.
+        self._shutdown_event = asyncio.Event()
+        self._live_runtime_pause_gate = live_runtime_pause_gate
         # Pause gate: SET = queue is allowed to pull/process tasks (the default,
         # not paused); CLEAR = paused. When paused the worker stops pulling NEW
         # tasks (the running one finishes) and `_ingest_pending_tasks` no-ops, so
@@ -73,6 +84,12 @@ class CollectionQueue:
         if self._shutdown_requested:
             logger.info(
                 "Service is shutting down; collection task %d stays PENDING in DB",
+                task_id,
+            )
+            return task_id
+        if self._is_live_runtime_paused():
+            logger.info(
+                "Live runtime paused for agent request; collection task %d stays PENDING in DB",
                 task_id,
             )
             return task_id
@@ -151,6 +168,17 @@ class CollectionQueue:
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self._run_worker())
 
+    def _is_live_runtime_paused(self) -> bool:
+        return (
+            self._live_runtime_pause_gate is not None
+            and self._live_runtime_pause_gate.is_paused
+        )
+
+    async def _wait_if_live_runtime_paused(self) -> bool:
+        if self._live_runtime_pause_gate is None:
+            return True
+        return await self._live_runtime_pause_gate.wait_if_paused(stop_event=self._shutdown_event)
+
     def _schedule_requeue_after_delay(
         self,
         *,
@@ -200,6 +228,8 @@ class CollectionQueue:
                     continue
                 if self._shutdown_requested:
                     break
+            if not await self._wait_if_live_runtime_paused():
+                break
             try:
                 task_id, channel, force, full = await asyncio.wait_for(
                     self._queue.get(), timeout=1.0
@@ -506,7 +536,7 @@ class CollectionQueue:
         `_known_task_ids` so tasks already sitting in the queue or scheduled
         for delayed requeue are not pushed twice.
         """
-        if not self._resume_gate.is_set():
+        if not self._resume_gate.is_set() or self._is_live_runtime_paused():
             # Paused: leave PENDING rows in the DB (not buffered into memory) so
             # they stay visible and survive a restart.
             return 0
@@ -646,6 +676,7 @@ class CollectionQueue:
 
     async def shutdown(self, *, grace_timeout: float | None = None) -> None:
         self._shutdown_requested = True
+        self._shutdown_event.set()
         await self.stop_db_pull()
         await self._cancel_delayed_requeues()
 

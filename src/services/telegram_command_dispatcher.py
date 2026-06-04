@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from src.config import AppConfig
 from src.database import Database, DatabaseBusyError
 from src.database.live_accounts import load_live_usable_accounts
+from src.live_runtime_pause import LiveRuntimePauseGate
 from src.models import Account, RuntimeSnapshot, TelegramCommandStatus
 from src.scheduler.service import SchedulerManager
 from src.services.channel_onboarding import (
@@ -85,6 +86,7 @@ class TelegramCommandDispatcher:
         auth: TelegramAuth | None = None,
         search_engine: "SearchEngine | None" = None,
         collection_queue: "CollectionQueue | None" = None,
+        live_runtime_pause_gate: LiveRuntimePauseGate | None = None,
     ):
         self._db = db
         self._pool = pool
@@ -94,6 +96,7 @@ class TelegramCommandDispatcher:
         self._auth = auth
         self._search_engine = search_engine
         self._collection_queue = collection_queue
+        self._live_runtime_pause_gate = live_runtime_pause_gate
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._last_reaction_at_monotonic: dict[str, float] = {}
@@ -117,6 +120,12 @@ class TelegramCommandDispatcher:
     async def _run_loop(self) -> None:
         while not self._stop_event.is_set():
             try:
+                if self._live_runtime_pause_gate is not None:
+                    resumed = await self._live_runtime_pause_gate.wait_if_paused(
+                        stop_event=self._stop_event,
+                    )
+                    if not resumed:
+                        break
                 command = await self._db.repos.telegram_commands.claim_next_command()
             except DatabaseBusyError:
                 # Transient lock while claiming — never let it kill the loop
