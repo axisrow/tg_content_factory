@@ -88,7 +88,7 @@ class ImageGenerationService:
         adapter = self._resolve_adapter(provider_name)
         if adapter is None:
             logger.warning("No image adapter available for model=%s", model)
-            self._set_failure(
+            self._last_failure = ImageGenerationFailure(
                 kind="no_adapter",
                 provider=provider_name,
                 model=model,
@@ -100,32 +100,19 @@ class ImageGenerationService:
             result = await adapter(text, model_id)
         except TimeoutError as exc:
             logger.warning("Image generation timed out (model=%s): %s", model, exc)
-            self._set_failure(
-                kind="timeout",
-                provider=provider_name,
-                model=model,
-                message=str(exc),
-                retryable=True,
-            )
-            return None
-        except OSError as exc:
-            logger.warning("Image generation failed (model=%s): %s", model, exc)
-            self._set_failure(
-                kind="error",
-                provider=provider_name,
-                model=model,
-                message=str(exc),
-                retryable=True,
+            self._last_failure = ImageGenerationFailure(
+                kind="timeout", provider=provider_name, model=model, message=str(exc),
             )
             return None
         except Exception as exc:
-            logger.exception("Image generation unexpected error (model=%s)", model)
-            self._set_failure(
-                kind="error",
-                provider=provider_name,
-                model=model,
-                message=str(exc),
-                retryable=True,
+            # OSError is an expected I/O failure — log calmly without a traceback;
+            # anything else is unexpected and warrants the full stack.
+            if isinstance(exc, OSError):
+                logger.warning("Image generation failed (model=%s): %s", model, exc)
+            else:
+                logger.exception("Image generation unexpected error (model=%s)", model)
+            self._last_failure = ImageGenerationFailure(
+                kind="error", provider=provider_name, model=model, message=str(exc),
             )
             return None
         if result and not result.startswith("http") and getattr(self, "_s3", None) is not None:
@@ -150,23 +137,6 @@ class ImageGenerationService:
         return self._last_failure
 
     # ── internals ──
-
-    def _set_failure(
-        self,
-        *,
-        kind: str,
-        provider: str | None,
-        model: str | None,
-        message: str,
-        retryable: bool,
-    ) -> None:
-        self._last_failure = ImageGenerationFailure(
-            kind=kind,
-            provider=provider,
-            model=model,
-            message=message,
-            retryable=retryable,
-        )
 
     def _init_s3(self) -> None:
         from src.services.s3_store import S3Store
