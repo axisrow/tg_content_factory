@@ -572,6 +572,7 @@ class TestWebImagesRoutes:
             svc = MagicMock()
             svc.is_available = AsyncMock(return_value=True)
             svc.generate = AsyncMock(return_value=None)
+            svc.last_failure = None
             mock_svc_fn.return_value = svc
             resp = await route_client.post("/images/generate", data={"prompt": "a cat"})
         assert resp.status_code == 500

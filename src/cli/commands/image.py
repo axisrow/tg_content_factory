@@ -9,7 +9,7 @@ from src.cli import runtime
 from src.services.image_generation_service import ImageGenerationService
 
 
-def _generation_failure_text(svc: ImageGenerationService, model: str | None) -> str:
+def _generation_failure_text(svc: ImageGenerationService) -> str:
     failure = svc.last_failure
     if failure is not None and getattr(failure, "is_timeout", False):
         return failure.user_message(lang="en")
@@ -32,7 +32,7 @@ def run(args: argparse.Namespace) -> None:
             if result:
                 print(f"Result: {result}")
             else:
-                print(_generation_failure_text(svc, model))
+                print(_generation_failure_text(svc))
 
         elif action == "models":
             provider = args.provider
