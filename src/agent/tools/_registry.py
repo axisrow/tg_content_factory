@@ -608,7 +608,7 @@ async def resolve_phone(db: object, raw_phone: object) -> tuple[str, dict | None
     usable_accounts = [
         account
         for account in accounts
-        if account_session_status(account) == "ok"
+        if getattr(account, "is_active", True) and account_session_status(account) == "ok"
     ]
     if not usable_accounts:
         return "", _text_response("Ошибка: нет подключённых аккаунтов.")
