@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.config import AppConfig
-from src.database import Database
+from src.database import Database, DatabaseBusyError
 from src.database.live_accounts import load_live_usable_accounts
 from src.models import Account, RuntimeSnapshot, TelegramCommandStatus
 from src.scheduler.service import SchedulerManager
@@ -114,7 +114,14 @@ class TelegramCommandDispatcher:
 
     async def _run_loop(self) -> None:
         while not self._stop_event.is_set():
-            command = await self._db.repos.telegram_commands.claim_next_command()
+            try:
+                command = await self._db.repos.telegram_commands.claim_next_command()
+            except DatabaseBusyError:
+                # Transient lock while claiming — never let it kill the loop
+                # ("Task exception was never retrieved"). Back off and retry.
+                logger.warning("telegram_command_dispatcher: DB busy while claiming command; retrying")
+                await asyncio.sleep(1.0)
+                continue
             if command is None:
                 await asyncio.sleep(1.0)
                 continue

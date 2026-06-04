@@ -240,6 +240,44 @@ async def test_run_loop_processes_task(mock_collector, mock_channel_bundle, mock
     assert mock_tasks_repo.claim_next_due_generic_task.call_count >= 2
 
 
+@pytest.mark.anyio
+async def test_run_loop_busy_does_not_log_loop_failure(
+    mock_collector, mock_channel_bundle, mock_tasks_repo, caplog
+):
+    """A transient DatabaseBusyError must back off quietly, not be logged as a
+    'loop failure' with a full traceback (it floods the log on every lock)."""
+    import logging
+
+    from src.database import DatabaseBusyError
+
+    calls = [0]
+
+    async def claim_side_effect(*args, **kwargs):
+        calls[0] += 1
+        if calls[0] == 1:
+            raise DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+        return None
+
+    mock_tasks_repo.claim_next_due_generic_task.side_effect = claim_side_effect
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await dispatcher.start()
+        await asyncio.sleep(0.1)
+        await dispatcher.stop()
+
+    assert [r for r in caplog.records if "loop failure" in r.message] == []
+    busy = [r for r in caplog.records if "busy" in r.message.lower()]
+    assert busy
+    assert all(r.exc_info is None for r in busy)
+
+
 # === _handle_stats_all tests ===
 
 

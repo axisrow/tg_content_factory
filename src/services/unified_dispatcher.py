@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Awaitable, Callable, TypeVar
 
+from src.database import DatabaseBusyError
 from src.database.bundles import ChannelBundle, PipelineBundle, SearchQueryBundle
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.models import CollectionTask, CollectionTaskStatus, CollectionTaskType
@@ -153,6 +154,13 @@ class UnifiedDispatcher:
                 await self._dispatch(task)
             except asyncio.CancelledError:
                 raise
+            except DatabaseBusyError:
+                # Transient lock — back off quietly. Logging a full traceback
+                # here floods the log on every contended write; the task stays
+                # claimable and is retried on the next poll.
+                logger.warning("Unified dispatcher: DB busy; backing off %.1fs", current_interval)
+                await asyncio.sleep(current_interval)
+                continue
             except Exception:
                 logger.exception("Unified dispatcher loop failure")
                 if task and task.id is not None:

@@ -2103,3 +2103,32 @@ async def test_collection_pause_without_queue_still_sets_setting():
     result = await d._handle_collection_pause({})
     db.set_setting.assert_awaited_once_with("collection_queue_paused", "1")
     assert result == {"paused": True}
+
+
+async def test_run_loop_survives_busy_error_from_claim():
+    """A transient DatabaseBusyError from claim_next_command must NOT kill the
+    dispatcher coroutine (regression: "Task exception was never retrieved").
+    The loop must back off and continue claiming commands.
+    """
+    from src.database import DatabaseBusyError
+
+    db = _mock_db()
+    pool = _mock_pool()
+    d = _dispatcher(db=db, pool=pool)
+
+    calls = 0
+
+    async def claim_busy_then_stop():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+        d._stop_event.set()
+        return None
+
+    db.repos.telegram_commands.claim_next_command = claim_busy_then_stop
+
+    with patch.object(mod.asyncio, "sleep", new_callable=AsyncMock):
+        await d._run_loop()
+
+    assert calls == 2
