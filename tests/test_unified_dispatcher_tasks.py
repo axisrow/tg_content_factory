@@ -36,6 +36,7 @@ def _dispatcher(**kw):
     channel_bundle.get_by_channel_id = AsyncMock(return_value=MagicMock(channel_id=42))
     tasks = AsyncMock()
     tasks.requeue_running_generic_tasks_on_startup = AsyncMock(return_value=0)
+    tasks.fail_running_generic_tasks_on_startup = AsyncMock(return_value=0)
     tasks.claim_next_due_generic_task = AsyncMock(return_value=None)
     tasks.update_collection_task = AsyncMock()
     tasks.get_collection_task = AsyncMock(return_value=None)

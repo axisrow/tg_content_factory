@@ -608,6 +608,35 @@ class CollectionTasksRepository:
         )
         return cur.rowcount or 0
 
+    async def fail_running_generic_tasks_on_startup(
+        self,
+        now: datetime,
+        handled_types: list[str],
+        *,
+        error: str,
+        note: str | None = None,
+    ) -> int:
+        if not handled_types:
+            return 0
+        now_iso = now.astimezone(timezone.utc).isoformat()
+        placeholders = ", ".join("?" for _ in handled_types)
+        sets = ["status = ?", "completed_at = ?", "error = ?"]
+        params: list[Any] = [
+            CollectionTaskStatus.FAILED.value,
+            now_iso,
+            error,
+        ]
+        if note is not None:
+            sets.append("note = ?")
+            params.append(note)
+        cur = await self._database.execute_write(
+            f"UPDATE collection_tasks "
+            f"SET {', '.join(sets)} "
+            f"WHERE task_type IN ({placeholders}) AND status = ?",
+            (*params, *handled_types, CollectionTaskStatus.RUNNING.value),
+        )
+        return cur.rowcount or 0
+
     async def has_active_task(
         self,
         task_type: CollectionTaskType | str,

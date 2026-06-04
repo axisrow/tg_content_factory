@@ -120,6 +120,9 @@ class MessagesRepository:
             )
 
     async def insert_message(self, msg: Message) -> bool:
+        # Local import — see insert_messages_batch for the partial-init rationale.
+        from src.database import DatabaseBusyError
+
         try:
             cur = await self._database.execute_write(
                 """INSERT OR IGNORE INTO messages
@@ -162,6 +165,10 @@ class MessagesRepository:
             if msg.reactions_json:
                 await self._upsert_reactions(msg.channel_id, msg.message_id, msg.reactions_json)
             return inserted
+        except DatabaseBusyError:
+            # Transient lock — propagate instead of masking it as a persistence
+            # failure, mirroring insert_messages_batch. The caller re-collects.
+            raise
         except Exception:
             logger.exception(
                 "Failed to insert message channel_id=%s message_id=%s",
@@ -233,6 +240,12 @@ class MessagesRepository:
             )
             existing_keys = set()
 
+        # Local import: facade.py imports this module at top level, so a
+        # module-level `from src.database import DatabaseBusyError` would fail
+        # at startup (partially initialized package). By call time the package
+        # is fully initialized, so the import here is safe and cheap (cached).
+        from src.database import DatabaseBusyError
+
         try:
             cur = await self._database.executemany_write(
                 """INSERT OR IGNORE INTO messages
@@ -247,6 +260,11 @@ class MessagesRepository:
                 data,
             )
             count = cur.rowcount if cur.rowcount >= 0 else len(messages)
+        except DatabaseBusyError:
+            # Transient lock — let the caller decide (the collector reverts
+            # last_collected_id and re-collects next cycle). Swallowing this
+            # into return 0 masks it as a false "Failed to persist" error.
+            raise
         except Exception as exc:
             logger.error("Failed to insert batch of %d messages: %s", len(messages), exc)
             return 0

@@ -1756,3 +1756,21 @@ async def test_engagement_stats_null_when_absent(db):
     assert messages[0].views is None
     assert messages[0].forwards is None
     assert messages[0].reply_count is None
+
+
+@pytest.mark.anyio
+async def test_insert_messages_batch_does_not_swallow_busy(db, monkeypatch):
+    """A DatabaseBusyError during the batch write must propagate, not be
+    swallowed into a silent return 0 that the collector then misreads as a
+    'Failed to persist N/N messages' persistence error."""
+    msgs = [
+        Message(channel_id=1, message_id=1, text="x", date=datetime.now(timezone.utc)),
+    ]
+
+    async def busy_writer(*args, **kwargs):
+        raise DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+
+    monkeypatch.setattr(db, "executemany_write", busy_writer)
+
+    with pytest.raises(DatabaseBusyError):
+        await db.insert_messages_batch(msgs)

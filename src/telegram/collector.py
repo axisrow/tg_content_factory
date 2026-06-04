@@ -27,7 +27,7 @@ from telethon.tl.types import (
 )
 
 from src.config import SchedulerConfig
-from src.database import Database
+from src.database import Database, DatabaseBusyError
 from src.filters.criteria import (
     LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD,
     LOW_SUBSCRIBER_RATIO_THRESHOLD,
@@ -789,7 +789,19 @@ class Collector:
                     return True
 
                 expected_ids = {message.message_id for message in batch}
-                await self._db.insert_messages_batch(batch)
+                try:
+                    await self._db.insert_messages_batch(batch)
+                except DatabaseBusyError:
+                    # Transient lock — not a real persistence failure. Stop this
+                    # cycle cleanly; last_collected_id is untouched so the batch
+                    # is re-collected next time. Avoids the misleading
+                    # "Failed to persist N/N messages" error.
+                    logger.warning(
+                        "Channel %d (%s): DB busy during flush; will retry next cycle",
+                        channel_id,
+                        channel_log_name,
+                    )
+                    return False
                 persisted_ids: set[int] = set()
                 expected_id_list = list(expected_ids)
                 for start in range(0, len(expected_id_list), PERSISTED_ID_VERIFY_CHUNK_SIZE):

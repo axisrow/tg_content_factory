@@ -1750,6 +1750,7 @@ def _make_tasks_repo():
     repo = MagicMock()
     repo.claim_next_due_generic_task = AsyncMock(return_value=None)
     repo.requeue_running_generic_tasks_on_startup = AsyncMock(return_value=0)
+    repo.fail_running_generic_tasks_on_startup = AsyncMock(return_value=0)
     repo.update_collection_task = AsyncMock()
     repo.update_collection_task_progress = AsyncMock()
     repo.get_collection_task = AsyncMock(return_value=None)
@@ -1787,6 +1788,7 @@ async def test_dispatcher_start_recovers_tasks():
 
     tasks_repo = _make_tasks_repo()
     tasks_repo.requeue_running_generic_tasks_on_startup = AsyncMock(return_value=3)
+    tasks_repo.fail_running_generic_tasks_on_startup = AsyncMock(return_value=0)
     dispatcher = UnifiedDispatcher(
         collector=_make_collector(),
         channel_bundle=_make_channel_bundle(),

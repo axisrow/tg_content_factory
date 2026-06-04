@@ -30,6 +30,7 @@ import asyncio
 import logging
 
 from src.config import AppConfig
+from src.database import DatabaseBusyError
 from src.database.repositories.accounts import AccountSessionDecryptError
 from src.runtime.worker import (
     _current_task_is_cancelling,
@@ -170,6 +171,11 @@ class EmbeddedWorker:
                         logger.info("[embedded-worker] stopping during snapshot publish")
                         break
                     logger.warning("[embedded-worker] snapshot publish was cancelled; continuing")
+                except DatabaseBusyError:
+                    # Transient lock — back off quietly. A full traceback every
+                    # heartbeat (~5s) floods the log while contended; the next
+                    # heartbeat republishes the snapshot.
+                    logger.warning("[embedded-worker] DB busy publishing snapshots; will retry next heartbeat")
                 except Exception:
                     # Snapshot publishing must never crash the loop — the worker
                     # is still processing queued tasks even if snapshots fail.

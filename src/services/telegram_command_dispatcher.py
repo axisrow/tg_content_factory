@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from src.config import AppConfig
-from src.database import Database
+from src.database import Database, DatabaseBusyError
 from src.database.live_accounts import load_live_usable_accounts
 from src.models import Account, RuntimeSnapshot, TelegramCommandStatus
 from src.scheduler.service import SchedulerManager
@@ -51,6 +51,8 @@ if TYPE_CHECKING:
     from src.search.engine import SearchEngine
 
 logger = logging.getLogger(__name__)
+COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC = 0.1
+COMMAND_STATUS_UPDATE_BUSY_RETRY_MAX_SEC = 1.0
 
 # Minimum spacing between reactions on the same phone. Configurable live via the
 # DB setting below; a non-zero floor is enforced because Telegram rate-limits
@@ -114,7 +116,14 @@ class TelegramCommandDispatcher:
 
     async def _run_loop(self) -> None:
         while not self._stop_event.is_set():
-            command = await self._db.repos.telegram_commands.claim_next_command()
+            try:
+                command = await self._db.repos.telegram_commands.claim_next_command()
+            except DatabaseBusyError:
+                # Transient lock while claiming — never let it kill the loop
+                # ("Task exception was never retrieved"). Back off and retry.
+                logger.warning("telegram_command_dispatcher: DB busy while claiming command; retrying")
+                await asyncio.sleep(1.0)
+                continue
             if command is None:
                 await asyncio.sleep(1.0)
                 continue
@@ -131,10 +140,12 @@ class TelegramCommandDispatcher:
             try:
                 result = await self._dispatch(command.command_type, command.payload)
             except asyncio.CancelledError:
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.PENDING,
                     error="cancelled while running; reset for retry",
+                    log_action="pending after cancellation",
+                    retry_busy=False,
                 )
                 raise
             except TelegramCommandRetryLaterError as exc:
@@ -145,13 +156,14 @@ class TelegramCommandDispatcher:
                     exc.run_after.isoformat(),
                     exc.reason,
                 )
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.PENDING,
                     error=exc.reason,
                     result_payload=exc.result_payload or {},
                     payload=command.payload,
                     run_after=exc.run_after,
+                    log_action="pending for retry",
                 )
             except HandledFloodWaitError as exc:
                 run_after = exc.info.next_available_at_utc + timedelta(seconds=1)
@@ -162,7 +174,7 @@ class TelegramCommandDispatcher:
                     run_after.isoformat(),
                     exc.info.detail,
                 )
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.PENDING,
                     error=exc.info.detail,
@@ -175,6 +187,7 @@ class TelegramCommandDispatcher:
                     },
                     payload=command.payload,
                     run_after=run_after,
+                    log_action="pending after flood-wait",
                 )
             except (TelegramReactionInvalidError, ReactionInvalidError) as exc:
                 logger.info(
@@ -183,7 +196,7 @@ class TelegramCommandDispatcher:
                     command.command_type,
                     str(exc),
                 )
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.FAILED,
                     error=str(exc),
@@ -192,6 +205,7 @@ class TelegramCommandDispatcher:
                         "emoji": command.payload.get("emoji"),
                     },
                     payload=command.payload,
+                    log_action="failed after invalid reaction",
                 )
             except Exception as exc:
                 duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -206,11 +220,12 @@ class TelegramCommandDispatcher:
                     )
                 else:
                     logger.exception("Telegram command failed: id=%s type=%s", command.id, command.command_type)
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.FAILED,
                     error=str(exc),
                     payload=command.payload,
+                    log_action="failed after dispatch error",
                 )
             else:
                 if is_auth_command:
@@ -222,12 +237,51 @@ class TelegramCommandDispatcher:
                         phone,
                         duration_ms,
                     )
-                await self._db.repos.telegram_commands.update_command(
+                await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.SUCCEEDED,
                     result_payload=result.get("result") or {},
                     payload=result.get("payload_update"),
+                    log_action="succeeded",
                 )
+
+    async def _update_command_safely(
+        self,
+        command_id: int | None,
+        *,
+        status: TelegramCommandStatus,
+        log_action: str,
+        retry_busy: bool = True,
+        **kwargs: Any,
+    ) -> None:
+        delay = COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC
+        while True:
+            try:
+                await self._db.repos.telegram_commands.update_command(
+                    command_id,
+                    status=status,
+                    **kwargs,
+                )
+                return
+            except DatabaseBusyError as exc:
+                logger.warning(
+                    "telegram_command_dispatcher: DB busy while marking command %s %s: %s",
+                    command_id,
+                    log_action,
+                    exc,
+                )
+                if not retry_busy:
+                    return
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, COMMAND_STATUS_UPDATE_BUSY_RETRY_MAX_SEC)
+            except Exception as exc:
+                logger.warning(
+                    "telegram_command_dispatcher: failed to mark command %s %s: %s",
+                    command_id,
+                    log_action,
+                    exc,
+                )
+                return
 
     async def _dispatch(self, command_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         handler_name = f"_handle_{command_type.replace('.', '_')}"

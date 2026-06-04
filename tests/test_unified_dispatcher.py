@@ -58,6 +58,8 @@ def mock_tasks_repo():
     repo.get_collection_task = AsyncMock()
     repo.create_stats_continuation_task = AsyncMock(return_value=999)
     repo.reschedule_stats_task = AsyncMock()
+    repo.reset_collection_task_to_pending = AsyncMock()
+    repo.fail_running_generic_tasks_on_startup = AsyncMock(return_value=0)
     return repo
 
 
@@ -162,6 +164,7 @@ async def test_stop_without_start(dispatcher):
 async def test_start_requeues_interrupted_tasks(mock_collector, mock_channel_bundle, mock_tasks_repo):
     """start() requeues interrupted tasks on startup."""
     mock_tasks_repo.requeue_running_generic_tasks_on_startup.return_value = 3
+    mock_tasks_repo.fail_running_generic_tasks_on_startup.return_value = 2
 
     dispatcher = UnifiedDispatcher(
         mock_collector,
@@ -174,6 +177,7 @@ async def test_start_requeues_interrupted_tasks(mock_collector, mock_channel_bun
     await dispatcher.stop()
 
     mock_tasks_repo.requeue_running_generic_tasks_on_startup.assert_called_once()
+    mock_tasks_repo.fail_running_generic_tasks_on_startup.assert_called_once()
 
 
 @pytest.mark.anyio
@@ -238,6 +242,129 @@ async def test_run_loop_processes_task(mock_collector, mock_channel_bundle, mock
     await dispatcher.stop()
 
     assert mock_tasks_repo.claim_next_due_generic_task.call_count >= 2
+
+
+@pytest.mark.anyio
+async def test_run_loop_busy_does_not_log_loop_failure(
+    mock_collector, mock_channel_bundle, mock_tasks_repo, caplog
+):
+    """A transient DatabaseBusyError must back off quietly, not be logged as a
+    'loop failure' with a full traceback (it floods the log on every lock)."""
+    import logging
+
+    from src.database import DatabaseBusyError
+
+    calls = [0]
+
+    async def claim_side_effect(*args, **kwargs):
+        calls[0] += 1
+        if calls[0] == 1:
+            raise DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+        return None
+
+    mock_tasks_repo.claim_next_due_generic_task.side_effect = claim_side_effect
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await dispatcher.start()
+        await asyncio.sleep(0.1)
+        await dispatcher.stop()
+
+    assert [r for r in caplog.records if "loop failure" in r.message] == []
+    busy = [r for r in caplog.records if "busy" in r.message.lower()]
+    assert busy
+    assert all(r.exc_info is None for r in busy)
+
+
+@pytest.mark.anyio
+async def test_run_loop_busy_after_claim_requeues_task(
+    mock_collector, mock_channel_bundle, mock_tasks_repo, caplog
+):
+    """If a handler hits a transient DB lock after claiming a task, the task must
+    return to pending so the next poll can retry it without a worker restart."""
+    import logging
+
+    from src.database import DatabaseBusyError
+
+    task = CollectionTask(
+        id=77,
+        task_type=CollectionTaskType.STATS_ALL,
+        status=CollectionTaskStatus.RUNNING,
+        payload=StatsAllTaskPayload(channel_ids=[], next_index=0),
+    )
+    mock_tasks_repo.claim_next_due_generic_task.side_effect = [task, None, None]
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+    )
+    dispatcher._dispatch = AsyncMock(  # type: ignore[method-assign]
+        side_effect=DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await dispatcher.start()
+        await asyncio.sleep(0.1)
+        await dispatcher.stop()
+
+    mock_tasks_repo.reset_collection_task_to_pending.assert_awaited_once_with(
+        77,
+        note="Retry after transient database lock",
+    )
+    assert [r for r in caplog.records if "loop failure" in r.message] == []
+
+
+@pytest.mark.anyio
+async def test_run_loop_busy_after_side_effecting_task_marks_failed_without_requeue(
+    mock_collector, mock_channel_bundle, mock_tasks_repo, caplog
+):
+    """Side-effecting task types must not be blindly retried after a DB lock."""
+    import logging
+
+    from src.database import DatabaseBusyError
+
+    task = CollectionTask(
+        id=88,
+        task_type=CollectionTaskType.CONTENT_PUBLISH,
+        status=CollectionTaskStatus.RUNNING,
+        payload=ContentPublishTaskPayload(pipeline_id=None),
+    )
+    mock_tasks_repo.claim_next_due_generic_task.side_effect = [task, None, None]
+
+    dispatcher = UnifiedDispatcher(
+        mock_collector,
+        mock_channel_bundle,
+        mock_tasks_repo,
+        poll_interval_sec=0.01,
+    )
+    dispatcher._dispatch = AsyncMock(  # type: ignore[method-assign]
+        side_effect=DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+    )
+
+    with caplog.at_level(logging.WARNING):
+        await dispatcher.start()
+        await asyncio.sleep(0.1)
+        await dispatcher.stop()
+
+    mock_tasks_repo.reset_collection_task_to_pending.assert_not_awaited()
+    mock_tasks_repo.update_collection_task.assert_any_await(
+        88,
+        CollectionTaskStatus.FAILED,
+        error=(
+            "Task hit a transient database lock after it started; not retried automatically "
+            "because it may have external side effects"
+        ),
+        note="Not retried after transient database lock",
+    )
+    assert [r for r in caplog.records if "loop failure" in r.message] == []
 
 
 # === _handle_stats_all tests ===
