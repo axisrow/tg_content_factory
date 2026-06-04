@@ -485,6 +485,50 @@ def test_run_chat_status_events(capsys):
         run(_args(agent_action="chat", prompt="test", thread_id=1, model=None))
 
 
+def test_run_chat_two_messages_same_thread_with_status_on_second_turn(capsys):
+    db = make_cli_db()
+    config = make_cli_config()
+    mgr_first = _make_mgr(available=True)
+    mgr_second = _make_mgr(available=True)
+    auth = MagicMock(cleanup=AsyncMock())
+    pool = MagicMock(disconnect_all=AsyncMock())
+
+    async def _first_stream(*a, **kw):
+        yield f'data: {json.dumps({"text": "First reply"})}\n'
+        yield f'data: {json.dumps({"done": True})}\n'
+
+    async def _second_stream(*a, **kw):
+        yield f'data: {json.dumps({"type": "status", "text": "still working"})}\n'
+        yield f'data: {json.dumps({"type": "countdown", "text": "3s left"})}\n'
+        yield f'data: {json.dumps({"text": "Second reply"})}\n'
+        yield f'data: {json.dumps({"done": True})}\n'
+
+    mgr_first.chat_stream = _first_stream
+    mgr_second.chat_stream = _second_stream
+
+    with patch("src.cli.commands.agent.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch("src.cli.commands.agent.runtime.init_pool", AsyncMock(return_value=(auth, pool))), \
+         patch("src.cli.commands.agent.runtime.redirect_logging_to_file", return_value=None), \
+         patch("src.cli.commands.agent.runtime.restore_logging"), \
+         patch("src.agent.manager.AgentManager", side_effect=[mgr_first, mgr_second]), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(agent_action="chat", prompt="first prompt", thread_id=7, model=None))
+        run(_args(agent_action="chat", prompt="second prompt", thread_id=7, model=None))
+
+    captured = capsys.readouterr()
+    assert "Агент: First reply" in captured.out
+    assert "Агент: Second reply" in captured.out
+    assert "still working" in captured.err
+    assert "3s left" in captured.err
+    assert [call.args for call in db.save_agent_message.await_args_list] == [
+        (7, "user", "first prompt"),
+        (7, "assistant", "First reply"),
+        (7, "user", "second prompt"),
+        (7, "assistant", "Second reply"),
+    ]
+    db.delete_last_agent_exchange.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # run() — chat interactive TUI mode
 # ---------------------------------------------------------------------------

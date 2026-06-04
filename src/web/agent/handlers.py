@@ -10,15 +10,17 @@ import sqlite3
 from fastapi import HTTPException, Request
 
 from src.agent.models import CLAUDE_MODELS
+from src.utils.json import safe_json_dumps
 from src.web import deps
 from src.web.agent.forms import select_model
 from src.web.agent.responses import AgentJson, AgentRedirect, AgentStream, AgentTemplate
 
 logger = logging.getLogger(__name__)
 
-# Max seconds the agent SSE stream may go without emitting a chunk before we
-# abort it. This prevents a hung LLM/backend from holding the connection open.
-_SSE_IDLE_TIMEOUT = 180.0
+# How often the agent SSE wrapper wakes up while the backend has not emitted a
+# chunk yet. This is a keepalive cadence, not a cancellation deadline. The hard
+# cancellation deadline is config.agent.total_timeout (shared with the backends).
+_SSE_KEEPALIVE_INTERVAL = 15.0
 
 _SAVE_FAILED_WARNING = (
     "❗ Ответ не удалось сохранить — он пропадёт при перезагрузке страницы."
@@ -319,6 +321,7 @@ async def chat(request: Request, thread_id: int):
 
     # Use HTTP session cookie as session_id so per-user overrides are isolated
     session_id = request.cookies.get("session", "web")
+    total_timeout_sec = request.app.state.config.agent.total_timeout
 
     async def generate():
         def _consume_abandoned_next_chunk(task: asyncio.Task) -> None:
@@ -339,28 +342,43 @@ async def chat(request: Request, thread_id: int):
         agen = stream.__aiter__()
         waiting_for_permission = False
         pending_chunk_task: asyncio.Task | None = None
+        loop = asyncio.get_running_loop()
+        stream_started_at = loop.time()
+        deadline = stream_started_at + total_timeout_sec
         try:
             while True:
                 try:
                     if waiting_for_permission:
                         chunk = await agen.__anext__()
                     else:
-                        next_chunk_task = asyncio.create_task(agen.__anext__())
-                        done, _ = await asyncio.wait({next_chunk_task}, timeout=_SSE_IDLE_TIMEOUT)
-                        if not done:
-                            pending_chunk_task = next_chunk_task
-                            next_chunk_task.cancel()
-                            next_chunk_task.add_done_callback(_consume_abandoned_next_chunk)
+                        if pending_chunk_task is None:
+                            pending_chunk_task = asyncio.create_task(agen.__anext__())
+                        remaining_total = deadline - loop.time()
+                        if remaining_total <= 0:
                             raise asyncio.TimeoutError
-                        chunk = next_chunk_task.result()
+                        wait_timeout = min(_SSE_KEEPALIVE_INTERVAL, remaining_total)
+                        done, _ = await asyncio.wait({pending_chunk_task}, timeout=wait_timeout)
+                        if not done:
+                            elapsed = int(loop.time() - stream_started_at)
+                            status = {
+                                "type": "status",
+                                "text": f"Агент всё ещё работает... {elapsed}с",
+                            }
+                            yield f"data: {safe_json_dumps(status, ensure_ascii=False)}\n\n"
+                            continue
+                        chunk = pending_chunk_task.result()
+                        pending_chunk_task = None
                 except StopAsyncIteration:
                     break
                 except asyncio.TimeoutError:
                     logger.warning(
-                        "Agent SSE stream for thread %d idle >%.0fs; aborting",
+                        "Agent SSE stream for thread %d exceeded total timeout %.0fs; aborting",
                         thread_id,
-                        _SSE_IDLE_TIMEOUT,
+                        total_timeout_sec,
                     )
+                    if pending_chunk_task is not None and not pending_chunk_task.done():
+                        pending_chunk_task.cancel()
+                        pending_chunk_task.add_done_callback(_consume_abandoned_next_chunk)
                     try:
                         await agent_manager.cancel_stream(thread_id, wait_timeout=5.0)
                     except Exception:
@@ -405,7 +423,18 @@ async def chat(request: Request, thread_id: int):
                     yield f"data: {json.dumps(done_data, ensure_ascii=False)}\n\n"
                 else:
                     yield chunk
+                if done_data is not None:
+                    break
         finally:
+            if pending_chunk_task is not None and not pending_chunk_task.done():
+                pending_chunk_task.cancel()
+                pending_chunk_task.add_done_callback(_consume_abandoned_next_chunk)
+                done, _ = await asyncio.wait({pending_chunk_task}, timeout=1.0)
+                if not done:
+                    logger.debug(
+                        "Agent stream next-chunk task did not finish after cancellation for thread %d",
+                        thread_id,
+                    )
             if pending_chunk_task is None or pending_chunk_task.done():
                 try:
                     await agen.aclose()
