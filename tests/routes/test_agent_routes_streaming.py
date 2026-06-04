@@ -136,13 +136,14 @@ async def test_chat_rejects_malformed_json(client, db):
 
 
 @pytest.mark.anyio
-async def test_chat_streaming_idle_timeout_cancels_with_bounded_wait(client, db, monkeypatch):
+async def test_chat_streaming_total_timeout_cancels_with_bounded_wait(client, db, monkeypatch):
     from src.web.agent import handlers
 
     thread_id = await db.create_agent_thread("Chat")
     mock_mgr = client._transport_app.state.agent_manager
     mock_mgr.cancel_stream = AsyncMock(return_value=True)
-    monkeypatch.setattr(handlers, "_SSE_IDLE_TIMEOUT", 0.01)
+    monkeypatch.setattr(handlers, "_SSE_KEEPALIVE_INTERVAL", 0.01)
+    monkeypatch.setattr(client._transport_app.state.config.agent, "total_timeout", 0.02)
     cleanup_started = asyncio.Event()
     cleanup_release = asyncio.Event()
 
@@ -174,13 +175,134 @@ async def test_chat_streaming_idle_timeout_cancels_with_bounded_wait(client, db,
 
 
 @pytest.mark.anyio
+async def test_chat_streaming_keepalive_does_not_cancel_active_stream(client, db, monkeypatch):
+    from src.web.agent import handlers
+
+    thread_id = await db.create_agent_thread("Chat")
+    mock_mgr = client._transport_app.state.agent_manager
+    mock_mgr.cancel_stream = AsyncMock(return_value=True)
+    monkeypatch.setattr(handlers, "_SSE_KEEPALIVE_INTERVAL", 0.01)
+    monkeypatch.setattr(client._transport_app.state.config.agent, "total_timeout", 1)
+
+    async def _slow_stream(*a, **kw):
+        await asyncio.sleep(0.03)
+        yield 'data: {"done": true, "full_text": "finished"}\n\n'
+
+    mock_mgr.chat_stream = _slow_stream
+
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/chat",
+        json={"message": "hello"},
+    )
+
+    assert resp.status_code == 200
+    assert '"type": "status"' in resp.text
+    assert "finished" in resp.text
+    assert "Agent response timed out" not in resp.text
+    mock_mgr.cancel_stream.assert_not_awaited()
+
+    messages = await db.get_agent_messages(thread_id)
+    assistant_msgs = [m for m in messages if m["role"] == "assistant"]
+    assert len(assistant_msgs) == 1
+    assert assistant_msgs[0]["content"] == "finished"
+
+
+@pytest.mark.anyio
+async def test_chat_streaming_second_message_survives_keepalive_after_first_turn(client, db, monkeypatch):
+    from src.web.agent import handlers
+
+    thread_id = await db.create_agent_thread("Chat")
+    mock_mgr = client._transport_app.state.agent_manager
+    mock_mgr.cancel_stream = AsyncMock(return_value=True)
+    monkeypatch.setattr(handlers, "_SSE_KEEPALIVE_INTERVAL", 0.01)
+    monkeypatch.setattr(client._transport_app.state.config.agent, "total_timeout", 1)
+    prompts: list[str] = []
+
+    async def _two_turn_stream(_thread_id, prompt, **_kw):
+        prompts.append(prompt)
+        if len(prompts) == 1:
+            yield 'data: {"done": true, "full_text": "first answer"}\n\n'
+            return
+        await asyncio.sleep(0.03)
+        yield 'data: {"done": true, "full_text": "second answer"}\n\n'
+
+    mock_mgr.chat_stream = _two_turn_stream
+
+    first_resp = await client.post(
+        f"/agent/threads/{thread_id}/chat",
+        json={"message": "first prompt"},
+    )
+    second_resp = await client.post(
+        f"/agent/threads/{thread_id}/chat",
+        json={"message": "second prompt"},
+    )
+
+    assert first_resp.status_code == 200
+    assert second_resp.status_code == 200
+    assert "first answer" in first_resp.text
+    assert '"type": "status"' in second_resp.text
+    assert "second answer" in second_resp.text
+    assert "Agent response timed out" not in second_resp.text
+    assert prompts == ["first prompt", "second prompt"]
+    mock_mgr.cancel_stream.assert_not_awaited()
+
+    messages = await db.get_agent_messages(thread_id)
+    assert [(m["role"], m["content"]) for m in messages] == [
+        ("user", "first prompt"),
+        ("assistant", "first answer"),
+        ("user", "second prompt"),
+        ("assistant", "second answer"),
+    ]
+
+
+@pytest.mark.anyio
+async def test_chat_streaming_client_disconnect_closes_pending_stream(client, db, monkeypatch):
+    from src.web.agent import handlers
+
+    thread_id = await db.create_agent_thread("Chat")
+    mock_mgr = client._transport_app.state.agent_manager
+    monkeypatch.setattr(handlers, "_SSE_KEEPALIVE_INTERVAL", 0.01)
+    monkeypatch.setattr(client._transport_app.state.config.agent, "total_timeout", 1)
+    closed = asyncio.Event()
+
+    class HangingStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+            raise StopAsyncIteration
+
+        async def aclose(self):
+            closed.set()
+
+    def _hanging_stream(*a, **kw):
+        return HangingStream()
+
+    mock_mgr.chat_stream = _hanging_stream
+
+    async with client.stream(
+        "POST",
+        f"/agent/threads/{thread_id}/chat",
+        json={"message": "hello"},
+    ) as resp:
+        assert resp.status_code == 200
+        async for line in resp.aiter_lines():
+            if '"type": "status"' in line:
+                break
+
+    await asyncio.wait_for(closed.wait(), timeout=0.2)
+
+
+@pytest.mark.anyio
 async def test_chat_permission_request_waits_without_idle_timeout(client, db, monkeypatch):
     from src.web.agent import handlers
 
     thread_id = await db.create_agent_thread("Chat")
     mock_mgr = client._transport_app.state.agent_manager
     mock_mgr.cancel_stream = AsyncMock(return_value=True)
-    monkeypatch.setattr(handlers, "_SSE_IDLE_TIMEOUT", 0.01)
+    monkeypatch.setattr(handlers, "_SSE_KEEPALIVE_INTERVAL", 0.01)
+    monkeypatch.setattr(client._transport_app.state.config.agent, "total_timeout", 0.02)
 
     async def _permission_then_done(*a, **kw):
         yield 'data: {"type": "permission_request", "request_id": "r1", "tool": "WebSearch"}\n\n'
