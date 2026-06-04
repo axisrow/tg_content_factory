@@ -485,6 +485,33 @@ async def test_deactivate_last_active_primary_leaves_zero_primary(accounts_repo)
     assert {acc.id for acc in summaries} == {primary_id, inactive_id}
 
 
+async def test_reactivate_account_restores_primary_when_none_exists(accounts_repo):
+    """Re-enabling an account restores a missing primary instead of leaving a broken state."""
+    account_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))
+
+    await accounts_repo.set_account_active(account_id, False)
+    await accounts_repo.set_account_active(account_id, True)
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    by_id = {acc.id: acc for acc in summaries}
+    assert by_id[account_id].is_active is True
+    assert by_id[account_id].is_primary is True
+
+
+async def test_set_account_active_missing_id_is_noop(accounts_repo):
+    """Toggling a missing account must not repair or otherwise mutate primary flags."""
+    first_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=False))
+    second_id = await accounts_repo.add_account(make_account("+2222222222", is_primary=False))
+
+    await accounts_repo.set_account_active(999, False)
+
+    summaries = await accounts_repo.get_account_summaries(active_only=False)
+    assert [(acc.id, acc.is_primary) for acc in summaries] == [
+        (first_id, False),
+        (second_id, False),
+    ]
+
+
 async def test_deactivate_non_primary_keeps_primary(accounts_repo):
     """Deactivating a secondary account does not touch the primary flag."""
     primary_id = await accounts_repo.add_account(make_account("+1111111111", is_primary=True))

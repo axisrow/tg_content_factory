@@ -338,10 +338,21 @@ class AccountsRepository:
             "AccountsRepository.set_account_active requires a Database reference"
         )
         async with self._database.transaction() as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 "UPDATE accounts SET is_active = ? WHERE id = ?", (int(active), account_id)
             )
-            if not active:
+            if (cur.rowcount or 0) == 0:
+                return
+            if active:
+                await conn.execute(
+                    """
+                    UPDATE accounts SET is_primary = 1
+                    WHERE id = ?
+                    AND NOT EXISTS (SELECT 1 FROM accounts WHERE is_primary = 1)
+                    """,
+                    (account_id,),
+                )
+            else:
                 # Deactivating the current primary: demote it and promote the
                 # lowest-id remaining ACTIVE account. If none stay active, leave
                 # zero primary (acceptable — the user may disable everything).
