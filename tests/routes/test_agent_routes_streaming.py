@@ -170,8 +170,20 @@ async def test_chat_streaming_total_timeout_cancels_with_bounded_wait(client, db
         cleanup_release.set()
 
     assert resp.status_code == 200
-    assert "Agent response timed out" in resp.text
+    assert "Ответ агента остановлен по таймауту" in resp.text
     mock_mgr.cancel_stream.assert_awaited_once_with(thread_id, wait_timeout=5.0)
+
+    messages = await db.get_agent_messages(thread_id)
+    assert [(m["role"], m["content"]) for m in messages] == [
+        ("user", "hello"),
+        (
+            "assistant",
+            "Ответ агента остановлен по таймауту 0 секунд. "
+            "Фоновые задачи на live runtime были приостановлены на время запроса, "
+            "но инструмент всё равно не успел завершиться. Повторите запрос точнее "
+            "или меньшим объёмом.",
+        ),
+    ]
 
 
 @pytest.mark.anyio

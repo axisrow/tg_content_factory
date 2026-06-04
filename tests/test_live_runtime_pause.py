@@ -33,7 +33,7 @@ def test_live_runtime_pause_gate_waits_until_all_agent_requests_release():
     asyncio.run(_run())
 
 
-def test_scheduler_skips_background_collection_while_agent_uses_live_runtime():
+def test_scheduler_waits_to_run_background_collection_while_agent_uses_live_runtime():
     class FakeEnqueuer:
         def __init__(self) -> None:
             self.calls = 0
@@ -52,15 +52,18 @@ def test_scheduler_skips_background_collection_while_agent_uses_live_runtime():
         )
 
         async with gate.agent_request():
-            background_result = await manager._run_collection()
+            background_task = asyncio.create_task(manager._run_collection())
+            await asyncio.sleep(0)
+            assert enqueuer.calls == 0
             manual_result = await manager.trigger_now()
+        background_result = await asyncio.wait_for(background_task, timeout=0.5)
         return background_result, manual_result, enqueuer.calls
 
     background_result, manual_result, calls = asyncio.run(_run())
 
-    assert background_result == {"enqueued": 0, "skipped": 0, "total": 0, "errors": 0}
+    assert background_result == {"enqueued": 2, "skipped": 3, "total": 5, "errors": 0}
     assert manual_result == {"enqueued": 2, "skipped": 3, "total": 5, "errors": 0}
-    assert calls == 1
+    assert calls == 2
 
 
 def test_telegram_command_dispatcher_does_not_claim_while_agent_uses_live_runtime():

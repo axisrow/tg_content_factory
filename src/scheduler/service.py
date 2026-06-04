@@ -308,17 +308,20 @@ class SchedulerManager:
         )
         task.add_done_callback(_log_task_exception)
 
-    def _skip_paused_background_job(self, job_name: str) -> bool:
+    async def _wait_if_paused_background_job(self, job_name: str) -> bool:
         if self._live_runtime_pause_gate is None or not self._live_runtime_pause_gate.is_paused:
-            return False
+            return True
         logger.info(
-            "Scheduler: skipped %s while agent request is using live Telegram runtime",
+            "Scheduler: waiting to run %s while agent request is using live Telegram runtime",
             job_name,
         )
-        return True
+        resumed = await self._live_runtime_pause_gate.wait_if_paused()
+        if resumed:
+            logger.info("Scheduler: resumed %s after agent request released live Telegram runtime", job_name)
+        return resumed
 
     async def _run_warm_dialogs(self, background: bool = True) -> None:
-        if background and self._skip_paused_background_job("warm_all_dialogs"):
+        if background and not await self._wait_if_paused_background_job("warm_all_dialogs"):
             return
         if not self._warm_dialogs_callback:
             return
@@ -331,8 +334,8 @@ class SchedulerManager:
 
     async def _run_collection(self, background: bool = True) -> dict:
         """Enqueue all channels for collection."""
-        if background and self._skip_paused_background_job("collect_all"):
-            return {"enqueued": 0, "skipped": 0, "total": 0, "errors": 0}
+        if background and not await self._wait_if_paused_background_job("collect_all"):
+            return {"enqueued": 0, "skipped": 0, "total": 0, "errors": 1}
         logger.info("Starting scheduled collection")
         if not self._task_enqueuer:
             return {"enqueued": 0, "skipped": 0, "total": 0, "errors": 0}
@@ -431,7 +434,7 @@ class SchedulerManager:
 
     async def _run_pipeline_job(self, pipeline_id: int) -> None:
         """Enqueue a pipeline run task for the given pipeline id."""
-        if self._skip_paused_background_job(f"pipeline_run_{pipeline_id}"):
+        if not await self._wait_if_paused_background_job(f"pipeline_run_{pipeline_id}"):
             return
         if not self._task_enqueuer:
             return
@@ -442,7 +445,7 @@ class SchedulerManager:
 
     async def _run_content_generate_job(self, pipeline_id: int) -> None:
         """Enqueue a CONTENT_GENERATE task for the given pipeline id."""
-        if self._skip_paused_background_job(f"content_generate_{pipeline_id}"):
+        if not await self._wait_if_paused_background_job(f"content_generate_{pipeline_id}"):
             return
         if not self._task_enqueuer:
             return
@@ -453,7 +456,7 @@ class SchedulerManager:
 
     async def _run_search_query(self, sq_id: int) -> None:
         """Enqueue SQ_STATS task for a search query."""
-        if self._skip_paused_background_job(f"sq_{sq_id}"):
+        if not await self._wait_if_paused_background_job(f"sq_{sq_id}"):
             return
         if not self._task_enqueuer:
             return
@@ -463,7 +466,7 @@ class SchedulerManager:
             logger.exception("Error enqueuing SQ_STATS for sq_id=%d", sq_id)
 
     async def _run_photo_due(self) -> dict:
-        if self._skip_paused_background_job("photo_due"):
+        if not await self._wait_if_paused_background_job("photo_due"):
             return {"enqueued": False}
         if not self._task_enqueuer:
             return {"processed": 0}
@@ -474,7 +477,7 @@ class SchedulerManager:
         return {"enqueued": True}
 
     async def _run_photo_auto(self) -> dict:
-        if self._skip_paused_background_job("photo_auto"):
+        if not await self._wait_if_paused_background_job("photo_auto"):
             return {"enqueued": False}
         if not self._task_enqueuer:
             return {"jobs": 0}
