@@ -1515,6 +1515,7 @@ def _make_dispatcher(**overrides):
     channel_bundle = MagicMock()
     tasks_repo = MagicMock()
     tasks_repo.requeue_running_generic_tasks_on_startup = AsyncMock(return_value=0)
+    tasks_repo.fail_running_generic_tasks_on_startup = AsyncMock(return_value=0)
     tasks_repo.claim_next_due_generic_task = AsyncMock(return_value=None)
     tasks_repo.update_collection_task = AsyncMock()
     tasks_repo.update_collection_task_progress = AsyncMock()

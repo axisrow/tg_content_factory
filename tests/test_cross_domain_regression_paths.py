@@ -1271,6 +1271,7 @@ class TestUnifiedDispatcherHandlers:
         db = _make_mock_db()
         tasks_repo = AsyncMock()
         tasks_repo.requeue_running_generic_tasks_on_startup = AsyncMock(return_value=2)
+        tasks_repo.fail_running_generic_tasks_on_startup = AsyncMock(return_value=0)
         tasks_repo.claim_next_due_generic_task = AsyncMock(return_value=None)
         db.repos.collection_tasks = tasks_repo
         dispatcher = UnifiedDispatcher(
