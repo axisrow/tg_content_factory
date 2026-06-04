@@ -172,6 +172,17 @@ class TestResolvePhone:
         assert err is None
 
     @pytest.mark.anyio
+    async def test_empty_phone_skips_inactive_primary(self):
+        primary = SimpleNamespace(phone="+11111111111", is_active=False, is_primary=True)
+        secondary = SimpleNamespace(phone="+22222222222", is_active=True, is_primary=False)
+        db = MagicMock()
+        db.get_accounts = AsyncMock(return_value=[primary, secondary])
+
+        phone, err = await resolve_phone(db, "")
+        assert phone == "+22222222222"
+        assert err is None
+
+    @pytest.mark.anyio
     async def test_none_phone_defaults_to_primary(self):
         primary = SimpleNamespace(phone="+11111111111", is_primary=True)
         db = MagicMock()

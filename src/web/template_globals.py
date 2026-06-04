@@ -55,6 +55,7 @@ FLASH_MESSAGES = {
     "filters_saved": "Фильтры сохранены.",
     "scheduler_saved": "Настройки планировщика сохранены.",
     "account_toggled": "Статус аккаунта изменён.",
+    "account_set_primary": "Аккаунт назначен основным (Primary).",
     "account_deleted": "Аккаунт удалён.",
     "notification_account_saved": "Аккаунт для уведомлений сохранён.",
     "notification_bot_created": "Notification bot создан.",

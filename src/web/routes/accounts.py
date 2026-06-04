@@ -43,6 +43,15 @@ async def delete_account(request: Request, account_id: int):
     )
 
 
+@router.post("/{account_id}/set-primary")
+async def set_primary_account(request: Request, account_id: int):
+    db = deps.get_db(request)
+    changed = await db.repos.accounts.set_account_primary(account_id)
+    if not changed:
+        return RedirectResponse(url="/settings?error=invalid_account", status_code=303)
+    return RedirectResponse(url="/settings?msg=account_set_primary", status_code=303)
+
+
 @router.get("/flood-status")
 async def flood_status(request: Request):
     db = deps.get_db(request)

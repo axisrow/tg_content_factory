@@ -158,6 +158,7 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("account", "delete"): "dangerous live account deletion; intentionally blocked from live testing",
     ("account", "flood-clear"): "local flood state mutation",
     ("account", "send-code"): "Telegram auth flow",
+    ("account", "set-primary"): "local account state mutation",
     ("account", "toggle"): "local account state mutation",
     ("account", "verify-code"): "Telegram auth flow",
     ("agent", "context"): "local agent-thread mutation requiring chosen target",
