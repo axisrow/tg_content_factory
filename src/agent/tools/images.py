@@ -56,6 +56,13 @@ def _no_default_model_message(adapter_names) -> str:
     return message
 
 
+def _is_model_provider_available(model: str, adapter_names) -> bool:
+    provider, sep, _ = model.partition(":")
+    if not sep:
+        return True
+    return provider in set(adapter_names)
+
+
 async def resolve_default_image_model(requested_model, db, image_service) -> str:
     """Return the explicit image model to use for an agent generate_image call."""
     if isinstance(requested_model, str) and requested_model.strip():
@@ -70,7 +77,14 @@ async def resolve_default_image_model(requested_model, db, image_service) -> str
         # get_setting's contract is str | None; the isinstance guard also coerces
         # bare-MagicMock returns to "" on the deepagents-sync test path.
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            saved_model = value.strip()
+            if _is_model_provider_available(saved_model, image_service.adapter_names):
+                return saved_model
+            logger.warning(
+                "Ignoring default_image_model=%s because its provider is not available; adapters=%s",
+                saved_model,
+                image_service.adapter_names,
+            )
 
     return _default_model_for_adapters(image_service.adapter_names)
 

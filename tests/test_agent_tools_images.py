@@ -90,13 +90,27 @@ class TestImagesToolGenerateImage:
         mock_db.get_setting = AsyncMock(return_value="openai:gpt-image-1")
         with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
             mock_svc.return_value.is_available = AsyncMock(return_value=True)
-            mock_svc.return_value.adapter_names = ["codex"]
+            mock_svc.return_value.adapter_names = ["openai"]
             mock_svc.return_value.generate = AsyncMock(return_value="/local/path/image.png")
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["generate_image"]({"prompt": "a cat"})
         assert "/local/path/image.png" in _text(result)
         mock_svc.return_value.generate.assert_awaited_once_with(
             model="openai:gpt-image-1", text="a cat"
+        )
+
+    @pytest.mark.anyio
+    async def test_stale_db_default_falls_back_to_available_adapter_default(self, mock_db):
+        mock_db.get_setting = AsyncMock(return_value="openai:gpt-image-1")
+        with patch("src.services.image_generation_service.ImageGenerationService") as mock_svc:
+            mock_svc.return_value.is_available = AsyncMock(return_value=True)
+            mock_svc.return_value.adapter_names = ["together"]
+            mock_svc.return_value.generate = AsyncMock(return_value="/local/path/image.png")
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["generate_image"]({"prompt": "a cat"})
+        assert "/local/path/image.png" in _text(result)
+        mock_svc.return_value.generate.assert_awaited_once_with(
+            model="together:black-forest-labs/FLUX.1-schnell", text="a cat"
         )
 
     @pytest.mark.anyio
