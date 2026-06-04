@@ -10,6 +10,18 @@ from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
 class TestImagesToolGenerateImage:
+    def test_mcp_schema_allows_omitted_model(self, mock_db):
+        from src.agent.tools import images
+
+        tools = images.register(mock_db, None, MagicMock(), config={})
+        schema = next(tool.input_schema for tool in tools if tool.name == "generate_image")
+
+        assert schema["type"] == "object"
+        assert schema["required"] == ["prompt"]
+        assert "model" in schema["properties"]
+        assert "model" not in schema["required"]
+        assert {"type": "null"} in schema["properties"]["model"]["anyOf"]
+
     @pytest.mark.anyio
     async def test_missing_prompt(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
@@ -117,6 +129,8 @@ class TestImagesToolGenerateImage:
             result = await handlers["generate_image"]({"prompt": "a cat"})
         text = _text(result)
         assert "default_image_model" in text
+        assert "custom" in text
+        assert "codex:gpt-5.4" not in text
         mock_svc.return_value.generate.assert_not_called()
 
 

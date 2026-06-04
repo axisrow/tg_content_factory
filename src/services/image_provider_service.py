@@ -64,10 +64,10 @@ class ImageProviderSpec:
     # search_models(refresh=True) live fetch; receives the service so instance
     # monkeypatching of the underlying _fetch_* methods is honoured
     fetch_models: Callable[..., Awaitable[list[dict]]] | None = None
-    # When True, never chosen as the implicit default adapter — only on explicit
-    # ``provider:model`` selection. Set for adapters that are slow/expensive to
-    # invoke (Codex spawns a blocking subprocess), so an unqualified generate()
-    # never silently triggers them.
+    # When True, ImageGenerationService._resolve_adapter never chooses this as
+    # the unqualified fallback adapter. Callers may still intentionally resolve
+    # an omitted UI/tool model into this provider's fully qualified
+    # ``provider:model`` default before calling generate().
     explicit_only: bool = False
     # Default model override for providers without a static catalog. Providers
     # that declare a static_catalog derive their default from its first entry

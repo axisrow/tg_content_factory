@@ -14,6 +14,23 @@ from src.web.paths import DATA_IMAGE_DIR
 logger = logging.getLogger(__name__)
 
 
+GENERATE_IMAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "prompt": {
+            "type": "string",
+            "description": "Текстовый промпт для генерации изображения",
+        },
+        "model": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "description": "Необязательная модель в формате provider:model_id",
+        },
+    },
+    "required": ["prompt"],
+    "additionalProperties": False,
+}
+
+
 async def _read_image_setting(db, key: str) -> str:
     if db is None:
         return ""
@@ -36,6 +53,18 @@ def _default_model_for_adapters(adapter_names) -> str:
         if spec and spec.default_model:
             return spec.default_model
     return ""
+
+
+def _no_default_model_message(adapter_names) -> str:
+    names = sorted({str(name) for name in adapter_names if name})
+    message = (
+        "Не удалось выбрать модель изображения автоматически. "
+        "Задайте default_image_model в настройках или передайте model явно "
+        "в формате provider:model_id (например together:black-forest-labs/FLUX.1-schnell)."
+    )
+    if names:
+        message += f" Доступные adapters: {', '.join(names)}."
+    return message
 
 
 async def resolve_default_image_model(requested_model, db, image_service) -> str:
@@ -76,10 +105,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         "Generate an image from a text prompt. Optional model format: 'provider:model_id' "
         "(e.g. 'together:black-forest-labs/FLUX.1-schnell'). "
         "When omitted, the configured/default image model is used automatically.",
-        {
-            "prompt": Annotated[str, "Текстовый промпт для генерации изображения"],
-            "model": Annotated[str, "Необязательная модель в формате provider:model_id"],
-        },
+        GENERATE_IMAGE_SCHEMA,
     )
     async def generate_image(args):
         prompt = args.get("prompt", "")
@@ -92,11 +118,7 @@ def register(db, client_pool, embedding_service, **kwargs):
                 return _text_response("Генерация изображений не настроена. Добавьте провайдера в настройках.")
             resolved_model = await resolve_default_image_model(model, db, svc)
             if not resolved_model:
-                return _text_response(
-                    "Не удалось выбрать модель изображения автоматически. "
-                    "Задайте default_image_model в настройках или передайте model явно "
-                    "(например codex:gpt-5.4)."
-                )
+                return _text_response(_no_default_model_message(svc.adapter_names))
             result = await svc.generate(model=resolved_model, text=prompt)
             if result and (result.startswith("https://") or result.startswith("http://")):
                 import hashlib
