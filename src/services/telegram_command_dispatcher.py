@@ -51,6 +51,8 @@ if TYPE_CHECKING:
     from src.search.engine import SearchEngine
 
 logger = logging.getLogger(__name__)
+COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC = 0.1
+COMMAND_STATUS_UPDATE_BUSY_RETRY_MAX_SEC = 1.0
 
 # Minimum spacing between reactions on the same phone. Configurable live via the
 # DB setting below; a non-zero floor is enforced because Telegram rate-limits
@@ -143,6 +145,7 @@ class TelegramCommandDispatcher:
                     status=TelegramCommandStatus.PENDING,
                     error="cancelled while running; reset for retry",
                     log_action="pending after cancellation",
+                    retry_busy=False,
                 )
                 raise
             except TelegramCommandRetryLaterError as exc:
@@ -248,21 +251,37 @@ class TelegramCommandDispatcher:
         *,
         status: TelegramCommandStatus,
         log_action: str,
+        retry_busy: bool = True,
         **kwargs: Any,
     ) -> None:
-        try:
-            await self._db.repos.telegram_commands.update_command(
-                command_id,
-                status=status,
-                **kwargs,
-            )
-        except Exception as exc:
-            logger.warning(
-                "telegram_command_dispatcher: failed to mark command %s %s: %s",
-                command_id,
-                log_action,
-                exc,
-            )
+        delay = COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC
+        while True:
+            try:
+                await self._db.repos.telegram_commands.update_command(
+                    command_id,
+                    status=status,
+                    **kwargs,
+                )
+                return
+            except DatabaseBusyError as exc:
+                logger.warning(
+                    "telegram_command_dispatcher: DB busy while marking command %s %s: %s",
+                    command_id,
+                    log_action,
+                    exc,
+                )
+                if not retry_busy:
+                    return
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, COMMAND_STATUS_UPDATE_BUSY_RETRY_MAX_SEC)
+            except Exception as exc:
+                logger.warning(
+                    "telegram_command_dispatcher: failed to mark command %s %s: %s",
+                    command_id,
+                    log_action,
+                    exc,
+                )
+                return
 
     async def _dispatch(self, command_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         handler_name = f"_handle_{command_type.replace('.', '_')}"

@@ -1099,15 +1099,19 @@ async def test_run_loop_success_update_busy_does_not_kill_loop():
 
     db.repos.telegram_commands.claim_next_command = claim_once_then_stop
     db.repos.telegram_commands.update_command = AsyncMock(
-        side_effect=DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+        side_effect=[
+            DatabaseBusyError("Database is busy. Retry the request in a few seconds."),
+            None,
+        ]
     )
     d._dispatch = AsyncMock(return_value={"result": {}, "payload_update": None})
 
-    with patch.object(mod.asyncio, "sleep", new_callable=AsyncMock):
+    with patch.object(mod.asyncio, "sleep", new_callable=AsyncMock) as mock_sleep:
         await d._run_loop()
 
     assert calls == 2
-    db.repos.telegram_commands.update_command.assert_awaited_once()
+    assert db.repos.telegram_commands.update_command.await_count == 2
+    mock_sleep.assert_any_await(mod.COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC)
 
 
 async def test_run_loop_cancelled_reraises_when_update_busy():
