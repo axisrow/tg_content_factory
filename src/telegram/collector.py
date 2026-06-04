@@ -36,6 +36,7 @@ from src.filters.criteria import (
     PRECHECK_CROSS_DUPE_RATIO,
     PRECHECK_CROSS_DUPE_SAMPLE,
 )
+from src.live_runtime_pause import LiveRuntimePauseGate
 from src.models import Channel, ChannelStats, Message
 from src.services.translation_service import TranslationService
 from src.settings_utils import parse_int_setting
@@ -166,11 +167,14 @@ class Collector:
         db: Database,
         config: SchedulerConfig,
         notifier: Notifier | None = None,
+        *,
+        live_runtime_pause_gate: LiveRuntimePauseGate | None = None,
     ):
         self._pool = pool
         self._db = db
         self._config = config
         self._notifier = notifier
+        self._live_runtime_pause_gate = live_runtime_pause_gate
         self._running = False
         self._stats_running = False
         self._stats_all_running = False
@@ -226,6 +230,11 @@ class Collector:
     @property
     def is_running(self) -> bool:
         return self._running or self._stats_running or self._stats_all_running
+
+    async def _wait_if_live_runtime_paused(self) -> bool:
+        if self._live_runtime_pause_gate is None:
+            return True
+        return await self._live_runtime_pause_gate.wait_if_paused(stop_event=self._cancel_event)
 
     @property
     def is_stats_running(self) -> bool:
@@ -843,6 +852,8 @@ class Collector:
                 )
                 if progress_callback:
                     await progress_callback(total_collected + collected_count)
+                if not await self._wait_if_live_runtime_paused():
+                    return False
                 return True
 
             try:

@@ -25,6 +25,7 @@ from src.database.bundles import (
     SearchQueryBundle,
 )
 from src.database.repositories.accounts import AccountSessionDecryptError
+from src.live_runtime_pause import LiveRuntimePauseGate
 from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
@@ -247,12 +248,23 @@ async def build_container_with_templates(
     unified_dispatcher = None
     telegram_command_dispatcher = None
     agent_manager = None
+    live_runtime_pause_gate = LiveRuntimePauseGate() if runtime_mode == "worker" else None
     if runtime_mode == "worker":
         notifier = Notifier(
             notification_target_service, config.notifications.admin_chat_id, notification_bundle
         )
-        collector = Collector(pool, db, config.scheduler, notifier)
-        collection_queue = CollectionQueue(collector, channel_bundle)
+        collector = Collector(
+            pool,
+            db,
+            config.scheduler,
+            notifier,
+            live_runtime_pause_gate=live_runtime_pause_gate,
+        )
+        collection_queue = CollectionQueue(
+            collector,
+            channel_bundle,
+            live_runtime_pause_gate=live_runtime_pause_gate,
+        )
         search_pool = pool
     else:
         collector = SnapshotCollector(db)
@@ -287,6 +299,7 @@ async def build_container_with_templates(
             notifier=notifier,
             config=config,
             llm_provider_service=llm_provider_service,
+            live_runtime_pause_gate=live_runtime_pause_gate,
         )
         scheduler = SchedulerManager(
             config.scheduler,
@@ -295,6 +308,7 @@ async def build_container_with_templates(
             task_enqueuer=task_enqueuer,
             pipeline_bundle=pipeline_bundle,
             warm_dialogs_callback=pool.warm_all_dialogs,
+            live_runtime_pause_gate=live_runtime_pause_gate,
         )
         telegram_command_dispatcher = TelegramCommandDispatcher(
             db,
@@ -305,8 +319,15 @@ async def build_container_with_templates(
             auth=auth,
             search_engine=search_engine,
             collection_queue=collection_queue,
+            live_runtime_pause_gate=live_runtime_pause_gate,
         )
-        agent_manager = AgentManager(db, config, client_pool=pool, scheduler_manager=scheduler)
+        agent_manager = AgentManager(
+            db,
+            config,
+            client_pool=pool,
+            scheduler_manager=scheduler,
+            live_runtime_pause_gate=live_runtime_pause_gate,
+        )
     else:
         scheduler = SnapshotSchedulerManager(db, config.scheduler.collect_interval_minutes)
         await scheduler.load_settings()
@@ -358,6 +379,7 @@ async def build_container_with_templates(
         timing_buffer=timing_buffer,
         session_secret=session_secret,
         bg_tasks=set(),
+        live_runtime_pause_gate=live_runtime_pause_gate,
         agent_manager=agent_manager,
         translation_service=translation_service,
         llm_provider_service=llm_provider_service,

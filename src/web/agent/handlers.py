@@ -383,7 +383,24 @@ async def chat(request: Request, thread_id: int):
                         await agent_manager.cancel_stream(thread_id, wait_timeout=5.0)
                     except Exception:
                         logger.debug("cancel_stream after SSE timeout failed", exc_info=True)
-                    yield 'data: {"error": "Agent response timed out."}\n\n'
+                    timeout_text = (
+                        f"Ответ агента остановлен по таймауту {int(total_timeout_sec)} секунд. "
+                        "Фоновые задачи на live runtime были приостановлены на время запроса, "
+                        "но инструмент всё равно не успел завершиться. Повторите запрос точнее "
+                        "или меньшим объёмом."
+                    )
+                    try:
+                        await db.save_agent_message(thread_id, "assistant", timeout_text)
+                    except sqlite3.IntegrityError:
+                        logger.debug("Thread %d deleted during timeout save; skipping", thread_id)
+                    except Exception:
+                        logger.exception(
+                            "Failed to persist timeout assistant message for thread %d",
+                            thread_id,
+                        )
+                    yield (
+                        f"data: {safe_json_dumps({'error': timeout_text}, ensure_ascii=False)}\n\n"
+                    )
                     break
                 save_failed = False
                 done_data: dict | None = None

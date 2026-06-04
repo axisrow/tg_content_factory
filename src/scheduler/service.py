@@ -11,6 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 
 from src.config import SchedulerConfig
 from src.database.bundles import PipelineBundle, SchedulerBundle, SearchQueryBundle
+from src.live_runtime_pause import LiveRuntimePauseGate
 from src.settings_utils import parse_int_setting
 from src.utils.asyncio import make_log_task_exception_callback
 
@@ -39,6 +40,7 @@ class SchedulerManager:
         task_enqueuer: TaskEnqueuer | None = None,
         pipeline_bundle: PipelineBundle | None = None,
         warm_dialogs_callback: Callable[[], Awaitable[None]] | None = None,
+        live_runtime_pause_gate: LiveRuntimePauseGate | None = None,
     ):
         if config is None:
             config = SchedulerConfig()
@@ -48,6 +50,7 @@ class SchedulerManager:
         self._sq_bundle = search_query_bundle
         self._pipeline_bundle = pipeline_bundle
         self._warm_dialogs_callback = warm_dialogs_callback
+        self._live_runtime_pause_gate = live_runtime_pause_gate
         self._scheduler: AsyncIOScheduler | None = None
         self._job_id = "collect_all"
         self._photo_due_job_id = "photo_due"
@@ -289,20 +292,34 @@ class SchedulerManager:
             return {}
 
     async def trigger_now(self) -> dict:
-        return await self._run_collection()
+        return await self._run_collection(background=False)
 
     async def trigger_background(self) -> None:
         """Fire-and-forget collection run."""
         if self._bg_task and not self._bg_task.done():
             return
-        self._bg_task = asyncio.create_task(self._run_collection())
+        self._bg_task = asyncio.create_task(self._run_collection(background=False))
 
     async def trigger_warm_background(self) -> None:
         """Fire-and-forget dialog cache warm run."""
-        task = asyncio.create_task(self._run_warm_dialogs(), name="warm_all_dialogs_manual")
+        task = asyncio.create_task(
+            self._run_warm_dialogs(background=False),
+            name="warm_all_dialogs_manual",
+        )
         task.add_done_callback(_log_task_exception)
 
-    async def _run_warm_dialogs(self) -> None:
+    def _skip_paused_background_job(self, job_name: str) -> bool:
+        if self._live_runtime_pause_gate is None or not self._live_runtime_pause_gate.is_paused:
+            return False
+        logger.info(
+            "Scheduler: skipped %s while agent request is using live Telegram runtime",
+            job_name,
+        )
+        return True
+
+    async def _run_warm_dialogs(self, background: bool = True) -> None:
+        if background and self._skip_paused_background_job("warm_all_dialogs"):
+            return
         if not self._warm_dialogs_callback:
             return
         logger.info("Scheduler: starting dialog cache warm")
@@ -312,8 +329,10 @@ class SchedulerManager:
         except Exception:
             logger.exception("Scheduler: dialog cache warm failed")
 
-    async def _run_collection(self) -> dict:
+    async def _run_collection(self, background: bool = True) -> dict:
         """Enqueue all channels for collection."""
+        if background and self._skip_paused_background_job("collect_all"):
+            return {"enqueued": 0, "skipped": 0, "total": 0, "errors": 0}
         logger.info("Starting scheduled collection")
         if not self._task_enqueuer:
             return {"enqueued": 0, "skipped": 0, "total": 0, "errors": 0}
@@ -412,6 +431,8 @@ class SchedulerManager:
 
     async def _run_pipeline_job(self, pipeline_id: int) -> None:
         """Enqueue a pipeline run task for the given pipeline id."""
+        if self._skip_paused_background_job(f"pipeline_run_{pipeline_id}"):
+            return
         if not self._task_enqueuer:
             return
         try:
@@ -421,6 +442,8 @@ class SchedulerManager:
 
     async def _run_content_generate_job(self, pipeline_id: int) -> None:
         """Enqueue a CONTENT_GENERATE task for the given pipeline id."""
+        if self._skip_paused_background_job(f"content_generate_{pipeline_id}"):
+            return
         if not self._task_enqueuer:
             return
         try:
@@ -430,6 +453,8 @@ class SchedulerManager:
 
     async def _run_search_query(self, sq_id: int) -> None:
         """Enqueue SQ_STATS task for a search query."""
+        if self._skip_paused_background_job(f"sq_{sq_id}"):
+            return
         if not self._task_enqueuer:
             return
         try:
@@ -438,6 +463,8 @@ class SchedulerManager:
             logger.exception("Error enqueuing SQ_STATS for sq_id=%d", sq_id)
 
     async def _run_photo_due(self) -> dict:
+        if self._skip_paused_background_job("photo_due"):
+            return {"enqueued": False}
         if not self._task_enqueuer:
             return {"processed": 0}
         try:
@@ -447,6 +474,8 @@ class SchedulerManager:
         return {"enqueued": True}
 
     async def _run_photo_auto(self) -> dict:
+        if self._skip_paused_background_job("photo_auto"):
+            return {"enqueued": False}
         if not self._task_enqueuer:
             return {"jobs": 0}
         try:

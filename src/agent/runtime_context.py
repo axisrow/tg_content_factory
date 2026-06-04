@@ -131,7 +131,10 @@ class AgentRuntimeContext:
                 if cancel_event is not None and cancel_event.is_set():
                     future.cancel()
                     raise AgentToolRuntimeError(
-                        f"Agent tool '{tool_name}' was cancelled while waiting for the live Telegram runtime.",
+                        (
+                            f"Инструмент '{tool_name}' остановлен: запрос агента был отменён, "
+                            "пока инструмент ждал live Telegram runtime."
+                        ),
                         retryable=True,
                     )
 
@@ -195,4 +198,13 @@ def _tool_timeout_message(tool_name: str, timeout_sec: float | None) -> str:
             f"Генерация изображения заняла больше {seconds} секунд и была остановлена. "
             "Это не означает, что Telegram-аккаунт отключен."
         )
-    return f"Agent tool '{tool_name}' timed out while waiting for the live Telegram runtime."
+    if timeout_sec is None:
+        return (
+            f"Инструмент '{tool_name}' слишком долго ждал live Telegram runtime и был остановлен. "
+            "Попробуйте повторить запрос."
+        )
+    seconds = int(timeout_sec)
+    return (
+        f"Инструмент '{tool_name}' не дождался live Telegram runtime за {seconds} секунд "
+        "и был остановлен. Фоновая загрузка могла занимать runtime; попробуйте повторить запрос."
+    )
