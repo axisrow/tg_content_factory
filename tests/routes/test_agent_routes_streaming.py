@@ -256,6 +256,45 @@ async def test_chat_streaming_second_message_survives_keepalive_after_first_turn
 
 
 @pytest.mark.anyio
+async def test_chat_streaming_client_disconnect_closes_pending_stream(client, db, monkeypatch):
+    from src.web.agent import handlers
+
+    thread_id = await db.create_agent_thread("Chat")
+    mock_mgr = client._transport_app.state.agent_manager
+    monkeypatch.setattr(handlers, "_SSE_KEEPALIVE_INTERVAL", 0.01)
+    monkeypatch.setattr(client._transport_app.state.config.agent, "total_timeout", 1)
+    closed = asyncio.Event()
+
+    class HangingStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+            raise StopAsyncIteration
+
+        async def aclose(self):
+            closed.set()
+
+    def _hanging_stream(*a, **kw):
+        return HangingStream()
+
+    mock_mgr.chat_stream = _hanging_stream
+
+    async with client.stream(
+        "POST",
+        f"/agent/threads/{thread_id}/chat",
+        json={"message": "hello"},
+    ) as resp:
+        assert resp.status_code == 200
+        async for line in resp.aiter_lines():
+            if '"type": "status"' in line:
+                break
+
+    await asyncio.wait_for(closed.wait(), timeout=0.2)
+
+
+@pytest.mark.anyio
 async def test_chat_permission_request_waits_without_idle_timeout(client, db, monkeypatch):
     from src.web.agent import handlers
 

@@ -426,6 +426,15 @@ async def chat(request: Request, thread_id: int):
                 if done_data is not None:
                     break
         finally:
+            if pending_chunk_task is not None and not pending_chunk_task.done():
+                pending_chunk_task.cancel()
+                pending_chunk_task.add_done_callback(_consume_abandoned_next_chunk)
+                done, _ = await asyncio.wait({pending_chunk_task}, timeout=1.0)
+                if not done:
+                    logger.debug(
+                        "Agent stream next-chunk task did not finish after cancellation for thread %d",
+                        thread_id,
+                    )
             if pending_chunk_task is None or pending_chunk_task.done():
                 try:
                     await agen.aclose()
