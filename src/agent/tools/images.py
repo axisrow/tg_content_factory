@@ -14,6 +14,81 @@ from src.web.paths import DATA_IMAGE_DIR
 logger = logging.getLogger(__name__)
 
 
+GENERATE_IMAGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "prompt": {
+            "type": "string",
+            "description": "Текстовый промпт для генерации изображения",
+        },
+        "model": {
+            "anyOf": [{"type": "string"}, {"type": "null"}],
+            "description": "Необязательная модель в формате provider:model_id",
+        },
+    },
+    "required": ["prompt"],
+    "additionalProperties": False,
+}
+
+
+def _default_model_for_adapters(adapter_names) -> str:
+    from src.services.image_provider_service import IMAGE_PROVIDER_ORDER, image_provider_spec
+
+    available = set(adapter_names)
+    for provider in IMAGE_PROVIDER_ORDER:
+        if provider not in available:
+            continue
+        spec = image_provider_spec(provider)
+        if spec and spec.default_model:
+            return spec.default_model
+    return ""
+
+
+def _no_default_model_message(adapter_names) -> str:
+    names = sorted({str(name) for name in adapter_names if name})
+    message = (
+        "Не удалось выбрать модель изображения автоматически. "
+        "Задайте default_image_model в настройках или передайте model явно "
+        "в формате provider:model_id (например together:black-forest-labs/FLUX.1-schnell)."
+    )
+    if names:
+        message += f" Доступные adapters: {', '.join(names)}."
+    return message
+
+
+def _is_model_provider_available(model: str, adapter_names) -> bool:
+    provider, sep, _ = model.partition(":")
+    if not sep:
+        return True
+    return provider in set(adapter_names)
+
+
+async def resolve_default_image_model(requested_model, db, image_service) -> str:
+    """Return the explicit image model to use for an agent generate_image call."""
+    if isinstance(requested_model, str) and requested_model.strip():
+        return requested_model.strip()
+
+    if db is not None:
+        try:
+            value = await db.get_setting("default_image_model")
+        except Exception:
+            logger.warning("Failed to read default_image_model setting", exc_info=True)
+            value = None
+        # get_setting's contract is str | None; the isinstance guard also coerces
+        # bare-MagicMock returns to "" on the deepagents-sync test path.
+        if isinstance(value, str) and value.strip():
+            saved_model = value.strip()
+            if _is_model_provider_available(saved_model, image_service.adapter_names):
+                return saved_model
+            logger.warning(
+                "Ignoring default_image_model=%s because its provider is not available; adapters=%s",
+                saved_model,
+                image_service.adapter_names,
+            )
+
+    return _default_model_for_adapters(image_service.adapter_names)
+
+
 def register(db, client_pool, embedding_service, **kwargs):
     config = kwargs.get("config")
     tools = []
@@ -37,13 +112,10 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     @tool(
         "generate_image",
-        "Generate an image from a text prompt. Model format: 'provider:model_id' "
+        "Generate an image from a text prompt. Optional model format: 'provider:model_id' "
         "(e.g. 'together:black-forest-labs/FLUX.1-schnell'). "
-        "Use list_image_providers to see available providers, list_image_models for models.",
-        {
-            "prompt": Annotated[str, "Текстовый промпт для генерации изображения"],
-            "model": Annotated[str, "Модель в формате provider:model_id (например together:FLUX.1-schnell)"],
-        },
+        "When omitted, the configured/default image model is used automatically.",
+        GENERATE_IMAGE_SCHEMA,
     )
     async def generate_image(args):
         prompt = args.get("prompt", "")
@@ -54,7 +126,10 @@ def register(db, client_pool, embedding_service, **kwargs):
             svc = await _build_image_service()
             if not await svc.is_available():
                 return _text_response("Генерация изображений не настроена. Добавьте провайдера в настройках.")
-            result = await svc.generate(model=model, text=prompt)
+            resolved_model = await resolve_default_image_model(model, db, svc)
+            if not resolved_model:
+                return _text_response(_no_default_model_message(svc.adapter_names))
+            result = await svc.generate(model=resolved_model, text=prompt)
             if result and (result.startswith("https://") or result.startswith("http://")):
                 import hashlib
                 from urllib.parse import urlparse
@@ -85,7 +160,7 @@ def register(db, client_pool, embedding_service, **kwargs):
                 logger.info("Image downloaded to %s", local_path)
                 if db:
                     await db.repos.generated_images.save(
-                        prompt=prompt, model=model, image_url=result, local_path=local_path,
+                        prompt=prompt, model=resolved_model, image_url=result, local_path=local_path,
                     )
                 return _text_response(
                     f"Изображение создано!\n\n"
@@ -93,6 +168,9 @@ def register(db, client_pool, embedding_service, **kwargs):
                 )
             if result:
                 return _text_response(f"Изображение сгенерировано:\n{result}")
+            failure = getattr(svc, "last_failure", None)
+            if failure is not None and getattr(failure, "is_timeout", False):
+                return _text_response(failure.user_message(lang="ru"))
             return _text_response("Генерация не вернула результат.")
         except Exception as e:
             return _text_response(f"Ошибка генерации изображения: {e}")

@@ -64,15 +64,31 @@ class ImageProviderSpec:
     # search_models(refresh=True) live fetch; receives the service so instance
     # monkeypatching of the underlying _fetch_* methods is honoured
     fetch_models: Callable[..., Awaitable[list[dict]]] | None = None
-    # When True, never chosen as the implicit default adapter — only on explicit
-    # ``provider:model`` selection. Set for adapters that are slow/expensive to
-    # invoke (Codex spawns a blocking subprocess), so an unqualified generate()
-    # never silently triggers them.
+    # When True, ImageGenerationService._resolve_adapter never chooses this as
+    # the unqualified fallback adapter. Callers may still intentionally resolve
+    # an omitted UI/tool model into this provider's fully qualified
+    # ``provider:model`` default before calling generate().
     explicit_only: bool = False
+    # Default model override for providers without a static catalog. Providers
+    # that declare a static_catalog derive their default from its first entry
+    # (see the `default_model` property) so the two never drift.
+    _default_model_override: str = ""
 
     @property
     def keyless(self) -> bool:
         return self.detect is not None
+
+    @property
+    def default_model(self) -> str:
+        """Fully qualified ``provider:model_id`` to use when a caller resolves an
+        omitted model before invoking ImageGenerationService.generate().
+
+        Derived from the first static-catalog entry when one exists, so the
+        advertised default and the catalog can never diverge.
+        """
+        if self.static_catalog:
+            return self.static_catalog[0]["model_string"]
+        return self._default_model_override
 
 
 IMAGE_PROVIDER_SPECS: dict[str, ImageProviderSpec] = {
@@ -91,6 +107,7 @@ IMAGE_PROVIDER_SPECS: dict[str, ImageProviderSpec] = {
         "HuggingFace",
         ["HUGGINGFACE_API_KEY", "HUGGINGFACE_TOKEN"],
         keyed_factory=lambda key: _pa().make_huggingface_image_adapter(key),
+        _default_model_override="huggingface:stabilityai/stable-diffusion-xl-base-1.0",
     ),
     "openai": ImageProviderSpec(
         "openai",
@@ -118,6 +135,7 @@ IMAGE_PROVIDER_SPECS: dict[str, ImageProviderSpec] = {
         "Replicate",
         ["REPLICATE_API_TOKEN"],
         keyed_factory=lambda key: _pa().make_replicate_image_adapter(key),
+        _default_model_override="replicate:black-forest-labs/flux-schnell",
     ),
     # Codex is keyless — auth comes from the Codex CLI (~/.codex/auth.json), so
     # there are no env vars to configure; it is registered on detection and its

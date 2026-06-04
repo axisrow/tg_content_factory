@@ -8,11 +8,17 @@ from collections.abc import Awaitable, Callable
 from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Literal, TypeVar
 
 _T = TypeVar("_T")
 RuntimeKind = Literal["live", "snapshot", "none"]
 DEFAULT_SYNC_TIMEOUT_SEC = 120.0
+# Per-tool sync-bridge deadline overrides. generate_image must exceed the
+# slowest image adapter's own timeout (CODEX_IMAGE_TIMEOUT_SECONDS = 180s in
+# provider_adapters.py) so the adapter times out first with its specific
+# message and subprocess kill — the generic bridge deadline is only a backstop.
+DEFAULT_TOOL_SYNC_TIMEOUT_SEC = MappingProxyType({"generate_image": 240.0})
 
 
 class AgentToolRuntimeError(RuntimeError):
@@ -43,6 +49,11 @@ class AgentRuntimeContext:
     runtime_kind: RuntimeKind = "none"
     owner_loop: asyncio.AbstractEventLoop | None = None
     sync_timeout_sec: float | None = DEFAULT_SYNC_TIMEOUT_SEC
+    tool_sync_timeout_sec: dict[str, float | None] | None = None
+
+    def __post_init__(self) -> None:
+        if self.tool_sync_timeout_sec is None:
+            self.tool_sync_timeout_sec = dict(DEFAULT_TOOL_SYNC_TIMEOUT_SEC)
 
     @classmethod
     def build(
@@ -82,6 +93,11 @@ class AgentRuntimeContext:
                 return
         self.owner_loop = loop
 
+    def _sync_timeout_for_tool(self, tool_name: str) -> float | None:
+        if self.tool_sync_timeout_sec and tool_name in self.tool_sync_timeout_sec:
+            return self.tool_sync_timeout_sec[tool_name]
+        return self.sync_timeout_sec
+
     def run_sync(self, tool_name: str, operation: Callable[[], Awaitable[_T]]) -> _T:
         """Run an async operation from a sync tool thread."""
         try:
@@ -109,11 +125,8 @@ class AgentRuntimeContext:
                 cancel_event = None
                 permission_wait_tracker = None
 
-            deadline = (
-                time.monotonic() + self.sync_timeout_sec
-                if self.sync_timeout_sec is not None
-                else None
-            )
+            sync_timeout_sec = self._sync_timeout_for_tool(tool_name)
+            deadline = time.monotonic() + sync_timeout_sec if sync_timeout_sec is not None else None
             while True:
                 if cancel_event is not None and cancel_event.is_set():
                     future.cancel()
@@ -133,7 +146,7 @@ class AgentRuntimeContext:
                     if remaining <= 0:
                         future.cancel()
                         raise AgentToolRuntimeError(
-                            f"Agent tool '{tool_name}' timed out while waiting for the live Telegram runtime.",
+                            _tool_timeout_message(tool_name, sync_timeout_sec),
                             retryable=True,
                         )
                     poll_timeout = min(poll_timeout, remaining)
@@ -151,6 +164,8 @@ class AgentRuntimeContext:
                         retryable=True,
                     ) from exc
                 except FutureTimeoutError as exc:
+                    if future.done():
+                        return future.result(timeout=0)
                     permission_waiting = (
                         permission_wait_tracker is not None
                         and permission_wait_tracker.is_waiting()
@@ -160,7 +175,7 @@ class AgentRuntimeContext:
                     elif deadline is not None and deadline <= time.monotonic():
                         future.cancel()
                         raise AgentToolRuntimeError(
-                            f"Agent tool '{tool_name}' timed out while waiting for the live Telegram runtime.",
+                            _tool_timeout_message(tool_name, sync_timeout_sec),
                             retryable=True,
                         ) from exc
 
@@ -171,3 +186,13 @@ class AgentRuntimeContext:
             f"Agent tool '{tool_name}' cannot run inside an active event loop without a sync bridge.",
             retryable=True,
         )
+
+
+def _tool_timeout_message(tool_name: str, timeout_sec: float | None) -> str:
+    if tool_name == "generate_image" and timeout_sec is not None:
+        seconds = int(timeout_sec)
+        return (
+            f"Генерация изображения заняла больше {seconds} секунд и была остановлена. "
+            "Это не означает, что Telegram-аккаунт отключен."
+        )
+    return f"Agent tool '{tool_name}' timed out while waiting for the live Telegram runtime."

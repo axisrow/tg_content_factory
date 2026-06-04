@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
@@ -10,6 +11,51 @@ if TYPE_CHECKING:
     from src.services.s3_store import S3Store
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class ImageGenerationFailure:
+    kind: str
+    provider: str | None
+    model: str | None
+    message: str
+    retryable: bool = True
+
+    @property
+    def is_timeout(self) -> bool:
+        return self.kind == "timeout"
+
+    def user_message(self, *, lang: str = "ru") -> str:
+        """User-facing explanation of the failure, in Russian (``ru``) or English (``en``).
+
+        Centralizes the timeout wording so the agent/CLI/web callers don't each
+        re-derive it (and re-import the Codex timeout constant)."""
+        if not self.is_timeout:
+            return "Генерация не вернула результат." if lang == "ru" else "Generation failed — check logs"
+
+        model = self.model or ("по умолчанию" if lang == "ru" else "default")
+        if (self.model or "").startswith("codex:"):
+            from src.services.provider_adapters import CODEX_IMAGE_TIMEOUT_SECONDS
+
+            seconds = int(CODEX_IMAGE_TIMEOUT_SECONDS)
+            if lang == "ru":
+                return (
+                    f"Генерация изображения через {model} не успела завершиться за {seconds} секунд. "
+                    "Процесс Codex остановлен; попробуйте позже или передайте model другого провайдера."
+                )
+            return (
+                f"Generation timed out for model={model} after {seconds}s. "
+                "The Codex process was stopped; try again later or choose another image provider/model."
+            )
+        if lang == "ru":
+            return (
+                f"Генерация изображения через {model} не успела завершиться за таймаут. "
+                "Попробуйте позже или выберите другую модель."
+            )
+        return (
+            f"Generation timed out for model={model}. "
+            "Try again later or choose another image provider/model."
+        )
 
 
 class ImageGenerationService:
@@ -24,6 +70,7 @@ class ImageGenerationService:
     def __init__(self, adapters: dict[str, "ImageAdapter"] | None = None) -> None:
         self._adapters: dict[str, ImageAdapter] = {}
         self._s3: S3Store | None = None
+        self._last_failure: ImageGenerationFailure | None = None
         if adapters is not None:
             self._adapters = dict(adapters)
         else:
@@ -34,20 +81,52 @@ class ImageGenerationService:
 
     async def generate(self, model: str | None, text: str) -> str | None:
         """Generate an image for *text* using *model*.  Returns URL/path or ``None``."""
+        self._last_failure = None
         if not text or not self._adapters:
             return None
         provider_name, model_id = self._parse_model_string(model)
         adapter = self._resolve_adapter(provider_name)
         if adapter is None:
             logger.warning("No image adapter available for model=%s", model)
+            self._set_failure(
+                kind="no_adapter",
+                provider=provider_name,
+                model=model,
+                message=f"No image adapter available for model={model}",
+                retryable=False,
+            )
             return None
         try:
             result = await adapter(text, model_id)
-        except (OSError, asyncio.TimeoutError) as exc:
-            logger.warning("Image generation failed (model=%s): %s", model, exc)
+        except TimeoutError as exc:
+            logger.warning("Image generation timed out (model=%s): %s", model, exc)
+            self._set_failure(
+                kind="timeout",
+                provider=provider_name,
+                model=model,
+                message=str(exc),
+                retryable=True,
+            )
             return None
-        except Exception:
+        except OSError as exc:
+            logger.warning("Image generation failed (model=%s): %s", model, exc)
+            self._set_failure(
+                kind="error",
+                provider=provider_name,
+                model=model,
+                message=str(exc),
+                retryable=True,
+            )
+            return None
+        except Exception as exc:
             logger.exception("Image generation unexpected error (model=%s)", model)
+            self._set_failure(
+                kind="error",
+                provider=provider_name,
+                model=model,
+                message=str(exc),
+                retryable=True,
+            )
             return None
         if result and not result.startswith("http") and getattr(self, "_s3", None) is not None:
             s3_url = await self._s3.upload_file(result)
@@ -66,7 +145,28 @@ class ImageGenerationService:
     def adapter_names(self) -> list[str]:
         return list(self._adapters.keys())
 
+    @property
+    def last_failure(self) -> ImageGenerationFailure | None:
+        return self._last_failure
+
     # ── internals ──
+
+    def _set_failure(
+        self,
+        *,
+        kind: str,
+        provider: str | None,
+        model: str | None,
+        message: str,
+        retryable: bool,
+    ) -> None:
+        self._last_failure = ImageGenerationFailure(
+            kind=kind,
+            provider=provider,
+            model=model,
+            message=message,
+            retryable=retryable,
+        )
 
     def _init_s3(self) -> None:
         from src.services.s3_store import S3Store

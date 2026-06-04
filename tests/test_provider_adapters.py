@@ -858,9 +858,11 @@ def _install_fake_codex(
     import threading
 
     closed_event = threading.Event()
+    started_event = threading.Event()
 
     class FakeThread:
         def run(self, instruction):
+            started_event.set()
             if hang_seconds:
                 # Block as the real SDK does inside a blocking queue.get(); the
                 # only way out is close() firing closed_event (mirrors the SDK's
@@ -907,6 +909,7 @@ def _install_fake_codex(
     fake_mod.Codex = FakeCodex
     fake_mod.Sandbox = SimpleNamespace(workspace_write="workspace-write")
     monkeypatch.setitem(sys.modules, "openai_codex", fake_mod)
+    captured["started_event"] = started_event
     return captured
 
 
@@ -967,6 +970,25 @@ async def test_codex_image_adapter_times_out_and_kills_subprocess(monkeypatch, t
     with pytest.raises((asyncio.TimeoutError, TimeoutError)):
         await adapter("x", "gpt-5.4")
     # close() was called on timeout — without it the worker thread would leak.
+    assert captured.get("closed") is True
+
+
+@pytest.mark.anyio
+async def test_codex_image_adapter_cancel_closes_subprocess(monkeypatch, tmp_path):
+    """Caller cancellation also closes the Codex subprocess."""
+    import asyncio
+
+    from src.services.provider_adapters import make_codex_image_adapter
+
+    captured = _install_fake_codex(monkeypatch, hang_seconds=5.0)
+    adapter = make_codex_image_adapter(output_dir=str(tmp_path), image_timeout=5.0)
+
+    task = asyncio.create_task(adapter("x", "gpt-5.4"))
+    assert await asyncio.to_thread(captured["started_event"].wait, 1.0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert captured.get("closed") is True
 
 

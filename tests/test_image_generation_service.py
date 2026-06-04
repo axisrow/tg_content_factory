@@ -135,6 +135,17 @@ async def test_generate_catches_adapter_error():
     svc.register_adapter("broken", broken_adapter)
     result = await svc.generate("broken:m", "test prompt")
     assert result is None
+    assert svc.last_failure is not None
+    assert svc.last_failure.kind == "error"
+    assert svc.last_failure.model == "broken:m"
+
+    async def fixed_adapter(prompt: str, model: str) -> str:
+        return "https://img.example.com/fixed.png"
+
+    svc.register_adapter("broken", fixed_adapter)
+    result = await svc.generate("broken:m", "test prompt")
+    assert result == "https://img.example.com/fixed.png"
+    assert svc.last_failure is None
 
 
 # ── is_available() ──
@@ -413,6 +424,10 @@ async def test_generate_catches_os_error():
     svc.register_adapter("oserr", oserr_adapter)
     result = await svc.generate("oserr:m", "test")
     assert result is None
+    assert svc.last_failure is not None
+    assert svc.last_failure.kind == "error"
+    assert svc.last_failure.provider == "oserr"
+    assert svc.last_failure.retryable is True
 
 
 @pytest.mark.anyio
@@ -425,6 +440,11 @@ async def test_generate_catches_timeout_error():
     svc.register_adapter("timeout", timeout_adapter)
     result = await svc.generate("timeout:m", "test")
     assert result is None
+    assert svc.last_failure is not None
+    assert svc.last_failure.kind == "timeout"
+    assert svc.last_failure.provider == "timeout"
+    assert svc.last_failure.model == "timeout:m"
+    assert svc.last_failure.retryable is True
 
 
 # ── generate() no adapter for provider ──
@@ -437,6 +457,24 @@ async def test_generate_no_adapter_for_named_provider():
     # No adapters at all — _resolve_adapter returns None
     result = await svc.generate("beta:m", "test")
     assert result is None
+    assert svc.last_failure is None
+
+
+@pytest.mark.anyio
+async def test_generate_records_no_adapter_failure_for_explicit_only_default():
+    svc = _make_clean_service()
+
+    async def codex_adapter(prompt: str, model: str) -> str:
+        return "should-not-run"
+
+    svc.register_adapter("codex", codex_adapter)
+    result = await svc.generate(None, "test")
+    assert result is None
+    assert svc.last_failure is not None
+    assert svc.last_failure.kind == "no_adapter"
+    assert svc.last_failure.provider is None
+    assert svc.last_failure.model is None
+    assert svc.last_failure.retryable is False
 
 
 # ── _register_from_env with env vars ──
