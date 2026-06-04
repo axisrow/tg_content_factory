@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS messages (
     detected_lang TEXT,
     translation_en TEXT,
     translation_custom TEXT,
+    premium_search_query TEXT,
     UNIQUE(channel_id, message_id)
 );
 
@@ -140,6 +141,8 @@ CREATE INDEX IF NOT EXISTS idx_channel_stats_lookup
 CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text);
 CREATE INDEX IF NOT EXISTS idx_messages_channel_date ON messages(channel_id, date);
 CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date);
+CREATE INDEX IF NOT EXISTS idx_messages_premium_search_query
+    ON messages(premium_search_query) WHERE premium_search_query IS NOT NULL;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
     text,

@@ -50,6 +50,7 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "detected_lang": "detected_lang TEXT",
         "translation_en": "translation_en TEXT",
         "translation_custom": "translation_custom TEXT",
+        "premium_search_query": "premium_search_query TEXT",
     },
     "collection_tasks": {
         "channel_username": "channel_username TEXT",
@@ -146,6 +147,10 @@ SCHEMA_REPAIR_INDEXES: Sequence[str] = (
     """
     CREATE INDEX IF NOT EXISTS idx_messages_fwd_from_channel
     ON messages(forward_from_channel_id) WHERE forward_from_channel_id IS NOT NULL
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_messages_premium_search_query
+    ON messages(premium_search_query) WHERE premium_search_query IS NOT NULL
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_collection_tasks_type_status_run_after

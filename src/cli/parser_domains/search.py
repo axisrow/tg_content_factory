@@ -36,3 +36,9 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         default=False,
         help="Drop semantic vector index before --index-now",
     )
+    search_parser.add_argument(
+        "--purge-cache",
+        action="store_true",
+        default=False,
+        help="Delete messages cached by a previous Premium global search for <query> and exit",
+    )

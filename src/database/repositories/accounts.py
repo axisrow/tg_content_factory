@@ -333,6 +333,27 @@ class AccountsRepository:
             (int(is_premium), phone),
         )
 
+    @staticmethod
+    async def _promote_primary_if_none(conn, *, active_only: bool) -> None:
+        """Promote the lowest-id candidate to primary iff no primary exists.
+
+        Single owner of the "fill the primary gap" half of the one-primary
+        invariant (#733), shared by set_account_active and delete_account so the
+        candidate-selection rule cannot drift between call sites. With
+        ``active_only`` the candidate pool is restricted to active accounts.
+        """
+        candidate_filter = "WHERE is_active = 1\n            " if active_only else ""
+        await conn.execute(
+            f"""
+            UPDATE accounts SET is_primary = 1
+            WHERE id = (
+                SELECT id FROM accounts
+                {candidate_filter}ORDER BY id ASC LIMIT 1
+            )
+            AND NOT EXISTS (SELECT 1 FROM accounts WHERE is_primary = 1)
+            """
+        )
+
     async def set_account_active(self, account_id: int, active: bool) -> None:
         assert self._database is not None, (
             "AccountsRepository.set_account_active requires a Database reference"
@@ -360,17 +381,7 @@ class AccountsRepository:
                     "UPDATE accounts SET is_primary = 0 WHERE id = ? AND is_primary = 1",
                     (account_id,),
                 )
-                await conn.execute(
-                    """
-                    UPDATE accounts SET is_primary = 1
-                    WHERE id = (
-                        SELECT id FROM accounts
-                        WHERE is_active = 1
-                        ORDER BY id ASC LIMIT 1
-                    )
-                    AND NOT EXISTS (SELECT 1 FROM accounts WHERE is_primary = 1)
-                    """
-                )
+                await self._promote_primary_if_none(conn, active_only=True)
 
     async def set_account_primary(self, account_id: int) -> bool:
         """Atomically make *account_id* the sole primary, demoting the previous one.
@@ -383,6 +394,11 @@ class AccountsRepository:
             "AccountsRepository.set_account_primary requires a Database reference"
         )
         async with self._database.transaction() as conn:
+            # The partial unique index idx_accounts_single_primary (#733) is
+            # checked immediately, so demote MUST precede promote — two primaries
+            # can never coexist even mid-transaction. That forces the existence
+            # check up front (rowcount-on-promote would arrive too late), so the
+            # SELECT is load-bearing, not redundant.
             cur = await conn.execute("SELECT 1 FROM accounts WHERE id = ?", (account_id,))
             if await cur.fetchone() is None:
                 return False
@@ -397,20 +413,4 @@ class AccountsRepository:
         async with self._database.transaction() as conn:
             cur = await conn.execute("DELETE FROM accounts WHERE id = ?", (account_id,))
             if (cur.rowcount or 0) > 0:
-                await conn.execute(
-                    """
-                    UPDATE accounts
-                    SET is_primary = 1
-                    WHERE id = (
-                        SELECT id
-                        FROM accounts
-                        ORDER BY id ASC
-                        LIMIT 1
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM accounts
-                        WHERE is_primary = 1
-                    )
-                    """
-                )
+                await self._promote_primary_if_none(conn, active_only=False)

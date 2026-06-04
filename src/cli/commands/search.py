@@ -13,6 +13,17 @@ def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         config, db = await runtime.init_db(args.config)
 
+        if getattr(args, "purge_cache", False):
+            try:
+                if not args.query:
+                    logging.error("--purge-cache requires a query (the Premium search text to purge).")
+                    return
+                deleted = await db.repos.messages.delete_premium_search_results(args.query)
+                print(f"Purged {deleted} cached message(s) from Premium search for '{args.query}'.")
+            finally:
+                await db.close()
+            return
+
         pool = None
         if args.mode in ("telegram", "my_chats", "channel"):
             _, pool = await runtime.init_pool(config, db)
