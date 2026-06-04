@@ -59,6 +59,7 @@ class SchedulerManager:
         self._warm_dialogs_interval_minutes: int = 1440  # 24 hours default
         self._current_interval_minutes: int = config.collect_interval_minutes
         self._bg_task: asyncio.Task | None = None
+        self._stop_event = asyncio.Event()
         self._jobs_cache: dict[str, object] = {}
         self._jobs_cache_ts: float = 0.0
 
@@ -137,6 +138,7 @@ class SchedulerManager:
             logger.warning("Scheduler already running")
             return
 
+        self._stop_event.clear()
         if self._scheduler is not None:
             try:
                 self._scheduler.shutdown(wait=False)
@@ -229,6 +231,7 @@ class SchedulerManager:
         logger.info("Scheduler started with %d jobs, collecting every %d min", total_jobs, collect_interval)
 
     async def stop(self) -> None:
+        self._stop_event.set()
         if self._bg_task and not self._bg_task.done():
             self._bg_task.cancel()
             try:
@@ -315,7 +318,7 @@ class SchedulerManager:
             "Scheduler: waiting to run %s while agent request is using live Telegram runtime",
             job_name,
         )
-        resumed = await self._live_runtime_pause_gate.wait_if_paused()
+        resumed = await self._live_runtime_pause_gate.wait_if_paused(stop_event=self._stop_event)
         if resumed:
             logger.info("Scheduler: resumed %s after agent request released live Telegram runtime", job_name)
         return resumed

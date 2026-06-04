@@ -30,7 +30,7 @@ class LiveRuntimePauseGate:
         try:
             yield
         finally:
-            await self._release_agent_request()
+            await asyncio.shield(self._release_agent_request())
 
     async def _acquire_agent_request(self) -> None:
         async with self._lock:
@@ -61,11 +61,12 @@ class LiveRuntimePauseGate:
         if stop_event is None:
             await self._resume_event.wait()
             return True
-        resume_wait = asyncio.ensure_future(self._resume_event.wait())
-        stop_wait = asyncio.ensure_future(stop_event.wait())
+        resume_wait = asyncio.create_task(self._resume_event.wait())
+        stop_wait = asyncio.create_task(stop_event.wait())
         try:
             await asyncio.wait({resume_wait, stop_wait}, return_when=asyncio.FIRST_COMPLETED)
         finally:
-            resume_wait.cancel()
-            stop_wait.cancel()
+            for task in (resume_wait, stop_wait):
+                task.cancel()
+            await asyncio.gather(resume_wait, stop_wait, return_exceptions=True)
         return not stop_event.is_set()

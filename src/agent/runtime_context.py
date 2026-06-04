@@ -206,5 +206,5 @@ def _tool_timeout_message(tool_name: str, timeout_sec: float | None) -> str:
     seconds = int(timeout_sec)
     return (
         f"Инструмент '{tool_name}' не дождался live Telegram runtime за {seconds} секунд "
-        "и был остановлен. Фоновая загрузка могла занимать runtime; попробуйте повторить запрос."
+        "и был остановлен. Попробуйте повторить запрос точнее или меньшим объёмом."
     )

@@ -383,11 +383,15 @@ async def chat(request: Request, thread_id: int):
                         await agent_manager.cancel_stream(thread_id, wait_timeout=5.0)
                     except Exception:
                         logger.debug("cancel_stream after SSE timeout failed", exc_info=True)
+                    pause_note = (
+                        "Фоновые задачи на live runtime были приостановлены на время запроса, "
+                        "но инструмент всё равно не успел завершиться. "
+                        if getattr(agent_manager, "_live_runtime_pause_gate", None) is not None
+                        else ""
+                    )
                     timeout_text = (
                         f"Ответ агента остановлен по таймауту {int(total_timeout_sec)} секунд. "
-                        "Фоновые задачи на live runtime были приостановлены на время запроса, "
-                        "но инструмент всё равно не успел завершиться. Повторите запрос точнее "
-                        "или меньшим объёмом."
+                        f"{pause_note}Повторите запрос точнее или меньшим объёмом."
                     )
                     try:
                         await db.save_agent_message(thread_id, "assistant", timeout_text)

@@ -66,6 +66,38 @@ def test_scheduler_waits_to_run_background_collection_while_agent_uses_live_runt
     assert calls == 2
 
 
+def test_scheduler_stop_interrupts_paused_background_collection_wait():
+    class FakeEnqueuer:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def enqueue_all_channels(self):
+            self.calls += 1
+            return SimpleNamespace(queued_count=2, skipped_existing_count=3, total_candidates=5)
+
+    async def _run() -> tuple[dict, int]:
+        gate = LiveRuntimePauseGate()
+        enqueuer = FakeEnqueuer()
+        manager = SchedulerManager(
+            SchedulerConfig(),
+            task_enqueuer=enqueuer,
+            live_runtime_pause_gate=gate,
+        )
+
+        async with gate.agent_request():
+            background_task = asyncio.create_task(manager._run_collection())
+            await asyncio.sleep(0)
+            assert enqueuer.calls == 0
+            await manager.stop()
+            background_result = await asyncio.wait_for(background_task, timeout=0.5)
+        return background_result, enqueuer.calls
+
+    background_result, calls = asyncio.run(_run())
+
+    assert background_result == {"enqueued": 0, "skipped": 0, "total": 0, "errors": 1}
+    assert calls == 0
+
+
 def test_telegram_command_dispatcher_does_not_claim_while_agent_uses_live_runtime():
     class FakeTelegramCommands:
         def __init__(self) -> None:
