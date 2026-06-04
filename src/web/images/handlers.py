@@ -74,11 +74,8 @@ async def generate_image(request: Request) -> ImagesJson:
     result = await svc.generate(form.model or None, form.prompt)
     if result is None:
         failure = svc.last_failure
-        if getattr(failure, "kind", "") == "timeout":
-            return ImagesJson(
-                {"ok": False, "error": "Image generation timed out. Try again later or choose another model."},
-                status_code=500,
-            )
+        if failure is not None and getattr(failure, "is_timeout", False):
+            return ImagesJson({"ok": False, "error": failure.user_message(lang="en")}, status_code=500)
         return ImagesJson({"ok": False, "error": "Generation failed — check server logs"}, status_code=500)
 
     return ImagesJson(
