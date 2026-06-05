@@ -338,6 +338,7 @@ class CollectionTasksRepository:
             "status = ?",
             "started_at = NULL",
             "completed_at = NULL",
+            "last_progress_at = NULL",
             "error = NULL",
         ]
         params: list[Any] = [CollectionTaskStatus.PENDING.value]

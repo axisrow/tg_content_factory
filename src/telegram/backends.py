@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from abc import ABC, abstractmethod
@@ -19,6 +20,8 @@ from src.telegram.reactions import normalize_outgoing_reaction_emoji
 from src.telegram.session_materializer import SessionMaterializer
 
 logger = logging.getLogger(__name__)
+
+STREAM_ITERATOR_CLOSE_TIMEOUT_SEC = 10.0
 
 
 async def fetch_message_reaction_users_raw(client: Any, peer: Any, message_id: int, *, limit: int) -> Any:
@@ -123,7 +126,18 @@ class TelegramTransportSession:
                 if aclose is not None:
                     result = aclose()
                     if inspect.isawaitable(result):
-                        await result
+                        try:
+                            await asyncio.wait_for(
+                                result, timeout=STREAM_ITERATOR_CLOSE_TIMEOUT_SEC
+                            )
+                        except asyncio.TimeoutError:
+                            self._logger.warning(
+                                "%s: iterator close timed out after %.1fs",
+                                operation,
+                                STREAM_ITERATOR_CLOSE_TIMEOUT_SEC,
+                            )
+                        except Exception:
+                            self._logger.debug("%s: iterator close failed", operation, exc_info=True)
         except HandledFloodWaitError:
             raise
         except Exception as exc:
