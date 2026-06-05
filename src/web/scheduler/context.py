@@ -339,16 +339,14 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
     task_is_progressing = worker_alive and running_task is not None and not running_task_stale
     collector_is_running = worker_alive and (collector.is_running or task_is_progressing)
     state = "healthy"
-    if running_task_stale:
-        # Genuinely stuck: a RUNNING task whose progress hasn't advanced for a
-        # long time. Stale progress is more specific than a stale heartbeat:
-        # a worker can be alive enough to serve web/runtime paths while its
-        # collection task is no longer moving.
-        state = "collector_stuck"
-    elif not worker_alive:
+    if not worker_alive:
         # Worker-process absent dominates: without it `no_clients` /
         # `all_flooded` are symptoms, not the root cause.
         state = "worker_down"
+    elif running_task_stale:
+        # Genuinely stuck: a live worker has a RUNNING task whose progress
+        # hasn't advanced for a long time.
+        state = "collector_stuck"
     elif degraded_session_accounts and not active_accounts:
         state = "session_degraded"
     elif not connected_active_accounts:

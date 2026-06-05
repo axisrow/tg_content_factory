@@ -624,7 +624,7 @@ async def test_scheduler_page_renders_worker_down_banner(client, base_app):
 
 @pytest.mark.anyio
 async def test_scheduler_page_renders_stuck_collector_banner_for_stale_progress(client, base_app):
-    """A running task whose progress hasn't moved for a long time is stuck.
+    """A live worker with a task whose progress hasn't moved for a long time is stuck.
 
     'Stuck' is decided by stalled progress (last_progress_at far in the past),
     NOT merely by a running row existing alongside a stale heartbeat — that
@@ -653,6 +653,43 @@ async def test_scheduler_page_renders_stuck_collector_banner_for_stale_progress(
     assert "Сбор завис" in body
     assert "Stuck Channel" in body
     assert "Telegram-воркер не запущен" not in body
+
+
+@pytest.mark.anyio
+async def test_scheduler_page_shows_worker_down_when_progress_stale_and_heartbeat_stale(client, base_app):
+    """Stale heartbeat + stale RUNNING row = worker_down, because no worker is alive."""
+    from src.models import RuntimeSnapshot
+
+    _, db, _ = base_app
+    heartbeat_stale = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="worker_heartbeat",
+            payload={"status": "alive"},
+            updated_at=heartbeat_stale,
+        )
+    )
+    task_id = await db.create_collection_task(
+        channel_id=-100406,
+        channel_title="Orphaned Stale Channel",
+    )
+    await db.update_collection_task(
+        task_id,
+        CollectionTaskStatus.RUNNING,
+        messages_collected=42,
+    )
+    progress_stale = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    await db.execute_write(
+        "UPDATE collection_tasks SET last_progress_at = ? WHERE id = ?",
+        (progress_stale, task_id),
+    )
+
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Telegram-воркер не запущен" in body
+    assert "Сбор завис" not in body
+    assert "Сейчас собирается:" not in body
 
 
 @pytest.mark.anyio

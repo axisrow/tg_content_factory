@@ -686,6 +686,47 @@ class Collector:
             return "game"
         return "unknown"
 
+    async def _release_collection_client(
+        self,
+        phone: str,
+        session,
+        *,
+        retire: bool = False,
+    ) -> None:
+        if not retire:
+            await self._pool.release_client(phone)
+            return
+
+        logger.warning(
+            "Retiring Telegram client for %s because a message stream read did not finish cancellation",
+            phone,
+        )
+        pool_dict = getattr(self._pool, "__dict__", {})
+        remove_client = None
+        if "remove_client" in pool_dict or hasattr(type(self._pool), "remove_client"):
+            remove_client = getattr(self._pool, "remove_client", None)
+        if remove_client is not None:
+            try:
+                result = remove_client(phone)
+                if isawaitable(result):
+                    await result
+                    return
+            except Exception:
+                logger.debug("Failed to remove dirty Telegram client for %s", phone, exc_info=True)
+
+        raw_client = getattr(session, "raw_client", None)
+        disconnect = getattr(raw_client, "disconnect", None) if raw_client is not None else None
+        if disconnect is None:
+            disconnect = getattr(session, "disconnect", None)
+        if disconnect is not None:
+            try:
+                result = disconnect()
+                if isawaitable(result):
+                    await asyncio.wait_for(result, timeout=STREAM_CLEANUP_TIMEOUT_SEC)
+            except Exception:
+                logger.debug("Failed to disconnect dirty Telegram client for %s", phone, exc_info=True)
+        await self._pool.release_client(phone)
+
     async def _collect_channel(
         self,
         channel: Channel,
@@ -781,6 +822,7 @@ class Collector:
             flood_wait_operation: str | None = None
             stop_due_to_persistence_error = False
             stream_idle_timeout = False
+            retire_client_after_stream_timeout = False
 
             is_first_run = channel.last_collected_id == 0
             should_notify = self._notifier is not None and not is_first_run
@@ -1082,7 +1124,7 @@ class Collector:
                             return total_collected
 
                 async def _collect_messages() -> None:
-                    nonlocal stop_due_to_persistence_error, messages_batch
+                    nonlocal messages_batch, retire_client_after_stream_timeout, stop_due_to_persistence_error
                     # Idle timeout caps the wait for the *next* post, not the whole
                     # channel: a healthy channel that streams post-by-post is never
                     # aborted, only a stream gone silent (dead socket) is. 0/negative
@@ -1102,7 +1144,7 @@ class Collector:
                     stream_close_allowed = True
 
                     async def _next_message():
-                        nonlocal stream_close_allowed
+                        nonlocal retire_client_after_stream_timeout, stream_close_allowed
                         if idle_timeout is None:
                             return await agen.__anext__()
 
@@ -1122,7 +1164,7 @@ class Collector:
                                 )
 
                         async def _cancel_next_task(reason: str) -> None:
-                            nonlocal stream_close_allowed
+                            nonlocal retire_client_after_stream_timeout, stream_close_allowed
                             if next_task.done():
                                 return
                             stream_close_allowed = False
@@ -1134,6 +1176,7 @@ class Collector:
                             if next_task in done:
                                 stream_close_allowed = True
                             else:
+                                retire_client_after_stream_timeout = True
                                 logger.warning(
                                     "Channel %d (%s): message stream %s timed out after %.1fs",
                                     channel_id,
@@ -1311,7 +1354,11 @@ class Collector:
                         channel_id,
                         update_err,
                     )
-                await self._pool.release_client(phone)
+                await self._release_collection_client(
+                    phone,
+                    session,
+                    retire=retire_client_after_stream_timeout,
+                )
 
             if stop_due_to_persistence_error or stream_idle_timeout:
                 # Idle timeout and persistence errors both stop this pass; the
