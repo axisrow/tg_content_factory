@@ -966,6 +966,273 @@ async def test_persist_progress_log_includes_channel_username(db, caplog):
 
 
 @pytest.mark.anyio
+async def test_collect_channel_hanging_stream_times_out_and_releases_client(db):
+    ch = Channel(channel_id=-100134, title="Hanging Stream")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    async def _hanging_stream(*_args, **_kwargs):
+        await asyncio.Event().wait()
+        yield  # pragma: no cover - keeps this as an async generator
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_hanging_stream())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.02)
+    collector = Collector(pool, db, config)
+
+    count = await asyncio.wait_for(
+        collector._collect_channel(stored, force=True),
+        timeout=0.2,
+    )
+
+    assert count == 0
+    pool.release_client.assert_awaited_with("+7000")
+    updated = await db.get_channel_by_pk(ch_id)
+    assert updated is not None
+    assert updated.last_collected_id == 0
+
+
+@pytest.mark.anyio
+async def test_collect_channel_hanging_stream_close_times_out_and_releases_client(db, monkeypatch):
+    ch = Channel(channel_id=-100137, title="Hanging Close")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    class HangingCloseStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+            raise StopAsyncIteration
+
+        async def aclose(self):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr("src.telegram.collector.STREAM_CLEANUP_TIMEOUT_SEC", 0.05)
+    monkeypatch.setattr("src.telegram.backends.STREAM_ITERATOR_CLOSE_TIMEOUT_SEC", 0.01)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=HangingCloseStream())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7003")))
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.01)
+    collector = Collector(pool, db, config)
+
+    count = await asyncio.wait_for(
+        collector._collect_channel(stored, force=True),
+        timeout=0.2,
+    )
+
+    assert count == 0
+    pool.release_client.assert_awaited_with("+7003")
+
+
+@pytest.mark.anyio
+async def test_collect_channel_abandoned_stream_read_retires_client(db, monkeypatch):
+    ch = Channel(channel_id=-100139, title="Dirty Stream Client")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    class SlowCloseStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+            raise StopAsyncIteration
+
+        async def aclose(self):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr("src.telegram.collector.STREAM_CLEANUP_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr("src.telegram.backends.STREAM_ITERATOR_CLOSE_TIMEOUT_SEC", 0.05)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=SlowCloseStream())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7005")))
+    pool.remove_client = AsyncMock()
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.01)
+    collector = Collector(pool, db, config)
+
+    count = await asyncio.wait_for(
+        collector._collect_channel(stored, force=True),
+        timeout=0.3,
+    )
+    await asyncio.sleep(0.06)
+
+    assert count == 0
+    pool.remove_client.assert_awaited_with("+7005")
+    pool.release_client.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_collect_channel_dirty_client_remove_timeout_does_not_release(db, monkeypatch):
+    ch = Channel(channel_id=-100140, title="Dirty Remove Timeout")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    class SlowCloseStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+            raise StopAsyncIteration
+
+        async def aclose(self):
+            await asyncio.Event().wait()
+
+    async def _hung_remove(_phone):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("src.telegram.collector.STREAM_CLEANUP_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr("src.telegram.backends.STREAM_ITERATOR_CLOSE_TIMEOUT_SEC", 0.05)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=SlowCloseStream())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7006")))
+    pool.remove_client = AsyncMock(side_effect=_hung_remove)
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.01)
+    collector = Collector(pool, db, config)
+
+    count = await asyncio.wait_for(
+        collector._collect_channel(stored, force=True),
+        timeout=0.3,
+    )
+    await asyncio.sleep(0.06)
+
+    assert count == 0
+    pool.remove_client.assert_awaited_with("+7006")
+    pool.release_client.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_collect_channel_cancels_pending_stream_read_on_shutdown(db):
+    ch = Channel(channel_id=-100138, title="Cancelled Stream")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    class CancellableStream:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled.set()
+
+    stream = CancellableStream()
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=stream)
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7004")))
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=30)
+    collector = Collector(pool, db, config)
+
+    task = asyncio.create_task(collector._collect_channel(stored, force=True))
+    await asyncio.wait_for(stream.started.wait(), timeout=0.2)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.wait_for(stream.cancelled.wait(), timeout=0.2)
+    pool.release_client.assert_awaited_with("+7004")
+
+
+@pytest.mark.anyio
+async def test_collect_channel_slow_but_alive_stream_not_aborted(db):
+    """A healthy channel that streams post-by-post must NOT be aborted.
+
+    The idle-timeout caps the wait for the *next* post, not the whole channel.
+    Here each post arrives faster than the idle limit, but the channel as a
+    whole takes longer than the limit — it must still collect every message.
+    Regression guard: the old per-channel timeout killed large live channels.
+    """
+    ch = Channel(channel_id=-100135, title="Slow But Alive")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    # 5 posts, ~0.02s apart → ~0.1s total, well past the 0.05s idle limit,
+    # but no single gap exceeds it.
+    async def _slow_stream(*_args, **_kwargs):
+        for i in range(1, 6):
+            await asyncio.sleep(0.02)
+            yield _make_mock_message(i, text=f"msg {i}")
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_slow_stream())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7001")))
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.05)
+    collector = Collector(pool, db, config)
+
+    count = await asyncio.wait_for(
+        collector._collect_channel(stored, force=True),
+        timeout=2.0,
+    )
+
+    assert count == 5
+    pool.release_client.assert_awaited_with("+7001")
+
+
+@pytest.mark.anyio
+async def test_collect_channel_zero_timeout_disables_abort(db):
+    """`collection_stream_timeout_sec=0` disables the idle abort entirely.
+
+    With the timeout off, even a slow stream collects fully and nothing is cut.
+    """
+    ch = Channel(channel_id=-100136, title="Timeout Disabled")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    async def _slow_stream(*_args, **_kwargs):
+        for i in range(1, 4):
+            await asyncio.sleep(0.01)
+            yield _make_mock_message(i, text=f"msg {i}")
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_slow_stream())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7002")))
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0)
+    collector = Collector(pool, db, config)
+
+    count = await asyncio.wait_for(
+        collector._collect_channel(stored, force=True),
+        timeout=2.0,
+    )
+
+    assert count == 3
+    pool.release_client.assert_awaited_with("+7002")
+
+
+@pytest.mark.anyio
 async def test_incremental_batch_flushes_to_avoid_huge_final_flush(db):
     """Incremental collection should flush large channels before the final flush."""
     ch = Channel(channel_id=-100130, title="Test", username="test130", last_collected_id=50)
@@ -1141,6 +1408,50 @@ async def test_incremental_collection_sends_notification_queries(db):
 
     collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0), notifier)
     count = await collector._collect_channel(ch)
+
+    assert count == 1
+    notifier.notify.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_incremental_collection_sends_notifications_before_idle_timeout_return(db):
+    from src.models import SearchQuery
+
+    ch = Channel(channel_id=-100141, title="Test", username="test141", last_collected_id=10)
+    await db.add_channel(ch)
+    repo = db.repos.search_queries
+    await repo.add(SearchQuery(query="urgent", notify_on_collect=True))
+
+    class OneThenHangStream:
+        def __init__(self, msg):
+            self.msg = msg
+            self.sent = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self.sent:
+                self.sent = True
+                return self.msg
+            await asyncio.Event().wait()
+            raise StopAsyncIteration
+
+    mock_msg = _make_mock_message(11, text="urgent update")
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=OneThenHangStream(mock_msg))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    notifier = AsyncMock()
+
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.01),
+        notifier,
+    )
+    count = await asyncio.wait_for(collector._collect_channel(ch), timeout=0.3)
 
     assert count == 1
     notifier.notify.assert_awaited_once()

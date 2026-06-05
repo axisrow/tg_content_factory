@@ -226,17 +226,22 @@ async def test_publish_worker_down_snapshot_for_decrypt_failure():
 
 
 async def test_worker_loop_continues_after_transient_snapshot_cancel():
+    from src.config import AppConfig
+
     container = MagicMock()
+    # The publish timeout is read from config now, so a real AppConfig is needed
+    # (a MagicMock would feed asyncio.wait_for a non-numeric timeout).
+    config = AppConfig()
     publish_calls = 0
+    worker_task: asyncio.Task[None] | None = None
 
     async def publish_snapshot(_container, *, stop_event=None):
         nonlocal publish_calls
         publish_calls += 1
         if publish_calls == 1:
             raise asyncio.CancelledError
-        task = asyncio.current_task()
-        assert task is not None
-        task.cancel()
+        assert worker_task is not None
+        worker_task.cancel()
         raise asyncio.CancelledError
 
     with (
@@ -246,7 +251,7 @@ async def test_worker_loop_continues_after_transient_snapshot_cancel():
         patch("src.runtime.worker._publish_snapshots", new=publish_snapshot),
         patch("src.runtime.worker.HEARTBEAT_INTERVAL_SEC", 0.001),
     ):
-        worker_task = asyncio.create_task(_run_worker_async(MagicMock()))
+        worker_task = asyncio.create_task(_run_worker_async(config))
         with pytest.raises(asyncio.CancelledError):
             await worker_task
 
@@ -255,8 +260,10 @@ async def test_worker_loop_continues_after_transient_snapshot_cancel():
 
 
 async def test_embedded_worker_stop_suppresses_cancelled_snapshot_publish():
+    from src.config import AppConfig
+
     container = MagicMock()
-    worker = EmbeddedWorker(MagicMock())
+    worker = EmbeddedWorker(AppConfig())
 
     with (
         patch("src.web.embedded_worker.build_worker_container", AsyncMock(return_value=container)),
@@ -278,3 +285,39 @@ async def test_embedded_worker_stop_suppresses_cancelled_snapshot_publish():
 
     stop_container.assert_awaited_once_with(container)
     assert worker.container is None
+
+
+async def test_embedded_worker_retries_after_hanging_snapshot_publish():
+    from src.config import AppConfig
+
+    container = MagicMock()
+    # The publish timeout now comes from config, not a hard-coded module
+    # constant — a single source of truth instead of the old duplicate.
+    config = AppConfig()
+    config.scheduler.snapshot_publish_timeout_sec = 0.01
+    worker = EmbeddedWorker(config)
+    publish_started = asyncio.Event()
+    publish_calls = 0
+
+    async def hanging_publish(_container, *, stop_event=None):
+        nonlocal publish_calls
+        publish_calls += 1
+        publish_started.set()
+        await asyncio.Event().wait()
+
+    with (
+        patch("src.web.embedded_worker.build_worker_container", AsyncMock(return_value=container)),
+        patch("src.web.embedded_worker.start_container", AsyncMock()),
+        patch("src.web.embedded_worker.stop_container", AsyncMock()) as stop_container,
+        patch("src.web.embedded_worker._publish_snapshots", new=hanging_publish),
+        patch("src.web.embedded_worker.HEARTBEAT_INTERVAL_SEC", 0.001),
+    ):
+        await worker.start()
+        try:
+            await asyncio.wait_for(publish_started.wait(), timeout=0.05)
+            await asyncio.sleep(0.05)
+            assert publish_calls >= 2
+        finally:
+            await worker.stop(timeout=0.01)
+
+    stop_container.assert_awaited_once_with(container)
