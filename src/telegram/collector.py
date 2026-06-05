@@ -287,25 +287,28 @@ class Collector:
             return max(1, configured)
         return max(1, min(configured, connected))
 
-    async def available_collection_worker_count(self) -> int:
-        configured = int(getattr(self._config, "collection_worker_count", 0) or 0)
-        connected = len(getattr(self._pool, "clients", {}) or {})
+    async def available_collection_slot_count(self) -> int:
         counter = getattr(self._pool, "available_collection_client_count", None)
         if callable(counter):
             try:
                 count = counter()
                 if asyncio.iscoroutine(count):
                     count = await count
-                available = int(count)
-                if available > 0:
-                    limit = configured if configured > 0 else 10
-                    return max(1, min(limit, available))
-                if connected <= 0:
-                    return max(1, configured) if configured > 0 else 1
-                return 1
+                return max(0, int(count))
             except Exception:
-                logger.debug("Failed to read available collection client count", exc_info=True)
+                logger.debug("Failed to read available collection client slots", exc_info=True)
         return self.collection_worker_count()
+
+    async def available_collection_worker_count(self) -> int:
+        configured = int(getattr(self._config, "collection_worker_count", 0) or 0)
+        connected = len(getattr(self._pool, "clients", {}) or {})
+        available = await self.available_collection_slot_count()
+        if available > 0:
+            limit = configured if configured > 0 else 10
+            return max(1, min(limit, available))
+        if connected <= 0:
+            return max(1, configured) if configured > 0 else 1
+        return 1
 
     def stats_all_worker_count(self) -> int:
         configured = max(1, int(getattr(self._config, "stats_all_worker_count", 1) or 1))
