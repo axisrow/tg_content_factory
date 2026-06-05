@@ -15,7 +15,7 @@ import pytest
 from src.collection_queue import CollectionQueue
 from src.config import SchedulerConfig
 from src.database import Database
-from src.models import Channel, CollectionTaskStatus
+from src.models import Channel, CollectionTask, CollectionTaskStatus
 from src.telegram.collector import Collector
 
 
@@ -441,6 +441,17 @@ async def test_available_collection_worker_count_uses_exclusive_available_client
 
 
 @pytest.mark.anyio
+async def test_available_collection_slot_count_returns_raw_exclusive_slots():
+    pool = _make_pool(clients={"+1": MagicMock(), "+2": MagicMock()})
+    pool.available_collection_client_count.return_value = 0
+    db = MagicMock()
+    collector = Collector(pool, db, SchedulerConfig(collection_worker_count=0))
+
+    assert await collector.available_collection_slot_count() == 0
+    assert await collector.available_collection_worker_count() == 1
+
+
+@pytest.mark.anyio
 async def test_available_collection_worker_count_respects_explicit_limit_and_availability():
     pool = _make_pool(clients={"+1": MagicMock(), "+2": MagicMock(), "+3": MagicMock()})
     pool.available_collection_client_count.return_value = 1
@@ -472,6 +483,7 @@ async def test_collection_worker_count_no_clients():
 @pytest.mark.anyio
 async def test_target_worker_count_delegates_to_collector():
     collector = MagicMock()
+    del collector.available_collection_slot_count
     del collector.available_collection_worker_count
     collector.collection_worker_count = MagicMock(return_value=3)
     queue = CollectionQueue(collector, MagicMock())
@@ -482,6 +494,7 @@ async def test_target_worker_count_delegates_to_collector():
 @pytest.mark.anyio
 async def test_target_worker_count_prefers_available_collection_count():
     collector = MagicMock()
+    del collector.available_collection_slot_count
     collector.available_collection_worker_count = AsyncMock(return_value=2)
     collector.collection_worker_count = MagicMock(return_value=3)
     queue = CollectionQueue(collector, MagicMock())
@@ -493,9 +506,20 @@ async def test_target_worker_count_prefers_available_collection_count():
 
 
 @pytest.mark.anyio
-async def test_worker_parks_when_available_target_is_already_active():
+async def test_available_target_worker_count_adds_free_slots_to_active_tasks():
     collector = MagicMock()
-    collector.available_collection_worker_count = AsyncMock(return_value=1)
+    collector.available_collection_slot_count = AsyncMock(return_value=1)
+    collector.collection_worker_count = MagicMock(return_value=3)
+    queue = CollectionQueue(collector, MagicMock())
+    queue._active_task_ids[99] = asyncio.Event()
+
+    assert await queue._available_target_worker_count() == 2
+
+
+@pytest.mark.anyio
+async def test_worker_parks_when_no_free_slot_is_available_for_active_task():
+    collector = MagicMock()
+    collector.available_collection_slot_count = AsyncMock(return_value=0)
     collector.collection_worker_count = MagicMock(return_value=3)
     collector.collect_single_channel = AsyncMock(return_value=0)
     channels = MagicMock()
@@ -507,3 +531,34 @@ async def test_worker_parks_when_available_target_is_already_active():
 
     assert queue._queue.qsize() == 1
     collector.collect_single_channel.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_worker_starts_replacement_when_free_slot_exists_for_active_task():
+    collector = MagicMock()
+    collector.available_collection_slot_count = AsyncMock(return_value=1)
+    collector.collection_worker_count = MagicMock(return_value=3)
+    collector.collect_single_channel = AsyncMock(return_value=0)
+    collector.is_cancelled = False
+
+    task = CollectionTask(
+        id=1,
+        channel_id=-8002,
+        channel_title="queued",
+        status=CollectionTaskStatus.PENDING,
+    )
+    channels = MagicMock()
+    channels.get_collection_task = AsyncMock(return_value=task)
+    channels.update_collection_task = AsyncMock()
+    channels.update_collection_task_progress = AsyncMock()
+
+    queue = CollectionQueue(collector, channels)
+    queue._active_task_ids[99] = asyncio.Event()
+    queued = Channel(channel_id=-8002, title="queued")
+    queue._queue.put_nowait((1, queued, False, False))
+
+    await queue._run_single_worker()
+
+    collector.collect_single_channel.assert_awaited_once()
+    assert collector.collect_single_channel.await_args.args[0] == queued
+    assert queue._queue.empty()

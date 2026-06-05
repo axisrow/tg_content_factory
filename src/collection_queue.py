@@ -147,6 +147,18 @@ class CollectionQueue:
         return 1
 
     async def _available_target_worker_count(self) -> int:
+        slot_getter = getattr(self._collector, "available_collection_slot_count", None)
+        if callable(slot_getter):
+            slots = slot_getter()
+            if asyncio.iscoroutine(slots):
+                slots = await slots
+            active_count = len(self._active_task_ids)
+            configured = self._target_worker_count()
+            desired = active_count + max(0, int(slots))
+            if desired <= 0:
+                return 1
+            return max(1, active_count, min(configured, desired))
+
         getter = getattr(self._collector, "available_collection_worker_count", None)
         if callable(getter):
             count = getter()
