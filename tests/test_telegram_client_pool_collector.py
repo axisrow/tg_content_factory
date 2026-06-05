@@ -930,6 +930,26 @@ async def test_remove_client_cleans_up_all_state(pool, mock_auth, mock_db):
 
 
 @pytest.mark.anyio
+async def test_remove_client_disconnect_timeout_marks_client_removed(pool, monkeypatch):
+    async def _hung_disconnect():
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("src.telegram.client_pool.REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC", 0.01)
+    client = AsyncMock()
+    client.disconnect = AsyncMock(side_effect=_hung_disconnect)
+    pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
+    pool._in_use.add("+7001")
+    pool._dialogs_fetched.add("+7001")
+
+    await asyncio.wait_for(pool.remove_client("+7001"), timeout=0.1)
+
+    client.disconnect.assert_awaited_once()
+    assert "+7001" not in pool.clients
+    assert "+7001" not in pool._in_use
+    assert "+7001" not in pool._dialogs_fetched
+
+
+@pytest.mark.anyio
 async def test_remove_client_with_active_leases(pool, mock_auth, mock_db):
     client = AsyncMock()
     pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)

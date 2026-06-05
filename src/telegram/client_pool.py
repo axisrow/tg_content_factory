@@ -48,6 +48,7 @@ from src.telegram.session_materializer import SessionMaterializer
 from src.telegram.utils import normalize_utc
 
 logger = logging.getLogger(__name__)
+REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC = 5.0
 
 
 @dataclass
@@ -699,22 +700,32 @@ class ClientPool:
         self._session_overrides.pop(phone, None)
         async with self._lock:
             leases = list(self._active_leases.pop(phone, []))
-        for lease in reversed(leases):
-            if lease.disconnect_on_release:
-                try:
-                    await self._backend_router.release(lease)
-                except Exception:
-                    logger.debug("Failed to release live lease for %s", phone, exc_info=True)
         client = self.clients.pop(phone, None)
-        if isinstance(client, TelegramTransportSession):
-            try:
-                await client.raw_client.disconnect()
-            except Exception:
-                logger.debug("Failed to disconnect session for %s", phone, exc_info=True)
         self._in_use.discard(phone)
         self._dialogs_fetched.discard(phone)
         self.invalidate_dialogs_cache(phone)
         self.clear_premium_flood(phone)
+        for lease in reversed(leases):
+            if lease.disconnect_on_release:
+                try:
+                    await asyncio.wait_for(
+                        self._backend_router.release(lease),
+                        timeout=REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning("Timeout releasing live lease for %s", phone)
+                except Exception:
+                    logger.debug("Failed to release live lease for %s", phone, exc_info=True)
+        if isinstance(client, TelegramTransportSession):
+            try:
+                await asyncio.wait_for(
+                    client.raw_client.disconnect(),
+                    timeout=REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Timeout disconnecting session for %s", phone)
+            except Exception:
+                logger.debug("Failed to disconnect session for %s", phone, exc_info=True)
 
     def _premium_flooded_phones(self) -> set[str]:
         now = datetime.now(timezone.utc)
