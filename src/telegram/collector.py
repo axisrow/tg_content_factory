@@ -249,6 +249,9 @@ class Collector:
             return cancel_event.is_set() or self._cancel_event.is_set()
         return self._cancel_event.is_set()
 
+    def _should_clear_collection_cancel_on_start(self, cancel_event: asyncio.Event | None) -> bool:
+        return cancel_event is None or not self.is_running
+
     async def _wait_if_live_runtime_paused(
         self,
         *,
@@ -618,7 +621,7 @@ class Collector:
                 channel.channel_id,
             )
             return 0
-        if cancel_event is None:
+        if self._should_clear_collection_cancel_on_start(cancel_event):
             self._cancel_event.clear()
         self._auto_delete_cached = None
         self._active_collection_count = int(getattr(self, "_active_collection_count", 0) or 0) + 1
