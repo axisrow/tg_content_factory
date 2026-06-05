@@ -336,7 +336,8 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
     # last_progress_at). Used instead of "any RUNNING row exists" so the UI
     # never claims a collection is in flight when the row is an orphan left by
     # a crashed worker.
-    task_is_progressing = running_task is not None and not running_task_stale
+    task_is_progressing = worker_alive and running_task is not None and not running_task_stale
+    collector_is_running = worker_alive and (collector.is_running or task_is_progressing)
     state = "healthy"
     if running_task_stale:
         # Genuinely stuck: a RUNNING task whose progress hasn't advanced for a
@@ -365,7 +366,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         state=state,
     )
     current_status_label, current_status_detail, current_status_severity = _current_status_presentation(
-        state, is_running=collector.is_running or task_is_progressing
+        state, is_running=collector_is_running
     )
     load_label, load_severity = _load_presentation(load_level)
     capacity_accounts = max(1, available_accounts_now)
@@ -404,7 +405,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
             interval_minutes=interval_minutes,
             active_unfiltered_channels=active_unfiltered_channels,
             available_accounts_now=available_accounts_now,
-            is_running=collector.is_running or task_is_progressing,
+            is_running=collector_is_running,
             pending_count=len(pending_channel_tasks),
         ),
         "current_status_label": current_status_label,
@@ -420,7 +421,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         "running_task_messages_collected": running_task.messages_collected if running_task else 0,
         "recent_zero_collect_count": recent_zero_collect_count,
         "recent_unavailability_events": recent_unavailability_events,
-        "is_running": collector.is_running or task_is_progressing,
+        "is_running": collector_is_running,
         "next_available_label": _format_retry_hint(next_available_at or availability_next),
     }
 
