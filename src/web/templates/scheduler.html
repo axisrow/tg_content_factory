@@ -134,7 +134,10 @@
         <p class="mb-2"><strong>Сейчас собирается:</strong> {{ collector_health.running_task_title }}, собрано {{ collector_health.running_task_messages_collected }} сообщений; остальные задачи ждут.</p>
         {% endif %}
 
-        {% if collector_health.state == 'worker_down' %}
+        {% if collector_health.state == 'collector_stuck' %}
+        <p class="mb-2"><strong>Почему сейчас не собираем:</strong> текущая задача сбора{% if collector_health.running_task_title %} (<strong>{{ collector_health.running_task_title }}</strong>){% endif %} давно не двигается с места, поэтому остальные задачи ждут в очереди.</p>
+        <p class="mb-2"><strong>Как починить:</strong> перезапустите процесс с воркером и проверьте, что очередь снова разбирается.</p>
+        {% elif collector_health.state == 'worker_down' %}
         <p class="mb-2"><strong>Почему сейчас не собираем:</strong> веб-процесс принимает задачи и пишет их в БД, но Telegram-коннекты держит отдельный воркер-процесс — он сейчас не запущен (нет свежего heartbeat в <code>runtime_snapshots</code>). Задачи из <code>collection_tasks</code> копятся в статусе <em>pending</em>, но никто их не исполняет.</p>
         {% if collector_health.worker_reason %}
         <p class="mb-2"><strong>Причина:</strong> {{ collector_health.worker_reason }}</p>

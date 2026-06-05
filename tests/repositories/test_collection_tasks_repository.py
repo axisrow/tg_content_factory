@@ -171,6 +171,35 @@ async def test_update_collection_task_progress(collection_tasks_repo):
     assert task.messages_collected == 100
 
 
+async def test_update_collection_task_progress_stamps_last_progress_at(collection_tasks_repo):
+    """Progress updates must record *when* progress last moved.
+
+    The scheduler health page uses this timestamp to tell a genuinely stuck
+    collection ("no progress for a long time") apart from a worker that simply
+    isn't running — so every progress write must refresh last_progress_at.
+    """
+    before = datetime.now(tz=timezone.utc)
+    task_id = await collection_tasks_repo.create_collection_task(1, "Test")
+    await collection_tasks_repo.update_collection_task_progress(task_id, 100)
+
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task.last_progress_at is not None
+    assert task.last_progress_at >= before - timedelta(seconds=5)
+
+
+async def test_update_collection_task_to_running_seeds_last_progress_at(collection_tasks_repo):
+    """A freshly RUNNING task must have a progress timestamp seeded.
+
+    Without it, a task that hasn't flushed its first batch yet would look
+    "stuck since NULL" instead of "just started".
+    """
+    task_id = await collection_tasks_repo.create_collection_task(1, "Test")
+    await collection_tasks_repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
+
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task.last_progress_at is not None
+
+
 # update_collection_task tests
 
 

@@ -5,9 +5,32 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from src.services.runtime_diagnostics import (
+    DEFAULT_SNAPSHOT_PUBLISH_TIMEOUT_SEC,
     WORKER_HEARTBEAT_STALE_AFTER_SEC,
     evaluate_worker_heartbeat,
+    resolve_snapshot_publish_timeout,
 )
+
+
+def test_resolve_snapshot_publish_timeout_passes_through_positive():
+    assert resolve_snapshot_publish_timeout(30.0) == 30.0
+    assert resolve_snapshot_publish_timeout(5) == 5.0
+
+
+def test_resolve_snapshot_publish_timeout_rejects_zero_and_negative():
+    """A misconfigured 0/negative must not make every heartbeat time out instantly.
+
+    asyncio.wait_for(timeout<=0) aborts the publish on the first pass, so a bad
+    value would silently stop heartbeats and flip the UI to worker_down. Fall
+    back to the safe default instead.
+    """
+    assert resolve_snapshot_publish_timeout(0) == DEFAULT_SNAPSHOT_PUBLISH_TIMEOUT_SEC
+    assert resolve_snapshot_publish_timeout(-1) == DEFAULT_SNAPSHOT_PUBLISH_TIMEOUT_SEC
+
+
+def test_resolve_snapshot_publish_timeout_handles_none_and_garbage():
+    assert resolve_snapshot_publish_timeout(None) == DEFAULT_SNAPSHOT_PUBLISH_TIMEOUT_SEC
+    assert resolve_snapshot_publish_timeout("nonsense") == DEFAULT_SNAPSHOT_PUBLISH_TIMEOUT_SEC
 
 
 def _snapshot(*, updated_at, payload=None):

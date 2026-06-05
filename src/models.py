@@ -206,6 +206,9 @@ class CollectionTask(BaseModel):
     created_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    # When progress (messages_collected) last advanced — used by the scheduler
+    # health page to tell a genuinely stuck collection apart from a downed worker.
+    last_progress_at: datetime | None = None
 
 
 class ChannelStats(BaseModel):

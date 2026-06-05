@@ -37,17 +37,16 @@ from src.runtime.worker import (
     _publish_snapshots,
     _publish_worker_down_snapshot,
 )
+from src.services.runtime_diagnostics import HEARTBEAT_INTERVAL_SEC, resolve_snapshot_publish_timeout
 from src.web.bootstrap import build_worker_container, start_container, stop_container
 from src.web.container import AppContainer
 from src.web.log_handler import LogBuffer
 
 logger = logging.getLogger(__name__)
 
-# How often the embedded worker republishes `worker_heartbeat` and the other
-# runtime snapshots. Matches `src/runtime/worker.py:_run_worker_async` and is
-# what `_is_worker_alive` compares against (`WORKER_HEARTBEAT_STALE_AFTER_SEC`
-# is 60s, so 5s gives 12 beats of slack before the UI marks the worker down).
-HEARTBEAT_INTERVAL_SEC = 5.0
+# HEARTBEAT_INTERVAL_SEC is imported from src.services.runtime_diagnostics — the
+# single source of truth shared with the standalone worker. The snapshot-publish
+# timeout comes from config (scheduler.snapshot_publish_timeout_sec).
 
 
 class EmbeddedWorker:
@@ -159,10 +158,16 @@ class EmbeddedWorker:
                 self._container = None
             return
 
+        publish_timeout = resolve_snapshot_publish_timeout(
+            self._config.scheduler.snapshot_publish_timeout_sec
+        )
         try:
             while not self._stop_event.is_set():
                 try:
-                    await _publish_snapshots(self._container, stop_event=self._stop_event)
+                    await asyncio.wait_for(
+                        _publish_snapshots(self._container, stop_event=self._stop_event),
+                        timeout=publish_timeout,
+                    )
                     self._ready_event.set()
                 except asyncio.CancelledError:
                     if _current_task_is_cancelling():
@@ -171,6 +176,11 @@ class EmbeddedWorker:
                         logger.info("[embedded-worker] stopping during snapshot publish")
                         break
                     logger.warning("[embedded-worker] snapshot publish was cancelled; continuing")
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "[embedded-worker] snapshot publish timed out after %.1fs; continuing",
+                        publish_timeout,
+                    )
                 except DatabaseBusyError:
                     # Transient lock — back off quietly. A full traceback every
                     # heartbeat (~5s) floods the log while contended; the next

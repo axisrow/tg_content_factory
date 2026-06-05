@@ -121,6 +121,11 @@ class CollectionTasksRepository:
             created_at=parse_datetime(row["created_at"]),
             started_at=parse_datetime(row["started_at"]),
             completed_at=parse_datetime(row["completed_at"]),
+            last_progress_at=(
+                parse_datetime(row["last_progress_at"])
+                if "last_progress_at" in row.keys()
+                else None
+            ),
         )
 
     async def create_collection_task(
@@ -221,9 +226,10 @@ class CollectionTasksRepository:
         return cur.lastrowid or 0
 
     async def update_collection_task_progress(self, task_id: int, messages_collected: int) -> None:
+        now = datetime.now(tz=timezone.utc).isoformat()
         await self._database.execute_write(
-            "UPDATE collection_tasks SET messages_collected = ? WHERE id = ?",
-            (messages_collected, task_id),
+            "UPDATE collection_tasks SET messages_collected = ?, last_progress_at = ? WHERE id = ?",
+            (messages_collected, now, task_id),
         )
 
     async def persist_stats_progress(
@@ -254,6 +260,10 @@ class CollectionTasksRepository:
         params: list[Any] = [status_value]
         if status_value == CollectionTaskStatus.RUNNING.value:
             sets.append("started_at = ?")
+            params.append(now)
+            # Seed the progress clock so a just-started task reads as fresh
+            # rather than "stuck since NULL" before its first batch flushes.
+            sets.append("last_progress_at = ?")
             params.append(now)
         terminal = (CollectionTaskStatus.COMPLETED.value, CollectionTaskStatus.FAILED.value)
         if status_value in terminal:
@@ -578,7 +588,7 @@ class CollectionTasksRepository:
         placeholders = ", ".join("?" for _ in handled_types)
         cur = await self._database.execute_write(
             f"UPDATE collection_tasks "
-            f"SET status = 'running', started_at = ?, completed_at = NULL "
+            f"SET status = 'running', started_at = ?, last_progress_at = ?, completed_at = NULL "
             f"WHERE id = ("
             f"    SELECT id FROM collection_tasks "
             f"    WHERE task_type IN ({placeholders}) "
@@ -586,7 +596,7 @@ class CollectionTasksRepository:
             f"    AND (run_after IS NULL OR run_after <= ?) "
             f"    ORDER BY COALESCE(run_after, ''), id ASC LIMIT 1"
             f") RETURNING *",
-            (now_iso, *handled_types, CollectionTaskStatus.PENDING.value, now_iso),
+            (now_iso, now_iso, *handled_types, CollectionTaskStatus.PENDING.value, now_iso),
         )
         row = await cur.fetchone()
         if row is None:

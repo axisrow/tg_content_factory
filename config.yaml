@@ -11,6 +11,8 @@ scheduler:
   collect_interval_minutes: 30
   delay_between_channels_sec: 2
   delay_between_requests_sec: 1
+  collection_stream_timeout_sec: 120
+  snapshot_publish_timeout_sec: 30
   max_flood_wait_sec: 300
   stats_all_max_channels_per_run: 10
   stats_all_cooldown_sec: 600

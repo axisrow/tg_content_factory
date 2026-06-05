@@ -623,11 +623,122 @@ async def test_scheduler_page_renders_worker_down_banner(client, base_app):
 
 
 @pytest.mark.anyio
+async def test_scheduler_page_renders_stuck_collector_banner_for_stale_progress(client, base_app):
+    """A running task whose progress hasn't moved for a long time is stuck.
+
+    'Stuck' is decided by stalled progress (last_progress_at far in the past),
+    NOT merely by a running row existing alongside a stale heartbeat — that
+    second case is just a downed worker (see the test below).
+    """
+    _, db, _ = base_app
+    task_id = await db.create_collection_task(
+        channel_id=-100404,
+        channel_title="Stuck Channel",
+    )
+    await db.update_collection_task(
+        task_id,
+        CollectionTaskStatus.RUNNING,
+        messages_collected=42,
+    )
+    # Force the progress timestamp far into the past → genuinely stalled.
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat()
+    await db.execute_write(
+        "UPDATE collection_tasks SET last_progress_at = ? WHERE id = ?",
+        (stale, task_id),
+    )
+
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Сбор завис" in body
+    assert "Stuck Channel" in body
+    assert "Telegram-воркер не запущен" not in body
+
+
+@pytest.mark.anyio
+async def test_scheduler_page_shows_worker_down_when_progress_fresh_but_heartbeat_stale(client, base_app):
+    """Stale heartbeat + a freshly-progressing running task = worker_down, not stuck.
+
+    Anti-regression: the buggy version flagged any running row under a stale
+    heartbeat as 'collector_stuck', mislabelling a simply-crashed worker (which
+    left an orphaned RUNNING row) as a hung collection.
+    """
+    from src.models import RuntimeSnapshot
+
+    _, db, _ = base_app
+    stale = datetime.now(timezone.utc) - timedelta(minutes=5)
+    await db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="worker_heartbeat",
+            payload={"status": "alive"},
+            updated_at=stale,
+        )
+    )
+    task_id = await db.create_collection_task(
+        channel_id=-100405,
+        channel_title="Fresh Channel",
+    )
+    await db.update_collection_task(
+        task_id,
+        CollectionTaskStatus.RUNNING,
+        messages_collected=42,
+    )
+    # Progress is recent → not stuck, the worker just isn't beating.
+    fresh = datetime.now(timezone.utc).isoformat()
+    await db.execute_write(
+        "UPDATE collection_tasks SET last_progress_at = ? WHERE id = ?",
+        (fresh, task_id),
+    )
+
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "Telegram-воркер не запущен" in body
+    assert "Сбор завис" not in body
+
+
+@pytest.mark.anyio
 async def test_scheduler_page_no_worker_banner_when_heartbeat_fresh(client, base_app):
     """Fresh heartbeat must NOT render the worker_down banner."""
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
     assert "Telegram-воркер не запущен" not in resp.text
+
+
+# ── _is_running_task_stale: stuck threshold tracks the idle timeout ────
+
+
+def _running_task(*, last_progress_at):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(last_progress_at=last_progress_at, started_at=last_progress_at)
+
+
+def test_running_task_stale_with_default_idle_timeout():
+    """With the default idle timeout, ~6min of no progress reads as stuck."""
+    from src.web.scheduler.context import _is_running_task_stale
+
+    now = datetime.now(timezone.utc)
+    task = _running_task(last_progress_at=now - timedelta(seconds=360))
+    assert _is_running_task_stale(task, idle_timeout_sec=120.0, now=now) is True
+
+
+def test_running_task_not_stale_when_idle_timeout_is_large():
+    """A large collection_stream_timeout_sec must push the stuck threshold out.
+
+    The collector legitimately waits up to idle_timeout_sec for the next post,
+    so a stall shorter than that (plus grace) is NOT stuck — otherwise the page
+    cries 'stuck' while the worker is still legally waiting.
+    """
+    from src.web.scheduler.context import _is_running_task_stale
+
+    now = datetime.now(timezone.utc)
+    # 7 minutes of no progress, but the configured idle timeout is 10 minutes.
+    task = _running_task(last_progress_at=now - timedelta(seconds=420))
+    assert _is_running_task_stale(task, idle_timeout_sec=600.0, now=now) is False
+    # Once the stall clearly exceeds the idle timeout + grace, it IS stuck.
+    very_stale = _running_task(last_progress_at=now - timedelta(seconds=900))
+    assert _is_running_task_stale(very_stale, idle_timeout_sec=600.0, now=now) is True
 
 
 # ── web_mode fixture sanity (#457 round 3) ─────────────────────────────
