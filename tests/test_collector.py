@@ -1076,6 +1076,50 @@ async def test_collect_channel_abandoned_stream_read_retires_client(db, monkeypa
 
 
 @pytest.mark.anyio
+async def test_collect_channel_dirty_client_remove_timeout_does_not_release(db, monkeypatch):
+    ch = Channel(channel_id=-100140, title="Dirty Remove Timeout")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    class SlowCloseStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+            raise StopAsyncIteration
+
+        async def aclose(self):
+            await asyncio.Event().wait()
+
+    async def _hung_remove(_phone):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr("src.telegram.collector.STREAM_CLEANUP_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr("src.telegram.backends.STREAM_ITERATOR_CLOSE_TIMEOUT_SEC", 0.05)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=SlowCloseStream())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7006")))
+    pool.remove_client = AsyncMock(side_effect=_hung_remove)
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.01)
+    collector = Collector(pool, db, config)
+
+    count = await asyncio.wait_for(
+        collector._collect_channel(stored, force=True),
+        timeout=0.3,
+    )
+    await asyncio.sleep(0.06)
+
+    assert count == 0
+    pool.remove_client.assert_awaited_with("+7006")
+    pool.release_client.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_collect_channel_cancels_pending_stream_read_on_shutdown(db):
     ch = Channel(channel_id=-100138, title="Cancelled Stream")
     ch_id = await db.add_channel(ch)

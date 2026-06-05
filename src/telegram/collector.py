@@ -709,8 +709,16 @@ class Collector:
             try:
                 result = remove_client(phone)
                 if isawaitable(result):
-                    await result
-                    return
+                    await asyncio.wait_for(result, timeout=STREAM_CLEANUP_TIMEOUT_SEC)
+                return
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Timed out removing dirty Telegram client for %s after %.1fs; "
+                    "not returning it to the pool",
+                    phone,
+                    STREAM_CLEANUP_TIMEOUT_SEC,
+                )
+                return
             except Exception:
                 logger.debug("Failed to remove dirty Telegram client for %s", phone, exc_info=True)
 
