@@ -531,6 +531,7 @@ async def test_reset_collection_task_to_pending(collection_tasks_repo):
     assert task.status == CollectionTaskStatus.PENDING
     assert task.started_at is None
     assert task.completed_at is None
+    assert task.last_progress_at is None
     assert task.error is None
     assert task.note == "shutdown"
 

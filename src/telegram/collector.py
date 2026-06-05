@@ -1099,17 +1099,14 @@ class Collector:
                         wait_time=self._config.delay_between_requests_sec,
                     )
                     agen = stream.__aiter__()
+                    stream_close_allowed = True
 
                     async def _next_message():
+                        nonlocal stream_close_allowed
                         if idle_timeout is None:
                             return await agen.__anext__()
 
                         next_task = asyncio.create_task(agen.__anext__())
-                        done, _ = await asyncio.wait({next_task}, timeout=idle_timeout)
-                        if next_task in done:
-                            return await next_task
-
-                        next_task.cancel()
 
                         def _consume_late_next_task(task: asyncio.Task) -> None:
                             try:
@@ -1124,21 +1121,36 @@ class Collector:
                                     exc_info=(type(exc), exc, exc.__traceback__),
                                 )
 
-                        next_task.add_done_callback(_consume_late_next_task)
+                        async def _cancel_next_task(reason: str) -> None:
+                            nonlocal stream_close_allowed
+                            if next_task.done():
+                                return
+                            stream_close_allowed = False
+                            next_task.cancel()
+                            next_task.add_done_callback(_consume_late_next_task)
+                            done, _ = await asyncio.wait(
+                                {next_task}, timeout=STREAM_CLEANUP_TIMEOUT_SEC
+                            )
+                            if next_task in done:
+                                stream_close_allowed = True
+                            else:
+                                logger.warning(
+                                    "Channel %d (%s): message stream %s timed out after %.1fs",
+                                    channel_id,
+                                    channel.username or channel.title or "",
+                                    reason,
+                                    STREAM_CLEANUP_TIMEOUT_SEC,
+                                )
+
                         try:
-                            await asyncio.wait_for(
-                                asyncio.shield(next_task),
-                                timeout=STREAM_CLEANUP_TIMEOUT_SEC,
-                            )
-                        except asyncio.TimeoutError:
-                            logger.warning(
-                                "Channel %d (%s): message stream next-cancel timed out after %.1fs",
-                                channel_id,
-                                channel.username or channel.title or "",
-                                STREAM_CLEANUP_TIMEOUT_SEC,
-                            )
+                            done, _ = await asyncio.wait({next_task}, timeout=idle_timeout)
                         except asyncio.CancelledError:
-                            pass
+                            await _cancel_next_task("next-cancel on collector cancellation")
+                            raise
+                        if next_task in done:
+                            return await next_task
+
+                        await _cancel_next_task("next-cancel")
                         raise asyncio.TimeoutError
 
                     try:
@@ -1212,7 +1224,7 @@ class Collector:
                         pass
                     finally:
                         aclose = getattr(agen, "aclose", None)
-                        if aclose is not None:
+                        if aclose is not None and stream_close_allowed:
                             try:
                                 close_result = aclose()
                                 if isawaitable(close_result):
@@ -1233,6 +1245,13 @@ class Collector:
                                     channel.username or channel.title or "",
                                     exc_info=True,
                                 )
+                        elif aclose is not None:
+                            logger.debug(
+                                "Channel %d (%s): skipping message stream close because "
+                                "a pending next read did not finish cancellation",
+                                channel_id,
+                                channel.username or channel.title or "",
+                            )
 
                 await run_with_flood_wait(
                     _collect_messages(),

@@ -1015,6 +1015,7 @@ async def test_collect_channel_hanging_stream_close_times_out_and_releases_clien
             await asyncio.Event().wait()
 
     monkeypatch.setattr("src.telegram.collector.STREAM_CLEANUP_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr("src.telegram.backends.STREAM_ITERATOR_CLOSE_TIMEOUT_SEC", 0.01)
 
     mock_client = AsyncMock()
     mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
@@ -1031,6 +1032,48 @@ async def test_collect_channel_hanging_stream_close_times_out_and_releases_clien
 
     assert count == 0
     pool.release_client.assert_awaited_with("+7003")
+
+
+@pytest.mark.anyio
+async def test_collect_channel_cancels_pending_stream_read_on_shutdown(db):
+    ch = Channel(channel_id=-100138, title="Cancelled Stream")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    class CancellableStream:
+        def __init__(self):
+            self.started = asyncio.Event()
+            self.cancelled = asyncio.Event()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            self.started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                self.cancelled.set()
+
+    stream = CancellableStream()
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=stream)
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7004")))
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=30)
+    collector = Collector(pool, db, config)
+
+    task = asyncio.create_task(collector._collect_channel(stored, force=True))
+    await asyncio.wait_for(stream.started.wait(), timeout=0.2)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    await asyncio.wait_for(stream.cancelled.wait(), timeout=0.2)
+    pool.release_client.assert_awaited_with("+7004")
 
 
 @pytest.mark.anyio
