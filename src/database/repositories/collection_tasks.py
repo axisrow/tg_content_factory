@@ -307,6 +307,7 @@ class CollectionTasksRepository:
             "run_after = ?",
             "started_at = NULL",
             "completed_at = NULL",
+            "last_progress_at = NULL",
             "error = NULL",
             "messages_collected = ?",
         ]

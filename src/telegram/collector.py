@@ -6,6 +6,7 @@ import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta, timezone
+from inspect import isawaitable
 from math import ceil
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
@@ -66,6 +67,7 @@ GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC = 300
 GLOBAL_RESOLVE_BACKOFF_CAP_SEC = 3600
 MESSAGE_FLUSH_BATCH_SIZE = 500
 PERSISTED_ID_VERIFY_CHUNK_SIZE = 500
+STREAM_CLEANUP_TIMEOUT_SEC = 10.0
 
 
 def _format_channel_log_name(channel: Channel) -> str:
@@ -1097,9 +1099,51 @@ class Collector:
                         wait_time=self._config.delay_between_requests_sec,
                     )
                     agen = stream.__aiter__()
+
+                    async def _next_message():
+                        if idle_timeout is None:
+                            return await agen.__anext__()
+
+                        next_task = asyncio.create_task(agen.__anext__())
+                        done, _ = await asyncio.wait({next_task}, timeout=idle_timeout)
+                        if next_task in done:
+                            return await next_task
+
+                        next_task.cancel()
+
+                        def _consume_late_next_task(task: asyncio.Task) -> None:
+                            try:
+                                exc = task.exception()
+                            except asyncio.CancelledError:
+                                return
+                            if exc is not None:
+                                logger.debug(
+                                    "Channel %d (%s): message stream next failed after timeout",
+                                    channel_id,
+                                    channel.username or channel.title or "",
+                                    exc_info=(type(exc), exc, exc.__traceback__),
+                                )
+
+                        next_task.add_done_callback(_consume_late_next_task)
+                        try:
+                            await asyncio.wait_for(
+                                asyncio.shield(next_task),
+                                timeout=STREAM_CLEANUP_TIMEOUT_SEC,
+                            )
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "Channel %d (%s): message stream next-cancel timed out after %.1fs",
+                                channel_id,
+                                channel.username or channel.title or "",
+                                STREAM_CLEANUP_TIMEOUT_SEC,
+                            )
+                        except asyncio.CancelledError:
+                            pass
+                        raise asyncio.TimeoutError
+
                     try:
                         while True:
-                            msg = await asyncio.wait_for(agen.__anext__(), timeout=idle_timeout)
+                            msg = await _next_message()
 
                             topic_id = None
                             reply_to = getattr(msg, "reply_to", None)
@@ -1169,7 +1213,26 @@ class Collector:
                     finally:
                         aclose = getattr(agen, "aclose", None)
                         if aclose is not None:
-                            await aclose()
+                            try:
+                                close_result = aclose()
+                                if isawaitable(close_result):
+                                    await asyncio.wait_for(
+                                        close_result, timeout=STREAM_CLEANUP_TIMEOUT_SEC
+                                    )
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    "Channel %d (%s): message stream close timed out after %.1fs",
+                                    channel_id,
+                                    channel.username or channel.title or "",
+                                    STREAM_CLEANUP_TIMEOUT_SEC,
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "Channel %d (%s): message stream close failed",
+                                    channel_id,
+                                    channel.username or channel.title or "",
+                                    exc_info=True,
+                                )
 
                 await run_with_flood_wait(
                     _collect_messages(),

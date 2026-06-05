@@ -565,6 +565,29 @@ async def test_reschedule_collection_task_does_not_overwrite_cancelled(collectio
     assert task.messages_collected == 0
 
 
+async def test_reschedule_collection_task_clears_last_progress_at(collection_tasks_repo):
+    task_id = await collection_tasks_repo.create_collection_task(1, "Channel 1")
+    await collection_tasks_repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
+    started = await collection_tasks_repo.get_collection_task(task_id)
+    assert started is not None
+    assert started.last_progress_at is not None
+
+    await collection_tasks_repo.reschedule_collection_task(
+        task_id,
+        run_after=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        note="flood wait",
+        messages_collected=10,
+    )
+
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task is not None
+    assert task.status == CollectionTaskStatus.PENDING
+    assert task.started_at is None
+    assert task.completed_at is None
+    assert task.last_progress_at is None
+    assert task.messages_collected == 10
+
+
 # fail_running_collection_tasks_on_startup tests
 
 

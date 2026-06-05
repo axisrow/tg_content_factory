@@ -997,6 +997,43 @@ async def test_collect_channel_hanging_stream_times_out_and_releases_client(db):
 
 
 @pytest.mark.anyio
+async def test_collect_channel_hanging_stream_close_times_out_and_releases_client(db, monkeypatch):
+    ch = Channel(channel_id=-100137, title="Hanging Close")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    class HangingCloseStream:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Event().wait()
+            raise StopAsyncIteration
+
+        async def aclose(self):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr("src.telegram.collector.STREAM_CLEANUP_TIMEOUT_SEC", 0.01)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=HangingCloseStream())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7003")))
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.01)
+    collector = Collector(pool, db, config)
+
+    count = await asyncio.wait_for(
+        collector._collect_channel(stored, force=True),
+        timeout=0.2,
+    )
+
+    assert count == 0
+    pool.release_client.assert_awaited_with("+7003")
+
+
+@pytest.mark.anyio
 async def test_collect_channel_slow_but_alive_stream_not_aborted(db):
     """A healthy channel that streams post-by-post must NOT be aborted.
 
