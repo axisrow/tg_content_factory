@@ -695,6 +695,8 @@ async def test_scheduler_page_shows_worker_down_when_progress_fresh_but_heartbea
     body = resp.text
     assert "Telegram-воркер не запущен" in body
     assert "Сбор завис" not in body
+    assert "Сейчас собирается:" not in body
+    assert "Дождаться завершения текущего первичного сбора" not in body
 
 
 @pytest.mark.anyio
