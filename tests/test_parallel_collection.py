@@ -15,7 +15,7 @@ import pytest
 from src.collection_queue import CollectionQueue
 from src.config import SchedulerConfig
 from src.database import Database
-from src.models import Channel
+from src.models import Channel, CollectionTaskStatus
 from src.telegram.collector import Collector
 
 
@@ -307,7 +307,7 @@ async def test_collector_active_count_reflects_parallel_runs():
 
 
 @pytest.mark.anyio
-async def test_collect_single_channel_task_cancel_event_preserves_global_cancel():
+async def test_collect_single_channel_task_cancel_event_clears_idle_global_cancel():
     pool = _make_pool()
     db = MagicMock()
     collector = Collector(pool, db, SchedulerConfig())
@@ -321,10 +321,59 @@ async def test_collect_single_channel_task_cancel_event_preserves_global_cancel(
         cancel_event=task_cancel_event,
     )
 
-    assert collector._cancel_event.is_set()
-    assert collector._is_collection_cancelled(task_cancel_event) is True
+    assert not collector._cancel_event.is_set()
+    assert collector._is_collection_cancelled(task_cancel_event) is False
     collector._collect_channel.assert_awaited_once()
     assert collector._collect_channel.await_args.kwargs["cancel_event"] is task_cancel_event
+
+
+@pytest.mark.anyio
+async def test_collect_single_channel_task_cancel_event_preserves_active_global_cancel():
+    pool = _make_pool()
+    db = MagicMock()
+    collector = Collector(pool, db, SchedulerConfig())
+    collector._load_min_subscribers_filter = AsyncMock(return_value=0)
+    collector._collect_channel = AsyncMock(return_value=0)
+    task_cancel_event = asyncio.Event()
+
+    collector._active_collection_count = 1
+    collector._cancel_event.set()
+    await collector.collect_single_channel(
+        Channel(channel_id=-6002, title="test"),
+        cancel_event=task_cancel_event,
+    )
+
+    assert collector._cancel_event.is_set()
+    assert collector._is_collection_cancelled(task_cancel_event) is True
+    assert collector._active_collection_count == 1
+    collector._collect_channel.assert_awaited_once()
+    assert collector._collect_channel.await_args.kwargs["cancel_event"] is task_cancel_event
+
+
+@pytest.mark.anyio
+async def test_queue_ignores_stale_collector_cancel_for_idle_channel_task(tmp_path):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        channel = await _seed_channel(db, -6003)
+        pool = _make_pool()
+        collector = Collector(pool, db, SchedulerConfig())
+        collector._load_min_subscribers_filter = AsyncMock(return_value=0)
+        collector._collect_channel = AsyncMock(return_value=4)
+        collector._cancel_event.set()
+        queue = CollectionQueue(collector, db)
+
+        task_id = await queue.enqueue(channel)
+        await asyncio.wait_for(queue._queue.join(), timeout=2.0)
+
+        task = await db.get_collection_task(task_id)
+        assert task is not None
+        assert task.status == CollectionTaskStatus.COMPLETED
+        assert task.messages_collected == 4
+        assert not collector.is_cancelled
+    finally:
+        await queue.shutdown()
+        await db.close()
 
 
 @pytest.mark.anyio
