@@ -11,12 +11,15 @@ from src.config import AppConfig
 from src.database.repositories.accounts import AccountSessionDecryptError
 from src.models import RuntimeSnapshot
 from src.services.notification_service import NotificationService
+from src.services.runtime_diagnostics import HEARTBEAT_INTERVAL_SEC, resolve_snapshot_publish_timeout
 from src.telegram.utils import normalize_utc
 from src.web.bootstrap import build_worker_container, start_container, stop_container
 from src.web.log_handler import LogBuffer
 
 logger = logging.getLogger(__name__)
-HEARTBEAT_INTERVAL_SEC = 5.0
+# HEARTBEAT_INTERVAL_SEC is the single source of truth in runtime_diagnostics.
+# The snapshot-publish timeout comes from config
+# (scheduler.snapshot_publish_timeout_sec).
 
 
 def _current_task_is_cancelling() -> bool:
@@ -234,10 +237,14 @@ async def _run_worker_async(config: AppConfig) -> None:
         await _publish_worker_down_snapshot(container, exc)
         await stop_container(container)
         return
+    publish_timeout = resolve_snapshot_publish_timeout(config.scheduler.snapshot_publish_timeout_sec)
     try:
         while not stop_event.is_set():
             try:
-                await _publish_snapshots(container, stop_event=stop_event)
+                await asyncio.wait_for(
+                    _publish_snapshots(container, stop_event=stop_event),
+                    timeout=publish_timeout,
+                )
             except asyncio.CancelledError:
                 if _current_task_is_cancelling():
                     raise
@@ -245,6 +252,11 @@ async def _run_worker_async(config: AppConfig) -> None:
                     logger.info("Worker stopping during snapshot publish")
                     break
                 logger.warning("Worker snapshot publish was cancelled; continuing worker loop")
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Worker snapshot publish timed out after %.1fs; continuing worker loop",
+                    publish_timeout,
+                )
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=HEARTBEAT_INTERVAL_SEC)
             except asyncio.TimeoutError:

@@ -171,6 +171,35 @@ async def test_update_collection_task_progress(collection_tasks_repo):
     assert task.messages_collected == 100
 
 
+async def test_update_collection_task_progress_stamps_last_progress_at(collection_tasks_repo):
+    """Progress updates must record *when* progress last moved.
+
+    The scheduler health page uses this timestamp to tell a genuinely stuck
+    collection ("no progress for a long time") apart from a worker that simply
+    isn't running — so every progress write must refresh last_progress_at.
+    """
+    before = datetime.now(tz=timezone.utc)
+    task_id = await collection_tasks_repo.create_collection_task(1, "Test")
+    await collection_tasks_repo.update_collection_task_progress(task_id, 100)
+
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task.last_progress_at is not None
+    assert task.last_progress_at >= before - timedelta(seconds=5)
+
+
+async def test_update_collection_task_to_running_seeds_last_progress_at(collection_tasks_repo):
+    """A freshly RUNNING task must have a progress timestamp seeded.
+
+    Without it, a task that hasn't flushed its first batch yet would look
+    "stuck since NULL" instead of "just started".
+    """
+    task_id = await collection_tasks_repo.create_collection_task(1, "Test")
+    await collection_tasks_repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
+
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task.last_progress_at is not None
+
+
 # update_collection_task tests
 
 
@@ -502,6 +531,7 @@ async def test_reset_collection_task_to_pending(collection_tasks_repo):
     assert task.status == CollectionTaskStatus.PENDING
     assert task.started_at is None
     assert task.completed_at is None
+    assert task.last_progress_at is None
     assert task.error is None
     assert task.note == "shutdown"
 
@@ -534,6 +564,29 @@ async def test_reschedule_collection_task_does_not_overwrite_cancelled(collectio
     assert task.status == CollectionTaskStatus.CANCELLED
     assert task.note == "user cancel"
     assert task.messages_collected == 0
+
+
+async def test_reschedule_collection_task_clears_last_progress_at(collection_tasks_repo):
+    task_id = await collection_tasks_repo.create_collection_task(1, "Channel 1")
+    await collection_tasks_repo.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
+    started = await collection_tasks_repo.get_collection_task(task_id)
+    assert started is not None
+    assert started.last_progress_at is not None
+
+    await collection_tasks_repo.reschedule_collection_task(
+        task_id,
+        run_after=datetime(2030, 1, 1, tzinfo=timezone.utc),
+        note="flood wait",
+        messages_collected=10,
+    )
+
+    task = await collection_tasks_repo.get_collection_task(task_id)
+    assert task is not None
+    assert task.status == CollectionTaskStatus.PENDING
+    assert task.started_at is None
+    assert task.completed_at is None
+    assert task.last_progress_at is None
+    assert task.messages_collected == 10
 
 
 # fail_running_collection_tasks_on_startup tests

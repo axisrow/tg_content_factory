@@ -6,6 +6,7 @@ import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta, timezone
+from inspect import isawaitable
 from math import ceil
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
@@ -66,6 +67,7 @@ GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC = 300
 GLOBAL_RESOLVE_BACKOFF_CAP_SEC = 3600
 MESSAGE_FLUSH_BATCH_SIZE = 500
 PERSISTED_ID_VERIFY_CHUNK_SIZE = 500
+STREAM_CLEANUP_TIMEOUT_SEC = 10.0
 
 
 def _format_channel_log_name(channel: Channel) -> str:
@@ -684,6 +686,55 @@ class Collector:
             return "game"
         return "unknown"
 
+    async def _release_collection_client(
+        self,
+        phone: str,
+        session,
+        *,
+        retire: bool = False,
+    ) -> None:
+        if not retire:
+            await self._pool.release_client(phone)
+            return
+
+        logger.warning(
+            "Retiring Telegram client for %s because a message stream read did not finish cancellation",
+            phone,
+        )
+        pool_dict = getattr(self._pool, "__dict__", {})
+        remove_client = None
+        if "remove_client" in pool_dict or hasattr(type(self._pool), "remove_client"):
+            remove_client = getattr(self._pool, "remove_client", None)
+        if remove_client is not None:
+            try:
+                result = remove_client(phone)
+                if isawaitable(result):
+                    await asyncio.wait_for(result, timeout=STREAM_CLEANUP_TIMEOUT_SEC)
+                return
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Timed out removing dirty Telegram client for %s after %.1fs; "
+                    "not returning it to the pool",
+                    phone,
+                    STREAM_CLEANUP_TIMEOUT_SEC,
+                )
+                return
+            except Exception:
+                logger.debug("Failed to remove dirty Telegram client for %s", phone, exc_info=True)
+
+        raw_client = getattr(session, "raw_client", None)
+        disconnect = getattr(raw_client, "disconnect", None) if raw_client is not None else None
+        if disconnect is None:
+            disconnect = getattr(session, "disconnect", None)
+        if disconnect is not None:
+            try:
+                result = disconnect()
+                if isawaitable(result):
+                    await asyncio.wait_for(result, timeout=STREAM_CLEANUP_TIMEOUT_SEC)
+            except Exception:
+                logger.debug("Failed to disconnect dirty Telegram client for %s", phone, exc_info=True)
+        await self._pool.release_client(phone)
+
     async def _collect_channel(
         self,
         channel: Channel,
@@ -778,9 +829,21 @@ class Collector:
             flood_wait_sec: int | None = None
             flood_wait_operation: str | None = None
             stop_due_to_persistence_error = False
+            stream_idle_timeout = False
+            retire_client_after_stream_timeout = False
 
             is_first_run = channel.last_collected_id == 0
             should_notify = self._notifier is not None and not is_first_run
+
+            async def _check_collected_notification_queries() -> None:
+                nonlocal all_messages
+                if not should_notify or not all_messages:
+                    return
+                for message in all_messages:
+                    message.channel_username = channel.username
+                await self._check_notification_queries(all_messages)
+                all_messages = []
+
             limit = None
             channel_log_name = _format_channel_log_name(channel)
             logger.info(
@@ -1079,77 +1142,177 @@ class Collector:
                             return total_collected
 
                 async def _collect_messages() -> None:
-                    nonlocal stop_due_to_persistence_error, messages_batch
-                    async for msg in session.stream_messages(
+                    nonlocal messages_batch, retire_client_after_stream_timeout, stop_due_to_persistence_error
+                    # Idle timeout caps the wait for the *next* post, not the whole
+                    # channel: a healthy channel that streams post-by-post is never
+                    # aborted, only a stream gone silent (dead socket) is. 0/negative
+                    # disables the cap (wait_for(timeout=None) == a bare await).
+                    # asyncio.TimeoutError propagates to the outer handler, which
+                    # releases the client.
+                    configured = self._config.collection_stream_timeout_sec
+                    idle_timeout = configured if configured and configured > 0 else None
+                    stream = session.stream_messages(
                         entity,
                         min_id=min_id,
                         limit=limit,
                         reverse=True,
                         wait_time=self._config.delay_between_requests_sec,
-                    ):
-                        topic_id = None
-                        reply_to = getattr(msg, "reply_to", None)
-                        if reply_to and getattr(reply_to, "forum_topic", False):
-                            topic_id = (
-                                getattr(reply_to, "reply_to_top_id", None)
-                                or getattr(reply_to, "reply_to_msg_id", None)
-                                or 1
+                    )
+                    agen = stream.__aiter__()
+                    stream_close_allowed = True
+
+                    async def _next_message():
+                        nonlocal retire_client_after_stream_timeout, stream_close_allowed
+                        if idle_timeout is None:
+                            return await agen.__anext__()
+
+                        next_task = asyncio.create_task(agen.__anext__())
+
+                        def _consume_late_next_task(task: asyncio.Task) -> None:
+                            try:
+                                exc = task.exception()
+                            except asyncio.CancelledError:
+                                return
+                            if exc is not None:
+                                logger.debug(
+                                    "Channel %d (%s): message stream next failed after timeout",
+                                    channel_id,
+                                    channel.username or channel.title or "",
+                                    exc_info=(type(exc), exc, exc.__traceback__),
+                                )
+
+                        async def _cancel_next_task(reason: str) -> None:
+                            nonlocal retire_client_after_stream_timeout, stream_close_allowed
+                            if next_task.done():
+                                return
+                            stream_close_allowed = False
+                            next_task.cancel()
+                            next_task.add_done_callback(_consume_late_next_task)
+                            done, _ = await asyncio.wait(
+                                {next_task}, timeout=STREAM_CLEANUP_TIMEOUT_SEC
                             )
-                        elif reply_to:
-                            pass
-                        # Extract forward source channel for cross-channel citation tracking
-                        fwd_from_channel_id = None
-                        fwd_from = getattr(msg, "fwd_from", None)
-                        if fwd_from and getattr(fwd_from, "from_id", None):
-                            from_id = fwd_from.from_id
-                            if hasattr(from_id, "channel_id"):
-                                fwd_from_channel_id = from_id.channel_id
+                            if next_task in done:
+                                stream_close_allowed = True
+                            else:
+                                retire_client_after_stream_timeout = True
+                                logger.warning(
+                                    "Channel %d (%s): message stream %s timed out after %.1fs",
+                                    channel_id,
+                                    channel.username or channel.title or "",
+                                    reason,
+                                    STREAM_CLEANUP_TIMEOUT_SEC,
+                                )
 
-                        sender_identity = extract_message_sender_identity(msg)
-                        message = Message(
-                            channel_id=channel_id,
-                            message_id=msg.id,
-                            sender_id=sender_identity.sender_id,
-                            sender_name=sender_identity.sender_name,
-                            sender_first_name=sender_identity.sender_first_name,
-                            sender_last_name=sender_identity.sender_last_name,
-                            sender_username=sender_identity.sender_username,
-                            text=msg.text,
-                            message_kind=self._get_message_kind(msg),
-                            detected_lang=TranslationService.detect_language(msg.text),
-                            media_type=self._get_media_type(msg),
-                            service_action_raw=self._get_service_action_raw(msg),
-                            service_action_semantic=self._get_service_action_semantic(msg),
-                            service_action_payload_json=self._get_service_action_payload(msg),
-                            sender_kind=self._get_sender_kind(msg),
-                            topic_id=topic_id,
-                            reactions_json=self._extract_reactions(msg),
-                            views=getattr(msg, "views", None),
-                            forwards=getattr(msg, "forwards", None),
-                            reply_count=getattr(getattr(msg, "replies", None), "replies", None),
-                            date=(
-                                msg.date.replace(tzinfo=timezone.utc)
-                                if msg.date and msg.date.tzinfo is None
-                                else msg.date
-                            ),
-                            forward_from_channel_id=fwd_from_channel_id,
-                        )
-                        messages_batch.append(message)
+                        try:
+                            done, _ = await asyncio.wait({next_task}, timeout=idle_timeout)
+                        except asyncio.CancelledError:
+                            await _cancel_next_task("next-cancel on collector cancellation")
+                            raise
+                        if next_task in done:
+                            return await next_task
 
-                        if len(messages_batch) % 10 == 0 and self._cancel_event.is_set():
-                            logger.info("Channel %d collection interrupted", channel_id)
-                            break
+                        await _cancel_next_task("next-cancel")
+                        raise asyncio.TimeoutError
 
-                        if len(messages_batch) >= MESSAGE_FLUSH_BATCH_SIZE:
-                            if not await self._channel_still_exists(channel_id):
+                    try:
+                        while True:
+                            msg = await _next_message()
+
+                            topic_id = None
+                            reply_to = getattr(msg, "reply_to", None)
+                            if reply_to and getattr(reply_to, "forum_topic", False):
+                                topic_id = (
+                                    getattr(reply_to, "reply_to_top_id", None)
+                                    or getattr(reply_to, "reply_to_msg_id", None)
+                                    or 1
+                                )
+                            elif reply_to:
+                                pass
+                            # Extract forward source channel for cross-channel citation tracking
+                            fwd_from_channel_id = None
+                            fwd_from = getattr(msg, "fwd_from", None)
+                            if fwd_from and getattr(fwd_from, "from_id", None):
+                                from_id = fwd_from.from_id
+                                if hasattr(from_id, "channel_id"):
+                                    fwd_from_channel_id = from_id.channel_id
+
+                            sender_identity = extract_message_sender_identity(msg)
+                            message = Message(
+                                channel_id=channel_id,
+                                message_id=msg.id,
+                                sender_id=sender_identity.sender_id,
+                                sender_name=sender_identity.sender_name,
+                                sender_first_name=sender_identity.sender_first_name,
+                                sender_last_name=sender_identity.sender_last_name,
+                                sender_username=sender_identity.sender_username,
+                                text=msg.text,
+                                message_kind=self._get_message_kind(msg),
+                                detected_lang=TranslationService.detect_language(msg.text),
+                                media_type=self._get_media_type(msg),
+                                service_action_raw=self._get_service_action_raw(msg),
+                                service_action_semantic=self._get_service_action_semantic(msg),
+                                service_action_payload_json=self._get_service_action_payload(msg),
+                                sender_kind=self._get_sender_kind(msg),
+                                topic_id=topic_id,
+                                reactions_json=self._extract_reactions(msg),
+                                views=getattr(msg, "views", None),
+                                forwards=getattr(msg, "forwards", None),
+                                reply_count=getattr(getattr(msg, "replies", None), "replies", None),
+                                date=(
+                                    msg.date.replace(tzinfo=timezone.utc)
+                                    if msg.date and msg.date.tzinfo is None
+                                    else msg.date
+                                ),
+                                forward_from_channel_id=fwd_from_channel_id,
+                            )
+                            messages_batch.append(message)
+
+                            if len(messages_batch) % 10 == 0 and self._cancel_event.is_set():
+                                logger.info("Channel %d collection interrupted", channel_id)
+                                break
+
+                            if len(messages_batch) >= MESSAGE_FLUSH_BATCH_SIZE:
+                                if not await self._channel_still_exists(channel_id):
+                                    messages_batch = []
+                                    break
+                                if not await _flush_batch(messages_batch):
+                                    stop_due_to_persistence_error = True
+                                    break
                                 messages_batch = []
-                                break
-                            if not await _flush_batch(messages_batch):
-                                stop_due_to_persistence_error = True
-                                break
-                            messages_batch = []
-                            if self._cancel_event.is_set():
-                                break
+                                if self._cancel_event.is_set():
+                                    break
+                    except StopAsyncIteration:
+                        pass
+                    finally:
+                        aclose = getattr(agen, "aclose", None)
+                        if aclose is not None and stream_close_allowed:
+                            try:
+                                close_result = aclose()
+                                if isawaitable(close_result):
+                                    await asyncio.wait_for(
+                                        close_result, timeout=STREAM_CLEANUP_TIMEOUT_SEC
+                                    )
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    "Channel %d (%s): message stream close timed out after %.1fs",
+                                    channel_id,
+                                    channel.username or channel.title or "",
+                                    STREAM_CLEANUP_TIMEOUT_SEC,
+                                )
+                            except Exception:
+                                logger.debug(
+                                    "Channel %d (%s): message stream close failed",
+                                    channel_id,
+                                    channel.username or channel.title or "",
+                                    exc_info=True,
+                                )
+                        elif aclose is not None:
+                            logger.debug(
+                                "Channel %d (%s): skipping message stream close because "
+                                "a pending next read did not finish cancellation",
+                                channel_id,
+                                channel.username or channel.title or "",
+                            )
 
                 await run_with_flood_wait(
                     _collect_messages(),
@@ -1171,6 +1334,15 @@ class Collector:
             except HandledFloodWaitError as exc:
                 flood_wait_sec = exc.info.wait_seconds
                 flood_wait_operation = flood_wait_operation or exc.info.operation
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Channel %d (%s): no new message for %.1fs (stream idle); "
+                    "stopping this pass and releasing the client",
+                    channel_id,
+                    channel.username or channel.title or "",
+                    self._config.collection_stream_timeout_sec,
+                )
+                stream_idle_timeout = True
             finally:
                 # Flush remaining messages — each operation is protected
                 # independently so a failure in one doesn't prevent the
@@ -1200,9 +1372,19 @@ class Collector:
                         channel_id,
                         update_err,
                     )
-                await self._pool.release_client(phone)
+                await self._release_collection_client(
+                    phone,
+                    session,
+                    retire=retire_client_after_stream_timeout,
+                )
 
-            if stop_due_to_persistence_error:
+            if stream_idle_timeout and not stop_due_to_persistence_error:
+                await _check_collected_notification_queries()
+
+            if stop_due_to_persistence_error or stream_idle_timeout:
+                # Idle timeout and persistence errors both stop this pass; the
+                # finally block above already flushed any pending batch and
+                # advanced last_collected_id, so progress is never lost.
                 return total_collected + collected_count
 
             # Handle FloodWait AFTER finally has flushed progress.
@@ -1273,10 +1455,7 @@ class Collector:
                     continue
                 return total_collected + collected_count
 
-            if should_notify and all_messages:
-                for m in all_messages:
-                    m.channel_username = channel.username
-                await self._check_notification_queries(all_messages)
+            await _check_collected_notification_queries()
 
             # Update forum topics in DB if messages with topic_id
             # were collected

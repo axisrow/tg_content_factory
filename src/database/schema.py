@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS collection_tasks (
     parent_task_id INTEGER,
     created_at TEXT DEFAULT (datetime('now')),
     started_at TEXT,
-    completed_at TEXT
+    completed_at TEXT,
+    last_progress_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS telegram_commands (

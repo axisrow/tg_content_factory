@@ -20,7 +20,10 @@ from src.services.pipeline_result import result_kind_label
 from src.services.runtime_diagnostics import (
     WORKER_HEARTBEAT_STALE_AFTER_SEC as WORKER_HEARTBEAT_STALE_AFTER_SEC_SVC,
 )
-from src.services.runtime_diagnostics import evaluate_worker_heartbeat
+from src.services.runtime_diagnostics import (
+    evaluate_worker_heartbeat,
+    running_task_stale_after,
+)
 from src.telegram.flood_wait import (
     is_blocking_flood_wait_until,
     is_transient_flood_wait_seconds,
@@ -42,6 +45,36 @@ JOB_LABELS = {
 # staleness window + classification now live in src.services.runtime_diagnostics
 # so the agent's get_runtime_diagnostics tool stays in lock-step with this banner.
 WORKER_HEARTBEAT_STALE_AFTER_SEC = WORKER_HEARTBEAT_STALE_AFTER_SEC_SVC
+
+
+def _is_running_task_stale(
+    running_task,
+    *,
+    idle_timeout_sec: float | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """True when a RUNNING task's progress hasn't advanced for too long.
+
+    'Stuck' is decided by stalled progress, not by the mere existence of a
+    RUNNING row: a worker that simply crashed leaves an orphaned RUNNING row
+    whose progress clock is recent, and that must read as `worker_down`, not
+    `collector_stuck`. Falls back to `started_at` when no batch has flushed yet,
+    and treats an unknown timestamp as NOT stale (we can't prove it's stuck).
+
+    The threshold is derived from ``idle_timeout_sec`` (the per-channel
+    collection_stream_timeout_sec) so it tracks how long the collector is
+    actually allowed to wait for the next post — a large idle timeout pushes the
+    'stuck' verdict out instead of firing while the worker still legally waits.
+    """
+    if running_task is None:
+        return False
+    marker = running_task.last_progress_at or running_task.started_at
+    if marker is None:
+        return False
+    now = now or datetime.now(timezone.utc)
+    if marker.tzinfo is None:
+        marker = marker.replace(tzinfo=timezone.utc)
+    return (now - marker).total_seconds() > running_task_stale_after(idle_timeout_sec)
 
 
 def _job_label(job_id: str) -> str:
@@ -69,7 +102,7 @@ def _compute_load_level(
     available_accounts_now: int,
     state: str,
 ) -> str:
-    if state in {"worker_down", "all_flooded", "no_clients", "session_degraded"}:
+    if state in {"worker_down", "collector_stuck", "all_flooded", "no_clients", "session_degraded"}:
         return "overload"
     capacity_accounts = max(1, available_accounts_now)
     pressure = active_unfiltered_channels / capacity_accounts
@@ -85,6 +118,8 @@ def _compute_load_level(
 def _current_status_presentation(state: str, *, is_running: bool) -> tuple[str, str, str]:
     if state == "worker_down":
         return "Telegram-воркер не запущен", "Задачи копятся в БД, но воркер их не исполняет.", "danger"
+    if state == "collector_stuck":
+        return "Сбор завис", "Текущая задача не завершилась, остальные задачи ждут.", "danger"
     if state == "all_flooded":
         return "Все аккаунты во Flood Wait", "Сбор заблокирован до ближайшего окна доступности.", "danger"
     if state == "no_clients":
@@ -107,7 +142,7 @@ def _load_presentation(load_level: str) -> tuple[str, str]:
 
 
 def _collector_health_border_severity(*, state: str, load_level: str) -> str:
-    if state in {"worker_down", "all_flooded", "no_clients", "session_degraded"}:
+    if state in {"worker_down", "collector_stuck", "all_flooded", "no_clients", "session_degraded"}:
         return "danger"
     if state == "degraded" or load_level in {"high", "overload"}:
         return "warning"
@@ -130,6 +165,11 @@ def _collector_health_recommendations(
             "Telegram-воркер не запущен. Если используете `serve` — перезапустите его; "
             "если `serve --no-worker` — запустите воркер отдельно: `python -m src.main worker`. "
             "Без воркера задачи сбора копятся в БД, но не исполняются."
+        )
+    if state == "collector_stuck":
+        recommendations.append(
+            "Текущая задача сбора зависла. Перезапустите `serve` или отдельный воркер, "
+            "затем проверьте, что очередь снова разбирается."
         )
     if state == "all_flooded":
         recommendations.append("Дождаться ближайшего окна после Flood Wait и не запускать ручной collect-all повторно.")
@@ -287,11 +327,26 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         None,
     )
 
+    # Derive the "stuck" threshold from the configured per-channel idle timeout
+    # so the two stay in lock-step (a large idle timeout must not trip a false
+    # "stuck"). running_task_stale_after() coerces None/garbage to the floor.
+    idle_timeout_sec = deps.get_container(request).config.scheduler.collection_stream_timeout_sec
+    running_task_stale = _is_running_task_stale(running_task, idle_timeout_sec=idle_timeout_sec)
+    # A task that is RUNNING and actually making progress (recent
+    # last_progress_at). Used instead of "any RUNNING row exists" so the UI
+    # never claims a collection is in flight when the row is an orphan left by
+    # a crashed worker.
+    task_is_progressing = worker_alive and running_task is not None and not running_task_stale
+    collector_is_running = worker_alive and (collector.is_running or task_is_progressing)
     state = "healthy"
     if not worker_alive:
         # Worker-process absent dominates: without it `no_clients` /
         # `all_flooded` are symptoms, not the root cause.
         state = "worker_down"
+    elif running_task_stale:
+        # Genuinely stuck: a live worker has a RUNNING task whose progress
+        # hasn't advanced for a long time.
+        state = "collector_stuck"
     elif degraded_session_accounts and not active_accounts:
         state = "session_degraded"
     elif not connected_active_accounts:
@@ -309,7 +364,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         state=state,
     )
     current_status_label, current_status_detail, current_status_severity = _current_status_presentation(
-        state, is_running=collector.is_running
+        state, is_running=collector_is_running
     )
     load_label, load_severity = _load_presentation(load_level)
     capacity_accounts = max(1, available_accounts_now)
@@ -348,7 +403,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
             interval_minutes=interval_minutes,
             active_unfiltered_channels=active_unfiltered_channels,
             available_accounts_now=available_accounts_now,
-            is_running=collector.is_running,
+            is_running=collector_is_running,
             pending_count=len(pending_channel_tasks),
         ),
         "current_status_label": current_status_label,
@@ -364,7 +419,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         "running_task_messages_collected": running_task.messages_collected if running_task else 0,
         "recent_zero_collect_count": recent_zero_collect_count,
         "recent_unavailability_events": recent_unavailability_events,
-        "is_running": collector.is_running,
+        "is_running": collector_is_running,
         "next_available_label": _format_retry_hint(next_available_at or availability_next),
     }
 
