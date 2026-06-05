@@ -332,11 +332,9 @@ async def lifespan(app: FastAPI):
 
     await start_container(container)
 
-    # #457 round 4: `serve` CLI sets `app.state.embed_worker=True` so a user
-    # running `python -m src.main serve` gets the full functionality (UI +
-    # actual collection) in a single command. Tests and split production
-    # setups (Docker/k8s with `--no-worker` + a separate `worker` container)
-    # leave `embed_worker` unset → no background worker here.
+    # `serve` sets `app.state.embed_worker=True` by default so one command runs
+    # the web UI and the Telegram worker. Split setups using `serve --no-worker`
+    # manage the worker externally.
     embedded_worker: EmbeddedWorker | None = None
     if getattr(app.state, "embed_worker", False):
         embedded_worker = EmbeddedWorker(app.state.config)

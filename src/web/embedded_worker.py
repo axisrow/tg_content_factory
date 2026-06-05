@@ -8,14 +8,12 @@ UI buttons accept clicks while nothing was collected, the scheduler stayed
 "stopped", and tasks piled up in `collection_tasks` with status=pending
 forever.
 
-Round 4 attaches the worker runtime to the same process by default — the
-lifespan hook spawns an asyncio task that is the exact moral equivalent of
-`src.runtime.worker._run_worker_async`, just running inside the web loop
-instead of its own `asyncio.run()`. The code path that production split
-deployments take (dedicated worker container) stays available via
-`python -m src.main serve --no-worker` plus a separately launched
-`python -m src.main worker` — both processes keep sharing the SQLite file
-and `runtime_snapshots` rows as before.
+Normal `python -m src.main serve` attaches the worker runtime to the same
+process: the lifespan hook spawns an asyncio task that is the exact moral
+equivalent of `src.runtime.worker._run_worker_async`, just running inside the
+web loop instead of its own `asyncio.run()`. Production split deployments can
+use `python -m src.main serve --no-worker` plus a separately launched worker.
+Both modes keep sharing the SQLite file and `runtime_snapshots` rows as before.
 
 We deliberately do NOT reuse the web container's `Database` instance: each
 AppContainer owns its own aiosqlite connection (`Database.close()` is called
