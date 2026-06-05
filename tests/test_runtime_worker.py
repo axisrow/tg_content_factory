@@ -233,15 +233,15 @@ async def test_worker_loop_continues_after_transient_snapshot_cancel():
     # (a MagicMock would feed asyncio.wait_for a non-numeric timeout).
     config = AppConfig()
     publish_calls = 0
+    worker_task: asyncio.Task[None] | None = None
 
     async def publish_snapshot(_container, *, stop_event=None):
         nonlocal publish_calls
         publish_calls += 1
         if publish_calls == 1:
             raise asyncio.CancelledError
-        task = asyncio.current_task()
-        assert task is not None
-        task.cancel()
+        assert worker_task is not None
+        worker_task.cancel()
         raise asyncio.CancelledError
 
     with (
