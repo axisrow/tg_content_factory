@@ -246,7 +246,7 @@ class Collector:
 
     def _is_collection_cancelled(self, cancel_event: asyncio.Event | None = None) -> bool:
         if cancel_event is not None:
-            return cancel_event.is_set()
+            return cancel_event.is_set() or self._cancel_event.is_set()
         return self._cancel_event.is_set()
 
     async def _wait_if_live_runtime_paused(
@@ -764,11 +764,10 @@ class Collector:
             except asyncio.TimeoutError:
                 logger.warning(
                     "Timed out removing dirty Telegram client for %s after %.1fs; "
-                    "not returning it to the pool",
+                    "disconnecting and releasing the lease",
                     phone,
                     STREAM_CLEANUP_TIMEOUT_SEC,
                 )
-                return
             except Exception:
                 logger.debug("Failed to remove dirty Telegram client for %s", phone, exc_info=True)
 

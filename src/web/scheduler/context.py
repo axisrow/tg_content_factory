@@ -345,7 +345,10 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
     # so the two stay in lock-step (a large idle timeout must not trip a false
     # "stuck"). running_task_stale_after() coerces None/garbage to the floor.
     idle_timeout_sec = deps.get_container(request).config.scheduler.collection_stream_timeout_sec
-    running_task_stale = _is_running_task_stale(running_task, idle_timeout_sec=idle_timeout_sec)
+    running_task_stale = any(
+        _is_running_task_stale(task, idle_timeout_sec=idle_timeout_sec)
+        for task in running_tasks
+    )
     # A task that is RUNNING and actually making progress (recent
     # last_progress_at). Used instead of "any RUNNING row exists" so the UI
     # never claims a collection is in flight when the row is an orphan left by

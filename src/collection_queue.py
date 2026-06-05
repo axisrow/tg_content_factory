@@ -245,7 +245,11 @@ class CollectionQueue:
                         )
             if not self._queue.empty() and len(self._workers) < target:
                 continue
-            if self._queue.empty() and not self._active_task_ids:
+            if (
+                self._queue.empty()
+                and not self._active_task_ids
+                and not any(not worker.done() for worker in self._workers)
+            ):
                 break
 
     async def _run_single_worker(self) -> None:
@@ -260,6 +264,9 @@ class CollectionQueue:
                 if self._shutdown_requested or self._stop_workers:
                     break
             if not await self._wait_if_live_runtime_paused():
+                break
+            target = await self._available_target_worker_count()
+            if len(self._active_task_ids) >= target:
                 break
             try:
                 task_id, channel, force, full = await asyncio.wait_for(

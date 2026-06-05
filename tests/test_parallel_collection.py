@@ -307,7 +307,7 @@ async def test_collector_active_count_reflects_parallel_runs():
 
 
 @pytest.mark.anyio
-async def test_collect_single_channel_task_cancel_event_does_not_clear_global_cancel():
+async def test_collect_single_channel_task_cancel_event_preserves_global_cancel():
     pool = _make_pool()
     db = MagicMock()
     collector = Collector(pool, db, SchedulerConfig())
@@ -322,7 +322,7 @@ async def test_collect_single_channel_task_cancel_event_does_not_clear_global_ca
     )
 
     assert collector._cancel_event.is_set()
-    assert collector._is_collection_cancelled(task_cancel_event) is False
+    assert collector._is_collection_cancelled(task_cancel_event) is True
     collector._collect_channel.assert_awaited_once()
     assert collector._collect_channel.await_args.kwargs["cancel_event"] is task_cancel_event
 
@@ -441,3 +441,20 @@ async def test_target_worker_count_prefers_available_collection_count():
     collector.collection_worker_count.reset_mock()
     assert await queue._available_target_worker_count() == 2
     collector.collection_worker_count.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_worker_parks_when_available_target_is_already_active():
+    collector = MagicMock()
+    collector.available_collection_worker_count = AsyncMock(return_value=1)
+    collector.collection_worker_count = MagicMock(return_value=3)
+    collector.collect_single_channel = AsyncMock(return_value=0)
+    channels = MagicMock()
+    queue = CollectionQueue(collector, channels)
+    queue._active_task_ids[99] = asyncio.Event()
+    queue._queue.put_nowait((1, Channel(channel_id=-8001, title="queued"), False, False))
+
+    await queue._run_single_worker()
+
+    assert queue._queue.qsize() == 1
+    collector.collect_single_channel.assert_not_awaited()

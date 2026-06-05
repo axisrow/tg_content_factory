@@ -737,6 +737,43 @@ async def test_scheduler_page_shows_worker_down_when_progress_fresh_but_heartbea
 
 
 @pytest.mark.anyio
+async def test_scheduler_page_marks_stuck_when_any_parallel_running_task_is_stale(client, base_app):
+    from src.models import RuntimeSnapshot
+
+    _, db, _ = base_app
+    await db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="worker_heartbeat",
+            payload={"status": "alive"},
+            updated_at=datetime.now(timezone.utc),
+        )
+    )
+    stale_task_id = await db.create_collection_task(
+        channel_id=-100406,
+        channel_title="Older Stale Channel",
+    )
+    await db.update_collection_task(stale_task_id, CollectionTaskStatus.RUNNING)
+    await db.execute_write(
+        "UPDATE collection_tasks SET last_progress_at = ? WHERE id = ?",
+        ((datetime.now(timezone.utc) - timedelta(minutes=30)).isoformat(), stale_task_id),
+    )
+    fresh_task_id = await db.create_collection_task(
+        channel_id=-100407,
+        channel_title="Newer Fresh Channel",
+    )
+    await db.update_collection_task(fresh_task_id, CollectionTaskStatus.RUNNING)
+    await db.execute_write(
+        "UPDATE collection_tasks SET last_progress_at = ? WHERE id = ?",
+        (datetime.now(timezone.utc).isoformat(), fresh_task_id),
+    )
+
+    resp = await client.get("/scheduler/")
+
+    assert resp.status_code == 200
+    assert "Сбор завис" in resp.text
+
+
+@pytest.mark.anyio
 async def test_scheduler_page_no_worker_banner_when_heartbeat_fresh(client, base_app):
     """Fresh heartbeat must NOT render the worker_down banner."""
     resp = await client.get("/scheduler/")
