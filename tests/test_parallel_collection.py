@@ -25,7 +25,7 @@ def _make_pool(
     get_available_client=None,
 ):
     pool = MagicMock()
-    pool.clients = clients or {"+7001": MagicMock()}
+    pool.clients = clients if clients is not None else {"+7001": MagicMock()}
     pool._active_leases = {}
     pool._premium_flood_wait_until = {}
     pool._session_overrides = {}
@@ -37,7 +37,7 @@ def _make_pool(
     pool._warming_task = None
     pool.is_dialogs_fetched = MagicMock(return_value=False)
     pool.mark_dialogs_fetched = MagicMock()
-    pool.connected_phones = MagicMock(return_value=set((clients or {"+7001": MagicMock()}).keys()))
+    pool.connected_phones = MagicMock(return_value=set(pool.clients.keys()))
     pool.get_phone_for_channel = MagicMock(return_value=None)
     pool.register_channel_phone = MagicMock()
     pool.clear_channel_phone = MagicMock()
@@ -50,6 +50,7 @@ def _make_pool(
     pool.get_stats_availability = AsyncMock()
     del pool.get_stats_availability
     pool.available_stats_client_count = AsyncMock(return_value=len(pool.clients))
+    pool.available_collection_client_count = AsyncMock(return_value=len(pool.clients))
     pool._connected_phones = lambda: set(pool.clients.keys())
     pool._in_use = set()
     return pool
@@ -355,6 +356,7 @@ async def test_collection_worker_count_auto_mode():
     db = MagicMock()
     collector = Collector(pool, db, SchedulerConfig(collection_worker_count=0))
     assert collector.collection_worker_count() == 3
+    assert await collector.available_collection_worker_count() == 3
 
 
 @pytest.mark.anyio
@@ -364,6 +366,8 @@ async def test_collection_worker_count_auto_caps_at_10():
     db = MagicMock()
     collector = Collector(pool, db, SchedulerConfig(collection_worker_count=0))
     assert collector.collection_worker_count() == 10
+    pool.available_collection_client_count.return_value = 12
+    assert await collector.available_collection_worker_count() == 10
 
 
 @pytest.mark.anyio
@@ -372,6 +376,39 @@ async def test_collection_worker_count_explicit_limit():
     db = MagicMock()
     collector = Collector(pool, db, SchedulerConfig(collection_worker_count=2))
     assert collector.collection_worker_count() == 2
+    assert await collector.available_collection_worker_count() == 2
+
+
+@pytest.mark.anyio
+async def test_available_collection_worker_count_uses_exclusive_available_clients():
+    pool = _make_pool(clients={"+1": MagicMock(), "+2": MagicMock(), "+3": MagicMock()})
+    pool.available_collection_client_count.return_value = 1
+    db = MagicMock()
+    collector = Collector(pool, db, SchedulerConfig(collection_worker_count=0))
+
+    assert collector.collection_worker_count() == 3
+    assert await collector.available_collection_worker_count() == 1
+    pool.available_collection_client_count.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_available_collection_worker_count_respects_explicit_limit_and_availability():
+    pool = _make_pool(clients={"+1": MagicMock(), "+2": MagicMock(), "+3": MagicMock()})
+    pool.available_collection_client_count.return_value = 1
+    db = MagicMock()
+    collector = Collector(pool, db, SchedulerConfig(collection_worker_count=3))
+
+    assert await collector.available_collection_worker_count() == 1
+
+
+@pytest.mark.anyio
+async def test_available_collection_worker_count_keeps_single_fallback_when_none_available():
+    pool = _make_pool(clients={"+1": MagicMock(), "+2": MagicMock(), "+3": MagicMock()})
+    pool.available_collection_client_count.return_value = 0
+    db = MagicMock()
+    collector = Collector(pool, db, SchedulerConfig(collection_worker_count=0))
+
+    assert await collector.available_collection_worker_count() == 1
 
 
 @pytest.mark.anyio
@@ -380,11 +417,27 @@ async def test_collection_worker_count_no_clients():
     db = MagicMock()
     collector = Collector(pool, db, SchedulerConfig(collection_worker_count=0))
     assert collector.collection_worker_count() == 1
+    assert await collector.available_collection_worker_count() == 1
 
 
 @pytest.mark.anyio
 async def test_target_worker_count_delegates_to_collector():
     collector = MagicMock()
+    del collector.available_collection_worker_count
     collector.collection_worker_count = MagicMock(return_value=3)
     queue = CollectionQueue(collector, MagicMock())
     assert queue._target_worker_count() == 3
+    assert await queue._available_target_worker_count() == 3
+
+
+@pytest.mark.anyio
+async def test_target_worker_count_prefers_available_collection_count():
+    collector = MagicMock()
+    collector.available_collection_worker_count = AsyncMock(return_value=2)
+    collector.collection_worker_count = MagicMock(return_value=3)
+    queue = CollectionQueue(collector, MagicMock())
+
+    assert queue._target_worker_count() == 3
+    collector.collection_worker_count.reset_mock()
+    assert await queue._available_target_worker_count() == 2
+    collector.collection_worker_count.assert_not_called()
