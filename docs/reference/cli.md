@@ -7,8 +7,12 @@ python -m src.main [--config CONFIG] <command> [subcommand] [options]
 ## serve
 
 ```bash
-python -m src.main serve [--web-pass PASS]
+python -m src.main serve [--web-pass PASS] [--no-worker]
 ```
+
+By default, `serve` starts the web UI/API and an embedded Telegram worker in
+the same process. Use `--no-worker` when a process manager starts
+`python -m src.main worker` separately.
 
 ## stop / restart
 

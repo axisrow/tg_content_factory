@@ -9,7 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.models import Channel, CollectionTaskStatus, ContentPipeline, SearchQuery, StatsAllTaskPayload
+from src.models import Channel, CollectionTask, CollectionTaskStatus, ContentPipeline, SearchQuery, StatsAllTaskPayload
+from src.web.scheduler.context import format_task_result
 
 
 @pytest.fixture
@@ -165,6 +166,48 @@ async def test_scheduler_page_shows_tasks(client):
 
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_scheduler_page_shows_channel_collect_result_with_valid_total(client):
+    db = client._transport.app.state.db
+    task_id = await db.repos.tasks.create_collection_task(
+        channel_id=-1001234567890,
+        channel_title="Progress Channel",
+        payload={"messages_total": 5000},
+    )
+    await db.update_collection_task(task_id, CollectionTaskStatus.RUNNING, messages_collected=1000)
+
+    resp = await client.get("/scheduler/")
+
+    assert resp.status_code == 200
+    assert "1000/5000" in resp.text
+
+
+def test_format_task_result_channel_collect_with_valid_total():
+    task = CollectionTask(
+        task_type="channel_collect",
+        messages_collected=1000,
+        payload={"messages_total": 5000},
+    )
+
+    assert format_task_result(task) == "1000/5000"
+
+
+def test_format_task_result_channel_collect_hides_invalid_total():
+    task = CollectionTask(
+        task_type="channel_collect",
+        messages_collected=32878,
+        payload={"messages_total": 5000},
+    )
+
+    assert format_task_result(task) == "32878"
+
+
+def test_format_task_result_channel_collect_without_total():
+    task = CollectionTask(task_type="channel_collect", messages_collected=32878)
+
+    assert format_task_result(task) == "32878"
 
 
 @pytest.mark.anyio

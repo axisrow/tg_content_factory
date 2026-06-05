@@ -89,6 +89,21 @@ def _job_label(job_id: str) -> str:
     return job_id
 
 
+def format_task_result(task) -> str:
+    """Compact display for the scheduler task result column."""
+    collected = int(task.messages_collected or 0)
+    if task.task_type.value == "channel_collect":
+        payload = task.payload if isinstance(task.payload, dict) else {}
+        raw_total = payload.get("messages_total")
+        try:
+            total = int(raw_total) if raw_total is not None else None
+        except (TypeError, ValueError):
+            total = None
+        if total is not None and total >= collected:
+            return f"{collected}/{total}"
+    return str(collected)
+
+
 def _format_retry_hint(run_after) -> str:
     if run_after is None:
         return ""
@@ -318,20 +333,22 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
     )
     recent_unavailability_events = _dedupe_recent_unavailability_events(recent_tasks)
     pending_channel_tasks = await db.get_pending_channel_tasks()
-    running_task = next(
-        (
-            task
-            for task in recent_tasks
-            if task.task_type.value == "channel_collect" and task.status.value == "running"
-        ),
-        None,
-    )
+    running_tasks = [
+        task
+        for task in recent_tasks
+        if task.task_type.value == "channel_collect" and task.status.value == "running"
+    ]
+    running_task = running_tasks[0] if running_tasks else None
+    running_count = len(running_tasks)
 
     # Derive the "stuck" threshold from the configured per-channel idle timeout
     # so the two stay in lock-step (a large idle timeout must not trip a false
     # "stuck"). running_task_stale_after() coerces None/garbage to the floor.
     idle_timeout_sec = deps.get_container(request).config.scheduler.collection_stream_timeout_sec
-    running_task_stale = _is_running_task_stale(running_task, idle_timeout_sec=idle_timeout_sec)
+    running_task_stale = any(
+        _is_running_task_stale(task, idle_timeout_sec=idle_timeout_sec)
+        for task in running_tasks
+    )
     # A task that is RUNNING and actually making progress (recent
     # last_progress_at). Used instead of "any RUNNING row exists" so the UI
     # never claims a collection is in flight when the row is an orphan left by
@@ -417,6 +434,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         "queue_pending_count": len(pending_channel_tasks),
         "running_task_title": running_task.channel_title if running_task else "",
         "running_task_messages_collected": running_task.messages_collected if running_task else 0,
+        "running_count": running_count,
         "recent_zero_collect_count": recent_zero_collect_count,
         "recent_unavailability_events": recent_unavailability_events,
         "is_running": collector_is_running,

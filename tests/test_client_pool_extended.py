@@ -96,6 +96,26 @@ async def test_get_available_client_flood_waited(mock_db, mock_auth):
 
 
 @pytest.mark.anyio
+async def test_available_collection_client_count_counts_only_exclusive_usable_accounts(mock_db, mock_auth):
+    future = datetime.now(timezone.utc) + timedelta(minutes=10)
+    mock_db.get_accounts.return_value = [
+        Account(phone="+7001", is_active=True, session_string="s1"),
+        Account(phone="+7002", is_active=True, session_string="s2", flood_wait_until=future),
+        Account(phone="+7003", is_active=True, session_string="s3"),
+    ]
+
+    pool = ClientPool(mock_auth, mock_db)
+    pool.clients = {
+        "+7001": MagicMock(),
+        "+7002": MagicMock(),
+        "+7003": MagicMock(),
+    }
+    pool._in_use.add("+7001")
+
+    assert await pool.available_collection_client_count() == 1
+
+
+@pytest.mark.anyio
 async def test_get_premium_client_unavailable(mock_db, mock_auth):
     acc = Account(phone="+7001", is_active=True, is_premium=False, session_string="s1")
     mock_db.get_accounts.return_value = [acc]

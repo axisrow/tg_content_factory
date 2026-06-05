@@ -1076,7 +1076,7 @@ async def test_collect_channel_abandoned_stream_read_retires_client(db, monkeypa
 
 
 @pytest.mark.anyio
-async def test_collect_channel_dirty_client_remove_timeout_does_not_release(db, monkeypatch):
+async def test_collect_channel_dirty_client_remove_timeout_releases_lease(db, monkeypatch):
     ch = Channel(channel_id=-100140, title="Dirty Remove Timeout")
     ch_id = await db.add_channel(ch)
     stored = await db.get_channel_by_pk(ch_id)
@@ -1116,7 +1116,7 @@ async def test_collect_channel_dirty_client_remove_timeout_does_not_release(db, 
 
     assert count == 0
     pool.remove_client.assert_awaited_with("+7006")
-    pool.release_client.assert_not_awaited()
+    pool.release_client.assert_awaited_with("+7006")
 
 
 @pytest.mark.anyio
