@@ -834,6 +834,16 @@ class Collector:
 
             is_first_run = channel.last_collected_id == 0
             should_notify = self._notifier is not None and not is_first_run
+
+            async def _check_collected_notification_queries() -> None:
+                nonlocal all_messages
+                if not should_notify or not all_messages:
+                    return
+                for message in all_messages:
+                    message.channel_username = channel.username
+                await self._check_notification_queries(all_messages)
+                all_messages = []
+
             limit = None
             channel_log_name = _format_channel_log_name(channel)
             logger.info(
@@ -1368,6 +1378,9 @@ class Collector:
                     retire=retire_client_after_stream_timeout,
                 )
 
+            if stream_idle_timeout and not stop_due_to_persistence_error:
+                await _check_collected_notification_queries()
+
             if stop_due_to_persistence_error or stream_idle_timeout:
                 # Idle timeout and persistence errors both stop this pass; the
                 # finally block above already flushed any pending batch and
@@ -1442,10 +1455,7 @@ class Collector:
                     continue
                 return total_collected + collected_count
 
-            if should_notify and all_messages:
-                for m in all_messages:
-                    m.channel_username = channel.username
-                await self._check_notification_queries(all_messages)
+            await _check_collected_notification_queries()
 
             # Update forum topics in DB if messages with topic_id
             # were collected

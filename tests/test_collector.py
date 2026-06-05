@@ -1414,6 +1414,50 @@ async def test_incremental_collection_sends_notification_queries(db):
 
 
 @pytest.mark.anyio
+async def test_incremental_collection_sends_notifications_before_idle_timeout_return(db):
+    from src.models import SearchQuery
+
+    ch = Channel(channel_id=-100141, title="Test", username="test141", last_collected_id=10)
+    await db.add_channel(ch)
+    repo = db.repos.search_queries
+    await repo.add(SearchQuery(query="urgent", notify_on_collect=True))
+
+    class OneThenHangStream:
+        def __init__(self, msg):
+            self.msg = msg
+            self.sent = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self.sent:
+                self.sent = True
+                return self.msg
+            await asyncio.Event().wait()
+            raise StopAsyncIteration
+
+    mock_msg = _make_mock_message(11, text="urgent update")
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=OneThenHangStream(mock_msg))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    notifier = AsyncMock()
+
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.01),
+        notifier,
+    )
+    count = await asyncio.wait_for(collector._collect_channel(ch), timeout=0.3)
+
+    assert count == 1
+    notifier.notify.assert_awaited_once()
+
+
+@pytest.mark.anyio
 async def test_first_run_detects_topics_without_retaining_messages(db):
     """First-run forum-topic detection runs via the saw_topic_message flag (#633).
 
