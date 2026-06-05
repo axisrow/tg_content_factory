@@ -59,6 +59,7 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "run_after": "run_after TEXT",
         "payload": "payload TEXT",
         "parent_task_id": "parent_task_id INTEGER",
+        "last_progress_at": "last_progress_at TEXT",
     },
     "telegram_commands": {
         "run_after": "run_after TEXT",

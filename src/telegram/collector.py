@@ -778,6 +778,7 @@ class Collector:
             flood_wait_sec: int | None = None
             flood_wait_operation: str | None = None
             stop_due_to_persistence_error = False
+            stream_idle_timeout = False
 
             is_first_run = channel.last_collected_id == 0
             should_notify = self._notifier is not None and not is_first_run
@@ -1080,76 +1081,95 @@ class Collector:
 
                 async def _collect_messages() -> None:
                     nonlocal stop_due_to_persistence_error, messages_batch
-                    async for msg in session.stream_messages(
+                    # Idle timeout caps the wait for the *next* post, not the whole
+                    # channel: a healthy channel that streams post-by-post is never
+                    # aborted, only a stream gone silent (dead socket) is. 0/negative
+                    # disables the cap (wait_for(timeout=None) == a bare await).
+                    # asyncio.TimeoutError propagates to the outer handler, which
+                    # releases the client.
+                    configured = self._config.collection_stream_timeout_sec
+                    idle_timeout = configured if configured and configured > 0 else None
+                    stream = session.stream_messages(
                         entity,
                         min_id=min_id,
                         limit=limit,
                         reverse=True,
                         wait_time=self._config.delay_between_requests_sec,
-                    ):
-                        topic_id = None
-                        reply_to = getattr(msg, "reply_to", None)
-                        if reply_to and getattr(reply_to, "forum_topic", False):
-                            topic_id = (
-                                getattr(reply_to, "reply_to_top_id", None)
-                                or getattr(reply_to, "reply_to_msg_id", None)
-                                or 1
+                    )
+                    agen = stream.__aiter__()
+                    try:
+                        while True:
+                            msg = await asyncio.wait_for(agen.__anext__(), timeout=idle_timeout)
+
+                            topic_id = None
+                            reply_to = getattr(msg, "reply_to", None)
+                            if reply_to and getattr(reply_to, "forum_topic", False):
+                                topic_id = (
+                                    getattr(reply_to, "reply_to_top_id", None)
+                                    or getattr(reply_to, "reply_to_msg_id", None)
+                                    or 1
+                                )
+                            elif reply_to:
+                                pass
+                            # Extract forward source channel for cross-channel citation tracking
+                            fwd_from_channel_id = None
+                            fwd_from = getattr(msg, "fwd_from", None)
+                            if fwd_from and getattr(fwd_from, "from_id", None):
+                                from_id = fwd_from.from_id
+                                if hasattr(from_id, "channel_id"):
+                                    fwd_from_channel_id = from_id.channel_id
+
+                            sender_identity = extract_message_sender_identity(msg)
+                            message = Message(
+                                channel_id=channel_id,
+                                message_id=msg.id,
+                                sender_id=sender_identity.sender_id,
+                                sender_name=sender_identity.sender_name,
+                                sender_first_name=sender_identity.sender_first_name,
+                                sender_last_name=sender_identity.sender_last_name,
+                                sender_username=sender_identity.sender_username,
+                                text=msg.text,
+                                message_kind=self._get_message_kind(msg),
+                                detected_lang=TranslationService.detect_language(msg.text),
+                                media_type=self._get_media_type(msg),
+                                service_action_raw=self._get_service_action_raw(msg),
+                                service_action_semantic=self._get_service_action_semantic(msg),
+                                service_action_payload_json=self._get_service_action_payload(msg),
+                                sender_kind=self._get_sender_kind(msg),
+                                topic_id=topic_id,
+                                reactions_json=self._extract_reactions(msg),
+                                views=getattr(msg, "views", None),
+                                forwards=getattr(msg, "forwards", None),
+                                reply_count=getattr(getattr(msg, "replies", None), "replies", None),
+                                date=(
+                                    msg.date.replace(tzinfo=timezone.utc)
+                                    if msg.date and msg.date.tzinfo is None
+                                    else msg.date
+                                ),
+                                forward_from_channel_id=fwd_from_channel_id,
                             )
-                        elif reply_to:
-                            pass
-                        # Extract forward source channel for cross-channel citation tracking
-                        fwd_from_channel_id = None
-                        fwd_from = getattr(msg, "fwd_from", None)
-                        if fwd_from and getattr(fwd_from, "from_id", None):
-                            from_id = fwd_from.from_id
-                            if hasattr(from_id, "channel_id"):
-                                fwd_from_channel_id = from_id.channel_id
+                            messages_batch.append(message)
 
-                        sender_identity = extract_message_sender_identity(msg)
-                        message = Message(
-                            channel_id=channel_id,
-                            message_id=msg.id,
-                            sender_id=sender_identity.sender_id,
-                            sender_name=sender_identity.sender_name,
-                            sender_first_name=sender_identity.sender_first_name,
-                            sender_last_name=sender_identity.sender_last_name,
-                            sender_username=sender_identity.sender_username,
-                            text=msg.text,
-                            message_kind=self._get_message_kind(msg),
-                            detected_lang=TranslationService.detect_language(msg.text),
-                            media_type=self._get_media_type(msg),
-                            service_action_raw=self._get_service_action_raw(msg),
-                            service_action_semantic=self._get_service_action_semantic(msg),
-                            service_action_payload_json=self._get_service_action_payload(msg),
-                            sender_kind=self._get_sender_kind(msg),
-                            topic_id=topic_id,
-                            reactions_json=self._extract_reactions(msg),
-                            views=getattr(msg, "views", None),
-                            forwards=getattr(msg, "forwards", None),
-                            reply_count=getattr(getattr(msg, "replies", None), "replies", None),
-                            date=(
-                                msg.date.replace(tzinfo=timezone.utc)
-                                if msg.date and msg.date.tzinfo is None
-                                else msg.date
-                            ),
-                            forward_from_channel_id=fwd_from_channel_id,
-                        )
-                        messages_batch.append(message)
+                            if len(messages_batch) % 10 == 0 and self._cancel_event.is_set():
+                                logger.info("Channel %d collection interrupted", channel_id)
+                                break
 
-                        if len(messages_batch) % 10 == 0 and self._cancel_event.is_set():
-                            logger.info("Channel %d collection interrupted", channel_id)
-                            break
-
-                        if len(messages_batch) >= MESSAGE_FLUSH_BATCH_SIZE:
-                            if not await self._channel_still_exists(channel_id):
+                            if len(messages_batch) >= MESSAGE_FLUSH_BATCH_SIZE:
+                                if not await self._channel_still_exists(channel_id):
+                                    messages_batch = []
+                                    break
+                                if not await _flush_batch(messages_batch):
+                                    stop_due_to_persistence_error = True
+                                    break
                                 messages_batch = []
-                                break
-                            if not await _flush_batch(messages_batch):
-                                stop_due_to_persistence_error = True
-                                break
-                            messages_batch = []
-                            if self._cancel_event.is_set():
-                                break
+                                if self._cancel_event.is_set():
+                                    break
+                    except StopAsyncIteration:
+                        pass
+                    finally:
+                        aclose = getattr(agen, "aclose", None)
+                        if aclose is not None:
+                            await aclose()
 
                 await run_with_flood_wait(
                     _collect_messages(),
@@ -1171,6 +1191,15 @@ class Collector:
             except HandledFloodWaitError as exc:
                 flood_wait_sec = exc.info.wait_seconds
                 flood_wait_operation = flood_wait_operation or exc.info.operation
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Channel %d (%s): no new message for %.1fs (stream idle); "
+                    "stopping this pass and releasing the client",
+                    channel_id,
+                    channel.username or channel.title or "",
+                    self._config.collection_stream_timeout_sec,
+                )
+                stream_idle_timeout = True
             finally:
                 # Flush remaining messages — each operation is protected
                 # independently so a failure in one doesn't prevent the
@@ -1202,7 +1231,10 @@ class Collector:
                     )
                 await self._pool.release_client(phone)
 
-            if stop_due_to_persistence_error:
+            if stop_due_to_persistence_error or stream_idle_timeout:
+                # Idle timeout and persistence errors both stop this pass; the
+                # finally block above already flushed any pending batch and
+                # advanced last_collected_id, so progress is never lost.
                 return total_collected + collected_count
 
             # Handle FloodWait AFTER finally has flushed progress.

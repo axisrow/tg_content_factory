@@ -966,6 +966,108 @@ async def test_persist_progress_log_includes_channel_username(db, caplog):
 
 
 @pytest.mark.anyio
+async def test_collect_channel_hanging_stream_times_out_and_releases_client(db):
+    ch = Channel(channel_id=-100134, title="Hanging Stream")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    async def _hanging_stream(*_args, **_kwargs):
+        await asyncio.Event().wait()
+        yield  # pragma: no cover - keeps this as an async generator
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_hanging_stream())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.02)
+    collector = Collector(pool, db, config)
+
+    count = await asyncio.wait_for(
+        collector._collect_channel(stored, force=True),
+        timeout=0.2,
+    )
+
+    assert count == 0
+    pool.release_client.assert_awaited_with("+7000")
+    updated = await db.get_channel_by_pk(ch_id)
+    assert updated is not None
+    assert updated.last_collected_id == 0
+
+
+@pytest.mark.anyio
+async def test_collect_channel_slow_but_alive_stream_not_aborted(db):
+    """A healthy channel that streams post-by-post must NOT be aborted.
+
+    The idle-timeout caps the wait for the *next* post, not the whole channel.
+    Here each post arrives faster than the idle limit, but the channel as a
+    whole takes longer than the limit — it must still collect every message.
+    Regression guard: the old per-channel timeout killed large live channels.
+    """
+    ch = Channel(channel_id=-100135, title="Slow But Alive")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    # 5 posts, ~0.02s apart → ~0.1s total, well past the 0.05s idle limit,
+    # but no single gap exceeds it.
+    async def _slow_stream(*_args, **_kwargs):
+        for i in range(1, 6):
+            await asyncio.sleep(0.02)
+            yield _make_mock_message(i, text=f"msg {i}")
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_slow_stream())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7001")))
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0.05)
+    collector = Collector(pool, db, config)
+
+    count = await asyncio.wait_for(
+        collector._collect_channel(stored, force=True),
+        timeout=2.0,
+    )
+
+    assert count == 5
+    pool.release_client.assert_awaited_with("+7001")
+
+
+@pytest.mark.anyio
+async def test_collect_channel_zero_timeout_disables_abort(db):
+    """`collection_stream_timeout_sec=0` disables the idle abort entirely.
+
+    With the timeout off, even a slow stream collects fully and nothing is cut.
+    """
+    ch = Channel(channel_id=-100136, title="Timeout Disabled")
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    async def _slow_stream(*_args, **_kwargs):
+        for i in range(1, 4):
+            await asyncio.sleep(0.01)
+            yield _make_mock_message(i, text=f"msg {i}")
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_slow_stream())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7002")))
+    config = SchedulerConfig(delay_between_requests_sec=0, collection_stream_timeout_sec=0)
+    collector = Collector(pool, db, config)
+
+    count = await asyncio.wait_for(
+        collector._collect_channel(stored, force=True),
+        timeout=2.0,
+    )
+
+    assert count == 3
+    pool.release_client.assert_awaited_with("+7002")
+
+
+@pytest.mark.anyio
 async def test_incremental_batch_flushes_to_avoid_huge_final_flush(db):
     """Incremental collection should flush large channels before the final flush."""
     ch = Channel(channel_id=-100130, title="Test", username="test130", last_collected_id=50)

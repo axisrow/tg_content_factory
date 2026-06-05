@@ -26,6 +26,12 @@ class SchedulerConfig(BaseModel):
     collect_interval_minutes: int = 60
     delay_between_channels_sec: int = 2
     delay_between_requests_sec: int = 1
+    # Per-post idle timeout while streaming a channel. 0/negative = disabled.
+    collection_stream_timeout_sec: float = 120.0
+    # asyncio.wait_for timeout around runtime-snapshot publishing. 0/negative or
+    # garbage is NOT "disabled" — it falls back to the safe default (a zero
+    # timeout would abort every heartbeat); see resolve_snapshot_publish_timeout.
+    snapshot_publish_timeout_sec: float = 30.0
     max_flood_wait_sec: int = 300
     stats_worker_count: int = 3
     stats_all_max_channels_per_run: int = 10
