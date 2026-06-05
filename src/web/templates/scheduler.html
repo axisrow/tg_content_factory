@@ -130,7 +130,9 @@
             </div>
         </div>
 
-        {% if collector_health.is_running and collector_health.running_task_title %}
+        {% if collector_health.is_running and collector_health.running_count and collector_health.running_count > 1 %}
+        <p class="mb-2"><strong>Сейчас собирается:</strong> {{ collector_health.running_count }} каналов параллельно; остальные задачи ждут.</p>
+        {% elif collector_health.is_running and collector_health.running_task_title %}
         <p class="mb-2"><strong>Сейчас собирается:</strong> {{ collector_health.running_task_title }}, собрано {{ collector_health.running_task_messages_collected }} сообщений; остальные задачи ждут.</p>
         {% endif %}
 
@@ -362,7 +364,7 @@
                                       title="{{ pipeline_meta.first_error_detail or '' }}">⚠ {{ pipeline_meta.errors_count }}</span>
                             {% endif %}
                         {% else %}
-                            {{ t.messages_collected }}
+                            {{ t | format_task_result }}
                         {% endif %}
                     </td>
                     <td>{{ t.created_at|local_dt }}</td>
@@ -409,7 +411,7 @@
                                       title="{{ pipeline_meta.first_error_detail or '' }}">⚠ {{ pipeline_meta.errors_count }}</span>
                             {% endif %}
                         {% else %}
-                            {{ t.messages_collected }} сообщ.
+                            {{ t | format_task_result }}{% if t.task_type.value != 'channel_collect' %} сообщ.{% endif %}
                         {% endif %}
                         {% if t.created_at %}&middot; {{ t.created_at|local_dt }}{% endif %}
                     </small>

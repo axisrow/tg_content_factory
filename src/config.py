@@ -33,6 +33,9 @@ class SchedulerConfig(BaseModel):
     # timeout would abort every heartbeat); see resolve_snapshot_publish_timeout.
     snapshot_publish_timeout_sec: float = 30.0
     max_flood_wait_sec: int = 300
+    # Parallel message-collection workers. 0 or unset = auto (one per
+    # connected Telegram account, capped at 10).
+    collection_worker_count: int = 0
     stats_worker_count: int = 3
     stats_all_max_channels_per_run: int = 10
     stats_all_cooldown_sec: int = 600

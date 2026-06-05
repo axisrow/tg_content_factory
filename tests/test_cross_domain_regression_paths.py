@@ -3587,8 +3587,8 @@ class TestMyTelegramToolPhoneGates:
 class TestCollectionQueueExtraCoverage:
     """Cover remaining gaps in collection_queue.py."""
 
-    async def test_cancel_task_calls_cancel_on_collector(self):
-        """Line 49: cancel current task."""
+    async def test_cancel_task_marks_only_matching_active_task(self):
+        """Cancel marks the matching active task without cancelling the whole collector."""
         from src.collection_queue import CollectionQueue
 
         channels = MagicMock()
@@ -3597,9 +3597,16 @@ class TestCollectionQueueExtraCoverage:
         collector.cancel = AsyncMock()
 
         queue = CollectionQueue(collector, channels)
-        queue._current_task_id = 42
+        cancel_event = asyncio.Event()
+        other_event = asyncio.Event()
+        queue._active_task_ids[42] = cancel_event
+        queue._active_task_ids[43] = other_event
+
         result = await queue.cancel_task(42, note="test")
-        collector.cancel.assert_awaited_once()
+
+        assert cancel_event.is_set()
+        assert not other_event.is_set()
+        collector.cancel.assert_not_awaited()
         assert result is True
 
     async def test_worker_skips_cancelled_task(self):

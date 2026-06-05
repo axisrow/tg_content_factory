@@ -79,6 +79,12 @@ def _format_channel_log_name(channel: Channel) -> str:
     return title or "no username"
 
 
+def _redact_phone(phone: str) -> str:
+    if len(phone) <= 4:
+        return phone
+    return phone[:3] + "..." + phone[-4:]
+
+
 class NoActiveStatsClientsError(RuntimeError):
     """Raised when there are no active connected clients for stats collection."""
 
@@ -177,7 +183,7 @@ class Collector:
         self._config = config
         self._notifier = notifier
         self._live_runtime_pause_gate = live_runtime_pause_gate
-        self._running = False
+        self._active_collection_count = 0
         self._stats_running = False
         self._stats_all_running = False
         self._cancel_event = asyncio.Event()
@@ -231,12 +237,23 @@ class Collector:
 
     @property
     def is_running(self) -> bool:
-        return self._running or self._stats_running or self._stats_all_running
+        return self._active_collection_count > 0 or self._stats_running or self._stats_all_running
 
-    async def _wait_if_live_runtime_paused(self) -> bool:
+    def _is_collection_cancelled(self, cancel_event: asyncio.Event | None = None) -> bool:
+        if cancel_event is not None:
+            return cancel_event.is_set()
+        return self._cancel_event.is_set()
+
+    async def _wait_if_live_runtime_paused(
+        self,
+        *,
+        stop_event: asyncio.Event | None = None,
+    ) -> bool:
         if self._live_runtime_pause_gate is None:
             return True
-        return await self._live_runtime_pause_gate.wait_if_paused(stop_event=self._cancel_event)
+        return await self._live_runtime_pause_gate.wait_if_paused(
+            stop_event=stop_event or self._cancel_event
+        )
 
     @property
     def is_stats_running(self) -> bool:
@@ -251,6 +268,15 @@ class Collector:
         connected = len(getattr(self._pool, "clients", {}) or {})
         if connected <= 0:
             return configured
+        return max(1, min(configured, connected))
+
+    def collection_worker_count(self) -> int:
+        configured = int(getattr(self._config, "collection_worker_count", 0) or 0)
+        connected = len(getattr(self._pool, "clients", {}) or {})
+        if configured <= 0:
+            return max(1, min(connected, 10)) if connected > 0 else 1
+        if connected <= 0:
+            return max(1, configured)
         return max(1, min(configured, connected))
 
     def stats_all_worker_count(self) -> int:
@@ -552,6 +578,7 @@ class Collector:
         full: bool = False,
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
         force: bool = False,
+        cancel_event: asyncio.Event | None = None,
     ) -> int:
         """Collect messages from a single channel. If full=True, reset last_collected_id to 0.
 
@@ -566,27 +593,31 @@ class Collector:
                 channel.channel_id,
             )
             return 0
-        async with self._lock:
-            self._running = True
+        if cancel_event is None:
             self._cancel_event.clear()
-            self._auto_delete_cached = None
-            try:
-                if full:
-                    channel = Channel(**{**channel.model_dump(), "last_collected_id": 0})
+        self._auto_delete_cached = None
+        self._active_collection_count += 1
+        try:
+            if full:
+                channel = Channel(**{**channel.model_dump(), "last_collected_id": 0})
 
-                min_subs = await self._load_min_subscribers_filter()
-                return await self._collect_channel(
-                    channel, progress_callback=progress_callback, force=force, min_subs=min_subs
-                )
-            finally:
-                self._running = False
+            min_subs = await self._load_min_subscribers_filter()
+            return await self._collect_channel(
+                channel,
+                progress_callback=progress_callback,
+                force=force,
+                min_subs=min_subs,
+                cancel_event=cancel_event,
+            )
+        finally:
+            self._active_collection_count = max(0, self._active_collection_count - 1)
 
     async def collect_all_channels(self) -> dict:
         """Collect messages from all active channels. Returns stats."""
         async with self._lock:
-            self._running = True
             self._cancel_event.clear()
             self._auto_delete_cached = None
+            self._active_collection_count += 1
             stats = {"channels": 0, "messages": 0, "errors": 0}
 
             try:
@@ -612,12 +643,6 @@ class Collector:
                         stats["errors"] += 1
                         break
                     except UsernameResolveFloodWaitDeferredError as e:
-                        # The triggering channel set the global resolve backoff and
-                        # deferred itself. Do NOT abort the whole run (#552): the
-                        # backoff is now active, so every subsequent channel resolves
-                        # cache-only and never hits the live API. Continue so cached
-                        # channels keep collecting within the same run instead of
-                        # bricking the run that first hits the flood.
                         logger.warning(
                             "Channel %s deferred until %s (resolve flood backoff active); "
                             "continuing run cache-only",
@@ -639,7 +664,7 @@ class Collector:
                         logger.error("Error collecting channel %s: %s", channel.channel_id, e)
                         stats["errors"] += 1
             finally:
-                self._running = False
+                self._active_collection_count = max(0, self._active_collection_count - 1)
 
         logger.info(
             "Collection done: %d channels, %d messages, %d errors",
@@ -742,11 +767,15 @@ class Collector:
         force: bool = False,
         min_subs: int = 0,
         progress_offset: int = 0,
+        cancel_event: asyncio.Event | None = None,
     ) -> int:
         """Collect new messages from a single channel. Returns count."""
         total_collected = 0
 
         while True:
+            if self._is_collection_cancelled(cancel_event):
+                return total_collected
+
             channel_id = channel.channel_id
             min_id = channel.last_collected_id
 
@@ -847,12 +876,13 @@ class Collector:
             limit = None
             channel_log_name = _format_channel_log_name(channel)
             logger.info(
-                "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s",
+                "Collecting channel %d (%s), first_run=%s, min_id=%d, limit=%s, account=%s",
                 channel_id,
                 channel_log_name,
                 is_first_run,
                 min_id,
                 limit,
+                _redact_phone(phone),
             )
 
             async def _flush_batch(batch: list[Message]) -> bool:
@@ -907,15 +937,16 @@ class Collector:
                 if should_notify:
                     all_messages.extend(batch)
                 logger.info(
-                    "Channel %d (%s): persisted %d messages, total %d",
+                    "Channel %d (%s): persisted %d messages, total %d, account=%s",
                     channel_id,
                     channel_log_name,
                     len(batch),
                     collected_count,
+                    _redact_phone(phone),
                 )
                 if progress_callback:
                     await progress_callback(total_collected + collected_count)
-                if not await self._wait_if_live_runtime_paused():
+                if not await self._wait_if_live_runtime_paused(stop_event=cancel_event):
                     return False
                 return True
 
@@ -1105,7 +1136,12 @@ class Collector:
                 if is_first_run and not force:
                     try:
                         sample_prefixes = await run_with_flood_wait(
-                            self._precheck_sample(session, entity, PRECHECK_CROSS_DUPE_SAMPLE),
+                            self._precheck_sample(
+                                session,
+                                entity,
+                                PRECHECK_CROSS_DUPE_SAMPLE,
+                                cancel_event=cancel_event,
+                            ),
                             operation="collect_channel_precheck_sample",
                             phone=phone,
                             pool=self._pool,
@@ -1267,7 +1303,10 @@ class Collector:
                             )
                             messages_batch.append(message)
 
-                            if len(messages_batch) % 10 == 0 and self._cancel_event.is_set():
+                            if (
+                                len(messages_batch) % 10 == 0
+                                and self._is_collection_cancelled(cancel_event)
+                            ):
                                 logger.info("Channel %d collection interrupted", channel_id)
                                 break
 
@@ -1279,7 +1318,7 @@ class Collector:
                                     stop_due_to_persistence_error = True
                                     break
                                 messages_batch = []
-                                if self._cancel_event.is_set():
+                                if self._is_collection_cancelled(cancel_event):
                                     break
                     except StopAsyncIteration:
                         pass
@@ -1526,7 +1565,14 @@ class Collector:
                 await self._pool.release_client(p)
         return None
 
-    async def _precheck_sample(self, session, entity, limit: int) -> list[str]:
+    async def _precheck_sample(
+        self,
+        session,
+        entity,
+        limit: int,
+        *,
+        cancel_event: asyncio.Event | None = None,
+    ) -> list[str]:
         """Sample up to `limit` messages for cross-channel precheck."""
         prefixes: list[str] = []
         async for msg in session.stream_messages(
@@ -1534,7 +1580,7 @@ class Collector:
             limit=limit,
             wait_time=self._config.delay_between_requests_sec,
         ):
-            if self._cancel_event.is_set():
+            if self._is_collection_cancelled(cancel_event):
                 break
             if msg.text and len(msg.text) > 10:
                 prefixes.append(msg.text[:100])
