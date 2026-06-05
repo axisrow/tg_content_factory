@@ -519,6 +519,9 @@ class ClientPool:
     async def available_stats_client_count(self) -> int:
         return await self._lease_pool.available_exclusive_count(self._connected_phones())
 
+    async def available_collection_client_count(self) -> int:
+        return await self._lease_pool.available_exclusive_count(self._connected_phones())
+
     async def get_client_by_phone(
         self,
         phone: str,

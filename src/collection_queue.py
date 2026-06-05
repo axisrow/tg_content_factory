@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -142,8 +143,17 @@ class CollectionQueue:
     def _target_worker_count(self) -> int:
         getter = getattr(self._collector, "collection_worker_count", None)
         if callable(getter):
-            return max(1, getter())
+            return max(1, int(getter()))
         return 1
+
+    async def _available_target_worker_count(self) -> int:
+        getter = getattr(self._collector, "available_collection_worker_count", None)
+        if callable(getter):
+            count = getter()
+            if asyncio.iscoroutine(count):
+                count = await count
+            return max(1, int(count))
+        return self._target_worker_count()
 
     def _ensure_supervisor(self) -> None:
         if self._supervisor is None or self._supervisor.done():
@@ -208,7 +218,7 @@ class CollectionQueue:
                     break
 
             self._workers = [w for w in self._workers if not w.done()]
-            target = self._target_worker_count()
+            target = await self._available_target_worker_count()
             while len(self._workers) < target:
                 w = asyncio.create_task(self._run_single_worker())
                 self._workers.append(w)
@@ -328,19 +338,32 @@ class CollectionQueue:
                 async def _progress(count: int) -> None:
                     await self._channels.update_collection_task_progress(task_id, count)
 
-                count = await self._collector.collect_single_channel(
-                    channel,
-                    full=full,
-                    progress_callback=_progress,
-                    force=force,
-                    cancel_event=cancel_event,
-                )
+                collect_kwargs = {
+                    "full": full,
+                    "progress_callback": _progress,
+                    "force": force,
+                }
+                try:
+                    signature = inspect.signature(self._collector.collect_single_channel)
+                    accepts_cancel_event = (
+                        "cancel_event" in signature.parameters
+                        or any(
+                            parameter.kind == inspect.Parameter.VAR_KEYWORD
+                            for parameter in signature.parameters.values()
+                        )
+                    )
+                except (TypeError, ValueError):
+                    accepts_cancel_event = True
+                if accepts_cancel_event:
+                    collect_kwargs["cancel_event"] = cancel_event
+                count = await self._collector.collect_single_channel(channel, **collect_kwargs)
                 persisted = await self._channels.get_collection_task(task_id)
                 persisted_cancelled = (
                     persisted is not None
                     and persisted.status == CollectionTaskStatus.CANCELLED
                 )
-                cancelled = cancel_event.is_set() or persisted_cancelled
+                collector_cancelled = bool(getattr(self._collector, "is_cancelled", False))
+                cancelled = cancel_event.is_set() or persisted_cancelled or collector_cancelled
                 if cancelled:
                     if self._shutdown_requested and not persisted_cancelled:
                         await self._reset_task_to_pending_after_shutdown(task_id)
