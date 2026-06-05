@@ -168,12 +168,21 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
         RuntimeSnapshot(snapshot_type="scheduler_jobs", payload={"jobs": jobs})
     )
     queue = getattr(container, "collection_queue", None)
+    active_task_ids = list(getattr(queue, "_active_task_ids", {}).keys()) if queue is not None else []
+    target_worker_count = 0
+    if queue is not None:
+        getter = getattr(queue, "_target_worker_count", None)
+        if callable(getter):
+            target_worker_count = getter()
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="collection_queue_status",
             payload={
                 "paused": bool(getattr(queue, "is_paused", False)) if queue is not None else False,
-                "current_task_id": getattr(queue, "_current_task_id", None) if queue is not None else None,
+                "current_task_id": active_task_ids[0] if active_task_ids else None,
+                "active_task_ids": active_task_ids,
+                "running_count": len(active_task_ids),
+                "target_worker_count": target_worker_count,
                 "timestamp": now.isoformat(),
             },
         )

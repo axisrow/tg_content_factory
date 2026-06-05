@@ -14,9 +14,10 @@ scheduler:
   collection_stream_timeout_sec: 120
   snapshot_publish_timeout_sec: 30
   max_flood_wait_sec: 300
-  stats_all_max_channels_per_run: 10
-  stats_all_cooldown_sec: 600
-  stats_all_worker_count: 1
+  collection_worker_count: 0
+  stats_all_max_channels_per_run: 30
+  stats_all_cooldown_sec: 10
+  stats_all_worker_count: 3
 
 notifications:
   admin_chat_id: null

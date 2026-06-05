@@ -51,14 +51,32 @@ def test_serve_register_fails():
 def test_serve_starts_server():
     from src.cli.commands.serve import run
     cfg = make_app_config()
+    app = MagicMock()
     with patch("src.cli.commands.serve.load_config", return_value=cfg), \
-         patch("src.cli.commands.serve.create_app", return_value=MagicMock()), \
+         patch("src.cli.commands.serve.create_app", return_value=app), \
          patch("src.cli.commands.serve.register_current_process"), \
          patch("src.cli.commands.serve.uvicorn") as mock_uv, \
          patch("src.cli.commands.serve.unregister_current_process") as mock_unreg:
         mock_uv.run = MagicMock(side_effect=KeyboardInterrupt)
         run(_args(web_pass=None))
+        assert app.state.embed_worker is True
         mock_unreg.assert_called_once()
+
+
+def test_serve_no_worker_disables_embedded_worker():
+    from src.cli.commands.serve import run
+    cfg = make_app_config()
+    app = MagicMock()
+    with patch("src.cli.commands.serve.load_config", return_value=cfg), \
+         patch("src.cli.commands.serve.create_app", return_value=app), \
+         patch("src.cli.commands.serve.register_current_process"), \
+         patch("src.cli.commands.serve.uvicorn") as mock_uv, \
+         patch("src.cli.commands.serve.unregister_current_process") as mock_unreg:
+        mock_uv.run = MagicMock()
+        run(_args(web_pass=None, no_worker=True))
+
+    assert app.state.embed_worker is False
+    mock_unreg.assert_called_once()
 
 
 def test_serve_with_web_pass_override():

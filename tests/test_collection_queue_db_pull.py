@@ -28,7 +28,9 @@ class _FakeCollector:
         self.full_calls: list[bool] = []
         self.is_cancelled = False
 
-    async def collect_single_channel(self, channel, *, full=False, progress_callback=None, force=False):
+    async def collect_single_channel(
+        self, channel, *, full=False, progress_callback=None, force=False, cancel_event=None
+    ):
         self.calls.append(channel.channel_id)
         self.full_calls.append(full)
         return 0
@@ -55,7 +57,9 @@ class _UsernameResolveFloodCollector(_FakeCollector):
         super().__init__()
         self.next_available_at = next_available_at
 
-    async def collect_single_channel(self, channel, *, full=False, progress_callback=None, force=False):
+    async def collect_single_channel(
+        self, channel, *, full=False, progress_callback=None, force=False, cancel_event=None
+    ):
         self.calls.append(channel.channel_id)
         raise UsernameResolveFloodWaitDeferredError(
             wait_seconds=120,
@@ -64,7 +68,9 @@ class _UsernameResolveFloodCollector(_FakeCollector):
 
 
 class _UsernameResolveRateLimitedCollector(_FakeCollector):
-    async def collect_single_channel(self, channel, *, full=False, progress_callback=None, force=False):
+    async def collect_single_channel(
+        self, channel, *, full=False, progress_callback=None, force=False, cancel_event=None
+    ):
         self.calls.append(channel.channel_id)
         self.full_calls.append(full)
         raise UsernameResolveRateLimitedError("+7001", 28.2)
@@ -77,7 +83,9 @@ class _BlockingCollector:
         self.finish = asyncio.Event()
         self.is_cancelled = False
 
-    async def collect_single_channel(self, channel, *, full=False, progress_callback=None, force=False):
+    async def collect_single_channel(
+        self, channel, *, full=False, progress_callback=None, force=False, cancel_event=None
+    ):
         self.calls.append(channel.channel_id)
         self.started.set()
         await self.finish.wait()
@@ -420,7 +428,7 @@ async def test_shutdown_waits_for_active_collection_and_leaves_queued_pending(tm
         assert first.messages_collected == 7
         assert second.status == "pending"
         assert collector.calls == [-1001]
-        assert "ждём завершения активной задачи сбора" in caplog.text
+        assert "ждём завершения" in caplog.text and "pending" in caplog.text.lower()
         assert "Новые задачи останутся pending в БД" in caplog.text
     finally:
         await queue.shutdown()
@@ -506,8 +514,8 @@ async def test_worker_stays_alive_while_paused(tmp_path):
         task_id = await queue.enqueue(channel)
         await asyncio.sleep(0.3)
 
-        # Worker is alive but holds the task without processing it while paused.
-        assert queue._worker is not None and not queue._worker.done()
+        # Supervisor is alive but holds the task without processing it while paused.
+        assert queue._supervisor is not None and not queue._supervisor.done()
         assert collector.calls == []
         task = await db.get_collection_task(task_id)
         assert task.status == "pending"
