@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -191,15 +192,37 @@ async def test_flood_clear_not_found(route_client, base_app):
 
 @pytest.mark.anyio
 async def test_account_info_json(route_client, base_app):
-    """GET /settings/{id}/info returns account summary JSON (parity: account info)."""
+    """GET /settings/{id}/info returns account summary and live diagnostics."""
     _, db, _ = base_app
     accounts = await db.get_account_summaries(active_only=False)
     acc = accounts[0]
-    resp = await route_client.get(f"/settings/{acc.id}/info")
+    with patch("src.web.routes.accounts.get_live_account_info_text", AsyncMock(return_value="live ok")) as mock_live:
+        resp = await route_client.get(f"/settings/{acc.id}/info")
     assert resp.status_code == 200
     data = resp.json()
     assert data["id"] == acc.id
     assert data["phone"] == acc.phone
+    assert data["live_info"] == "live ok"
+    assert "session_string" not in data
+    runtime_arg, phone_arg = mock_live.await_args.args
+    assert runtime_arg.db is db
+    assert phone_arg == acc.phone
+
+
+@pytest.mark.anyio
+async def test_account_info_json_without_live_runtime(route_client, base_app):
+    """GET /settings/{id}/info returns no-live diagnostic instead of failing."""
+    _, db, _ = base_app
+    accounts = await db.get_account_summaries(active_only=False)
+    acc = accounts[0]
+    with patch("src.web.routes.accounts.deps.get_pool", side_effect=RuntimeError("missing pool")):
+        resp = await route_client.get(f"/settings/{acc.id}/info")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == acc.id
+    assert "live Telegram runtime unavailable" in data["live_info"]
+    assert "session_string" not in data
 
 
 @pytest.mark.anyio

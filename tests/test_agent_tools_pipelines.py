@@ -1,11 +1,14 @@
 """Tests for agent tools: pipelines.py MCP tools."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.models import Channel, Message, PipelineEdge, PipelineGraph, PipelineNode, PipelineNodeType
+from src.services.pipeline_service import PipelineService
 from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
@@ -177,20 +180,38 @@ class TestPipelinesToolGetPipelineDetail:
 class TestGetPipelineQueueTool:
     @pytest.mark.anyio
     async def test_empty_queue(self, mock_db):
-        mock_db.repos.generation_runs.list_by_status = AsyncMock(return_value=[])
+        mock_db.repos.content_pipelines.get_by_id = AsyncMock(return_value=_make_pipeline(pk=1))
+        mock_db.repos.generation_runs.list_pending_moderation = AsyncMock(return_value=[])
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
-        result = await handlers["get_pipeline_queue"]({})
-        assert "Очередь генерации пуста" in _text(result)
+        result = await handlers["get_pipeline_queue"]({"pipeline_id": 1})
+        assert "Нет черновиков на модерации для пайплайна id=1" in _text(result)
+        mock_db.repos.generation_runs.list_pending_moderation.assert_awaited_once_with(
+            pipeline_id=1,
+            limit=20,
+        )
 
     @pytest.mark.anyio
     async def test_with_runs(self, mock_db):
         run = _make_run(run_id=1, status="pending", text="Generated content preview")
-        mock_db.repos.generation_runs.list_by_status = AsyncMock(return_value=[run])
+        mock_db.repos.content_pipelines.get_by_id = AsyncMock(return_value=_make_pipeline(pk=1))
+        mock_db.repos.generation_runs.list_pending_moderation = AsyncMock(return_value=[run])
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
-        result = await handlers["get_pipeline_queue"]({"limit": 10})
+        result = await handlers["get_pipeline_queue"]({"pipeline_id": 1, "limit": 10})
         text = _text(result)
-        assert "Очередь генерации (1 шт.)" in text
+        assert "Очередь модерации пайплайна id=1 (1 шт.)" in text
         assert "run_id=1" in text
+        assert "Generated content preview" in text
+        mock_db.repos.generation_runs.list_pending_moderation.assert_awaited_once_with(
+            pipeline_id=1,
+            limit=10,
+        )
+
+    @pytest.mark.anyio
+    async def test_pipeline_not_found(self, mock_db):
+        mock_db.repos.content_pipelines.get_by_id = AsyncMock(return_value=None)
+        handlers = _get_tool_handlers(mock_db, config=MagicMock())
+        result = await handlers["get_pipeline_queue"]({"pipeline_id": 999})
+        assert "Пайплайн id=999 не найден" in _text(result)
 
 
 class TestPipelinesToolAddPipeline:
@@ -650,3 +671,40 @@ class TestGetPipelineDryRunCountTool:
         text = _text(result)
         assert "3" in text
         mock_db.repos.messages.get_recent_for_channels.assert_called_once_with([100, 200], 12.0)
+
+    @pytest.mark.anyio
+    async def test_counts_dag_source_node_messages(self, db):
+        await db.add_channel(Channel(channel_id=1001, title="DAG Source"))
+        await db.insert_message(
+            Message(
+                channel_id=1001,
+                message_id=1,
+                text="Recent DAG message",
+                date=datetime.now(timezone.utc),
+            )
+        )
+        graph = PipelineGraph(
+            nodes=[
+                PipelineNode(
+                    id="src",
+                    type=PipelineNodeType.SOURCE,
+                    name="Source",
+                    config={"channel_ids": [1001]},
+                ),
+                PipelineNode(id="pub", type=PipelineNodeType.PUBLISH, name="Publish"),
+            ],
+            edges=[PipelineEdge(from_node="src", to_node="pub")],
+        )
+        pipeline_id = await PipelineService(db).import_json({
+            "name": "DAG dry-run",
+            "pipeline_json": graph.model_dump(mode="json"),
+        })
+
+        handlers = _get_tool_handlers(db)
+        result = await handlers["get_pipeline_dry_run_count"](
+            {"pipeline_id": pipeline_id, "since_value": 1, "since_unit": "d"}
+        )
+
+        text = _text(result)
+        assert "Сообщений-кандидатов: 1" in text
+        assert "источников=1" in text

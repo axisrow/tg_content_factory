@@ -583,6 +583,23 @@ async def test_list_pipeline_runs_json(client):
 
 
 @pytest.mark.anyio
+async def test_list_pipeline_runs_filters_by_status(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    app = client._transport.app  # type: ignore
+    db = app.state.db
+    completed_id = await db.repos.generation_runs.create_run(1, "prompt completed")
+    await db.repos.generation_runs.save_result(completed_id, "done", {})
+    failed_id = await db.repos.generation_runs.create_run(1, "prompt failed")
+    await db.repos.generation_runs.set_status(failed_id, "failed")
+
+    resp = await client.get("/pipelines/1/runs?status=failed")
+
+    assert resp.status_code == 200
+    run_ids = [r["id"] for r in resp.json()["runs"]]
+    assert run_ids == [failed_id]
+
+
+@pytest.mark.anyio
 async def test_show_pipeline_run_json(client):
     await client.post("/pipelines/add", data=_ADD_DATA)
     app = client._transport.app  # type: ignore

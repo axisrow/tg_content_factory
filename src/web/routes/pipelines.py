@@ -152,9 +152,16 @@ async def show_pipeline(request: Request, pipeline_id: int):
 
 
 @router.get("/{pipeline_id}/runs", response_class=JSONResponse)
-async def list_pipeline_runs(request: Request, pipeline_id: int, limit: int = 20, offset: int = 0):
+async def list_pipeline_runs(
+    request: Request,
+    pipeline_id: int,
+    limit: int = 20,
+    offset: int = 0,
+    status: str | None = None,
+):
     return pipeline_response(
-        request, await handlers.list_pipeline_runs(request, pipeline_id, limit=limit, offset=offset)
+        request,
+        await handlers.list_pipeline_runs(request, pipeline_id, limit=limit, offset=offset, status=status),
     )
 
 

@@ -858,13 +858,22 @@ async def show_pipeline(request: Request, pipeline_id: int):
     })
 
 
-async def list_pipeline_runs(request: Request, pipeline_id: int, limit: int = 20, offset: int = 0):
+async def list_pipeline_runs(
+    request: Request,
+    pipeline_id: int,
+    limit: int = 20,
+    offset: int = 0,
+    status: str | None = None,
+):
     """GET /pipelines/{id}/runs — run history (parity with CLI `pipeline runs`)."""
     svc = deps.pipeline_service(request)
     db = deps.get_db(request)
     if await svc.get(pipeline_id) is None:
         return PipelineJson({"error": "pipeline_not_found"}, status_code=404)
-    runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id, limit=limit, offset=offset)
+    fetch_limit = limit * 10 if status else limit
+    runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id, limit=fetch_limit, offset=offset)
+    if status:
+        runs = [run for run in runs if run.status == status][:limit]
     return PipelineJson({"pipeline_id": pipeline_id, "runs": [_run_to_dict(r) for r in runs]})
 
 

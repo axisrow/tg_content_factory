@@ -70,6 +70,18 @@ async def api_content_summary(request: Request):
     return JSONResponse(await analytics.get_summary())
 
 
+@router.get("/content/api/types")
+async def api_content_type_stats(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+):
+    """Get engagement stats grouped by media/content type as JSON."""
+    db = deps.get_db(request)
+    rows = await db.get_engagement_by_media_type(date_from=date_from or None, date_to=date_to or None)
+    return JSONResponse(rows)
+
+
 @router.get("/content/api/pipelines")
 async def api_pipeline_stats(request: Request, pipeline_id: int | None = None):
     """Get pipeline statistics as JSON."""
@@ -88,6 +100,15 @@ async def api_pipeline_stats(request: Request, pipeline_id: int | None = None):
         }
         for s in stats
     ])
+
+
+@router.get("/content/api/daily")
+async def api_daily_stats(request: Request, days: int = 30, pipeline_id: int | None = None):
+    """Get daily generation/publication/rejection stats as JSON."""
+    db = deps.get_db(request)
+    analytics = ContentAnalyticsService(db)
+    stats = await analytics.get_daily_stats(days=max(1, days), pipeline_id=pipeline_id)
+    return JSONResponse([dataclasses.asdict(row) for row in stats])
 
 
 @router.get("/trends", response_class=HTMLResponse)
@@ -109,6 +130,33 @@ async def trends_page(request: Request, days: int = 7):
             "days": days,
         },
     )
+
+
+@router.get("/trends/topics")
+async def api_trending_topics(request: Request, days: int = 7, limit: int = 20):
+    """Get trending topics as JSON."""
+    db = deps.get_db(request)
+    trend = TrendService(db)
+    topics = await trend.get_trending_topics(days=max(1, days), limit=max(1, limit))
+    return JSONResponse([dataclasses.asdict(row) for row in topics])
+
+
+@router.get("/trends/channels")
+async def api_trending_channels(request: Request, days: int = 7, limit: int = 10):
+    """Get trending channels as JSON."""
+    db = deps.get_db(request)
+    trend = TrendService(db)
+    channels = await trend.get_trending_channels(days=max(1, days), limit=max(1, limit))
+    return JSONResponse([dataclasses.asdict(row) for row in channels])
+
+
+@router.get("/trends/emojis")
+async def api_trending_emojis(request: Request, days: int = 7, limit: int = 15):
+    """Get trending reaction emojis as JSON."""
+    db = deps.get_db(request)
+    trend = TrendService(db)
+    emojis = await trend.get_trending_emojis(days=max(1, days), limit=max(1, limit))
+    return JSONResponse([dataclasses.asdict(row) for row in emojis])
 
 
 # ── Channel analytics ────────────────────────────────────────────
@@ -137,8 +185,8 @@ def _svc(request: Request) -> ChannelAnalyticsService:
 
 
 @router.get("/channels/api/overview")
-async def api_channel_overview(request: Request, channel_id: int):
-    overview = await _svc(request).get_channel_overview(channel_id)
+async def api_channel_overview(request: Request, channel_id: int, days: int = 30):
+    overview = await _svc(request).get_channel_overview(channel_id, days=max(1, days))
     return JSONResponse(dataclasses.asdict(overview))
 
 
@@ -202,6 +250,18 @@ async def api_messages_top(
     db = deps.get_db(request)
     limit = max(1, min(limit, 100))
     rows = await db.get_top_messages(limit=limit, date_from=date_from or None, date_to=date_to or None)
+    return JSONResponse(rows)
+
+
+@router.get("/messages/hourly")
+async def api_messages_hourly(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+):
+    """Message distribution by hour as JSON (parity with CLI `analytics hourly`)."""
+    db = deps.get_db(request)
+    rows = await db.get_hourly_activity(date_from=date_from or None, date_to=date_to or None)
     return JSONResponse(rows)
 
 

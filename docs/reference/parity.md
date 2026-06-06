@@ -103,7 +103,7 @@
 | Генерация контента | `pipeline generate` | `POST /pipelines/{id}/generate` | `generate_draft` |
 | История запусков | `pipeline runs` | `GET /pipelines/{id}/runs` | `list_pipeline_runs` |
 | Детали запуска | `pipeline run-show` | `GET /pipelines/{id}/runs/{run_id}` | `get_pipeline_run` |
-| Очередь | `pipeline queue` | `GET /pipelines/{id}/queue` | `get_pipeline_queue` |
+| Очередь модерации | `pipeline queue` | `GET /pipelines/{id}/queue` | `get_pipeline_queue` |
 | Опубликовать | `pipeline publish` | `POST /pipelines/{id}/publish` | `publish_pipeline_run` |
 | Одобрить | `pipeline approve` | `POST /moderation/{id}/approve` | `approve_run` |
 | Отклонить | `pipeline reject` | `POST /moderation/{id}/reject` | `reject_run` |
@@ -177,17 +177,17 @@
 |----------|-----|-------------|------------|
 | Сводка | `analytics summary` | `GET /analytics/content/api/summary` | `get_analytics_summary` |
 | Топ сообщений | `analytics top` | `GET /analytics/messages/top` | `get_top_messages` |
-| Типы контента | `analytics content-types` | `GET /analytics/content` | `get_content_type_stats` |
-| Почасовая активность | `analytics hourly` | `GET /analytics` | `get_hourly_activity` |
-| Ежедневная статистика | `analytics daily` | `GET /analytics/content/api/pipelines` | `get_daily_stats` |
+| Типы контента | `analytics content-types` | `GET /analytics/content/api/types` | `get_content_type_stats` |
+| Почасовая активность | `analytics hourly` | `GET /analytics/messages/hourly` | `get_hourly_activity` |
+| Ежедневная статистика | `analytics daily` | `GET /analytics/content/api/daily` | `get_daily_stats` |
 | Статистика пайплайнов | `analytics pipeline-stats` | `GET /analytics/pipelines/stats` | `get_pipeline_stats` |
-| Трендовые темы | `analytics trending-topics` | `GET /analytics/trends` | `get_trending_topics` |
-| Топ каналов | `analytics trending-channels` | `GET /analytics/trends` | `get_trending_channels` |
-| Трендовые эмодзи | `analytics trending-emojis` | `GET /analytics/trends` | `get_trending_emojis` |
+| Трендовые темы | `analytics trending-topics` | `GET /analytics/trends/topics` | `get_trending_topics` |
+| Топ каналов | `analytics trending-channels` | `GET /analytics/trends/channels` | `get_trending_channels` |
+| Трендовые эмодзи | `analytics trending-emojis` | `GET /analytics/trends/emojis` | `get_trending_emojis` |
 | Скорость сообщений | `analytics velocity` | `GET /analytics/messages/velocity` | `get_message_velocity` |
 | Пиковые часы | `analytics peak-hours` | `GET /analytics/peak-hours` | `get_peak_hours` |
 | Календарь | `analytics calendar` | `GET /calendar/api/calendar` | `get_calendar` |
-| Аналитика канала | `analytics channel` | `GET /analytics/channels` | `get_channel_analytics` |
+| Аналитика канала | `analytics channel` | `GET /analytics/channels/api/overview` | `get_channel_analytics` |
 
 ## Dialogs
 

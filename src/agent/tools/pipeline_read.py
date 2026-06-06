@@ -89,24 +89,38 @@ def register_pipeline_read_tools(db: Any, ctx: Any) -> list[Any]:
 
     @tool(
         "get_pipeline_queue",
-        "List pending and running generation runs across all pipelines (the generation queue). "
-        "Shows run_id, pipeline_id, status, and text preview. "
+        "List generation runs awaiting moderation for one pipeline. "
+        "Shows run_id, status, created timestamp, and text preview. "
         "Use get_pipeline_run to see full text of a specific run.",
         GET_PIPELINE_QUEUE_SCHEMA,
     )
     async def get_pipeline_queue(args):
         try:
+            pipeline_id = arg_int(args, "pipeline_id", required=True)
             limit = arg_int(args, "limit", 20) or 20
-            runs = await db.repos.generation_runs.list_by_status(["pending", "running"], limit=limit)
+            pipeline = await db.repos.content_pipelines.get_by_id(pipeline_id)
+            if pipeline is None:
+                return _text_response(f"Пайплайн id={pipeline_id} не найден.")
+            runs = await db.repos.generation_runs.list_pending_moderation(
+                pipeline_id=pipeline_id,
+                limit=limit,
+            )
             if not runs:
-                return _text_response("Очередь генерации пуста.")
-            lines = [f"Очередь генерации ({len(runs)} шт.):"]
+                return _text_response(f"Нет черновиков на модерации для пайплайна id={pipeline_id}.")
+            lines = [f"Очередь модерации пайплайна id={pipeline_id} ({len(runs)} шт.):"]
             for run in runs:
                 preview = (run.generated_text or "")[:100]
+                created_at = getattr(run, "created_at", None)
+                if hasattr(created_at, "strftime"):
+                    created = created_at.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    created = created_at or "—"
                 lines.append(
-                    f"- run_id={run.id}, pipeline_id={run.pipeline_id}, status={run.status}: {preview}"
+                    f"- run_id={run.id}, status={run.status}, created={created}: {preview}"
                 )
             return _text_response("\n".join(lines))
+        except ToolInputError as exc:
+            return exc.to_response()
         except Exception as exc:
             return _text_response(f"Ошибка получения очереди: {exc}")
 

@@ -60,15 +60,22 @@ def _make_pipeline(
 class TestGetPipelineQueueErrors:
     @pytest.mark.anyio
     async def test_exception_returns_error(self, mock_db):
-        mock_db.repos.generation_runs.list_by_status = AsyncMock(
+        mock_db.repos.content_pipelines.get_by_id = AsyncMock(return_value=_make_pipeline(id=1))
+        mock_db.repos.generation_runs.list_pending_moderation = AsyncMock(
             side_effect=Exception("DB error")
         )
         handlers = _get_tool_handlers(mock_db)
-        result = await handlers["get_pipeline_queue"]({})
+        result = await handlers["get_pipeline_queue"]({"pipeline_id": 1})
 
         text = _text(result)
         assert "Ошибка получения очереди" in text
         assert "DB error" in text
+
+    @pytest.mark.anyio
+    async def test_missing_pipeline_id(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_pipeline_queue"]({})
+        assert "pipeline_id обязателен" in _text(result)
 
 
 # ---------------------------------------------------------------------------

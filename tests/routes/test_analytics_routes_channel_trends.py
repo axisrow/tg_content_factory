@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.services.trend_service import TrendingChannel, TrendingEmoji, TrendingTopic
+
 # ── Trends page ─────────────────────────────────────────────────────
 
 
@@ -27,6 +29,55 @@ async def test_trends_page_invalid_days(route_client):
     """Test trends page with invalid days falls back to 7."""
     resp = await route_client.get("/analytics/trends?days=99")
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_api_trending_topics(route_client):
+    """GET /analytics/trends/topics returns topic JSON."""
+    with patch("src.web.routes.analytics.TrendService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_trending_topics = AsyncMock(return_value=[TrendingTopic(keyword="ai", count=3)])
+        resp = await route_client.get("/analytics/trends/topics?days=7&limit=5")
+
+    assert resp.status_code == 200
+    assert resp.json() == [{"keyword": "ai", "count": 3}]
+    instance.get_trending_topics.assert_awaited_once_with(days=7, limit=5)
+
+
+@pytest.mark.anyio
+async def test_api_trending_channels(route_client):
+    """GET /analytics/trends/channels returns channel JSON."""
+    with patch("src.web.routes.analytics.TrendService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_trending_channels = AsyncMock(
+            return_value=[
+                TrendingChannel(
+                    channel_id=100,
+                    title="Test",
+                    username="test",
+                    avg_views=10.5,
+                    message_count=4,
+                )
+            ]
+        )
+        resp = await route_client.get("/analytics/trends/channels?days=7&limit=5")
+
+    assert resp.status_code == 200
+    assert resp.json()[0]["channel_id"] == 100
+    instance.get_trending_channels.assert_awaited_once_with(days=7, limit=5)
+
+
+@pytest.mark.anyio
+async def test_api_trending_emojis(route_client):
+    """GET /analytics/trends/emojis returns reaction emoji JSON."""
+    with patch("src.web.routes.analytics.TrendService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_trending_emojis = AsyncMock(return_value=[TrendingEmoji(emoji="🔥", count=9)])
+        resp = await route_client.get("/analytics/trends/emojis?days=14&limit=3")
+
+    assert resp.status_code == 200
+    assert resp.json() == [{"emoji": "🔥", "count": 9}]
+    instance.get_trending_emojis.assert_awaited_once_with(days=14, limit=3)
 
 
 # ── Channel analytics page ─────────────────────────────────────────
@@ -72,11 +123,12 @@ async def test_api_channel_overview(route_client):
     with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
         instance = mock_svc.return_value
         instance.get_channel_overview = AsyncMock(return_value=overview)
-        resp = await route_client.get("/analytics/channels/api/overview?channel_id=100")
+        resp = await route_client.get("/analytics/channels/api/overview?channel_id=100&days=14")
         assert resp.status_code == 200
         data = resp.json()
         assert data["channel_id"] == 100
         assert data["title"] == "Test"
+        instance.get_channel_overview.assert_awaited_once_with(100, days=14)
 
 
 @pytest.mark.anyio

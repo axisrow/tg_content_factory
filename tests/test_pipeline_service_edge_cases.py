@@ -10,6 +10,7 @@ from src.database.bundles import PipelineBundle
 from src.models import (
     Account,
     Channel,
+    ContentPipeline,
     PipelineEdge,
     PipelineGraph,
     PipelineNode,
@@ -192,6 +193,37 @@ async def test_get_detail(svc, pipeline_id):
     assert detail["source_ids"] == [1001, 1002]
     assert detail["target_refs"] == ["+100|77"]
     assert len(detail["source_titles"]) == 2
+
+
+@pytest.mark.anyio
+async def test_get_detail_uses_dag_source_ids_without_sidecar_rows(svc):
+    graph = PipelineGraph(
+        nodes=[
+            PipelineNode(
+                id="src",
+                type=PipelineNodeType.SOURCE,
+                name="Source",
+                config={"channel_ids": [1002]},
+            ),
+            PipelineNode(id="pub", type=PipelineNodeType.PUBLISH, name="Publish"),
+        ],
+        edges=[PipelineEdge(from_node="src", to_node="pub")],
+    )
+    pipeline_id = await svc._bundle.add(  # noqa: SLF001 - test seeds exact storage shape.
+        ContentPipeline(name="DAG detail", prompt_template=".", pipeline_json=graph),
+        [],
+        [],
+    )
+
+    detail = await svc.get_detail(pipeline_id)
+    assert detail is not None
+    assert detail["source_ids"] == [1002]
+    assert detail["source_titles"] == ["Source B"]
+
+    rows = await svc.get_with_relations()
+    row = next(item for item in rows if item["pipeline"].id == pipeline_id)
+    assert row["source_ids"] == [1002]
+    assert row["source_titles"] == ["Source B"]
 
 
 @pytest.mark.anyio
