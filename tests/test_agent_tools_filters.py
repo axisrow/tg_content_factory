@@ -286,3 +286,32 @@ class TestHardDeleteChannelsTool:
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["hard_delete_channels"]({"pks": "1", "confirm": True})
         assert "Ошибка удаления каналов" in _text(result)
+
+
+class TestPurgeChannelMessagesTool:
+    @pytest.mark.anyio
+    async def test_missing_channel_id(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["purge_channel_messages"]({})
+        assert "channel_id обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_no_confirm_returns_gate(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["purge_channel_messages"]({"channel_id": 100})
+        assert "confirm=true" in _text(result).lower()
+
+    @pytest.mark.anyio
+    async def test_with_confirm_purges(self, mock_db):
+        mock_db.delete_messages_for_channel = AsyncMock(return_value=42)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["purge_channel_messages"]({"channel_id": 100, "confirm": True})
+        assert "42" in _text(result)
+        mock_db.delete_messages_for_channel.assert_called_once_with(100)
+
+    @pytest.mark.anyio
+    async def test_error_returns_text(self, mock_db):
+        mock_db.delete_messages_for_channel = AsyncMock(side_effect=Exception("boom"))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["purge_channel_messages"]({"channel_id": 100, "confirm": True})
+        assert "Ошибка очистки сообщений канала" in _text(result)

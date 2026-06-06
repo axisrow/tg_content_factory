@@ -199,3 +199,31 @@ async def test_edit_search_query_missing_query(route_client):
     """POST /search-queries/{id}/edit without query returns 422."""
     resp = await route_client.post("/search-queries/1/edit", data={}, follow_redirects=False)
     assert resp.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_get_search_query_json(route_client, db):
+    from src.models import SearchQuery
+
+    sq_id = await db.repos.search_queries.add(SearchQuery(query="btc", interval_minutes=60))
+    resp = await route_client.get(f"/search-queries/{sq_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == sq_id
+    assert data["query"] == "btc"
+
+
+@pytest.mark.anyio
+async def test_get_search_query_not_found(route_client):
+    resp = await route_client.get("/search-queries/9999")
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_get_search_query_stats_json(route_client, db):
+    from src.models import SearchQuery
+
+    sq_id = await db.repos.search_queries.add(SearchQuery(query="eth", interval_minutes=60))
+    resp = await route_client.get(f"/search-queries/{sq_id}/stats?days=7")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)

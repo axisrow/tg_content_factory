@@ -444,4 +444,83 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(set_channel_tags)
 
+    @tool(
+        "get_channel_tags",
+        "Get tags assigned to a specific channel. pk = DB primary key from list_channels.",
+        {
+            "pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"],
+        },
+    )
+    async def get_channel_tags(args):
+        try:
+            pk = arg_int(args, "pk", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        try:
+            ch = await db.get_channel_by_pk(pk)
+            if ch is None:
+                return _text_response(f"Канал pk={pk} не найден.")
+            tags = await db.repos.channels.get_channel_tags(pk)
+            if not tags:
+                return _text_response(f"У канала '{ch.title}' нет тегов.")
+            return _text_response(f"Теги канала '{ch.title}': {', '.join(tags)}")
+        except Exception as e:
+            return _text_response(f"Ошибка получения тегов канала: {e}")
+
+    tools.append(get_channel_tags)
+
+    # ------------------------------------------------------------------
+    # Bulk add / list-for-import (dialog cache, no live pool needed)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "list_dialogs_for_import",
+        "List cached dialogs available for import as channels. Each row includes channel_id, "
+        "title, username and already_added (true if the dialog is already saved as a channel). "
+        "Uses the cached dialog list; call refresh_dialogs first if it looks stale.",
+        {},
+    )
+    async def list_dialogs_for_import(args):
+        try:
+            dialogs = await ctx.channel_service().get_dialogs_with_added_flags()
+            if not dialogs:
+                return _text_response("Диалоги в кеше не найдены. Сначала выполните refresh_dialogs.")
+            lines = [f"Диалоги для импорта ({len(dialogs)}):"]
+            for d in dialogs:
+                added = "уже добавлен" if d.get("already_added") else "новый"
+                title = d.get("title") or "(без названия)"
+                username = f" @{d['username']}" if d.get("username") else ""
+                lines.append(f"- {d.get('channel_id')} {title}{username} [{added}]")
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения диалогов для импорта: {e}")
+
+    tools.append(list_dialogs_for_import)
+
+    @tool(
+        "add_channels_bulk",
+        "Bulk-add channels from the cached dialog list by their channel_id. "
+        "channel_ids = comma-separated dialog channel_id values (from list_dialogs_for_import). "
+        "Uses cached dialogs; refresh_dialogs first if stale. Requires confirm=true.",
+        {
+            "channel_ids": Annotated[str, "ID диалогов через запятую (из list_dialogs_for_import)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
+    )
+    async def add_channels_bulk(args):
+        raw = arg_str(args, "channel_ids", "")
+        ids = [c.strip() for c in raw.split(",") if c.strip()]
+        if not ids:
+            return _text_response("Укажите channel_ids (через запятую).")
+        gate = require_confirmation(f"добавит {len(ids)} диалог(ов) как каналы", args)
+        if gate:
+            return gate
+        try:
+            await ctx.channel_service().add_bulk_by_dialog_ids(ids)
+            return _text_response(f"Обработано {len(ids)} диалог(ов) для добавления в каналы.")
+        except Exception as e:
+            return _text_response(f"Ошибка массового добавления: {e}")
+
+    tools.append(add_channels_bulk)
+
     return tools

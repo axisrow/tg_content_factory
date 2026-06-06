@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Annotated, Any
 
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
@@ -10,6 +10,7 @@ from src.agent.tools._registry import (
     ToolInputError,
     _text_response,
     arg_csv_ints,
+    arg_int,
     arg_str,
     get_accounts_with_flood_cleanup,
     is_flood_wait_active,
@@ -414,4 +415,52 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         return _text_response("\n".join(lines))
 
     tools.append(send_reactions)
+
+    @tool(
+        "translate_message",
+        "Translate a single collected message into a target language by its DB id. "
+        "message_db_id = DB id of the message (not the Telegram message_id). "
+        "target = ISO language code (default 'en'). Stores the translation.",
+        {
+            "message_db_id": Annotated[int, "ID сообщения в БД"],
+            "target": Annotated[str, "Целевой язык (например en)"],
+        },
+    )
+    async def translate_message(args):
+        try:
+            message_db_id = arg_int(args, "message_db_id", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        target = arg_str(args, "target", "en") or "en"
+        db = ctx.db
+        try:
+            msg = await db.repos.messages.get_by_id(message_db_id)
+            if msg is None:
+                return _text_response(f"Сообщение id={message_db_id} не найдено.")
+            if not (msg.text or "").strip():
+                return _text_response("В сообщении нет текста для перевода.")
+
+            from src.services.provider_service import build_provider_service
+            from src.services.translation_service import TranslationService
+
+            provider_name = await db.get_setting("translation_provider")
+            model = await db.get_setting("translation_model")
+            provider_service = await build_provider_service(db, ctx.config)
+            svc = TranslationService(db, provider_service=provider_service)
+
+            results = await svc.translate_batch([msg], target, provider_name=provider_name, model=model)
+            if not results:
+                return _text_response(
+                    "Перевод не выполнен (язык совпадает с целевым или провайдер не настроен)."
+                )
+            _, translated = results[0]
+            await db.repos.messages.update_translation(message_db_id, target, translated)
+            original = (msg.text or "")[:500]
+            return _text_response(
+                f"Оригинал:\n  {original}\n\nПеревод ({target}):\n  {translated[:500]}"
+            )
+        except Exception as e:
+            return _text_response(f"Ошибка перевода сообщения: {e}")
+
+    tools.append(translate_message)
     return tools

@@ -146,6 +146,28 @@ async def get_refinement_steps(request: Request, pipeline_id: int):
     return pipeline_response(request, await handlers.get_refinement_steps(request, pipeline_id))
 
 
+@router.get("/{pipeline_id}/show", response_class=JSONResponse)
+async def show_pipeline(request: Request, pipeline_id: int):
+    return pipeline_response(request, await handlers.show_pipeline(request, pipeline_id))
+
+
+@router.get("/{pipeline_id}/runs", response_class=JSONResponse)
+async def list_pipeline_runs(request: Request, pipeline_id: int, limit: int = 20, offset: int = 0):
+    return pipeline_response(
+        request, await handlers.list_pipeline_runs(request, pipeline_id, limit=limit, offset=offset)
+    )
+
+
+@router.get("/{pipeline_id}/runs/{run_id}", response_class=JSONResponse)
+async def show_pipeline_run(request: Request, pipeline_id: int, run_id: int):
+    return pipeline_response(request, await handlers.show_pipeline_run(request, pipeline_id, run_id))
+
+
+@router.get("/{pipeline_id}/queue", response_class=JSONResponse)
+async def pipeline_queue(request: Request, pipeline_id: int, limit: int = 50):
+    return pipeline_response(request, await handlers.pipeline_queue(request, pipeline_id, limit=limit))
+
+
 @router.get("/dry-run-count", response_class=JSONResponse)
 async def dry_run_count_new(request: Request, source_ids: str = "",
                              since_value: int = 6, since_unit: str = "h"):

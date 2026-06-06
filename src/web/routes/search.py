@@ -1,11 +1,44 @@
 from fastapi import APIRouter, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
+from src.cli.commands.common import resolve_channel
+from src.web import deps
 from src.web.search import handlers
 from src.web.search.forms import extract_length as _extract_length  # noqa: F401  (back-compat import)
 from src.web.search.responses import search_response
 
 router = APIRouter()
+
+
+@router.get("/messages/{identifier}", response_class=JSONResponse)
+async def read_messages(
+    request: Request,
+    identifier: str,
+    query: str = Query(""),
+    limit: int = Query(50),
+    date_from: str = Query(""),
+    date_to: str = Query(""),
+    topic_id: int | None = Query(None),
+):
+    """Read collected messages of a channel from the DB (parity with CLI `messages read`)."""
+    db = deps.get_db(request)
+    channels = await db.get_channels()
+    ch = resolve_channel(channels, identifier)
+    if ch is None:
+        return JSONResponse({"error": "channel_not_found"}, status_code=404)
+    messages, total = await db.search_messages(
+        query=query,
+        channel_id=ch.channel_id,
+        date_from=date_from or None,
+        date_to=date_to or None,
+        limit=limit,
+        topic_id=topic_id,
+    )
+    return JSONResponse({
+        "channel_id": ch.channel_id,
+        "total": total,
+        "messages": [m.model_dump(mode="json") for m in messages],
+    })
 
 
 @router.get("/", response_class=HTMLResponse)

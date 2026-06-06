@@ -445,6 +445,21 @@ class TelegramCommandDispatcher:
         )
         return {"phone": result.phone, "message_id": result.message_id}
 
+    async def _handle_dialogs_join(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await TelegramActionService(self._pool).join_dialog(
+            phone=str(payload["phone"]),
+            target=payload["target"],
+        )
+        return {"phone": result.phone, "target": result.target, "via_invite": result.via_invite}
+
+    async def _handle_dialogs_resolve(self, payload: dict[str, Any]) -> dict[str, Any]:
+        entity = await self._pool.resolve_any_entity(
+            payload["identifier"], phone=str(payload.get("phone") or "") or None
+        )
+        if not entity:
+            raise RuntimeError("resolve failed")
+        return {"entity": entity}
+
     async def _handle_dialogs_edit_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         result = await TelegramActionService(self._pool).edit_message(
             phone=str(payload["phone"]),

@@ -620,3 +620,33 @@ class TestPipelineRunsToolResultSemantics:
         assert "Сгенерировано" in text
         assert "generated_items:2" in text
         assert "hello" in text
+
+
+class TestGetPipelineDryRunCountTool:
+    @pytest.mark.anyio
+    async def test_missing_id(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_pipeline_dry_run_count"]({})
+        assert "pipeline_id обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_not_found(self, mock_db):
+        with patch("src.services.pipeline_service.PipelineService") as mock_svc:
+            mock_svc.return_value.get_detail = AsyncMock(return_value=None)
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["get_pipeline_dry_run_count"]({"pipeline_id": 9})
+        assert "не найден" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_counts_messages(self, mock_db):
+        mock_db.repos = MagicMock()
+        mock_db.repos.messages.get_recent_for_channels = AsyncMock(return_value=[1, 2, 3])
+        with patch("src.services.pipeline_service.PipelineService") as mock_svc:
+            mock_svc.return_value.get_detail = AsyncMock(return_value={"source_ids": [100, 200]})
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["get_pipeline_dry_run_count"](
+                {"pipeline_id": 1, "since_value": 12, "since_unit": "h"}
+            )
+        text = _text(result)
+        assert "3" in text
+        mock_db.repos.messages.get_recent_for_channels.assert_called_once_with([100, 200], 12.0)

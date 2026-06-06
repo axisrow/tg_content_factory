@@ -620,3 +620,28 @@ async def test_translate_message_non_en_target(route_client, base_app):
     assert data["ok"] is True
     assert data["cached"] is True
     assert data["translation"] == "Bonjour monde"
+
+
+@pytest.mark.anyio
+async def test_read_messages_route_returns_json(route_client):
+    """GET /messages/{identifier} reads collected messages (parity: messages read)."""
+    from src.models import Channel
+
+    db = route_client._transport_app.state.db
+    await db.add_channel(Channel(channel_id=777, title="ReadChan", username="readchan"))
+    await db.insert_messages_batch([
+        Message(channel_id=777, message_id=1, text="hello world", date=datetime(2024, 6, 1, tzinfo=timezone.utc)),
+    ])
+
+    resp = await route_client.get("/messages/readchan")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["channel_id"] == 777
+    assert data["total"] >= 1
+    assert any("hello world" in (m.get("text") or "") for m in data["messages"])
+
+
+@pytest.mark.anyio
+async def test_read_messages_route_channel_not_found(route_client):
+    resp = await route_client.get("/messages/nonexistent_channel")
+    assert resp.status_code == 404

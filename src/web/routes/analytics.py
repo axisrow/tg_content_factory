@@ -192,3 +192,38 @@ async def api_cross_citations(
 ):
     data = await _svc(request).get_cross_channel_citations(channel_id, days, limit)
     return JSONResponse(data)
+
+
+@router.get("/messages/top")
+async def api_messages_top(
+    request: Request, limit: int = 20, date_from: str = "", date_to: str = "",
+):
+    """Top messages by reactions (parity with CLI `analytics top`)."""
+    db = deps.get_db(request)
+    limit = max(1, min(limit, 100))
+    rows = await db.get_top_messages(limit=limit, date_from=date_from or None, date_to=date_to or None)
+    return JSONResponse(rows)
+
+
+@router.get("/pipelines/stats")
+async def api_pipeline_stats_alias(request: Request, pipeline_id: int | None = None):
+    """Pipeline statistics (parity with CLI `analytics pipeline-stats`)."""
+    db = deps.get_db(request)
+    stats = await ContentAnalyticsService(db).get_pipeline_stats(pipeline_id)
+    return JSONResponse([dataclasses.asdict(s) for s in stats])
+
+
+@router.get("/messages/velocity")
+async def api_message_velocity(request: Request, days: int = 30):
+    """Daily message velocity (parity with CLI `analytics velocity`)."""
+    db = deps.get_db(request)
+    data = await TrendService(db).get_message_velocity(days=days)
+    return JSONResponse([dataclasses.asdict(v) for v in data])
+
+
+@router.get("/peak-hours")
+async def api_peak_hours(request: Request, days: int = 30):
+    """Peak posting hours (parity with CLI `analytics peak-hours`)."""
+    db = deps.get_db(request)
+    data = await TrendService(db).get_peak_hours(days=days)
+    return JSONResponse([dataclasses.asdict(h) for h in data])

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from claude_agent_sdk import tool
 
-from src.agent.tools._registry import ToolInputError, _text_response, arg_bool, arg_int
+from src.agent.tools._registry import ToolInputError, _text_response, arg_bool, arg_int, arg_str
 from src.agent.tools.pipeline_schemas import (
     GET_PIPELINE_DETAIL_SCHEMA,
     GET_PIPELINE_QUEUE_SCHEMA,
@@ -139,4 +139,39 @@ def register_pipeline_read_tools(db: Any, ctx: Any) -> list[Any]:
             return _text_response(f"Ошибка получения шагов рефайнмента: {exc}")
 
     tools.append(get_refinement_steps)
+
+    @tool(
+        "get_pipeline_dry_run_count",
+        "Count how many source messages a pipeline would consider within a recent time window "
+        "(dry-run, nothing is generated). since_unit is one of m/h/d (default 6h).",
+        {
+            "pipeline_id": Annotated[int, "ID пайплайна"],
+            "since_value": Annotated[int, "Значение периода (по умолчанию 6)"],
+            "since_unit": Annotated[str, "Единица периода: m/h/d (по умолчанию h)"],
+        },
+    )
+    async def get_pipeline_dry_run_count(args):
+        try:
+            pipeline_id = arg_int(args, "pipeline_id", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        since_value = arg_int(args, "since_value", 6)
+        since_unit = arg_str(args, "since_unit", "h")
+        try:
+            from src.services.pipeline_service import to_since_hours
+
+            detail = await ctx.pipeline_service().get_detail(pipeline_id)
+            if detail is None:
+                return _text_response(f"Пайплайн id={pipeline_id} не найден.")
+            source_ids = detail.get("source_ids", [])
+            since_h = to_since_hours(since_value, since_unit)
+            msgs = await db.repos.messages.get_recent_for_channels(source_ids, since_h)
+            return _text_response(
+                f"Сообщений-кандидатов: {len(msgs)} "
+                f"(источников={len(source_ids)}, период={since_value}{since_unit})."
+            )
+        except Exception as exc:
+            return _text_response(f"Ошибка подсчёта dry-run: {exc}")
+
+    tools.append(get_pipeline_dry_run_count)
     return tools

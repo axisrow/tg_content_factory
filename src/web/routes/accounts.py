@@ -80,6 +80,17 @@ async def flood_status(request: Request):
     return JSONResponse(result)
 
 
+@router.get("/{account_id}/info")
+async def account_info(request: Request, account_id: int):
+    """Account summary from the DB as JSON (parity with CLI `account info`)."""
+    db = deps.get_db(request)
+    accounts = await db.get_account_summaries(active_only=False)
+    acc = next((a for a in accounts if a.id == account_id), None)
+    if acc is None:
+        return JSONResponse({"error": "account_not_found"}, status_code=404)
+    return JSONResponse(acc.model_dump(mode="json"))
+
+
 @router.post("/{account_id}/flood-clear")
 async def flood_clear(request: Request, account_id: int):
     db = deps.get_db(request)

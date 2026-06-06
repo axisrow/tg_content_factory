@@ -187,3 +187,22 @@ async def test_flood_clear_not_found(route_client, base_app):
     resp = await route_client.post("/settings/99999/flood-clear", follow_redirects=False)
     assert resp.status_code in (303, 302)
     assert "error=account_not_found" in resp.headers.get("location", "")
+
+
+@pytest.mark.anyio
+async def test_account_info_json(route_client, base_app):
+    """GET /settings/{id}/info returns account summary JSON (parity: account info)."""
+    _, db, _ = base_app
+    accounts = await db.get_account_summaries(active_only=False)
+    acc = accounts[0]
+    resp = await route_client.get(f"/settings/{acc.id}/info")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == acc.id
+    assert data["phone"] == acc.phone
+
+
+@pytest.mark.anyio
+async def test_account_info_not_found(route_client, base_app):
+    resp = await route_client.get("/settings/99999/info")
+    assert resp.status_code == 404

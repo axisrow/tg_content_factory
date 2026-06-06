@@ -383,3 +383,64 @@ class TestAnalyticsToolGetHourlyActivity:
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["get_hourly_activity"]({})
         assert "Ошибка" in _text(result)
+
+
+class TestGetTrendingEmojisTool:
+    @pytest.mark.anyio
+    async def test_empty(self, mock_db):
+        with patch("src.services.trend_service.TrendService") as mock_svc:
+            mock_svc.return_value.get_trending_emojis = AsyncMock(return_value=[])
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["get_trending_emojis"]({})
+        assert "Нет данных" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_data(self, mock_db):
+        emojis = [SimpleNamespace(emoji="👍", count=42), SimpleNamespace(emoji="🔥", count=10)]
+        with patch("src.services.trend_service.TrendService") as mock_svc:
+            mock_svc.return_value.get_trending_emojis = AsyncMock(return_value=emojis)
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["get_trending_emojis"]({"days": 30, "limit": 5})
+        text = _text(result)
+        assert "👍" in text
+        assert "42" in text
+
+    @pytest.mark.anyio
+    async def test_error(self, mock_db):
+        with patch("src.services.trend_service.TrendService") as mock_svc:
+            mock_svc.return_value.get_trending_emojis = AsyncMock(side_effect=Exception("boom"))
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["get_trending_emojis"]({})
+        assert "Ошибка" in _text(result)
+
+
+class TestGetChannelAnalyticsTool:
+    @pytest.mark.anyio
+    async def test_missing_channel_id(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_channel_analytics"]({})
+        assert "channel_id обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_overview(self, mock_db):
+        overview = SimpleNamespace(
+            channel_id=100, title="MyChan", username="mychan",
+            subscriber_count=1000, subscriber_delta=5, err=2.5,
+            total_posts=50, posts_today=2, posts_week=10, posts_month=30,
+            avg_views=500.0, avg_forwards=3.0, avg_reactions=20.0,
+        )
+        with patch("src.services.channel_analytics_service.ChannelAnalyticsService") as mock_svc:
+            mock_svc.return_value.get_channel_overview = AsyncMock(return_value=overview)
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["get_channel_analytics"]({"channel_id": 100, "days": 30})
+        text = _text(result)
+        assert "MyChan" in text
+        assert "1000" in text
+
+    @pytest.mark.anyio
+    async def test_error(self, mock_db):
+        with patch("src.services.channel_analytics_service.ChannelAnalyticsService") as mock_svc:
+            mock_svc.return_value.get_channel_overview = AsyncMock(side_effect=Exception("boom"))
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["get_channel_analytics"]({"channel_id": 100})
+        assert "Ошибка" in _text(result)

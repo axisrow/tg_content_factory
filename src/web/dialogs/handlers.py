@@ -19,6 +19,7 @@ from src.web.dialogs.forms import (
     EditMessageForm,
     EditPermissionsForm,
     ForwardMessagesForm,
+    JoinDialogForm,
     KickParticipantForm,
     LeaveDialogsForm,
     MarkReadForm,
@@ -26,6 +27,7 @@ from src.web.dialogs.forms import (
     PinMessageForm,
     ReactionForm,
     RefreshDialogsForm,
+    ResolveEntityForm,
     SendMessageForm,
     UnpinMessageForm,
     parse_dialog_form,
@@ -161,6 +163,30 @@ async def send_message(request: Request) -> CommandRedirect | DialogRedirect:
         request,
         "dialogs.send",
         payload={"phone": form.phone, "recipient": form.recipient, "text": form.text},
+        phone=form.phone,
+    )
+
+
+async def join_dialog(request: Request) -> CommandRedirect | DialogRedirect:
+    form = await parse_dialog_form(request, JoinDialogForm)
+    if not form.phone or not form.target:
+        return DialogRedirect(form.phone, error="missing_fields")
+    return await _enqueue(
+        request,
+        "dialogs.join",
+        payload={"phone": form.phone, "target": form.target},
+        phone=form.phone,
+    )
+
+
+async def resolve_entity(request: Request) -> CommandRedirect | DialogRedirect:
+    form = await parse_dialog_form(request, ResolveEntityForm)
+    if not form.identifier:
+        return DialogRedirect(form.phone, error="missing_fields")
+    return await _enqueue(
+        request,
+        "dialogs.resolve",
+        payload={"phone": form.phone, "identifier": form.identifier},
         phone=form.phone,
     )
 

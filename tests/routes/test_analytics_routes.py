@@ -203,3 +203,57 @@ async def test_api_pipelines_filter_by_id(route_client):
     data = json.loads(resp.text)
     assert len(data) == 1
     assert data[0]["pipeline_id"] == pipeline_id
+
+
+@pytest.mark.anyio
+async def test_api_messages_top_returns_json(route_client):
+    """GET /analytics/messages/top returns a JSON list (parity: analytics top)."""
+    resp = await route_client.get("/analytics/messages/top?limit=5")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_api_messages_top_with_data(route_client):
+    from datetime import datetime, timezone
+
+    from src.models import Channel, Message
+
+    db = route_client._transport_app.state.db
+    await db.add_channel(Channel(channel_id=500, title="Top Chan", username="top"))
+    await db.insert_messages_batch([
+        Message(
+            channel_id=500, message_id=1, text="reacted",
+            reactions_json='[{"emoji": "👍", "count": 99}]',
+            date=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        )
+    ])
+    resp = await route_client.get("/analytics/messages/top?limit=10")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert any(row.get("total_reactions") for row in data)
+
+
+@pytest.mark.anyio
+async def test_api_pipeline_stats_alias_returns_json(route_client):
+    """GET /analytics/pipelines/stats returns a JSON list (parity: analytics pipeline-stats)."""
+    resp = await route_client.get("/analytics/pipelines/stats")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_api_message_velocity_returns_json(route_client):
+    """GET /analytics/messages/velocity returns a JSON list (parity: analytics velocity)."""
+    resp = await route_client.get("/analytics/messages/velocity?days=30")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_api_peak_hours_returns_json(route_client):
+    """GET /analytics/peak-hours returns a JSON list (parity: analytics peak-hours)."""
+    resp = await route_client.get("/analytics/peak-hours?days=30")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)

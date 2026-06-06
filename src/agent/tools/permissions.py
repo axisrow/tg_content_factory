@@ -106,6 +106,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "search_my_chats": ToolCategory.READ,
     "search_in_channel": ToolCategory.READ,
     "search_hybrid": ToolCategory.READ,
+    "purge_search_cache": ToolCategory.DELETE,
     # Channels
     "list_channels": ToolCategory.READ,
     "get_channel_stats": ToolCategory.READ,
@@ -119,6 +120,9 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "create_tag": ToolCategory.WRITE,
     "delete_tag": ToolCategory.DELETE,
     "set_channel_tags": ToolCategory.WRITE,
+    "get_channel_tags": ToolCategory.READ,
+    "add_channels_bulk": ToolCategory.WRITE,
+    "list_dialogs_for_import": ToolCategory.READ,
     # Collection
     "collect_channel": ToolCategory.WRITE,
     "collect_all_channels": ToolCategory.WRITE,
@@ -138,6 +142,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "publish_pipeline_run": ToolCategory.WRITE,
     "get_pipeline_queue": ToolCategory.READ,
     "get_refinement_steps": ToolCategory.READ,
+    "get_pipeline_dry_run_count": ToolCategory.READ,
     "set_refinement_steps": ToolCategory.WRITE,
     "export_pipeline_json": ToolCategory.READ,
     "import_pipeline_json": ToolCategory.WRITE,
@@ -177,6 +182,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "purge_filtered_channels": ToolCategory.DELETE,
     "hard_delete_channels": ToolCategory.DELETE,
     "precheck_filters": ToolCategory.WRITE,
+    "purge_channel_messages": ToolCategory.DELETE,
     # Analytics
     "get_analytics_summary": ToolCategory.READ,
     "get_pipeline_stats": ToolCategory.READ,
@@ -189,6 +195,8 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "get_top_messages": ToolCategory.READ,
     "get_content_type_stats": ToolCategory.READ,
     "get_hourly_activity": ToolCategory.READ,
+    "get_trending_emojis": ToolCategory.READ,
+    "get_channel_analytics": ToolCategory.READ,
     # Scheduler
     "get_scheduler_status": ToolCategory.READ,
     "start_scheduler": ToolCategory.WRITE,
@@ -244,6 +252,7 @@ TOOL_CATEGORIES: dict[str, ToolCategory] = {
     "pin_message": ToolCategory.WRITE,
     "unpin_message": ToolCategory.WRITE,
     "download_media": ToolCategory.READ,
+    "translate_message": ToolCategory.WRITE,
     "get_participants": ToolCategory.READ,
     "edit_admin": ToolCategory.WRITE,
     "edit_permissions": ToolCategory.WRITE,
@@ -285,11 +294,13 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ("Поиск", [
         "search_messages", "semantic_search", "index_messages",
         "search_telegram", "search_my_chats", "search_in_channel", "search_hybrid",
+        "purge_search_cache",
     ]),
     ("Каналы", [
         "list_channels", "get_channel_stats", "add_channel", "delete_channel",
         "toggle_channel", "import_channels", "refresh_channel_types", "refresh_channel_meta",
         "list_tags", "create_tag", "delete_tag", "set_channel_tags",
+        "get_channel_tags", "add_channels_bulk", "list_dialogs_for_import",
     ]),
     ("Сбор", [
         "collect_channel", "collect_all_channels", "collect_channel_stats", "collect_all_stats",
@@ -300,7 +311,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "list_pipeline_runs", "get_pipeline_run", "publish_pipeline_run",
         "get_pipeline_queue", "get_refinement_steps", "set_refinement_steps",
         "export_pipeline_json", "import_pipeline_json", "list_pipeline_templates",
-        "create_pipeline_from_template", "ai_edit_pipeline",
+        "create_pipeline_from_template", "ai_edit_pipeline", "get_pipeline_dry_run_count",
     ]),
     ("Модерация", [
         "list_pending_moderation", "view_moderation_run", "approve_run", "reject_run",
@@ -319,12 +330,14 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
     ("Фильтры", [
         "analyze_filters", "apply_filters", "reset_filters", "toggle_channel_filter",
         "purge_filtered_channels", "hard_delete_channels", "precheck_filters",
+        "purge_channel_messages",
     ]),
     ("Аналитика", [
         "get_analytics_summary", "get_pipeline_stats", "get_daily_stats",
         "get_trending_topics", "get_trending_channels", "get_message_velocity",
         "get_peak_hours", "get_calendar",
         "get_top_messages", "get_content_type_stats", "get_hourly_activity",
+        "get_trending_emojis", "get_channel_analytics",
     ]),
     ("Планировщик", [
         "get_scheduler_status", "start_scheduler", "stop_scheduler",
@@ -350,6 +363,7 @@ MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
         "send_message", "send_reaction", "send_reactions", "forward_messages", "edit_message", "delete_message",
         "pin_message", "unpin_message", "download_media", "read_messages",
         "get_telegram_queue_status", "cancel_telegram_command", "clear_pending_telegram_commands",
+        "translate_message",
     ]),
     ("Управление чатом", [
         "get_participants", "edit_admin", "edit_permissions", "kick_participant",
