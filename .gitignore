@@ -66,3 +66,7 @@ tasks/
 site/
 docs/superpowers/
 .worktrees/
+
+# ai_detect_tool — standalone tool (см. #781): код версионируем, артефакты нет.
+# *.db уже покрыт глобально выше; здесь добавляем выходные CSV и рабочие JSON-сессии.
+ai_detect_tool/
