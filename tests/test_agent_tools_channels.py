@@ -388,6 +388,18 @@ class TestAddChannelsBulkTool:
         mock_svc.return_value.add_bulk_by_dialog_ids.assert_called_once_with(["100", "200"])
 
     @pytest.mark.anyio
+    async def test_with_confirm_reports_skipped_ids(self, mock_db):
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.add_bulk_by_dialog_ids = AsyncMock(
+                return_value={"processed": 1, "skipped": 1, "skipped_ids": ["200"]}
+            )
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["add_channels_bulk"]({"channel_ids": "100, 200", "confirm": True})
+        text = _text(result)
+        assert "Обработано 1 из 2" in text
+        assert "Пропущено 1: 200" in text
+
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         with patch("src.services.channel_service.ChannelService") as mock_svc:
             mock_svc.return_value.add_bulk_by_dialog_ids = AsyncMock(side_effect=Exception("boom"))

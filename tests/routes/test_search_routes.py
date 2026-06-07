@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.models import Message, SearchResult
+from src.models import Channel, Message, SearchResult
 
 
 @pytest.mark.anyio
@@ -625,8 +625,6 @@ async def test_translate_message_non_en_target(route_client, base_app):
 @pytest.mark.anyio
 async def test_read_messages_route_returns_json(route_client):
     """GET /messages/{identifier} reads collected messages (parity: messages read)."""
-    from src.models import Channel
-
     db = route_client._transport_app.state.db
     await db.add_channel(Channel(channel_id=777, title="ReadChan", username="readchan"))
     await db.insert_messages_batch([
@@ -639,6 +637,19 @@ async def test_read_messages_route_returns_json(route_client):
     assert data["channel_id"] == 777
     assert data["total"] >= 1
     assert any("hello world" in (m.get("text") or "") for m in data["messages"])
+
+
+@pytest.mark.anyio
+async def test_read_messages_route_clamps_limit(route_client, monkeypatch):
+    db = route_client._transport_app.state.db
+    await db.add_channel(Channel(channel_id=778, title="ClampChan", username="clampchan"))
+    search_messages = AsyncMock(return_value=([], 0))
+    monkeypatch.setattr(db, "search_messages", search_messages)
+
+    resp = await route_client.get("/messages/clampchan?limit=100000")
+
+    assert resp.status_code == 200
+    assert search_messages.await_args.kwargs["limit"] == 500
 
 
 @pytest.mark.anyio

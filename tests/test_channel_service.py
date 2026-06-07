@@ -237,9 +237,15 @@ class TestAddBulkByDialogIds:
         bundle = _make_bundle()
 
         service = _make_service(bundle=bundle, pool=pool)
-        await service.add_bulk_by_dialog_ids(["-999"])
+        result = await service.add_bulk_by_dialog_ids(["-999"])
 
         bundle.add_channel.assert_not_awaited()
+        assert result == {
+            "requested": 1,
+            "processed": 0,
+            "skipped": 1,
+            "skipped_ids": ["-999"],
+        }
 
 
 class TestToggle:

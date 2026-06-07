@@ -132,11 +132,14 @@ def register_pipeline_run_tools(db: Any, client_pool: Any, config: Any, ctx: Any
         try:
             limit = int(args.get("limit", 20))
             status_filter = args.get("status")
-            fetch_limit = limit * 10 if status_filter else limit
-            runs = await db.repos.generation_runs.list_by_pipeline(int(pipeline_id), limit=fetch_limit)
+            runs = await db.repos.generation_runs.list_by_pipeline(
+                int(pipeline_id),
+                limit=limit,
+                status=status_filter,
+                include_moderation_status=bool(status_filter),
+            )
             if status_filter:
                 runs = [run for run in runs if run.status == status_filter or run.moderation_status == status_filter]
-                runs = runs[:limit]
             if not runs:
                 return _text_response(f"Нет генераций для пайплайна id={pipeline_id}.")
             lines = [f"Генерации пайплайна id={pipeline_id} ({len(runs)} шт.):"]

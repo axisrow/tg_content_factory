@@ -26,6 +26,7 @@ async def read_messages(
     ch = resolve_channel(channels, identifier)
     if ch is None:
         return JSONResponse({"error": "channel_not_found"}, status_code=404)
+    limit = max(1, min(limit, 500))
     messages, total = await db.search_messages(
         query=query,
         channel_id=ch.channel_id,

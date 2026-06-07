@@ -870,10 +870,12 @@ async def list_pipeline_runs(
     db = deps.get_db(request)
     if await svc.get(pipeline_id) is None:
         return PipelineJson({"error": "pipeline_not_found"}, status_code=404)
-    fetch_limit = limit * 10 if status else limit
-    runs = await db.repos.generation_runs.list_by_pipeline(pipeline_id, limit=fetch_limit, offset=offset)
-    if status:
-        runs = [run for run in runs if run.status == status][:limit]
+    runs = await db.repos.generation_runs.list_by_pipeline(
+        pipeline_id,
+        limit=limit,
+        offset=offset,
+        status=status,
+    )
     return PipelineJson({"pipeline_id": pipeline_id, "runs": [_run_to_dict(r) for r in runs]})
 
 

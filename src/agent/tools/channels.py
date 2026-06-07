@@ -516,7 +516,19 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            await ctx.channel_service().add_bulk_by_dialog_ids(ids)
+            result = await ctx.channel_service().add_bulk_by_dialog_ids(ids)
+            if isinstance(result, dict):
+                processed = int(result.get("processed", 0))
+                skipped = int(result.get("skipped", 0))
+                text = f"Обработано {processed} из {len(ids)} диалог(ов) для добавления в каналы."
+                if skipped:
+                    skipped_ids = result.get("skipped_ids", [])
+                    skipped_text = ", ".join(str(cid) for cid in skipped_ids) if isinstance(skipped_ids, list) else ""
+                    if skipped_text:
+                        text += f"\nПропущено {skipped}: {skipped_text}"
+                    else:
+                        text += f"\nПропущено {skipped} диалог(ов)."
+                return _text_response(text)
             return _text_response(f"Обработано {len(ids)} диалог(ов) для добавления в каналы.")
         except Exception as e:
             return _text_response(f"Ошибка массового добавления: {e}")
