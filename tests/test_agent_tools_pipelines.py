@@ -421,19 +421,23 @@ class TestPipelinesToolListPipelineRuns:
         assert "run_id=1" in text
 
     @pytest.mark.anyio
-    async def test_status_filter_is_passed_to_repository(self, mock_db):
+    async def test_moderation_status_filter_is_passed_to_repository(self, mock_db):
         run = _make_run(run_id=1, status="completed", moderation_status="approved")
         mock_db.repos.generation_runs.list_by_pipeline = AsyncMock(return_value=[run])
         handlers = _get_tool_handlers(mock_db, config=MagicMock())
 
-        result = await handlers["list_pipeline_runs"]({"pipeline_id": 1, "limit": 5, "status": "approved"})
+        result = await handlers["list_pipeline_runs"]({
+            "pipeline_id": 1,
+            "limit": 5,
+            "moderation_status": "approved",
+        })
 
         assert "run_id=1" in _text(result)
         mock_db.repos.generation_runs.list_by_pipeline.assert_awaited_once_with(
             1,
             limit=5,
-            status="approved",
-            include_moderation_status=True,
+            status=None,
+            moderation_status="approved",
         )
 
 

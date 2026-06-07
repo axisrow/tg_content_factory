@@ -864,6 +864,7 @@ async def list_pipeline_runs(
     limit: int = 20,
     offset: int = 0,
     status: str | None = None,
+    moderation_status: str | None = None,
 ):
     """GET /pipelines/{id}/runs — run history (parity with CLI `pipeline runs`)."""
     svc = deps.pipeline_service(request)
@@ -875,6 +876,7 @@ async def list_pipeline_runs(
         limit=limit,
         offset=offset,
         status=status,
+        moderation_status=moderation_status,
     )
     return PipelineJson({"pipeline_id": pipeline_id, "runs": [_run_to_dict(r) for r in runs]})
 

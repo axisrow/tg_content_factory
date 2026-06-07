@@ -473,7 +473,7 @@ class TestListPipelineRunsErrors:
         assert "Нет генераций" in _text(result)
 
     @pytest.mark.anyio
-    async def test_with_status_filter(self, mock_db):
+    async def test_with_moderation_status_filter(self, mock_db):
         runs = [
             SimpleNamespace(
                 id=1, pipeline_id=1, status="completed",
@@ -486,16 +486,22 @@ class TestListPipelineRunsErrors:
                 created_at="2025-01-02",
             ),
         ]
-        mock_db.repos.generation_runs.list_by_pipeline = AsyncMock(return_value=runs)
+        mock_db.repos.generation_runs.list_by_pipeline = AsyncMock(return_value=[runs[0]])
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["list_pipeline_runs"]({
             "pipeline_id": 1,
-            "status": "approved",
+            "moderation_status": "approved",
         })
 
         text = _text(result)
         assert "text A" in text
         assert "text B" not in text
+        mock_db.repos.generation_runs.list_by_pipeline.assert_awaited_once_with(
+            1,
+            limit=20,
+            status=None,
+            moderation_status="approved",
+        )
 
     @pytest.mark.anyio
     async def test_exception(self, mock_db):

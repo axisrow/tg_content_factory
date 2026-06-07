@@ -65,7 +65,7 @@ async def test_list_by_pipeline_can_filter_moderation_status(db):
     run_id = await repo.create_run(42, "approved-prompt")
     await repo.set_moderation_status(run_id, "approved")
 
-    rows = await repo.list_by_pipeline(42, status="approved", include_moderation_status=True)
+    rows = await repo.list_by_pipeline(42, moderation_status="approved")
 
     assert [run.id for run in rows] == [run_id]
 

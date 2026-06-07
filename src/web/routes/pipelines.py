@@ -158,10 +158,18 @@ async def list_pipeline_runs(
     limit: int = 20,
     offset: int = 0,
     status: str | None = None,
+    moderation_status: str | None = None,
 ):
     return pipeline_response(
         request,
-        await handlers.list_pipeline_runs(request, pipeline_id, limit=limit, offset=offset, status=status),
+        await handlers.list_pipeline_runs(
+            request,
+            pipeline_id,
+            limit=limit,
+            offset=offset,
+            status=status,
+            moderation_status=moderation_status,
+        ),
     )
 
 

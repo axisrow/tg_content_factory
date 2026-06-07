@@ -600,6 +600,23 @@ async def test_list_pipeline_runs_filters_by_status(client):
 
 
 @pytest.mark.anyio
+async def test_list_pipeline_runs_filters_by_moderation_status(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    app = client._transport.app  # type: ignore
+    db = app.state.db
+    approved_id = await db.repos.generation_runs.create_run(1, "prompt approved")
+    await db.repos.generation_runs.set_moderation_status(approved_id, "approved")
+    rejected_id = await db.repos.generation_runs.create_run(1, "prompt rejected")
+    await db.repos.generation_runs.set_moderation_status(rejected_id, "rejected")
+
+    resp = await client.get("/pipelines/1/runs?moderation_status=approved")
+
+    assert resp.status_code == 200
+    run_ids = [r["id"] for r in resp.json()["runs"]]
+    assert run_ids == [approved_id]
+
+
+@pytest.mark.anyio
 async def test_show_pipeline_run_json(client):
     await client.post("/pipelines/add", data=_ADD_DATA)
     app = client._transport.app  # type: ignore

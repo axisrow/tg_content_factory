@@ -53,7 +53,8 @@ GENERATE_DRAFT_SCHEMA = {
 LIST_PIPELINE_RUNS_SCHEMA = {
     "pipeline_id": PIPELINE_ID_ARG,
     "limit": LIMIT_ARG,
-    "status": Annotated[str, "Фильтр по статусу (pending/completed/approved/rejected)"],
+    "status": Annotated[str, "Фильтр по статусу выполнения (pending/running/completed/failed)"],
+    "moderation_status": Annotated[str, "Фильтр по статусу модерации (pending/approved/rejected/published)"],
 }
 
 GET_PIPELINE_RUN_SCHEMA = {"run_id": RUN_ID_ARG}

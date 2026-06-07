@@ -181,17 +181,16 @@ class GenerationRunsRepository:
         limit: int = 20,
         offset: int = 0,
         status: str | None = None,
-        include_moderation_status: bool = False,
+        moderation_status: str | None = None,
     ) -> list[GenerationRun]:
         where = "pipeline_id = ?"
         params: list[object] = [pipeline_id]
         if status:
-            if include_moderation_status:
-                where += " AND (status = ? OR moderation_status = ?)"
-                params.extend([status, status])
-            else:
-                where += " AND status = ?"
-                params.append(status)
+            where += " AND status = ?"
+            params.append(status)
+        if moderation_status:
+            where += " AND moderation_status = ?"
+            params.append(moderation_status)
         cur = await self._db.execute(
             f"SELECT * FROM generation_runs WHERE {where} ORDER BY id DESC LIMIT ? OFFSET ?",
             (*params, limit, offset),
