@@ -456,6 +456,9 @@ class FakeClientPool(ResolveGuardMixin, MagicMock):
         super().__init__()
         self._resolve_rate_limiter = ResolveRateLimiter()
         self._resolve_username_backoff_until_utc = None
+        self._resolve_ramp_up_until_utc = None
+        self._resolve_ramp_up_last_call_utc = None
+        self._resolve_ramp_up_min_interval_sec = 5.0
         self.clients = kwargs.pop("clients", {})
         self.release_client = kwargs.pop("release_client", AsyncMock())
         self.report_flood = kwargs.pop("report_flood", AsyncMock())

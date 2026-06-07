@@ -309,6 +309,7 @@ async def build_container_with_templates(
             pipeline_bundle=pipeline_bundle,
             warm_dialogs_callback=pool.warm_all_dialogs,
             live_runtime_pause_gate=live_runtime_pause_gate,
+            resolve_backoff_callback=pool.get_resolve_username_backoff_remaining_sec,
         )
         telegram_command_dispatcher = TelegramCommandDispatcher(
             db,

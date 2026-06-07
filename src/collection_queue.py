@@ -604,6 +604,11 @@ class CollectionQueue:
                 )
                 return 0
 
+        resolve_backoff_remaining = 0
+        pool = getattr(self._collector, "_pool", None)
+        if pool is not None:
+            resolve_backoff_remaining = pool.get_resolve_username_backoff_remaining_sec()
+
         pending = await self._channels.get_pending_channel_tasks()
         count = 0
         for task in pending:
@@ -625,6 +630,19 @@ class CollectionQueue:
                 continue
             force = bool((task.payload or {}).get("force", False))
             full = bool((task.payload or {}).get("full", False))
+            if resolve_backoff_remaining > 0 and channel.username:
+                run_after = datetime.now(timezone.utc) + timedelta(
+                    seconds=resolve_backoff_remaining + RESOLVE_USERNAME_BACKOFF_BUFFER_SEC
+                )
+                self._schedule_requeue_after_delay(
+                    task_id=task.id,
+                    channel=channel,
+                    force=force,
+                    full=full,
+                    run_after=run_after,
+                )
+                count += 1
+                continue
             if task.run_after is not None and task.run_after.timestamp() > time.time():
                 self._schedule_requeue_after_delay(
                     task_id=task.id,
