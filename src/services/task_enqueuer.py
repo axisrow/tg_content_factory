@@ -29,9 +29,11 @@ class TaskEnqueuer:
         self._db = db
         self._collection_service = collection_service
 
-    async def enqueue_all_channels(self):
+    async def enqueue_all_channels(self, *, resolve_backoff_remaining_sec: int = 0):
         """Delegate to CollectionService for channel collection tasks."""
-        return await self._collection_service.enqueue_all_channels()
+        return await self._collection_service.enqueue_all_channels(
+            resolve_backoff_remaining_sec=resolve_backoff_remaining_sec,
+        )
 
     async def enqueue_sq_stats(self, sq_id: int) -> int | None:
         """Create a SQ_STATS task for a specific search query, with dedup."""

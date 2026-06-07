@@ -463,6 +463,65 @@ async def test_collect_all_channels_continues_after_mid_run_resolve_flood(db):
 
 
 @pytest.mark.anyio
+async def test_collect_channel_defensive_backoff_when_guard_returns_none(db):
+    """#785: if the pool's backoff is None after a long resolve FloodWait, the
+    collector sets it defensively rather than letting all subsequent channels
+    fire blind live resolves. Regression guard for the guard→collector race
+    where ``_record_resolve_username_flood`` runs but the backoff is already
+    expired/cleared by the time the collector reads it back."""
+    ch = Channel(
+        channel_id=1970788995,
+        title="Defensive Backoff",
+        username="defensive_backoff",
+        last_collected_id=5,
+    )
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    flood_err = FloodWaitError(request=None, capture=55919)
+    raw_client = FakeTelethonClient(entity_resolver=lambda _arg: flood_err)
+    pool = make_mock_pool()
+    # Initialise all ResolveGuardMixin state so MagicMock auto-fabrication
+    # does not interfere with the mixin's datetime comparisons.
+    pool._resolve_ramp_up_until_utc = None
+    pool._resolve_ramp_up_last_call_utc = None
+    pool._resolve_ramp_up_min_interval_sec = 5.0
+    session = TelegramTransportSession(
+        raw_client,
+        disconnect_on_close=False,
+        phone="+7001",
+        pool=pool,
+    )
+    pool.get_available_client = AsyncMock(return_value=(session, "+7001"))
+
+    # Simulate the pool having lost its backoff: get_resolve_username_backoff_until
+    # always returns None even though a long flood was just raised. The collector
+    # must call set_resolve_username_backoff defensively.
+    pool.get_resolve_username_backoff_until = lambda: None
+
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
+    )
+
+    with pytest.raises(UsernameResolveFloodWaitDeferredError):
+        await collector._collect_channel(stored)
+
+    # The defensive set_resolve_username_backoff call must have been made with
+    # the flood_wait_sec value (55919 > 300 threshold). Verify by reading the
+    # raw internal state (get_resolve_username_backoff_until is overridden to
+    # always return None, so we read _resolve_username_backoff_until_utc directly).
+    assert pool._resolve_username_backoff_until_utc is not None
+    remaining = (
+        pool._resolve_username_backoff_until_utc - datetime.now(timezone.utc)
+    ).total_seconds()
+    assert remaining > 0, "defensive backoff must be active"
+    assert remaining <= 55919
+
+
+@pytest.mark.anyio
 async def test_collect_no_username_channel_fetches_dialogs_once(db):
     """For no-username channels get_dialogs() is called once per process to warm entity cache."""
     ch = Channel(channel_id=123, title="No Username")

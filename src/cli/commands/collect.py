@@ -64,7 +64,9 @@ def run(args: argparse.Namespace) -> None:
                     channel_bundle, collector, collection_queue=None
                 )
                 task_enqueuer = TaskEnqueuer(db, collection_service)
-                result = await task_enqueuer.enqueue_all_channels()
+                result = await task_enqueuer.enqueue_all_channels(
+                    resolve_backoff_remaining_sec=pool.get_resolve_username_backoff_remaining_sec(),
+                )
                 print(
                     f"Enqueued {result.queued_count} channels "
                     f"(skipped {result.skipped_existing_count}, "

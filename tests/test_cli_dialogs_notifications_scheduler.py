@@ -21,6 +21,7 @@ def cli_env_with_pool(cli_env):
     fake_pool = AsyncMock()
     fake_pool.clients = {}
     fake_pool.disconnect_all = AsyncMock()
+    fake_pool.get_resolve_username_backoff_remaining_sec = MagicMock(return_value=0)
 
     async def fake_init_pool(config, db):
         from src.telegram.auth import TelegramAuth
