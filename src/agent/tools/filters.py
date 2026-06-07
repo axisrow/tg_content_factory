@@ -8,7 +8,12 @@ from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
 from src.agent.tools._formatters import format_filter_report
-from src.agent.tools._registry import _text_response, require_confirmation
+from src.agent.tools._registry import (
+    ToolInputError,
+    _text_response,
+    arg_int,
+    require_confirmation,
+)
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -197,5 +202,32 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка pre-filter: {e}")
 
     tools.append(precheck_filters)
+
+    @tool(
+        "purge_channel_messages",
+        "⚠️ DANGEROUS: Delete all collected messages of ONE channel. "
+        "channel_id = Telegram numeric ID (from list_channels), NOT the DB pk. "
+        "Requires confirm=true.",
+        {
+            "channel_id": Annotated[int, "Числовой Telegram ID канала (НЕ pk)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
+        annotations=ToolAnnotations(destructiveHint=True),
+    )
+    async def purge_channel_messages(args):
+        try:
+            channel_id = arg_int(args, "channel_id", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        gate = require_confirmation(f"удалит все сообщения канала channel_id={channel_id}", args)
+        if gate:
+            return gate
+        try:
+            deleted = await db.delete_messages_for_channel(channel_id)
+            return _text_response(f"Удалено {deleted} сообщений канала channel_id={channel_id}.")
+        except Exception as e:
+            return _text_response(f"Ошибка очистки сообщений канала: {e}")
+
+    tools.append(purge_channel_messages)
 
     return tools

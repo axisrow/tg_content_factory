@@ -305,3 +305,104 @@ class TestSetChannelTagsTool:
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["set_channel_tags"]({"pk": 1, "tags": ""})
         assert "очищены" in _text(result)
+
+
+class TestGetChannelTagsTool:
+    @pytest.mark.anyio
+    async def test_missing_pk(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_channel_tags"]({})
+        assert "pk обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_channel_not_found(self, mock_db):
+        mock_db.get_channel_by_pk = AsyncMock(return_value=None)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_channel_tags"]({"pk": 999})
+        assert "не найден" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_no_tags(self, mock_db):
+        mock_db.get_channel_by_pk = AsyncMock(return_value=_make_channel(title="TestChan"))
+        mock_db.repos.channels.get_channel_tags = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_channel_tags"]({"pk": 1})
+        assert "нет тегов" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_tags(self, mock_db):
+        mock_db.get_channel_by_pk = AsyncMock(return_value=_make_channel(title="TestChan"))
+        mock_db.repos.channels.get_channel_tags = AsyncMock(return_value=["news", "tech"])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["get_channel_tags"]({"pk": 1})
+        text = _text(result)
+        assert "TestChan" in text
+        assert "news" in text
+
+
+class TestListDialogsForImportTool:
+    @pytest.mark.anyio
+    async def test_empty(self, mock_db):
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.get_dialogs_with_added_flags = AsyncMock(return_value=[])
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["list_dialogs_for_import"]({})
+        assert "не найдены" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_dialogs_shows_added_flag(self, mock_db):
+        dialogs = [
+            {"channel_id": 100, "title": "Already", "username": "a", "already_added": True},
+            {"channel_id": 200, "title": "New", "username": None, "already_added": False},
+        ]
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.get_dialogs_with_added_flags = AsyncMock(return_value=dialogs)
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["list_dialogs_for_import"]({})
+        text = _text(result)
+        assert "уже добавлен" in text
+        assert "новый" in text
+        assert "Already" in text
+
+
+class TestAddChannelsBulkTool:
+    @pytest.mark.anyio
+    async def test_missing_ids(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["add_channels_bulk"]({})
+        assert "channel_ids" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_no_confirm_returns_gate(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["add_channels_bulk"]({"channel_ids": "100,200"})
+        assert "confirm=true" in _text(result).lower()
+
+    @pytest.mark.anyio
+    async def test_with_confirm_adds(self, mock_db):
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.add_bulk_by_dialog_ids = AsyncMock()
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["add_channels_bulk"]({"channel_ids": "100, 200", "confirm": True})
+        assert "Обработано 2" in _text(result)
+        mock_svc.return_value.add_bulk_by_dialog_ids.assert_called_once_with(["100", "200"])
+
+    @pytest.mark.anyio
+    async def test_with_confirm_reports_skipped_ids(self, mock_db):
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.add_bulk_by_dialog_ids = AsyncMock(
+                return_value={"processed": 1, "skipped": 1, "skipped_ids": ["200"]}
+            )
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["add_channels_bulk"]({"channel_ids": "100, 200", "confirm": True})
+        text = _text(result)
+        assert "Обработано 1 из 2" in text
+        assert "Пропущено 1: 200" in text
+
+    @pytest.mark.anyio
+    async def test_error_returns_text(self, mock_db):
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.add_bulk_by_dialog_ids = AsyncMock(side_effect=Exception("boom"))
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["add_channels_bulk"]({"channel_ids": "100", "confirm": True})
+        assert "Ошибка массового добавления" in _text(result)

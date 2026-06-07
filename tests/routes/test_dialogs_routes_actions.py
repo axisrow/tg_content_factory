@@ -280,6 +280,43 @@ async def test_mark_read_no_max_id(route_client):
     assert resp.status_code == 303
 
 
+# === join / resolve (parity: dialogs join / dialogs resolve) ===
+
+
+@pytest.mark.anyio
+async def test_join_dialog_missing_fields(route_client):
+    resp = await route_client.post("/dialogs/join", data={"phone": ""}, follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_join_dialog_enqueues(route_client):
+    resp = await route_client.post(
+        "/dialogs/join",
+        data={"phone": "+1234567890", "target": "@somechannel"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers.get("location", "")
+
+
+@pytest.mark.anyio
+async def test_resolve_entity_missing_fields(route_client):
+    resp = await route_client.post("/dialogs/resolve", data={"identifier": ""}, follow_redirects=False)
+    assert resp.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_resolve_entity_enqueues(route_client):
+    resp = await route_client.post(
+        "/dialogs/resolve",
+        data={"phone": "+1234567890", "identifier": "@someuser"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "command_id=" in resp.headers.get("location", "")
+
+
 # === queue cancel / clear-pending (issue #621) ===
 
 

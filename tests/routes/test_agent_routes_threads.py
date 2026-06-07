@@ -352,6 +352,29 @@ async def test_chat_auto_renames_thread(client, db):
     assert thread["title"] == "My first message"
 
 
+# ── thread messages JSON (parity: agent messages) ─────────────────────
+
+
+@pytest.mark.anyio
+async def test_get_thread_messages_json(client, db):
+    thread_id = await db.create_agent_thread("Conv")
+    await db.save_agent_message(thread_id, "user", "hi there")
+    await db.save_agent_message(thread_id, "assistant", "hello")
+
+    resp = await client.get(f"/agent/threads/{thread_id}/messages")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["thread_id"] == thread_id
+    assert len(data["messages"]) == 2
+    assert data["messages"][0]["content"] == "hi there"
+
+
+@pytest.mark.anyio
+async def test_get_thread_messages_not_found(client):
+    resp = await client.get("/agent/threads/9999/messages")
+    assert resp.status_code == 404
+
+
 @pytest.mark.anyio
 async def test_chat_does_not_rename_custom_thread(client, db):
     """Test chat does not rename thread with custom title."""

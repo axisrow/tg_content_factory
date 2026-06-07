@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
+from src.agent.runtime_context import AgentRuntimeContext
+from src.agent.tools.accounts import get_live_account_info_text
 from src.web import deps
 
 router = APIRouter()
@@ -78,6 +80,32 @@ async def flood_status(request: Request):
             "remaining_seconds": remaining,
         })
     return JSONResponse(result)
+
+
+@router.get("/{account_id}/info")
+async def account_info(request: Request, account_id: int):
+    """Account summary plus live diagnostics as JSON (parity with CLI `account info`)."""
+    db = deps.get_db(request)
+    accounts = await db.get_account_summaries(active_only=False)
+    acc = next((a for a in accounts if a.id == account_id), None)
+    if acc is None:
+        return JSONResponse({"error": "account_not_found"}, status_code=404)
+    try:
+        client_pool = deps.get_pool(request)
+    except RuntimeError:
+        client_pool = None
+    runtime = AgentRuntimeContext.build(
+        db=db,
+        config=getattr(request.app.state, "config", None),
+        client_pool=client_pool,
+    )
+    try:
+        live_info = await get_live_account_info_text(runtime, acc.phone)
+    except Exception as exc:
+        live_info = f"Ошибка получения live Telegram account info: {exc}"
+    data = acc.model_dump(mode="json")
+    data["live_info"] = live_info
+    return JSONResponse(data)
 
 
 @router.post("/{account_id}/flood-clear")

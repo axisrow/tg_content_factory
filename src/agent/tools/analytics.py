@@ -8,6 +8,9 @@ from claude_agent_sdk import tool
 
 from src.agent.tools._registry import _text_response
 
+_MAX_TREND_DAYS = 365
+_MAX_TREND_LIMIT = 100
+
 
 def _daily_stat_value(row: object, attr: str, legacy_key: str | None = None, default: int | str = 0) -> object:
     if hasattr(row, attr):
@@ -15,6 +18,10 @@ def _daily_stat_value(row: object, attr: str, legacy_key: str | None = None, def
     if isinstance(row, dict):
         return row.get(legacy_key or attr, default)
     return default
+
+
+def _clamp_positive(value: int, upper: int) -> int:
+    return max(1, min(value, upper))
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -119,8 +126,8 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.trend_service import TrendService
 
             svc = TrendService(db)
-            days = int(args.get("days", 7))
-            limit = int(args.get("limit", 20))
+            days = _clamp_positive(int(args.get("days", 7)), _MAX_TREND_DAYS)
+            limit = _clamp_positive(int(args.get("limit", 20)), _MAX_TREND_LIMIT)
             topics = await svc.get_trending_topics(days=days, limit=limit)
             if not topics:
                 return _text_response("Трендовые темы не найдены.")
@@ -146,8 +153,8 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.trend_service import TrendService
 
             svc = TrendService(db)
-            days = int(args.get("days", 7))
-            limit = int(args.get("limit", 20))
+            days = _clamp_positive(int(args.get("days", 7)), _MAX_TREND_DAYS)
+            limit = _clamp_positive(int(args.get("limit", 20)), _MAX_TREND_LIMIT)
             channels = await svc.get_trending_channels(days=days, limit=limit)
             if not channels:
                 return _text_response("Данные о каналах не найдены.")
@@ -174,7 +181,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.trend_service import TrendService
 
             svc = TrendService(db)
-            days = int(args.get("days", 30))
+            days = _clamp_positive(int(args.get("days", 30)), _MAX_TREND_DAYS)
             velocity = await svc.get_message_velocity(days=days)
             if not velocity:
                 return _text_response("Данные о скорости сообщений не найдены.")
@@ -187,16 +194,21 @@ def register(db, client_pool, embedding_service, **kwargs):
 
     tools.append(get_message_velocity)
 
-    @tool("get_peak_hours", "Get peak activity hours across all channels", {})
+    @tool(
+        "get_peak_hours",
+        "Get peak activity hours across all channels",
+        {"days": Annotated[int, "Количество дней для анализа"]},
+    )
     async def get_peak_hours(args):
         try:
             from src.services.trend_service import TrendService
 
             svc = TrendService(db)
-            hours = await svc.get_peak_hours()
+            days = _clamp_positive(int(args.get("days", 30)), _MAX_TREND_DAYS)
+            hours = await svc.get_peak_hours(days=days)
             if not hours:
                 return _text_response("Данные о пиковых часах не найдены.")
-            lines = ["Пиковые часы активности:"]
+            lines = [f"Пиковые часы активности за {days} дней:"]
             for h in hours:
                 bar = "█" * max(1, h.count // 10)
                 lines.append(f"- {h.hour:02d}:00 — {h.count} сообщений {bar}")
@@ -338,5 +350,69 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка получения часовой активности: {e}")
 
     tools.append(get_hourly_activity)
+
+    @tool(
+        "get_trending_emojis",
+        "Get the most-used reaction emojis across collected channels over the last N days.",
+        {
+            "days": Annotated[int, "Период в днях (по умолчанию 7)"],
+            "limit": Annotated[int, "Максимум эмодзи (по умолчанию 15)"],
+        },
+    )
+    async def get_trending_emojis(args):
+        try:
+            from src.services.trend_service import TrendService
+
+            days = _clamp_positive(int(args.get("days", 7)), _MAX_TREND_DAYS)
+            limit = _clamp_positive(int(args.get("limit", 15)), _MAX_TREND_LIMIT)
+            emojis = await TrendService(db).get_trending_emojis(days=days, limit=limit)
+            if not emojis:
+                return _text_response("Нет данных по трендовым эмодзи.")
+            lines = [f"Трендовые эмодзи за {days} дн.:"]
+            for item in emojis:
+                lines.append(f"- {item.emoji}: {item.count}")
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения трендовых эмодзи: {e}")
+
+    tools.append(get_trending_emojis)
+
+    @tool(
+        "get_channel_analytics",
+        "Get an analytics overview for a single channel: subscribers and deltas, ERR, post "
+        "frequency, average views/forwards/reactions. channel_id = Telegram numeric ID.",
+        {
+            "channel_id": Annotated[int, "Числовой Telegram ID канала"],
+            "days": Annotated[int, "Период в днях (по умолчанию 30)"],
+        },
+    )
+    async def get_channel_analytics(args):
+        channel_id = args.get("channel_id")
+        if not channel_id:
+            return _text_response("Ошибка: channel_id обязателен.")
+        try:
+            from src.services.channel_analytics_service import ChannelAnalyticsService
+
+            days = int(args.get("days", 30))
+            ov = await ChannelAnalyticsService(db).get_channel_overview(int(channel_id), days=days)
+            if ov.title is None and ov.subscriber_count is None:
+                return _text_response(f"Канал channel_id={channel_id} не найден или без данных.")
+            title = ov.title or "(без названия)"
+            lines = [
+                f"Аналитика канала: {title} (channel_id={ov.channel_id}), период {days} дн.",
+                f"- Подписчиков: {ov.subscriber_count if ov.subscriber_count is not None else '—'} "
+                f"(Δ {ov.subscriber_delta if ov.subscriber_delta is not None else '—'})",
+                f"- ERR: {f'{ov.err:.2f}%' if ov.err is not None else '—'}",
+                f"- Постов: всего {ov.total_posts}, сегодня {ov.posts_today}, "
+                f"неделя {ov.posts_week}, месяц {ov.posts_month}",
+                f"- Ср. просмотры: {ov.avg_views if ov.avg_views is not None else '—'}, "
+                f"ср. репосты: {ov.avg_forwards if ov.avg_forwards is not None else '—'}, "
+                f"ср. реакции: {ov.avg_reactions if ov.avg_reactions is not None else '—'}",
+            ]
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка аналитики канала: {e}")
+
+    tools.append(get_channel_analytics)
 
     return tools

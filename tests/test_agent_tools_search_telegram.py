@@ -517,3 +517,32 @@ class TestSearchMessagesOptionalFilters:
 
         call_kwargs = mock_db.search_messages.await_args.kwargs
         assert call_kwargs["channel_id"] == 300
+
+
+class TestPurgeSearchCacheTool:
+    @pytest.mark.anyio
+    async def test_missing_query(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["purge_search_cache"]({})
+        assert "query обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_no_confirm_returns_gate(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["purge_search_cache"]({"query": "btc"})
+        assert "confirm=true" in _text(result).lower()
+
+    @pytest.mark.anyio
+    async def test_with_confirm_purges(self, mock_db):
+        mock_db.repos.messages.delete_premium_search_results = AsyncMock(return_value=7)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["purge_search_cache"]({"query": "btc", "confirm": True})
+        assert "7" in _text(result)
+        mock_db.repos.messages.delete_premium_search_results.assert_called_once_with("btc")
+
+    @pytest.mark.anyio
+    async def test_error_returns_text(self, mock_db):
+        mock_db.repos.messages.delete_premium_search_results = AsyncMock(side_effect=Exception("boom"))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["purge_search_cache"]({"query": "btc", "confirm": True})
+        assert "Ошибка очистки кэша" in _text(result)

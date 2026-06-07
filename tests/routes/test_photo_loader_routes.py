@@ -362,3 +362,27 @@ async def test_photos_auto_missing_interval_minutes(route_client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
+
+
+# === read-only JSON GET routes (parity: photo-loader batch-list/auto-list/items) ===
+
+
+@pytest.mark.anyio
+async def test_list_photo_batches_json(route_client):
+    resp = await route_client.get("/dialogs/photos/batches")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_list_auto_uploads_json(route_client):
+    resp = await route_client.get("/dialogs/photos/auto")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_list_photo_items_json(route_client):
+    resp = await route_client.get("/dialogs/photos/items")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)

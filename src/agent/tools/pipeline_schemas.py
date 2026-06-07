@@ -9,7 +9,7 @@ LIMIT_ARG = Annotated[int, "Максимальное количество рез
 
 LIST_PIPELINES_SCHEMA = {"active_only": Annotated[bool, "Показывать только активные"]}
 GET_PIPELINE_DETAIL_SCHEMA = {"pipeline_id": PIPELINE_ID_ARG}
-GET_PIPELINE_QUEUE_SCHEMA = {"limit": LIMIT_ARG}
+GET_PIPELINE_QUEUE_SCHEMA = {"pipeline_id": PIPELINE_ID_ARG, "limit": LIMIT_ARG}
 GET_REFINEMENT_STEPS_SCHEMA = {"pipeline_id": PIPELINE_ID_ARG}
 
 ADD_PIPELINE_SCHEMA = {
@@ -53,7 +53,8 @@ GENERATE_DRAFT_SCHEMA = {
 LIST_PIPELINE_RUNS_SCHEMA = {
     "pipeline_id": PIPELINE_ID_ARG,
     "limit": LIMIT_ARG,
-    "status": Annotated[str, "Фильтр по статусу (pending/completed/approved/rejected)"],
+    "status": Annotated[str, "Фильтр по статусу выполнения (pending/running/completed/failed)"],
+    "moderation_status": Annotated[str, "Фильтр по статусу модерации (pending/approved/rejected/published)"],
 }
 
 GET_PIPELINE_RUN_SCHEMA = {"run_id": RUN_ID_ARG}

@@ -263,3 +263,16 @@ async def test_get_provider_api_key_exception_returns_empty(caplog):
     assert any(
         "Failed to load API key for provider anything" in rec.message for rec in caplog.records
     )
+
+
+@pytest.mark.anyio
+async def test_list_generated_images_json(route_client):
+    """GET /images/generated returns a JSON list (parity with CLI `image generated`)."""
+    db = route_client._transport_app.state.db
+    await db.repos.generated_images.save("a cat", "together:flux", "http://img/1.png", None)
+
+    resp = await route_client.get("/images/generated")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert any(img.get("prompt") == "a cat" for img in data)

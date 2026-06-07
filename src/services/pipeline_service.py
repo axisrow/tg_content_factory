@@ -23,7 +23,7 @@ from src.models import (
     PipelineTemplate,
 )
 from src.services.pipeline_filters import normalize_filter_config
-from src.services.pipeline_llm_requirements import pipeline_needs_llm
+from src.services.pipeline_llm_requirements import get_dag_source_channel_ids, pipeline_needs_llm
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,28 @@ class PipelineService:
             ],
         )
         return pipeline.model_copy(update={"pipeline_json": graph})
+
+    @staticmethod
+    def _effective_source_ids(
+        pipeline: ContentPipeline,
+        sources: list[PipelineSource],
+    ) -> list[int]:
+        """Return source IDs from the runtime graph for DAGs, sidecar rows for legacy pipelines."""
+        dag_source_ids = get_dag_source_channel_ids(pipeline)
+        if dag_source_ids is not None:
+            return dag_source_ids
+        return [source.channel_id for source in sources]
+
+    @staticmethod
+    def _source_titles(source_ids: list[int], channels_by_id: dict[int, Any]) -> list[str]:
+        return [
+            (
+                channels_by_id.get(source_id).title or str(source_id)
+                if channels_by_id.get(source_id)
+                else str(source_id)
+            )
+            for source_id in source_ids
+        ]
 
     async def add(
         self,
@@ -279,20 +301,14 @@ class PipelineService:
         )
         pipeline = self._hydrate_runtime_refs(pipeline, sources, targets)
         channels_by_id = {channel.channel_id: channel for channel in channels}
+        source_ids = self._effective_source_ids(pipeline, sources)
         return {
             "pipeline": pipeline,
             "sources": sources,
             "targets": targets,
-            "source_ids": [source.channel_id for source in sources],
+            "source_ids": source_ids,
             "target_refs": [f"{target.phone}|{target.dialog_id}" for target in targets],
-            "source_titles": [
-                (
-                    channels_by_id.get(source.channel_id).title or str(source.channel_id)
-                    if channels_by_id.get(source.channel_id)
-                    else str(source.channel_id)
-                )
-                for source in sources
-            ],
+            "source_titles": self._source_titles(source_ids, channels_by_id),
         }
 
     async def get_with_relations(self, active_only: bool = False) -> list[dict]:
@@ -308,30 +324,23 @@ class PipelineService:
         channels_by_id = {channel.channel_id: channel for channel in channels}
         sources_by_pid = _group_by_pipeline(all_sources)
         targets_by_pid = _group_by_pipeline(all_targets)
-        return [
-            {
-                "pipeline": self._hydrate_runtime_refs(
-                    p,
-                    sources_by_pid.get(p.id, []),
-                    targets_by_pid.get(p.id, []),
-                ) if p.id is not None and p.pipeline_json is not None else p,
-                "sources": sources_by_pid.get(p.id, []),
-                "targets": targets_by_pid.get(p.id, []),
-                "source_ids": [s.channel_id for s in sources_by_pid.get(p.id, [])],
+        results = []
+        for p in pipelines:
+            sources = sources_by_pid.get(p.id, []) if p.id is not None else []
+            targets = targets_by_pid.get(p.id, []) if p.id is not None else []
+            hydrated = self._hydrate_runtime_refs(p, sources, targets) if p.id is not None and p.pipeline_json else p
+            source_ids = self._effective_source_ids(hydrated, sources)
+            results.append({
+                "pipeline": hydrated,
+                "sources": sources,
+                "targets": targets,
+                "source_ids": source_ids,
                 "target_refs": [
-                    f"{t.phone}|{t.dialog_id}" for t in targets_by_pid.get(p.id, [])
+                    f"{t.phone}|{t.dialog_id}" for t in targets
                 ],
-                "source_titles": [
-                    (
-                        channels_by_id.get(s.channel_id).title or str(s.channel_id)
-                        if channels_by_id.get(s.channel_id)
-                        else str(s.channel_id)
-                    )
-                    for s in sources_by_pid.get(p.id, [])
-                ],
-            }
-            for p in pipelines
-        ]
+                "source_titles": self._source_titles(source_ids, channels_by_id),
+            })
+        return results
 
     async def list_cached_dialogs_by_phone(
         self,

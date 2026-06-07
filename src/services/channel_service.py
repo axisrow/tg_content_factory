@@ -72,7 +72,7 @@ class ChannelService:
             dialog["already_added"] = dialog["channel_id"] in existing_ids
         return dialogs
 
-    async def add_bulk_by_dialog_ids(self, channel_ids: list[str]) -> None:
+    async def add_bulk_by_dialog_ids(self, channel_ids: list[str]) -> dict[str, int | list[str]]:
         if self._db is not None:
             dialogs = []
             for phone in await self._db.repos.dialog_cache.get_all_phones():
@@ -81,8 +81,11 @@ class ChannelService:
             dialogs = await self._pool.get_dialogs()
         dialogs_map = {str(d["channel_id"]): d for d in dialogs}
         stats_channel_ids: list[int] = []
+        processed = 0
+        skipped_ids: list[str] = []
         for cid in channel_ids:
             if cid not in dialogs_map:
+                skipped_ids.append(cid)
                 continue
             dialog = dialogs_map[cid]
             channel_id = int(dialog["channel_id"])
@@ -100,6 +103,7 @@ class ChannelService:
             )
             channel = channel_with_meta(channel, meta)
             await self._channels.add_channel(channel)
+            processed += 1
             if existing is None and channel.is_active:
                 stats_channel_ids.append(channel.channel_id)
         await enqueue_stats_for_new_channels(
@@ -107,6 +111,12 @@ class ChannelService:
             stats_channel_ids,
             context="bulk dialog add",
         )
+        return {
+            "requested": len(channel_ids),
+            "processed": processed,
+            "skipped": len(skipped_ids),
+            "skipped_ids": skipped_ids,
+        }
 
     async def get_my_dialogs(self, phone: str, refresh: bool = False) -> list[dict]:
         """Get all dialogs for a specific account, enriched with already_added flag."""

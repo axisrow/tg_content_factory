@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -618,3 +618,50 @@ class TestEditPermissions:
             }
         )
         assert "обновлены" in _text(result)
+
+
+class TestTranslateMessage:
+    @pytest.mark.anyio
+    async def test_missing_id(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["translate_message"]({})
+        assert "message_db_id обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_message_not_found(self, mock_db):
+        mock_db.repos.messages.get_by_id = AsyncMock(return_value=None)
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["translate_message"]({"message_db_id": 5})
+        assert "не найдено" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_empty_text(self, mock_db):
+        mock_db.repos.messages.get_by_id = AsyncMock(return_value=SimpleNamespace(text="   "))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["translate_message"]({"message_db_id": 5})
+        assert "нет текста" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_success(self, mock_db):
+        mock_db.repos.messages.get_by_id = AsyncMock(return_value=SimpleNamespace(text="Привет мир"))
+        mock_db.repos.messages.update_translation = AsyncMock()
+        mock_db.get_setting = AsyncMock(return_value=None)
+        with patch("src.services.provider_service.build_provider_service", AsyncMock(return_value=MagicMock())), \
+             patch("src.services.translation_service.TranslationService") as mock_svc:
+            mock_svc.return_value.translate_batch = AsyncMock(return_value=[(5, "Hello world")])
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["translate_message"]({"message_db_id": 5, "target": "en"})
+        text = _text(result)
+        assert "Hello world" in text
+        mock_db.repos.messages.update_translation.assert_called_once_with(5, "en", "Hello world")
+
+    @pytest.mark.anyio
+    async def test_no_result(self, mock_db):
+        mock_db.repos.messages.get_by_id = AsyncMock(return_value=SimpleNamespace(text="text"))
+        mock_db.get_setting = AsyncMock(return_value=None)
+        with patch("src.services.provider_service.build_provider_service", AsyncMock(return_value=MagicMock())), \
+             patch("src.services.translation_service.TranslationService") as mock_svc:
+            mock_svc.return_value.translate_batch = AsyncMock(return_value=[])
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["translate_message"]({"message_db_id": 5})
+        assert "Перевод не выполнен" in _text(result)

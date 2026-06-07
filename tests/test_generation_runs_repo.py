@@ -44,6 +44,33 @@ async def test_generation_runs_repo_hydrates_moderation_fields(db):
 
 
 @pytest.mark.anyio
+async def test_list_by_pipeline_filters_status_before_offset(db):
+    repo = db.repos.generation_runs
+    failed_ids: list[int] = []
+    for idx in range(5):
+        completed_id = await repo.create_run(42, f"completed-{idx}")
+        await repo.save_result(completed_id, "done", {})
+        failed_id = await repo.create_run(42, f"failed-{idx}")
+        await repo.set_status(failed_id, "failed")
+        failed_ids.append(failed_id)
+
+    rows = await repo.list_by_pipeline(42, limit=2, offset=1, status="failed")
+
+    assert [run.id for run in rows] == list(reversed(failed_ids))[1:3]
+
+
+@pytest.mark.anyio
+async def test_list_by_pipeline_can_filter_moderation_status(db):
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "approved-prompt")
+    await repo.set_moderation_status(run_id, "approved")
+
+    rows = await repo.list_by_pipeline(42, moderation_status="approved")
+
+    assert [run.id for run in rows] == [run_id]
+
+
+@pytest.mark.anyio
 async def test_list_pending_moderation_returns_runs(db):
     repo = db.repos.generation_runs
     pending_id = await repo.create_run(42, "pending-prompt")

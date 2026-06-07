@@ -1,11 +1,31 @@
 from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
+from src.web import deps
 from src.web.search_queries import handlers
 from src.web.search_queries.forms import SearchQueryForm
 from src.web.search_queries.responses import search_query_response
 
 router = APIRouter()
+
+
+@router.get("/{sq_id}", response_class=JSONResponse)
+async def get_search_query(request: Request, sq_id: int):
+    """Get one search query as JSON (parity with CLI `search-query get`)."""
+    sq = await deps.search_query_service(request).get(sq_id)
+    if sq is None:
+        return JSONResponse({"error": "search_query_not_found"}, status_code=404)
+    return JSONResponse(sq.model_dump(mode="json"))
+
+
+@router.get("/{sq_id}/stats", response_class=JSONResponse)
+async def get_search_query_stats(request: Request, sq_id: int, days: int = 30):
+    """Get daily match stats for a search query (parity with CLI `search-query stats`)."""
+    svc = deps.search_query_service(request)
+    if await svc.get(sq_id) is None:
+        return JSONResponse({"error": "search_query_not_found"}, status_code=404)
+    stats = await svc.get_daily_stats(sq_id, days=days)
+    return JSONResponse([s.model_dump(mode="json") for s in stats])
 
 
 @router.get("/", response_class=HTMLResponse)

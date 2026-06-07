@@ -828,3 +828,81 @@ async def set_refinement_steps(request: Request, pipeline_id: int):
         return PipelineJson({"ok": False, "error": str(exc)}, status_code=400)
     await db.repos.content_pipelines.set_refinement_steps(pipeline_id, validated)
     return PipelineJson({"ok": True, "steps": validated})
+
+
+def _run_to_dict(run) -> dict:
+    return run.model_dump(
+        mode="json",
+        include={"id", "pipeline_id", "status", "moderation_status", "created_at", "published_at"},
+    )
+
+
+async def show_pipeline(request: Request, pipeline_id: int):
+    """GET /pipelines/{id}/show — pipeline details as JSON (parity with CLI `pipeline show`)."""
+    svc = deps.pipeline_service(request)
+    detail = await svc.get_detail(pipeline_id)
+    if detail is None:
+        return PipelineJson({"error": "pipeline_not_found"}, status_code=404)
+    p = detail["pipeline"]
+    return PipelineJson({
+        "id": p.id,
+        "name": p.name,
+        "is_active": p.is_active,
+        "llm_model": p.llm_model,
+        "publish_mode": p.publish_mode.value,
+        "generation_backend": p.generation_backend.value,
+        "generate_interval_minutes": p.generate_interval_minutes,
+        "source_ids": detail.get("source_ids", []),
+        "source_titles": detail.get("source_titles", []),
+        "target_refs": detail.get("target_refs", []),
+    })
+
+
+async def list_pipeline_runs(
+    request: Request,
+    pipeline_id: int,
+    limit: int = 20,
+    offset: int = 0,
+    status: str | None = None,
+    moderation_status: str | None = None,
+):
+    """GET /pipelines/{id}/runs — run history (parity with CLI `pipeline runs`)."""
+    db = deps.get_db(request)
+    if await db.repos.content_pipelines.get_by_id(pipeline_id) is None:
+        return PipelineJson({"error": "pipeline_not_found"}, status_code=404)
+    runs = await db.repos.generation_runs.list_by_pipeline(
+        pipeline_id,
+        limit=limit,
+        offset=offset,
+        status=status,
+        moderation_status=moderation_status,
+    )
+    return PipelineJson({"pipeline_id": pipeline_id, "runs": [_run_to_dict(r) for r in runs]})
+
+
+async def show_pipeline_run(request: Request, pipeline_id: int, run_id: int):
+    """GET /pipelines/{id}/runs/{run_id} — run details (parity with CLI `pipeline run-show`)."""
+    db = deps.get_db(request)
+    run = await db.repos.generation_runs.get(run_id)
+    if run is None or run.pipeline_id != pipeline_id:
+        return PipelineJson({"error": "run_not_found"}, status_code=404)
+    data = _run_to_dict(run)
+    data["generated_text"] = run.generated_text
+    data["image_url"] = run.image_url
+    data["quality_score"] = run.quality_score
+    return PipelineJson(data)
+
+
+async def pipeline_queue(request: Request, pipeline_id: int, limit: int = 50):
+    """GET /pipelines/{id}/queue — moderation queue (parity with CLI `pipeline queue`)."""
+    db = deps.get_db(request)
+    if await db.repos.content_pipelines.get_by_id(pipeline_id) is None:
+        return PipelineJson({"error": "pipeline_not_found"}, status_code=404)
+    runs = await db.repos.generation_runs.list_pending_moderation(pipeline_id=pipeline_id, limit=limit)
+    return PipelineJson({
+        "pipeline_id": pipeline_id,
+        "queue": [
+            {**_run_to_dict(r), "preview": (r.generated_text or "")[:100]}
+            for r in runs
+        ],
+    })

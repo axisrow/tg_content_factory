@@ -42,6 +42,16 @@ class SendMessageForm(_FrozenForm):
     text: str = ""
 
 
+class JoinDialogForm(_FrozenForm):
+    phone: str = ""
+    target: str = ""
+
+
+class ResolveEntityForm(_FrozenForm):
+    phone: str = ""
+    identifier: str = ""
+
+
 class EditMessageForm(_FrozenForm):
     phone: str = ""
     chat_id: str = ""

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.models import PhotoSendMode
+from src.web import deps
 from src.web.photo_loader.forms import (
     PhotoAutoCreateForm,
     PhotoBatchForm,
@@ -174,3 +175,24 @@ async def photo_update_auto(request: Request, job_id: int):
 async def photo_delete_auto(request: Request, job_id: int, phone: str = Form("")):
     result = await handle_photo_delete_auto(request, job_id, PhotoPhoneForm(phone=phone))
     return photo_loader_response(request, result)
+
+
+@router.get("/batches", response_class=JSONResponse)
+async def list_photo_batches(request: Request, limit: int = 50):
+    """List photo batches as JSON (parity with CLI `photo-loader batch-list`)."""
+    batches = await deps.get_photo_task_service(request).list_batches(limit=limit)
+    return JSONResponse([b.model_dump(mode="json") for b in batches])
+
+
+@router.get("/auto", response_class=JSONResponse)
+async def list_auto_uploads(request: Request, active_only: bool = False):
+    """List auto-upload jobs as JSON (parity with CLI `photo-loader auto-list`)."""
+    jobs = await deps.get_photo_auto_upload_service(request).list_jobs(active_only=active_only)
+    return JSONResponse([j.model_dump(mode="json") for j in jobs])
+
+
+@router.get("/items", response_class=JSONResponse)
+async def list_photo_items(request: Request, limit: int = 100):
+    """List photo batch items as JSON (parity with CLI `photo-loader items`)."""
+    items = await deps.get_photo_task_service(request).list_items(limit=limit)
+    return JSONResponse([i.model_dump(mode="json") for i in items])
