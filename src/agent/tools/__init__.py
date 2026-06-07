@@ -181,7 +181,7 @@ def make_mcp_server(db, client_pool=None, scheduler_manager=None, config=None, a
     )
 
 
-# Tool names safe for unattended pipeline execution (read-only subset).
+# Tool names safe for unattended pipeline execution (read-only and non-private subset).
 _PIPELINE_SAFE_TOOLS: frozenset[str] = frozenset({
     "search_messages",
     "semantic_search",
@@ -215,7 +215,6 @@ _PIPELINE_SAFE_TOOLS: frozenset[str] = frozenset({
     "get_peak_hours",
     "get_calendar",
     "list_tags",
-    "list_dialogs_for_import",
     "list_search_queries",
     "get_search_query_stats",
     "get_pipeline_dry_run_count",
