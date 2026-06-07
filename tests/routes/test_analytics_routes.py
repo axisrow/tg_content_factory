@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
+
+from src.services.content_analytics_service import DailyStats
 
 
 @pytest.mark.anyio
@@ -117,6 +121,14 @@ async def test_api_content_summary_returns_json(route_client):
 
 
 @pytest.mark.anyio
+async def test_api_content_type_stats_returns_json(route_client):
+    """GET /analytics/content/api/types returns a JSON list."""
+    resp = await route_client.get("/analytics/content/api/types")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
 async def test_api_pipelines_returns_json(route_client):
     """Test pipeline stats API returns JSON."""
     resp = await route_client.get("/analytics/content/api/pipelines")
@@ -203,3 +215,108 @@ async def test_api_pipelines_filter_by_id(route_client):
     data = json.loads(resp.text)
     assert len(data) == 1
     assert data[0]["pipeline_id"] == pipeline_id
+
+
+@pytest.mark.anyio
+async def test_api_daily_stats(route_client):
+    """GET /analytics/content/api/daily returns daily content stats."""
+    with patch("src.web.routes.analytics.ContentAnalyticsService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_daily_stats = AsyncMock(
+            return_value=[
+                DailyStats(date="2026-06-06", generations=2, publications=1, rejections=0)
+            ]
+        )
+        resp = await route_client.get("/analytics/content/api/daily?days=7&pipeline_id=5")
+
+    assert resp.status_code == 200
+    assert resp.json() == [
+        {"date": "2026-06-06", "generations": 2, "publications": 1, "rejections": 0}
+    ]
+    instance.get_daily_stats.assert_awaited_once_with(days=7, pipeline_id=5)
+
+
+@pytest.mark.anyio
+async def test_api_messages_top_returns_json(route_client):
+    """GET /analytics/messages/top returns a JSON list (parity: analytics top)."""
+    resp = await route_client.get("/analytics/messages/top?limit=5")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_api_hourly_activity_returns_json(route_client):
+    """GET /analytics/messages/hourly returns a JSON list."""
+    resp = await route_client.get("/analytics/messages/hourly")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_api_messages_top_with_data(route_client):
+    from datetime import datetime, timezone
+
+    from src.models import Channel, Message
+
+    db = route_client._transport_app.state.db
+    await db.add_channel(Channel(channel_id=500, title="Top Chan", username="top"))
+    await db.insert_messages_batch([
+        Message(
+            channel_id=500, message_id=1, text="reacted",
+            reactions_json='[{"emoji": "👍", "count": 99}]',
+            date=datetime(2024, 6, 1, tzinfo=timezone.utc),
+        )
+    ])
+    resp = await route_client.get("/analytics/messages/top?limit=10")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert any(row.get("total_reactions") for row in data)
+
+
+@pytest.mark.anyio
+async def test_api_pipeline_stats_alias_returns_json(route_client):
+    """GET /analytics/pipelines/stats returns a JSON list (parity: analytics pipeline-stats)."""
+    resp = await route_client.get("/analytics/pipelines/stats")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_api_message_velocity_returns_json(route_client):
+    """GET /analytics/messages/velocity returns a JSON list (parity: analytics velocity)."""
+    resp = await route_client.get("/analytics/messages/velocity?days=30")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_api_message_velocity_clamps_days(route_client):
+    """GET /analytics/messages/velocity clamps expensive day windows."""
+    with patch("src.web.routes.analytics.TrendService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_message_velocity = AsyncMock(return_value=[])
+        resp = await route_client.get("/analytics/messages/velocity?days=999999")
+
+    assert resp.status_code == 200
+    instance.get_message_velocity.assert_awaited_once_with(days=365)
+
+
+@pytest.mark.anyio
+async def test_api_peak_hours_returns_json(route_client):
+    """GET /analytics/peak-hours returns a JSON list (parity: analytics peak-hours)."""
+    resp = await route_client.get("/analytics/peak-hours?days=30")
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_api_peak_hours_clamps_days(route_client):
+    """GET /analytics/peak-hours clamps expensive day windows."""
+    with patch("src.web.routes.analytics.TrendService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_peak_hours = AsyncMock(return_value=[])
+        resp = await route_client.get("/analytics/peak-hours?days=0")
+
+    assert resp.status_code == 200
+    instance.get_peak_hours.assert_awaited_once_with(days=1)

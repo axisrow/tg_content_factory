@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import base64
 import re
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -545,6 +545,123 @@ async def test_toggle_pipeline_not_found(client):
     resp = await client.post("/pipelines/999999/toggle", follow_redirects=False)
     assert resp.status_code == 303
     assert "error=pipeline_invalid" in resp.headers["location"]
+
+
+# === read-only JSON GET routes (parity: pipeline show/runs/run-show/queue) ===
+
+
+@pytest.mark.anyio
+async def test_show_pipeline_json(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    resp = await client.get("/pipelines/1/show")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == 1
+    assert data["name"] == "Test Pipeline"
+    assert "source_ids" in data
+
+
+@pytest.mark.anyio
+async def test_show_pipeline_not_found(client):
+    resp = await client.get("/pipelines/999/show")
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_list_pipeline_runs_json(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    app = client._transport.app  # type: ignore
+    db = app.state.db
+    run_id = await db.repos.generation_runs.create_run(1, "prompt")
+    await db.repos.generation_runs.save_result(run_id, "txt", {})
+
+    resp = await client.get("/pipelines/1/runs")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["pipeline_id"] == 1
+    assert any(r["id"] == run_id for r in data["runs"])
+
+
+@pytest.mark.anyio
+async def test_pipeline_run_and_queue_reads_do_not_hydrate_pipeline_service(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    with patch("src.web.pipelines.handlers.deps.pipeline_service", side_effect=AssertionError("hydrated")):
+        runs_resp = await client.get("/pipelines/1/runs")
+        queue_resp = await client.get("/pipelines/1/queue")
+
+    assert runs_resp.status_code == 200
+    assert queue_resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_list_pipeline_runs_filters_by_status(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    app = client._transport.app  # type: ignore
+    db = app.state.db
+    completed_id = await db.repos.generation_runs.create_run(1, "prompt completed")
+    await db.repos.generation_runs.save_result(completed_id, "done", {})
+    failed_id = await db.repos.generation_runs.create_run(1, "prompt failed")
+    await db.repos.generation_runs.set_status(failed_id, "failed")
+
+    resp = await client.get("/pipelines/1/runs?status=failed")
+
+    assert resp.status_code == 200
+    run_ids = [r["id"] for r in resp.json()["runs"]]
+    assert run_ids == [failed_id]
+
+
+@pytest.mark.anyio
+async def test_list_pipeline_runs_filters_by_moderation_status(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    app = client._transport.app  # type: ignore
+    db = app.state.db
+    approved_id = await db.repos.generation_runs.create_run(1, "prompt approved")
+    await db.repos.generation_runs.set_moderation_status(approved_id, "approved")
+    rejected_id = await db.repos.generation_runs.create_run(1, "prompt rejected")
+    await db.repos.generation_runs.set_moderation_status(rejected_id, "rejected")
+
+    resp = await client.get("/pipelines/1/runs?moderation_status=approved")
+
+    assert resp.status_code == 200
+    run_ids = [r["id"] for r in resp.json()["runs"]]
+    assert run_ids == [approved_id]
+
+
+@pytest.mark.anyio
+async def test_show_pipeline_run_json(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    app = client._transport.app  # type: ignore
+    db = app.state.db
+    run_id = await db.repos.generation_runs.create_run(1, "prompt")
+    await db.repos.generation_runs.save_result(run_id, "hello run", {})
+
+    resp = await client.get(f"/pipelines/1/runs/{run_id}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["id"] == run_id
+    assert data["generated_text"] == "hello run"
+
+
+@pytest.mark.anyio
+async def test_show_pipeline_run_wrong_pipeline(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    app = client._transport.app  # type: ignore
+    db = app.state.db
+    run_id = await db.repos.generation_runs.create_run(1, "prompt")
+
+    resp = await client.get(f"/pipelines/2/runs/{run_id}")
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_pipeline_queue_json(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    resp = await client.get("/pipelines/1/queue")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["pipeline_id"] == 1
+    assert isinstance(data["queue"], list)
 
 
 # === _target_refs error paths ===

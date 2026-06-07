@@ -55,6 +55,16 @@ async def send_message(request: Request):
     return dialog_response(request, await handle_send_message(request))
 
 
+@router.post("/join")
+async def join_dialog(request: Request):
+    return dialog_response(request, await handlers.join_dialog(request))
+
+
+@router.post("/resolve")
+async def resolve_entity(request: Request):
+    return dialog_response(request, await handlers.resolve_entity(request))
+
+
 @router.post("/edit-message")
 async def edit_message(request: Request):
     return dialog_response(request, await handle_edit_message(request))

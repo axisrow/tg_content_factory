@@ -1,6 +1,7 @@
 """Tests for src/cli/commands/analytics.py — CLI analytics subcommands."""
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.cli.commands.analytics import run
@@ -287,20 +288,26 @@ def test_calendar_with_data(capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_trending_emojis_no_messages(capsys):
-    db = make_cli_db(search_messages=AsyncMock(return_value=([], 0)))
-    with _init_patches(db)[0], _init_patches(db)[1]:
+def test_trending_emojis_no_reactions(capsys):
+    db = make_cli_db()
+    init_db_patch, run_patch = _init_patches(db)
+    with init_db_patch, run_patch, patch("src.services.trend_service.TrendService") as mock_svc:
+        mock_svc.return_value.get_trending_emojis = AsyncMock(return_value=[])
         run(_args(analytics_action="trending-emojis", days=7, limit=20))
-    assert "No emojis" in capsys.readouterr().out
+    assert "No emoji reactions" in capsys.readouterr().out
+    mock_svc.return_value.get_trending_emojis.assert_awaited_once_with(days=7, limit=20)
 
 
-def test_trending_emojis_with_emojis(capsys):
-    msg = MagicMock(text="Hello 🎉 world 🌍 test 🎉")
-    db = make_cli_db(search_messages=AsyncMock(return_value=([msg], 1)))
-    with _init_patches(db)[0], _init_patches(db)[1]:
+def test_trending_emojis_with_reaction_emojis(capsys):
+    db = make_cli_db()
+    rows = [SimpleNamespace(emoji="🎉", count=2), SimpleNamespace(emoji="🌍", count=1)]
+    init_db_patch, run_patch = _init_patches(db)
+    with init_db_patch, run_patch, patch("src.services.trend_service.TrendService") as mock_svc:
+        mock_svc.return_value.get_trending_emojis = AsyncMock(return_value=rows)
         run(_args(analytics_action="trending-emojis", days=7, limit=20))
     out = capsys.readouterr().out
     assert "🎉" in out
+    assert "2" in out
 
 
 # ---------------------------------------------------------------------------

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
 from claude_agent_sdk import tool
 
-from src.agent.tools._registry import ToolInputError, _text_response, arg_bool, arg_int
+from src.agent.tools._registry import ToolInputError, _text_response, arg_bool, arg_int, arg_str
 from src.agent.tools.pipeline_schemas import (
     GET_PIPELINE_DETAIL_SCHEMA,
     GET_PIPELINE_QUEUE_SCHEMA,
@@ -89,24 +89,38 @@ def register_pipeline_read_tools(db: Any, ctx: Any) -> list[Any]:
 
     @tool(
         "get_pipeline_queue",
-        "List pending and running generation runs across all pipelines (the generation queue). "
-        "Shows run_id, pipeline_id, status, and text preview. "
+        "List generation runs awaiting moderation for one pipeline. "
+        "Shows run_id, status, created timestamp, and text preview. "
         "Use get_pipeline_run to see full text of a specific run.",
         GET_PIPELINE_QUEUE_SCHEMA,
     )
     async def get_pipeline_queue(args):
         try:
+            pipeline_id = arg_int(args, "pipeline_id", required=True)
             limit = arg_int(args, "limit", 20) or 20
-            runs = await db.repos.generation_runs.list_by_status(["pending", "running"], limit=limit)
+            pipeline = await db.repos.content_pipelines.get_by_id(pipeline_id)
+            if pipeline is None:
+                return _text_response(f"Пайплайн id={pipeline_id} не найден.")
+            runs = await db.repos.generation_runs.list_pending_moderation(
+                pipeline_id=pipeline_id,
+                limit=limit,
+            )
             if not runs:
-                return _text_response("Очередь генерации пуста.")
-            lines = [f"Очередь генерации ({len(runs)} шт.):"]
+                return _text_response(f"Нет черновиков на модерации для пайплайна id={pipeline_id}.")
+            lines = [f"Очередь модерации пайплайна id={pipeline_id} ({len(runs)} шт.):"]
             for run in runs:
                 preview = (run.generated_text or "")[:100]
+                created_at = getattr(run, "created_at", None)
+                if hasattr(created_at, "strftime"):
+                    created = created_at.strftime("%Y-%m-%d %H:%M:%S")
+                else:
+                    created = created_at or "—"
                 lines.append(
-                    f"- run_id={run.id}, pipeline_id={run.pipeline_id}, status={run.status}: {preview}"
+                    f"- run_id={run.id}, status={run.status}, created={created}: {preview}"
                 )
             return _text_response("\n".join(lines))
+        except ToolInputError as exc:
+            return exc.to_response()
         except Exception as exc:
             return _text_response(f"Ошибка получения очереди: {exc}")
 
@@ -139,4 +153,39 @@ def register_pipeline_read_tools(db: Any, ctx: Any) -> list[Any]:
             return _text_response(f"Ошибка получения шагов рефайнмента: {exc}")
 
     tools.append(get_refinement_steps)
+
+    @tool(
+        "get_pipeline_dry_run_count",
+        "Count how many source messages a pipeline would consider within a recent time window "
+        "(dry-run, nothing is generated). since_unit is one of m/h/d (default 6h).",
+        {
+            "pipeline_id": Annotated[int, "ID пайплайна"],
+            "since_value": Annotated[int, "Значение периода (по умолчанию 6)"],
+            "since_unit": Annotated[str, "Единица периода: m/h/d (по умолчанию h)"],
+        },
+    )
+    async def get_pipeline_dry_run_count(args):
+        try:
+            pipeline_id = arg_int(args, "pipeline_id", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        since_value = arg_int(args, "since_value", 6)
+        since_unit = arg_str(args, "since_unit", "h")
+        try:
+            from src.services.pipeline_service import to_since_hours
+
+            detail = await ctx.pipeline_service().get_detail(pipeline_id)
+            if detail is None:
+                return _text_response(f"Пайплайн id={pipeline_id} не найден.")
+            source_ids = detail.get("source_ids", [])
+            since_h = to_since_hours(since_value, since_unit)
+            msgs = await db.repos.messages.get_recent_for_channels(source_ids, since_h)
+            return _text_response(
+                f"Сообщений-кандидатов: {len(msgs)} "
+                f"(источников={len(source_ids)}, период={since_value}{since_unit})."
+            )
+        except Exception as exc:
+            return _text_response(f"Ошибка подсчёта dry-run: {exc}")
+
+    tools.append(get_pipeline_dry_run_count)
     return tools

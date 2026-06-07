@@ -3,9 +3,16 @@ from __future__ import annotations
 from typing import Annotated
 
 from claude_agent_sdk import tool
+from mcp.types import ToolAnnotations
 
 from src.agent.tools._formatters import format_channel_identity, format_sender_identity
-from src.agent.tools._registry import _text_response, require_pool
+from src.agent.tools._registry import (
+    ToolInputError,
+    _text_response,
+    arg_str,
+    require_confirmation,
+    require_pool,
+)
 
 
 def register(db, client_pool, embedding_service, **kwargs):
@@ -286,5 +293,36 @@ def register(db, client_pool, embedding_service, **kwargs):
         return _text_response(text)
 
     tools.append(search_hybrid)
+
+    # ------------------------------------------------------------------
+    # purge_search_cache  (DELETE — Premium search cache by query)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "purge_search_cache",
+        "⚠️ DANGEROUS: Delete messages cached solely by a Premium global search for a given query. "
+        "Only premium-search-tagged rows are removed; collected user data is never touched. "
+        "Requires confirm=true.",
+        {
+            "query": Annotated[str, "Поисковый запрос, кэш которого нужно очистить"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
+        annotations=ToolAnnotations(destructiveHint=True),
+    )
+    async def purge_search_cache(args):
+        try:
+            query = arg_str(args, "query", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        gate = require_confirmation(f"очистит кэш Premium-поиска по запросу '{query}'", args)
+        if gate:
+            return gate
+        try:
+            deleted = await db.repos.messages.delete_premium_search_results(query)
+            return _text_response(f"Удалено из кэша Premium-поиска: {deleted} сообщений (запрос '{query}').")
+        except Exception as e:
+            return _text_response(f"Ошибка очистки кэша поиска: {e}")
+
+    tools.append(purge_search_cache)
 
     return tools

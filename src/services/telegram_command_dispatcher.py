@@ -482,6 +482,22 @@ class TelegramCommandDispatcher:
         )
         return {"phone": result.phone, "message_id": result.message_id}
 
+    async def _handle_dialogs_join(self, payload: dict[str, Any]) -> dict[str, Any]:
+        result = await TelegramActionService(self._pool).join_dialog(
+            phone=str(payload["phone"]),
+            target=payload["target"],
+        )
+        return {"phone": result.phone, "target": result.target, "via_invite": result.via_invite}
+
+    async def _handle_dialogs_resolve(self, payload: dict[str, Any]) -> dict[str, Any]:
+        identifier = str(payload["identifier"])
+        entity = await self._pool.resolve_any_entity(
+            identifier, phone=str(payload.get("phone") or "") or None
+        )
+        if not entity:
+            raise RuntimeError(f"resolve failed: {identifier!r} not found")
+        return {"entity": entity}
+
     async def _handle_dialogs_edit_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         result = await TelegramActionService(self._pool).edit_message(
             phone=str(payload["phone"]),
@@ -806,7 +822,7 @@ class TelegramCommandDispatcher:
         identifier = str(payload["identifier"]).strip()
         info = await self._pool.resolve_channel(identifier)
         if not info:
-            raise RuntimeError("resolve failed")
+            raise RuntimeError(f"resolve failed: {identifier!r} not found")
         existing = await get_existing_channel(self._db, int(info["channel_id"]))
         meta = await fetch_channel_meta(
             self._pool, int(info["channel_id"]), info.get("channel_type")

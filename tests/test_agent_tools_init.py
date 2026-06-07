@@ -312,6 +312,17 @@ class TestBuildAgentToolsDict:
         for tool_name in tools_dict:
             assert tool_name in _PIPELINE_SAFE_TOOLS, f"build_agent_tools_dict included unsafe tool: {tool_name}"
 
+    def test_dialog_import_listing_is_interactive_only(self):
+        from src.agent.tools import _PIPELINE_SAFE_TOOLS, build_agent_tools_dict
+
+        mock_db = MagicMock()
+
+        with patch("src.services.embedding_service.EmbeddingService"):
+            tools_dict = build_agent_tools_dict(mock_db)
+
+        assert "list_dialogs_for_import" not in _PIPELINE_SAFE_TOOLS
+        assert "list_dialogs_for_import" not in tools_dict
+
     @pytest.mark.anyio
     async def test_tool_functions_are_async_callable(self):
         from claude_agent_sdk import SdkMcpTool

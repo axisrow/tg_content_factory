@@ -15,6 +15,7 @@
 | `search_my_chats` | READ | Поиск по личным чатам аккаунта |
 | `search_in_channel` | READ | Поиск внутри конкретного канала через Telegram |
 | `search_hybrid` | READ | Гибридный поиск (FTS + семантика) |
+| `purge_search_cache` | DELETE | Очистка кэша Premium-поиска по запросу |
 
 ## Каналы
 
@@ -32,6 +33,9 @@
 | `create_tag` | WRITE | Создать тег |
 | `delete_tag` | DELETE | Удалить тег |
 | `set_channel_tags` | WRITE | Обновить теги канала |
+| `get_channel_tags` | READ | Получить теги конкретного канала |
+| `add_channels_bulk` | WRITE | Массовое добавление каналов из кеша диалогов |
+| `list_dialogs_for_import` | READ | Список диалогов для импорта (с флагом already_added) |
 
 ## Сбор
 
@@ -65,6 +69,7 @@
 | `list_pipeline_templates` | READ | Список шаблонов |
 | `create_pipeline_from_template` | WRITE | Создать pipeline из шаблона |
 | `ai_edit_pipeline` | WRITE | AI-редактирование pipeline |
+| `get_pipeline_dry_run_count` | READ | Подсчёт сообщений-кандидатов dry-run |
 
 ## Модерация
 
@@ -114,6 +119,7 @@
 | `purge_filtered_channels` | DELETE | Очистить сообщения |
 | `hard_delete_channels` | DELETE | Удалить из БД |
 | `precheck_filters` | WRITE | Pre-check |
+| `purge_channel_messages` | DELETE | Очистить сообщения конкретного канала (по channel_id) |
 
 ## Аналитика
 
@@ -130,6 +136,8 @@
 | `get_top_messages` | READ | Топ сообщений по реакциям |
 | `get_content_type_stats` | READ | Статистика по типам контента |
 | `get_hourly_activity` | READ | Почасовая активность |
+| `get_trending_emojis` | READ | Трендовые эмодзи за период |
+| `get_channel_analytics` | READ | Обзорная аналитика одного канала |
 
 ## Планировщик
 
@@ -206,6 +214,7 @@
 | `pin_message` | WRITE | Закрепить сообщение |
 | `unpin_message` | WRITE | Открепить |
 | `download_media` | READ | Скачать медиа |
+| `translate_message` | WRITE | Перевод одного сообщения по его DB id |
 
 ## Управление чатом
 

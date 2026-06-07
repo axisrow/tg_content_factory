@@ -808,6 +808,38 @@ async def test_dry_run_count_dag_pipeline_falls_back_to_sidecar_sources(route_cl
     assert resp.json() == {"total": 1, "after_filter": 1}
 
 
+@pytest.mark.anyio
+async def test_show_pipeline_returns_dag_source_ids(route_client, base_app):
+    """GET /pipelines/<id>/show reports source IDs from DAG source node."""
+    _, db, _ = base_app
+    dag = PipelineGraph(
+        nodes=[
+            PipelineNode(
+                id="src",
+                type=PipelineNodeType.SOURCE,
+                name="src",
+                config={"channel_ids": [100]},
+            ),
+            PipelineNode(id="pub", type=PipelineNodeType.PUBLISH, name="pub"),
+        ],
+        edges=[PipelineEdge(from_node="src", to_node="pub")],
+    )
+    pipeline = ContentPipeline(
+        name="DAG Show",
+        prompt_template=".",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        pipeline_json=dag,
+    )
+    pipeline_id = await db.repos.content_pipelines.add(pipeline, [], [])
+
+    resp = await route_client.get(f"/pipelines/{pipeline_id}/show")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["source_ids"] == [100]
+    assert data["source_titles"] == ["Test Channel"]
+
+
 # ── dry_run_count_new ───────────────────────────────────────────────
 
 

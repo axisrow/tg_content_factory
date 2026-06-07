@@ -176,11 +176,24 @@ class GenerationRunsRepository:
         return [self._to_generation_run(row) for row in rows]
 
     async def list_by_pipeline(
-        self, pipeline_id: int, limit: int = 20, offset: int = 0
+        self,
+        pipeline_id: int,
+        limit: int = 20,
+        offset: int = 0,
+        status: str | None = None,
+        moderation_status: str | None = None,
     ) -> list[GenerationRun]:
+        where = "pipeline_id = ?"
+        params: list[object] = [pipeline_id]
+        if status:
+            where += " AND status = ?"
+            params.append(status)
+        if moderation_status:
+            where += " AND moderation_status = ?"
+            params.append(moderation_status)
         cur = await self._db.execute(
-            "SELECT * FROM generation_runs WHERE pipeline_id = ? ORDER BY id DESC LIMIT ? OFFSET ?",
-            (pipeline_id, limit, offset),
+            f"SELECT * FROM generation_runs WHERE {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
         )
         rows = await cur.fetchall()
         return [self._to_generation_run(row) for row in rows]
