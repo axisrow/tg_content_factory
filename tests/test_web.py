@@ -1646,6 +1646,13 @@ async def test_search_telegram_proxy_renders_worker_result(client, monkeypatch):
     assert fake_cmd_service.enqueue.await_args.args[0] == "search.telegram"
 
 
+def test_search_telegram_proxy_timeout_covers_premium_worker_bounds():
+    from src.search.telegram_search import PREMIUM_SEARCH_RPC_TIMEOUT_SEC
+    from src.web.search import handlers as search_handlers
+
+    assert search_handlers._WORKER_SEARCH_TIMEOUT_SEC >= (PREMIUM_SEARCH_RPC_TIMEOUT_SEC * 2) + 5
+
+
 @pytest.mark.anyio
 async def test_search_telegram_proxy_timeout_logs_command_context(client, monkeypatch, caplog):
     """A slow worker response exposes command context instead of a generic timeout."""

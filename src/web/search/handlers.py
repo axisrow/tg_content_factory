@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 # Telegram-backed search modes need a live ClientPool. The web container has
 # none (runtime_mode="web"), so these are proxied to the worker process (#643).
 _TELEGRAM_SEARCH_MODES = {"telegram", "my_chats", "channel"}
-_WORKER_SEARCH_TIMEOUT_SEC = 45.0
+_WORKER_SEARCH_TIMEOUT_SEC = 130.0
 _WORKER_SEARCH_POLL_SEC = 0.4
 
 
