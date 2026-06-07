@@ -9,7 +9,7 @@ from pathlib import Path
 _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
 # Pure dev/test tooling that must never ship as a runtime dependency.
-_DEV_ONLY = {"pytest", "pytest-timeout", "pytest-xdist", "ruff", "pytest-cov"}
+_DEV_ONLY = {"pytest", "pytest-asyncio", "pytest-timeout", "pytest-xdist", "ruff", "pytest-cov"}
 _DIST_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 
