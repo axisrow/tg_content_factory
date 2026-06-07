@@ -1432,6 +1432,11 @@ class Collector:
                     next_available_at = self._pool.get_resolve_username_backoff_until()
                     if next_available_at is None and flood_wait_sec > GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC:
                         next_available_at = self._pool.set_resolve_username_backoff(flood_wait_sec)
+                        persist_backoff = getattr(self._pool, "persist_resolve_username_backoff", None)
+                        if callable(persist_backoff):
+                            maybe_awaitable = persist_backoff()
+                            if isawaitable(maybe_awaitable):
+                                await maybe_awaitable
                         logger.warning(
                             "%s: defensive backoff set to %s (was None, flood_wait_sec=%d)",
                             RESOLVE_USERNAME_OPERATION,

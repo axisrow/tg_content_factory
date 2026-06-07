@@ -87,7 +87,6 @@ class ResolveGuardMixin:
         # Ramp-up: 10% of flood wait, max 1h
         ramp_duration = min(wait_seconds * 0.1, 3600)
         self._resolve_ramp_up_until_utc = new_until + timedelta(seconds=ramp_duration)
-        self._persist_resolve_backoff()
         logger.warning(
             "resolve backoff: set until %s (wait_seconds=%d, ramp-up until %s)",
             new_until.isoformat(),
@@ -96,33 +95,23 @@ class ResolveGuardMixin:
         )
         return new_until
 
-    def _persist_resolve_backoff(self) -> None:
-        """Fire-and-forget persist the backoff deadline to DB settings."""
-        import asyncio
-
+    async def persist_resolve_username_backoff(self) -> None:
+        """Persist the backoff deadline to DB settings before the caller exits."""
         backoff_until = self._resolve_username_backoff_until_utc
         db = getattr(self, "_db", None)
         if db is None:
             return
 
-        async def _save() -> None:
-            try:
-                if backoff_until is not None:
-                    await db.set_setting(
-                        "resolve_username_backoff_until_utc",
-                        backoff_until.isoformat(),
-                    )
-                else:
-                    await db.set_setting("resolve_username_backoff_until_utc", "")
-            except Exception:
-                logger.debug("Failed to persist resolve_username backoff", exc_info=True)
-
         try:
-            loop = asyncio.get_running_loop()
-            t = loop.create_task(_save())
-            t.add_done_callback(lambda _t: _t.exception() if not _t.cancelled() else None)
-        except RuntimeError:
-            pass
+            if backoff_until is not None:
+                await db.set_setting(
+                    "resolve_username_backoff_until_utc",
+                    backoff_until.isoformat(),
+                )
+            else:
+                await db.set_setting("resolve_username_backoff_until_utc", "")
+        except Exception:
+            logger.debug("Failed to persist resolve_username backoff", exc_info=True)
 
     async def restore_resolve_username_backoff(self, db: object) -> None:
         """Restore backoff from DB on startup. Call once during pool init."""
@@ -206,6 +195,7 @@ class ResolveGuardMixin:
         except HandledFloodWaitError as exc:
             next_available_at = self._record_resolve_username_flood(exc.info.wait_seconds)
             if next_available_at is not None:
+                await self.persist_resolve_username_backoff()
                 (logger_ or logger).warning(
                     "%s got FloodWait %ss on %s while resolving %s; "
                     "pausing live username resolves until %s",

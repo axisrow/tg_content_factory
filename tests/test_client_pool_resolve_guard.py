@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -44,6 +45,7 @@ async def test_live_username_resolve_uses_shared_rate_limiter():
 async def test_live_username_resolve_records_full_long_flood_backoff():
     pool = ClientPool.__new__(ClientPool)
     pool.report_flood = AsyncMock()
+    pool._db = SimpleNamespace(set_setting=AsyncMock())
     pool._resolve_username_backoff_until_utc = None
     pool._resolve_rate_limiter = ResolveRateLimiter(max_calls=1, jitter_sec=0.0)
 
@@ -61,6 +63,10 @@ async def test_live_username_resolve_records_full_long_flood_backoff():
     pool.report_flood.assert_awaited_once_with("+7001", 7200)
     remaining = pool.get_resolve_username_backoff_remaining_sec()
     assert 7100 < remaining <= 7200
+    pool._db.set_setting.assert_awaited_once()
+    key, value = pool._db.set_setting.await_args.args
+    assert key == "resolve_username_backoff_until_utc"
+    assert datetime.fromisoformat(value) == pool.get_resolve_username_backoff_until()
 
 
 def _make_pool():

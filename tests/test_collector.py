@@ -487,6 +487,7 @@ async def test_collect_channel_defensive_backoff_when_guard_returns_none(db):
     pool._resolve_ramp_up_until_utc = None
     pool._resolve_ramp_up_last_call_utc = None
     pool._resolve_ramp_up_min_interval_sec = 5.0
+    pool._db = SimpleNamespace(set_setting=AsyncMock())
     session = TelegramTransportSession(
         raw_client,
         disconnect_on_close=False,
@@ -519,6 +520,10 @@ async def test_collect_channel_defensive_backoff_when_guard_returns_none(db):
     ).total_seconds()
     assert remaining > 0, "defensive backoff must be active"
     assert remaining <= 55919
+    assert pool._db.set_setting.await_count >= 1
+    key, value = pool._db.set_setting.await_args.args
+    assert key == "resolve_username_backoff_until_utc"
+    assert datetime.fromisoformat(value) == pool._resolve_username_backoff_until_utc
 
 
 @pytest.mark.anyio
