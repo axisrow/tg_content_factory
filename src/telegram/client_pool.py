@@ -44,6 +44,8 @@ from src.telegram.flood_wait import (
     run_with_flood_wait,
     run_with_flood_wait_retry,
 )
+from src.telegram.rate_limiter import ResolveRateLimiter
+from src.telegram.resolve_guard import ResolveGuardMixin
 from src.telegram.session_materializer import SessionMaterializer
 from src.telegram.utils import normalize_utc
 
@@ -74,7 +76,7 @@ class StatsClientAvailability:
     next_available_at_utc: datetime | None = None
 
 
-class ClientPool:
+class ClientPool(ResolveGuardMixin):
     """Pool of Telegram clients with fallback rotation on flood waits."""
 
     def __init__(
@@ -116,6 +118,8 @@ class ClientPool:
         self._dialogs_db_cache_ttl_sec = 3600.0  # 1 hour; stale DB cache triggers fresh Telegram fetch
         self._dialog_refresh_tasks: dict[tuple[str, str], asyncio.Task[list[dict]]] = {}
         self._premium_flood_wait_until: dict[str, datetime] = {}
+        self._resolve_rate_limiter = ResolveRateLimiter()
+        self._resolve_username_backoff_until_utc: datetime | None = None
 
     def is_dialogs_fetched(self, phone: str) -> bool:
         """Return True if get_dialogs() was already called for this phone in this process."""
@@ -369,15 +373,29 @@ class ClientPool:
         """
         session = adapt_transport_session(session, disconnect_on_close=False)
         resolver = session.resolve_input_entity if use_input_entity else session.resolve_entity
-        try:
+        is_live_username = self._is_live_username_peer(peer)
+
+        async def _resolve(current_operation: str) -> object:
+            if is_live_username:
+                return await self.run_live_username_resolve(
+                    lambda: resolver(peer),
+                    phone=phone,
+                    username=str(peer),
+                    operation=current_operation,
+                    logger_=logger,
+                    timeout=timeout,
+                )
             return await run_with_flood_wait(
                 resolver(peer),
-                operation=operation,
+                operation=current_operation,
                 phone=phone,
                 pool=self,
                 logger_=logger,
                 timeout=timeout,
             )
+
+        try:
+            return await _resolve(operation)
         except (ValueError, TypeError):
             await run_with_flood_wait(
                 session.warm_dialog_cache(),
@@ -388,14 +406,7 @@ class ClientPool:
                 timeout=warm_timeout,
             )
             self.mark_dialogs_fetched(phone)
-            return await run_with_flood_wait(
-                resolver(peer),
-                operation=f"{operation}_after_warm",
-                phone=phone,
-                pool=self,
-                logger_=logger,
-                timeout=timeout,
-            )
+            return await _resolve(f"{operation}_after_warm")
 
     async def resolve_dialog_entity(
         self,
@@ -431,11 +442,11 @@ class ClientPool:
         dialog = await self._get_cached_dialog(phone, dialog_id)
         username = dialog.get("username") if dialog else None
         if username:
-            return await run_with_flood_wait(
-                session.resolve_input_entity(username),
+            return await self.run_live_username_resolve(
+                lambda: session.resolve_input_entity(username),
                 operation="resolve_dialog_entity_username",
                 phone=phone,
-                pool=self,
+                username=str(username),
                 logger_=logger,
                 timeout=30.0,
             )
@@ -1554,11 +1565,11 @@ class ClientPool:
                 if entity is None:
                     channel = await self._db.get_channel_by_channel_id(channel_id)
                     if channel and channel.username:
-                        entity = await run_with_flood_wait(
-                            session.resolve_entity(channel.username),
+                        entity = await self.run_live_username_resolve(
+                            lambda: session.resolve_entity(channel.username),
                             operation="get_forum_topics_resolve_username",
                             phone=phone,
-                            pool=self,
+                            username=str(channel.username),
                             logger_=logger,
                             timeout=10.0,
                         )

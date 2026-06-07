@@ -12,7 +12,7 @@ from src.search.transformers import TelegramMessageTransformer
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
-from src.utils.safe_logging import mask_phone, query_log_fields
+from src.utils.safe_logging import elapsed_ms, mask_phone, query_log_fields
 
 try:
     from telethon.tl.types import PeerChannel
@@ -21,10 +21,6 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 PREMIUM_SEARCH_RPC_TIMEOUT_SEC = 60.0
-
-
-def _elapsed_ms(started_at: float) -> int:
-    return int((time.monotonic() - started_at) * 1000)
 
 
 def _timeout_error(stage: str) -> str:
@@ -212,7 +208,7 @@ class TelegramSearch:
                     "premium_search timeout stage=quota phone=%s elapsed_ms=%d timeout_sec=%.0f "
                     "limit=%d query_hash=%s query_len=%d",
                     masked_phone,
-                    _elapsed_ms(quota_started_at),
+                    elapsed_ms(quota_started_at),
                     PREMIUM_SEARCH_RPC_TIMEOUT_SEC,
                     limit,
                     fields["query_hash"],
@@ -228,7 +224,7 @@ class TelegramSearch:
                 "premium_search quota_ok phone=%s elapsed_ms=%d remains=%s query_is_free=%s "
                 "query_hash=%s",
                 masked_phone,
-                _elapsed_ms(quota_started_at),
+                elapsed_ms(quota_started_at),
                 quota.get("remains") if quota else None,
                 quota.get("query_is_free") if quota else None,
                 fields["query_hash"],
@@ -237,7 +233,7 @@ class TelegramSearch:
                 logger.warning(
                     "premium_search quota_exhausted phone=%s elapsed_ms=%d query_hash=%s",
                     masked_phone,
-                    _elapsed_ms(search_started_at),
+                    elapsed_ms(search_started_at),
                     fields["query_hash"],
                 )
                 return SearchResult(
@@ -263,7 +259,7 @@ class TelegramSearch:
                 "premium_search telegram_rpc_ok phone=%s elapsed_ms=%d raw_messages=%d "
                 "channels=%d query_hash=%s",
                 masked_phone,
-                _elapsed_ms(rpc_started_at),
+                elapsed_ms(rpc_started_at),
                 len(messages),
                 len(seen_channels),
                 fields["query_hash"],
@@ -277,7 +273,7 @@ class TelegramSearch:
             logger.info(
                 "premium_search success phone=%s elapsed_ms=%d total=%d query_hash=%s",
                 masked_phone,
-                _elapsed_ms(search_started_at),
+                elapsed_ms(search_started_at),
                 len(messages),
                 fields["query_hash"],
             )
@@ -287,7 +283,7 @@ class TelegramSearch:
                 "premium_search timeout stage=telegram_rpc phone=%s elapsed_ms=%d timeout_sec=%.0f "
                 "limit=%d query_hash=%s query_len=%d",
                 masked_phone,
-                _elapsed_ms(search_started_at),
+                elapsed_ms(search_started_at),
                 PREMIUM_SEARCH_RPC_TIMEOUT_SEC,
                 limit,
                 fields["query_hash"],
@@ -321,7 +317,7 @@ class TelegramSearch:
             logger.exception(
                 "premium_search error phone=%s elapsed_ms=%d query_hash=%s query_len=%d",
                 masked_phone,
-                _elapsed_ms(search_started_at),
+                elapsed_ms(search_started_at),
                 fields["query_hash"],
                 fields["query_len"],
             )
@@ -491,7 +487,10 @@ class TelegramSearch:
                 flood_wait=exc.info,
             )
         except Exception as exc:
-            logger.exception("Telegram my_chats search failed for query=%r", query)
+            logger.exception(
+                "Telegram my_chats search failed query_hash=%s",
+                query_log_fields(query)["query_hash"],
+            )
             return SearchResult(
                 messages=[],
                 total=0,
@@ -553,11 +552,11 @@ class TelegramSearch:
                     username = ch_record.username if ch_record else None
                     if username:
                         try:
-                            entity = await run_with_flood_wait(
-                                session.resolve_entity(username),
+                            entity = await self._pool.run_live_username_resolve(
+                                lambda: session.resolve_entity(username),
                                 operation="search_in_channel_resolve_username",
                                 phone=phone,
-                                pool=self._pool,
+                                username=str(username),
                                 logger_=logger,
                                 timeout=30.0,
                             )
@@ -628,9 +627,9 @@ class TelegramSearch:
             )
         except Exception as exc:
             logger.exception(
-                "Telegram channel search failed for channel_id=%s query=%r",
+                "Telegram channel search failed channel_id=%s query_hash=%s",
                 channel_id,
-                query,
+                query_log_fields(query)["query_hash"],
             )
             return SearchResult(
                 messages=[],
