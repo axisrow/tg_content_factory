@@ -332,8 +332,8 @@ async def test_clear_pending_collect_tasks_without_queue_falls_back_to_db():
 
 
 @pytest.mark.anyio
-async def test_enqueue_all_channels_skips_username_channels_during_backoff():
-    """Channels with a username should be skipped when resolve_backoff is active."""
+async def test_enqueue_all_channels_enqueues_username_channels_during_backoff():
+    """Backoff is handled by the queue/collector, not by filtering enqueue candidates."""
     ch_with_user1 = Channel(id=1, channel_id=100, title="Ch1", username="channel1")
     ch_with_user2 = Channel(id=2, channel_id=200, title="Ch2", username="channel2")
     ch_no_user = Channel(id=3, channel_id=300, title="Ch3", username=None)
@@ -347,8 +347,9 @@ async def test_enqueue_all_channels_skips_username_channels_during_backoff():
     result = await svc.enqueue_all_channels(resolve_backoff_remaining_sec=3600)
 
     assert result.total_candidates == 3
-    assert result.skipped_backoff_count == 2
-    assert result.queued_count == 1
+    assert result.skipped_backoff_count == 0
+    assert result.queued_count == 3
+    assert channels.create_collection_task_if_not_active.await_count == 3
 
 
 @pytest.mark.anyio

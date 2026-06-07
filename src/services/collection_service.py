@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
@@ -11,8 +10,6 @@ from src.models import Channel, CollectionTaskType
 if TYPE_CHECKING:
     from src.collection_queue import CollectionQueue
     from src.telegram.collector import Collector
-
-logger = logging.getLogger(__name__)
 
 EnqueueResult = Literal["not_found", "filtered", "queued", "already_active"]
 
@@ -79,30 +76,19 @@ class CollectionService:
         channels = await self._channels.list_channels(active_only=True, include_filtered=False)
         queued_count = 0
         skipped_existing_count = 0
-        skipped_backoff_count = 0
 
         for channel in channels:
-            if resolve_backoff_remaining_sec > 0 and channel.username:
-                skipped_backoff_count += 1
-                continue
             created = await self._enqueue_channel(channel, force=True, full=False)
             if created:
                 queued_count += 1
             else:
                 skipped_existing_count += 1
 
-        if skipped_backoff_count > 0:
-            logger.info(
-                "Skipped %d username channels due to resolve backoff (%ds remaining)",
-                skipped_backoff_count,
-                resolve_backoff_remaining_sec,
-            )
-
         return BulkEnqueueResult(
             queued_count=queued_count,
             skipped_existing_count=skipped_existing_count,
             total_candidates=len(channels),
-            skipped_backoff_count=skipped_backoff_count,
+            skipped_backoff_count=0,
         )
 
     async def cancel_task(self, task_id: int, note: str | None = None) -> bool:
