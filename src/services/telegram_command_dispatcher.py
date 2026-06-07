@@ -152,14 +152,13 @@ class TelegramCommandDispatcher:
                 search_fields = query_log_fields(str(command.payload.get("query", "")))
                 logger.info(
                     "telegram_search_command start command_id=%s mode=%s limit=%s channel_id=%s "
-                    "query_hash=%s query_len=%d query_preview=%r",
+                    "query_hash=%s query_len=%d",
                     command.id,
                     command.payload.get("mode", "telegram"),
                     command.payload.get("limit", 50),
                     command.payload.get("channel_id"),
                     search_fields["query_hash"],
                     search_fields["query_len"],
-                    search_fields["query_preview"],
                 )
             try:
                 result = await self._dispatch(command.command_type, command.payload)

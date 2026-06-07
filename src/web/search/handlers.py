@@ -66,14 +66,13 @@ async def _telegram_search_via_worker(
     started_at = time.monotonic()
     logger.info(
         "telegram_search_worker enqueue command_id=%s mode=%s limit=%d channel_id=%s "
-        "query_hash=%s query_len=%d query_preview=%r",
+        "query_hash=%s query_len=%d",
         command_id,
         mode,
         limit,
         channel_id,
         fields["query_hash"],
         fields["query_len"],
-        fields["query_preview"],
     )
     deadline = time.monotonic() + _WORKER_SEARCH_TIMEOUT_SEC
     last_status = "unknown"
@@ -137,7 +136,7 @@ async def _telegram_search_via_worker(
         await asyncio.sleep(_WORKER_SEARCH_POLL_SEC)
     logger.warning(
         "telegram_search_worker timeout command_id=%s elapsed_ms=%d timeout_sec=%.0f "
-        "last_status=%s mode=%s limit=%d query_hash=%s query_len=%d query_preview=%r",
+        "last_status=%s mode=%s limit=%d query_hash=%s query_len=%d",
         command_id,
         int((time.monotonic() - started_at) * 1000),
         _WORKER_SEARCH_TIMEOUT_SEC,
@@ -146,7 +145,6 @@ async def _telegram_search_via_worker(
         limit,
         fields["query_hash"],
         fields["query_len"],
-        fields["query_preview"],
     )
     return SearchResult(
         messages=[],

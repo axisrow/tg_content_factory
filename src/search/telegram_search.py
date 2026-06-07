@@ -114,12 +114,11 @@ class TelegramSearch:
             fields = query_log_fields(query)
             logger.warning(
                 "premium_search_quota timeout stage=quota phone=%s timeout_sec=%.0f "
-                "query_hash=%s query_len=%d query_preview=%r",
+                "query_hash=%s query_len=%d",
                 mask_phone(phone),
                 PREMIUM_SEARCH_RPC_TIMEOUT_SEC,
                 fields["query_hash"],
                 fields["query_len"],
-                fields["query_preview"],
             )
             return None
         finally:
@@ -159,11 +158,10 @@ class TelegramSearch:
         search_started_at = time.monotonic()
         fields = query_log_fields(query)
         logger.info(
-            "premium_search start mode=telegram limit=%d query_hash=%s query_len=%d query_preview=%r",
+            "premium_search start mode=telegram limit=%d query_hash=%s query_len=%d",
             limit,
             fields["query_hash"],
             fields["query_len"],
-            fields["query_preview"],
         )
         if not self._pool:
             logger.warning(
@@ -183,12 +181,11 @@ class TelegramSearch:
             reason = await self._get_premium_unavailability_reason()
             logger.warning(
                 "premium_search unavailable reason=no_premium_client detail=%s limit=%d "
-                "query_hash=%s query_len=%d query_preview=%r",
+                "query_hash=%s query_len=%d",
                 reason,
                 limit,
                 fields["query_hash"],
                 fields["query_len"],
-                fields["query_preview"],
             )
             return SearchResult(messages=[], total=0, query=query, error=reason)
 
@@ -213,14 +210,13 @@ class TelegramSearch:
             except asyncio.TimeoutError:
                 logger.warning(
                     "premium_search timeout stage=quota phone=%s elapsed_ms=%d timeout_sec=%.0f "
-                    "limit=%d query_hash=%s query_len=%d query_preview=%r",
+                    "limit=%d query_hash=%s query_len=%d",
                     masked_phone,
                     _elapsed_ms(quota_started_at),
                     PREMIUM_SEARCH_RPC_TIMEOUT_SEC,
                     limit,
                     fields["query_hash"],
                     fields["query_len"],
-                    fields["query_preview"],
                 )
                 return SearchResult(
                     messages=[],
@@ -289,14 +285,13 @@ class TelegramSearch:
         except asyncio.TimeoutError:
             logger.warning(
                 "premium_search timeout stage=telegram_rpc phone=%s elapsed_ms=%d timeout_sec=%.0f "
-                "limit=%d query_hash=%s query_len=%d query_preview=%r",
+                "limit=%d query_hash=%s query_len=%d",
                 masked_phone,
                 _elapsed_ms(search_started_at),
                 PREMIUM_SEARCH_RPC_TIMEOUT_SEC,
                 limit,
                 fields["query_hash"],
                 fields["query_len"],
-                fields["query_preview"],
             )
             return SearchResult(
                 messages=[],
@@ -324,13 +319,11 @@ class TelegramSearch:
             )
         except Exception as exc:
             logger.exception(
-                "premium_search error phone=%s elapsed_ms=%d query_hash=%s query_len=%d "
-                "query_preview=%r",
+                "premium_search error phone=%s elapsed_ms=%d query_hash=%s query_len=%d",
                 masked_phone,
                 _elapsed_ms(search_started_at),
                 fields["query_hash"],
                 fields["query_len"],
-                fields["query_preview"],
             )
             return SearchResult(
                 messages=[],

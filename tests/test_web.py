@@ -1684,6 +1684,7 @@ async def test_search_telegram_proxy_timeout_logs_command_context(client, monkey
     assert "status=running" in resp.text
     assert "telegram_search_worker timeout command_id=123" in caplog.text
     assert "last_status=running" in caplog.text
+    assert "test" not in caplog.text
     fake_cmd_service.enqueue.assert_awaited_once()
 
 

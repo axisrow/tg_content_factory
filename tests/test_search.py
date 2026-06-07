@@ -326,6 +326,7 @@ async def test_search_telegram_quota_timeout_returns_diagnostic_error_and_releas
     assert "stage=quota" in result.error
     assert request_names == ["CheckSearchPostsFloodRequest"]
     assert "premium_search timeout stage=quota" in caplog.text
+    assert "slow quota" not in caplog.text
     assert phone not in caplog.text
     assert "+12...7890" in caplog.text
 
@@ -370,6 +371,7 @@ async def test_search_telegram_rpc_timeout_returns_diagnostic_error_and_releases
     assert result.error is not None
     assert "stage=telegram_rpc" in result.error
     assert "premium_search timeout stage=telegram_rpc" in caplog.text
+    assert "slow rpc" not in caplog.text
     assert phone not in caplog.text
     assert "+12...7890" in caplog.text
 
@@ -413,6 +415,7 @@ async def test_search_telegram_success_logs_safe_diagnostics(
     assert "premium_search start mode=telegram" in caplog.text
     assert "premium_search success" in caplog.text
     assert "query_hash=" in caplog.text
+    assert "AI" not in caplog.text
     assert phone not in caplog.text
     assert "+12...7890" in caplog.text
 
