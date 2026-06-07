@@ -195,9 +195,11 @@ def build_timing_buffer():
 
 
 def build_log_buffer() -> logging.Handler:
+    from src.cli.runtime import install_log_redaction
     from src.web.log_handler import LogBuffer
 
     log_buffer = LogBuffer(maxlen=500)
     log_buffer.setFormatter(logging.Formatter("%(message)s"))
+    install_log_redaction(log_buffer, fmt="%(message)s")
     logging.getLogger().addHandler(log_buffer)
     return log_buffer

@@ -7,10 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.cli.runtime import (
     ensure_data_dirs,
+    install_log_redaction,
     redirect_logging_to_file,
     restore_logging,
     setup_logging,
 )
+from src.utils.safe_logging import RedactingFormatter, redact_log_text, text_hash
 
 
 class TestSetupLogging:
@@ -129,6 +131,63 @@ class TestRedirectLogging:
             # Should not raise or change anything
         finally:
             root.handlers = original_handlers
+
+
+class TestRedactingFilter:
+    def test_redact_log_text_masks_phone_and_query(self):
+        out = redact_log_text("auth.send_code start phone=+1234567890")
+        assert "+1234567890" not in out
+        assert "phone=+12...7890" in out
+
+        out = redact_log_text("Search query 'kremlin news' (id=5)")
+        assert "kremlin news" not in out
+        assert f"hash:{text_hash('kremlin news')}" in out
+
+    def test_redact_log_text_preserves_numeric_metadata(self):
+        # Short numeric fields and hex hashes must not be mangled.
+        line = "timeout command_id=123 duration_ms=4500 query_hash=9a8701151ccd query_len=2"
+        assert redact_log_text(line) == line
+
+    def test_formatter_redacts_output_without_mutating_record(self):
+        record = logging.LogRecord(
+            name="x", level=logging.INFO, pathname=__file__, lineno=1,
+            msg="resolve for %s", args=("+1234567890",), exc_info=None,
+        )
+        out = RedactingFormatter("%(message)s").format(record)
+        assert "+1234567890" not in out
+        assert "+12...7890" in out
+        # The shared record is untouched — record-level consumers (caplog) see raw.
+        assert record.getMessage() == "resolve for +1234567890"
+
+    def test_install_log_redaction_idempotent(self):
+        handler = logging.StreamHandler()
+        install_log_redaction(handler)
+        first = handler.formatter
+        install_log_redaction(handler)
+        assert isinstance(handler.formatter, RedactingFormatter)
+        assert handler.formatter is first
+
+    def test_setup_logging_redacts_through_handler(self, tmp_path):
+        log_file = tmp_path / "redact.log"
+        root = logging.getLogger()
+        original_handlers = root.handlers[:]
+        original_level = root.level
+        root.handlers.clear()
+        try:
+            setup_logging(log_path=log_file)
+            logging.getLogger("redact.test").info("auth phone=+1234567890 query='top secret'")
+            for h in root.handlers:
+                h.flush()
+            contents = log_file.read_text(encoding="utf-8")
+            assert "+1234567890" not in contents
+            assert "top secret" not in contents
+            assert "+12...7890" in contents
+        finally:
+            for h in root.handlers[:]:
+                if h not in original_handlers:
+                    h.close()
+            root.handlers = original_handlers
+            root.setLevel(original_level)
 
 
 class TestInitPool:

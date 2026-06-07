@@ -32,6 +32,7 @@ from src.telegram.reactions import (
     TelegramReactionInvalidError,
     normalize_outgoing_reaction_emoji,
 )
+from src.utils.introspection import explicit_pool_method
 
 # Upper bound on a single send_reactions batch. Each item issues at least one DB
 # read + write while holding the connection write-lock; an unbounded batch from a
@@ -67,15 +68,6 @@ def _coerce_exact_int(value: Any) -> int | None:
     return None
 
 
-def _explicit_pool_method(client_pool: Any, name: str) -> Any | None:
-    instance_attrs = getattr(client_pool, "__dict__", {})
-    if isinstance(instance_attrs, dict) and name in instance_attrs:
-        candidate = instance_attrs[name]
-    elif callable(getattr(type(client_pool), name, None)):
-        candidate = getattr(client_pool, name)
-    else:
-        return None
-    return candidate if callable(candidate) else None
 
 
 async def _reaction_queue_status_hint(ctx: Any, phone: str, client_pool: Any) -> str:
@@ -90,7 +82,7 @@ async def _reaction_queue_status_hint(ctx: Any, phone: str, client_pool: Any) ->
         if flood_until is not None:
             lines.append(f"Аккаунт сейчас во flood-wait до {flood_until.isoformat()}; задача подождёт.")
 
-    is_warming = _explicit_pool_method(client_pool, "is_warming")
+    is_warming = explicit_pool_method(client_pool, "is_warming")
     if callable(is_warming):
         try:
             if bool(is_warming()):

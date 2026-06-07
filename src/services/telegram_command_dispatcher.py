@@ -40,7 +40,7 @@ from src.telegram.notifier import Notifier
 from src.telegram.reactions import TelegramReactionInvalidError, normalize_outgoing_reaction_emoji
 from src.telegram.utils import normalize_utc
 from src.utils.datetime import parse_required_datetime, parse_required_schedule_datetime
-from src.utils.safe_logging import query_log_fields
+from src.utils.safe_logging import elapsed_ms, query_log_fields
 
 try:  # telethon is an optional dependency at test-time
     from telethon.errors import ReactionInvalidError
@@ -231,7 +231,7 @@ class TelegramCommandDispatcher:
                     log_action="failed after invalid reaction",
                 )
             except Exception as exc:
-                duration_ms = int((time.monotonic() - started_at) * 1000)
+                duration_ms = elapsed_ms(started_at)
                 if is_auth_command:
                     logger.exception(
                         "telegram_auth_command error command_id=%s command_type=%s phone=%s duration_ms=%d error=%s",
@@ -263,7 +263,7 @@ class TelegramCommandDispatcher:
                 )
             else:
                 if is_auth_command:
-                    duration_ms = int((time.monotonic() - started_at) * 1000)
+                    duration_ms = elapsed_ms(started_at)
                     logger.info(
                         "telegram_auth_command success command_id=%s command_type=%s phone=%s duration_ms=%d",
                         command.id,
@@ -272,7 +272,7 @@ class TelegramCommandDispatcher:
                         duration_ms,
                     )
                 elif is_search_command:
-                    duration_ms = int((time.monotonic() - started_at) * 1000)
+                    duration_ms = elapsed_ms(started_at)
                     result_payload = result.get("result") or {}
                     logger.info(
                         "telegram_search_command success command_id=%s mode=%s duration_ms=%d "

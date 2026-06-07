@@ -18,6 +18,7 @@ from src.telegram.flood_wait import (
     sleep_for_flood_wait_seconds,
 )
 from src.utils.datetime import try_parse_utc_datetime
+from src.utils.introspection import explicit_pool_method
 
 logger = logging.getLogger(__name__)
 
@@ -776,7 +777,7 @@ async def resolve_entity(
 ) -> tuple[object, object, dict | None]:
     """Resolve a chat/user entity for Telethon operations with dialog-cache warming fallback.
 
-    For usernames, t.me links, and "me" → uses ``client.get_entity()`` directly (API lookup).
+    For usernames, t.me links, and "me" → uses the shared pool resolver when available.
     For numeric IDs → uses ``ClientPool.resolve_dialog_entity()`` which warms the entity cache
     automatically when the entity isn't cached yet (e.g. private groups without a username).
 
@@ -788,11 +789,16 @@ async def resolve_entity(
         return None, None, _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
     raw_client, _ = result
 
-    # Non-numeric identifiers: let Telethon resolve via API (username/link/self)
+    # Non-numeric identifiers: use the shared pool resolver when available so
+    # username/t.me live resolves obey the same FloodWait budget as workers.
     cid = chat_id.strip()
     if not _NUMERIC_ID_RE.match(cid):
         try:
-            entity = await raw_client.get_entity(cid)
+            resolver = explicit_pool_method(client_pool, "resolve_entity_with_warm")
+            if resolver is not None:
+                entity = await resolver(raw_client, phone, cid, operation="agent_resolve_entity")
+            else:
+                entity = await raw_client.get_entity(cid)
             return raw_client, entity, None
         except Exception as e:
             return None, None, _text_response(f"Ошибка: не удалось найти чат/пользователя '{chat_id}': {e}")

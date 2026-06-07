@@ -10,7 +10,7 @@ from fastapi import Request
 from pydantic import ValidationError
 
 from src.models import SearchResult, TelegramCommandStatus
-from src.utils.safe_logging import query_log_fields
+from src.utils.safe_logging import elapsed_ms, query_log_fields
 from src.web import deps
 from src.web.search.forms import extract_length, parse_channel_id
 from src.web.search.responses import SearchJson, SearchRedirect, SearchTemplate
@@ -82,7 +82,7 @@ async def _telegram_search_via_worker(
             logger.warning(
                 "telegram_search_worker missing command_id=%s elapsed_ms=%d mode=%s query_hash=%s",
                 command_id,
-                int((time.monotonic() - started_at) * 1000),
+                elapsed_ms(started_at),
                 mode,
                 fields["query_hash"],
             )
@@ -95,7 +95,7 @@ async def _telegram_search_via_worker(
                     "telegram_search_worker success command_id=%s elapsed_ms=%d mode=%s "
                     "total=%d result_error=%s query_hash=%s",
                     command_id,
-                    int((time.monotonic() - started_at) * 1000),
+                    elapsed_ms(started_at),
                     mode,
                     result.total,
                     bool(result.error),
@@ -115,7 +115,7 @@ async def _telegram_search_via_worker(
                 "telegram_search_worker failed command_id=%s elapsed_ms=%d mode=%s error=%s "
                 "query_hash=%s",
                 command_id,
-                int((time.monotonic() - started_at) * 1000),
+                elapsed_ms(started_at),
                 mode,
                 command.error,
                 fields["query_hash"],
@@ -128,7 +128,7 @@ async def _telegram_search_via_worker(
             logger.warning(
                 "telegram_search_worker cancelled command_id=%s elapsed_ms=%d mode=%s query_hash=%s",
                 command_id,
-                int((time.monotonic() - started_at) * 1000),
+                elapsed_ms(started_at),
                 mode,
                 fields["query_hash"],
             )
@@ -138,7 +138,7 @@ async def _telegram_search_via_worker(
         "telegram_search_worker timeout command_id=%s elapsed_ms=%d timeout_sec=%.0f "
         "last_status=%s mode=%s limit=%d query_hash=%s query_len=%d",
         command_id,
-        int((time.monotonic() - started_at) * 1000),
+        elapsed_ms(started_at),
         _WORKER_SEARCH_TIMEOUT_SEC,
         last_status,
         mode,
@@ -226,7 +226,11 @@ async def render_search_page(
                     request, mode=mode, query=fts_query, limit=limit, channel_id=channel_id_int
                 )
             except Exception as exc:
-                logger.exception("Worker search proxy failed: mode=%s query=%r", mode, q)
+                logger.exception(
+                    "Worker search proxy failed: mode=%s query_hash=%s",
+                    mode,
+                    query_log_fields(q)["query_hash"],
+                )
                 result = SearchResult(messages=[], total=0, query=q, error=f"Ошибка поиска: {exc}")
         else:
             try:
@@ -243,7 +247,11 @@ async def render_search_page(
                     max_length=max_length,
                 )
             except Exception as exc:
-                logger.exception("Search request failed: mode=%s query=%r", mode, q)
+                logger.exception(
+                    "Search request failed: mode=%s query_hash=%s",
+                    mode,
+                    query_log_fields(q)["query_hash"],
+                )
                 result = SearchResult(
                     messages=[],
                     total=0,

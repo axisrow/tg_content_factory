@@ -10,6 +10,7 @@ from src.database import Database
 from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
+from src.utils.safe_logging import RedactingFormatter
 from src.web.paths import PROJECT_ROOT
 
 _DATA_ROOT = PROJECT_ROOT / "data"
@@ -17,6 +18,22 @@ _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
 _TUI_LOG_PATH = _DATA_ROOT / "agent_tui.log"
 APP_LOG_PATH = _DATA_ROOT / "app.log"
+
+
+def install_log_redaction(handler: logging.Handler, *, fmt: str = _LOG_FORMAT) -> None:
+    """Make a handler redact phone/query PII in its emitted output (#785).
+
+    Swaps the handler's formatter for a ``RedactingFormatter`` (idempotent),
+    preserving the existing format/datefmt. Redaction is per-handler output only
+    and does not mutate the shared LogRecord, so record-level consumers such as
+    pytest ``caplog`` keep seeing the original message.
+    """
+    if isinstance(handler.formatter, RedactingFormatter):
+        return
+    existing = handler.formatter
+    datefmt = getattr(existing, "datefmt", None) or _LOG_DATEFMT
+    fmt = getattr(existing, "_fmt", None) or fmt
+    handler.setFormatter(RedactingFormatter(fmt, datefmt=datefmt))
 
 
 def setup_logging(log_path: Path | None = None) -> None:
@@ -28,6 +45,8 @@ def setup_logging(log_path: Path | None = None) -> None:
     )
     root = logging.getLogger()
     for h in root.handlers:
+        install_log_redaction(h)
+    for h in root.handlers:
         if isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", None) == str(log_path):
             return
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,7 +56,7 @@ def setup_logging(log_path: Path | None = None) -> None:
         backupCount=3,
         encoding="utf-8",
     )
-    rfh.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT))
+    install_log_redaction(rfh)
     root.addHandler(rfh)
 
 
@@ -56,7 +75,7 @@ def redirect_logging_to_file(path: str | Path = _TUI_LOG_PATH) -> list[logging.H
             removed.append(h)
             root.removeHandler(h)
     fh = logging.FileHandler(str(path), encoding="utf-8")
-    fh.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT))
+    install_log_redaction(fh)
     root.addHandler(fh)
     return removed
 

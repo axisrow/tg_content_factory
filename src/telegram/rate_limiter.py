@@ -17,13 +17,50 @@ from __future__ import annotations
 import random
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timedelta, timezone
+from math import ceil
 
-# Telegram does not publish the ``auth.resolveUsername`` limit; production
-# evidence (#464/#551) points at roughly 30 calls / account / minute before
-# escalation begins, so we stay just under that.
-DEFAULT_MAX_CALLS = 30
+# Telegram does not publish the ``auth.resolveUsername`` limit. Production
+# evidence points at roughly 30 calls / account / minute before escalation can
+# begin, so the default stays materially below that.
+DEFAULT_MAX_CALLS = 20
 DEFAULT_WINDOW_SEC = 60.0
 DEFAULT_JITTER_SEC = 5.0
+RESOLVE_USERNAME_BACKOFF_BUFFER_SEC = 5
+GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC = 300
+
+
+class UsernameResolveFloodWaitDeferredError(RuntimeError):
+    """Raised when username resolution is deferred by Flood Wait backoff."""
+
+    def __init__(self, wait_seconds: int, next_available_at: datetime):
+        super().__init__(
+            "Username resolve is flood-waited until "
+            f"{next_available_at.isoformat()} (retry in {wait_seconds}s)"
+        )
+        self.wait_seconds = wait_seconds
+        self.next_available_at = next_available_at
+
+
+class UsernameResolveRateLimitedError(RuntimeError):
+    """Raised when a live username resolve is throttled before hitting Telegram."""
+
+    def __init__(self, phone: str, retry_after_sec: float, *, now: datetime | None = None):
+        retry_after_sec = max(0.0, float(retry_after_sec))
+        retry_after_seconds = ceil(retry_after_sec)
+        next_available_at = (now or datetime.now(timezone.utc)) + timedelta(
+            seconds=retry_after_seconds
+        )
+        super().__init__(
+            f"resolve_username rate-limited for {phone}; retry in {retry_after_seconds}s"
+        )
+        self.phone = phone
+        self.retry_after_sec = retry_after_sec
+        self.retry_after_seconds = retry_after_seconds
+        self.next_available_at = next_available_at
+
+    def run_after_with_buffer(self, buffer_sec: int = RESOLVE_USERNAME_BACKOFF_BUFFER_SEC) -> datetime:
+        return self.next_available_at + timedelta(seconds=buffer_sec)
 
 
 class ResolveRateLimiter:
