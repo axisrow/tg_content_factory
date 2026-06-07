@@ -96,6 +96,14 @@ class _BlockingCollector:
         self.finish.set()
 
 
+class _ResolveBackoffPool:
+    def __init__(self, remaining_sec: int):
+        self.remaining_sec = remaining_sec
+
+    def get_resolve_username_backoff_remaining_sec(self) -> int:
+        return self.remaining_sec
+
+
 async def _seed_channel(db: Database, channel_id: int = -1001) -> None:
     await db.add_channel(Channel(channel_id=channel_id, title="t", is_active=True))
 
@@ -178,6 +186,45 @@ async def test_pending_task_without_payload_defaults_to_incremental(tmp_path):
 
         assert collector.calls == [-1001]
         assert collector.full_calls == [False]
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_resolve_backoff_delayed_requeue_preserves_payload_flags(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await db.add_channel(
+            Channel(channel_id=-1001, title="t", username="named_channel", is_active=True)
+        )
+        task_id = await db.repos.tasks.create_collection_task_if_not_active(
+            -1001,
+            "t",
+            channel_username="named_channel",
+            payload={"force": True, "full": True},
+        )
+        collector = _FakeCollector()
+        collector._pool = _ResolveBackoffPool(remaining_sec=60)
+        queue = CollectionQueue(collector, db)
+        queue._ensure_worker = lambda: None
+
+        scheduled: list[dict] = []
+
+        def capture_requeue(**kwargs):
+            scheduled.append(kwargs)
+
+        monkeypatch.setattr(queue, "_schedule_requeue_after_delay", capture_requeue)
+
+        assert await queue._ingest_pending_tasks() == 1
+
+        assert queue._queue.empty()
+        assert scheduled
+        assert scheduled[0]["task_id"] == task_id
+        assert scheduled[0]["force"] is True
+        assert scheduled[0]["full"] is True
+        assert scheduled[0]["run_after"] > datetime.now(timezone.utc)
     finally:
         await queue.shutdown()
         await db.close()
