@@ -61,9 +61,12 @@ async def _fake_flood_wait(coro, **kw):
 def _make_pool():
     """Bare ClientPool with mocked get_available_client / release_client."""
     from src.telegram.client_pool import ClientPool
+    from src.telegram.rate_limiter import ResolveRateLimiter
     pool = ClientPool.__new__(ClientPool)
     pool.release_client = AsyncMock()
     pool.get_available_client = AsyncMock()
+    pool._resolve_rate_limiter = ResolveRateLimiter()
+    pool._resolve_username_backoff_until_utc = None
     return pool
 
 
@@ -114,6 +117,20 @@ def _user_entity(user_id: int, first_name: str = "First", last_name: str = "Last
 
 class TestResolveAnyEntityClientPool:
     """Tests for ClientPool.resolve_any_entity()."""
+
+    @pytest.fixture(autouse=True)
+    def _mirror_flood_wait_into_resolve_guard(self):
+        # Live username resolves run via ResolveGuardMixin.run_live_username_resolve
+        # (src.telegram.resolve_guard), which has its own bound run_with_flood_wait.
+        # These tests patch the client_pool binding; mirror it so the guard path
+        # sees the same fake. Defers to the current (possibly patched) binding.
+        import src.telegram.client_pool as cp_mod
+
+        async def _delegating(coro, **kw):
+            return await cp_mod.run_with_flood_wait(coro, **kw)
+
+        with patch("src.telegram.resolve_guard.run_with_flood_wait", side_effect=_delegating):
+            yield
 
     @pytest.mark.anyio
     async def test_resolve_user_by_username(self):

@@ -7,7 +7,6 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta, timezone
 from inspect import isawaitable
-from math import ceil
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import (
@@ -52,19 +51,24 @@ from src.telegram.flood_wait import (
 )
 from src.telegram.identity import extract_message_sender_identity
 from src.telegram.notifier import Notifier
-from src.telegram.rate_limiter import ResolveRateLimiter
+from src.telegram.rate_limiter import (
+    GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC,
+    UsernameResolveFloodWaitDeferredError,
+    UsernameResolveRateLimitedError,
+)
+
+# Re-exported for collection_queue / CLI consumers that import it from here.
+from src.telegram.rate_limiter import (
+    RESOLVE_USERNAME_BACKOFF_BUFFER_SEC as RESOLVE_USERNAME_BACKOFF_BUFFER_SEC,
+)
 from src.telegram.reactions import extract_message_reactions_json
+from src.utils.safe_logging import mask_phone
 
 logger = logging.getLogger(__name__)
 
 RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
-RESOLVE_USERNAME_BACKOFF_BUFFER_SEC = 5
-# Global cross-account resolve backoff (#552). Only a *long* resolve flood
-# (> threshold) freezes live resolves for every account; short floods are left
-# to the per-account #502 rotation. The freeze is capped so a single 15-18h
-# Telegram flood cannot brick all collection for hours.
-GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC = 300
-GLOBAL_RESOLVE_BACKOFF_CAP_SEC = 3600
+# Global cross-account resolve backoff. Only a *long* resolve flood freezes
+# live resolves for every account; short floods are left to normal rotation.
 MESSAGE_FLUSH_BATCH_SIZE = 500
 PERSISTED_ID_VERIFY_CHUNK_SIZE = 500
 STREAM_CLEANUP_TIMEOUT_SEC = 10.0
@@ -77,12 +81,6 @@ def _format_channel_log_name(channel: Channel) -> str:
 
     title = (channel.title or "").strip()
     return title or "no username"
-
-
-def _redact_phone(phone: str) -> str:
-    if len(phone) <= 4:
-        return phone
-    return phone[:3] + "..." + phone[-4:]
 
 
 class NoActiveStatsClientsError(RuntimeError):
@@ -115,42 +113,6 @@ class AllCollectionClientsFloodedError(RuntimeError):
         )
         self.retry_after_sec = retry_after_sec
         self.next_available_at = next_available_at
-
-
-class UsernameResolveFloodWaitDeferredError(RuntimeError):
-    """Raised when username resolution is deferred by Flood Wait backoff."""
-
-    def __init__(self, wait_seconds: int, next_available_at: datetime):
-        super().__init__(
-            "Username resolve is flood-waited until "
-            f"{next_available_at.isoformat()} (retry in {wait_seconds}s)"
-        )
-        self.wait_seconds = wait_seconds
-        self.next_available_at = next_available_at
-
-
-class UsernameResolveRateLimitedError(RuntimeError):
-    """Raised when a live username resolve is throttled by the per-account
-    rate limiter (#551) *before* hitting Telegram. Unlike a flood-wait deferral
-    this is a short, preventive reschedule — the channel is skipped this run and
-    retried shortly, not paused for hours."""
-
-    def __init__(self, phone: str, retry_after_sec: float, *, now: datetime | None = None):
-        retry_after_sec = max(0.0, float(retry_after_sec))
-        retry_after_seconds = ceil(retry_after_sec)
-        next_available_at = (now or datetime.now(timezone.utc)) + timedelta(
-            seconds=retry_after_seconds
-        )
-        super().__init__(
-            f"resolve_username rate-limited for {phone}; retry in {retry_after_seconds}s"
-        )
-        self.phone = phone
-        self.retry_after_sec = retry_after_sec
-        self.retry_after_seconds = retry_after_seconds
-        self.next_available_at = next_available_at
-
-    def run_after_with_buffer(self, buffer_sec: int = RESOLVE_USERNAME_BACKOFF_BUFFER_SEC) -> datetime:
-        return self.next_available_at + timedelta(seconds=buffer_sec)
 
 
 class Collector:
@@ -191,40 +153,21 @@ class Collector:
         self._stats_lock = asyncio.Lock()
         self._stats_all_lock = asyncio.Lock()
         self._last_unavailability_log: tuple[str, str | int | None, datetime | None] | None = None
-        self._resolve_username_backoff_until_utc: datetime | None = None
-        # Preventive per-account throttle for live resolve_username calls (#551):
-        # caps the burst that the reactive backoff above can only react to.
-        self._resolve_rate_limiter = ResolveRateLimiter()
 
     def _get_resolve_username_backoff_remaining_sec(self) -> int:
-        if self._resolve_username_backoff_until_utc is None:
-            return 0
-        remaining = (
-            self._resolve_username_backoff_until_utc - datetime.now(timezone.utc)
-        ).total_seconds()
-        if remaining <= 0:
-            self._resolve_username_backoff_until_utc = None
-            return 0
-        return int(remaining)
-
-    def _set_resolve_username_backoff(self, wait_seconds: int) -> datetime:
-        # Cap the freeze (#552): Telegram resolve floods can be 15-18h; honoring
-        # them literally would brick all collection. We block live resolves for
-        # at most GLOBAL_RESOLVE_BACKOFF_CAP_SEC and rely on cache-only resolves
-        # plus rescheduling in the meantime.
-        capped = min(int(wait_seconds), GLOBAL_RESOLVE_BACKOFF_CAP_SEC)
-        self._resolve_username_backoff_until_utc = datetime.now(timezone.utc) + timedelta(
-            seconds=capped
-        )
-        return self._resolve_username_backoff_until_utc
+        # The pool owns the single source of truth for the resolve backoff (#785).
+        return self._pool.get_resolve_username_backoff_remaining_sec()
 
     def _raise_resolve_username_deferred(self) -> None:
         remaining = self._get_resolve_username_backoff_remaining_sec()
-        if remaining <= 0 or self._resolve_username_backoff_until_utc is None:
+        if remaining <= 0:
             return
+        next_available_at = self._pool.get_resolve_username_backoff_until() or (
+            datetime.now(timezone.utc) + timedelta(seconds=remaining)
+        )
         raise UsernameResolveFloodWaitDeferredError(
             wait_seconds=remaining,
-            next_available_at=self._resolve_username_backoff_until_utc,
+            next_available_at=next_available_at,
         )
 
     async def get_collection_availability(self):
@@ -586,18 +529,15 @@ class Collector:
             live_input_resolver = session.get_entity
 
         # Only the live API fallback is rate-limited (#551) — the cached
-        # resolves above are free and must stay free. If the account has
-        # burned its window, defer the channel rather than firing the call
-        # that would trigger a multi-hour flood wait.
-        retry_after = self._resolve_rate_limiter.try_acquire(phone)
-        if retry_after > 0:
-            raise UsernameResolveRateLimitedError(phone, retry_after)
-
-        return await run_with_flood_wait(
-            live_input_resolver(username),
-            operation=RESOLVE_USERNAME_OPERATION,
+        # resolves above are free and must stay free. The shared pool guard
+        # enforces the per-account budget and the global FloodWait backoff, so
+        # a burned window defers the channel instead of firing the call that
+        # would trigger a multi-hour flood wait.
+        return await self._pool.run_live_username_resolve(
+            lambda: live_input_resolver(username),
             phone=phone,
-            pool=None,
+            username=username,
+            operation=RESOLVE_USERNAME_OPERATION,
             logger_=logger,
             timeout=30.0,
         )
@@ -912,7 +852,7 @@ class Collector:
                 is_first_run,
                 min_id,
                 limit,
-                _redact_phone(phone),
+                mask_phone(phone),
             )
 
             async def _flush_batch(batch: list[Message]) -> bool:
@@ -972,7 +912,7 @@ class Collector:
                     channel_log_name,
                     len(batch),
                     collected_count,
-                    _redact_phone(phone),
+                    mask_phone(phone),
                 )
                 if progress_callback:
                     await progress_callback(total_collected + collected_count)
@@ -1486,7 +1426,12 @@ class Collector:
                             channel_id,
                         )
                         return total_collected + collected_count
-                    next_available_at = self._set_resolve_username_backoff(flood_wait_sec)
+                    # The pool already recorded this long flood inside
+                    # run_live_username_resolve (>300s threshold); read back the
+                    # active deadline rather than re-setting a second window (#785).
+                    next_available_at = self._pool.get_resolve_username_backoff_until() or (
+                        datetime.now(timezone.utc) + timedelta(seconds=flood_wait_sec)
+                    )
                     logger.warning(
                         "%s got FloodWait %ss on %s; pausing ALL username resolves until %s",
                         RESOLVE_USERNAME_OPERATION,
@@ -1724,6 +1669,9 @@ class Collector:
             except (AllStatsClientsFloodedError, NoActiveStatsClientsError):
                 logger.error("No available clients for stats collection")
                 return None
+            except (UsernameResolveRateLimitedError, UsernameResolveFloodWaitDeferredError) as exc:
+                logger.warning("Stats collection deferred by username resolve guard: %s", exc)
+                return None
             finally:
                 self._stats_running = False
 
@@ -1757,11 +1705,11 @@ class Collector:
             try:
                 if channel.username:
                     try:
-                        entity = await run_with_flood_wait(
-                            session.resolve_entity(channel.username),
+                        entity = await self._pool.run_live_username_resolve(
+                            lambda: session.resolve_entity(channel.username),
                             operation="collect_channel_stats_resolve_username",
                             phone=phone,
-                            pool=self._pool,
+                            username=str(channel.username),
                             logger_=logger,
                             timeout=30.0,
                         )
@@ -1961,6 +1909,22 @@ class Collector:
                         stats["flood_wait_retry_after_sec"] = exc.retry_after_sec
                         stats["limited"] = True
 
+                async def _defer_resolve_batch(
+                    channel: Channel,
+                    *,
+                    retry_after_sec: int,
+                    next_available_at: datetime,
+                ) -> None:
+                    nonlocal stop_workers
+                    async with state_lock:
+                        stop_workers = True
+                        if channel in in_flight:
+                            in_flight.remove(channel)
+                        deferred_front.appendleft(channel)
+                        stats["resolve_username_until"] = next_available_at.isoformat()
+                        stats["resolve_username_retry_after_sec"] = retry_after_sec
+                        stats["limited"] = True
+
                 async def _worker() -> None:
                     nonlocal stop_workers
                     while not self._cancel_event.is_set():
@@ -1985,6 +1949,29 @@ class Collector:
                                 e.next_available_at.isoformat(),
                             )
                             await _defer_batch(channel, e)
+                            return
+                        except (UsernameResolveRateLimitedError, UsernameResolveFloodWaitDeferredError) as e:
+                            retry_after_sec = int(
+                                getattr(e, "retry_after_seconds", None)
+                                or getattr(e, "wait_seconds", 0)
+                                or 0
+                            )
+                            next_available_at = getattr(
+                                e,
+                                "next_available_at",
+                                datetime.now(timezone.utc) + timedelta(seconds=retry_after_sec),
+                            )
+                            logger.warning(
+                                "Username resolve budget is blocked for stats. "
+                                "Deferring %d queued channels until %s",
+                                1 + len(queue),
+                                next_available_at.isoformat(),
+                            )
+                            await _defer_resolve_batch(
+                                channel,
+                                retry_after_sec=retry_after_sec,
+                                next_available_at=next_available_at,
+                            )
                             return
                         except NoActiveStatsClientsError:
                             logger.error("No active connected clients for stats collection")

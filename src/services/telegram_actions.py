@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse
 
 from src.telegram.client_pool import ClientPool
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.utils.introspection import explicit_pool_method
 
 logger = logging.getLogger(__name__)
 
@@ -143,7 +144,7 @@ class TelegramActionService:
 
     @staticmethod
     def _has_explicit_pool_operation(pool: Any, name: str) -> bool:
-        return hasattr(type(pool), name) or name in getattr(pool, "__dict__", {})
+        return explicit_pool_method(pool, name) is not None
 
     @staticmethod
     def _looks_numeric_identifier(value: Any) -> bool:

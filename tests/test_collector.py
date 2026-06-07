@@ -248,12 +248,13 @@ async def test_collect_channel_long_username_resolve_flood_sets_backoff_without_
     with pytest.raises(UsernameResolveFloodWaitDeferredError):
         await collector._collect_channel(stored)
 
-    pool.report_flood.assert_not_awaited()
+    pool.report_flood.assert_awaited_once_with("+7001", 7200)
     pool.get_available_client.assert_awaited_once()
     raw_client2.get_input_entity.assert_not_awaited()
-    # #552: a 7200s flood is capped to the 3600s global backoff window.
+    # Long resolve floods are honored for Telegram's full window so the worker
+    # does not retry before the account is usable again.
     remaining = collector._get_resolve_username_backoff_remaining_sec()
-    assert 3500 < remaining <= 3600
+    assert 7100 < remaining <= 7200
 
 
 @pytest.mark.anyio
@@ -302,7 +303,7 @@ async def test_collect_channel_username_resolve_flood_does_not_rotate(db):
     result = await collector._collect_channel(stored)
 
     assert result == 0
-    pool.report_flood.assert_not_awaited()
+    pool.report_flood.assert_awaited_once_with("+7001", 120)
     assert pool.get_available_client.await_count == 1
     raw_client2.get_input_entity.assert_not_awaited()
     assert collector._get_resolve_username_backoff_remaining_sec() == 0
@@ -336,11 +337,11 @@ async def test_collect_channel_defers_when_resolve_rate_limited(db):
     pool.get_available_client = AsyncMock(return_value=(session, "+7001"))
     collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
 
-    # Exhaust the limiter for +7001 before collection runs.
-    collector._resolve_rate_limiter = ResolveRateLimiter(
+    # Exhaust the shared pool limiter for +7001 before collection runs.
+    pool._resolve_rate_limiter = ResolveRateLimiter(
         max_calls=1, window_sec=60.0, jitter_sec=0.0
     )
-    assert collector._resolve_rate_limiter.try_acquire("+7001") == 0.0
+    assert pool._resolve_rate_limiter.try_acquire("+7001") == 0.0
 
     with pytest.raises(UsernameResolveRateLimitedError) as exc_info:
         await collector._collect_channel(stored)
@@ -373,7 +374,7 @@ async def test_collect_channel_cache_only_defers_on_backoff_miss(db):
     )
     pool.get_available_client = AsyncMock(return_value=(session, "+7001"))
     collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
-    collector._set_resolve_username_backoff(600)
+    pool.set_resolve_username_backoff(600)
 
     with pytest.raises(UsernameResolveRateLimitedError) as exc_info:
         await collector._collect_channel(stored)
@@ -402,7 +403,7 @@ async def test_collect_all_channels_continues_cache_only_during_backoff(db):
     s2 = TelegramTransportSession(raw2, disconnect_on_close=False, phone="+7002", pool=pool)
     pool.get_available_client = AsyncMock(side_effect=[(s1, "+7001"), (s2, "+7002")])
     collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
-    collector._set_resolve_username_backoff(600)
+    pool.set_resolve_username_backoff(600)
 
     stats = await collector.collect_all_channels()
 
@@ -451,9 +452,12 @@ async def test_collect_all_channels_continues_after_mid_run_resolve_flood(db):
     # The triggering channel is counted as deferred, not as an error.
     assert stats["errors"] == 0
     assert stats.get("deferred", 0) >= 1
-    # Backoff is active and capped to the 3600s window.
+    # Backoff is active for Telegram's full FloodWait window.
     remaining = collector._get_resolve_username_backoff_remaining_sec()
-    assert 3500 < remaining <= 3600
+    assert 7100 < remaining <= 7200
+    # Single source of truth (#785): the collector reads the pool's backoff, no
+    # separate collector-local copy.
+    assert remaining == pool.get_resolve_username_backoff_remaining_sec()
     # Channel 2 was routed cache-only — no live resolve fired.
     raw2.get_input_entity.assert_not_awaited()
 
@@ -2224,6 +2228,49 @@ async def test_collect_all_stats_skips_filtered(db):
     # Only 1 channel (Normal), and it will error because no client
     assert stats["channels"] == 0
     assert stats["errors"] == 1
+
+
+@pytest.mark.anyio
+async def test_collect_all_stats_defers_when_resolve_rate_limited(db):
+    from src.telegram.rate_limiter import ResolveRateLimiter
+
+    await db.add_channel(Channel(channel_id=1970788993, title="Stats Resolve 1", username="stats_1"))
+    await db.add_channel(Channel(channel_id=1970788994, title="Stats Resolve 2", username="stats_2"))
+
+    raw_client = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    pool = make_mock_pool()
+    session = TelegramTransportSession(
+        raw_client,
+        disconnect_on_close=False,
+        phone="+7001",
+        pool=pool,
+    )
+    pool.get_available_client = AsyncMock(return_value=(session, "+7001"))
+    pool._resolve_rate_limiter = ResolveRateLimiter(
+        max_calls=1,
+        window_sec=60.0,
+        jitter_sec=0.0,
+    )
+    assert pool._resolve_rate_limiter.try_acquire("+7001") == 0.0
+
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(
+            delay_between_channels_sec=0,
+            delay_between_requests_sec=0,
+            stats_all_worker_count=1,
+        ),
+    )
+
+    stats = await collector.collect_all_stats(max_channels=2)
+
+    assert stats["channels"] == 0
+    assert stats["errors"] == 0
+    assert stats["limited"] is True
+    assert stats["remaining"] == 2
+    assert 0 < stats["resolve_username_retry_after_sec"] <= 60
+    raw_client.get_entity.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

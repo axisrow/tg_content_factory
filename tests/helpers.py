@@ -27,6 +27,8 @@ from src.search.engine import SearchEngine
 from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
+from src.telegram.rate_limiter import ResolveRateLimiter
+from src.telegram.resolve_guard import ResolveGuardMixin
 from src.web.app import create_app
 
 
@@ -442,11 +444,18 @@ class FakeCliTelethonClient:
         return await self.invoke(request)
 
 
-class FakeClientPool(MagicMock):
-    """Pool double with controllable async methods and dialog cache state."""
+class FakeClientPool(ResolveGuardMixin, MagicMock):
+    """Pool double with controllable async methods and dialog cache state.
+
+    Inherits the real ``ResolveGuardMixin`` so the live-username-resolve guard
+    runs production logic (MRO resolves the mixin methods before MagicMock's
+    auto-fabrication), while every other attribute is still auto-mocked.
+    """
 
     def __init__(self, **kwargs):
         super().__init__()
+        self._resolve_rate_limiter = ResolveRateLimiter()
+        self._resolve_username_backoff_until_utc = None
         self.clients = kwargs.pop("clients", {})
         self.release_client = kwargs.pop("release_client", AsyncMock())
         self.report_flood = kwargs.pop("report_flood", AsyncMock())
