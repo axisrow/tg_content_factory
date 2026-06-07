@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import re
 from functools import lru_cache
@@ -40,7 +41,7 @@ def _xdist_available_workers_for_load(cpu_count: int) -> int:
         current_load = os.getloadavg()[0]
     except (AttributeError, OSError):
         current_load = 0.0
-    busy_cores = max(0, int(current_load))
+    busy_cores = max(0, math.ceil(current_load))
     return max(1, cpu_count - busy_cores - 1)
 
 

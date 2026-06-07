@@ -417,7 +417,7 @@ async def test_dialogs_resolve_not_found_raises():
     pool = _mock_pool()
     pool.resolve_any_entity = AsyncMock(return_value=None)
     d = _dispatcher(pool=pool)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match=r"resolve failed: '@nope' not found"):
         await d._handle_dialogs_resolve({"identifier": "@nope"})
 
 
@@ -694,7 +694,7 @@ async def test_channels_add_identifier_fail():
     pool = _mock_pool()
     pool.resolve_channel.return_value = None
     d = _dispatcher(pool=pool)
-    with pytest.raises(RuntimeError, match="resolve failed"):
+    with pytest.raises(RuntimeError, match=r"resolve failed: '@x' not found"):
         await d._handle_channels_add_identifier({"identifier": "@x"})
 
 

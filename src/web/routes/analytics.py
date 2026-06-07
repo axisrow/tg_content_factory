@@ -12,6 +12,13 @@ from src.web import deps
 
 router = APIRouter()
 
+_MAX_TREND_DAYS = 365
+_MAX_TREND_LIMIT = 100
+
+
+def _clamp_positive(value: int, upper: int) -> int:
+    return max(1, min(value, upper))
+
 
 @router.get("", response_class=HTMLResponse)
 async def analytics_page(
@@ -137,7 +144,10 @@ async def api_trending_topics(request: Request, days: int = 7, limit: int = 20):
     """Get trending topics as JSON."""
     db = deps.get_db(request)
     trend = TrendService(db)
-    topics = await trend.get_trending_topics(days=max(1, days), limit=max(1, limit))
+    topics = await trend.get_trending_topics(
+        days=_clamp_positive(days, _MAX_TREND_DAYS),
+        limit=_clamp_positive(limit, _MAX_TREND_LIMIT),
+    )
     return JSONResponse([dataclasses.asdict(row) for row in topics])
 
 
@@ -146,7 +156,10 @@ async def api_trending_channels(request: Request, days: int = 7, limit: int = 10
     """Get trending channels as JSON."""
     db = deps.get_db(request)
     trend = TrendService(db)
-    channels = await trend.get_trending_channels(days=max(1, days), limit=max(1, limit))
+    channels = await trend.get_trending_channels(
+        days=_clamp_positive(days, _MAX_TREND_DAYS),
+        limit=_clamp_positive(limit, _MAX_TREND_LIMIT),
+    )
     return JSONResponse([dataclasses.asdict(row) for row in channels])
 
 
@@ -155,7 +168,10 @@ async def api_trending_emojis(request: Request, days: int = 7, limit: int = 15):
     """Get trending reaction emojis as JSON."""
     db = deps.get_db(request)
     trend = TrendService(db)
-    emojis = await trend.get_trending_emojis(days=max(1, days), limit=max(1, limit))
+    emojis = await trend.get_trending_emojis(
+        days=_clamp_positive(days, _MAX_TREND_DAYS),
+        limit=_clamp_positive(limit, _MAX_TREND_LIMIT),
+    )
     return JSONResponse([dataclasses.asdict(row) for row in emojis])
 
 
@@ -277,7 +293,7 @@ async def api_pipeline_stats_alias(request: Request, pipeline_id: int | None = N
 async def api_message_velocity(request: Request, days: int = 30):
     """Daily message velocity (parity with CLI `analytics velocity`)."""
     db = deps.get_db(request)
-    data = await TrendService(db).get_message_velocity(days=days)
+    data = await TrendService(db).get_message_velocity(days=_clamp_positive(days, _MAX_TREND_DAYS))
     return JSONResponse([dataclasses.asdict(v) for v in data])
 
 
@@ -285,5 +301,5 @@ async def api_message_velocity(request: Request, days: int = 30):
 async def api_peak_hours(request: Request, days: int = 30):
     """Peak posting hours (parity with CLI `analytics peak-hours`)."""
     db = deps.get_db(request)
-    data = await TrendService(db).get_peak_hours(days=days)
+    data = await TrendService(db).get_peak_hours(days=_clamp_positive(days, _MAX_TREND_DAYS))
     return JSONResponse([dataclasses.asdict(h) for h in data])

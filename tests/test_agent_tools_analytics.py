@@ -184,11 +184,21 @@ class TestAnalyticsToolGetPeakHours:
         with patch("src.services.trend_service.TrendService") as mock_svc:
             mock_svc.return_value.get_peak_hours = AsyncMock(return_value=hours)
             handlers = _get_tool_handlers(mock_db)
-            result = await handlers["get_peak_hours"]({})
+            result = await handlers["get_peak_hours"]({"days": 14})
         text = _text(result)
+        mock_svc.return_value.get_peak_hours.assert_awaited_once_with(days=14)
+        assert "за 14 дней" in text
         assert "09:00" in text
         assert "500 сообщений" in text
         assert "18:00" in text
+
+    @pytest.mark.anyio
+    async def test_days_are_clamped(self, mock_db):
+        with patch("src.services.trend_service.TrendService") as mock_svc:
+            mock_svc.return_value.get_peak_hours = AsyncMock(return_value=[])
+            handlers = _get_tool_handlers(mock_db)
+            await handlers["get_peak_hours"]({"days": 999999})
+        mock_svc.return_value.get_peak_hours.assert_awaited_once_with(days=365)
 
     @pytest.mark.anyio
     async def test_error(self, mock_db):

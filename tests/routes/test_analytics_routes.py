@@ -291,8 +291,32 @@ async def test_api_message_velocity_returns_json(route_client):
 
 
 @pytest.mark.anyio
+async def test_api_message_velocity_clamps_days(route_client):
+    """GET /analytics/messages/velocity clamps expensive day windows."""
+    with patch("src.web.routes.analytics.TrendService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_message_velocity = AsyncMock(return_value=[])
+        resp = await route_client.get("/analytics/messages/velocity?days=999999")
+
+    assert resp.status_code == 200
+    instance.get_message_velocity.assert_awaited_once_with(days=365)
+
+
+@pytest.mark.anyio
 async def test_api_peak_hours_returns_json(route_client):
     """GET /analytics/peak-hours returns a JSON list (parity: analytics peak-hours)."""
     resp = await route_client.get("/analytics/peak-hours?days=30")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+@pytest.mark.anyio
+async def test_api_peak_hours_clamps_days(route_client):
+    """GET /analytics/peak-hours clamps expensive day windows."""
+    with patch("src.web.routes.analytics.TrendService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_peak_hours = AsyncMock(return_value=[])
+        resp = await route_client.get("/analytics/peak-hours?days=0")
+
+    assert resp.status_code == 200
+    instance.get_peak_hours.assert_awaited_once_with(days=1)

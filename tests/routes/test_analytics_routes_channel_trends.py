@@ -45,6 +45,18 @@ async def test_api_trending_topics(route_client):
 
 
 @pytest.mark.anyio
+async def test_api_trending_topics_clamps_days_and_limit(route_client):
+    """GET /analytics/trends/topics clamps expensive query bounds."""
+    with patch("src.web.routes.analytics.TrendService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_trending_topics = AsyncMock(return_value=[])
+        resp = await route_client.get("/analytics/trends/topics?days=999999&limit=999999")
+
+    assert resp.status_code == 200
+    instance.get_trending_topics.assert_awaited_once_with(days=365, limit=100)
+
+
+@pytest.mark.anyio
 async def test_api_trending_channels(route_client):
     """GET /analytics/trends/channels returns channel JSON."""
     with patch("src.web.routes.analytics.TrendService") as mock_svc:
@@ -68,6 +80,18 @@ async def test_api_trending_channels(route_client):
 
 
 @pytest.mark.anyio
+async def test_api_trending_channels_clamps_floor(route_client):
+    """GET /analytics/trends/channels clamps lower bounds to one."""
+    with patch("src.web.routes.analytics.TrendService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_trending_channels = AsyncMock(return_value=[])
+        resp = await route_client.get("/analytics/trends/channels?days=-5&limit=0")
+
+    assert resp.status_code == 200
+    instance.get_trending_channels.assert_awaited_once_with(days=1, limit=1)
+
+
+@pytest.mark.anyio
 async def test_api_trending_emojis(route_client):
     """GET /analytics/trends/emojis returns reaction emoji JSON."""
     with patch("src.web.routes.analytics.TrendService") as mock_svc:
@@ -78,6 +102,18 @@ async def test_api_trending_emojis(route_client):
     assert resp.status_code == 200
     assert resp.json() == [{"emoji": "🔥", "count": 9}]
     instance.get_trending_emojis.assert_awaited_once_with(days=14, limit=3)
+
+
+@pytest.mark.anyio
+async def test_api_trending_emojis_clamps_days_and_limit(route_client):
+    """GET /analytics/trends/emojis clamps expensive query bounds."""
+    with patch("src.web.routes.analytics.TrendService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_trending_emojis = AsyncMock(return_value=[])
+        resp = await route_client.get("/analytics/trends/emojis?days=999999&limit=999999")
+
+    assert resp.status_code == 200
+    instance.get_trending_emojis.assert_awaited_once_with(days=365, limit=100)
 
 
 # ── Channel analytics page ─────────────────────────────────────────

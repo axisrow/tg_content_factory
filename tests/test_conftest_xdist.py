@@ -43,7 +43,13 @@ def test_xdist_auto_workers_reduce_worker_count_when_cpu_is_busy(monkeypatch) ->
     monkeypatch.setenv("TGCF_PYTEST_XDIST_WORKERS", "8")
     _set_cpu_state(monkeypatch, cpu_count=16, load_average=12.8)
 
-    assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 3
+    assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 2
+
+
+def test_xdist_auto_workers_round_fractional_load_up(monkeypatch) -> None:
+    _set_cpu_state(monkeypatch, cpu_count=4, load_average=0.95)
+
+    assert root_conftest._xdist_available_workers_for_load(4) == 2
 
 
 def test_xdist_auto_workers_keep_one_worker_when_cpu_is_saturated(monkeypatch) -> None:

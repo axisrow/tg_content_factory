@@ -867,9 +867,8 @@ async def list_pipeline_runs(
     moderation_status: str | None = None,
 ):
     """GET /pipelines/{id}/runs — run history (parity with CLI `pipeline runs`)."""
-    svc = deps.pipeline_service(request)
     db = deps.get_db(request)
-    if await svc.get(pipeline_id) is None:
+    if await db.repos.content_pipelines.get_by_id(pipeline_id) is None:
         return PipelineJson({"error": "pipeline_not_found"}, status_code=404)
     runs = await db.repos.generation_runs.list_by_pipeline(
         pipeline_id,
@@ -896,9 +895,8 @@ async def show_pipeline_run(request: Request, pipeline_id: int, run_id: int):
 
 async def pipeline_queue(request: Request, pipeline_id: int, limit: int = 50):
     """GET /pipelines/{id}/queue — moderation queue (parity with CLI `pipeline queue`)."""
-    svc = deps.pipeline_service(request)
     db = deps.get_db(request)
-    if await svc.get(pipeline_id) is None:
+    if await db.repos.content_pipelines.get_by_id(pipeline_id) is None:
         return PipelineJson({"error": "pipeline_not_found"}, status_code=404)
     runs = await db.repos.generation_runs.list_pending_moderation(pipeline_id=pipeline_id, limit=limit)
     return PipelineJson({

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import base64
 import re
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -580,6 +580,18 @@ async def test_list_pipeline_runs_json(client):
     data = resp.json()
     assert data["pipeline_id"] == 1
     assert any(r["id"] == run_id for r in data["runs"])
+
+
+@pytest.mark.anyio
+async def test_pipeline_run_and_queue_reads_do_not_hydrate_pipeline_service(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    with patch("src.web.pipelines.handlers.deps.pipeline_service", side_effect=AssertionError("hydrated")):
+        runs_resp = await client.get("/pipelines/1/runs")
+        queue_resp = await client.get("/pipelines/1/queue")
+
+    assert runs_resp.status_code == 200
+    assert queue_resp.status_code == 200
 
 
 @pytest.mark.anyio
