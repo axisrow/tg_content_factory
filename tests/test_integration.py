@@ -772,7 +772,7 @@ class TestGracefulShutdown:
 
         enqueuer = MagicMock()
 
-        async def _blocking_enqueue():
+        async def _blocking_enqueue(**_kwargs):
             started_event.set()
             try:
                 await asyncio.sleep(10)
@@ -783,7 +783,10 @@ class TestGracefulShutdown:
         enqueuer.enqueue_all_channels = AsyncMock(side_effect=_blocking_enqueue)
 
         config = SchedulerConfig()
-        manager = SchedulerManager(config, task_enqueuer=enqueuer)
+        manager = SchedulerManager(
+            config, task_enqueuer=enqueuer,
+            resolve_backoff_callback=lambda: 0,
+        )
 
         await manager.trigger_background()
         assert manager._bg_task is not None
@@ -813,17 +816,20 @@ class TestGracefulShutdown:
 
         enqueuer = MagicMock()
 
-        async def _blocking_enqueue():
+        async def _blocking_enqueue(**_kwargs):
             nonlocal call_count
             call_count += 1
             started_event.set()
             await release_event.wait()
-            return MagicMock(queued_count=0, skipped_existing_count=0, total_candidates=0)
+            return MagicMock(queued_count=0, skipped_existing_count=0, total_candidates=0, skipped_backoff_count=0)
 
         enqueuer.enqueue_all_channels = AsyncMock(side_effect=_blocking_enqueue)
 
         config = SchedulerConfig()
-        manager = SchedulerManager(config, task_enqueuer=enqueuer)
+        manager = SchedulerManager(
+            config, task_enqueuer=enqueuer,
+            resolve_backoff_callback=lambda: 0,
+        )
 
         try:
             await asyncio.gather(manager.trigger_background(), manager.trigger_background())

@@ -19,6 +19,7 @@ class BulkEnqueueResult:
     queued_count: int
     skipped_existing_count: int
     total_candidates: int
+    skipped_backoff_count: int = 0
 
 
 class CollectionService:
@@ -67,14 +68,16 @@ class CollectionService:
         created = await self._enqueue_channel(channel, force=force, full=full)
         return "queued" if created else "already_active"
 
-    async def enqueue_all_channels(self) -> BulkEnqueueResult:
+    async def enqueue_all_channels(
+        self,
+        *,
+        resolve_backoff_remaining_sec: int = 0,
+    ) -> BulkEnqueueResult:
         channels = await self._channels.list_channels(active_only=True, include_filtered=False)
         queued_count = 0
         skipped_existing_count = 0
 
         for channel in channels:
-            # Atomic INSERT … WHERE NOT EXISTS prevents duplicate tasks
-            # even under concurrent calls (scheduler + web UI).
             created = await self._enqueue_channel(channel, force=True, full=False)
             if created:
                 queued_count += 1
@@ -85,6 +88,7 @@ class CollectionService:
             queued_count=queued_count,
             skipped_existing_count=skipped_existing_count,
             total_candidates=len(channels),
+            skipped_backoff_count=0,
         )
 
     async def cancel_task(self, task_id: int, note: str | None = None) -> bool:

@@ -41,6 +41,7 @@ class SchedulerManager:
         pipeline_bundle: PipelineBundle | None = None,
         warm_dialogs_callback: Callable[[], Awaitable[None]] | None = None,
         live_runtime_pause_gate: LiveRuntimePauseGate | None = None,
+        resolve_backoff_callback: Callable[[], int] | None = None,
     ):
         if config is None:
             config = SchedulerConfig()
@@ -51,6 +52,7 @@ class SchedulerManager:
         self._pipeline_bundle = pipeline_bundle
         self._warm_dialogs_callback = warm_dialogs_callback
         self._live_runtime_pause_gate = live_runtime_pause_gate
+        self._resolve_backoff_callback = resolve_backoff_callback
         self._scheduler: AsyncIOScheduler | None = None
         self._job_id = "collect_all"
         self._photo_due_job_id = "photo_due"
@@ -342,12 +344,21 @@ class SchedulerManager:
         logger.info("Starting scheduled collection")
         if not self._task_enqueuer:
             return {"enqueued": 0, "skipped": 0, "total": 0, "errors": 0}
+        resolve_backoff_sec = 0
+        if self._resolve_backoff_callback:
+            try:
+                resolve_backoff_sec = self._resolve_backoff_callback()
+            except Exception:
+                logger.warning("resolve_backoff_callback failed", exc_info=True)
         try:
-            result = await self._task_enqueuer.enqueue_all_channels()
+            result = await self._task_enqueuer.enqueue_all_channels(
+                resolve_backoff_remaining_sec=resolve_backoff_sec,
+            )
             stats = {
                 "enqueued": result.queued_count,
                 "skipped": result.skipped_existing_count,
                 "total": result.total_candidates,
+                "skipped_backoff": result.skipped_backoff_count,
                 "errors": 0,
             }
             logger.info("Scheduled collection enqueued: %s", stats)

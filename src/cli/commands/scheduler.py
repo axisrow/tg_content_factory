@@ -44,7 +44,9 @@ def run(args: argparse.Namespace) -> None:
                     await manager.stop()
                     print("\nScheduler stopped.")
             elif args.scheduler_action == "trigger":
-                result = await collection_service.enqueue_all_channels()
+                result = await collection_service.enqueue_all_channels(
+                    resolve_backoff_remaining_sec=pool.get_resolve_username_backoff_remaining_sec(),
+                )
                 print(
                     f"Enqueued {result.queued_count} channels "
                     f"(skipped {result.skipped_existing_count}, "

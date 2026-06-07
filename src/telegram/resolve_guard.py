@@ -29,6 +29,9 @@ class ResolveGuardMixin:
 
     _resolve_rate_limiter: ResolveRateLimiter
     _resolve_username_backoff_until_utc: datetime | None
+    _resolve_ramp_up_until_utc: datetime | None
+    _resolve_ramp_up_last_call_utc: datetime | None
+    _resolve_ramp_up_min_interval_sec: float
 
     def _get_resolve_rate_limiter(self) -> ResolveRateLimiter:
         limiter = getattr(self, "_resolve_rate_limiter", None)
@@ -58,18 +61,98 @@ class ResolveGuardMixin:
             return None
         return backoff_until
 
+    def is_resolve_ramp_up_active(self) -> bool:
+        ramp = getattr(self, "_resolve_ramp_up_until_utc", None)
+        if ramp is None:
+            return False
+        if (ramp - datetime.now(timezone.utc)).total_seconds() <= 0:
+            self._resolve_ramp_up_until_utc = None
+            return False
+        return True
+
     def set_resolve_username_backoff(self, wait_seconds: int) -> datetime:
-        """Pause live username resolves for Telegram's full FloodWait window."""
-        self._resolve_username_backoff_until_utc = datetime.now(timezone.utc) + timedelta(
+        new_until = datetime.now(timezone.utc) + timedelta(
             seconds=max(0, int(wait_seconds))
         )
-        return self._resolve_username_backoff_until_utc
+        existing = getattr(self, "_resolve_username_backoff_until_utc", None)
+        if existing is not None and existing > new_until:
+            logger.warning(
+                "resolve backoff: keeping existing %s (new would be %s for wait_seconds=%d)",
+                existing.isoformat(),
+                new_until.isoformat(),
+                wait_seconds,
+            )
+            return existing
+        self._resolve_username_backoff_until_utc = new_until
+        # Ramp-up: 10% of flood wait, max 1h
+        ramp_duration = min(wait_seconds * 0.1, 3600)
+        self._resolve_ramp_up_until_utc = new_until + timedelta(seconds=ramp_duration)
+        logger.warning(
+            "resolve backoff: set until %s (wait_seconds=%d, ramp-up until %s)",
+            new_until.isoformat(),
+            wait_seconds,
+            (self._resolve_ramp_up_until_utc or new_until).isoformat(),
+        )
+        return new_until
+
+    async def persist_resolve_username_backoff(self) -> None:
+        """Persist the backoff deadline to DB settings before the caller exits."""
+        backoff_until = self._resolve_username_backoff_until_utc
+        db = getattr(self, "_db", None)
+        if db is None:
+            return
+
+        try:
+            if backoff_until is not None:
+                await db.set_setting(
+                    "resolve_username_backoff_until_utc",
+                    backoff_until.isoformat(),
+                )
+            else:
+                await db.set_setting("resolve_username_backoff_until_utc", "")
+        except Exception:
+            logger.debug("Failed to persist resolve_username backoff", exc_info=True)
+
+    async def restore_resolve_username_backoff(self, db: object) -> None:
+        """Restore backoff from DB on startup. Call once during pool init."""
+        try:
+            value = await db.get_setting("resolve_username_backoff_until_utc")
+        except Exception:
+            return
+        if not value:
+            return
+        try:
+            restored = datetime.fromisoformat(value)
+            if restored.tzinfo is None:
+                restored = restored.replace(tzinfo=timezone.utc)
+            remaining = (restored - datetime.now(timezone.utc)).total_seconds()
+            if remaining > 0:
+                self._resolve_username_backoff_until_utc = restored
+                # Also restore ramp-up: 10% of remaining, max 1h
+                ramp_duration = min(remaining * 0.1, 3600)
+                self._resolve_ramp_up_until_utc = restored + timedelta(seconds=ramp_duration)
+                logger.warning(
+                    "resolve backoff: restored from DB until %s (%.0fs remaining)",
+                    restored.isoformat(),
+                    remaining,
+                )
+        except (ValueError, TypeError):
+            pass
 
     def reserve_resolve_username_call(self, phone: str) -> float:
-        """Reserve one live username resolve slot, or return retry-after seconds."""
         remaining = self.get_resolve_username_backoff_remaining_sec()
         if remaining > 0:
             return float(remaining)
+        if self.is_resolve_ramp_up_active():
+            min_interval = getattr(self, "_resolve_ramp_up_min_interval_sec", 5.0)
+            last = getattr(self, "_resolve_ramp_up_last_call_utc", None)
+            now = datetime.now(timezone.utc)
+            if last is not None:
+                elapsed = (now - last).total_seconds()
+                if elapsed < min_interval:
+                    return min_interval - elapsed
+            self._resolve_ramp_up_last_call_utc = now
+            return 0.0
         return self._get_resolve_rate_limiter().try_acquire(str(phone or "unknown"))
 
     @staticmethod
@@ -112,6 +195,7 @@ class ResolveGuardMixin:
         except HandledFloodWaitError as exc:
             next_available_at = self._record_resolve_username_flood(exc.info.wait_seconds)
             if next_available_at is not None:
+                await self.persist_resolve_username_backoff()
                 (logger_ or logger).warning(
                     "%s got FloodWait %ss on %s while resolving %s; "
                     "pausing live username resolves until %s",

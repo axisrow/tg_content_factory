@@ -38,9 +38,14 @@ def test_scheduler_waits_to_run_background_collection_while_agent_uses_live_runt
         def __init__(self) -> None:
             self.calls = 0
 
-        async def enqueue_all_channels(self):
+        async def enqueue_all_channels(self, **kwargs):
             self.calls += 1
-            return SimpleNamespace(queued_count=2, skipped_existing_count=3, total_candidates=5)
+            return SimpleNamespace(
+                queued_count=2,
+                skipped_existing_count=3,
+                skipped_backoff_count=0,
+                total_candidates=5,
+            )
 
     async def _run() -> tuple[dict, dict, int]:
         gate = LiveRuntimePauseGate()
@@ -61,8 +66,8 @@ def test_scheduler_waits_to_run_background_collection_while_agent_uses_live_runt
 
     background_result, manual_result, calls = asyncio.run(_run())
 
-    assert background_result == {"enqueued": 2, "skipped": 3, "total": 5, "errors": 0}
-    assert manual_result == {"enqueued": 2, "skipped": 3, "total": 5, "errors": 0}
+    assert background_result == {"enqueued": 2, "skipped": 3, "total": 5, "skipped_backoff": 0, "errors": 0}
+    assert manual_result == {"enqueued": 2, "skipped": 3, "total": 5, "skipped_backoff": 0, "errors": 0}
     assert calls == 2
 
 
@@ -71,9 +76,14 @@ def test_scheduler_stop_interrupts_paused_background_collection_wait():
         def __init__(self) -> None:
             self.calls = 0
 
-        async def enqueue_all_channels(self):
+        async def enqueue_all_channels(self, **kwargs):
             self.calls += 1
-            return SimpleNamespace(queued_count=2, skipped_existing_count=3, total_candidates=5)
+            return SimpleNamespace(
+                queued_count=2,
+                skipped_existing_count=3,
+                skipped_backoff_count=0,
+                total_candidates=5,
+            )
 
     async def _run() -> tuple[dict, int]:
         gate = LiveRuntimePauseGate()

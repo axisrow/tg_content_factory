@@ -120,6 +120,9 @@ class ClientPool(ResolveGuardMixin):
         self._premium_flood_wait_until: dict[str, datetime] = {}
         self._resolve_rate_limiter = ResolveRateLimiter()
         self._resolve_username_backoff_until_utc: datetime | None = None
+        self._resolve_ramp_up_until_utc: datetime | None = None
+        self._resolve_ramp_up_last_call_utc: datetime | None = None
+        self._resolve_ramp_up_min_interval_sec: float = 5.0
 
     def is_dialogs_fetched(self, phone: str) -> bool:
         """Return True if get_dialogs() was already called for this phone in this process."""
@@ -462,6 +465,7 @@ class ClientPool(ResolveGuardMixin):
 
     async def initialize(self, *, phones: Iterable[str] | None = None) -> None:
         """Load active accounts and validate that their sessions are usable."""
+        await self.restore_resolve_username_backoff(self._db)
         accounts = await load_live_usable_accounts(self._db, active_only=True)
         if phones is not None:
             allowed_phones = {str(phone) for phone in phones if str(phone)}
