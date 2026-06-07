@@ -22,7 +22,6 @@ except ImportError:  # pragma: no cover
 logger = logging.getLogger(__name__)
 PREMIUM_SEARCH_RPC_TIMEOUT_SEC = 60.0
 
-
 def _timeout_error(stage: str) -> str:
     return (
         f"Telegram Premium search timed out after {PREMIUM_SEARCH_RPC_TIMEOUT_SEC:.0f}s "
