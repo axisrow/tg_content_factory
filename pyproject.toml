@@ -105,6 +105,7 @@ select = ["E", "F", "I", "N", "W"]
 
 [tool.pytest.ini_options]
 anyio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 timeout = 30
 addopts = "--dist=loadfile"

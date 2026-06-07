@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -2128,6 +2129,37 @@ async def test_search_telegram_handler_without_engine_raises():
     d = _dispatcher(search_engine=None)
     with pytest.raises(RuntimeError, match="Search engine unavailable"):
         await d._handle_search_telegram({"mode": "telegram", "query": "q"})
+
+
+async def test_run_loop_logs_search_telegram_command_context(caplog):
+    from src.models import SearchResult
+
+    db = _mock_db()
+    pool = _mock_pool()
+    engine = MagicMock()
+    engine.search_telegram = AsyncMock(return_value=SearchResult(messages=[], total=0, query="q"))
+    command = TelegramCommand(
+        id=44,
+        command_type="search.telegram",
+        payload={"mode": "telegram", "query": "q", "limit": 5},
+    )
+    dispatcher = _dispatcher(db=db, pool=pool, search_engine=engine)
+
+    async def claim_once():
+        dispatcher._stop_event.set()
+        return command
+
+    db.repos.telegram_commands.claim_next_command = claim_once
+    caplog.set_level(logging.INFO, logger="src.services.telegram_command_dispatcher")
+
+    await dispatcher._run_loop()
+
+    assert "telegram_search_command start command_id=44" in caplog.text
+    assert "telegram_search_command success command_id=44" in caplog.text
+    assert "query_hash=" in caplog.text
+    update_call = db.repos.telegram_commands.update_command.call_args
+    assert update_call is not None
+    assert update_call[1]["status"] == TelegramCommandStatus.SUCCEEDED
 
 
 async def test_collection_pause_sets_setting_and_pauses():

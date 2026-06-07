@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
+import time
 from datetime import timezone
 
 from src.models import Channel, Message, SearchResult
@@ -10,6 +12,7 @@ from src.search.transformers import TelegramMessageTransformer
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.utils.safe_logging import mask_phone, query_log_fields
 
 try:
     from telethon.tl.types import PeerChannel
@@ -17,6 +20,18 @@ except ImportError:  # pragma: no cover
     PeerChannel = None  # type: ignore[assignment,misc]
 
 logger = logging.getLogger(__name__)
+PREMIUM_SEARCH_RPC_TIMEOUT_SEC = 60.0
+
+
+def _elapsed_ms(started_at: float) -> int:
+    return int((time.monotonic() - started_at) * 1000)
+
+
+def _timeout_error(stage: str) -> str:
+    return (
+        f"Telegram Premium search timed out after {PREMIUM_SEARCH_RPC_TIMEOUT_SEC:.0f}s "
+        f"(stage={stage}). Попробуйте позже или используйте другой режим поиска."
+    )
 
 
 class TelegramSearch:
@@ -59,11 +74,14 @@ class TelegramSearch:
             return await run_with_flood_wait(
                 self._check_search_quota_with_client(session, query),
                 operation=operation,
-                phone=phone,
+                phone=mask_phone(phone),
                 pool=None,
                 logger_=logger,
+                timeout=PREMIUM_SEARCH_RPC_TIMEOUT_SEC,
             )
         except HandledFloodWaitError:
+            raise
+        except asyncio.TimeoutError:
             raise
         except Exception as exc:
             logger.debug("checkSearchPostsFlood unavailable: %s", exc)
@@ -90,7 +108,19 @@ class TelegramSearch:
             reporter = getattr(self._pool, "report_premium_flood", None)
             if callable(reporter):
                 await reporter(phone, exc.info.wait_seconds)
-            logger.debug("checkSearchPostsFlood flood-waited for %s: %s", phone, exc.info.detail)
+            logger.debug("checkSearchPostsFlood flood-waited for %s: %s", mask_phone(phone), exc.info.detail)
+            return None
+        except asyncio.TimeoutError:
+            fields = query_log_fields(query)
+            logger.warning(
+                "premium_search_quota timeout stage=quota phone=%s timeout_sec=%.0f "
+                "query_hash=%s query_len=%d query_preview=%r",
+                mask_phone(phone),
+                PREMIUM_SEARCH_RPC_TIMEOUT_SEC,
+                fields["query_hash"],
+                fields["query_len"],
+                fields["query_preview"],
+            )
             return None
         finally:
             await self._pool.release_client(phone)
@@ -126,7 +156,21 @@ class TelegramSearch:
         return "Нет аккаунтов с Telegram Premium. Добавьте Premium-аккаунт в настройках."
 
     async def search_telegram(self, query: str, limit: int = 50) -> SearchResult:
+        search_started_at = time.monotonic()
+        fields = query_log_fields(query)
+        logger.info(
+            "premium_search start mode=telegram limit=%d query_hash=%s query_len=%d query_preview=%r",
+            limit,
+            fields["query_hash"],
+            fields["query_len"],
+            fields["query_preview"],
+        )
         if not self._pool:
+            logger.warning(
+                "premium_search unavailable reason=no_pool limit=%d query_hash=%s",
+                limit,
+                fields["query_hash"],
+            )
             return SearchResult(
                 messages=[],
                 total=0,
@@ -137,19 +181,69 @@ class TelegramSearch:
         result = await self._pool.get_premium_client()
         if result is None:
             reason = await self._get_premium_unavailability_reason()
-            logger.warning("search_telegram: no premium client for query=%r: %s", query, reason)
+            logger.warning(
+                "premium_search unavailable reason=no_premium_client detail=%s limit=%d "
+                "query_hash=%s query_len=%d query_preview=%r",
+                reason,
+                limit,
+                fields["query_hash"],
+                fields["query_len"],
+                fields["query_preview"],
+            )
             return SearchResult(messages=[], total=0, query=query, error=reason)
 
         session, phone = result
         session = adapt_transport_session(session, disconnect_on_close=False)
+        masked_phone = mask_phone(phone)
+        logger.info(
+            "premium_search acquired phone=%s limit=%d query_hash=%s",
+            masked_phone,
+            limit,
+            fields["query_hash"],
+        )
         try:
-            quota = await self._load_search_quota_with_flood_handling(
-                session,
-                phone,
-                query=query,
-                operation="search_telegram_check_quota",
+            quota_started_at = time.monotonic()
+            try:
+                quota = await self._load_search_quota_with_flood_handling(
+                    session,
+                    phone,
+                    query=query,
+                    operation="search_telegram_check_quota",
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "premium_search timeout stage=quota phone=%s elapsed_ms=%d timeout_sec=%.0f "
+                    "limit=%d query_hash=%s query_len=%d query_preview=%r",
+                    masked_phone,
+                    _elapsed_ms(quota_started_at),
+                    PREMIUM_SEARCH_RPC_TIMEOUT_SEC,
+                    limit,
+                    fields["query_hash"],
+                    fields["query_len"],
+                    fields["query_preview"],
+                )
+                return SearchResult(
+                    messages=[],
+                    total=0,
+                    query=query,
+                    error=_timeout_error("quota"),
+                )
+            logger.info(
+                "premium_search quota_ok phone=%s elapsed_ms=%d remains=%s query_is_free=%s "
+                "query_hash=%s",
+                masked_phone,
+                _elapsed_ms(quota_started_at),
+                quota.get("remains") if quota else None,
+                quota.get("query_is_free") if quota else None,
+                fields["query_hash"],
             )
             if quota and quota.get("remains") == 0 and not quota.get("query_is_free"):
+                logger.warning(
+                    "premium_search quota_exhausted phone=%s elapsed_ms=%d query_hash=%s",
+                    masked_phone,
+                    _elapsed_ms(search_started_at),
+                    fields["query_hash"],
+                )
                 return SearchResult(
                     messages=[],
                     total=0,
@@ -160,12 +254,23 @@ class TelegramSearch:
                     ),
                 )
 
+            rpc_started_at = time.monotonic()
             messages, seen_channels = await run_with_flood_wait(
                 self._search_posts_global(session, query, limit),
                 operation="search_telegram",
-                phone=phone,
+                phone=masked_phone,
                 pool=None,
                 logger_=logger,
+                timeout=PREMIUM_SEARCH_RPC_TIMEOUT_SEC,
+            )
+            logger.info(
+                "premium_search telegram_rpc_ok phone=%s elapsed_ms=%d raw_messages=%d "
+                "channels=%d query_hash=%s",
+                masked_phone,
+                _elapsed_ms(rpc_started_at),
+                len(messages),
+                len(seen_channels),
+                fields["query_hash"],
             )
             clearer = getattr(self._pool, "clear_premium_flood", None)
             if callable(clearer):
@@ -173,11 +278,43 @@ class TelegramSearch:
                 if inspect.isawaitable(result):
                     await result
             messages = await self._persistence.cache_search_results(seen_channels, messages, phone, query)
+            logger.info(
+                "premium_search success phone=%s elapsed_ms=%d total=%d query_hash=%s",
+                masked_phone,
+                _elapsed_ms(search_started_at),
+                len(messages),
+                fields["query_hash"],
+            )
             return SearchResult(messages=messages, total=len(messages), query=query)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "premium_search timeout stage=telegram_rpc phone=%s elapsed_ms=%d timeout_sec=%.0f "
+                "limit=%d query_hash=%s query_len=%d query_preview=%r",
+                masked_phone,
+                _elapsed_ms(search_started_at),
+                PREMIUM_SEARCH_RPC_TIMEOUT_SEC,
+                limit,
+                fields["query_hash"],
+                fields["query_len"],
+                fields["query_preview"],
+            )
+            return SearchResult(
+                messages=[],
+                total=0,
+                query=query,
+                error=_timeout_error("telegram_rpc"),
+            )
         except HandledFloodWaitError as exc:
             reporter = getattr(self._pool, "report_premium_flood", None)
             if callable(reporter):
                 await reporter(phone, exc.info.wait_seconds)
+            logger.warning(
+                "premium_search flood_wait phone=%s wait_seconds=%d operation=%s query_hash=%s",
+                masked_phone,
+                exc.info.wait_seconds,
+                exc.info.operation,
+                fields["query_hash"],
+            )
             return SearchResult(
                 messages=[],
                 total=0,
@@ -186,7 +323,15 @@ class TelegramSearch:
                 flood_wait=exc.info,
             )
         except Exception as exc:
-            logger.exception("Telegram global search failed for query=%r", query)
+            logger.exception(
+                "premium_search error phone=%s elapsed_ms=%d query_hash=%s query_len=%d "
+                "query_preview=%r",
+                masked_phone,
+                _elapsed_ms(search_started_at),
+                fields["query_hash"],
+                fields["query_len"],
+                fields["query_preview"],
+            )
             return SearchResult(
                 messages=[],
                 total=0,

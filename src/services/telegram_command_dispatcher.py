@@ -40,6 +40,7 @@ from src.telegram.notifier import Notifier
 from src.telegram.reactions import TelegramReactionInvalidError, normalize_outgoing_reaction_emoji
 from src.telegram.utils import normalize_utc
 from src.utils.datetime import parse_required_datetime, parse_required_schedule_datetime
+from src.utils.safe_logging import query_log_fields
 
 try:  # telethon is an optional dependency at test-time
     from telethon.errors import ReactionInvalidError
@@ -138,6 +139,7 @@ class TelegramCommandDispatcher:
                 continue
             started_at = time.monotonic()
             is_auth_command = command.command_type.startswith("auth.")
+            is_search_command = command.command_type == "search.telegram"
             phone = str(command.payload.get("phone", "")).strip()
             if is_auth_command:
                 logger.info(
@@ -145,6 +147,19 @@ class TelegramCommandDispatcher:
                     command.id,
                     command.command_type,
                     phone,
+                )
+            elif is_search_command:
+                search_fields = query_log_fields(str(command.payload.get("query", "")))
+                logger.info(
+                    "telegram_search_command start command_id=%s mode=%s limit=%s channel_id=%s "
+                    "query_hash=%s query_len=%d query_preview=%r",
+                    command.id,
+                    command.payload.get("mode", "telegram"),
+                    command.payload.get("limit", 50),
+                    command.payload.get("channel_id"),
+                    search_fields["query_hash"],
+                    search_fields["query_len"],
+                    search_fields["query_preview"],
                 )
             try:
                 result = await self._dispatch(command.command_type, command.payload)
@@ -227,6 +242,17 @@ class TelegramCommandDispatcher:
                         duration_ms,
                         str(exc),
                     )
+                elif is_search_command:
+                    search_fields = query_log_fields(str(command.payload.get("query", "")))
+                    logger.exception(
+                        "telegram_search_command error command_id=%s mode=%s duration_ms=%d "
+                        "error=%s query_hash=%s",
+                        command.id,
+                        command.payload.get("mode", "telegram"),
+                        duration_ms,
+                        str(exc),
+                        search_fields["query_hash"],
+                    )
                 else:
                     logger.exception("Telegram command failed: id=%s type=%s", command.id, command.command_type)
                 await self._update_command_safely(
@@ -245,6 +271,18 @@ class TelegramCommandDispatcher:
                         command.command_type,
                         phone,
                         duration_ms,
+                    )
+                elif is_search_command:
+                    duration_ms = int((time.monotonic() - started_at) * 1000)
+                    result_payload = result.get("result") or {}
+                    logger.info(
+                        "telegram_search_command success command_id=%s mode=%s duration_ms=%d "
+                        "total=%s result_error=%s",
+                        command.id,
+                        command.payload.get("mode", "telegram"),
+                        duration_ms,
+                        result_payload.get("total"),
+                        bool(result_payload.get("error")),
                     )
                 await self._update_command_safely(
                     command.id,

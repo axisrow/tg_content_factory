@@ -10,6 +10,7 @@ from fastapi import Request
 from pydantic import ValidationError
 
 from src.models import SearchResult, TelegramCommandStatus
+from src.utils.safe_logging import query_log_fields
 from src.web import deps
 from src.web.search.forms import extract_length, parse_channel_id
 from src.web.search.responses import SearchJson, SearchRedirect, SearchTemplate
@@ -22,6 +23,12 @@ logger = logging.getLogger(__name__)
 _TELEGRAM_SEARCH_MODES = {"telegram", "my_chats", "channel"}
 _WORKER_SEARCH_TIMEOUT_SEC = 45.0
 _WORKER_SEARCH_POLL_SEC = 0.4
+
+
+def _status_value(status: TelegramCommandStatus | str | None) -> str:
+    if status is None:
+        return "unknown"
+    return getattr(status, "value", str(status))
 
 
 async def _telegram_search_via_worker(
@@ -55,30 +62,101 @@ async def _telegram_search_via_worker(
     command_id = await cmd_service.enqueue(
         "search.telegram", payload=payload, requested_by="web:search"
     )
+    fields = query_log_fields(query)
+    started_at = time.monotonic()
+    logger.info(
+        "telegram_search_worker enqueue command_id=%s mode=%s limit=%d channel_id=%s "
+        "query_hash=%s query_len=%d query_preview=%r",
+        command_id,
+        mode,
+        limit,
+        channel_id,
+        fields["query_hash"],
+        fields["query_len"],
+        fields["query_preview"],
+    )
     deadline = time.monotonic() + _WORKER_SEARCH_TIMEOUT_SEC
+    last_status = "unknown"
     while time.monotonic() < deadline:
         command = await cmd_service.get(command_id)
         if command is None:
+            logger.warning(
+                "telegram_search_worker missing command_id=%s elapsed_ms=%d mode=%s query_hash=%s",
+                command_id,
+                int((time.monotonic() - started_at) * 1000),
+                mode,
+                fields["query_hash"],
+            )
             break
+        last_status = _status_value(command.status)
         if command.status == TelegramCommandStatus.SUCCEEDED:
             try:
-                return SearchResult.model_validate(command.result_payload or {})
+                result = SearchResult.model_validate(command.result_payload or {})
+                logger.info(
+                    "telegram_search_worker success command_id=%s elapsed_ms=%d mode=%s "
+                    "total=%d result_error=%s query_hash=%s",
+                    command_id,
+                    int((time.monotonic() - started_at) * 1000),
+                    mode,
+                    result.total,
+                    bool(result.error),
+                    fields["query_hash"],
+                )
+                return result
             except ValidationError:
-                logger.warning("Malformed worker search result for command %s", command_id)
+                logger.warning(
+                    "Malformed worker search result for command %s mode=%s query_hash=%s",
+                    command_id,
+                    mode,
+                    fields["query_hash"],
+                )
                 return SearchResult(messages=[], total=0, query=query, error="Некорректный ответ worker.")
         if command.status == TelegramCommandStatus.FAILED:
+            logger.warning(
+                "telegram_search_worker failed command_id=%s elapsed_ms=%d mode=%s error=%s "
+                "query_hash=%s",
+                command_id,
+                int((time.monotonic() - started_at) * 1000),
+                mode,
+                command.error,
+                fields["query_hash"],
+            )
             return SearchResult(
                 messages=[], total=0, query=query,
                 error=command.error or "Ошибка поиска в worker.",
             )
         if command.status == TelegramCommandStatus.CANCELLED:
+            logger.warning(
+                "telegram_search_worker cancelled command_id=%s elapsed_ms=%d mode=%s query_hash=%s",
+                command_id,
+                int((time.monotonic() - started_at) * 1000),
+                mode,
+                fields["query_hash"],
+            )
             return SearchResult(messages=[], total=0, query=query, error="Поиск отменён.")
         await asyncio.sleep(_WORKER_SEARCH_POLL_SEC)
+    logger.warning(
+        "telegram_search_worker timeout command_id=%s elapsed_ms=%d timeout_sec=%.0f "
+        "last_status=%s mode=%s limit=%d query_hash=%s query_len=%d query_preview=%r",
+        command_id,
+        int((time.monotonic() - started_at) * 1000),
+        _WORKER_SEARCH_TIMEOUT_SEC,
+        last_status,
+        mode,
+        limit,
+        fields["query_hash"],
+        fields["query_len"],
+        fields["query_preview"],
+    )
     return SearchResult(
         messages=[],
         total=0,
         query=query,
-        error="Worker не ответил вовремя. Проверьте, что Telegram-worker запущен.",
+        error=(
+            f"Worker не ответил за {_WORKER_SEARCH_TIMEOUT_SEC:.0f}с "
+            f"(command_id={command_id}, status={last_status}). "
+            "Задача могла ещё выполняться в Telegram-worker; проверьте логи."
+        ),
     )
 
 

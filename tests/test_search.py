@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -8,6 +10,7 @@ import pytest
 from telethon.errors import FloodWaitError
 
 from src.models import Message
+from src.search import telegram_search as telegram_search_module
 from src.search.engine import SearchEngine
 from src.services.embedding_service import EmbeddingService
 from src.web.routes.search import _extract_length
@@ -283,6 +286,135 @@ async def test_search_telegram_ignores_quota_probe_failure_when_search_succeeds(
     assert result.total == 1
     assert result.error is None
     assert result.messages[0].message_id == 42
+
+
+@pytest.mark.anyio
+async def test_search_telegram_quota_timeout_returns_diagnostic_error_and_releases_client(
+    db,
+    real_pool_harness_factory,
+    monkeypatch,
+    caplog,
+):
+    monkeypatch.setattr(telegram_search_module, "PREMIUM_SEARCH_RPC_TIMEOUT_SEC", 0.01)
+    caplog.set_level(logging.WARNING, logger="src.search.telegram_search")
+
+    request_names: list[str] = []
+
+    async def _invoke(request):
+        request_names.append(request.__class__.__name__)
+        if request.__class__.__name__ == "CheckSearchPostsFloodRequest":
+            await asyncio.sleep(0.1)
+        return _make_search_response([])
+
+    harness = real_pool_harness_factory()
+    phone = "+1234567890"
+    client = FakeCliTelethonClient(me=SimpleNamespace(premium=True))
+    client.invoke = AsyncMock(side_effect=_invoke)
+    await _connect_search_account(
+        harness,
+        phone=phone,
+        session_string="premium-session",
+        is_premium=True,
+        client=client,
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_telegram("slow quota", limit=10)
+
+    assert result.total == 0
+    assert result.error is not None
+    assert "stage=quota" in result.error
+    assert request_names == ["CheckSearchPostsFloodRequest"]
+    assert "premium_search timeout stage=quota" in caplog.text
+    assert phone not in caplog.text
+    assert "+12...7890" in caplog.text
+
+    leased = await harness.pool.get_premium_client()
+    assert leased is not None
+    _, leased_phone = leased
+    await harness.pool.release_client(leased_phone)
+
+
+@pytest.mark.anyio
+async def test_search_telegram_rpc_timeout_returns_diagnostic_error_and_releases_client(
+    db,
+    real_pool_harness_factory,
+    monkeypatch,
+    caplog,
+):
+    monkeypatch.setattr(telegram_search_module, "PREMIUM_SEARCH_RPC_TIMEOUT_SEC", 0.01)
+    caplog.set_level(logging.WARNING, logger="src.search.telegram_search")
+
+    async def _invoke(request):
+        if request.__class__.__name__ == "CheckSearchPostsFloodRequest":
+            return SimpleNamespace(total_daily=100, remains=10, wait_till=None, query_is_free=False)
+        await asyncio.sleep(0.1)
+        return _make_search_response([])
+
+    harness = real_pool_harness_factory()
+    phone = "+1234567890"
+    client = FakeCliTelethonClient(me=SimpleNamespace(premium=True))
+    client.invoke = AsyncMock(side_effect=_invoke)
+    await _connect_search_account(
+        harness,
+        phone=phone,
+        session_string="premium-session",
+        is_premium=True,
+        client=client,
+    )
+
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_telegram("slow rpc", limit=10)
+
+    assert result.total == 0
+    assert result.error is not None
+    assert "stage=telegram_rpc" in result.error
+    assert "premium_search timeout stage=telegram_rpc" in caplog.text
+    assert phone not in caplog.text
+    assert "+12...7890" in caplog.text
+
+    leased = await harness.pool.get_premium_client()
+    assert leased is not None
+    _, leased_phone = leased
+    await harness.pool.release_client(leased_phone)
+
+
+@pytest.mark.anyio
+async def test_search_telegram_success_logs_safe_diagnostics(
+    db,
+    real_pool_harness_factory,
+    caplog,
+):
+    mock_msg = _make_mock_api_message()
+    mock_chat = MagicMock()
+    mock_chat.id = 100123
+    mock_chat.title = "Test Channel"
+    mock_chat.username = "test_channel"
+
+    response = _make_search_response([mock_msg], chats=[mock_chat])
+    harness = real_pool_harness_factory()
+    phone = "+1234567890"
+    await _connect_search_account(
+        harness,
+        phone=phone,
+        session_string="premium-session",
+        is_premium=True,
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(premium=True),
+            invoke_side_effect=lambda request: response,
+        ),
+    )
+
+    caplog.set_level(logging.INFO, logger="src.search.telegram_search")
+    engine = SearchEngine(db, pool=harness.pool)
+    result = await engine.search_telegram("AI", limit=10)
+
+    assert result.total == 1
+    assert "premium_search start mode=telegram" in caplog.text
+    assert "premium_search success" in caplog.text
+    assert "query_hash=" in caplog.text
+    assert phone not in caplog.text
+    assert "+12...7890" in caplog.text
 
 
 @pytest.mark.anyio

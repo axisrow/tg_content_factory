@@ -1646,6 +1646,40 @@ async def test_search_telegram_proxy_renders_worker_result(client, monkeypatch):
     assert fake_cmd_service.enqueue.await_args.args[0] == "search.telegram"
 
 
+@pytest.mark.anyio
+async def test_search_telegram_proxy_timeout_logs_command_context(client, monkeypatch, caplog):
+    """A slow worker response exposes command context instead of a generic timeout."""
+    from src.models import TelegramCommand, TelegramCommandStatus
+    from src.web import deps
+    from src.web.search import handlers as search_handlers
+
+    monkeypatch.setattr("src.web.routes.scheduler._is_worker_alive", AsyncMock(return_value=True))
+    monkeypatch.setattr(search_handlers, "_WORKER_SEARCH_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr(search_handlers, "_WORKER_SEARCH_POLL_SEC", 0.001)
+    caplog.set_level(logging.WARNING, logger="src.web.search.handlers")
+
+    command = TelegramCommand(
+        id=123,
+        command_type="search.telegram",
+        status=TelegramCommandStatus.RUNNING,
+        result_payload=None,
+    )
+    fake_cmd_service = SimpleNamespace(
+        enqueue=AsyncMock(return_value=123),
+        get=AsyncMock(return_value=command),
+    )
+    monkeypatch.setattr(deps, "telegram_command_service", lambda request: fake_cmd_service)
+
+    resp = await client.get("/search?q=test&mode=telegram")
+
+    assert resp.status_code == 200
+    assert "command_id=123" in resp.text
+    assert "status=running" in resp.text
+    assert "telegram_search_worker timeout command_id=123" in caplog.text
+    assert "last_status=running" in caplog.text
+    fake_cmd_service.enqueue.assert_awaited_once()
+
+
 @pytest.fixture
 async def unauth_client(client):
     """Client without auth headers, reusing the same app from client fixture."""
