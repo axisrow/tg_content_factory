@@ -2656,7 +2656,10 @@ async def test_delete_channel_cancels_pending_collection_tasks(client):
 
 @pytest.mark.anyio
 async def test_stats_all_creates_pending_task(client):
+    from src.models import Channel
+
     db = client._transport.app.state.db
+    await db.add_channel(Channel(channel_id=-100800, title="Test"))
 
     resp = await client.post("/channels/stats/all", follow_redirects=False)
     assert resp.status_code == 303
@@ -2673,8 +2676,11 @@ async def test_stats_all_creates_pending_task(client):
 
 @pytest.mark.anyio
 async def test_stats_all_queued_when_collector_running(client):
+    from src.models import Channel
+
     app = client._transport.app.state
     db = app.db
+    await db.add_channel(Channel(channel_id=-100810, title="Test"))
     app.collector._running = True
     try:
         resp = await client.post("/channels/stats/all", follow_redirects=False)
@@ -2700,7 +2706,7 @@ async def test_stats_all_blocks_duplicate_active_task(client):
 
 
 @pytest.mark.anyio
-async def test_stats_all_prioritizes_channels_without_stats(client):
+async def test_stats_all_only_channels_without_stats(client):
     from src.models import Channel, ChannelStats
 
     db = client._transport.app.state.db
@@ -2718,8 +2724,9 @@ async def test_stats_all_prioritizes_channels_without_stats(client):
     payload = tasks[0].payload
     assert isinstance(payload, StatsAllTaskPayload)
     channel_ids = payload.channel_ids
-    assert channel_ids.index(-100901) > channel_ids.index(-100902)
-    assert channel_ids.index(-100901) > channel_ids.index(-100903)
+    assert -100901 not in channel_ids
+    assert -100902 in channel_ids
+    assert -100903 in channel_ids
 
 
 @pytest.mark.anyio

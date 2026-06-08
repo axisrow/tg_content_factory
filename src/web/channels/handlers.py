@@ -25,10 +25,17 @@ async def _enqueue_channel_command(request: Request, command_type: str, payload:
 
 async def channels_list(request: Request) -> ChannelsTemplate:
     service = deps.channel_service(request)
+    db = deps.get_db(request)
     show_all = request.query_params.get("view") == "all"
     channels, latest_stats, prev_subscriber_counts = await service.list_for_page(
         include_filtered=show_all
     )
+    if show_all:
+        total_count = len(channels)
+        active_count = await db.repos.channels.count_channels(include_filtered=False)
+    else:
+        active_count = len(channels)
+        total_count = await db.repos.channels.count_channels()
     return ChannelsTemplate(
         "channels.html",
         {
@@ -38,6 +45,8 @@ async def channels_list(request: Request) -> ChannelsTemplate:
             "error": request.query_params.get("error"),
             "msg": request.query_params.get("msg"),
             "show_all": show_all,
+            "active_count": active_count,
+            "total_count": total_count,
         },
     )
 

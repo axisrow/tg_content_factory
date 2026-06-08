@@ -33,6 +33,7 @@ async def filter_manage(request: Request) -> FilterTemplate:
     db = deps.get_db(request)
     channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
     filtered = [ch for ch in channels if ch.is_filtered]
+    total_channels = len(channels)
     dev_mode = await _dev_mode_enabled(request)
     pending_rename_count = await db.count_pending_rename_events()
     return FilterTemplate(
@@ -40,6 +41,7 @@ async def filter_manage(request: Request) -> FilterTemplate:
         {
             "channels": filtered,
             "total": len(filtered),
+            "total_channels": total_channels,
             "dev_mode": dev_mode,
             "pending_rename_count": pending_rename_count,
         },
