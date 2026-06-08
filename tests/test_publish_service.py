@@ -593,3 +593,45 @@ async def test_publish_service_resolve_entity_fallback():
     results = await service.publish_run(run, make_pipeline(publish_mode=PipelinePublishMode.AUTO))
     # Should succeed via fallback resolve_input_entity
     assert results[0].success is True
+
+
+@pytest.mark.anyio
+async def test_publish_service_resolve_entity_no_wait_for():
+    """_resolve_entity must await resolve_dialog_entity directly without
+    asyncio.wait_for to avoid orphaned background Telethon requests on
+    timeout.  Issue #795."""
+
+    import asyncio
+    from unittest.mock import patch
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+
+    resolved_entity = {"phone": "+1234567890", "dialog_id": -1001234567890, "dialog_type": None}
+
+    class DirectAwaitPool(FakeClientPool):
+        async def resolve_dialog_entity(self, session, phone, dialog_id, dialog_type):
+            return resolved_entity
+
+    pool = DirectAwaitPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    with patch("asyncio.wait_for", wraps=asyncio.wait_for) as mock_wait_for:
+        run = GenerationRun(
+            id=1, pipeline_id=1, generated_text="Test",
+            moderation_status="approved",
+        )
+        results = await service.publish_run(run, make_pipeline(publish_mode=PipelinePublishMode.AUTO))
+
+    assert results[0].success is True
+    # wait_for must NOT be called — resolve_dialog_entity is awaited directly
+    for call in mock_wait_for.call_args_list:
+        # The only allowed wait_for calls are for send_message/publish_files in _publish_to_target
+        pos_args = call[0]
+        if pos_args:
+            coro_name = getattr(pos_args[0], "__name__", "") or ""
+            assert "resolve" not in str(coro_name).lower(), (
+                f"asyncio.wait_for called on resolve operation: {call}"
+            )
