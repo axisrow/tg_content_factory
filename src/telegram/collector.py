@@ -1902,7 +1902,24 @@ class Collector:
             has_stats = channel.channel_id in latest_stats
             return (1 if has_stats else 0, _collected_at(channel), index)
 
-        return [channel for _index, channel in sorted(enumerate(channels), key=_sort_key)]
+        ordered = [channel for _index, channel in sorted(enumerate(channels), key=_sort_key)]
+
+        if skip_fresh_hours > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=skip_fresh_hours)
+            result = []
+            for ch in ordered:
+                latest = latest_stats.get(ch.channel_id)
+                if latest is None:
+                    result.append(ch)
+                    continue
+                collected_at = latest.collected_at or datetime.min.replace(tzinfo=timezone.utc)
+                if collected_at.tzinfo is None:
+                    collected_at = collected_at.replace(tzinfo=timezone.utc)
+                if collected_at < cutoff:
+                    result.append(ch)
+            ordered = result
+
+        return ordered
 
     async def collect_all_stats(self, *, max_channels: int | None = None) -> dict:
         async with self._stats_all_lock:
