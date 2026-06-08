@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 
@@ -51,15 +50,11 @@ class ChannelAnalyzer:
         if not channels:
             return FilterReport()
 
-        t_map = time.monotonic()
-        uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map = await asyncio.gather(
-            _timed_fetch("uniqueness map", self._repo.fetch_uniqueness_map(channel_id)),
-            _timed_fetch("subscriber map", self._repo.fetch_subscriber_map(channel_id)),
-            _timed_fetch("short-message map", self._repo.fetch_short_message_map(channel_id)),
-            _timed_fetch("cross-dupe map", self._repo.fetch_cross_dupe_map(channel_id)),
-            _timed_fetch("cyrillic map", self._repo.fetch_cyrillic_map(channel_id)),
-        )
-        logger.info("filter/analyze: all maps in %.1fs", time.monotonic() - t_map)
+        uniqueness_map = await _timed_fetch("uniqueness map", self._repo.fetch_uniqueness_map(channel_id))
+        subscriber_map = await _timed_fetch("subscriber map", self._repo.fetch_subscriber_map(channel_id))
+        short_map = await _timed_fetch("short-message map", self._repo.fetch_short_message_map(channel_id))
+        cross_dupe_map = await _timed_fetch("cross-dupe map", self._repo.fetch_cross_dupe_map(channel_id))
+        cyrillic_map = await _timed_fetch("cyrillic map", self._repo.fetch_cyrillic_map(channel_id))
 
         min_subs = await self._load_min_subscribers_filter()
 
