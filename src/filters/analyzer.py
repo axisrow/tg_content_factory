@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 async def _timed_fetch(label: str, coro):
     """Await coro, log elapsed time and row count, return result."""
+    logger.info("filter/analyze: %s — started", label)
     t = time.monotonic()
     result = await coro
     logger.info("filter/analyze: %s (%d) in %.1fs", label, len(result), time.monotonic() - t)
