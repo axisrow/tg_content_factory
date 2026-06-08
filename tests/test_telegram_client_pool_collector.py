@@ -1775,7 +1775,7 @@ async def test_collect_stats_username_fallback_fails():
 @pytest.mark.anyio
 async def test_collect_stats_no_username_resolves_numeric():
     channel = Channel(channel_id=123)
-    entity = SimpleNamespace(id=123, date=None)
+    entity = SimpleNamespace(id=123, title="Test", date=None)
     full_result = MagicMock()
     full_result.full_chat.participants_count = 100
 
@@ -1786,6 +1786,7 @@ async def test_collect_stats_no_username_resolves_numeric():
     db = MagicMock()
     db.save_channel_stats = AsyncMock()
     db.set_channel_type = AsyncMock()
+    db.repos.channels.set_channel_type = AsyncMock()
     db.repos.channels.update_channel_created_at = AsyncMock()
 
     collector = Collector(pool, db, SchedulerConfig())
@@ -1806,7 +1807,7 @@ async def test_collect_stats_no_username_resolves_numeric():
 @pytest.mark.anyio
 async def test_collect_stats_timeout_during_messages():
     channel = Channel(channel_id=123, username="test")
-    entity = SimpleNamespace(id=123, date=None)
+    entity = SimpleNamespace(id=123, title="Test", date=None)
     full_result = MagicMock()
     full_result.full_chat.participants_count = 50
 
@@ -1817,6 +1818,7 @@ async def test_collect_stats_timeout_during_messages():
     db = MagicMock()
     db.save_channel_stats = AsyncMock()
     db.set_channel_type = AsyncMock()
+    db.repos.channels.set_channel_type = AsyncMock()
     db.repos.channels.update_channel_created_at = AsyncMock()
 
     collector = Collector(pool, db, SchedulerConfig())
@@ -1838,7 +1840,7 @@ async def test_collect_stats_timeout_during_messages():
 @pytest.mark.anyio
 async def test_collect_stats_updates_channel_type():
     channel = Channel(channel_id=123, username="test", channel_type=None)
-    entity = SimpleNamespace(id=123, date=None, broadcast=True, megagroup=False,
+    entity = SimpleNamespace(id=123, title="Test Channel", date=None, broadcast=True, megagroup=False,
                              gigagroup=False, forum=False, monoforum=False,
                              scam=False, fake=False, restricted=False)
     full_result = MagicMock()
@@ -1860,6 +1862,7 @@ async def test_collect_stats_updates_channel_type():
     db = MagicMock()
     db.save_channel_stats = AsyncMock()
     db.set_channel_type = AsyncMock()
+    db.repos.channels.set_channel_type = AsyncMock()
     db.repos.channels.update_channel_created_at = AsyncMock()
 
     collector = Collector(pool, db, SchedulerConfig())
