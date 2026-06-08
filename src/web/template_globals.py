@@ -93,6 +93,7 @@ FLASH_MESSAGES = {
     "channel_not_found": "Канал не найден.",
     "stats_collection_started": "Сбор статистики запущен в фоне.",
     "stats_collection_queued": "Сбор статистики поставлен в очередь.",
+    "stats_already_ready": "Статистика уже собрана для всех каналов.",
     "search_triggered": "Поиск запущен.",
     "no_accounts": "Для начала работы добавьте Telegram-аккаунт.",
     "sq_added": "Поисковый запрос добавлен.",
