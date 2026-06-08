@@ -1857,7 +1857,9 @@ class Collector:
             configured = int(getattr(self._config, "stats_all_max_channels_per_run", 10) or 10)
         return max(1, int(configured))
 
-    async def _order_stats_all_channels(self, channels: list[Channel]) -> list[Channel]:
+    async def _order_stats_all_channels(
+        self, channels: list[Channel], *, skip_fresh_hours: int = 0
+    ) -> list[Channel]:
         try:
             latest_stats = await self._db.get_latest_stats_for_all()
         except Exception:
@@ -1874,14 +1876,31 @@ class Collector:
                 collected_at = collected_at.replace(tzinfo=timezone.utc)
             return (1, collected_at, index)
 
-        return [channel for _index, channel in sorted(enumerate(channels), key=_sort_key)]
+        ordered = [channel for _index, channel in sorted(enumerate(channels), key=_sort_key)]
+
+        if skip_fresh_hours > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=skip_fresh_hours)
+            result = []
+            for ch in ordered:
+                latest = latest_stats.get(ch.channel_id)
+                if latest is None:
+                    result.append(ch)
+                    continue
+                collected_at = latest.collected_at or datetime.min.replace(tzinfo=timezone.utc)
+                if collected_at.tzinfo is None:
+                    collected_at = collected_at.replace(tzinfo=timezone.utc)
+                if collected_at < cutoff:
+                    result.append(ch)
+            ordered = result
+
+        return ordered
 
     async def collect_all_stats(self, *, max_channels: int | None = None) -> dict:
         async with self._stats_all_lock:
             self._stats_all_running = True
             try:
                 channels = await self._db.get_channels(active_only=True, include_filtered=False)
-                channels = await self._order_stats_all_channels(channels)
+                channels = await self._order_stats_all_channels(channels, skip_fresh_hours=24)
                 channel_limit = self._stats_all_channel_limit(max_channels)
                 total_channels = len(channels)
                 selected_channels = channels[:channel_limit]
