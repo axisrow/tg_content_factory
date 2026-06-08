@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -17,6 +18,14 @@ from src.filters.models import ChannelFilterResult, FilterReport
 from src.settings_utils import parse_int_setting
 
 logger = logging.getLogger(__name__)
+
+
+async def _timed_fetch(label: str, coro):
+    """Await coro, log elapsed time and row count, return result."""
+    t = time.monotonic()
+    result = await coro
+    logger.info("filter/analyze: %s (%d) in %.1fs", label, len(result), time.monotonic() - t)
+    return result
 
 
 class ChannelAnalyzer:
@@ -41,25 +50,15 @@ class ChannelAnalyzer:
         if not channels:
             return FilterReport()
 
-        t1 = time.monotonic()
-        uniqueness_map = await self._repo.fetch_uniqueness_map(channel_id)
-        logger.info("filter/analyze: uniqueness map (%d) in %.1fs", len(uniqueness_map), time.monotonic() - t1)
-
-        t1 = time.monotonic()
-        subscriber_map = await self._repo.fetch_subscriber_map(channel_id)
-        logger.info("filter/analyze: subscriber map (%d) in %.1fs", len(subscriber_map), time.monotonic() - t1)
-
-        t1 = time.monotonic()
-        short_map = await self._repo.fetch_short_message_map(channel_id)
-        logger.info("filter/analyze: short-message map (%d) in %.1fs", len(short_map), time.monotonic() - t1)
-
-        t1 = time.monotonic()
-        cross_dupe_map = await self._repo.fetch_cross_dupe_map(channel_id)
-        logger.info("filter/analyze: cross-dupe map (%d) in %.1fs", len(cross_dupe_map), time.monotonic() - t1)
-
-        t1 = time.monotonic()
-        cyrillic_map = await self._repo.fetch_cyrillic_map(channel_id)
-        logger.info("filter/analyze: cyrillic map (%d) in %.1fs", len(cyrillic_map), time.monotonic() - t1)
+        t_map = time.monotonic()
+        uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map = await asyncio.gather(
+            _timed_fetch("uniqueness map", self._repo.fetch_uniqueness_map(channel_id)),
+            _timed_fetch("subscriber map", self._repo.fetch_subscriber_map(channel_id)),
+            _timed_fetch("short-message map", self._repo.fetch_short_message_map(channel_id)),
+            _timed_fetch("cross-dupe map", self._repo.fetch_cross_dupe_map(channel_id)),
+            _timed_fetch("cyrillic map", self._repo.fetch_cyrillic_map(channel_id)),
+        )
+        logger.info("filter/analyze: all maps in %.1fs", time.monotonic() - t_map)
 
         min_subs = await self._load_min_subscribers_filter()
 
