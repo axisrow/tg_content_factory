@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -58,7 +59,15 @@ async def _connect_notification_account(
     entity_id: int = 987654321,
     is_primary: bool = False,
 ):
-    harness.queue_cli_client(phone=phone, client=FakeCliTelethonClient())
+    # Pool client must have me/entity configured since use_client() now
+    # routes through get_client_by_phone which reuses the pool session.
+    harness.queue_cli_client(
+        phone=phone,
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(id=me_id, username=me_username),
+            entity_resolver=lambda _peer: SimpleNamespace(id=entity_id),
+        ),
+    )
     native_client = harness.queue_native_client(
         session_string=session_string,
         client=FakeCliTelethonClient(
@@ -177,7 +186,7 @@ async def test_delete_bot_success():
 @pytest.mark.anyio
 async def test_setup_bot_success(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
-    native_client = await _connect_notification_account(
+    await _connect_notification_account(
         harness,
         phone="+70001111111",
         session_string="session-1",
@@ -197,7 +206,6 @@ async def test_setup_bot_success(db, real_pool_harness_factory):
     assert bot.tg_user_id == 111
     assert bot.bot_username == "leadhunter_alice_bot"
     assert bot.bot_id == 987654321
-    native_client.disconnect.assert_awaited_once()
 
     saved = await db.get_notification_bot(111)
     assert saved is not None
@@ -207,7 +215,7 @@ async def test_setup_bot_success(db, real_pool_harness_factory):
 @pytest.mark.anyio
 async def test_setup_bot_custom_prefix(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
-    native_client = await _connect_notification_account(
+    await _connect_notification_account(
         harness,
         phone="+70001111111",
         session_string="session-1",
@@ -231,7 +239,9 @@ async def test_setup_bot_custom_prefix(db, real_pool_harness_factory):
 
     assert bot.bot_username == "acme_bob_bot"
     created_client = mock_create.await_args.args[0]
-    assert created_client.raw_client is native_client
+    # use_client() now returns pool session (reuses persistent connection)
+    pool_session = harness.pool.clients["+70001111111"]
+    assert created_client.raw_client is pool_session.raw_client
     assert mock_create.await_args.args[1:] == ("Acme (bob)", "acme_bob_bot")
 
 
@@ -273,8 +283,14 @@ async def test_setup_bot_no_client(db, real_pool_harness_factory):
 @pytest.mark.anyio
 async def test_setup_bot_bot_id_none_if_entity_fails(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
-    harness.queue_cli_client(phone="+70001111111", client=FakeCliTelethonClient())
-    native_client = harness.queue_native_client(
+    harness.queue_cli_client(
+        phone="+70001111111",
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(id=444, username="carol"),
+            entity_resolver=lambda _peer: Exception("peer not found"),
+        ),
+    )
+    harness.queue_native_client(
         session_string="session-1",
         client=FakeCliTelethonClient(
             me=SimpleNamespace(id=444, username="carol"),
@@ -297,7 +313,6 @@ async def test_setup_bot_bot_id_none_if_entity_fails(db, real_pool_harness_facto
         bot = await svc.setup_bot()
 
     assert bot.bot_id is None
-    native_client.disconnect.assert_awaited_once()
 
 
 @pytest.mark.anyio
@@ -356,7 +371,7 @@ async def test_teardown_bot_success(db, real_pool_harness_factory):
     await db.save_notification_bot(saved)
 
     harness = real_pool_harness_factory()
-    native_client = await _connect_notification_account(
+    await _connect_notification_account(
         harness,
         phone="+70001111111",
         session_string="session-1",
@@ -373,13 +388,12 @@ async def test_teardown_bot_success(db, real_pool_harness_factory):
         await svc.teardown_bot()
 
     assert await db.get_notification_bot(777) is None
-    native_client.disconnect.assert_awaited_once()
 
 
 @pytest.mark.anyio
 async def test_teardown_bot_no_bot_raises(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
-    native_client = await _connect_notification_account(
+    await _connect_notification_account(
         harness,
         phone="+70001111111",
         session_string="session-1",
@@ -392,13 +406,11 @@ async def test_teardown_bot_no_bot_raises(db, real_pool_harness_factory):
     with pytest.raises(RuntimeError, match="No notification bot"):
         await svc.teardown_bot()
 
-    native_client.disconnect.assert_awaited_once()
-
 
 @pytest.mark.anyio
 async def test_notifier_uses_primary_account_by_default(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
-    native_client = await _connect_notification_account(
+    await _connect_notification_account(
         harness,
         phone="+70001111111",
         session_string="session-1",
@@ -411,8 +423,9 @@ async def test_notifier_uses_primary_account_by_default(db, real_pool_harness_fa
     sent = await notifier.notify("hello")
 
     assert sent is True
-    native_client.send_message.assert_awaited_once_with(123456, "hello")
-    native_client.disconnect.assert_awaited_once()
+    # Verify send went through the pool session's raw_client (cli_client)
+    pool_session = harness.pool.clients["+70001111111"]
+    pool_session.raw_client.send_message.assert_awaited_once_with(123456, "hello")
 
 
 @pytest.mark.anyio
@@ -435,16 +448,8 @@ async def test_notifier_does_not_fallback_from_selected_account(db, real_pool_ha
         is_primary=False,
     )
     await db.set_setting("notification_account_phone", "+70002222222")
-    harness.native_auth_spy.by_session.pop("session-selected", None)
-
-    def _raise_native(session_string: str):
-        if session_string == "session-selected":
-            raise ConnectionError("selected account unavailable")
-        return FakeCliTelethonClient(
-            me=SimpleNamespace(id=111, username="primary"),
-        )
-
-    harness.native_auth_spy.factory = _raise_native
+    # Put selected account in flood wait so describe_target() returns non-available
+    await db.update_account_flood("+70002222222", datetime.now(timezone.utc) + timedelta(seconds=300))
 
     notifier = Notifier(NotificationTargetService(db, harness.pool), admin_chat_id=123456)
     sent = await notifier.notify("hello")
@@ -464,7 +469,7 @@ async def test_notification_service_uses_selected_account(db, real_pool_harness_
         me_username="primary",
         is_primary=True,
     )
-    selected_client = await _connect_notification_account(
+    await _connect_notification_account(
         harness,
         phone="+70002222222",
         session_string="session-selected",
@@ -484,7 +489,6 @@ async def test_notification_service_uses_selected_account(db, real_pool_harness_
         bot = await svc.setup_bot()
 
     assert bot.tg_user_id == 222
-    assert selected_client.disconnect.await_count == 1
 
 
 # ---------------------------------------------------------------------------
