@@ -85,7 +85,6 @@
     </div>
 </div>
 
-{% if collector_health.state != 'healthy' or collector_health.load_level != 'ok' %}
 <div class="card mb-4 border-{{ collector_health.health_border_severity }}">
     <div class="card-header fw-semibold">
         Здоровье коллектора
@@ -179,7 +178,6 @@
         {% endif %}
     </div>
 </div>
-{% endif %}
 
 <!-- Scheduler Jobs -->
 {% if scheduler_jobs %}
