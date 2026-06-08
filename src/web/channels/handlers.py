@@ -30,12 +30,8 @@ async def channels_list(request: Request) -> ChannelsTemplate:
     channels, latest_stats, prev_subscriber_counts = await service.list_for_page(
         include_filtered=show_all
     )
-    if show_all:
-        total_count = len(channels)
-        active_count = await db.repos.channels.count_channels(include_filtered=False)
-    else:
-        active_count = len(channels)
-        total_count = await db.repos.channels.count_channels()
+    active_count = await db.repos.channels.count_channels(active_only=True, include_filtered=False)
+    total_count = await db.repos.channels.count_channels()
     return ChannelsTemplate(
         "channels.html",
         {

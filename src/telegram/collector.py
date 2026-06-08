@@ -1775,6 +1775,22 @@ class Collector:
                         timeout=30.0,
                     )
 
+                # Guard: entity resolved as a User/Bot (no ``title``) — not a channel.
+                # Reuse the pool's canonical classifier (bot/dm) so the channel
+                # stops re-entering stats payloads forever instead of failing
+                # silently on every run.
+                if not hasattr(entity, "title"):
+                    entity_type = self._pool._entity_to_dict(entity)["channel_type"]
+                    logger.warning(
+                        "Stats: channel %d resolved as non-channel entity (%s), "
+                        "deactivating",
+                        channel.channel_id,
+                        entity_type,
+                    )
+                    await self._db.repos.channels.set_channel_type(channel.channel_id, entity_type)
+                    await self._db.set_channel_active(channel.id, False)
+                    return None
+
                 full = await run_with_flood_wait(
                     session.fetch_full_channel(entity),
                     operation="collect_channel_stats_fetch_full_channel",
@@ -1866,41 +1882,35 @@ class Collector:
             logger.debug("Failed to load latest channel stats for stats-all ordering", exc_info=True)
             return channels
 
-        def _sort_key(item: tuple[int, Channel]) -> tuple[int, datetime, int]:
-            index, channel = item
+        def _collected_at(channel: Channel) -> datetime:
+            """UTC-normalized last-stats timestamp; ``datetime.min`` if never collected."""
             latest = latest_stats.get(channel.channel_id)
-            if latest is None:
-                return (0, datetime.min.replace(tzinfo=timezone.utc), index)
-            collected_at = latest.collected_at or datetime.min.replace(tzinfo=timezone.utc)
+            collected_at = (latest.collected_at if latest else None) or datetime.min.replace(tzinfo=timezone.utc)
             if collected_at.tzinfo is None:
                 collected_at = collected_at.replace(tzinfo=timezone.utc)
-            return (1, collected_at, index)
-
-        ordered = [channel for _index, channel in sorted(enumerate(channels), key=_sort_key)]
+            return collected_at
 
         if skip_fresh_hours > 0:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=skip_fresh_hours)
-            result = []
-            for ch in ordered:
-                latest = latest_stats.get(ch.channel_id)
-                if latest is None:
-                    result.append(ch)
-                    continue
-                collected_at = latest.collected_at or datetime.min.replace(tzinfo=timezone.utc)
-                if collected_at.tzinfo is None:
-                    collected_at = collected_at.replace(tzinfo=timezone.utc)
-                if collected_at < cutoff:
-                    result.append(ch)
-            ordered = result
+            channels = [
+                ch for ch in channels
+                if ch.channel_id not in latest_stats or _collected_at(ch) < cutoff
+            ]
 
-        return ordered
+        def _sort_key(item: tuple[int, Channel]) -> tuple[int, datetime, int]:
+            index, channel = item
+            has_stats = channel.channel_id in latest_stats
+            return (1 if has_stats else 0, _collected_at(channel), index)
+
+        return [channel for _index, channel in sorted(enumerate(channels), key=_sort_key)]
 
     async def collect_all_stats(self, *, max_channels: int | None = None) -> dict:
         async with self._stats_all_lock:
             self._stats_all_running = True
             try:
                 channels = await self._db.get_channels(active_only=True, include_filtered=False)
-                channels = await self._order_stats_all_channels(channels, skip_fresh_hours=24)
+                skip_fresh_hours = int(getattr(self._config, "stats_all_skip_fresh_hours", 24) or 0)
+                channels = await self._order_stats_all_channels(channels, skip_fresh_hours=skip_fresh_hours)
                 channel_limit = self._stats_all_channel_limit(max_channels)
                 total_channels = len(channels)
                 selected_channels = channels[:channel_limit]
