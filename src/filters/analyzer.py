@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 from src.database import Database
 from src.filters.criteria import (
@@ -34,15 +35,31 @@ class ChannelAnalyzer:
         )
 
     async def _build_report(self, channel_id: int | None = None) -> FilterReport:
+        t0 = time.monotonic()
         channels = await self._repo.fetch_channels_for_analysis(channel_id)
+        logger.info("filter/analyze: fetched %d channels in %.1fs", len(channels), time.monotonic() - t0)
         if not channels:
             return FilterReport()
 
+        t1 = time.monotonic()
         uniqueness_map = await self._repo.fetch_uniqueness_map(channel_id)
+        logger.info("filter/analyze: uniqueness map (%d) in %.1fs", len(uniqueness_map), time.monotonic() - t1)
+
+        t1 = time.monotonic()
         subscriber_map = await self._repo.fetch_subscriber_map(channel_id)
+        logger.info("filter/analyze: subscriber map (%d) in %.1fs", len(subscriber_map), time.monotonic() - t1)
+
+        t1 = time.monotonic()
         short_map = await self._repo.fetch_short_message_map(channel_id)
+        logger.info("filter/analyze: short-message map (%d) in %.1fs", len(short_map), time.monotonic() - t1)
+
+        t1 = time.monotonic()
         cross_dupe_map = await self._repo.fetch_cross_dupe_map(channel_id)
+        logger.info("filter/analyze: cross-dupe map (%d) in %.1fs", len(cross_dupe_map), time.monotonic() - t1)
+
+        t1 = time.monotonic()
         cyrillic_map = await self._repo.fetch_cyrillic_map(channel_id)
+        logger.info("filter/analyze: cyrillic map (%d) in %.1fs", len(cyrillic_map), time.monotonic() - t1)
 
         min_subs = await self._load_min_subscribers_filter()
 
@@ -139,6 +156,12 @@ class ChannelAnalyzer:
             )
 
         filtered_count = sum(1 for result in results if result.is_filtered)
+        logger.info(
+            "filter/analyze: report complete — %d channels, %d filtered in %.1fs",
+            len(results),
+            filtered_count,
+            time.monotonic() - t0,
+        )
         return FilterReport(
             results=results,
             total_channels=len(results),

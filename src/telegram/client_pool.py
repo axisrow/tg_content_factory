@@ -42,7 +42,6 @@ from src.telegram.flood_wait import (
     is_blocking_flood_wait_until,
     is_transient_flood_wait_seconds,
     run_with_flood_wait,
-    run_with_flood_wait_retry,
 )
 from src.telegram.rate_limiter import ResolveRateLimiter
 from src.telegram.resolve_guard import ResolveGuardMixin
@@ -51,6 +50,9 @@ from src.telegram.utils import normalize_utc
 
 logger = logging.getLogger(__name__)
 REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC = 5.0
+WARM_SINGLE_PHONE_TIMEOUT_SEC = 30.0
+WARM_ALL_PHONES_TOTAL_SEC = 150.0
+WARM_STAGGER_DELAY_SEC = 1.0
 
 
 @dataclass
@@ -167,8 +169,13 @@ class ClientPool(ResolveGuardMixin):
         Records which channels are accessible from which account so that
         private-group collection can target the right phone without guessing.
         Stores self._warming_task so the collector can wait during a race.
+
+        Uses run_with_flood_wait (single-shot) instead of the retry variant —
+        warm is a cache-preheating optimisation and should fail fast rather than
+        blocking on FloodWait sleep/retry loops.
         """
         self._warming_task = asyncio.current_task()
+        deadline = time.monotonic() + WARM_ALL_PHONES_TOTAL_SEC
         now = datetime.now(timezone.utc)
         flood_waited: set[str] = set()
         try:
@@ -183,7 +190,14 @@ class ClientPool(ResolveGuardMixin):
             }
         except Exception:
             logger.debug("warm_all_dialogs: failed to load flood-wait status", exc_info=True)
-        for phone in list(self._connected_phones()):
+        phones_list = list(self._connected_phones())
+        for idx, phone in enumerate(phones_list):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.info("warm_all_dialogs: budget exhausted after %d phones", idx)
+                break
+            if idx > 0:
+                await asyncio.sleep(WARM_STAGGER_DELAY_SEC)
             if phone in flood_waited:
                 logger.info("warm_all_dialogs: skip %s because active flood-wait is stored", phone)
                 continue
@@ -192,13 +206,13 @@ class ClientPool(ResolveGuardMixin):
                 continue
             session, p = result
             try:
-                dialogs = await run_with_flood_wait_retry(
-                    lambda: session.warm_dialog_cache(),
+                dialogs = await run_with_flood_wait(
+                    session.warm_dialog_cache(),
                     operation="telegram_warm_dialog_cache",
                     phone=p,
                     pool=self,
                     logger_=logger,
-                    timeout=60.0,
+                    timeout=WARM_SINGLE_PHONE_TIMEOUT_SEC,
                 )
                 self.mark_dialogs_fetched(p)
                 for dialog in dialogs or []:
@@ -220,9 +234,7 @@ class ClientPool(ResolveGuardMixin):
                                 )
                         except Exception:
                             # Best-effort warming hint; the in-memory map is already set.
-                            # The except covers both the read and the write, so the message
-                            # says "read or persist". exc_info keeps the traceback for
-                            # DB-lock diagnosis, matching collector.py (#676 review).
+                            # exc_info keeps the traceback for DB-lock diagnosis (#676).
                             logger.debug(
                                 "warm_all_dialogs: failed to read or persist preferred_phone "
                                 "for channel %d",

@@ -159,8 +159,14 @@ async def hard_delete_all(request: Request) -> FilterRedirect:
 async def analyze_channels(request: Request) -> FilterRedirect:
     db = deps.get_db(request)
     analyzer = ChannelAnalyzer(db)
+    logger.info("filter/analyze: starting analysis")
     report = await analyzer.analyze_all()
     await analyzer.apply_filters(report)
+    logger.info(
+        "filter/analyze: applied filters — %d channels, %d filtered",
+        report.total_channels,
+        report.filtered_count,
+    )
 
     purged_count = 0
     auto_delete = await db.repos.settings.get_setting("auto_delete_filtered")
@@ -182,6 +188,8 @@ async def analyze_channels(request: Request) -> FilterRedirect:
                     len(result.errors),
                     "; ".join(result.errors),
                 )
+            else:
+                logger.info("filter/analyze: auto-purged %d filtered channels", purged_count)
 
     msg = "purged_all_filtered" if purged_count else "filter_applied"
     return manage_redirect(msg=msg)
