@@ -2606,6 +2606,51 @@ async def test_filter_toggle_sets_manual_flag(client):
 
 
 @pytest.mark.anyio
+async def test_has_stats_returns_true_when_all_channels_have_stats(client):
+    from src.models import Channel, ChannelStats
+
+    db = client._transport.app.state.db
+    await db.add_channel(Channel(channel_id=-100710, title="Ch1"))
+    await db.add_channel(Channel(channel_id=-100711, title="Ch2"))
+    await db.save_channel_stats(ChannelStats(channel_id=-100710, subscriber_count=10))
+    await db.save_channel_stats(ChannelStats(channel_id=-100711, subscriber_count=20))
+
+    resp = await client.get("/channels/filter/has-stats")
+    assert resp.status_code == 200
+    assert resp.json() == {"has_stats": True}
+
+
+@pytest.mark.anyio
+async def test_has_stats_returns_false_when_channel_missing_stats(client):
+    from src.models import Channel, ChannelStats
+
+    db = client._transport.app.state.db
+    await db.add_channel(Channel(channel_id=-100720, title="With stats"))
+    await db.add_channel(Channel(channel_id=-100721, title="No stats"))
+    await db.save_channel_stats(ChannelStats(channel_id=-100720, subscriber_count=10))
+
+    resp = await client.get("/channels/filter/has-stats")
+    assert resp.status_code == 200
+    assert resp.json() == {"has_stats": False}
+
+
+@pytest.mark.anyio
+async def test_stats_all_redirects_when_all_channels_have_stats(client):
+    from src.models import Channel, ChannelStats
+
+    db = client._transport.app.state.db
+    await db.add_channel(Channel(channel_id=-100730, title="Ch"))
+    await db.save_channel_stats(ChannelStats(channel_id=-100730, subscriber_count=5))
+
+    resp = await client.post("/channels/stats/all", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=stats_already_ready" in resp.headers["location"]
+
+    tasks = await db.get_collection_tasks()
+    assert len(tasks) == 0
+
+
+@pytest.mark.anyio
 async def test_collect_filtered_channel_is_allowed(client):
     """Manual collect (web UI) must proceed even when channel is filtered."""
     from src.models import Channel
