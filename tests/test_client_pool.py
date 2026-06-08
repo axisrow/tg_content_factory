@@ -346,3 +346,151 @@ async def test_resolve_channel_strips_post_id_from_url(real_pool_harness_factory
     assert result is not None
     assert result["channel_id"] == 555
     client.get_entity.assert_awaited_with("https://t.me/ruarms_com")
+
+
+# ---------------------------------------------------------------------------
+# warm_all_dialogs: fail-fast on FloodWait, per-phone timeout, overall budget
+# ---------------------------------------------------------------------------
+
+
+async def _setup_warm_harness(harness, phones_and_clients):
+    """Add accounts and initialize, returning {phone: FakeCliTelethonClient}."""
+    for phone, client in phones_and_clients.items():
+        harness.queue_cli_client(phone=phone, client=client)
+        await harness.add_account(phone, session_string=f"s-{phone}", is_primary=(phone == list(phones_and_clients)[0]))
+    await harness.initialize_connected_accounts()
+    return phones_and_clients
+
+
+@pytest.mark.anyio
+async def test_warm_flood_wait_fail_fast(real_pool_harness_factory, monkeypatch, caplog):
+    """FloodWait on one phone should NOT sleep+retry — fail fast, move to next."""
+    import time
+
+    monkeypatch.setattr("src.telegram.client_pool.WARM_SINGLE_PHONE_TIMEOUT_SEC", 5.0)
+    monkeypatch.setattr("src.telegram.client_pool.WARM_STAGGER_DELAY_SEC", 0.0)
+
+    harness = real_pool_harness_factory()
+    fw_client = FakeCliTelethonClient(dialogs=FloodWaitError(24))
+    ok_client = FakeCliTelethonClient(dialogs=[])
+
+    await _setup_warm_harness(harness, {
+        "+70000000001": fw_client,
+        "+70000000002": ok_client,
+    })
+
+    caplog.clear()
+    t0 = time.monotonic()
+    await harness.pool.warm_all_dialogs()
+    elapsed = time.monotonic() - t0
+
+    # Must complete quickly — no 24s sleep
+    assert elapsed < 5.0, f"warm took {elapsed:.1f}s, expected fail-fast < 5s"
+    # Second phone should still be processed
+    ok_client.get_dialogs.assert_awaited()
+
+
+@pytest.mark.anyio
+async def test_warm_single_phone_timeout(real_pool_harness_factory, monkeypatch):
+    """A hanging get_dialogs should time out and not block other phones."""
+    import asyncio
+    import time
+
+    monkeypatch.setattr("src.telegram.client_pool.WARM_SINGLE_PHONE_TIMEOUT_SEC", 1.0)
+    monkeypatch.setattr("src.telegram.client_pool.WARM_STAGGER_DELAY_SEC", 0.0)
+
+    harness = real_pool_harness_factory()
+
+    async def _hang_forever():
+        await asyncio.Event().wait()
+
+    hang_client = FakeCliTelethonClient()
+    hang_client.get_dialogs = AsyncMock(side_effect=_hang_forever)
+
+    ok_client = FakeCliTelethonClient(dialogs=[])
+
+    await _setup_warm_harness(harness, {
+        "+70000000001": hang_client,
+        "+70000000002": ok_client,
+    })
+
+    t0 = time.monotonic()
+    await harness.pool.warm_all_dialogs()
+    elapsed = time.monotonic() - t0
+
+    # 1s timeout on first phone + near-instant on second
+    assert elapsed < 10.0, f"warm took {elapsed:.1f}s, expected < 10s"
+    ok_client.get_dialogs.assert_awaited()
+
+
+@pytest.mark.anyio
+async def test_warm_overall_budget_exhausted(real_pool_harness_factory, monkeypatch):
+    """Overall budget stops processing remaining phones."""
+    import asyncio
+    import time
+
+    monkeypatch.setattr("src.telegram.client_pool.WARM_SINGLE_PHONE_TIMEOUT_SEC", 2.0)
+    monkeypatch.setattr("src.telegram.client_pool.WARM_ALL_PHONES_TOTAL_SEC", 3.0)
+    monkeypatch.setattr("src.telegram.client_pool.WARM_STAGGER_DELAY_SEC", 0.0)
+
+    harness = real_pool_harness_factory()
+
+    async def _slow_dialogs():
+        await asyncio.sleep(2.0)
+        return []
+
+    clients = {}
+    for i in range(1, 5):
+        c = FakeCliTelethonClient(dialogs=[])
+        c.get_dialogs = AsyncMock(side_effect=_slow_dialogs)
+        clients[f"+7000000000{i}"] = c
+
+    await _setup_warm_harness(harness, clients)
+
+    t0 = time.monotonic()
+    await harness.pool.warm_all_dialogs()
+    elapsed = time.monotonic() - t0
+
+    # Budget 3s: first phone takes 2s, second starts but budget runs out
+    assert elapsed < 8.0, f"warm took {elapsed:.1f}s, budget should cap it"
+    # Not all 4 phones should have been called
+    called_count = sum(1 for c in clients.values() if c.get_dialogs.await_count > 0)
+    assert called_count < 4, f"all {called_count} phones called, budget should have stopped early"
+
+
+@pytest.mark.anyio
+async def test_warm_stagger_between_phones(real_pool_harness_factory, monkeypatch):
+    """Phones are staggered with a small delay between them."""
+    import time
+
+    stagger = 0.3
+    monkeypatch.setattr("src.telegram.client_pool.WARM_STAGGER_DELAY_SEC", stagger)
+    monkeypatch.setattr("src.telegram.client_pool.WARM_SINGLE_PHONE_TIMEOUT_SEC", 5.0)
+
+    harness = real_pool_harness_factory()
+
+    timestamps: list[float] = []
+
+    async def _record_and_return():
+        timestamps.append(time.monotonic())
+        return []
+
+    clients = {}
+    for i in range(1, 4):
+        c = FakeCliTelethonClient(dialogs=[])
+        c.get_dialogs = AsyncMock(side_effect=_record_and_return)
+        clients[f"+7000000000{i}"] = c
+
+    await _setup_warm_harness(harness, clients)
+    await harness.pool.warm_all_dialogs()
+
+    # 3 phones → 2 gaps between them
+    assert len(timestamps) == 3, f"expected 3 timestamps, got {len(timestamps)}"
+    gap1 = timestamps[1] - timestamps[0]
+    gap2 = timestamps[2] - timestamps[1]
+    # Each gap should be at least the stagger delay (0.3s)
+    assert gap1 >= stagger - 0.05, f"gap1={gap1:.2f}s, expected >= {stagger}s"
+    assert gap2 >= stagger - 0.05, f"gap2={gap2:.2f}s, expected >= {stagger}s"
+    # But no stagger before the first phone — total ~ 2*stagger, not 3
+    total_elapsed = timestamps[-1] - timestamps[0]
+    assert total_elapsed < 3 * stagger, f"total={total_elapsed:.2f}s, should be ~2*stagger"
