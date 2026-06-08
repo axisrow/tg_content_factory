@@ -138,6 +138,21 @@ class ChannelsRepository:
         rows = await cur.fetchall()
         return [self._map_channel(r) for r in rows]
 
+    async def count_channels(
+        self, active_only: bool = False, include_filtered: bool = True
+    ) -> int:
+        conditions = []
+        if active_only:
+            conditions.append("is_active = 1")
+        if not include_filtered:
+            conditions.append("is_filtered = 0")
+        sql = "SELECT COUNT(*) FROM channels"
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        cur = await self._db.execute(sql)
+        row = await cur.fetchone()
+        return row[0] if row else 0
+
     async def update_channel_last_id(self, channel_id: int, last_id: int) -> None:
         await self._database.execute_write(
             """

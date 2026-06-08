@@ -161,3 +161,98 @@ async def test_collect_channel_stats_uses_transport_session_and_persists_stats(
     saved = await db.get_channel_stats(-100123)
     assert len(saved) == 1
     assert saved[0].subscriber_count == 5000
+
+
+def _resolved_bot_entity(user_id: int, username: str | None = None):
+    """A Telegram User entity (bot) — no ``title`` attribute."""
+    return SimpleNamespace(
+        id=user_id,
+        username=username,
+        first_name="BotUser",
+        last_name=None,
+        bot=True,
+    )
+
+
+@pytest.mark.anyio
+async def test_collect_channel_stats_deactivates_bot_channel(
+    db,
+    real_pool_harness_factory,
+):
+    """A channel whose username resolves to a bot (User entity without ``title``)
+    must be deactivated and typed as ``'bot'`` instead of silently failing
+    on every stats run forever.
+    """
+    await db.add_channel(Channel(channel_id=-100999, title="Bot Channel", username="some_bot"))
+    channel = (await db.get_channels())[0]
+
+    entity = _resolved_bot_entity(-100999, "some_bot")
+
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(
+            entity_resolver=lambda _peer: entity,
+        ),
+    )
+    await harness.add_account("+7000", session_string="session-bot-test", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    collector = Collector(harness.pool, db, SchedulerConfig())
+    result = await collector.collect_channel_stats(channel)
+
+    # Stats must not be collected for a bot
+    assert result is None
+
+    # Channel must be deactivated — not left in eternal "no stats" limbo
+    updated = (await db.get_channels())[0]
+    assert updated.is_active is False
+
+    # Channel type must be explicitly 'bot' for visibility in UI/CLI
+    assert updated.channel_type == "bot"
+
+    # No stats row should exist for a bot
+    saved = await db.get_channel_stats(-100999)
+    assert len(saved) == 0
+
+
+@pytest.mark.anyio
+async def test_collect_channel_stats_deactivates_dm_user_channel(
+    db,
+    real_pool_harness_factory,
+):
+    """A channel whose ID resolves to a regular user (not a bot) must be
+    deactivated and typed as ``'dm'`` — whatever Telegram returns.
+    """
+    await db.add_channel(Channel(channel_id=-100998, title="DM Channel"))
+    channel = (await db.get_channels())[0]
+
+    user_entity = SimpleNamespace(
+        id=-100998,
+        username=None,
+        first_name="Plain",
+        last_name="User",
+        bot=False,  # not a bot — just a regular user
+    )
+
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(
+            entity_resolver=lambda _peer: user_entity,
+        ),
+    )
+    await harness.add_account("+7000", session_string="session-dm-test", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    collector = Collector(harness.pool, db, SchedulerConfig())
+    result = await collector.collect_channel_stats(channel)
+
+    assert result is None
+
+    updated = (await db.get_channels())[0]
+    assert updated.is_active is False
+    assert updated.channel_type == "dm"
+
+    saved = await db.get_channel_stats(-100998)
+    assert len(saved) == 0

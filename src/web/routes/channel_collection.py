@@ -163,10 +163,10 @@ async def collect_all_stats(request: Request):
     channels = await db.repos.channels.get_channels(active_only=True, include_filtered=False)
     latest_stats = await db.get_latest_stats_for_all()
     channels_without_stats = [ch for ch in channels if ch.channel_id not in latest_stats]
-    channels_with_stats = [ch for ch in channels if ch.channel_id in latest_stats]
-    ordered_channels = channels_without_stats + channels_with_stats
+    if not channels_without_stats:
+        return RedirectResponse(url="/channels?msg=stats_already_ready", status_code=303)
     payload = StatsAllTaskPayload(
-        channel_ids=[ch.channel_id for ch in ordered_channels],
+        channel_ids=[ch.channel_id for ch in channels_without_stats],
     )
     await db.create_stats_task(
         payload,

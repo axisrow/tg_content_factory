@@ -40,6 +40,7 @@ class SchedulerConfig(BaseModel):
     stats_all_max_channels_per_run: int = 10
     stats_all_cooldown_sec: int = 600
     stats_all_worker_count: int = 1
+    stats_all_skip_fresh_hours: int = 24
 
 
 class NotificationsConfig(BaseModel):
