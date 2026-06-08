@@ -178,10 +178,9 @@ class PublishService:
         try:
             resolver = getattr(self._client_pool, "resolve_dialog_entity", None)
             if callable(resolver):
-                resolved = resolver(session, phone, target.dialog_id, target.dialog_type)
-                return await asyncio.wait_for(resolved, timeout=30.0)
+                return await resolver(session, phone, target.dialog_id, target.dialog_type)
 
-            return await asyncio.wait_for(session.resolve_input_entity(target.dialog_id), timeout=30.0)
+            return await session.resolve_input_entity(target.dialog_id)
         except Exception as e:
             logger.warning("Could not resolve dialog_id %s: %s", target.dialog_id, e)
             return None

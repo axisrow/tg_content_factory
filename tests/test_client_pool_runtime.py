@@ -238,15 +238,13 @@ async def test_get_native_client_by_phone_uses_native_backend_and_disconnects(
 
 @pytest.mark.anyio
 @pytest.mark.native_backend_allowed
-async def test_notification_target_uses_real_pool_native_getter(
+async def test_notification_target_uses_real_pool_client_getter(
     real_pool_harness_factory,
 ):
+    """use_client() routes through get_client_by_phone, reusing the
+    persistent pool session instead of creating a new TCP connection."""
     harness = real_pool_harness_factory()
-    harness.queue_cli_client(phone="+70000000001", client=FakeCliTelethonClient())
-    native_client = harness.queue_native_client(
-        session_string="session-1",
-        client=FakeCliTelethonClient(),
-    )
+    pool_client = harness.queue_cli_client(phone="+70000000001", client=FakeCliTelethonClient())
 
     await harness.add_account(
         phone="+70000000001",
@@ -259,10 +257,9 @@ async def test_notification_target_uses_real_pool_native_getter(
 
     async with service.use_client() as (acquired_client, phone):
         assert isinstance(acquired_client, TelegramTransportSession)
-        assert acquired_client.raw_client is native_client
+        # get_client_by_phone reuses the persistent pool session
+        assert acquired_client.raw_client is pool_client
         assert phone == "+70000000001"
-
-    native_client.disconnect.assert_awaited_once()
 
 
 @pytest.mark.anyio

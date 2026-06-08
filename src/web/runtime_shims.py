@@ -54,6 +54,9 @@ class SnapshotClientPool:
     async def disconnect_all(self) -> None:
         return None
 
+    async def get_client_by_phone(self, phone: str):
+        raise RuntimeError("Telegram runtime is only available in the worker process.")
+
     async def get_native_client_by_phone(self, phone: str):
         raise RuntimeError("Telegram runtime is only available in the worker process.")
 

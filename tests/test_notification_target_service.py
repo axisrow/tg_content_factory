@@ -33,7 +33,7 @@ def _make_service(accounts=None, clients=None, configured_phone=None):
 
     pool = MagicMock()
     pool.clients = clients if clients is not None else {}
-    pool.get_native_client_by_phone = AsyncMock(return_value=(MagicMock(), "phone"))
+    pool.get_client_by_phone = AsyncMock(return_value=(MagicMock(), "phone"))
     pool.release_client = AsyncMock()
 
     svc = NotificationTargetService(notifications, pool)
@@ -149,7 +149,7 @@ async def test_use_client_success():
         clients={"+70001112233": MagicMock()},
     )
     mock_client = MagicMock()
-    svc._pool.get_native_client_by_phone = AsyncMock(
+    svc._pool.get_client_by_phone = AsyncMock(
         return_value=(mock_client, "+70001112233")
     )
 
@@ -158,6 +158,32 @@ async def test_use_client_success():
         assert phone == "+70001112233"
 
     svc._pool.release_client.assert_called_once_with("+70001112233")
+
+
+@pytest.mark.anyio
+async def test_use_client_uses_client_by_phone_not_native():
+    """use_client() must route through get_client_by_phone (reuses pool
+    connection) instead of get_native_client_by_phone (creates new TCP
+    connection each call).  Issue #795."""
+    acc = _make_account(phone="+70001112233")
+    svc, _ = _make_service(
+        accounts=[acc],
+        clients={"+70001112233": MagicMock()},
+    )
+    mock_client = MagicMock()
+    svc._pool.get_client_by_phone = AsyncMock(
+        return_value=(mock_client, "+70001112233")
+    )
+    svc._pool.get_native_client_by_phone = AsyncMock(
+        return_value=(MagicMock(), "+70001112233")
+    )
+
+    async with svc.use_client() as (client, phone):
+        assert client == mock_client
+        assert phone == "+70001112233"
+
+    svc._pool.get_client_by_phone.assert_called_once_with("+70001112233")
+    svc._pool.get_native_client_by_phone.assert_not_called()
 
 
 @pytest.mark.anyio

@@ -209,7 +209,7 @@ async def test_collect_channel_stats_success(db):
     ch = Channel(channel_id=-100123, title="Test", username="test_chan")
     await db.add_channel(ch)
 
-    mock_entity = SimpleNamespace()
+    mock_entity = SimpleNamespace(title="Test", id=-100123)
     mock_full_chat = SimpleNamespace(participants_count=5000)
     mock_full = SimpleNamespace(full_chat=mock_full_chat)
 
@@ -249,7 +249,7 @@ async def test_collect_channel_stats_rotates_on_flood_wait(db):
     client1 = AsyncMock()
     client1.get_entity = AsyncMock(side_effect=flood_err)
 
-    mock_entity = SimpleNamespace()
+    mock_entity = SimpleNamespace(title="Test", id=-100123)
     mock_full_chat = SimpleNamespace(participants_count=123)
     mock_full = SimpleNamespace(full_chat=mock_full_chat)
     client2 = AsyncMock()
@@ -388,7 +388,7 @@ async def test_collect_all_stats(db):
     await db.add_channel(ch1)
     await db.add_channel(ch2)
 
-    mock_entity = SimpleNamespace()
+    mock_entity = SimpleNamespace(title="Test", id=-100123)
     mock_full_chat = SimpleNamespace(participants_count=1000)
     mock_full = SimpleNamespace(full_chat=mock_full_chat)
     mock_messages = [_make_mock_msg(i) for i in range(1, 3)]
