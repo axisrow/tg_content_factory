@@ -151,9 +151,9 @@ class NotificationTargetService:
         if status.state != "available" or status.effective_phone is None:
             raise RuntimeError(status.message)
 
-        getter = getattr(self._pool, "get_native_client_by_phone", None)
+        getter = getattr(self._pool, "get_client_by_phone", None)
         if not callable(getter):
-            raise RuntimeError("Notification target pool does not support native client access.")
+            raise RuntimeError("Notification target pool does not support client access.")
         result = await getter(status.effective_phone)
         if result is None:
             raise RuntimeError(f"Аккаунт {status.effective_phone} временно недоступен.")
