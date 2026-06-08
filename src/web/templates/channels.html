@@ -25,8 +25,8 @@
 
 {% if channels or show_all %}
 <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
-    <a href="/channels" class="btn btn-sm {{ 'btn-primary' if not show_all else 'btn-outline-primary' }}">Активные</a>
-    <a href="/channels?view=all" class="btn btn-sm {{ 'btn-primary' if show_all else 'btn-outline-primary' }}">Все каналы</a>
+    <a href="/channels" class="btn btn-sm {{ 'btn-primary' if not show_all else 'btn-outline-primary' }}">Активные ({{ active_count }})</a>
+    <a href="/channels?view=all" class="btn btn-sm {{ 'btn-primary' if show_all else 'btn-outline-primary' }}">Все каналы ({{ total_count }})</a>
     <span class="flex-fill"></span>
     <form method="post" action="/channels/stats/all" class="d-inline" data-busy>
         <button type="submit" class="btn btn-outline-primary btn-sm">Обновить статистику</button>
