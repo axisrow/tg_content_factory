@@ -385,8 +385,11 @@ class CollectionQueue:
                 cancelled = cancel_event.is_set() or persisted_cancelled or collector_cancelled
                 if cancelled:
                     if self._shutdown_requested and not persisted_cancelled:
-                        await self._reset_task_to_pending_after_shutdown(task_id)
-                        logger.info("Task %d requeued after service shutdown interrupted collection", task_id)
+                        try:
+                            await self._reset_task_to_pending_after_shutdown(task_id)
+                            logger.info("Task %d requeued after service shutdown interrupted collection", task_id)
+                        except (ValueError, RuntimeError):
+                            logger.debug("Could not reset task %d during shutdown", task_id)
                     else:
                         await self._channels.cancel_collection_task(
                             task_id,
@@ -519,18 +522,14 @@ class CollectionQueue:
                 keep_known_task_id = requeued
                 if not requeued:
                     self._retried_tasks.discard(task_id)
-                    await self._channels.update_collection_task(
-                        task_id,
-                        CollectionTaskStatus.FAILED,
-                        error=str(exc)[:500],
+                    await self._update_task_status_shutdown_safe(
+                        task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
                     )
                     logger.exception("Collection failed for channel %d (reconnect failed)", channel.channel_id)
             except Exception as exc:
                 self._retried_tasks.discard(task_id)
-                await self._channels.update_collection_task(
-                    task_id,
-                    CollectionTaskStatus.FAILED,
-                    error=str(exc)[:500],
+                await self._update_task_status_shutdown_safe(
+                    task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
                 )
                 logger.exception("Collection failed for channel %d", channel.channel_id)
             else:
@@ -546,6 +545,17 @@ class CollectionQueue:
 
     async def _run_worker(self) -> None:
         await self._run_single_worker()
+
+    async def _update_task_status_shutdown_safe(
+        self, task_id: int, status: CollectionTaskStatus, **kwargs
+    ) -> None:
+        """Update collection task status, suppressing DB errors during shutdown."""
+        try:
+            await self._channels.update_collection_task(task_id, status, **kwargs)
+        except (ValueError, RuntimeError):
+            if not self._shutdown_requested:
+                raise
+            logger.debug("Could not update task %d status during shutdown", task_id)
 
     async def _reset_task_to_pending_after_shutdown(self, task_id: int) -> None:
         reset = getattr(self._channels, "reset_collection_task_to_pending", None)
@@ -780,6 +790,7 @@ class CollectionQueue:
                     for w in self._workers:
                         if not w.done():
                             w.cancel()
+                    await asyncio.gather(*self._workers, return_exceptions=True)
             except asyncio.CancelledError:
                 raise
             except Exception:

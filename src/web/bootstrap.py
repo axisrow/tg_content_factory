@@ -514,6 +514,8 @@ async def _cancel_bg_tasks(tasks: set[asyncio.Task]) -> None:
 
 
 async def stop_container(container: AppContainer) -> None:
+    if container.shutting_down:
+        return
     container.shutting_down = True
 
     async def _stop_step(name: str, coro, *, timeout: float = _SHUTDOWN_DEFAULT_TIMEOUT) -> None:
