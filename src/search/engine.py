@@ -58,6 +58,7 @@ class SearchEngine:
         is_fts: bool = False,
         min_length: int | None = None,
         max_length: int | None = None,
+        include_filtered: bool = False,
     ) -> SearchResult:
         return await self._local.search(
             query=query,
@@ -69,6 +70,7 @@ class SearchEngine:
             is_fts=is_fts,
             min_length=min_length,
             max_length=max_length,
+            include_filtered=include_filtered,
         )
 
     async def check_search_quota(self, query: str = "") -> dict | None:
@@ -84,6 +86,7 @@ class SearchEngine:
         offset: int = 0,
         min_length: int | None = None,
         max_length: int | None = None,
+        include_filtered: bool = False,
     ) -> SearchResult:
         if not self.semantic_available:
             return SearchResult(messages=[], total=0, query=query, error=_SEMANTIC_UNAVAILABLE)
@@ -96,6 +99,7 @@ class SearchEngine:
             offset=offset,
             min_length=min_length,
             max_length=max_length,
+            include_filtered=include_filtered,
         )
 
     async def search_hybrid(
@@ -109,6 +113,7 @@ class SearchEngine:
         is_fts: bool = False,
         min_length: int | None = None,
         max_length: int | None = None,
+        include_filtered: bool = False,
     ) -> SearchResult:
         if not self.semantic_available:
             return SearchResult(messages=[], total=0, query=query, error=_SEMANTIC_UNAVAILABLE)
@@ -122,6 +127,7 @@ class SearchEngine:
             is_fts=is_fts,
             min_length=min_length,
             max_length=max_length,
+            include_filtered=include_filtered,
         )
 
     async def search_telegram(self, query: str, limit: int = 50) -> SearchResult:

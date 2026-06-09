@@ -445,6 +445,7 @@ class CollectionBundle:
         is_fts: bool = False,
         min_length: int | None = None,
         max_length: int | None = None,
+        include_filtered: bool = False,
     ) -> tuple[list[Message], int]:
         return await self.messages.search_messages(
             query=query,
@@ -456,6 +457,7 @@ class CollectionBundle:
             is_fts=is_fts,
             min_length=min_length,
             max_length=max_length,
+            include_filtered=include_filtered,
         )
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
@@ -691,6 +693,7 @@ class SearchBundle:
         is_fts: bool = False,
         min_length: int | None = None,
         max_length: int | None = None,
+        include_filtered: bool = False,
     ) -> tuple[list[Message], int]:
         return await self.messages.search_messages(
             query=query,
@@ -702,6 +705,7 @@ class SearchBundle:
             is_fts=is_fts,
             min_length=min_length,
             max_length=max_length,
+            include_filtered=include_filtered,
         )
 
     async def add_channel(self, channel: Channel) -> int:

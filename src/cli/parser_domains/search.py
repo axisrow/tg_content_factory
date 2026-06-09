@@ -25,6 +25,10 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         "--fts", action="store_true", default=False, help="Use FTS5 boolean syntax"
     )
     search_parser.add_argument(
+        "--all", action="store_true", default=False,
+        help="Search all channels including filtered ones",
+    )
+    search_parser.add_argument(
         "--index-now",
         action="store_true",
         default=False,

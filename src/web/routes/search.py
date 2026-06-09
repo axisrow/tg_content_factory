@@ -56,6 +56,7 @@ async def search_page(
     date_to: str = Query(""),
     mode: str = Query("local"),
     is_fts: bool = Query(False),
+    include_filtered: bool = Query(False),
     page: int = Query(1),
 ):
     return search_response(
@@ -68,6 +69,7 @@ async def search_page(
             date_to=date_to,
             mode=mode,
             is_fts=is_fts,
+            include_filtered=include_filtered,
             page=page,
         ),
     )

@@ -45,6 +45,7 @@ def run(args: argparse.Namespace) -> None:
                 return
 
             engine = SearchEngine(db, pool, config=config)
+            include_filtered = getattr(args, "all", False)
 
             if args.mode == "telegram":
                 result = await engine.search_telegram(args.query, limit=args.limit)
@@ -60,6 +61,7 @@ def run(args: argparse.Namespace) -> None:
                     limit=args.limit,
                     min_length=args.min_length,
                     max_length=args.max_length,
+                    include_filtered=include_filtered,
                 )
             elif args.mode == "hybrid":
                 result = await engine.search_hybrid(
@@ -68,6 +70,7 @@ def run(args: argparse.Namespace) -> None:
                     min_length=args.min_length,
                     max_length=args.max_length,
                     is_fts=args.fts,
+                    include_filtered=include_filtered,
                 )
             else:
                 result = await engine.search_local(
@@ -76,6 +79,7 @@ def run(args: argparse.Namespace) -> None:
                     min_length=args.min_length,
                     max_length=args.max_length,
                     is_fts=args.fts,
+                    include_filtered=include_filtered,
                 )
 
             print(f"Found {result.total} results for '{result.query}':\n")

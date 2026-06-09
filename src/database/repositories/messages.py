@@ -454,8 +454,11 @@ class MessagesRepository:
         min_length: int | None = None,
         max_length: int | None = None,
         topic_id: int | None = None,
-    ) -> tuple[list[str], list]:
-        conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
+        include_filtered: bool = False,
+    ) -> tuple[str, list]:
+        conditions: list[str] = []
+        if not include_filtered:
+            conditions.append("(c.is_filtered IS NULL OR c.is_filtered = 0)")
         params: list = []
         if channel_id:
             conditions.append("m.channel_id = ?")
@@ -479,7 +482,8 @@ class MessagesRepository:
         if max_length is not None:
             conditions.append("LENGTH(m.text) < ?")
             params.append(max_length)
-        return conditions, params
+        where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        return where, params
 
     async def _load_messages_by_ids(self, message_ids: list[int]) -> list[Message]:
         if not message_ids:
@@ -514,18 +518,19 @@ class MessagesRepository:
         max_length: int | None = None,
         topic_id: int | None = None,
         limit: int = 100,
+        include_filtered: bool = False,
     ) -> list[int]:
-        conditions, params = self._build_message_filters(
+        where, params = self._build_message_filters(
             channel_id=channel_id,
             date_from=date_from,
             date_to=date_to,
             min_length=min_length,
             max_length=max_length,
             topic_id=topic_id,
+            include_filtered=include_filtered,
         )
 
         channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
-        where = " WHERE " + " AND ".join(conditions)
         if self._fts_available:
             fts_query = self._build_fts_match(query, is_fts)
             fts_join = (
@@ -544,14 +549,13 @@ class MessagesRepository:
             )
         else:
             logger.debug("FTS5 unavailable, falling back to LIKE search")
-            conditions.append("m.text LIKE ?")
             params.append(f"%{query}%")
-            where = " WHERE " + " AND ".join(conditions)
+            like_where = (where + " AND m.text LIKE ?") if where else " WHERE m.text LIKE ?"
             cur = await self._db.execute(
                 f"""
                 SELECT m.id
                 FROM messages m{channel_join}
-                {where}
+                {like_where}
                 ORDER BY m.date DESC
                 LIMIT ?
                 """,
@@ -572,17 +576,18 @@ class MessagesRepository:
         min_length: int | None = None,
         max_length: int | None = None,
         topic_id: int | None = None,
+        include_filtered: bool = False,
     ) -> tuple[list[Message], int]:
-        conditions, params = self._build_message_filters(
+        where, params = self._build_message_filters(
             channel_id=channel_id,
             date_from=date_from,
             date_to=date_to,
             min_length=min_length,
             max_length=max_length,
             topic_id=topic_id,
+            include_filtered=include_filtered,
         )
         channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
-        where = " WHERE " + " AND ".join(conditions)
 
         if query:
             if self._fts_available:
@@ -608,12 +613,11 @@ class MessagesRepository:
                 )
             else:
                 logger.debug("FTS5 unavailable, falling back to LIKE search")
-                conditions.append("m.text LIKE ?")
                 params.append(f"%{query}%")
-                where = " WHERE " + " AND ".join(conditions)
+                like_where = (where + " AND m.text LIKE ?") if where else " WHERE m.text LIKE ?"
 
                 count_cur = await self._db.execute(
-                    f"SELECT COUNT(*) as cnt FROM messages m{channel_join}{where}",
+                    f"SELECT COUNT(*) as cnt FROM messages m{channel_join}{like_where}",
                     tuple(params),
                 )
                 row = await count_cur.fetchone()
@@ -622,7 +626,7 @@ class MessagesRepository:
                 cur = await self._db.execute(
                     f"""SELECT m.*, c.title as channel_title, c.username as channel_username
                         FROM messages m{channel_join}
-                        {where}
+                        {like_where}
                         ORDER BY m.date DESC
                         LIMIT ? OFFSET ?""",
                     (*params, limit, offset),
@@ -658,6 +662,7 @@ class MessagesRepository:
         topic_id: int | None = None,
         limit: int = 100,
         max_candidates: int = 50_000,
+        include_filtered: bool = False,
     ) -> list[tuple[int, float]]:
         dimensions = await self.get_embedding_dimensions()
         if dimensions is None:
@@ -667,22 +672,23 @@ class MessagesRepository:
                 "Query embedding dimensions "
                 f"{len(query_embedding)} do not match index {dimensions}."
             )
-        conditions, params = self._build_message_filters(
+        where, params = self._build_message_filters(
             channel_id=channel_id,
             date_from=date_from,
             date_to=date_to,
             min_length=min_length,
             max_length=max_length,
             topic_id=topic_id,
+            include_filtered=include_filtered,
         )
-        where = " AND ".join(conditions)
+        where_clause = where.replace(" WHERE ", "WHERE ", 1) if where else ""
         cur = await self._db.execute(
             f"""
             SELECT e.message_id, e.embedding
             FROM message_embeddings e
             JOIN messages m ON m.id = e.message_id
             LEFT JOIN channels c ON m.channel_id = c.channel_id
-            WHERE {where}
+            {where_clause}
             LIMIT ?
             """,
             (*params, max_candidates),
@@ -724,6 +730,7 @@ class MessagesRepository:
         max_length: int | None = None,
         topic_id: int | None = None,
         candidate_limit: int | None = None,
+        include_filtered: bool = False,
     ) -> tuple[list[Message], int]:
         fetch_limit = candidate_limit or max(offset + limit, 50)
         candidates = await self._search_semantic_candidates(
@@ -735,6 +742,7 @@ class MessagesRepository:
             max_length=max_length,
             topic_id=topic_id,
             limit=fetch_limit,
+            include_filtered=include_filtered,
         )
         page_ids = [message_id for message_id, _distance in candidates[offset : offset + limit]]
         messages = await self._load_messages_by_ids(page_ids)
@@ -756,6 +764,7 @@ class MessagesRepository:
         topic_id: int | None = None,
         candidate_limit: int | None = None,
         rrf_k: int = 60,
+        include_filtered: bool = False,
     ) -> tuple[list[Message], int]:
         fetch_limit = candidate_limit or max(offset + limit, 50)
         text_ids = await self._search_text_candidate_ids(
@@ -768,6 +777,7 @@ class MessagesRepository:
             max_length=max_length,
             topic_id=topic_id,
             limit=fetch_limit,
+            include_filtered=include_filtered,
         )
         semantic_candidates = await self._search_semantic_candidates(
             query_embedding,
@@ -778,6 +788,7 @@ class MessagesRepository:
             max_length=max_length,
             topic_id=topic_id,
             limit=fetch_limit,
+            include_filtered=include_filtered,
         )
         if not text_ids and not semantic_candidates:
             return [], 0

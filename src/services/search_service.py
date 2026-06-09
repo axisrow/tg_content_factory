@@ -22,6 +22,7 @@ class SearchService:
         is_fts: bool = False,
         min_length: int | None = None,
         max_length: int | None = None,
+        include_filtered: bool = False,
     ) -> SearchResult:
         if mode == "ai" and self._ai_search:
             return await self._ai_search.search(query)
@@ -41,6 +42,7 @@ class SearchService:
                 offset=offset,
                 min_length=min_length,
                 max_length=max_length,
+                include_filtered=include_filtered,
             )
         if mode == "hybrid":
             return await self._engine.search_hybrid(
@@ -53,6 +55,7 @@ class SearchService:
                 is_fts=is_fts,
                 min_length=min_length,
                 max_length=max_length,
+                include_filtered=include_filtered,
             )
         return await self._engine.search_local(
             query=query,
@@ -64,6 +67,7 @@ class SearchService:
             is_fts=is_fts,
             min_length=min_length,
             max_length=max_length,
+            include_filtered=include_filtered,
         )
 
     async def check_quota(self, query: str = "") -> dict | None:
