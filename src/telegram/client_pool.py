@@ -1233,7 +1233,33 @@ class ClientPool(ResolveGuardMixin):
         if channel_type == "group":
             return None
 
-        result = await self.get_available_client()
+        # Route to the account that can actually see this (possibly private)
+        # channel instead of a random available one (#808). Mirrors
+        # Collector._collect_channel: in-memory map → DB preferred_phone →
+        # wait_for_warm → fall back to any available client.
+        db_preferred: str | None = None
+        preferred = self.get_phone_for_channel(channel_id)
+        if not preferred:
+            try:
+                db_preferred = await self._db.repos.channels.get_preferred_phone(channel_id)
+            except Exception:
+                logger.debug(
+                    "fetch_channel_meta: failed to read preferred_phone for channel_id %s",
+                    channel_id,
+                    exc_info=True,
+                )
+            preferred = db_preferred
+        if not preferred and self.is_warming():
+            await self.wait_for_warm(timeout=30.0)
+            preferred = self.get_phone_for_channel(channel_id)
+
+        used_preferred = False
+        result = None
+        if preferred:
+            result = await self.get_client_by_phone(preferred)
+            used_preferred = result is not None
+        if result is None:
+            result = await self.get_available_client()
         if not result:
             logger.warning("fetch_channel_meta: no available client for channel_id %s", channel_id)
             return None
@@ -1241,6 +1267,29 @@ class ClientPool(ResolveGuardMixin):
         session, phone = result
         session = adapt_transport_session(session, disconnect_on_close=False)
         try:
+            # Pre-warm the entity cache when routing through a preferred account
+            # whose dialogs haven't been fetched this process (StringSession loses
+            # the cache between restarts). Mirrors Collector._collect_channel.
+            if used_preferred and not self.is_dialogs_fetched(phone):
+                try:
+                    await run_with_flood_wait(
+                        session.warm_dialog_cache(),
+                        operation="fetch_channel_meta_warm_dialog_cache",
+                        phone=phone,
+                        pool=self,
+                        logger_=logger,
+                        timeout=30.0,
+                    )
+                    self.mark_dialogs_fetched(phone)
+                except HandledFloodWaitError as exc:
+                    logger.info(
+                        "fetch_channel_meta: flood wait warming %s for channel_id %s: %s",
+                        phone,
+                        channel_id,
+                        exc.info.detail,
+                    )
+                    return None
+
             entity = await self.resolve_entity_with_warm(
                 session, phone, PeerChannel(channel_id), operation="fetch_channel_meta"
             )
@@ -1257,6 +1306,25 @@ class ClientPool(ResolveGuardMixin):
                 full.full_chat.linked_chat_id if full and full.full_chat else None
             )
             has_comments = linked_chat_id is not None
+            # Self-heal the channel→phone map on success: remember which account
+            # resolved this channel so the next bulk pass routes there directly.
+            self.register_channel_phone(channel_id, phone)
+            if not db_preferred:
+                # Persist only if no preferred_phone was set yet (avoid clobbering
+                # a valid value from previous error recovery — same gate as
+                # warm_all_dialogs).
+                try:
+                    existing = await self._db.repos.channels.get_preferred_phone(channel_id)
+                    if not existing:
+                        await self._db.repos.channels.update_channel_preferred_phone(
+                            channel_id, phone
+                        )
+                except Exception:
+                    logger.debug(
+                        "fetch_channel_meta: failed to persist preferred_phone for channel_id %s",
+                        channel_id,
+                        exc_info=True,
+                    )
             return {
                 "about": about,
                 "linked_chat_id": linked_chat_id,
@@ -1277,6 +1345,32 @@ class ClientPool(ResolveGuardMixin):
         except (ChannelPrivateError, ChatAdminRequiredError):
             logger.debug(
                 "fetch_channel_meta: access denied for channel_id %s (expected for private channels)",
+                channel_id,
+            )
+            # If the preferred account lost access, drop the stale mapping so the
+            # next pass rediscovers. Leave it alone on the available-client path —
+            # we'd be erasing a good record on a guess.
+            if used_preferred:
+                self.clear_channel_phone(channel_id)
+                try:
+                    await self._db.repos.channels.update_channel_preferred_phone(
+                        channel_id, None
+                    )
+                except Exception:
+                    logger.debug(
+                        "fetch_channel_meta: failed to clear stale preferred_phone "
+                        "for channel_id %s",
+                        channel_id,
+                        exc_info=True,
+                    )
+            return None
+        except (ValueError, TypeError):
+            # Telethon raises ValueError("Could not find the input entity ...")
+            # when no warmed account can resolve the peer. Not unexpected during
+            # bulk passes — keep it at DEBUG so it doesn't drown the logs (#808).
+            logger.debug(
+                "fetch_channel_meta: entity unresolved for channel_id %s "
+                "(not in any warmed account)",
                 channel_id,
             )
             return None
