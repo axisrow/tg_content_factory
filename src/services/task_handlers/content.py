@@ -9,7 +9,7 @@ from src.models import (
     ContentGenerateTaskPayload,
     ContentPublishTaskPayload,
 )
-from src.services.task_handlers.base import TaskHandlerContext, build_image_service, resolve_llm_provider_service
+from src.services.task_handlers.base import TaskHandlerContext, build_content_generation_service
 
 logger = logging.getLogger(__name__)
 
@@ -52,11 +52,8 @@ class ContentTaskHandler:
         pipeline_id = payload.pipeline_id
         try:
             from src.models import PipelinePublishMode
-            from src.services.content_generation_service import ContentGenerationService
-            from src.services.draft_notification_service import DraftNotificationService
             from src.services.pipeline_service import PipelineService
             from src.services.publish_service import PublishService
-            from src.services.quality_scoring_service import QualityScoringService
 
             svc = PipelineService(ctx.pipeline_bundle)
             pipeline = await svc.get(pipeline_id)
@@ -69,20 +66,7 @@ class ContentTaskHandler:
                 return
 
             db = ctx.db
-            notification_service = DraftNotificationService(db, ctx.notifier)
-            image_service = await build_image_service(ctx)
-            provider_service = await resolve_llm_provider_service(ctx)
-            quality_service = QualityScoringService(db, provider_service=provider_service)
-            gen = ContentGenerationService(
-                db,
-                ctx.search_engine,
-                config=ctx.config,
-                image_service=image_service,
-                notification_service=notification_service,
-                quality_service=quality_service,
-                client_pool=ctx.client_pool,
-                provider_service=provider_service,
-            )
+            gen = await build_content_generation_service(ctx)
             run = await gen.generate(pipeline=pipeline, model=pipeline.llm_model)
 
             effective_mode = (

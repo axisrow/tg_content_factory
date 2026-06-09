@@ -13,6 +13,7 @@ from src.telegram.collector import Collector
 if TYPE_CHECKING:
     from src.database import Database
     from src.search.engine import SearchEngine
+    from src.services.content_generation_service import ContentGenerationService
     from src.services.image_generation_service import ImageGenerationService
     from src.services.photo_auto_upload_service import PhotoAutoUploadService
     from src.services.photo_task_service import PhotoTaskService
@@ -74,3 +75,31 @@ async def resolve_llm_provider_service(context: TaskHandlerContext) -> object:
     from src.services.provider_service import build_provider_service
 
     return await build_provider_service(context.db, context.config)
+
+
+async def build_content_generation_service(context: TaskHandlerContext) -> "ContentGenerationService":
+    """Assemble a ContentGenerationService with its collaborators from the context.
+
+    Shared by the CONTENT_GENERATE and PIPELINE_RUN task handlers so the wiring
+    (draft notifications + image service + provider/quality services) lives in
+    one place.
+    """
+    from src.services.content_generation_service import ContentGenerationService
+    from src.services.draft_notification_service import DraftNotificationService
+    from src.services.quality_scoring_service import QualityScoringService
+
+    db = context.db
+    notification_service = DraftNotificationService(db, context.notifier)
+    image_service = await build_image_service(context)
+    provider_service = await resolve_llm_provider_service(context)
+    quality_service = QualityScoringService(db, provider_service=provider_service)
+    return ContentGenerationService(
+        db,
+        context.search_engine,
+        config=context.config,
+        image_service=image_service,
+        notification_service=notification_service,
+        quality_service=quality_service,
+        client_pool=context.client_pool,
+        provider_service=provider_service,
+    )
