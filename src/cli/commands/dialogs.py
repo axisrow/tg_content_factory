@@ -24,6 +24,55 @@ from src.telegram.reactions import (
 from src.utils.datetime import parse_required_datetime
 
 
+def _resolve_phone(pool, args) -> str | None:
+    """Pick the account phone for a dialogs action, printing why it can't run.
+
+    Returns the resolved phone, or ``None`` (after printing an error) when there
+    are no connected accounts or the requested account is not connected.
+    """
+    accounts = sorted(pool.clients.keys())
+    if not accounts:
+        print("No connected accounts.")
+        return None
+    phone = args.phone or accounts[0]
+    if phone not in pool.clients:
+        print(f"Account {phone} not connected.")
+        return None
+    return phone
+
+
+def _parse_message_ids(args) -> list[int] | None:
+    """Parse comma/space-separated ``args.message_ids`` into ints.
+
+    Returns the parsed ids, or ``None`` (after printing an error) when none are
+    valid.
+    """
+    raw_ids: list[str] = []
+    for item in args.message_ids:
+        raw_ids.extend(part.strip() for part in item.split(",") if part.strip())
+    ids = [int(raw) for raw in raw_ids if raw.isdigit()]
+    if not ids:
+        print("No valid message IDs provided.")
+        return None
+    return ids
+
+
+def _confirm_or_abort(args, *lines: str) -> bool:
+    """Show a confirmation preview and read a [y/N] answer unless ``--yes``.
+
+    Returns True to proceed, False (after printing "Aborted.") to stop.
+    """
+    if args.yes:
+        return True
+    for line in lines:
+        print(line)
+    answer = input("Continue? [y/N] ").strip().lower()
+    if answer != "y":
+        print("Aborted.")
+        return False
+    return True
+
+
 def run_with_dependencies(
     args: argparse.Namespace,
     *,
@@ -35,26 +84,16 @@ def run_with_dependencies(
         _, pool = await runtime_mod.init_pool(config, db)
         try:
             if args.dialogs_action == "refresh":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 svc = channel_service_cls(db, pool, None)  # type: ignore[arg-type]
                 dialogs = await svc.get_my_dialogs(phone, refresh=True)
                 print(f"Dialogs refreshed: {len(dialogs)} total.")
 
             elif args.dialogs_action == "list":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 svc = channel_service_cls(db, pool, None)  # type: ignore[arg-type]
                 dialogs = await svc.get_my_dialogs(phone)
@@ -96,13 +135,8 @@ def run_with_dependencies(
                     print(f"Username: @{entity['username']}")
 
             elif args.dialogs_action == "leave":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
 
                 raw_ids: list[str] = []
@@ -147,13 +181,8 @@ def run_with_dependencies(
                 print(f"\nDone: {left} left, {failed} failed.")
 
             elif args.dialogs_action == "join":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
 
                 if not args.yes:
@@ -200,13 +229,8 @@ def run_with_dependencies(
                     )
 
             elif args.dialogs_action == "send":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 recipient = args.recipient
                 text = args.text
@@ -233,27 +257,17 @@ def run_with_dependencies(
                     print(f"Error sending message: {exc}")
 
             elif args.dialogs_action == "forward":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                ids = _parse_message_ids(args)
+                if ids is None:
                     return
-                raw_ids: list[str] = []
-                for item in args.message_ids:
-                    raw_ids.extend(part.strip() for part in item.split(",") if part.strip())
-                ids = [int(raw) for raw in raw_ids if raw.isdigit()]
-                if not ids:
-                    print("No valid message IDs provided.")
+                if not _confirm_or_abort(
+                    args,
+                    f"Forward {len(ids)} message(s) from {args.from_chat} to {args.to_chat}: {ids}",
+                ):
                     return
-                if not args.yes:
-                    print(f"Forward {len(ids)} message(s) from {args.from_chat} to {args.to_chat}: {ids}")
-                    answer = input("Continue? [y/N] ").strip().lower()
-                    if answer != "y":
-                        print("Aborted.")
-                        return
                 try:
                     fwd_result = await TelegramActionService(pool).forward_messages(
                         phone=phone,
@@ -271,22 +285,16 @@ def run_with_dependencies(
                     print(f"Error forwarding messages: {exc}")
 
             elif args.dialogs_action == "edit-message":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                preview = args.text[:200] + ("..." if len(args.text) > 200 else "")
+                if not _confirm_or_abort(
+                    args,
+                    f"Edit message #{args.message_id} in {args.chat_id}:",
+                    f"  {preview}",
+                ):
                     return
-                if not args.yes:
-                    preview = args.text[:200] + ("..." if len(args.text) > 200 else "")
-                    print(f"Edit message #{args.message_id} in {args.chat_id}:")
-                    print(f"  {preview}")
-                    answer = input("Continue? [y/N] ").strip().lower()
-                    if answer != "y":
-                        print("Aborted.")
-                        return
                 try:
                     await TelegramActionService(pool).edit_message(
                         phone=phone,
@@ -301,27 +309,17 @@ def run_with_dependencies(
                     print(f"Error editing message: {exc}")
 
             elif args.dialogs_action == "delete-message":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                ids = _parse_message_ids(args)
+                if ids is None:
                     return
-                raw_ids: list[str] = []
-                for item in args.message_ids:
-                    raw_ids.extend(part.strip() for part in item.split(",") if part.strip())
-                ids = [int(raw) for raw in raw_ids if raw.isdigit()]
-                if not ids:
-                    print("No valid message IDs provided.")
+                if not _confirm_or_abort(
+                    args,
+                    f"Delete {len(ids)} message(s) from {args.chat_id}: {ids}",
+                ):
                     return
-                if not args.yes:
-                    print(f"Delete {len(ids)} message(s) from {args.chat_id}: {ids}")
-                    answer = input("Continue? [y/N] ").strip().lower()
-                    if answer != "y":
-                        print("Aborted.")
-                        return
                 try:
                     await TelegramActionService(pool).delete_messages(
                         phone=phone,
@@ -335,13 +333,8 @@ def run_with_dependencies(
                     print(f"Error deleting messages: {exc}")
 
             elif args.dialogs_action == "react":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 # Surface only a long (non-transient) flood-wait explicitly; a
                 # transient (<=60s) flood is now waited out centrally inside the
@@ -408,13 +401,8 @@ def run_with_dependencies(
                     print(f"Error sending reaction: {type(exc).__name__}: {exc}")
 
             elif args.dialogs_action == "pin-message":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 if not args.yes:
                     print(f"Pin message #{args.message_id} in {args.chat_id}")
@@ -436,13 +424,8 @@ def run_with_dependencies(
                     print(f"Error pinning message: {exc}")
 
             elif args.dialogs_action == "unpin-message":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 if not args.yes:
                     target = f"#{args.message_id}" if args.message_id else "all messages"
@@ -464,13 +447,8 @@ def run_with_dependencies(
                     print(f"Error unpinning message: {exc}")
 
             elif args.dialogs_action == "download-media":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 try:
                     result = await TelegramActionService(pool).download_media(
@@ -493,13 +471,8 @@ def run_with_dependencies(
                     print(f"Error downloading media: {exc}")
 
             elif args.dialogs_action == "participants":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 try:
                     result = await TelegramActionService(pool).get_participants(
@@ -531,13 +504,8 @@ def run_with_dependencies(
                     print(f"Error fetching participants: {exc}")
 
             elif args.dialogs_action == "edit-admin":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 if not args.yes:
                     print(f"Edit admin rights for {args.user_id} in {args.chat_id}")
@@ -560,13 +528,8 @@ def run_with_dependencies(
                     print(f"Error editing admin: {exc}")
 
             elif args.dialogs_action == "edit-permissions":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 if not args.yes:
                     print(f"Edit permissions for {args.user_id} in {args.chat_id}")
@@ -604,13 +567,8 @@ def run_with_dependencies(
                     print(f"Error editing permissions: {exc}")
 
             elif args.dialogs_action == "kick":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 if not args.yes:
                     print(f"Kick {args.user_id} from {args.chat_id}")
@@ -631,13 +589,8 @@ def run_with_dependencies(
                     print(f"Error kicking participant: {exc}")
 
             elif args.dialogs_action == "broadcast-stats":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 try:
                     result = await TelegramActionService(pool).get_broadcast_stats(
@@ -669,13 +622,8 @@ def run_with_dependencies(
                     print(f"Error fetching broadcast stats: {exc}")
 
             elif args.dialogs_action == "archive":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 try:
                     await TelegramActionService(pool).set_dialog_folder(
@@ -690,13 +638,8 @@ def run_with_dependencies(
                     print(f"Error archiving: {exc}")
 
             elif args.dialogs_action == "unarchive":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 try:
                     await TelegramActionService(pool).set_dialog_folder(
@@ -711,13 +654,8 @@ def run_with_dependencies(
                     print(f"Error unarchiving: {exc}")
 
             elif args.dialogs_action == "mark-read":
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 try:
                     await TelegramActionService(pool).mark_read(
@@ -743,13 +681,8 @@ def run_with_dependencies(
                     print("Cache cleared for all accounts.")
 
             elif args.dialogs_action in {"create-channel", "create-group"}:
-                accounts = sorted(pool.clients.keys())
-                if not accounts:
-                    print("No connected accounts.")
-                    return
-                phone = args.phone or accounts[0]
-                if phone not in pool.clients:
-                    print(f"Account {phone} not connected.")
+                phone = _resolve_phone(pool, args)
+                if phone is None:
                     return
                 is_group = args.dialogs_action == "create-group"
                 noun = "group" if is_group else "channel"
