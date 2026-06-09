@@ -93,17 +93,7 @@ class PipelineCreateForm(_FrozenForm):
     is_active: bool = False
 
 
-class PipelineEditForm(_FrozenForm):
-    name: str = ""
-    prompt_template: str = ""
-    source_channel_ids: list[int] = Field(default_factory=list)
-    target_refs: list[str] = Field(default_factory=list)
-    llm_model: str = ""
-    image_model: str = ""
-    publish_mode: str = "moderated"
-    generation_backend: str = "chain"
-    generate_interval_minutes: int = 60
-    is_active: bool = False
+class PipelineEditForm(PipelineCreateForm):
     react_emoji: str = ""
     filter_present: str = ""
     filter_message_kinds: list[str] = Field(default_factory=list)
