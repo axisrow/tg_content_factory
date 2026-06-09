@@ -31,6 +31,7 @@ class LocalSearch:
         is_fts: bool = False,
         min_length: int | None = None,
         max_length: int | None = None,
+        include_filtered: bool = False,
     ) -> SearchResult:
         messages, total = await self._search.search_messages(
             query=query,
@@ -42,6 +43,7 @@ class LocalSearch:
             is_fts=is_fts,
             min_length=min_length,
             max_length=max_length,
+            include_filtered=include_filtered,
         )
         return SearchResult(messages=messages, total=total, query=query)
 
@@ -66,6 +68,7 @@ class LocalSearch:
         offset: int = 0,
         min_length: int | None = None,
         max_length: int | None = None,
+        include_filtered: bool = False,
     ) -> SearchResult:
         if self._embedding_service is None:
             raise RuntimeError("Semantic search is unavailable.")
@@ -81,6 +84,7 @@ class LocalSearch:
                 offset=offset,
                 min_length=min_length,
                 max_length=max_length,
+                include_filtered=include_filtered,
             )
             return SearchResult(messages=messages, total=total, query=query)
 
@@ -94,11 +98,12 @@ class LocalSearch:
             return SearchResult(messages=[], total=0, query=query)
         # Build set of filtered channel IDs to exclude (matches vec SQL behavior)
         filtered_channels: set[int] = set()
-        cur = await self._search.messages._db.execute(
-            "SELECT channel_id FROM channels WHERE is_filtered = 1"
-        )
-        for row in await cur.fetchall():
-            filtered_channels.add(int(row["channel_id"]))
+        if not include_filtered:
+            cur = await self._search.messages._db.execute(
+                "SELECT channel_id FROM channels WHERE is_filtered = 1"
+            )
+            for row in await cur.fetchall():
+                filtered_channels.add(int(row["channel_id"]))
         # Over-fetch to allow for post-filtering
         fetch_k = min(index.size, max((limit + offset) * 4, 200))
         top_ids = [mid for mid, _score in index.search(query_embedding, k=fetch_k)]
@@ -142,6 +147,7 @@ class LocalSearch:
         is_fts: bool = False,
         min_length: int | None = None,
         max_length: int | None = None,
+        include_filtered: bool = False,
     ) -> SearchResult:
         if self._embedding_service is None:
             raise RuntimeError("Hybrid search is unavailable.")
@@ -157,5 +163,6 @@ class LocalSearch:
             is_fts=is_fts,
             min_length=min_length,
             max_length=max_length,
+            include_filtered=include_filtered,
         )
         return SearchResult(messages=messages, total=total, query=query)

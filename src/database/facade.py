@@ -627,6 +627,7 @@ class Database:
         is_fts: bool = False,
         min_length: int | None = None,
         max_length: int | None = None,
+        include_filtered: bool = False,
     ) -> tuple[list[Message], int]:
         self._require()
         return await self._messages.search_messages(
@@ -640,6 +641,7 @@ class Database:
             is_fts=is_fts,
             min_length=min_length,
             max_length=max_length,
+            include_filtered=include_filtered,
         )
 
     async def search_semantic_messages(
@@ -654,6 +656,7 @@ class Database:
         min_length: int | None = None,
         max_length: int | None = None,
         candidate_limit: int | None = None,
+        include_filtered: bool = False,
     ) -> tuple[list[Message], int]:
         self._require()
         return await self._messages.search_semantic_messages(
@@ -666,6 +669,7 @@ class Database:
             min_length=min_length,
             max_length=max_length,
             candidate_limit=candidate_limit,
+            include_filtered=include_filtered,
         )
 
     async def search_hybrid_messages(
@@ -682,6 +686,7 @@ class Database:
         min_length: int | None = None,
         max_length: int | None = None,
         candidate_limit: int | None = None,
+        include_filtered: bool = False,
     ) -> tuple[list[Message], int]:
         self._require()
         return await self._messages.search_hybrid_messages(
@@ -696,6 +701,7 @@ class Database:
             min_length=min_length,
             max_length=max_length,
             candidate_limit=candidate_limit,
+            include_filtered=include_filtered,
         )
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:

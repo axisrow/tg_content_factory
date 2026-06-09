@@ -172,6 +172,7 @@ async def render_search_page(
     date_to: str = "",
     mode: str = "local",
     is_fts: bool = False,
+    include_filtered: bool = False,
     page: int = 1,
 ) -> SearchTemplate | SearchRedirect:
     # Onboarding: redirect if no accounts configured
@@ -207,6 +208,7 @@ async def render_search_page(
                 date_to=None,
                 offset=offset,
                 is_fts=False,
+                include_filtered=include_filtered,
             )
         except Exception as exc:
             logger.exception("Browse mode failed: channel_id=%s", channel_id_int)
@@ -245,6 +247,7 @@ async def render_search_page(
                     is_fts=is_fts,
                     min_length=min_length,
                     max_length=max_length,
+                    include_filtered=include_filtered,
                 )
             except Exception as exc:
                 logger.exception(
@@ -289,6 +292,7 @@ async def render_search_page(
             "date_to": date_to,
             "mode": mode,
             "is_fts": is_fts,
+            "include_filtered": include_filtered,
             "page": page,
             "total_pages": total_pages,
             "semantic_available": semantic_available,
