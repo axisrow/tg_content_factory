@@ -1588,6 +1588,212 @@ async def test_get_hourly_activity(db):
     assert hours[20]["message_count"] == 1
 
 
+class _SQLRecorder:
+    """Proxy around the raw connection that records every executed SQL string."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.statements: list[str] = []
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    async def execute(self, sql, parameters=()):
+        self.statements.append(sql)
+        return await self._inner.execute(sql, parameters)
+
+
+@pytest.mark.anyio
+async def test_analytics_queries_do_not_scan_reactions_json(db):
+    """top/content-types/hourly must aggregate message_reactions, not json_each
+    over every messages row — a full json_each scan times out on 18M-row DBs (#826)."""
+    await db.add_channel(Channel(channel_id=-100504, title="NoScan"))
+    await db.insert_message(
+        Message(
+            channel_id=-100504,
+            message_id=1,
+            text="msg",
+            reactions_json='[{"emoji": "👍", "count": 3}]',
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    recorder = _SQLRecorder(db._messages._db)
+    db._messages._db = recorder
+    try:
+        await db.get_top_messages(limit=5)
+        await db.get_top_messages(limit=5, date_from="2025-01-01", date_to="2025-12-31")
+        await db.get_engagement_by_media_type()
+        await db.get_engagement_by_media_type(date_from="2025-01-01")
+        await db.get_hourly_activity()
+        await db.get_hourly_activity(date_to="2025-12-31")
+    finally:
+        db._messages._db = recorder._inner
+
+    offenders = [sql for sql in recorder.statements if "json_each" in sql]
+    assert not offenders, f"analytics queries still scan reactions_json via json_each: {offenders}"
+
+
+@pytest.mark.anyio
+async def test_get_engagement_avg_counts_zero_reaction_messages(db):
+    """avg_reactions denominator is ALL messages of the type, including ones without reactions."""
+    await db.add_channel(Channel(channel_id=-100505, title="AvgSemantics"))
+    msgs = [
+        Message(
+            channel_id=-100505,
+            message_id=1,
+            text="text with reactions",
+            media_type=None,
+            reactions_json='[{"emoji": "👍", "count": 4}]',
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100505,
+            message_id=2,
+            text="text without reactions",
+            media_type=None,
+            date=datetime(2025, 1, 2, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100505,
+            message_id=3,
+            text="photo",
+            media_type="photo",
+            reactions_json='[{"emoji": "❤️", "count": 6}]',
+            date=datetime(2025, 1, 3, tzinfo=timezone.utc),
+        ),
+    ]
+    for m in msgs:
+        await db.insert_message(m)
+
+    result = await db.get_engagement_by_media_type()
+    by_type = {r["content_type"]: r for r in result}
+    assert by_type["text"]["avg_reactions"] == pytest.approx(2.0)  # (4 + 0) / 2
+    assert by_type["photo"]["avg_reactions"] == pytest.approx(6.0)
+    # ordered by message_count descending
+    assert [r["content_type"] for r in result] == ["text", "photo"]
+
+
+@pytest.mark.anyio
+async def test_get_hourly_activity_avg_counts_zero_reaction_messages(db):
+    """hourly avg_reactions averages over all messages in the hour, zeros included."""
+    await db.add_channel(Channel(channel_id=-100506, title="HourlyAvg"))
+    msgs = [
+        Message(
+            channel_id=-100506,
+            message_id=1,
+            text="reacted",
+            reactions_json='[{"emoji": "👍", "count": 3}]',
+            date=datetime(2025, 1, 1, 9, 0, tzinfo=timezone.utc),
+        ),
+        Message(
+            channel_id=-100506,
+            message_id=2,
+            text="silent",
+            date=datetime(2025, 1, 2, 9, 30, tzinfo=timezone.utc),
+        ),
+    ]
+    for m in msgs:
+        await db.insert_message(m)
+
+    result = await db.get_hourly_activity()
+    hours = {r["hour"]: r for r in result}
+    assert hours[9]["message_count"] == 2
+    assert hours[9]["avg_reactions"] == pytest.approx(1.5)  # (3 + 0) / 2
+
+
+@pytest.mark.anyio
+async def test_get_top_messages_excludes_filtered_channels(db):
+    """Messages from is_filtered channels never reach the top list."""
+    await db.add_channel(Channel(channel_id=-100507, title="Visible"))
+    await db.add_channel(Channel(channel_id=-100508, title="Filtered"))
+    await db.set_channels_filtered_bulk([(-100508, "low_uniqueness")])
+    await db.insert_message(
+        Message(
+            channel_id=-100507,
+            message_id=1,
+            text="visible",
+            reactions_json='[{"emoji": "👍", "count": 2}]',
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+    await db.insert_message(
+        Message(
+            channel_id=-100508,
+            message_id=1,
+            text="hidden",
+            reactions_json='[{"emoji": "🔥", "count": 100}]',
+            date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    result = await db.get_top_messages(limit=10)
+    assert [r["channel_id"] for r in result] == [-100507]
+
+
+@pytest.mark.anyio
+async def test_reaction_refresh_removes_stale_emoji_rows(db):
+    """Re-collecting a message with fewer reactions must drop vanished emoji rows
+    from message_reactions so analytics mirror the current reactions_json."""
+    await db.add_channel(Channel(channel_id=-100509, title="StaleSingle"))
+    base = dict(channel_id=-100509, message_id=1, text="msg", date=datetime(2025, 1, 1, tzinfo=timezone.utc))
+    await db.insert_message(
+        Message(**base, reactions_json='[{"emoji": "👍", "count": 5}, {"emoji": "🔥", "count": 2}]')
+    )
+    # Same Telegram message re-collected after the 🔥 reactions were removed
+    await db.insert_message(Message(**base, reactions_json='[{"emoji": "👍", "count": 3}]'))
+
+    result = await db.get_top_messages(limit=10)
+    assert len(result) == 1
+    assert result[0]["total_reactions"] == 3  # not 3 + stale 🔥=2
+
+    cur = await db.execute(
+        "SELECT emoji, count FROM message_reactions WHERE channel_id = ? AND message_id = ?",
+        (-100509, 1),
+    )
+    rows = await cur.fetchall()
+    assert [(r["emoji"], r["count"]) for r in rows] == [("👍", 3)]
+
+
+@pytest.mark.anyio
+async def test_reaction_refresh_batch_removes_stale_emoji_rows(db):
+    """insert_messages_batch refresh path must also drop vanished emoji rows."""
+    await db.add_channel(Channel(channel_id=-100510, title="StaleBatch"))
+    base = dict(channel_id=-100510, message_id=1, text="msg", date=datetime(2025, 1, 1, tzinfo=timezone.utc))
+    await db.insert_messages_batch(
+        [Message(**base, reactions_json='[{"emoji": "👍", "count": 5}, {"emoji": "🔥", "count": 2}]')]
+    )
+    await db.insert_messages_batch([Message(**base, reactions_json='[{"emoji": "👍", "count": 3}]')])
+
+    result = await db.get_top_messages(limit=10)
+    assert len(result) == 1
+    assert result[0]["total_reactions"] == 3
+
+    cur = await db.execute(
+        "SELECT emoji, count FROM message_reactions WHERE channel_id = ? AND message_id = ?",
+        (-100510, 1),
+    )
+    rows = await cur.fetchall()
+    assert [(r["emoji"], r["count"]) for r in rows] == [("👍", 3)]
+
+
+@pytest.mark.anyio
+async def test_reaction_refresh_with_empty_list_clears_rows(db):
+    """An explicit empty reactions list ('[]') clears message_reactions for the message."""
+    await db.add_channel(Channel(channel_id=-100511, title="StaleEmpty"))
+    base = dict(channel_id=-100511, message_id=1, text="msg", date=datetime(2025, 1, 1, tzinfo=timezone.utc))
+    await db.insert_message(Message(**base, reactions_json='[{"emoji": "👍", "count": 5}]'))
+    await db.insert_message(Message(**base, reactions_json="[]"))
+
+    assert await db.get_top_messages(limit=10) == []
+    cur = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM message_reactions WHERE channel_id = ? AND message_id = ?",
+        (-100511, 1),
+    )
+    row = await cur.fetchone()
+    assert row["cnt"] == 0
+
+
 @pytest.mark.aiosqlite_serial
 @pytest.mark.anyio
 async def test_migration_creates_message_reactions_without_backfill(tmp_path):
