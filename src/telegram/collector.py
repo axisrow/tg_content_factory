@@ -1493,8 +1493,20 @@ class Collector:
                             f"channel {channel_id} — pausing username resolves on "
                             f"this account until {next_available_at.isoformat()}"
                         )
+                    # wait_seconds must describe the same deadline as
+                    # next_available_at (the aggregate min across accounts may
+                    # be earlier than this phone's own flood) — callers and the
+                    # stats path surface both, so they cannot diverge.
+                    defer_wait_sec = max(
+                        0,
+                        int(
+                            (
+                                next_available_at - datetime.now(timezone.utc)
+                            ).total_seconds()
+                        ),
+                    )
                     raise UsernameResolveFloodWaitDeferredError(
-                        wait_seconds=flood_wait_sec,
+                        wait_seconds=defer_wait_sec,
                         next_available_at=next_available_at,
                     )
 

@@ -651,6 +651,41 @@ async def test_collect_all_channels_rotates_flooded_channel_mid_run(db):
 
 
 @pytest.mark.anyio
+async def test_deferred_error_wait_seconds_matches_aggregate_deadline(db):
+    """#790 review follow-up: when rotation is exhausted, the deferred error's
+    ``wait_seconds`` must describe the same deadline as ``next_available_at``
+    (the aggregate min across accounts), not the triggering phone's own flood —
+    the stats path and ``str(exc)`` surface both fields."""
+    ch_id = await db.add_channel(
+        Channel(channel_id=1970788996, title="Agg Defer", username="agg_defer")
+    )
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    flood_err = FloodWaitError(request=None, capture=7200)
+    raw1 = FakeTelethonClient(entity_resolver=lambda _arg: flood_err)
+    pool = make_mock_pool(clients={"+7001": object(), "+7002": object()})
+    # The would-be rotation target already sits in a much shorter backoff —
+    # the aggregate deadline is +7002's ~400s, not +7001's fresh 7200s flood.
+    pool.set_resolve_username_backoff(400, phone="+7002")
+    s1 = TelegramTransportSession(raw1, disconnect_on_close=False, phone="+7001", pool=pool)
+    pool.get_available_client = AsyncMock(return_value=(s1, "+7001"))
+    collector = Collector(
+        pool, db, SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10)
+    )
+
+    with pytest.raises(UsernameResolveFloodWaitDeferredError) as exc_info:
+        await collector._collect_channel(stored)
+
+    exc = exc_info.value
+    assert exc.next_available_at == pool.get_resolve_username_backoff_until()
+    expected_sec = (exc.next_available_at - datetime.now(timezone.utc)).total_seconds()
+    assert abs(exc.wait_seconds - expected_sec) <= 2
+    # The aggregate (free in ~400s) must win over the triggering 7200s flood.
+    assert exc.wait_seconds <= 400
+
+
+@pytest.mark.anyio
 async def test_collect_channel_defensive_backoff_when_guard_returns_none(db):
     """#785: if the pool's backoff is None after a long resolve FloodWait, the
     collector sets it defensively rather than letting all subsequent channels
