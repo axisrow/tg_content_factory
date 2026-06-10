@@ -207,6 +207,69 @@ async def test_cost_tracker_day_reset():
         assert tracker.get_daily_cost() == 0.0
 
 
+# === CostTracker persistence tests (#233) ===
+
+
+@pytest.mark.anyio
+async def test_cost_tracker_persists_across_restart(db):
+    """Daily cost survives a process restart: a fresh tracker on the same DB restores it."""
+    cfg = CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=100.0)
+
+    tracker = CostTracker(cfg, db=db)
+    await tracker.record_cost(tokens=3000)  # 3.0
+    assert tracker.get_daily_cost() == 3.0
+
+    # Simulate a restart: brand-new tracker, same DB, zeroed in-memory state.
+    restarted = CostTracker(cfg, db=db)
+    assert restarted.get_daily_cost() == 0.0  # not loaded yet
+    # check_cost_cap triggers the lazy load.
+    await restarted.check_cost_cap(tokens=0)
+    assert restarted.get_daily_cost() == 3.0
+
+
+@pytest.mark.anyio
+async def test_cost_tracker_stale_day_not_restored(db):
+    """A persisted cost from a previous day is discarded, not carried into the new day."""
+    cfg = CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=100.0)
+
+    fake_time = 5000.0
+    with patch("src.services.production_limits_service.time.time", return_value=fake_time):
+        tracker = CostTracker(cfg, db=db)
+        await tracker.record_cost(tokens=3000)  # persisted with day_start=5000
+
+    # Next day: more than 24h later -> stale state must not be restored.
+    with patch("src.services.production_limits_service.time.time", return_value=fake_time + 86401):
+        restarted = CostTracker(cfg, db=db)
+        await restarted.check_cost_cap(tokens=0)
+        assert restarted.get_daily_cost() == 0.0
+
+
+@pytest.mark.anyio
+async def test_cost_tracker_no_db_is_in_memory():
+    """Without a DB the tracker stays pure in-memory (no persistence, no errors)."""
+    tracker = CostTracker(CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=100.0))
+    await tracker.record_cost(tokens=2000)  # 2.0
+
+    # A fresh tracker without DB knows nothing of the previous one.
+    fresh = CostTracker(CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=100.0))
+    await fresh.check_cost_cap(tokens=0)
+    assert fresh.get_daily_cost() == 0.0
+
+
+@pytest.mark.anyio
+async def test_cost_tracker_db_error_does_not_break_tracking():
+    """A failing DB degrades gracefully: in-memory tracking continues."""
+    broken_db = SimpleNamespace(
+        get_setting=AsyncMock(side_effect=RuntimeError("db down")),
+        set_setting=AsyncMock(side_effect=RuntimeError("db down")),
+    )
+    tracker = CostTracker(CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=100.0), db=broken_db)
+
+    cost = await tracker.record_cost(tokens=2000)  # load + persist both raise, swallowed
+    assert cost == 2.0
+    assert tracker.get_daily_cost() == 2.0
+
+
 # === ProductionLimitsService tests ===
 
 
