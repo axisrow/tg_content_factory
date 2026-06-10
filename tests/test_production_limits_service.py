@@ -270,6 +270,29 @@ async def test_cost_tracker_db_error_does_not_break_tracking():
     assert tracker.get_daily_cost() == 2.0
 
 
+@pytest.mark.anyio
+async def test_cost_tracker_transient_load_error_is_retried(db):
+    """A transient load failure must not permanently disable persistence (#813 review)."""
+    cfg = CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=100.0)
+
+    # Seed a persisted value via a healthy tracker.
+    seed = CostTracker(cfg, db=db)
+    await seed.record_cost(tokens=4000)  # 4.0
+    persisted = await db.get_setting("production_limits_daily_cost")
+
+    # Restart with a DB whose first get_setting fails transiently, then recovers.
+    flaky = SimpleNamespace(
+        get_setting=AsyncMock(side_effect=[RuntimeError("busy"), persisted]),
+        set_setting=db.set_setting,
+    )
+
+    tracker = CostTracker(cfg, db=flaky)
+    await tracker.check_cost_cap(tokens=0)  # first load raises -> _loaded stays False
+    assert tracker.get_daily_cost() == 0.0
+    await tracker.check_cost_cap(tokens=0)  # retry succeeds -> restores 4.0
+    assert tracker.get_daily_cost() == 4.0
+
+
 # === ProductionLimitsService tests ===
 
 

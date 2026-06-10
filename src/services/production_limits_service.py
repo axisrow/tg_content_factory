@@ -175,12 +175,17 @@ class CostTracker:
         """Restore the persisted daily cost on first use. Must be called under self._lock."""
         if self._db is None or self._loaded:
             return
-        self._loaded = True
         try:
             raw = await self._db.get_setting(_COST_STATE_KEY)
         except Exception:
+            # Leave _loaded False so a transient startup error (e.g. SQLite busy) is retried
+            # on the next call instead of silently disabling persistence for the whole
+            # process — which would let a restart reset the counter past daily_cost_cap.
             logger.warning("CostTracker: failed to load persisted daily cost", exc_info=True)
             return
+        # A successful read (even of malformed/empty state) is authoritative — mark loaded so
+        # we don't re-read every call; retrying only helps when the read itself failed.
+        self._loaded = True
         state = safe_json_loads_dict(raw)
         if not state:
             return
