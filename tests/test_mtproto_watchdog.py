@@ -291,3 +291,78 @@ class TestBackendLoggerProvider:
             "sess", base_logger=base
         )
         assert lease.phone == PHONE_A
+
+    async def test_ephemeral_native_client_gets_no_watchdog_logger(self):
+        """Review P2 (#817): force_native sessions are short-lived and never
+        replace ``clients[phone]`` — giving them the per-phone watchdog logger
+        would misattribute their security warnings to the phone and trigger a
+        reconnect of the healthy *pooled* client."""
+        from unittest.mock import MagicMock
+
+        from src.models import Account
+        from src.telegram.backends import NativeTelethonBackend
+
+        auth = MagicMock()
+        auth.create_client_from_session = AsyncMock(return_value=MagicMock())
+        provider = MagicMock()
+        backend = NativeTelethonBackend(auth, client_logger_provider=provider)
+        account = Account(phone=PHONE_A, session_string="sess", is_active=True)
+
+        await backend.acquire_client(account, ephemeral=True)
+
+        provider.assert_not_called()
+        auth.create_client_from_session.assert_awaited_once_with(
+            "sess", base_logger=None
+        )
+
+    async def test_router_marks_force_native_as_ephemeral(self):
+        from unittest.mock import MagicMock
+
+        from src.models import Account
+        from src.telegram.backends import BackendRouter
+
+        native = MagicMock()
+        native.acquire_client = AsyncMock(return_value=MagicMock())
+        router = BackendRouter(mode="auto", primary=MagicMock(), native=native)
+        account = Account(phone=PHONE_A, session_string="sess", is_active=True)
+
+        await router.acquire_client(account, force_native=True)
+
+        native.acquire_client.assert_awaited_once_with(account, ephemeral=True)
+
+    async def test_router_native_mode_pooled_client_is_supervised(self):
+        from unittest.mock import MagicMock
+
+        from src.models import Account
+        from src.telegram.backends import BackendRouter
+
+        native = MagicMock()
+        native.acquire_client = AsyncMock(return_value=MagicMock())
+        router = BackendRouter(mode="native", primary=MagicMock(), native=native)
+        account = Account(phone=PHONE_A, session_string="sess", is_active=True)
+
+        await router.acquire_client(account)
+
+        native.acquire_client.assert_awaited_once_with(account, ephemeral=False)
+
+
+class TestDisconnectAllUninstall:
+    async def test_disconnect_all_uninstalls_watchdog_handler(self):
+        """Review F1 (#817): pool teardown must detach the watchdog handler
+        from the global ``telethon.tgcf`` logger — a stale handler would keep
+        the dead pool referenced and pile up across pool re-creations."""
+        from unittest.mock import MagicMock
+
+        from src.telegram.client_pool import ClientPool
+
+        pool = ClientPool.__new__(ClientPool)
+        pool.clients = {}
+        pool._in_use = set()
+        pool._active_leases = {}
+        pool._dialogs_fetched = set()
+        watchdog = MagicMock()
+        pool._mtproto_watchdog = watchdog
+
+        await pool.disconnect_all()
+
+        watchdog.uninstall.assert_called_once_with()

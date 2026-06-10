@@ -623,10 +623,16 @@ class NativeTelethonBackend(TelegramBackend):
         # Per-phone Telethon base loggers for the MTProto watchdog (#556).
         self.client_logger_provider = client_logger_provider
 
-    async def acquire_client(self, account: Account) -> BackendClientLease:
+    async def acquire_client(
+        self, account: Account, *, ephemeral: bool = False
+    ) -> BackendClientLease:
+        # Ephemeral (force_native) sessions are short-lived and never replace
+        # the pooled client — giving them the per-phone watchdog logger would
+        # misattribute their security warnings to the phone and reconnect the
+        # healthy pooled client instead (#817 review P2).
         base_logger = (
             self.client_logger_provider(account.phone)
-            if self.client_logger_provider is not None
+            if self.client_logger_provider is not None and not ephemeral
             else None
         )
         client = await self._auth.create_client_from_session(
@@ -726,7 +732,7 @@ class BackendRouter:
         force_native: bool = False,
     ) -> BackendClientLease:
         if force_native or self._mode == "native":
-            return await self._native.acquire_client(account)
+            return await self._native.acquire_client(account, ephemeral=force_native)
 
         if self._mode == "auto":
             try:

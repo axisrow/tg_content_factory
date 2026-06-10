@@ -956,6 +956,12 @@ class ClientPool(ResolveGuardMixin):
         return set(self._premium_flood_wait_until)
 
     async def disconnect_all(self) -> None:
+        # Detach the watchdog handler from the global telethon.tgcf logger so
+        # a torn-down pool is not kept alive by it (#817 review F1); a later
+        # initialize() re-installs it. getattr: doubles built via __new__.
+        watchdog = getattr(self, "_mtproto_watchdog", None)
+        if watchdog is not None:
+            watchdog.uninstall()
         had_clients = bool(self.clients)
         for phone in list(self.clients):
             try:
