@@ -48,11 +48,13 @@ HANDLED_TYPES = [
     for handler_cls in _HANDLER_CLASSES
     for task_type in handler_cls.task_types
 ]
+# FILTER_ANALYZE is intentionally NOT here: with auto_delete_filtered=1 it
+# purges messages after applying filters, so a crash-requeued rerun would
+# re-analyze the already-purged channels (now with empty history) and silently
+# unfilter them (Codex review on #823). Treated as side-effecting instead.
 _DB_BUSY_REQUEUE_TASK_TYPES = (
     CollectionTaskType.STATS_ALL,
     CollectionTaskType.SQ_STATS,
-    # Pure-SQL analysis with idempotent apply — safe to retry after a transient lock.
-    CollectionTaskType.FILTER_ANALYZE,
 )
 _DB_BUSY_REQUEUE_TYPE_VALUES = [task_type.value for task_type in _DB_BUSY_REQUEUE_TASK_TYPES]
 _DB_BUSY_NON_RETRY_TYPE_VALUES = [
