@@ -19,6 +19,8 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
 
     acc_del = acc_sub.add_parser("delete", help="Delete account")
     acc_del.add_argument("id", type=int, help="Account id")
+    acc_del.add_argument("--notify-to", default=None, dest="notify_to",
+                         help="Phone to reassign notifications to if deleting the notification account")
 
     acc_send = acc_sub.add_parser("send-code", help="Send Telegram auth code to phone")
     acc_send.add_argument("--phone", required=True, help="Phone number with country code")

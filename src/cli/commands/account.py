@@ -4,12 +4,14 @@ import argparse
 import asyncio
 import json
 import logging
+import sys
 from datetime import datetime, timezone
 
 from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.tools.accounts import get_live_account_info_text
 from src.cli import runtime
 from src.models import Account
+from src.services.notification_target_service import NotificationTargetService
 from src.settings_utils import parse_int_setting
 from src.telegram.auth import TelegramAuth
 
@@ -205,8 +207,47 @@ def run(args: argparse.Namespace) -> None:
                 else:
                     print(f"Account id={args.id} not found")
             elif args.account_action == "delete":
+                accounts = await db.get_account_summaries(active_only=False)
+                acc = next((a for a in accounts if a.id == args.id), None)
+                if not acc:
+                    print(f"Account id={args.id} not found")
+                    return
+                target_svc = NotificationTargetService(db)
+                replacement = getattr(args, "notify_to", None)
+                configured = await target_svc.get_configured_phone()
+                remaining = [a for a in accounts if a.phone != acc.phone]
+                if (
+                    replacement is None
+                    and configured == acc.phone
+                    and len(remaining) >= 2
+                    and sys.stdin.isatty()
+                ):
+                    print("Этот аккаунт используется для уведомлений. На какой переназначить?")
+                    print("  0. Primary (по умолчанию)")
+                    for idx, other in enumerate(remaining, start=1):
+                        marker = " [primary]" if other.is_primary else ""
+                        print(f"  {idx}. {other.phone}{marker}")
+                    try:
+                        choice = input("Номер аккаунта [0]: ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        choice = ""
+                        print()
+                    if choice.isdigit() and 1 <= int(choice) <= len(remaining):
+                        replacement = remaining[int(choice) - 1].phone
+                try:
+                    reassignment = await target_svc.reassign_for_deleted_account(
+                        acc.phone, replacement, accounts=accounts
+                    )
+                except ValueError as exc:
+                    print(f"ERROR: {exc}")
+                    print("Аккаунт не удалён.")
+                    return
                 await db.delete_account(args.id)
                 print(f"Deleted account id={args.id}")
+                if reassignment.action == "reassigned":
+                    print(f"Уведомления переназначены на {reassignment.new_phone}.")
+                elif reassignment.action == "cleared":
+                    print("Аккаунт уведомлений сброшен — используется Primary. Подсказка: --notify-to PHONE.")
             elif args.account_action == "flood-status":
                 accounts = await db.get_account_summaries(active_only=False)
                 if not accounts:

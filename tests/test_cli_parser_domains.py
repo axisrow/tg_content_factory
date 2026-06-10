@@ -59,6 +59,19 @@ def test_cli_parser_registers_all_top_level_domains() -> None:
             {"command": "collect", "collect_action": "sample", "channel_id": 123, "limit": 5},
         ),
         (
+            ["account", "delete", "7", "--notify-to", "+70001112233"],
+            {
+                "command": "account",
+                "account_action": "delete",
+                "id": 7,
+                "notify_to": "+70001112233",
+            },
+        ),
+        (
+            ["account", "delete", "7"],
+            {"command": "account", "account_action": "delete", "id": 7, "notify_to": None},
+        ),
+        (
             ["channel", "tag", "set", "7", "news,ai"],
             {"command": "channel", "channel_action": "tag", "tag_action": "set", "pk": 7, "tags": "news,ai"},
         ),

@@ -33,14 +33,31 @@ async def delete_account(request: Request, account_id: int):
     if account is None:
         return RedirectResponse(url="/settings?error=invalid_account", status_code=303)
 
+    form = await request.form()
+    notify_to = (str(form.get("notify_to") or "")).strip() or None
+    try:
+        reassignment = await deps.get_notification_target_service(request).reassign_for_deleted_account(
+            account.phone, notify_to, accounts=accounts
+        )
+    except ValueError:
+        return RedirectResponse(url="/settings?error=invalid_notify_account", status_code=303)
+    if reassignment.action != "kept":
+        notifier = deps.get_notifier(request)
+        if notifier:
+            notifier.invalidate_me_cache()
+
     command_id = await deps.telegram_command_service(request).enqueue(
         "accounts.delete",
         payload={"account_id": account_id, "phone": account.phone},
         requested_by="web:accounts.delete",
     )
     await db.delete_account(account_id)
+    msg = {
+        "reassigned": "account_deleted_notify_reassigned",
+        "cleared": "account_deleted_notify_cleared",
+    }.get(reassignment.action, "account_deleted")
     return RedirectResponse(
-        url=f"/settings?msg=account_deleted&command_id={command_id}",
+        url=f"/settings?msg={msg}&command_id={command_id}",
         status_code=303,
     )
 
