@@ -121,9 +121,9 @@ class ClientPool(ResolveGuardMixin):
         self._dialog_refresh_tasks: dict[tuple[str, str], asyncio.Task[list[dict]]] = {}
         self._premium_flood_wait_until: dict[str, datetime] = {}
         self._resolve_rate_limiter = ResolveRateLimiter()
-        self._resolve_username_backoff_until_utc: datetime | None = None
-        self._resolve_ramp_up_until_utc: datetime | None = None
-        self._resolve_ramp_up_last_call_utc: datetime | None = None
+        self._resolve_username_backoff_until_utc: dict[str, datetime] = {}
+        self._resolve_ramp_up_until_utc: dict[str, datetime] = {}
+        self._resolve_ramp_up_last_call_utc: dict[str, datetime] = {}
         self._resolve_ramp_up_min_interval_sec: float = 5.0
 
     def is_dialogs_fetched(self, phone: str) -> bool:
@@ -528,8 +528,12 @@ class ClientPool(ResolveGuardMixin):
 
     async def initialize(self, *, phones: Iterable[str] | None = None) -> None:
         """Load active accounts and validate that their sessions are usable."""
-        await self.restore_resolve_username_backoff(self._db)
         accounts = await load_live_usable_accounts(self._db, active_only=True)
+        # Restore after loading accounts: the legacy single-deadline migration
+        # needs the known phones to apply the old global backoff per-phone.
+        await self.restore_resolve_username_backoff(
+            self._db, phones=[acc.phone for acc in accounts]
+        )
         if phones is not None:
             allowed_phones = {str(phone) for phone in phones if str(phone)}
             accounts = [acc for acc in accounts if acc.phone in allowed_phones]
@@ -583,10 +587,20 @@ class ClientPool(ResolveGuardMixin):
                         pass
                     del self.clients[phone]
 
-    async def get_available_client(self) -> tuple[TelegramTransportSession, str] | None:
-        """Get first available client not in flood wait. Returns (client, phone) or None."""
+    async def get_available_client(
+        self, *, exclude_phones: set[str] | frozenset[str] = frozenset()
+    ) -> tuple[TelegramTransportSession, str] | None:
+        """Get first available client not in flood wait. Returns (client, phone) or None.
+
+        ``exclude_phones`` skips specific accounts — used by the collector to
+        rotate a username resolve away from accounts already in resolve
+        backoff (#790).
+        """
         for _ in range(max(1, len(self.clients))):
-            lease = await self._lease_pool.acquire_available(self._connected_phones())
+            candidates = self._connected_phones() - set(exclude_phones)
+            if not candidates:
+                return None
+            lease = await self._lease_pool.acquire_available(candidates)
             if lease is None:
                 return None
             result = await self._acquire_from_lease(lease)

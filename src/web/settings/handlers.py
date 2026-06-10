@@ -50,6 +50,10 @@ from src.services.telegram_command_dispatcher import (
 )
 from src.settings_utils import parse_float_setting, parse_int_setting
 from src.telegram.flood_wait import is_blocking_flood_wait_until
+from src.telegram.resolve_guard import (
+    RESOLVE_BACKOFF_BY_PHONE_SETTING,
+    parse_resolve_backoff_setting,
+)
 from src.utils.datetime import parse_datetime
 from src.web import deps
 from src.web.settings.forms import (
@@ -494,6 +498,9 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
                 await db.update_account_flood(account.phone, None)
                 account.flood_wait_until = None
     connected_phones = set(pool.clients.keys())
+    resolve_backoffs = parse_resolve_backoff_setting(
+        await db.repos.settings.get_setting(RESOLVE_BACKOFF_BY_PHONE_SETTING), now=now
+    )
     account_status: dict[str, dict[str, object]] = {}
     flooded_connected = []
     for account in accounts:
@@ -569,6 +576,7 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
         "account_status": account_status,
         "account_phones": [acc.phone for acc in accounts],
         "connected_phones": connected_phones,
+        "resolve_backoffs": resolve_backoffs,
         "all_accounts_flooded": all_accounts_flooded,
         "next_available_at": next_available_at,
         "notification_target": notification_target,
