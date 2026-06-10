@@ -427,7 +427,7 @@ def _enforce_cli_transport(
 
     if request.node.get_closest_marker("native_backend_allowed"):
 
-        async def _fake_native_transport(self, session_string: str):
+        async def _fake_native_transport(self, session_string: str, *, base_logger=None):
             if native_auth_spy.queued_clients:
                 client = native_auth_spy.queued_clients.pop(0)
             elif session_string in native_auth_spy.by_session:
@@ -448,7 +448,7 @@ def _enforce_cli_transport(
         monkeypatch.setattr(TelegramAuth, "create_client_from_session", _fake_native_transport)
         return
 
-    async def _forbid_native_transport(self, session_string: str):
+    async def _forbid_native_transport(self, session_string: str, *, base_logger=None):
         raise AssertionError(
             "Native Telethon transport is forbidden in this test. "
             "Use telethon-cli-backed runtime or mark the test with native_backend_allowed."

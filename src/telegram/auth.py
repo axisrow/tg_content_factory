@@ -384,11 +384,22 @@ class TelegramAuth:
         logger.info("auth.sign_in_fresh success phone=%s duration_ms=%d", phone, duration_ms)
         return session_string
 
-    async def create_client_from_session(self, session_string: str) -> TelegramClient:
-        """Create and connect a client from saved session string."""
+    async def create_client_from_session(
+        self,
+        session_string: str,
+        *,
+        base_logger: logging.Logger | None = None,
+    ) -> TelegramClient:
+        """Create and connect a client from saved session string.
+
+        ``base_logger`` routes the client's Telethon loggers under a per-phone
+        name so the MTProto security watchdog can attribute warnings (#556).
+        """
+        extra_kwargs = {"base_logger": base_logger} if base_logger is not None else {}
         client = TelegramClient(
             StringSession(session_string), self._api_id, self._api_hash,
             connection_retries=None, retry_delay=2,
+            **extra_kwargs,
         )
         await client.connect()
         if not await client.is_user_authorized():
