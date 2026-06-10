@@ -8,6 +8,7 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
+from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._formatters import format_notification_status
 from src.agent.tools._registry import _text_response, arg_str, require_confirmation, require_pool
 
@@ -21,6 +22,23 @@ async def _describe_target(target_service):
         return await status
     return None
 
+
+
+
+# Permission metadata for this module's tools (#245). Single source of
+# truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
+# PHONE_BINDED_TOOLS from these declarations; invariants in
+# tests/test_tool_permissions_autoderive.py keep them in sync with the
+# @tool() definitions.
+TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
+    ("Уведомления", {
+        "get_notification_status": ToolMeta(ToolCategory.READ),
+        "setup_notification_bot": ToolMeta(ToolCategory.WRITE),
+        "delete_notification_bot": ToolMeta(ToolCategory.DELETE),
+        "test_notification": ToolMeta(ToolCategory.WRITE),
+        "notification_dry_run": ToolMeta(ToolCategory.READ),
+    }),
+]
 
 def register(db, client_pool, embedding_service, **kwargs):
     tools = []

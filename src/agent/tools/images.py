@@ -8,6 +8,7 @@ from typing import Annotated
 
 from claude_agent_sdk import tool
 
+from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._registry import _text_response
 from src.web.paths import DATA_IMAGE_DIR
 
@@ -88,6 +89,22 @@ async def resolve_default_image_model(requested_model, db, image_service) -> str
 
     return _default_model_for_adapters(image_service.adapter_names)
 
+
+
+
+# Permission metadata for this module's tools (#245). Single source of
+# truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
+# PHONE_BINDED_TOOLS from these declarations; invariants in
+# tests/test_tool_permissions_autoderive.py keep them in sync with the
+# @tool() definitions.
+TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
+    ("Изображения", {
+        "list_image_models": ToolMeta(ToolCategory.READ),
+        "list_image_providers": ToolMeta(ToolCategory.READ),
+        "generate_image": ToolMeta(ToolCategory.WRITE),
+        "list_generated_images": ToolMeta(ToolCategory.READ),
+    }),
+]
 
 def register(db, client_pool, embedding_service, **kwargs):
     from src.agent.tools._pipeline_runtime import build_image_service

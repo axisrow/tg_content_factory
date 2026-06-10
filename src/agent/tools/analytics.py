@@ -6,6 +6,7 @@ from typing import Annotated
 
 from claude_agent_sdk import tool
 
+from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._registry import _text_response
 
 _MAX_TREND_DAYS = 365
@@ -23,6 +24,31 @@ def _daily_stat_value(row: object, attr: str, legacy_key: str | None = None, def
 def _clamp_positive(value: int, upper: int) -> int:
     return max(1, min(value, upper))
 
+
+
+
+# Permission metadata for this module's tools (#245). Single source of
+# truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
+# PHONE_BINDED_TOOLS from these declarations; invariants in
+# tests/test_tool_permissions_autoderive.py keep them in sync with the
+# @tool() definitions.
+TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
+    ("Аналитика", {
+        "get_analytics_summary": ToolMeta(ToolCategory.READ),
+        "get_pipeline_stats": ToolMeta(ToolCategory.READ),
+        "get_daily_stats": ToolMeta(ToolCategory.READ),
+        "get_trending_topics": ToolMeta(ToolCategory.READ),
+        "get_trending_channels": ToolMeta(ToolCategory.READ),
+        "get_message_velocity": ToolMeta(ToolCategory.READ),
+        "get_peak_hours": ToolMeta(ToolCategory.READ),
+        "get_calendar": ToolMeta(ToolCategory.READ),
+        "get_top_messages": ToolMeta(ToolCategory.READ),
+        "get_content_type_stats": ToolMeta(ToolCategory.READ),
+        "get_hourly_activity": ToolMeta(ToolCategory.READ),
+        "get_trending_emojis": ToolMeta(ToolCategory.READ),
+        "get_channel_analytics": ToolMeta(ToolCategory.READ),
+    }),
+]
 
 def register(db, client_pool, embedding_service, **kwargs):
     tools = []
