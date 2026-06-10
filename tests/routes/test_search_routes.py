@@ -733,3 +733,29 @@ async def test_read_messages_json_includes_has_more(route_client):
     data_all = resp_all.json()
     assert data_all["has_more"] is False
     assert data_all["total"] == 3
+
+
+@pytest.mark.anyio
+async def test_search_page_next_link_for_exact_total_modes(route_client, monkeypatch):
+    """Semantic/hybrid modes return an exact total without has_more — «Далее»
+    must still appear when total exceeds the current page (review on #824)."""
+    msg = Message(
+        id=1,
+        channel_id=100,
+        message_id=1,
+        text="hit",
+        date=datetime(2024, 6, 1, tzinfo=timezone.utc),
+    )
+    mock_result = SearchResult(messages=[msg], total=120, has_more=False, query="test")
+    mock_svc = MagicMock()
+    mock_svc.search = AsyncMock(return_value=mock_result)
+    mock_svc.check_quota = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.web.search.handlers.deps.search_service",
+        lambda r: mock_svc,
+    )
+
+    resp = await route_client.get("/search?q=test&mode=semantic")
+
+    assert resp.status_code == 200
+    assert "Далее" in resp.text

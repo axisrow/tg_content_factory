@@ -186,6 +186,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             total=result.total,
             empty_prefix="Ничего не найдено по запросу",
             found_prefix="Найдено",
+            has_more=getattr(result, "has_more", False),
         )
 
     # ------------------------------------------------------------------

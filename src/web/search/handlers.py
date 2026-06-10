@@ -272,8 +272,10 @@ async def render_search_page(
         search_quota = None
 
     # Page-based navigation without an exact total (#766): «Далее» is shown when
-    # the LIMIT N+1 probe saw another page, «Назад» — when we're past page 1.
-    has_more = bool(result and getattr(result, "has_more", False))
+    # the LIMIT N+1 probe saw another page. Semantic/hybrid/telegram modes still
+    # return an exact total without setting has_more — derive it from the total
+    # there so their deeper pages stay reachable (review on #824).
+    has_more = bool(result and (result.has_more or result.total > page * limit))
 
     # Browse mode: viewing channel messages without search query
     browse_mode = bool(not q and channel_id_int and mode in {"local", "semantic", "hybrid"})
