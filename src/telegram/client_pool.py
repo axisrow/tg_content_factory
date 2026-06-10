@@ -43,10 +43,12 @@ from src.telegram.flood_wait import (
     is_transient_flood_wait_seconds,
     run_with_flood_wait,
 )
+from src.telegram.mtproto_watchdog import MTProtoSecurityWatchdog
 from src.telegram.rate_limiter import ResolveRateLimiter
 from src.telegram.resolve_guard import ResolveGuardMixin
 from src.telegram.session_materializer import SessionMaterializer
 from src.telegram.utils import normalize_utc
+from src.utils.safe_logging import mask_phone
 
 logger = logging.getLogger(__name__)
 REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC = 5.0
@@ -100,11 +102,18 @@ class ClientPool(ResolveGuardMixin):
         self._session_overrides: dict[str, str] = {}
         self._active_leases: dict[str, list[BackendClientLease]] = defaultdict(list)
         self._materializer = SessionMaterializer(self._runtime_config.session_cache_dir)
-        self._native_backend = NativeTelethonBackend(auth)
+        # MTProto security watchdog (#556): per-phone Telethon loggers let it
+        # attribute "Security error while unpacking" warnings and force a
+        # reconnect of the silently-bricked client.
+        self._mtproto_watchdog = MTProtoSecurityWatchdog(self._on_mtproto_security_brick)
+        self._native_backend = NativeTelethonBackend(
+            auth, client_logger_provider=self._mtproto_watchdog.register_phone
+        )
         self._primary_backend = TelethonCliBackend(
             auth,
             self._materializer,
             transport=self._runtime_config.cli_transport,
+            client_logger_provider=self._mtproto_watchdog.register_phone,
         )
         self._backend_router = BackendRouter(
             mode=self._runtime_config.backend_mode,
@@ -528,6 +537,9 @@ class ClientPool(ResolveGuardMixin):
 
     async def initialize(self, *, phones: Iterable[str] | None = None) -> None:
         """Load active accounts and validate that their sessions are usable."""
+        watchdog = getattr(self, "_mtproto_watchdog", None)
+        if watchdog is not None:
+            watchdog.install(asyncio.get_running_loop())
         accounts = await load_live_usable_accounts(self._db, active_only=True)
         # Restore after loading accounts: the legacy single-deadline migration
         # needs the known phones to apply the old global backoff per-phone.
@@ -853,7 +865,55 @@ class ClientPool(ResolveGuardMixin):
             logger.exception("Failed to reconnect client for %s", phone)
             return False
 
+    async def force_reconnect_phone(self, phone: str) -> bool:
+        """Disconnect and reconnect a client even when it looks connected.
+
+        Needed for the MTProto security brick (#556): the transport stays
+        formally connected while every incoming message is dropped, so
+        :meth:`reconnect_phone`'s ``is_connected()`` guard never fires.
+        """
+        session = self.clients.get(phone)
+        if session is None:
+            return False
+        try:
+            client = session.raw_client
+            try:
+                await asyncio.wait_for(
+                    client.disconnect(), timeout=REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC
+                )
+            except asyncio.TimeoutError:
+                logger.warning("Timeout disconnecting %s during force reconnect", mask_phone(phone))
+            await client.connect()
+            if not await client.is_user_authorized():
+                logger.error("Force reconnect of %s: session no longer authorized", mask_phone(phone))
+                return False
+            return bool(client.is_connected())
+        except Exception:
+            logger.exception("Force reconnect failed for %s", mask_phone(phone))
+            return False
+
+    async def _on_mtproto_security_brick(self, phone: str) -> None:
+        """Watchdog callback: the client is dropping every incoming message."""
+        logger.warning(
+            "MTProto security errors detected on %s — forcing reconnect",
+            mask_phone(phone),
+        )
+        ok = await self.force_reconnect_phone(phone)
+        logger.warning(
+            "MTProto watchdog reconnect of %s %s",
+            mask_phone(phone),
+            "succeeded" if ok else "FAILED",
+        )
+
+    def get_mtproto_watchdog_stats(self) -> dict[str, int]:
+        """Reconnects the watchdog has triggered, keyed by phone."""
+        return self._mtproto_watchdog.get_stats()
+
     async def remove_client(self, phone: str) -> None:
+        # getattr: test doubles build the pool via __new__ without __init__.
+        watchdog = getattr(self, "_mtproto_watchdog", None)
+        if watchdog is not None:
+            watchdog.unregister_phone(phone)
         self._session_overrides.pop(phone, None)
         async with self._lock:
             leases = list(self._active_leases.pop(phone, []))
@@ -896,6 +956,12 @@ class ClientPool(ResolveGuardMixin):
         return set(self._premium_flood_wait_until)
 
     async def disconnect_all(self) -> None:
+        # Detach the watchdog handler from the global telethon.tgcf logger so
+        # a torn-down pool is not kept alive by it (#817 review F1); a later
+        # initialize() re-installs it. getattr: doubles built via __new__.
+        watchdog = getattr(self, "_mtproto_watchdog", None)
+        if watchdog is not None:
+            watchdog.uninstall()
         had_clients = bool(self.clients)
         for phone in list(self.clients):
             try:

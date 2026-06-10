@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any
@@ -16,6 +16,7 @@ from telethon_cli.errors import CLIError
 from src.models import Account
 from src.telegram.auth import TelegramAuth
 from src.telegram.flood_wait import HandledFloodWaitError, handle_flood_wait
+from src.telegram.mtproto_watchdog import bind_telethon_base_logger
 from src.telegram.reactions import normalize_outgoing_reaction_emoji
 from src.telegram.session_materializer import SessionMaterializer
 
@@ -613,11 +614,30 @@ class TelegramBackend(ABC):
 class NativeTelethonBackend(TelegramBackend):
     name = "native"
 
-    def __init__(self, auth: TelegramAuth):
+    def __init__(
+        self,
+        auth: TelegramAuth,
+        client_logger_provider: Callable[[str], logging.Logger] | None = None,
+    ):
         self._auth = auth
+        # Per-phone Telethon base loggers for the MTProto watchdog (#556).
+        self.client_logger_provider = client_logger_provider
 
-    async def acquire_client(self, account: Account) -> BackendClientLease:
-        client = await self._auth.create_client_from_session(account.session_string)
+    async def acquire_client(
+        self, account: Account, *, ephemeral: bool = False
+    ) -> BackendClientLease:
+        # Ephemeral (force_native) sessions are short-lived and never replace
+        # the pooled client — giving them the per-phone watchdog logger would
+        # misattribute their security warnings to the phone and reconnect the
+        # healthy pooled client instead (#817 review P2).
+        base_logger = (
+            self.client_logger_provider(account.phone)
+            if self.client_logger_provider is not None and not ephemeral
+            else None
+        )
+        client = await self._auth.create_client_from_session(
+            account.session_string, base_logger=base_logger
+        )
         # Surface every FloodWaitError so run_with_flood_wait can call
         # pool.report_flood and rotate accounts (#495). Telethon's default
         # silently sleeps on waits ≤ threshold and hides the flood from us.
@@ -637,10 +657,13 @@ class TelethonCliBackend(TelegramBackend):
         auth: TelegramAuth,
         materializer: SessionMaterializer,
         transport: str = "hybrid",
+        client_logger_provider: Callable[[str], logging.Logger] | None = None,
     ):
         self._auth = auth
         self._materializer = materializer
         self._transport = transport
+        # Per-phone Telethon base loggers for the MTProto watchdog (#556).
+        self.client_logger_provider = client_logger_provider
 
     async def acquire_client(self, account: Account) -> BackendClientLease:
         if self._transport == "subprocess":
@@ -663,6 +686,13 @@ class TelethonCliBackend(TelegramBackend):
             client._connection_retries = None
             client._retry_delay = 2
             client.flood_sleep_threshold = 0
+            if self.client_logger_provider is not None:
+                # create_client() does not expose Telethon's base_logger=, and
+                # MTProtoSender captures its logger in __init__ — rebind both
+                # BEFORE connect() so the watchdog sees this client (#556).
+                bind_telethon_base_logger(
+                    client, self.client_logger_provider(account.phone)
+                )
             await client.connect()
             if not await client.is_user_authorized():
                 await _disconnect_client_safely(client, phone=account.phone)
@@ -702,7 +732,7 @@ class BackendRouter:
         force_native: bool = False,
     ) -> BackendClientLease:
         if force_native or self._mode == "native":
-            return await self._native.acquire_client(account)
+            return await self._native.acquire_client(account, ephemeral=force_native)
 
         if self._mode == "auto":
             try:
