@@ -80,7 +80,9 @@ class CreateWizardForm(_FrozenForm):
     account_phone: str = ""
 
 
-class PipelineCreateForm(_FrozenForm):
+class _PipelineFormBase(_FrozenForm):
+    """Fields shared by the pipeline create and edit forms."""
+
     name: str = ""
     prompt_template: str = ""
     source_channel_ids: list[int] = Field(default_factory=list)
@@ -93,7 +95,11 @@ class PipelineCreateForm(_FrozenForm):
     is_active: bool = False
 
 
-class PipelineEditForm(PipelineCreateForm):
+class PipelineCreateForm(_PipelineFormBase):
+    pass
+
+
+class PipelineEditForm(_PipelineFormBase):
     react_emoji: str = ""
     filter_present: str = ""
     filter_message_kinds: list[str] = Field(default_factory=list)
