@@ -9,10 +9,36 @@ from src.database.bundles import ChannelBundle
 from src.services.collection_service import CollectionService
 from src.services.task_enqueuer import TaskEnqueuer
 from src.telegram.collector import (
+    AllCollectionClientsFloodedError,
     Collector,
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
+
+
+def print_resolve_backoff_warning(pool) -> None:
+    """Print active per-account resolve_username backoffs, if any (#790)."""
+    get_remaining = getattr(pool, "get_resolve_username_backoff_remaining_sec", None)
+    if not callable(get_remaining):
+        return
+    active: dict[str, int] = {}
+    for phone in getattr(pool, "clients", {}) or {}:
+        try:
+            remaining = int(get_remaining(phone))
+        except TypeError:
+            return
+        except ValueError:
+            continue
+        if remaining > 0:
+            active[str(phone)] = remaining
+    if not active:
+        return
+    parts = ", ".join(f"{phone} ({sec}s left)" for phone, sec in sorted(active.items()))
+    print(
+        f"Warning: resolve_username Flood Wait active on: {parts}. "
+        "Username channels are rotated to free accounts; if every account is "
+        "blocked they are deferred."
+    )
 
 
 def run(args: argparse.Namespace) -> None:
@@ -57,6 +83,13 @@ def run(args: argparse.Namespace) -> None:
                         f"on {exc.phone}; deferred until {retry_at}."
                     )
                     return
+                except AllCollectionClientsFloodedError as exc:
+                    retry_at = exc.next_available_at.astimezone().isoformat()
+                    print(
+                        f"All accounts are flood-waited until {retry_at} "
+                        f"(retry in {exc.retry_after_sec}s); try again later."
+                    )
+                    return
                 print(f"Collected {count} messages from channel {args.channel_id}")
             else:
                 channel_bundle = ChannelBundle.from_database(db)
@@ -73,6 +106,7 @@ def run(args: argparse.Namespace) -> None:
                     f"total {result.total_candidates}). "
                     f"Run 'serve' to execute tasks."
                 )
+                print_resolve_backoff_warning(pool)
         finally:
             await pool.disconnect_all()
             await db.close()

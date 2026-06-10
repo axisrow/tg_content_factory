@@ -18,6 +18,17 @@ def _pending_key(phone: str) -> str:
     return f"auth_pending:{phone}"
 
 
+async def _load_resolve_backoffs(db, *, now: datetime) -> dict[str, datetime]:
+    """Read active per-phone resolve_username backoff deadlines from settings (#790)."""
+    from src.telegram.resolve_guard import (
+        RESOLVE_BACKOFF_BY_PHONE_SETTING,
+        parse_resolve_backoff_setting,
+    )
+
+    raw = await db.get_setting(RESOLVE_BACKOFF_BY_PHONE_SETTING)
+    return parse_resolve_backoff_setting(raw, now=now)
+
+
 async def _resolve_credentials(args: argparse.Namespace, config, db) -> tuple[int, str]:
     api_id = getattr(args, "api_id", None) or config.telegram.api_id
     api_hash = getattr(args, "api_hash", None) or config.telegram.api_hash
@@ -202,9 +213,10 @@ def run(args: argparse.Namespace) -> None:
                     print("No accounts found.")
                     return
                 now = datetime.now(timezone.utc)
-                fmt = "{:<16} {:<28} {:<14}"
-                print(fmt.format("Phone", "Flood wait until", "Remaining"))
-                print("-" * 60)
+                resolve_backoffs = await _load_resolve_backoffs(db, now=now)
+                fmt = "{:<16} {:<28} {:<14} {:<18}"
+                print(fmt.format("Phone", "Flood wait until", "Remaining", "Resolve backoff"))
+                print("-" * 78)
                 for acc in accounts:
                     if acc.flood_wait_until is None:
                         until_str = "OK"
@@ -220,7 +232,12 @@ def run(args: argparse.Namespace) -> None:
                         else:
                             until_str = "OK (expired)"
                             remaining_str = ""
-                    print(fmt.format(acc.phone, until_str, remaining_str))
+                    resolve_until = resolve_backoffs.get(acc.phone)
+                    if resolve_until is None:
+                        resolve_str = ""
+                    else:
+                        resolve_str = f"{int((resolve_until - now).total_seconds())}s"
+                    print(fmt.format(acc.phone, until_str, remaining_str, resolve_str))
             elif args.account_action == "flood-clear":
                 accounts = await db.get_account_summaries(active_only=False)
                 acc = next((a for a in accounts if a.phone == args.phone), None)

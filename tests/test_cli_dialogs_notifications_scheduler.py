@@ -785,6 +785,43 @@ class TestSchedulerCommandRW:
         assert _sched_read_setting(db_path, "collection_queue_paused") == "0"
         assert "Collection queue resumed" in capsys.readouterr().out
 
+    def test_db_only_actions_do_not_init_pool(self, tmp_path, cli_init_patch, capsys):
+        """DB-only scheduler subcommands must not connect the Telegram pool.
+
+        Each `scheduler task-cancel` used to spin up a full ClientPool (every
+        account connecting to Telegram) just to flip one DB row — which made
+        per-task cleanup in the live heavy suite take 30s+ per call and blow
+        the test timeout, and needlessly hammered Telegram with connects.
+        """
+
+        async def _explode(config, db):
+            raise AssertionError(
+                "init_pool must not be called for DB-only scheduler actions"
+            )
+
+        db_path = str(tmp_path / "sched_no_pool.db")
+        seed = Database(db_path)
+        asyncio.run(seed.initialize())
+        try:
+            task_id = _sched_seed_collection_task(seed, channel_id=222_020)
+        finally:
+            asyncio.run(seed.close())
+
+        with patch("src.cli.runtime.init_pool", side_effect=_explode):
+            for ns in (
+                _ns(scheduler_action="task-cancel", task_id=task_id),
+                _ns(scheduler_action="clear-pending"),
+                _ns(scheduler_action="status"),
+                _ns(scheduler_action="stop"),
+                _ns(scheduler_action="job-toggle", job_id="collect_all"),
+                _ns(scheduler_action="set-interval", job_id="collect_all", minutes=30),
+                _ns(scheduler_action="queue-pause"),
+                _ns(scheduler_action="queue-resume"),
+            ):
+                _sched_run_with_db(db_path, cli_init_patch, ns)
+
+        assert _sched_read_task_status(db_path, task_id) == "cancelled"
+
 
 # ---------------------------------------------------------------------------
 # serve command
@@ -1000,6 +1037,62 @@ class TestCollectCommand:
         out = capsys.readouterr().out
         assert "resolve_username rate-limited" in out
         assert "Collected" not in out
+
+    def test_collect_single_channel_all_clients_flooded(self, cli_env_with_pool, capsys):
+        """A pool-wide collection FloodWait must print a CLI message with the
+        retry deadline, not dump a traceback."""
+        from datetime import datetime, timedelta, timezone
+
+        from src.telegram.collector import AllCollectionClientsFloodedError, Collector
+
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+70001112233": AsyncMock()}
+        _add_channel(cli_env, channel_id=102, title="Flooded Channel")
+
+        next_at = datetime.now(timezone.utc) + timedelta(seconds=120)
+        exc = AllCollectionClientsFloodedError(120, next_at)
+        with patch.object(Collector, "collect_single_channel", new_callable=AsyncMock, side_effect=exc):
+            from src.cli.commands.collect import run
+
+            run(_ns(channel_id=102, full=False))
+
+        out = capsys.readouterr().out
+        assert "flood-waited until" in out
+        assert "120s" in out
+        assert "Collected" not in out
+
+    def test_collect_enqueue_warns_about_active_resolve_backoff(
+        self, cli_env_with_pool, capsys
+    ):
+        """#790: bare `collect` must surface active per-account resolve
+        backoffs instead of silently enqueueing as if nothing is wrong."""
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+7001": AsyncMock(), "+7002": AsyncMock()}
+        fake_pool.get_resolve_username_backoff_remaining_sec = MagicMock(
+            side_effect=lambda phone=None: 600 if phone == "+7001" else 0
+        )
+
+        from src.cli.commands.collect import run
+
+        run(_ns(channel_id=None, full=False))
+
+        out = capsys.readouterr().out
+        assert "enqueued" in out.lower()
+        assert "resolve_username Flood Wait active" in out
+        assert "+7001" in out
+        assert "+7002" not in out.split("Flood Wait active")[-1]
+
+    def test_collect_enqueue_no_backoff_no_warning(self, cli_env_with_pool, capsys):
+        cli_env, fake_pool = cli_env_with_pool
+        fake_pool.clients = {"+7001": AsyncMock()}
+
+        from src.cli.commands.collect import run
+
+        run(_ns(channel_id=None, full=False))
+
+        out = capsys.readouterr().out
+        assert "enqueued" in out.lower()
+        assert "Flood Wait active" not in out
 
 
 def _add_channel(db: Database, channel_id: int = 100, title: str = "TestCh") -> int:

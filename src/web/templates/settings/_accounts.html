@@ -42,6 +42,9 @@
                 {% if acc.flood_wait_until and account_status[acc.phone].state == 'flood' %}
                 {{ acc.flood_wait_until|local_dt("time") }}
                 <br><small class="text-muted">ещё {{ account_status[acc.phone].remaining_minutes }} мин</small>
+                {% elif resolve_backoffs and resolve_backoffs.get(acc.phone) %}
+                <span class="badge text-bg-warning" title="Live-резолв username приостановлен на этом аккаунте">Resolve</span>
+                <small class="text-muted">до {{ resolve_backoffs[acc.phone]|local_dt("time") }}</small>
                 {% else %}
                 <span class="text-muted">—</span>
                 {% endif %}
@@ -93,6 +96,7 @@
                 {% if account_status[acc.phone].state == 'available' %}&middot; Доступен{% endif %}
                 {% if account_status[acc.phone].state == 'disconnected' %}&middot; Не подключён{% endif %}
                 {% if account_status[acc.phone].state == 'flood' %}&middot; Flood до {{ acc.flood_wait_until|local_dt("time") }} ({{ account_status[acc.phone].remaining_minutes }} мин){% endif %}
+                {% if resolve_backoffs and resolve_backoffs.get(acc.phone) %}&middot; Resolve-backoff до {{ resolve_backoffs[acc.phone]|local_dt("time") }}{% endif %}
                 {% if account_status[acc.phone].state == 'session_unavailable' %}&middot; {{ session_status_label(acc.session_status) }}{% endif %}
                 {% if acc.created_at %}&middot; {{ acc.created_at|local_dt("date") }}{% endif %}
             </small>

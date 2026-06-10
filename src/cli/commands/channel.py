@@ -20,6 +20,7 @@ from src.services.channel_service import ChannelService
 from src.telegram.backends import adapt_transport_session
 from src.telegram.collector import (
     RESOLVE_USERNAME_BACKOFF_BUFFER_SEC,
+    AllCollectionClientsFloodedError,
     Collector,
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
@@ -518,6 +519,18 @@ def run(args: argparse.Namespace) -> None:
                     print(
                         "Collection deferred: resolve_username rate-limited "
                         f"on {exc.phone} until {run_after.astimezone().isoformat()}"
+                    )
+                except AllCollectionClientsFloodedError as exc:
+                    run_after = exc.next_available_at
+                    note = (
+                        "Отложено: все аккаунты в Flood Wait до "
+                        f"{run_after.astimezone().isoformat()}"
+                    )
+                    await db.reschedule_collection_task(task_id, run_after=run_after, note=note)
+                    print(
+                        "Collection deferred: all accounts flood-waited until "
+                        f"{run_after.astimezone().isoformat()} "
+                        f"(retry in {exc.retry_after_sec}s)"
                     )
                 except Exception as exc:
                     await db.update_collection_task(

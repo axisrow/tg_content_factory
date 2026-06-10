@@ -92,6 +92,17 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
     elif callable(getattr(type(container.pool), "is_warming", None)):
         is_warming_method = getattr(container.pool, "is_warming")
     is_warming = bool(is_warming_method()) if callable(is_warming_method) else False
+    # Per-phone live-resolve backoff deadlines (#790) — surfaced for web parity.
+    resolve_backoffs: dict[str, str] = {}
+    get_backoff_until = getattr(container.pool, "get_resolve_username_backoff_until", None)
+    if callable(get_backoff_until):
+        for phone in connected_phones:
+            try:
+                until = get_backoff_until(phone)
+            except TypeError:
+                break
+            if isinstance(until, datetime):
+                resolve_backoffs[phone] = until.isoformat()
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="worker_heartbeat",
@@ -106,6 +117,7 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
                 "connected_count": len(connected_phones),
                 "available_phones": sorted(available_phones),
                 "flood_waits": flood_waits,
+                "resolve_backoffs": resolve_backoffs,
                 "is_warming": is_warming,
                 "timestamp": now.isoformat(),
             },

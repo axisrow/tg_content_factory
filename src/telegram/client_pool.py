@@ -121,9 +121,9 @@ class ClientPool(ResolveGuardMixin):
         self._dialog_refresh_tasks: dict[tuple[str, str], asyncio.Task[list[dict]]] = {}
         self._premium_flood_wait_until: dict[str, datetime] = {}
         self._resolve_rate_limiter = ResolveRateLimiter()
-        self._resolve_username_backoff_until_utc: datetime | None = None
-        self._resolve_ramp_up_until_utc: datetime | None = None
-        self._resolve_ramp_up_last_call_utc: datetime | None = None
+        self._resolve_username_backoff_until_utc: dict[str, datetime] = {}
+        self._resolve_ramp_up_until_utc: dict[str, datetime] = {}
+        self._resolve_ramp_up_last_call_utc: dict[str, datetime] = {}
         self._resolve_ramp_up_min_interval_sec: float = 5.0
 
     def is_dialogs_fetched(self, phone: str) -> bool:
@@ -528,8 +528,12 @@ class ClientPool(ResolveGuardMixin):
 
     async def initialize(self, *, phones: Iterable[str] | None = None) -> None:
         """Load active accounts and validate that their sessions are usable."""
-        await self.restore_resolve_username_backoff(self._db)
         accounts = await load_live_usable_accounts(self._db, active_only=True)
+        # Restore after loading accounts: the legacy single-deadline migration
+        # needs the known phones to apply the old global backoff per-phone.
+        await self.restore_resolve_username_backoff(
+            self._db, phones=[acc.phone for acc in accounts]
+        )
         if phones is not None:
             allowed_phones = {str(phone) for phone in phones if str(phone)}
             accounts = [acc for acc in accounts if acc.phone in allowed_phones]
@@ -583,16 +587,88 @@ class ClientPool(ResolveGuardMixin):
                         pass
                     del self.clients[phone]
 
-    async def get_available_client(self) -> tuple[TelegramTransportSession, str] | None:
-        """Get first available client not in flood wait. Returns (client, phone) or None."""
+    async def get_available_client(
+        self, *, exclude_phones: set[str] | frozenset[str] = frozenset()
+    ) -> tuple[TelegramTransportSession, str] | None:
+        """Get first available client not in flood wait. Returns (client, phone) or None.
+
+        ``exclude_phones`` skips specific accounts — used by the collector to
+        rotate a username resolve away from accounts already in resolve
+        backoff (#790).
+        """
         for _ in range(max(1, len(self.clients))):
-            lease = await self._lease_pool.acquire_available(self._connected_phones())
+            candidates = self._connected_phones() - set(exclude_phones)
+            if not candidates:
+                return None
+            lease = await self._lease_pool.acquire_available(candidates)
             if lease is None:
                 return None
             result = await self._acquire_from_lease(lease)
             if result is not None:
                 return result
         return None
+
+    async def has_rotatable_resolve_phone(
+        self, exclude: set[str] | frozenset[str] = frozenset()
+    ) -> bool:
+        """True if some connected account outside ``exclude`` can run a live
+        username resolve right now (#790).
+
+        Stricter than the sync :meth:`has_resolve_capable_phone`, which only
+        knows the resolve-backoff map: this also rejects accounts in a *generic*
+        flood wait (``accounts.flood_wait_until``, known only to the DB) and
+        accounts already leased out. The collector uses it to decide whether
+        rotating a channel to another account can actually succeed — avoiding a
+        rotate-into-dead-end that would otherwise abort the whole run.
+        """
+        excluded = {str(p) for p in exclude}
+        # First narrow to phones that are not in resolve backoff (sync), then
+        # let the lease pool reject generic-flooded / in-use ones (async).
+        candidates = {
+            phone
+            for phone in self._connected_phones() - excluded
+            if self.get_resolve_username_backoff_remaining_sec(phone) == 0
+        }
+        if not candidates:
+            return False
+        return await self._lease_pool.available_exclusive_count(candidates) > 0
+
+    async def next_resolve_capable_at(self) -> datetime | None:
+        """Earliest UTC moment any connected account can run a live username
+        resolve again (#790).
+
+        Per phone the readiness is ``max(resolve backoff, generic
+        accounts.flood_wait_until)``; the result is the minimum across
+        connected phones. Returns ``None`` when some account is capable right
+        now (even if transiently leased) or when nothing is connected — the
+        caller then falls back to its own deadline.
+        """
+        connected = self._connected_phones()
+        if not connected:
+            return None
+        now = datetime.now(timezone.utc)
+        accounts = await load_live_usable_accounts(self._db, active_only=True)
+        generic: dict[str, datetime] = {}
+        for account in accounts:
+            until = normalize_utc(getattr(account, "flood_wait_until", None))
+            if until is not None:
+                generic[account.phone] = until
+        earliest: datetime | None = None
+        for phone in connected:
+            deadlines = [
+                until
+                for until in (
+                    self.get_resolve_username_backoff_until(phone),
+                    generic.get(phone),
+                )
+                if until is not None and until > now
+            ]
+            if not deadlines:
+                return None
+            ready = max(deadlines)
+            if earliest is None or ready < earliest:
+                earliest = ready
+        return earliest
 
     async def available_stats_client_count(self) -> int:
         return await self._lease_pool.available_exclusive_count(self._connected_phones())

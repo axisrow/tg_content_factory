@@ -141,21 +141,49 @@ class Collector:
         self._stats_all_lock = asyncio.Lock()
         self._last_unavailability_log: tuple[str, str | int | None, datetime | None] | None = None
 
-    def _get_resolve_username_backoff_remaining_sec(self) -> int:
-        # The pool owns the single source of truth for the resolve backoff (#785).
-        return self._pool.get_resolve_username_backoff_remaining_sec()
+    def _get_resolve_username_backoff_remaining_sec(self, phone: str | None = None) -> int:
+        # The pool owns the single source of truth for the resolve backoff
+        # (#785). With ``phone`` — that account's window; without — the
+        # pool-wide aggregate (0 while any connected account is free, #790).
+        return self._pool.get_resolve_username_backoff_remaining_sec(phone)
 
-    def _raise_resolve_username_deferred(self) -> None:
-        remaining = self._get_resolve_username_backoff_remaining_sec()
-        if remaining <= 0:
-            return
-        next_available_at = self._pool.get_resolve_username_backoff_until() or (
-            datetime.now(timezone.utc) + timedelta(seconds=remaining)
-        )
-        raise UsernameResolveFloodWaitDeferredError(
-            wait_seconds=remaining,
-            next_available_at=next_available_at,
-        )
+    async def _can_rotate_resolve(self, attempted_phones: set[str]) -> bool:
+        """True if another connected account outside ``attempted_phones`` can
+        run a live username resolve right now (#790).
+
+        Prefers the async ``has_rotatable_resolve_phone`` which also rejects
+        accounts in a *generic* flood wait (only the DB knows that, so the
+        check has to be async). Falls back to the sync resolve-backoff-only
+        ``has_resolve_capable_phone`` for test doubles that lack the async
+        method.
+        """
+        has_rotatable = getattr(self._pool, "has_rotatable_resolve_phone", None)
+        if callable(has_rotatable):
+            result = has_rotatable(exclude=attempted_phones)
+            if isawaitable(result):
+                result = await result
+            return bool(result)
+        has_capable = getattr(self._pool, "has_resolve_capable_phone", None)
+        if not callable(has_capable):
+            return False
+        return bool(has_capable(exclude=attempted_phones))
+
+    async def _next_resolve_capable_at(self) -> datetime | None:
+        """Earliest moment any connected account can live-resolve again (#790).
+
+        Prefers the async pool method, which also accounts for *generic*
+        flood waits — in the mixed state (this phone resolve-blocked for
+        hours, another phone generically flooded for minutes) the channel
+        must retry when the generic flood clears. Falls back to the
+        resolve-backoff-only aggregate for doubles lacking the async method.
+        """
+        getter = getattr(self._pool, "next_resolve_capable_at", None)
+        if callable(getter):
+            result = getter()
+            if isawaitable(result):
+                result = await result
+            return result
+        return self._pool.get_resolve_username_backoff_until()
 
     async def get_collection_availability(self):
         availability_fn = getattr(self._pool, "get_stats_availability", None)
@@ -493,10 +521,11 @@ class Collector:
             return cached
 
         if cache_only:
-            # Global resolve backoff (#552): the cache missed and we must not hit
-            # the live API on any account. Defer this channel for the run.
+            # Resolve backoff on this account (#552/#790): the cache missed and
+            # we must not hit the live API on this phone. The caller decides
+            # whether to rotate to another account or defer the channel.
             raise UsernameResolveRateLimitedError(
-                phone, self._get_resolve_username_backoff_remaining_sec()
+                phone, self._get_resolve_username_backoff_remaining_sec(phone)
             )
 
         raw_client = None
@@ -698,6 +727,11 @@ class Collector:
     ) -> int:
         """Collect new messages from a single channel. Returns count."""
         total_collected = 0
+        # Accounts that already failed a live resolve for this channel in this
+        # pass (resolve backoff / limiter / fresh long flood). Used to rotate
+        # the channel to a different account instead of deferring it while a
+        # free account exists (#790).
+        attempted_resolve_phones: set[str] = set()
 
         while True:
             if self._is_collection_cancelled(cancel_event):
@@ -705,25 +739,6 @@ class Collector:
 
             channel_id = channel.channel_id
             min_id = channel.last_collected_id
-
-            # Global resolve backoff (#552): while a long flood is in effect we
-            # do NOT abort the whole run. Instead this channel runs in cache-only
-            # mode — if its InputPeer is cached the collection proceeds, otherwise
-            # it is deferred and the run continues to the next channel (which may
-            # well be cache-resolvable).
-            resolve_cache_only = False
-            if channel.username:
-                backoff_remaining_sec = self._get_resolve_username_backoff_remaining_sec()
-                if backoff_remaining_sec > 0:
-                    resolve_cache_only = True
-                    logger.warning(
-                        "Channel %d (%s): %s global backoff active for %ss — "
-                        "cache-only resolve",
-                        channel_id,
-                        channel.username,
-                        RESOLVE_USERNAME_OPERATION,
-                        backoff_remaining_sec,
-                    )
 
             # For private groups (no username):
             #   1. preferred_phone from DB (persists across restarts)
@@ -741,6 +756,10 @@ class Collector:
                     result = await self._pool.get_client_by_phone(preferred)
                 else:
                     result = await self._pool.get_available_client()
+            elif attempted_resolve_phones:
+                result = await self._pool.get_available_client(
+                    exclude_phones=set(attempted_resolve_phones)
+                )
             else:
                 result = await self._pool.get_available_client()
 
@@ -753,6 +772,27 @@ class Collector:
             session, phone = result
             self._reset_collection_unavailability_log()
             session = adapt_transport_session(session, disconnect_on_close=False)
+
+            # Per-account resolve backoff (#552/#790): while this phone is in a
+            # flood backoff the channel runs in cache-only mode on it — a cached
+            # InputPeer still collects for free, a cache miss rotates to another
+            # account or defers the channel (handled at the resolve call site).
+            resolve_cache_only = False
+            if channel.username:
+                backoff_remaining_sec = self._get_resolve_username_backoff_remaining_sec(
+                    phone
+                )
+                if backoff_remaining_sec > 0:
+                    resolve_cache_only = True
+                    logger.warning(
+                        "Channel %d (%s): %s backoff active on %s for %ss — "
+                        "cache-only resolve",
+                        channel_id,
+                        channel.username,
+                        RESOLVE_USERNAME_OPERATION,
+                        mask_phone(phone),
+                        backoff_remaining_sec,
+                    )
             # Populate entity cache when using PeerChannel
             # (StringSession loses cache between restarts).
             # Only needed once per process lifetime per phone —
@@ -896,6 +936,36 @@ class Collector:
                     except HandledFloodWaitError as exc:
                         flood_wait_sec = exc.info.wait_seconds
                         flood_wait_operation = RESOLVE_USERNAME_OPERATION
+                        raise
+                    except UsernameResolveRateLimitedError:
+                        # This phone cannot resolve live right now (backoff or
+                        # limiter). Rotate to a free account when one exists;
+                        # defer the channel only when every account is blocked
+                        # (#790). The outer finally releases the client.
+                        attempted_resolve_phones.add(phone)
+                        if await self._can_rotate_resolve(attempted_resolve_phones):
+                            logger.warning(
+                                "Channel %d (%s): live resolve unavailable on %s; "
+                                "rotating to another account",
+                                channel_id,
+                                channel.username,
+                                mask_phone(phone),
+                            )
+                            continue
+                        # No account can live-resolve right now — defer the
+                        # channel for the moment the *first* account becomes
+                        # capable again, combining per-phone resolve backoff
+                        # with generic flood waits; this phone's own (possibly
+                        # hours-long) window must not dictate the retry when
+                        # another account frees up sooner (#790 review P2).
+                        capable_at = await self._next_resolve_capable_at()
+                        if capable_at is not None:
+                            now = datetime.now(timezone.utc)
+                            raise UsernameResolveRateLimitedError(
+                                phone,
+                                (capable_at - now).total_seconds(),
+                                now=now,
+                            )
                         raise
                     except (ValueError, UsernameNotOccupiedError, UsernameInvalidError):
                         logger.warning(
@@ -1370,55 +1440,93 @@ class Collector:
                             logger_=logger,
                         )
                         continue
-                    # Only a *long* resolve flood freezes live resolves for every
-                    # account (#552). A medium resolve flood skips just this
-                    # channel so one blip does not stall the whole pool.
+                    # Only a *long* resolve flood freezes live resolves — and
+                    # only for the flooded account (#552/#790). A medium resolve
+                    # flood skips just this channel so one blip does not stall
+                    # the whole pool.
                     if flood_wait_sec <= GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC:
                         logger.warning(
                             "%s short FloodWait %ss on %s; skipping channel %d "
-                            "(no global backoff)",
+                            "(no backoff)",
                             RESOLVE_USERNAME_OPERATION,
                             flood_wait_sec,
                             phone,
                             channel_id,
                         )
                         return total_collected + collected_count
-                    # The pool already recorded this long flood inside
-                    # run_live_username_resolve (>300s threshold); read back the
-                    # active deadline rather than re-setting a second window (#785).
-                    next_available_at = self._pool.get_resolve_username_backoff_until()
+                    # The pool already recorded this long flood for the phone
+                    # inside run_live_username_resolve (>300s threshold); read
+                    # back the active deadline rather than re-setting a second
+                    # window (#785).
+                    next_available_at = self._pool.get_resolve_username_backoff_until(phone)
                     if next_available_at is None and flood_wait_sec > GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC:
-                        next_available_at = self._pool.set_resolve_username_backoff(flood_wait_sec)
+                        next_available_at = self._pool.set_resolve_username_backoff(
+                            flood_wait_sec, phone=phone
+                        )
                         persist_backoff = getattr(self._pool, "persist_resolve_username_backoff", None)
                         if callable(persist_backoff):
                             maybe_awaitable = persist_backoff()
                             if isawaitable(maybe_awaitable):
                                 await maybe_awaitable
                         logger.warning(
-                            "%s: defensive backoff set to %s (was None, flood_wait_sec=%d)",
+                            "%s: defensive backoff set to %s on %s (was None, flood_wait_sec=%d)",
                             RESOLVE_USERNAME_OPERATION,
                             next_available_at.isoformat(),
+                            mask_phone(phone),
                             flood_wait_sec,
                         )
                     if next_available_at is None:
                         next_available_at = datetime.now(timezone.utc) + timedelta(
                             seconds=flood_wait_sec
                         )
+                    # Rotate the channel to a free account within the same pass
+                    # when one exists; defer only when every account is in
+                    # backoff (#790).
+                    attempted_resolve_phones.add(phone)
+                    if await self._can_rotate_resolve(attempted_resolve_phones):
+                        logger.warning(
+                            "%s got FloodWait %ss on %s; backoff on that account "
+                            "until %s — rotating channel %d to another account",
+                            RESOLVE_USERNAME_OPERATION,
+                            flood_wait_sec,
+                            mask_phone(phone),
+                            next_available_at.isoformat(),
+                            channel_id,
+                        )
+                        total_collected += collected_count
+                        progress_offset += collected_count
+                        continue
+                    capable_at = await self._next_resolve_capable_at()
+                    if capable_at is not None:
+                        next_available_at = capable_at
                     logger.warning(
-                        "%s got FloodWait %ss on %s; pausing ALL username resolves until %s",
+                        "%s got FloodWait %ss on %s; pausing username resolves on "
+                        "that account until %s (no free account to rotate to)",
                         RESOLVE_USERNAME_OPERATION,
                         flood_wait_sec,
-                        phone,
+                        mask_phone(phone),
                         next_available_at.isoformat(),
                     )
                     if self._notifier:
                         await self._notifier.notify(
                             f"FloodWait {flood_wait_sec}s on {phone}, "
-                            f"channel {channel_id} — pausing username resolves until "
-                            f"{next_available_at.isoformat()}"
+                            f"channel {channel_id} — pausing username resolves on "
+                            f"this account until {next_available_at.isoformat()}"
                         )
+                    # wait_seconds must describe the same deadline as
+                    # next_available_at (the aggregate min across accounts may
+                    # be earlier than this phone's own flood) — callers and the
+                    # stats path surface both, so they cannot diverge.
+                    defer_wait_sec = max(
+                        0,
+                        int(
+                            (
+                                next_available_at - datetime.now(timezone.utc)
+                            ).total_seconds()
+                        ),
+                    )
                     raise UsernameResolveFloodWaitDeferredError(
-                        wait_seconds=flood_wait_sec,
+                        wait_seconds=defer_wait_sec,
                         next_available_at=next_available_at,
                     )
 
@@ -1721,6 +1829,16 @@ class Collector:
                                     channel.channel_id,
                                 )
                             return None
+                        except Exception:
+                            # Transient failure (timeout, connection drop, …):
+                            # skip this run WITHOUT deactivating the channel
+                            # (#815 review follow-up).
+                            logger.warning(
+                                "Stats: channel %d entity lookup failed transiently, skipping",
+                                channel.channel_id,
+                                exc_info=True,
+                            )
+                            return None
                         new_username = getattr(entity, "username", None)
                         new_title = (
                             getattr(entity, "title", None)
@@ -1764,6 +1882,16 @@ class Collector:
                                 "Stats: cannot deactivate channel %d -- no DB pk",
                                 channel.channel_id,
                             )
+                        return None
+                    except Exception:
+                        # Transient failure (timeout, connection drop, …): skip
+                        # this run WITHOUT deactivating the channel (#815
+                        # review follow-up).
+                        logger.warning(
+                            "Stats: channel %d entity lookup failed transiently, skipping",
+                            channel.channel_id,
+                            exc_info=True,
+                        )
                         return None
 
                 # Guard: entity resolved as a User/Bot (no ``title``) — not a channel.

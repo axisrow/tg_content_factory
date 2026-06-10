@@ -775,22 +775,29 @@ class TestSchedulerClearPending:
 
 
 class TestSchedulerNoAccounts:
-    def test_status_no_accounts(self, capsys):
+    def test_status_works_without_accounts(self, capsys):
+        """`scheduler status` is a DB-only read: it must print the config even
+        when no Telegram account is connected (it no longer inits the pool)."""
         from src.cli.commands.scheduler import run
 
         db = MagicMock()
         db.close = AsyncMock()
+        db.get_setting = AsyncMock(return_value="0")
+        db.repos.settings.list_all = AsyncMock(return_value=[])
 
         config = MagicMock()
-        pool = MagicMock()
-        pool.clients = {}
-        pool.disconnect_all = AsyncMock()
+        config.scheduler.collect_interval_minutes = 60
+
+        async def _no_pool(config, db):
+            raise AssertionError("init_pool must not be called for `scheduler status`")
 
         with patch("src.cli.commands.scheduler.runtime.init_db", side_effect=_make_coro((config, db))), \
-             patch("src.cli.commands.scheduler.runtime.init_pool", side_effect=_make_coro((MagicMock(), pool))):
+             patch("src.cli.commands.scheduler.runtime.init_pool", side_effect=_no_pool):
             run(cli_ns(scheduler_action="status"))
 
-        # No crash; command exits silently after logging error
+        out = capsys.readouterr().out
+        assert "Scheduler config:" in out
+        assert "Interval: 60 min" in out
 
 
 # ---------------------------------------------------------------------------
