@@ -23,6 +23,7 @@ from src.agent.tools._registry import (
     require_confirmation,
 )
 from src.services.account_availability import compute_account_availability
+from src.services.notification_target_service import NotificationTargetService
 from src.services.runtime_diagnostics import evaluate_worker_heartbeat
 
 _NO_LIVE_RUNTIME = "live Telegram runtime unavailable"
@@ -248,10 +249,17 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "delete_account",
         "⚠️ DANGEROUS: Delete a Telegram account from the system. "
-        "account_id = id from list_accounts. Always ask user for confirmation first.",
+        "account_id = id from list_accounts. Always ask user for confirmation first. "
+        "If the account is the configured notification account, notifications are reassigned: "
+        "explicit notify_to phone, otherwise the single remaining account, otherwise Primary fallback.",
         {
             "account_id": Annotated[int, "ID аккаунта из list_accounts"],
             "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+            "notify_to": Annotated[
+                str,
+                "Телефон для переназначения уведомлений, если удаляется аккаунт уведомлений "
+                "(по умолчанию: единственный оставшийся, иначе Primary)",
+            ],
         },
         annotations=ToolAnnotations(destructiveHint=True),
     )
@@ -266,8 +274,20 @@ def register(db, client_pool, embedding_service, **kwargs):
             gate = require_confirmation(f"удалит аккаунт '{name}' из системы", args)
             if gate:
                 return gate
+            extra = ""
+            if acc is not None:
+                target_svc = NotificationTargetService(db)
+                notify_to = (args.get("notify_to") or "").strip() or None
+                try:
+                    reassignment = await target_svc.reassign_for_deleted_account(acc.phone, notify_to)
+                except ValueError as e:
+                    return _text_response(f"Ошибка: {e}. Аккаунт не удалён.")
+                if reassignment.action == "reassigned":
+                    extra = f" Уведомления переназначены на {reassignment.new_phone}."
+                elif reassignment.action == "cleared":
+                    extra = " Аккаунт уведомлений сброшен — используется Primary."
             await db.delete_account(int(account_id))
-            return _text_response(f"Аккаунт '{name}' удалён.")
+            return _text_response(f"Аккаунт '{name}' удалён.{extra}")
         except Exception as e:
             return _text_response(f"Ошибка удаления аккаунта: {e}")
 

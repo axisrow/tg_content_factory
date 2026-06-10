@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -23,8 +24,14 @@ class NotificationTargetStatus:
     effective_phone: str | None = None
 
 
+@dataclass(frozen=True)
+class NotificationReassignment:
+    action: str  # "kept" | "reassigned" | "cleared"
+    new_phone: str | None = None
+
+
 class NotificationTargetService:
-    def __init__(self, notifications: NotificationBundle | Database, pool: ClientPool):
+    def __init__(self, notifications: NotificationBundle | Database, pool: ClientPool | None = None):
         if isinstance(notifications, Database):
             notifications = NotificationBundle.from_database(notifications)
         self._notifications = notifications
@@ -36,6 +43,46 @@ class NotificationTargetService:
 
     async def set_configured_phone(self, phone: str | None) -> None:
         await self._notifications.set_setting(SETTING_KEY, phone or "")
+
+    async def reassign_for_deleted_account(
+        self,
+        deleted_phone: str,
+        replacement_phone: str | None = None,
+        *,
+        accounts: Sequence[Account | AccountSummary] | None = None,
+    ) -> NotificationReassignment:
+        """Reassign the configured notification account before ``deleted_phone`` is removed.
+
+        Explicit ``replacement_phone`` must belong to a remaining account, otherwise
+        ``ValueError``. Without it: a single remaining account is taken automatically;
+        zero or several remaining clear the setting (primary fallback applies).
+        ``accounts`` lets callers that already loaded the full account list
+        (``active_only=False``) skip the second fetch.
+        """
+        configured = await self.get_configured_phone()
+        if configured != deleted_phone:
+            return NotificationReassignment(action="kept")
+
+        if accounts is None:
+            accounts = await self._list_account_records()
+        remaining = [acc for acc in accounts if acc.phone != deleted_phone]
+        remaining_phones = {acc.phone for acc in remaining}
+
+        if replacement_phone is not None:
+            if replacement_phone not in remaining_phones:
+                raise ValueError(
+                    f"Аккаунт {replacement_phone} не найден среди оставшихся: "
+                    f"{', '.join(sorted(remaining_phones)) or 'нет аккаунтов'}"
+                )
+            await self.set_configured_phone(replacement_phone)
+            return NotificationReassignment(action="reassigned", new_phone=replacement_phone)
+
+        if len(remaining) == 1:
+            await self.set_configured_phone(remaining[0].phone)
+            return NotificationReassignment(action="reassigned", new_phone=remaining[0].phone)
+
+        await self.set_configured_phone(None)
+        return NotificationReassignment(action="cleared")
 
     async def describe_target(self) -> NotificationTargetStatus:
         accounts = await self._list_account_records()
@@ -147,6 +194,8 @@ class NotificationTargetService:
 
     @asynccontextmanager
     async def use_client(self):
+        if self._pool is None:
+            raise RuntimeError("Notification target pool is not configured.")
         status = await self.describe_target()
         if status.state != "available" or status.effective_phone is None:
             raise RuntimeError(status.message)

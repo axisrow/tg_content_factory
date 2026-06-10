@@ -312,26 +312,50 @@
         }
     };
 
+    function tgSubmitConfirmed(form, submitter) {
+        form._confirming = true;
+        try {
+            if (typeof form.requestSubmit === 'function') {
+                form.requestSubmit(submitter || undefined);
+            } else {
+                form.submit();
+            }
+        } finally {
+            delete form._confirming;
+        }
+    }
+
     document.addEventListener('submit', async function(e) {
         var form = e.target;
         if (form._confirming || form._confirmPending) return;
+        var reassignRaw = form.dataset && form.dataset.notifyReassign;
         var msg = form.dataset && form.dataset.confirm;
-        if (!msg) return;
+        if (!reassignRaw && !msg) return;
         e.preventDefault();
         var submitter = e.submitter;
         form._confirmPending = true;
         try {
-            var ok = await window.TGConfirm.show(msg);
-            if (ok) {
-                form._confirming = true;
-                try {
-                    if (typeof form.requestSubmit === 'function') {
-                        form.requestSubmit(submitter || undefined);
-                    } else {
-                        form.submit();
-                    }
-                } finally {
-                    delete form._confirming;
+            if (reassignRaw) {
+                var accounts = [];
+                try { accounts = JSON.parse(reassignRaw) || []; } catch (err) { accounts = []; }
+                var choices = accounts.map(function(a) {
+                    return {label: a.label, value: a.value};
+                });
+                choices.push({label: 'Primary (по умолчанию)', value: ''});
+                choices.push({label: 'Отмена', value: null});
+                var picked = await tgdlgCreate(
+                    'Этот аккаунт используется для уведомлений — на какой переназначить?',
+                    choices
+                );
+                if (picked !== null) {
+                    var input = form.querySelector('input[name="notify_to"]');
+                    if (input) input.value = picked;
+                    tgSubmitConfirmed(form, submitter);
+                }
+            } else {
+                var ok = await window.TGConfirm.show(msg);
+                if (ok) {
+                    tgSubmitConfirmed(form, submitter);
                 }
             }
         } finally {
