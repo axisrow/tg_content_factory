@@ -1693,21 +1693,21 @@ class Collector:
                             channel.username,
                         )
                         try:
-                            entity = await run_with_flood_wait(
-                                session.resolve_entity(PeerChannel(channel.channel_id)),
+                            entity = await self._pool.resolve_entity_with_warm(
+                                session,
+                                phone,
+                                PeerChannel(channel.channel_id),
                                 operation="collect_channel_stats_resolve_channel_id_fallback",
-                                phone=phone,
-                                pool=self._pool,
-                                logger_=logger,
-                                timeout=30.0,
                             )
                         except HandledFloodWaitError:
                             raise
                         except Exception:
                             logger.warning(
-                                "Stats: channel %d all entity lookups failed",
+                                "Stats: channel %d all entity lookups failed, deactivating",
                                 channel.channel_id,
                             )
+                            if channel.id:
+                                await self._db.set_channel_active(channel.id, False)
                             return None
                         new_username = getattr(entity, "username", None)
                         new_title = (
@@ -1723,14 +1723,24 @@ class Collector:
                             log_prefix="Stats",
                         )
                 else:
-                    entity = await run_with_flood_wait(
-                        session.resolve_entity(PeerChannel(channel.channel_id)),
-                        operation="collect_channel_stats_resolve_channel_id",
-                        phone=phone,
-                        pool=self._pool,
-                        logger_=logger,
-                        timeout=30.0,
-                    )
+                    # Warm cache for numeric-id channels; bare resolve loops forever (#794).
+                    try:
+                        entity = await self._pool.resolve_entity_with_warm(
+                            session,
+                            phone,
+                            PeerChannel(channel.channel_id),
+                            operation="collect_channel_stats_resolve_channel_id",
+                        )
+                    except HandledFloodWaitError:
+                        raise
+                    except Exception:
+                        logger.warning(
+                            "Stats: channel %d all entity lookups failed, deactivating",
+                            channel.channel_id,
+                        )
+                        if channel.id:
+                            await self._db.set_channel_active(channel.id, False)
+                        return None
 
                 # Guard: entity resolved as a User/Bot (no ``title``) — not a channel.
                 # Reuse the pool's canonical classifier (bot/dm) so the channel
