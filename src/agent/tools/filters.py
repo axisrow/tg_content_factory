@@ -7,6 +7,7 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
+from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._formatters import format_filter_report
 from src.agent.tools._registry import (
     ToolInputError,
@@ -15,6 +16,23 @@ from src.agent.tools._registry import (
     require_confirmation,
 )
 
+# Permission metadata for this module's tools (#245). Single source of
+# truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
+# PHONE_BINDED_TOOLS from these declarations; invariants in
+# tests/test_tool_permissions_autoderive.py keep them in sync with the
+# @tool() definitions.
+TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
+    ("Фильтры", {
+        "analyze_filters": ToolMeta(ToolCategory.READ),
+        "apply_filters": ToolMeta(ToolCategory.WRITE),
+        "reset_filters": ToolMeta(ToolCategory.WRITE),
+        "toggle_channel_filter": ToolMeta(ToolCategory.WRITE),
+        "purge_filtered_channels": ToolMeta(ToolCategory.DELETE),
+        "hard_delete_channels": ToolMeta(ToolCategory.DELETE),
+        "precheck_filters": ToolMeta(ToolCategory.WRITE),
+        "purge_channel_messages": ToolMeta(ToolCategory.DELETE),
+    }),
+]
 
 def register(db, client_pool, embedding_service, **kwargs):
     tools = []

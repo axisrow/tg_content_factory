@@ -9,6 +9,7 @@ from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
 from src.agent.runtime_context import AgentRuntimeContext
+from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._registry import (
     _text_response,
     account_session_status,
@@ -165,6 +166,26 @@ async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: object
         )
     return "\n".join(lines)
 
+
+
+
+# Permission metadata for this module's tools (#245). Single source of
+# truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
+# PHONE_BINDED_TOOLS from these declarations; invariants in
+# tests/test_tool_permissions_autoderive.py keep them in sync with the
+# @tool() definitions.
+TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
+    ("Аккаунты", {
+        "list_accounts": ToolMeta(ToolCategory.READ),
+        "toggle_account": ToolMeta(ToolCategory.WRITE),
+        "delete_account": ToolMeta(ToolCategory.DELETE),
+        "get_flood_status": ToolMeta(ToolCategory.READ),
+        "get_account_availability": ToolMeta(ToolCategory.READ),
+        "get_runtime_diagnostics": ToolMeta(ToolCategory.READ),
+        "clear_flood_status": ToolMeta(ToolCategory.WRITE),
+        "get_account_info": ToolMeta(ToolCategory.READ),
+    }),
+]
 
 def register(db, client_pool, embedding_service, **kwargs):
     runtime = _runtime(kwargs, db, client_pool)

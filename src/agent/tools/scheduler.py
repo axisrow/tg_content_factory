@@ -6,8 +6,26 @@ from typing import Annotated
 
 from claude_agent_sdk import tool
 
+from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._registry import _text_response, require_confirmation, require_pool
 
+# Permission metadata for this module's tools (#245). Single source of
+# truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
+# PHONE_BINDED_TOOLS from these declarations; invariants in
+# tests/test_tool_permissions_autoderive.py keep them in sync with the
+# @tool() definitions.
+TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
+    ("Планировщик", {
+        "get_scheduler_status": ToolMeta(ToolCategory.READ),
+        "start_scheduler": ToolMeta(ToolCategory.WRITE),
+        "stop_scheduler": ToolMeta(ToolCategory.WRITE),
+        "trigger_collection": ToolMeta(ToolCategory.WRITE),
+        "toggle_scheduler_job": ToolMeta(ToolCategory.WRITE),
+        "set_scheduler_interval": ToolMeta(ToolCategory.WRITE),
+        "cancel_scheduler_task": ToolMeta(ToolCategory.WRITE),
+        "clear_pending_tasks": ToolMeta(ToolCategory.WRITE),
+    }),
+]
 
 def register(db, client_pool, embedding_service, **kwargs):
     scheduler_manager = kwargs.get("scheduler_manager")

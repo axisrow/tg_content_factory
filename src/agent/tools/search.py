@@ -5,6 +5,7 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
+from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._formatters import format_channel_identity, format_sender_identity
 from src.agent.tools._registry import (
     ToolInputError,
@@ -14,6 +15,23 @@ from src.agent.tools._registry import (
     require_pool,
 )
 
+# Permission metadata for this module's tools (#245). Single source of
+# truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
+# PHONE_BINDED_TOOLS from these declarations; invariants in
+# tests/test_tool_permissions_autoderive.py keep them in sync with the
+# @tool() definitions.
+TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
+    ("Поиск", {
+        "search_messages": ToolMeta(ToolCategory.READ),
+        "semantic_search": ToolMeta(ToolCategory.READ),
+        "index_messages": ToolMeta(ToolCategory.WRITE),
+        "search_telegram": ToolMeta(ToolCategory.READ),
+        "search_my_chats": ToolMeta(ToolCategory.READ),
+        "search_in_channel": ToolMeta(ToolCategory.READ),
+        "search_hybrid": ToolMeta(ToolCategory.READ),
+        "purge_search_cache": ToolMeta(ToolCategory.DELETE),
+    }),
+]
 
 def register(db, client_pool, embedding_service, **kwargs):
     """Register search-related agent tools."""
