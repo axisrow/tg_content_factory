@@ -84,7 +84,14 @@ class TelegramSearch:
         session, phone = result
         session = adapt_transport_session(session, disconnect_on_close=False)
         try:
-            await self._warm_dialog_cache_if_needed(session, phone)
+            try:
+                await self._warm_dialog_cache_if_needed(session, phone)
+            except HandledFloodWaitError as exc:
+                # Warm-up flood waits were converted to an error SearchResult by
+                # the per-method try/except before the prelude was extracted; keep
+                # that contract instead of letting the exception escape `async with`.
+                yield self._error_result(query, exc.info.detail, flood_wait=exc.info)
+                return
             yield session, phone
         finally:
             await self._pool.release_client(phone)
