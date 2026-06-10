@@ -151,6 +151,55 @@ class TestAnalyzerCrossChannelDupes:
         assert "cross_channel_spam" in result.flags
 
 
+class TestAnalyzeAllQuickMode:
+    """quick=True skips the cross-dupe map — the heaviest query on live DBs (#774)."""
+
+    async def test_analyze_all_quick_omits_cross_dupe_flags(self, db, raw_db):
+        await _insert_channel(raw_db, 500)
+        await _insert_channel(raw_db, 501, title="Mirror")
+        shared = ["this is a duplicated message across channels"]
+        await _insert_messages(raw_db, 500, shared)
+        await _insert_messages(raw_db, 501, shared)
+        analyzer = ChannelAnalyzer(db)
+
+        full = await analyzer.analyze_all()
+        assert any("cross_channel_spam" in r.flags for r in full.results)
+
+        quick = await analyzer.analyze_all(quick=True)
+        assert quick.results
+        assert all("cross_channel_spam" not in r.flags for r in quick.results)
+        assert all(r.cross_dupe_pct is None for r in quick.results)
+        assert any(r.uniqueness_pct is not None for r in quick.results)
+
+    async def test_analyze_all_quick_parallel_path_skips_cross_dupe(self, tmp_path):
+        from src.database import Database
+
+        file_db = Database(str(tmp_path / "quick.db"))
+        await file_db.initialize()
+        try:
+            conn = file_db.db
+            await _insert_channel(conn, 600)
+            await _insert_channel(conn, 601, title="Mirror")
+            shared = ["duplicated message body across channels"]
+            await _insert_messages(conn, 600, shared)
+            await _insert_messages(conn, 601, shared)
+
+            repo = file_db.filter_repo
+            assert repo._can_parallel()
+
+            *_, full_cross_map, _ = await repo.fetch_maps_parallel(None)
+            assert full_cross_map
+
+            *_, quick_cross_map, _ = await repo.fetch_maps_parallel(None, include_cross_dupe=False)
+            assert quick_cross_map == {}
+
+            quick = await ChannelAnalyzer(file_db).analyze_all(quick=True)
+            assert quick.results
+            assert all("cross_channel_spam" not in r.flags for r in quick.results)
+        finally:
+            await file_db.close()
+
+
 class TestAnalyzerNonCyrillic:
     async def test_cyrillic_channel(self, db, raw_db):
         await _insert_channel(raw_db, 400)

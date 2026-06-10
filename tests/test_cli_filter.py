@@ -94,8 +94,46 @@ def test_filter_analyze(tmp_path, cli_init_patch, capsys):
 
     out = capsys.readouterr().out
     assert "No channels found" in out
-    mock_instance.analyze_all.assert_awaited_once()
+    mock_instance.analyze_all.assert_awaited_once_with(quick=False)
     mock_instance.apply_filters.assert_not_awaited()
+
+
+def test_analyze_quick_skips_cross_dupe(tmp_path, cli_init_patch, capsys):
+    """`filter analyze --quick` requests the analyzer's quick mode (#774)."""
+    db_path = str(tmp_path / "filter_analyze_quick.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    asyncio.run(db.add_account(Account(phone="+100", session_string="sess")))
+    asyncio.run(db.add_channel(Channel(channel_id=1001, title="Test Channel")))
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
+        from src.cli.commands.filter import run
+
+        with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
+            mock_instance = MagicMock()
+            mock_report = MagicMock()
+            mock_report.results = []
+            mock_report.total_channels = 0
+            mock_report.filtered_count = 0
+            mock_instance.analyze_all = AsyncMock(return_value=mock_report)
+            mock_analyzer.return_value = mock_instance
+
+            run(_ns(filter_action="analyze", quick=True))
+
+    out = capsys.readouterr().out
+    assert "No channels found" in out
+    mock_instance.analyze_all.assert_awaited_once_with(quick=True)
+
+
+def test_filter_analyze_parser_accepts_quick_flag():
+    """CLI parser exposes --quick on `filter analyze` (#774)."""
+    from src.cli.parser import build_parser
+
+    args = build_parser().parse_args(["filter", "analyze", "--quick"])
+    assert args.filter_action == "analyze"
+    assert args.quick is True
+
+    args_default = build_parser().parse_args(["filter", "analyze"])
+    assert args_default.quick is False
 
 
 def test_filter_apply(tmp_path, cli_init_patch, capsys):
