@@ -150,6 +150,34 @@ class ClientPool(ResolveGuardMixin):
         """Remove cached phone mapping for a channel (used during error recovery)."""
         self._channel_phone_map.pop(channel_id, None)
 
+    async def remember_channel_phone(
+        self, channel_id: int, phone: str, *, known_preferred: str | None = None
+    ) -> None:
+        """Cache channel→phone in memory and persist to DB only if no preferred set.
+
+        Avoids overwriting a valid preferred_phone from previous error recovery
+        (same gate as warm_all_dialogs). Pass ``known_preferred`` when the caller
+        already read the DB value to skip a redundant SELECT. Best-effort: a
+        failed DB write only means rediscovery repeats next pass.
+        """
+        self.register_channel_phone(channel_id, phone)
+        if known_preferred:
+            return
+        try:
+            existing = await self._db.repos.channels.get_preferred_phone(channel_id)
+            if not existing:
+                await self._db.repos.channels.update_channel_preferred_phone(
+                    channel_id, phone
+                )
+        except Exception:
+            # exc_info keeps the traceback for DB-lock diagnosis (#676).
+            logger.debug(
+                "remember_channel_phone: failed to read or persist preferred_phone "
+                "for channel %d",
+                channel_id,
+                exc_info=True,
+            )
+
     def is_warming(self) -> bool:
         """True while warm_all_dialogs() is still running."""
         return self._warming_task is not None and not self._warming_task.done()
@@ -223,24 +251,7 @@ class ClientPool(ResolveGuardMixin):
                         continue
                     eid = getattr(entity, "id", None)
                     if eid and eid not in self._channel_phone_map:
-                        self._channel_phone_map[eid] = p
-                        # Persist to DB only if no preferred_phone set yet
-                        # (avoid overwriting a valid value from previous error recovery)
-                        try:
-                            existing = await self._db.repos.channels.get_preferred_phone(eid)
-                            if not existing:
-                                await self._db.repos.channels.update_channel_preferred_phone(
-                                    eid, p
-                                )
-                        except Exception:
-                            # Best-effort warming hint; the in-memory map is already set.
-                            # exc_info keeps the traceback for DB-lock diagnosis (#676).
-                            logger.debug(
-                                "warm_all_dialogs: failed to read or persist preferred_phone "
-                                "for channel %d",
-                                eid,
-                                exc_info=True,
-                            )
+                        await self.remember_channel_phone(eid, p)
                 logger.info(
                     "warm_all_dialogs: warmed %s (%d dialogs)", p, len(dialogs or [])
                 )
@@ -1308,23 +1319,10 @@ class ClientPool(ResolveGuardMixin):
             has_comments = linked_chat_id is not None
             # Self-heal the channel→phone map on success: remember which account
             # resolved this channel so the next bulk pass routes there directly.
-            self.register_channel_phone(channel_id, phone)
-            if not db_preferred:
-                # Persist only if no preferred_phone was set yet (avoid clobbering
-                # a valid value from previous error recovery — same gate as
-                # warm_all_dialogs).
-                try:
-                    existing = await self._db.repos.channels.get_preferred_phone(channel_id)
-                    if not existing:
-                        await self._db.repos.channels.update_channel_preferred_phone(
-                            channel_id, phone
-                        )
-                except Exception:
-                    logger.debug(
-                        "fetch_channel_meta: failed to persist preferred_phone for channel_id %s",
-                        channel_id,
-                        exc_info=True,
-                    )
+            # db_preferred (if read above) skips a redundant SELECT.
+            await self.remember_channel_phone(
+                channel_id, phone, known_preferred=db_preferred
+            )
             return {
                 "about": about,
                 "linked_chat_id": linked_chat_id,
