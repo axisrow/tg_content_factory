@@ -643,7 +643,9 @@ async def test_read_messages_route_returns_json(route_client):
 async def test_read_messages_route_clamps_limit(route_client, monkeypatch):
     db = route_client._transport_app.state.db
     await db.add_channel(Channel(channel_id=778, title="ClampChan", username="clampchan"))
-    search_messages = AsyncMock(return_value=([], 0))
+    from src.database.repositories.messages import MessageSearchPage
+
+    search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
     monkeypatch.setattr(db, "search_messages", search_messages)
 
     resp = await route_client.get("/messages/clampchan?limit=100000")
@@ -656,3 +658,78 @@ async def test_read_messages_route_clamps_limit(route_client, monkeypatch):
 async def test_read_messages_route_channel_not_found(route_client):
     resp = await route_client.get("/messages/nonexistent_channel")
     assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_search_page_shows_plus_when_has_more(route_client, monkeypatch):
+    """With has_more the counter renders «N+» and the next-page link appears (#766)."""
+    msg = Message(
+        id=1,
+        channel_id=100,
+        message_id=1,
+        text="hit",
+        date=datetime(2024, 6, 1, tzinfo=timezone.utc),
+    )
+    mock_result = SearchResult(messages=[msg], total=50, has_more=True, query="test")
+    mock_svc = MagicMock()
+    mock_svc.search = AsyncMock(return_value=mock_result)
+    mock_svc.check_quota = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.web.search.handlers.deps.search_service",
+        lambda r: mock_svc,
+    )
+
+    resp = await route_client.get("/search?q=test")
+
+    assert resp.status_code == 200
+    assert "50+" in resp.text
+    assert "Далее" in resp.text
+
+
+@pytest.mark.anyio
+async def test_search_page_no_next_when_no_more(route_client, monkeypatch):
+    """Without has_more there is no «Далее» link and no «+» on the counter (#766)."""
+    msg = Message(
+        id=1,
+        channel_id=100,
+        message_id=1,
+        text="hit",
+        date=datetime(2024, 6, 1, tzinfo=timezone.utc),
+    )
+    mock_result = SearchResult(messages=[msg], total=1, has_more=False, query="test")
+    mock_svc = MagicMock()
+    mock_svc.search = AsyncMock(return_value=mock_result)
+    mock_svc.check_quota = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "src.web.search.handlers.deps.search_service",
+        lambda r: mock_svc,
+    )
+
+    resp = await route_client.get("/search?q=test")
+
+    assert resp.status_code == 200
+    assert "1+" not in resp.text
+    assert "Далее" not in resp.text
+
+
+@pytest.mark.anyio
+async def test_read_messages_json_includes_has_more(route_client):
+    """GET /messages/{identifier} exposes has_more next to the lower-bound total (#766)."""
+    db = route_client._transport_app.state.db
+    await db.add_channel(Channel(channel_id=779, title="MoreChan", username="morechan"))
+    await db.insert_messages_batch([
+        Message(channel_id=779, message_id=i, text=f"msg {i}", date=datetime(2024, 6, 1, tzinfo=timezone.utc))
+        for i in range(1, 4)
+    ])
+
+    resp = await route_client.get("/messages/morechan?limit=2")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["has_more"] is True
+    assert len(data["messages"]) == 2
+
+    resp_all = await route_client.get("/messages/morechan?limit=50")
+    data_all = resp_all.json()
+    assert data_all["has_more"] is False
+    assert data_all["total"] == 3

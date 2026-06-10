@@ -271,9 +271,9 @@ async def render_search_page(
         logger.exception("Failed to load search quota")
         search_quota = None
 
-    total_pages = 0
-    if result and result.total > 0:
-        total_pages = (result.total + limit - 1) // limit
+    # Page-based navigation without an exact total (#766): «Далее» is shown when
+    # the LIMIT N+1 probe saw another page, «Назад» — when we're past page 1.
+    has_more = bool(result and getattr(result, "has_more", False))
 
     # Browse mode: viewing channel messages without search query
     browse_mode = bool(not q and channel_id_int and mode in {"local", "semantic", "hybrid"})
@@ -294,7 +294,7 @@ async def render_search_page(
             "is_fts": is_fts,
             "include_filtered": include_filtered,
             "page": page,
-            "total_pages": total_pages,
+            "has_more": has_more,
             "semantic_available": semantic_available,
             "telegram_available": telegram_available,
             "ai_enabled": ai_enabled,
