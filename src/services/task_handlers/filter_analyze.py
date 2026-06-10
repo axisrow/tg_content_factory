@@ -3,15 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from src.database.bundles import ChannelBundle
 from src.filters.analyzer import ChannelAnalyzer
+from src.filters.models import FilterReport
 from src.models import (
     CollectionTask,
     CollectionTaskStatus,
     CollectionTaskType,
     FilterAnalyzeTaskPayload,
 )
-from src.services.channel_service import ChannelService
 from src.services.filter_deletion_service import FilterDeletionService
 from src.services.task_handlers.base import TaskHandlerContext
 
@@ -61,12 +60,21 @@ class FilterAnalyzeTaskHandler:
 
         analyzer = ChannelAnalyzer(ctx.db)
         timeout = self._timeout_sec()
+
+        async def _analyze() -> FilterReport:
+            # apply_filters writes under the same DB contention that can stall
+            # analyze_all, so the timeout must cover both (review on #823).
+            report = await analyzer.analyze_all()
+            if await self._is_cancelled(task.id):
+                return report
+            await analyzer.apply_filters(report)
+            return report
+
         try:
             if timeout is not None:
-                report = await asyncio.wait_for(analyzer.analyze_all(), timeout=timeout)
+                report = await asyncio.wait_for(_analyze(), timeout=timeout)
             else:
-                report = await analyzer.analyze_all()
-            await analyzer.apply_filters(report)
+                report = await _analyze()
         except asyncio.TimeoutError:
             await ctx.tasks.update_collection_task(
                 task.id,
@@ -81,27 +89,37 @@ class FilterAnalyzeTaskHandler:
             )
             return
 
+        # An admin can cancel the task from the scheduler page mid-analysis;
+        # honour that before any side effects (Codex review on #823).
+        if await self._is_cancelled(task.id):
+            logger.info("filter/analyze task %s cancelled, skipping apply/purge", task.id)
+            return
+
+        purge_note = ""
         purged_count = 0
         try:
             purged_count = await self._auto_purge(report)
         except Exception as exc:
-            # Filters are already applied; a purge failure must not erase that
-            # result, but it must be visible (#676).
+            # Filters are already applied — the task did its main job, so it
+            # completes; the purge failure stays visible in the note and the
+            # log instead of raising a false "analysis failed" alarm (#676,
+            # review on #823).
             logger.exception("filter/analyze task %s: auto-purge failed", task.id)
-            await ctx.tasks.update_collection_task(
-                task.id,
-                CollectionTaskStatus.FAILED,
-                messages_collected=report.filtered_count,
-                error=f"Filters applied, but auto-purge failed: {str(exc)[:400]}",
-            )
-            return
+            purge_note = f" auto_purge_failed={str(exc)[:200]}"
 
         await ctx.tasks.update_collection_task(
             task.id,
             CollectionTaskStatus.COMPLETED,
             messages_collected=report.filtered_count,
-            note=f"analyzed={report.total_channels} filtered={report.filtered_count} purged={purged_count}",
+            note=(
+                f"analyzed={report.total_channels} filtered={report.filtered_count}"
+                f" purged={purged_count}{purge_note}"
+            ),
         )
+
+    async def _is_cancelled(self, task_id: int) -> bool:
+        fresh = await self._context.tasks.get_collection_task(task_id)
+        return fresh is not None and fresh.status == CollectionTaskStatus.CANCELLED
 
     async def _auto_purge(self, report) -> int:
         """Mirror the legacy inline auto-purge from the web handler."""
@@ -119,8 +137,8 @@ class FilterAnalyzeTaskHandler:
         if not filtered_pks:
             return 0
 
-        channel_service = ChannelService(ChannelBundle.from_database(db), None, queue=None)
-        svc = FilterDeletionService(db, channel_service)
+        # purge_channels_by_pks never touches the optional channel_service.
+        svc = FilterDeletionService(db)
         result = await svc.purge_channels_by_pks(filtered_pks)
         if result.errors:
             logger.warning(

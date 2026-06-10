@@ -163,11 +163,13 @@ async def analyze_channels(request: Request) -> FilterRedirect:
     # UnifiedDispatcher; the UI polls analyze_status (#793). The auto-purge that
     # used to run inline here lives in FilterAnalyzeTaskHandler now.
     db = deps.get_db(request)
-    existing = await db.repos.tasks.get_active_filter_analyze_task()
-    if existing is not None:
+    # create_filter_analyze_task is atomic (INSERT ... WHERE NOT EXISTS) and
+    # returns None when a task is already pending/running — no check-then-create
+    # race between concurrent POSTs (review on #823).
+    task_id = await db.repos.tasks.create_filter_analyze_task(FilterAnalyzeTaskPayload())
+    if task_id is None:
         return manage_redirect(error="filter_analyze_running")
 
-    await db.repos.tasks.create_filter_analyze_task(FilterAnalyzeTaskPayload())
     logger.info("filter/analyze: queued background analysis task")
     return manage_redirect(msg="filter_analyze_queued")
 

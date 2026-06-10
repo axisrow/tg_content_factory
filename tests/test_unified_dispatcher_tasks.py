@@ -440,6 +440,96 @@ async def test_filter_analyze_auto_purge_when_setting_enabled():
 
 
 @pytest.mark.anyio
+async def test_filter_analyze_slow_apply_filters_also_times_out():
+    """The timeout covers apply_filters too — DB contention can stall it just
+    like analyze_all (review on #823)."""
+    import asyncio as aio
+    from types import SimpleNamespace
+
+    from src.filters.models import FilterReport
+
+    cfg = SimpleNamespace(scheduler=SimpleNamespace(filter_analyze_timeout_sec=0.05))
+    d = _dispatcher(db=_filter_analyze_db(), config=cfg)
+
+    async def _slow_apply(report):
+        await aio.sleep(5.0)
+
+    with patch("src.services.task_handlers.filter_analyze.ChannelAnalyzer") as mock_analyzer:
+        inst = mock_analyzer.return_value
+        inst.analyze_all = AsyncMock(
+            return_value=FilterReport(results=[], total_channels=1, filtered_count=0)
+        )
+        inst.apply_filters = _slow_apply
+        await d._dispatch(_task(CollectionTaskType.FILTER_ANALYZE, payload=_filter_analyze_payload()))
+
+    call = d._tasks.update_collection_task.call_args
+    assert call[0][1] == CollectionTaskStatus.FAILED
+    assert "timed out" in call.kwargs["error"]
+
+
+@pytest.mark.anyio
+async def test_filter_analyze_cancelled_mid_analysis_skips_side_effects():
+    """A task cancelled while analyze_all runs must not apply filters or purge
+    (Codex review on #823)."""
+    from src.filters.models import FilterReport
+
+    d = _dispatcher(db=_filter_analyze_db(auto_delete="1"))
+    d._tasks.get_collection_task = AsyncMock(
+        return_value=_task(
+            CollectionTaskType.FILTER_ANALYZE,
+            payload=_filter_analyze_payload(),
+            status=CollectionTaskStatus.CANCELLED,
+        )
+    )
+
+    with patch("src.services.task_handlers.filter_analyze.ChannelAnalyzer") as mock_analyzer:
+        inst = mock_analyzer.return_value
+        inst.analyze_all = AsyncMock(
+            return_value=FilterReport(results=[], total_channels=5, filtered_count=2)
+        )
+        inst.apply_filters = AsyncMock()
+        await d._dispatch(_task(CollectionTaskType.FILTER_ANALYZE, payload=_filter_analyze_payload()))
+
+    inst.apply_filters.assert_not_awaited()
+    d._tasks.update_collection_task.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_filter_analyze_auto_purge_failure_completes_with_note():
+    """Filters are applied even when auto-purge blows up — the task completes
+    and the failure stays visible in the note (review on #823)."""
+    from src.filters.models import ChannelFilterResult, FilterReport
+
+    db = _filter_analyze_db(auto_delete="1")
+    db.get_channels_with_counts = AsyncMock(
+        return_value=[MagicMock(channel_id=1, id=11)]
+    )
+    d = _dispatcher(db=db)
+
+    report = FilterReport(
+        results=[ChannelFilterResult(channel_id=1, flags=["manual"], is_filtered=True)],
+        total_channels=1,
+        filtered_count=1,
+    )
+    with (
+        patch("src.services.task_handlers.filter_analyze.ChannelAnalyzer") as mock_analyzer,
+        patch("src.services.task_handlers.filter_analyze.FilterDeletionService") as mock_deletion,
+    ):
+        inst = mock_analyzer.return_value
+        inst.analyze_all = AsyncMock(return_value=report)
+        inst.apply_filters = AsyncMock(return_value=1)
+        mock_deletion.return_value.purge_channels_by_pks = AsyncMock(
+            side_effect=RuntimeError("purge boom")
+        )
+        await d._dispatch(_task(CollectionTaskType.FILTER_ANALYZE, payload=_filter_analyze_payload()))
+
+    call = d._tasks.update_collection_task.call_args
+    assert call[0][1] == CollectionTaskStatus.COMPLETED
+    assert "auto_purge_failed" in call.kwargs["note"]
+    assert "purge boom" in call.kwargs["note"]
+
+
+@pytest.mark.anyio
 async def test_start_stop():
     d = _dispatcher()
     await d.start()

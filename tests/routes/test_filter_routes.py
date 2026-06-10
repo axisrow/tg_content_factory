@@ -593,6 +593,23 @@ async def test_analyze_rejects_when_task_active(route_client, db):
 
 
 @pytest.mark.anyio
+async def test_create_filter_analyze_task_is_atomic(db):
+    """INSERT ... WHERE NOT EXISTS: the second create returns None while a task
+    is active — no check-then-create race window (review on #823)."""
+    from src.models import CollectionTaskStatus, FilterAnalyzeTaskPayload
+
+    first = await db.repos.tasks.create_filter_analyze_task(FilterAnalyzeTaskPayload())
+    assert first is not None
+
+    second = await db.repos.tasks.create_filter_analyze_task(FilterAnalyzeTaskPayload())
+    assert second is None
+
+    await db.repos.tasks.update_collection_task(first, CollectionTaskStatus.COMPLETED)
+    third = await db.repos.tasks.create_filter_analyze_task(FilterAnalyzeTaskPayload())
+    assert third is not None
+
+
+@pytest.mark.anyio
 async def test_analyze_status_endpoint_reports_progress_and_result(route_client, db):
     """GET analyze/status reflects the latest filter-analyze task lifecycle (#793)."""
     from src.models import CollectionTaskStatus, FilterAnalyzeTaskPayload

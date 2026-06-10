@@ -219,7 +219,10 @@ async function refreshFilters(button) {
 }
 
 async function pollAnalyzeStatus(button) {
-    while (true) {
+    // 200 попыток × 3с = 10 минут: если задача висит (например, воркер не
+    // запущен в --no-worker деплое), не зацикливаем вкладку навсегда.
+    var maxAttempts = 200;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
         await new Promise(function(resolve) { setTimeout(resolve, 3000); });
         var resp;
         try {
@@ -239,6 +242,8 @@ async function pollAnalyzeStatus(button) {
             return;
         }
     }
+    setAsyncButtonBusy(button, false);
+    await window.TGConfirm.alert('Анализ выполняется дольше обычного. Обновите страницу позже, чтобы увидеть результат.');
 }
 </script>
 {% endblock %}
