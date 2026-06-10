@@ -90,12 +90,12 @@
         <ul class="pagination">
             {% if offset > 0 %}
             <li class="page-item">
-                <a class="page-link" href="?pipeline_id={{ selected_pipeline_id }}&limit={{ limit }}&offset={{ offset - limit }}">Назад</a>
+                <a class="page-link" href="?pipeline_id={{ selected_pipeline_id or '' }}&limit={{ limit }}&offset={{ [offset - limit, 0] | max }}">Назад</a>
             </li>
             {% endif %}
             {% if pending_runs|length == limit %}
             <li class="page-item">
-                <a class="page-link" href="?pipeline_id={{ selected_pipeline_id }}&limit={{ limit }}&offset={{ offset + limit }}">Вперёд</a>
+                <a class="page-link" href="?pipeline_id={{ selected_pipeline_id or '' }}&limit={{ limit }}&offset={{ offset + limit }}">Вперёд</a>
             </li>
             {% endif %}
         </ul>
