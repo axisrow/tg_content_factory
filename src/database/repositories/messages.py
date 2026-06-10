@@ -43,18 +43,6 @@ class MessageSearchPage:
         yield self.messages
         yield self.total
 
-# Sum of all reaction counts for a single message row (m.reactions_json).
-TOTAL_REACTIONS_SQL = (
-    "(SELECT COALESCE(SUM(json_extract(value, '$.count')), 0) FROM json_each(m.reactions_json))"
-)
-# Same sum guarded so it only evaluates for rows holding valid reactions JSON;
-# used inside AVG(...) over arbitrary message rows.
-TOTAL_REACTIONS_GUARDED_SQL = f"""CASE WHEN m.reactions_json IS NOT NULL AND m.reactions_json != ''
-          AND json_valid(m.reactions_json) = 1
-     THEN {TOTAL_REACTIONS_SQL}
-     ELSE 0 END"""
-
-
 def _parse_reactions_json(reactions_json: str) -> list[dict]:
     """Parse reactions_json string into a list of {emoji, count} dicts."""
     return parse_reactions_json(reactions_json)
@@ -1276,30 +1264,99 @@ class MessagesRepository:
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> list[dict]:
-        """Return top messages sorted by total reaction count."""
-        channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
-        conditions: list[str] = [
-            "(c.is_filtered IS NULL OR c.is_filtered = 0)",
-            "m.reactions_json IS NOT NULL",
-            "m.reactions_json != ''",
-            "json_valid(m.reactions_json) = 1",
-        ]
+        """Return top messages sorted by total reaction count.
+
+        Aggregates the normalized message_reactions table instead of running
+        json_each over reactions_json of every messages row — the latter is a
+        full-table scan that times out on multi-million-row databases (#826).
+        """
+        inner_conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
         params: list = []
-        self._append_analytics_date_filter(conditions, params, date_from, date_to)
-        where = " WHERE " + " AND ".join(conditions)
+        date_conditions: list[str] = []
+        self._append_analytics_date_filter(date_conditions, params, date_from, date_to)
+        # Date bounds live on messages; join it inside the aggregate only when
+        # a date filter is requested — the no-filter path stays index-only.
+        messages_join = ""
+        if date_conditions:
+            messages_join = (
+                " JOIN messages m ON m.channel_id = mr.channel_id AND m.message_id = mr.message_id"
+            )
+            inner_conditions.extend(date_conditions)
+        where = " WHERE " + " AND ".join(inner_conditions)
         cur = await self._db.execute(
             f"""SELECT m.id, m.channel_id, m.message_id, m.text, m.media_type,
                        m.date, m.reactions_json,
                        c.title as channel_title, c.username as channel_username,
-                       {TOTAL_REACTIONS_SQL} as total_reactions
-                FROM messages m{channel_join}
-                {where}
-                ORDER BY total_reactions DESC
-                LIMIT ?""",
+                       t.total_reactions
+                FROM (SELECT mr.channel_id, mr.message_id, SUM(mr.count) AS total_reactions
+                      FROM message_reactions mr{messages_join}
+                      LEFT JOIN channels c ON mr.channel_id = c.channel_id
+                      {where}
+                      GROUP BY mr.channel_id, mr.message_id
+                      ORDER BY total_reactions DESC
+                      LIMIT ?) t
+                JOIN messages m ON m.channel_id = t.channel_id AND m.message_id = t.message_id
+                LEFT JOIN channels c ON m.channel_id = c.channel_id
+                ORDER BY t.total_reactions DESC""",
             (*params, limit),
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
+
+    _REACTIONS_PER_MESSAGE_SQL = """(SELECT channel_id, message_id, SUM(count) AS total_reactions
+                       FROM message_reactions GROUP BY channel_id, message_id)"""
+
+    async def _get_engagement_rows(
+        self,
+        group_expr: str,
+        group_alias: str,
+        order_by: str,
+        date_from: str | None,
+        date_to: str | None,
+    ) -> list[dict]:
+        """Group messages by *group_expr*, averaging reactions over ALL messages
+        of the group (zero-reaction messages included in the denominator).
+
+        Runs two cheap aggregates — a plain COUNT over messages and a reaction
+        sum over the normalized message_reactions table — instead of a
+        json_each scan of every reactions_json (#826).
+        """
+        conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
+        params: list = []
+        self._append_analytics_date_filter(conditions, params, date_from, date_to)
+        where = " WHERE " + " AND ".join(conditions)
+        count_cur = await self._db.execute(
+            f"""SELECT {group_expr} as {group_alias}, COUNT(*) as message_count
+                FROM messages m
+                LEFT JOIN channels c ON m.channel_id = c.channel_id
+                {where}
+                GROUP BY {group_alias}
+                ORDER BY {order_by}""",
+            tuple(params),
+        )
+        counts = await count_cur.fetchall()
+        sum_cur = await self._db.execute(
+            f"""SELECT {group_expr} as {group_alias}, SUM(t.total_reactions) as reactions_sum
+                FROM {self._REACTIONS_PER_MESSAGE_SQL} t
+                JOIN messages m ON m.channel_id = t.channel_id AND m.message_id = t.message_id
+                LEFT JOIN channels c ON m.channel_id = c.channel_id
+                {where}
+                GROUP BY {group_alias}""",
+            tuple(params),
+        )
+        sums = {row[group_alias]: row["reactions_sum"] or 0 for row in await sum_cur.fetchall()}
+        return [
+            {
+                group_alias: row[group_alias],
+                "message_count": row["message_count"],
+                "avg_reactions": (
+                    sums.get(row[group_alias], 0) / row["message_count"]
+                    if row["message_count"]
+                    else 0.0
+                ),
+            }
+            for row in counts
+        ]
 
     async def get_engagement_by_media_type(
         self,
@@ -1307,23 +1364,13 @@ class MessagesRepository:
         date_to: str | None = None,
     ) -> list[dict]:
         """Return message count and avg reactions per content type."""
-        channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
-        conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
-        params: list = []
-        self._append_analytics_date_filter(conditions, params, date_from, date_to)
-        where = " WHERE " + " AND ".join(conditions)
-        cur = await self._db.execute(
-            f"""SELECT COALESCE(m.media_type, 'text') as content_type,
-                       COUNT(*) as message_count,
-                       COALESCE(AVG({TOTAL_REACTIONS_GUARDED_SQL}), 0) as avg_reactions
-                FROM messages m{channel_join}
-                {where}
-                GROUP BY content_type
-                ORDER BY message_count DESC""",
-            tuple(params),
+        return await self._get_engagement_rows(
+            group_expr="COALESCE(m.media_type, 'text')",
+            group_alias="content_type",
+            order_by="message_count DESC",
+            date_from=date_from,
+            date_to=date_to,
         )
-        rows = await cur.fetchall()
-        return [dict(r) for r in rows]
 
     async def get_hourly_activity(
         self,
@@ -1331,23 +1378,13 @@ class MessagesRepository:
         date_to: str | None = None,
     ) -> list[dict]:
         """Return message count and avg reactions per hour of day (0-23)."""
-        channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
-        conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
-        params: list = []
-        self._append_analytics_date_filter(conditions, params, date_from, date_to)
-        where = " WHERE " + " AND ".join(conditions)
-        cur = await self._db.execute(
-            f"""SELECT CAST(strftime('%H', m.date) AS INTEGER) as hour,
-                       COUNT(*) as message_count,
-                       COALESCE(AVG({TOTAL_REACTIONS_GUARDED_SQL}), 0) as avg_reactions
-                FROM messages m{channel_join}
-                {where}
-                GROUP BY hour
-                ORDER BY hour""",
-            tuple(params),
+        return await self._get_engagement_rows(
+            group_expr="CAST(strftime('%H', m.date) AS INTEGER)",
+            group_alias="hour",
+            order_by="hour",
+            date_from=date_from,
+            date_to=date_to,
         )
-        rows = await cur.fetchall()
-        return [dict(r) for r in rows]
 
     async def get_message_by_id(self, message_db_id: int) -> Message | None:
         """Get a single message by its DB primary key (id)."""

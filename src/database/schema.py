@@ -371,6 +371,9 @@ CREATE INDEX IF NOT EXISTS idx_message_reactions_channel_msg
 CREATE INDEX IF NOT EXISTS idx_message_reactions_emoji
     ON message_reactions(emoji);
 CREATE INDEX IF NOT EXISTS idx_messages_collected_at ON messages(collected_at);
+-- Covering index for analytics GROUP BY media_type with the is_filtered
+-- channel join: without it the count query full-scans the messages table (#826).
+CREATE INDEX IF NOT EXISTS idx_messages_media_type ON messages(media_type, channel_id);
 
 -- NOTE: the legacy denormalized `pipelines` table (schema v1, with JSON
 -- `source_channel_ids`/`targets` columns) was superseded by the normalized
