@@ -151,21 +151,32 @@ class ClientPool(ResolveGuardMixin):
         self._channel_phone_map.pop(channel_id, None)
 
     async def remember_channel_phone(
-        self, channel_id: int, phone: str, *, known_preferred: str | None = None
+        self,
+        channel_id: int,
+        phone: str,
+        *,
+        known_preferred: str | None = None,
+        force: bool = False,
     ) -> None:
-        """Cache channel→phone in memory and persist to DB only if no preferred set.
+        """Cache channel→phone in memory and persist to DB.
 
-        Avoids overwriting a valid preferred_phone from previous error recovery
-        (same gate as warm_all_dialogs). Pass ``known_preferred`` when the caller
-        already read the DB value to skip a redundant SELECT. Best-effort: a
-        failed DB write only means rediscovery repeats next pass.
+        By default persists only if no preferred is set yet (same gate as
+        warm_all_dialogs), avoiding clobbering a valid value from previous error
+        recovery. Pass ``known_preferred`` when the caller already read the DB
+        value to skip a redundant SELECT. Pass ``force=True`` to overwrite a
+        stale preferred with an account that just confirmably resolved the channel
+        (e.g. a successful fallback when the stored preferred was unavailable).
+        Best-effort: a failed DB write only means rediscovery repeats next pass.
         """
         self.register_channel_phone(channel_id, phone)
-        if known_preferred:
+        if known_preferred and not force:
             return
         try:
-            existing = await self._db.repos.channels.get_preferred_phone(channel_id)
-            if not existing:
+            existing = known_preferred
+            if existing is None:
+                existing = await self._db.repos.channels.get_preferred_phone(channel_id)
+            should_write = existing != phone if force else not existing
+            if should_write:
                 await self._db.repos.channels.update_channel_preferred_phone(
                     channel_id, phone
                 )
@@ -178,15 +189,26 @@ class ClientPool(ResolveGuardMixin):
                 exc_info=True,
             )
 
-    async def forget_channel_phone(self, channel_id: int) -> None:
+    async def forget_channel_phone(
+        self, channel_id: int, *, only_if_phone: str | None = None
+    ) -> None:
         """Drop the channel→phone mapping in memory and clear preferred in DB.
 
         Used during error recovery when the routed account turned out to be stale
         (lost access / can no longer resolve), so the next pass rediscovers a
-        working account. Best-effort: a failed DB write only repeats next pass.
+        working account. The in-memory map (which pointed at the failed account)
+        is always cleared. Pass ``only_if_phone`` to clear the DB preferred_phone
+        only when it still matches the account that just failed — avoids erasing a
+        valid persisted mapping when the in-memory map was stale but the DB row
+        points at a different, working account. Best-effort: a failed DB write
+        only repeats next pass.
         """
         self.clear_channel_phone(channel_id)
         try:
+            if only_if_phone is not None:
+                existing = await self._db.repos.channels.get_preferred_phone(channel_id)
+                if existing and existing != only_if_phone:
+                    return
             await self._db.repos.channels.update_channel_preferred_phone(channel_id, None)
         except Exception:
             logger.debug(
@@ -1337,9 +1359,15 @@ class ClientPool(ResolveGuardMixin):
             has_comments = linked_chat_id is not None
             # Self-heal the channel→phone map on success: remember which account
             # resolved this channel so the next bulk pass routes there directly.
-            # db_preferred (if read above) skips a redundant SELECT.
+            # When we fell back to a different account than the stored preferred,
+            # that preferred was stale/unavailable — force-update the DB to the
+            # account that just confirmably worked. When we used the preferred
+            # account, just fill the DB if it was empty (the warm_all_dialogs gate).
             await self.remember_channel_phone(
-                channel_id, phone, known_preferred=db_preferred
+                channel_id,
+                phone,
+                known_preferred=db_preferred,
+                force=not used_preferred,
             )
             return {
                 "about": about,
@@ -1365,9 +1393,11 @@ class ClientPool(ResolveGuardMixin):
             )
             # If the preferred account lost access, drop the stale mapping so the
             # next pass rediscovers. Leave it alone on the available-client path —
-            # we'd be erasing a good record on a guess.
+            # we'd be erasing a good record on a guess. Clear the DB only if it
+            # still points at the account that just failed (the in-memory map may
+            # be stale while the DB holds a different, valid account).
             if used_preferred:
-                await self.forget_channel_phone(channel_id)
+                await self.forget_channel_phone(channel_id, only_if_phone=phone)
             return None
         except (ValueError, TypeError):
             # Telethon raises ValueError("Could not find the input entity ...")
@@ -1381,8 +1411,9 @@ class ClientPool(ResolveGuardMixin):
             # A stored preferred phone that can no longer resolve the entity is
             # stale (membership change) — clear it so the next pass rediscovers
             # instead of pinning the same dead account (Codex review on #809).
+            # Clear the DB only if it still matches the failed account.
             if used_preferred:
-                await self.forget_channel_phone(channel_id)
+                await self.forget_channel_phone(channel_id, only_if_phone=phone)
             return None
         except Exception as e:
             logger.warning(

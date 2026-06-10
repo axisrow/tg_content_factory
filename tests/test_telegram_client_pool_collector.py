@@ -1005,6 +1005,59 @@ async def test_fetch_channel_meta_unresolved_keeps_map_on_available_client(pool,
     mock_db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
 
 
+@pytest.mark.anyio
+async def test_fetch_channel_meta_updates_db_when_fallback_account_differs(pool, mock_db):
+    # DB preferred is "+7001" but unavailable (flood) → fall back to "+7002" and
+    # succeed. The DB must be corrected to the account that actually worked,
+    # not left pointing at the stale preferred (Claude review #1 on #809).
+    session, entity, full_result = _meta_session_with_full()
+    pool.clients["+7002"] = session
+    mock_db.repos.channels.get_preferred_phone.return_value = "+7001"
+
+    with patch.object(pool, "is_warming", return_value=False):
+        with patch.object(pool, "get_client_by_phone", AsyncMock(return_value=None)):
+            with patch.object(
+                pool, "get_available_client", AsyncMock(return_value=(session, "+7002"))
+            ):
+                with patch.object(session, "resolve_entity", return_value=entity):
+                    with patch.object(
+                        session, "invoke_request", return_value=full_result
+                    ):
+                        result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is not None
+    assert pool.get_phone_for_channel(123) == "+7002"
+    mock_db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(
+        123, "+7002"
+    )
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_keeps_db_preferred_when_map_stale(pool, mock_db):
+    # In-memory map points at "+7001" (stale) but DB preferred is a different
+    # valid account "+7002". A failure on "+7001" must NOT erase the good DB
+    # value (Codex review P2 on #809).
+    session = TelegramTransportSession(AsyncMock(), disconnect_on_close=False)
+    pool.clients["+7001"] = session
+    pool.register_channel_phone(123, "+7001")
+    pool.mark_dialogs_fetched("+7001")
+    mock_db.repos.channels.get_preferred_phone.return_value = "+7002"
+
+    with patch.object(
+        pool, "get_client_by_phone", AsyncMock(return_value=(session, "+7001"))
+    ):
+        with patch.object(
+            session, "resolve_entity", side_effect=ChannelPrivateError(request=None)
+        ):
+            result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is None
+    # in-memory map cleared (it pointed at the failed account)...
+    assert pool.get_phone_for_channel(123) is None
+    # ...but the valid DB preferred is left intact.
+    mock_db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # ClientPool: _classify_entity edge cases
 # ---------------------------------------------------------------------------
