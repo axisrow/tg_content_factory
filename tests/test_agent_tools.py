@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.database import Database
+from src.database.repositories.messages import MessageSearchPage
 
 
 @pytest.fixture
@@ -51,7 +52,7 @@ class TestSearchMessagesTool:
 
     @pytest.mark.anyio
     async def test_empty_result(self, mock_db):
-        mock_db.search_messages = AsyncMock(return_value=([], 0))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
         handlers = _get_tool_handlers(mock_db)
 
         result = await handlers["search_messages"]({"query": "nonexistent", "limit": 20})
@@ -81,7 +82,7 @@ class TestSearchMessagesTool:
                 date="2025-01-02",
             ),
         ]
-        mock_db.search_messages = AsyncMock(return_value=(mock_messages, 2))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=mock_messages, total=2))
         handlers = _get_tool_handlers(mock_db)
 
         result = await handlers["search_messages"]({"query": "test", "limit": 10})
@@ -105,7 +106,7 @@ class TestSearchMessagesTool:
                 date="2025-01-01",
             ),
         ]
-        mock_db.search_messages = AsyncMock(return_value=(mock_messages, 1))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=mock_messages, total=1))
         handlers = _get_tool_handlers(mock_db)
 
         result = await handlers["search_messages"]({"query": "label", "limit": 10})
@@ -127,7 +128,7 @@ class TestSearchMessagesTool:
                 date="2025-01-01",
             ),
         ]
-        mock_db.search_messages = AsyncMock(return_value=(mock_messages, 1))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=mock_messages, total=1))
         handlers = _get_tool_handlers(mock_db)
 
         result = await handlers["search_messages"]({"query": "fallback", "limit": 10})
@@ -143,7 +144,7 @@ class TestSearchMessagesTool:
         mock_messages = [
             SimpleNamespace(channel_id=100, message_id=1, text=long_text, date="2025-01-01"),
         ]
-        mock_db.search_messages = AsyncMock(return_value=(mock_messages, 1))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=mock_messages, total=1))
         handlers = _get_tool_handlers(mock_db)
 
         result = await handlers["search_messages"]({"query": "x", "limit": 20})
@@ -159,7 +160,7 @@ class TestSearchMessagesTool:
         mock_messages = [
             SimpleNamespace(channel_id=100, message_id=1, text=None, date="2025-01-01"),
         ]
-        mock_db.search_messages = AsyncMock(return_value=(mock_messages, 1))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=mock_messages, total=1))
         handlers = _get_tool_handlers(mock_db)
 
         result = await handlers["search_messages"]({"query": "test", "limit": 20})
@@ -170,7 +171,7 @@ class TestSearchMessagesTool:
     @pytest.mark.anyio
     async def test_default_limit(self, mock_db):
         """Tool applies default limit=20 when not provided."""
-        mock_db.search_messages = AsyncMock(return_value=([], 0))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
         handlers = _get_tool_handlers(mock_db)
 
         await handlers["search_messages"]({"query": "test"})
@@ -179,7 +180,7 @@ class TestSearchMessagesTool:
 
     @pytest.mark.anyio
     async def test_custom_limit(self, mock_db):
-        mock_db.search_messages = AsyncMock(return_value=([], 0))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
         handlers = _get_tool_handlers(mock_db)
 
         await handlers["search_messages"]({"query": "test", "limit": 50})

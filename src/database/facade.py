@@ -23,7 +23,7 @@ from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.generated_images import GeneratedImagesRepository
 from src.database.repositories.generation_runs import GenerationRunsRepository
-from src.database.repositories.messages import MessagesRepository
+from src.database.repositories.messages import MessageSearchPage, MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.pipeline_action_log import PipelineActionLogRepository
@@ -628,7 +628,7 @@ class Database:
         min_length: int | None = None,
         max_length: int | None = None,
         include_filtered: bool = False,
-    ) -> tuple[list[Message], int]:
+    ) -> MessageSearchPage:
         self._require()
         return await self._messages.search_messages(
             query=query,

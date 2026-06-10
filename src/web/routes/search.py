@@ -27,7 +27,7 @@ async def read_messages(
     if ch is None:
         return JSONResponse({"error": "channel_not_found"}, status_code=404)
     limit = max(1, min(limit, 500))
-    messages, total = await db.search_messages(
+    result = await db.search_messages(
         query=query,
         channel_id=ch.channel_id,
         date_from=date_from or None,
@@ -37,8 +37,10 @@ async def read_messages(
     )
     return JSONResponse({
         "channel_id": ch.channel_id,
-        "total": total,
-        "messages": [m.model_dump(mode="json") for m in messages],
+        # Lower bound (#766) — exact only when has_more is false.
+        "total": result.total,
+        "has_more": result.has_more,
+        "messages": [m.model_dump(mode="json") for m in result.messages],
     })
 
 

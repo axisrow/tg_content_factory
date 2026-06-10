@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import struct
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
@@ -20,6 +21,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _EMBEDDING_DIMENSIONS_SETTING = "semantic_embedding_dimensions"
+
+
+@dataclass(frozen=True)
+class MessageSearchPage:
+    """One page of search results without an exact total (#766).
+
+    ``total`` is a lower bound — ``offset + len(messages)`` — exact only when
+    ``has_more`` is False. The exact ``COUNT(*)`` it replaced took 2-19s (FTS)
+    to 72s (LIKE full scan) on a 7M-row DB and starved WAL checkpoints, which
+    cascaded into "database is locked" across background loops.
+
+    ``__iter__`` keeps the legacy ``messages, total = ...`` unpacking working.
+    """
+
+    messages: list[Message]
+    total: int
+    has_more: bool = False
+
+    def __iter__(self):
+        yield self.messages
+        yield self.total
 
 # Sum of all reaction counts for a single message row (m.reactions_json).
 TOTAL_REACTIONS_SQL = (
@@ -605,7 +627,7 @@ class MessagesRepository:
         max_length: int | None = None,
         topic_id: int | None = None,
         include_filtered: bool = False,
-    ) -> tuple[list[Message], int]:
+    ) -> MessageSearchPage:
         where, params = self._build_message_filters(
             channel_id=channel_id,
             date_from=date_from,
@@ -617,6 +639,10 @@ class MessagesRepository:
         )
         channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
 
+        # LIMIT limit+1 probes for a next page instead of an exact COUNT(*) —
+        # see MessageSearchPage for why the COUNT had to go (#766).
+        probe_limit = limit + 1
+
         if query:
             if self._fts_available:
                 fts_query = self._build_fts_match(query, is_fts)
@@ -624,32 +650,18 @@ class MessagesRepository:
                     " INNER JOIN (SELECT rowid FROM messages_fts"
                     " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
                 )
-                count_cur = await self._db.execute(
-                    f"SELECT COUNT(*) as cnt FROM messages m{fts_join}{channel_join}{where}",
-                    (fts_query, *params),
-                )
-                row = await count_cur.fetchone()
-                total = row["cnt"] if row else 0
-
                 cur = await self._db.execute(
                     f"""SELECT m.*, c.title as channel_title, c.username as channel_username
                         FROM messages m{fts_join}{channel_join}
                         {where}
                         ORDER BY m.date DESC
                         LIMIT ? OFFSET ?""",
-                    (fts_query, *params, limit, offset),
+                    (fts_query, *params, probe_limit, offset),
                 )
             else:
                 logger.debug("FTS5 unavailable, falling back to LIKE search")
                 params.append(f"%{query}%")
                 like_where = (where + " AND m.text LIKE ?") if where else " WHERE m.text LIKE ?"
-
-                count_cur = await self._db.execute(
-                    f"SELECT COUNT(*) as cnt FROM messages m{channel_join}{like_where}",
-                    tuple(params),
-                )
-                row = await count_cur.fetchone()
-                total = row["cnt"] if row else 0
 
                 cur = await self._db.execute(
                     f"""SELECT m.*, c.title as channel_title, c.username as channel_username
@@ -657,26 +669,26 @@ class MessagesRepository:
                         {like_where}
                         ORDER BY m.date DESC
                         LIMIT ? OFFSET ?""",
-                    (*params, limit, offset),
+                    (*params, probe_limit, offset),
                 )
         else:
-            count_cur = await self._db.execute(
-                f"SELECT COUNT(*) as cnt FROM messages m{channel_join}{where}", tuple(params)
-            )
-            row = await count_cur.fetchone()
-            total = row["cnt"] if row else 0
-
             cur = await self._db.execute(
                 f"""SELECT m.*, c.title as channel_title, c.username as channel_username
                     FROM messages m{channel_join}
                     {where}
                     ORDER BY m.date DESC
                     LIMIT ? OFFSET ?""",
-                (*params, limit, offset),
+                (*params, probe_limit, offset),
             )
 
         rows = await cur.fetchall()
-        return self._rows_to_messages(rows), total
+        has_more = len(rows) > limit
+        messages = self._rows_to_messages(rows[:limit])
+        return MessageSearchPage(
+            messages=messages,
+            total=offset + len(messages),
+            has_more=has_more,
+        )
 
     async def _search_semantic_candidates(
         self,
