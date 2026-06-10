@@ -87,6 +87,122 @@ class TestCLIAccount:
         run(_ns(account_action="delete", id=pk))
         assert "Deleted" in capsys.readouterr().out
 
+    def test_delete_not_found(self, cli_env, capsys):
+        from src.cli.commands.account import run
+
+        run(_ns(account_action="delete", id=999))
+        assert "not found" in capsys.readouterr().out
+
+    def test_delete_notification_account_with_notify_to(self, cli_env, capsys):
+        pk = _add_account(cli_env, phone="+70001112233")
+        _add_account(cli_env, phone="+70001112234")
+        _add_account(cli_env, phone="+70001112235")
+        asyncio.run(cli_env.set_setting("notification_account_phone", "+70001112233"))
+        from src.cli.commands.account import run
+
+        run(_ns(account_action="delete", id=pk, notify_to="+70001112235"))
+        out = capsys.readouterr().out
+        assert "Deleted" in out
+        assert "переназначены на +70001112235" in out
+        rows = _query_db(
+            cli_env, "SELECT value FROM settings WHERE key=?", ("notification_account_phone",)
+        )
+        assert rows[0]["value"] == "+70001112235"
+
+    def test_delete_notification_account_auto_single_remaining(self, cli_env, capsys):
+        pk = _add_account(cli_env, phone="+70001112233")
+        _add_account(cli_env, phone="+70001112234")
+        asyncio.run(cli_env.set_setting("notification_account_phone", "+70001112233"))
+        from src.cli.commands.account import run
+
+        run(_ns(account_action="delete", id=pk))
+        out = capsys.readouterr().out
+        assert "Deleted" in out
+        assert "переназначены на +70001112234" in out
+        rows = _query_db(
+            cli_env, "SELECT value FROM settings WHERE key=?", ("notification_account_phone",)
+        )
+        assert rows[0]["value"] == "+70001112234"
+
+    def test_delete_notification_account_clears_without_choice(self, cli_env, capsys):
+        """Non-TTY, several remaining, no --notify-to: setting falls back to Primary."""
+        pk = _add_account(cli_env, phone="+70001112233")
+        _add_account(cli_env, phone="+70001112234")
+        _add_account(cli_env, phone="+70001112235")
+        asyncio.run(cli_env.set_setting("notification_account_phone", "+70001112233"))
+        from src.cli.commands.account import run
+
+        with patch("sys.stdin") as stdin_mock:
+            stdin_mock.isatty.return_value = False
+            run(_ns(account_action="delete", id=pk))
+        out = capsys.readouterr().out
+        assert "Deleted" in out
+        assert "сброшен" in out
+        rows = _query_db(
+            cli_env, "SELECT value FROM settings WHERE key=?", ("notification_account_phone",)
+        )
+        assert rows[0]["value"] == ""
+
+    def test_delete_notification_account_invalid_notify_to_aborts(self, cli_env, capsys):
+        pk = _add_account(cli_env, phone="+70001112233")
+        _add_account(cli_env, phone="+70001112234")
+        asyncio.run(cli_env.set_setting("notification_account_phone", "+70001112233"))
+        from src.cli.commands.account import run
+
+        run(_ns(account_action="delete", id=pk, notify_to="+9999"))
+        out = capsys.readouterr().out
+        assert "ERROR" in out
+        assert "не удалён" in out
+        rows = _query_db(cli_env, "SELECT COUNT(*) AS cnt FROM accounts WHERE id=?", (pk,))
+        assert rows[0]["cnt"] == 1
+        rows = _query_db(
+            cli_env, "SELECT value FROM settings WHERE key=?", ("notification_account_phone",)
+        )
+        assert rows[0]["value"] == "+70001112233"
+
+    def test_delete_notification_account_interactive_prompt(self, cli_env, capsys):
+        pk = _add_account(cli_env, phone="+70001112233")
+        _add_account(cli_env, phone="+70001112234")
+        _add_account(cli_env, phone="+70001112235")
+        asyncio.run(cli_env.set_setting("notification_account_phone", "+70001112233"))
+        from src.cli.commands.account import run
+
+        with (
+            patch("sys.stdin") as stdin_mock,
+            patch("builtins.input", return_value="2"),
+        ):
+            stdin_mock.isatty.return_value = True
+            run(_ns(account_action="delete", id=pk))
+        out = capsys.readouterr().out
+        assert "Deleted" in out
+        assert "переназначены на +70001112235" in out
+        rows = _query_db(
+            cli_env, "SELECT value FROM settings WHERE key=?", ("notification_account_phone",)
+        )
+        assert rows[0]["value"] == "+70001112235"
+
+    def test_delete_notification_account_prompt_eof_falls_back(self, cli_env, capsys):
+        """Ctrl-D in the interactive prompt applies the auto-rule instead of crashing."""
+        pk = _add_account(cli_env, phone="+70001112233")
+        _add_account(cli_env, phone="+70001112234")
+        _add_account(cli_env, phone="+70001112235")
+        asyncio.run(cli_env.set_setting("notification_account_phone", "+70001112233"))
+        from src.cli.commands.account import run
+
+        with (
+            patch("sys.stdin") as stdin_mock,
+            patch("builtins.input", side_effect=EOFError),
+        ):
+            stdin_mock.isatty.return_value = True
+            run(_ns(account_action="delete", id=pk))
+        out = capsys.readouterr().out
+        assert "Deleted" in out
+        assert "сброшен" in out
+        rows = _query_db(
+            cli_env, "SELECT value FROM settings WHERE key=?", ("notification_account_phone",)
+        )
+        assert rows[0]["value"] == ""
+
     def test_info_shows_live_account_profile(self, cli_env_with_pool, capsys):
         """account info: shows connected account profile diagnostics."""
         from src.models import TelegramUserInfo

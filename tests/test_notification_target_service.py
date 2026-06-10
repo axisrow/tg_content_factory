@@ -192,3 +192,105 @@ async def test_use_client_not_available():
     with pytest.raises(RuntimeError):
         async with svc.use_client():
             pass
+
+
+@pytest.mark.anyio
+async def test_reassign_kept_when_other_account_configured():
+    accounts = [_make_account(phone="+1"), _make_account(phone="+2", is_primary=False)]
+    svc, notifications = _make_service(accounts=accounts, configured_phone="+2")
+    result = await svc.reassign_for_deleted_account("+1")
+    assert result.action == "kept"
+    notifications.set_setting.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_reassign_kept_when_nothing_configured():
+    accounts = [_make_account(phone="+1"), _make_account(phone="+2", is_primary=False)]
+    svc, notifications = _make_service(accounts=accounts, configured_phone="")
+    result = await svc.reassign_for_deleted_account("+1")
+    assert result.action == "kept"
+    notifications.set_setting.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_reassign_explicit_replacement():
+    accounts = [
+        _make_account(phone="+1"),
+        _make_account(phone="+2", is_primary=False),
+        _make_account(phone="+3", is_primary=False),
+    ]
+    svc, notifications = _make_service(accounts=accounts, configured_phone="+1")
+    result = await svc.reassign_for_deleted_account("+1", "+3")
+    assert result.action == "reassigned"
+    assert result.new_phone == "+3"
+    notifications.set_setting.assert_called_once_with(
+        "notification_account_phone", "+3"
+    )
+
+
+@pytest.mark.anyio
+async def test_reassign_explicit_invalid_replacement_raises():
+    accounts = [_make_account(phone="+1"), _make_account(phone="+2", is_primary=False)]
+    svc, notifications = _make_service(accounts=accounts, configured_phone="+1")
+    with pytest.raises(ValueError):
+        await svc.reassign_for_deleted_account("+1", "+999")
+    notifications.set_setting.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_reassign_deleted_phone_not_valid_replacement():
+    accounts = [_make_account(phone="+1"), _make_account(phone="+2", is_primary=False)]
+    svc, notifications = _make_service(accounts=accounts, configured_phone="+1")
+    with pytest.raises(ValueError):
+        await svc.reassign_for_deleted_account("+1", "+1")
+    notifications.set_setting.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_reassign_auto_to_single_remaining():
+    accounts = [_make_account(phone="+1"), _make_account(phone="+2", is_primary=False)]
+    svc, notifications = _make_service(accounts=accounts, configured_phone="+1")
+    result = await svc.reassign_for_deleted_account("+1")
+    assert result.action == "reassigned"
+    assert result.new_phone == "+2"
+    notifications.set_setting.assert_called_once_with(
+        "notification_account_phone", "+2"
+    )
+
+
+@pytest.mark.anyio
+async def test_reassign_cleared_when_no_accounts_remain():
+    accounts = [_make_account(phone="+1")]
+    svc, notifications = _make_service(accounts=accounts, configured_phone="+1")
+    result = await svc.reassign_for_deleted_account("+1")
+    assert result.action == "cleared"
+    assert result.new_phone is None
+    notifications.set_setting.assert_called_once_with("notification_account_phone", "")
+
+
+@pytest.mark.anyio
+async def test_reassign_cleared_when_multiple_remain_without_choice():
+    accounts = [
+        _make_account(phone="+1"),
+        _make_account(phone="+2", is_primary=False),
+        _make_account(phone="+3", is_primary=False),
+    ]
+    svc, notifications = _make_service(accounts=accounts, configured_phone="+1")
+    result = await svc.reassign_for_deleted_account("+1")
+    assert result.action == "cleared"
+    notifications.set_setting.assert_called_once_with("notification_account_phone", "")
+
+
+@pytest.mark.anyio
+async def test_service_works_without_pool():
+    accounts = [_make_account(phone="+1"), _make_account(phone="+2", is_primary=False)]
+    notifications = MagicMock()
+    notifications.list_accounts = AsyncMock(return_value=accounts)
+    notifications.get_setting = AsyncMock(return_value="+1")
+    notifications.set_setting = AsyncMock()
+    svc = NotificationTargetService(notifications)
+    result = await svc.reassign_for_deleted_account("+1")
+    assert result.action == "reassigned"
+    with pytest.raises(RuntimeError):
+        async with svc.use_client():
+            pass

@@ -1,3 +1,21 @@
+{% macro delete_account_form(acc, accounts, notification_selected_phone) %}
+{% set others = accounts | rejectattr("phone", "equalto", acc.phone) | list %}
+{% if acc.phone == notification_selected_phone and others | length >= 2 %}
+{% set notify_options = [] %}
+{% for other in others %}
+{% set _ = notify_options.append({"value": other.phone, "label": other.phone ~ (" [primary]" if other.is_primary else "") ~ ("" if other.is_active else " [отключён]")}) %}
+{% endfor %}
+<form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" data-busy
+      data-notify-reassign='{{ notify_options | tojson }}'>
+    <input type="hidden" name="notify_to" value="">
+{% else %}
+<form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" data-busy data-confirm="Вы уверены, что хотите удалить этот аккаунт?">
+{% endif %}
+    <button type="submit" class="btn btn-outline-danger btn-sm" aria-label="Удалить" title="Удалить">
+        <i class="bi bi-trash" aria-hidden="true"></i>
+    </button>
+</form>
+{% endmacro %}
 <p><a href="/auth/login" class="btn btn-primary btn-sm"><i class="bi bi-plus-lg me-1" aria-hidden="true"></i>Добавить аккаунт</a></p>
 
 {% if all_accounts_flooded %}
@@ -69,11 +87,7 @@
                         <i class="bi {{ 'bi-pause-circle' if acc.is_active else 'bi-play-circle' }}" aria-hidden="true"></i>
                     </button>
                 </form>
-                <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" data-busy data-confirm="Вы уверены, что хотите удалить этот аккаунт?">
-                    <button type="submit" class="btn btn-outline-danger btn-sm" aria-label="Удалить" title="Удалить">
-                        <i class="bi bi-trash" aria-hidden="true"></i>
-                    </button>
-                </form>
+                {{ delete_account_form(acc, accounts, notification_selected_phone) }}
             </td>
         </tr>
         {% endfor %}
@@ -119,11 +133,7 @@
                         <i class="bi {{ 'bi-pause-circle' if acc.is_active else 'bi-play-circle' }}" aria-hidden="true"></i>
                     </button>
                 </form>
-                <form method="post" action="/settings/{{ acc.id }}/delete" class="d-inline" data-busy data-confirm="Вы уверены, что хотите удалить этот аккаунт?">
-                    <button type="submit" class="btn btn-outline-danger btn-sm" aria-label="Удалить" title="Удалить">
-                        <i class="bi bi-trash" aria-hidden="true"></i>
-                    </button>
-                </form>
+                {{ delete_account_form(acc, accounts, notification_selected_phone) }}
             </div>
         </div>
     </div>

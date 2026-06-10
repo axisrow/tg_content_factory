@@ -128,6 +128,13 @@ class TestToggleAccountTool:
         assert "Ошибка переключения аккаунта" in _text(result)
 
 
+def _wire_notification_repos(mock_db, configured=None, summaries=None):
+    """Wire repos used by NotificationTargetService during account deletion."""
+    mock_db.repos.settings.get_setting = AsyncMock(return_value=configured)
+    mock_db.repos.settings.set_setting = AsyncMock()
+    mock_db.repos.accounts.get_account_summaries = AsyncMock(return_value=summaries or [])
+
+
 class TestDeleteAccountTool:
     @pytest.mark.anyio
     async def test_missing_account_id_returns_error(self, mock_db):
@@ -147,10 +154,65 @@ class TestDeleteAccountTool:
         acc = _make_account(acc_id=5, phone="+75555555555")
         mock_db.get_accounts = AsyncMock(return_value=[acc])
         mock_db.delete_account = AsyncMock()
+        _wire_notification_repos(mock_db, configured=None, summaries=[acc])
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["delete_account"]({"account_id": 5, "confirm": True})
         assert "удалён" in _text(result)
         mock_db.delete_account.assert_awaited_once_with(5)
+        mock_db.repos.settings.set_setting.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_notification_account_reassigned_with_notify_to(self, mock_db):
+        acc = _make_account(acc_id=5, phone="+75555555555")
+        other = _make_account(acc_id=6, phone="+76666666666", is_primary=False)
+        third = _make_account(acc_id=7, phone="+77777777777", is_primary=False)
+        mock_db.get_accounts = AsyncMock(return_value=[acc, other, third])
+        mock_db.delete_account = AsyncMock()
+        _wire_notification_repos(mock_db, configured="+75555555555", summaries=[acc, other, third])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["delete_account"](
+            {"account_id": 5, "confirm": True, "notify_to": "+77777777777"}
+        )
+        text = _text(result)
+        assert "удалён" in text
+        assert "переназначены на +77777777777" in text
+        mock_db.delete_account.assert_awaited_once_with(5)
+        mock_db.repos.settings.set_setting.assert_awaited_once_with(
+            "notification_account_phone", "+77777777777"
+        )
+
+    @pytest.mark.anyio
+    async def test_notification_account_cleared_without_notify_to(self, mock_db):
+        acc = _make_account(acc_id=5, phone="+75555555555")
+        other = _make_account(acc_id=6, phone="+76666666666", is_primary=False)
+        third = _make_account(acc_id=7, phone="+77777777777", is_primary=False)
+        mock_db.get_accounts = AsyncMock(return_value=[acc, other, third])
+        mock_db.delete_account = AsyncMock()
+        _wire_notification_repos(mock_db, configured="+75555555555", summaries=[acc, other, third])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["delete_account"]({"account_id": 5, "confirm": True})
+        text = _text(result)
+        assert "удалён" in text
+        assert "сброшен" in text
+        mock_db.repos.settings.set_setting.assert_awaited_once_with(
+            "notification_account_phone", ""
+        )
+
+    @pytest.mark.anyio
+    async def test_invalid_notify_to_aborts_deletion(self, mock_db):
+        acc = _make_account(acc_id=5, phone="+75555555555")
+        other = _make_account(acc_id=6, phone="+76666666666", is_primary=False)
+        mock_db.get_accounts = AsyncMock(return_value=[acc, other])
+        mock_db.delete_account = AsyncMock()
+        _wire_notification_repos(mock_db, configured="+75555555555", summaries=[acc, other])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["delete_account"](
+            {"account_id": 5, "confirm": True, "notify_to": "+0000"}
+        )
+        text = _text(result)
+        assert "не удалён" in text
+        mock_db.delete_account.assert_not_awaited()
+        mock_db.repos.settings.set_setting.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
