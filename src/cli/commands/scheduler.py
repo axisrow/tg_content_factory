@@ -11,21 +11,30 @@ from src.services.collection_service import CollectionService
 from src.services.task_enqueuer import TaskEnqueuer
 from src.telegram.collector import Collector
 
+# Only these actions actually talk to Telegram; everything else is a pure DB
+# operation and must not pay (or risk) a full multi-account pool connect.
+_POOL_REQUIRED_ACTIONS = frozenset({"start", "trigger"})
+
 
 def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         config, db = await runtime.init_db(args.config)
-        _, pool = await runtime.init_pool(config, db)
+        pool = None
+        collection_service = None
+        task_enqueuer = None
 
         try:
-            if not pool.clients:
-                logging.error("No connected accounts.")
-                return
-
-            collector = Collector(pool, db, config.scheduler)
-            channel_bundle = ChannelBundle.from_database(db)
-            collection_service = CollectionService(channel_bundle, collector, collection_queue=None)
-            task_enqueuer = TaskEnqueuer(db, collection_service)
+            if args.scheduler_action in _POOL_REQUIRED_ACTIONS:
+                _, pool = await runtime.init_pool(config, db)
+                if not pool.clients:
+                    logging.error("No connected accounts.")
+                    return
+                collector = Collector(pool, db, config.scheduler)
+                channel_bundle = ChannelBundle.from_database(db)
+                collection_service = CollectionService(
+                    channel_bundle, collector, collection_queue=None
+                )
+                task_enqueuer = TaskEnqueuer(db, collection_service)
 
             if args.scheduler_action == "start":
                 manager = SchedulerManager(
@@ -119,7 +128,8 @@ def run(args: argparse.Namespace) -> None:
                 await db.set_setting("collection_queue_paused", "0")
                 print("Collection queue resumed.")
         finally:
-            await pool.disconnect_all()
+            if pool is not None:
+                await pool.disconnect_all()
             await db.close()
 
     asyncio.run(_run())
