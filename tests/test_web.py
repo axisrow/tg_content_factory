@@ -2511,10 +2511,34 @@ async def test_filter_analyze_applies_filters(client):
     resp = await client.post("/channels/filter/analyze", follow_redirects=False)
     assert resp.status_code == 303
     assert "/channels/filter/manage" in resp.headers["location"]
+    assert "msg=filter_analyze_queued" in resp.headers["location"]
+
+    # The analysis runs in the background FILTER_ANALYZE task since #793 —
+    # execute the queued task through its handler to cover the full flow.
+    import asyncio as aio
+    from unittest.mock import MagicMock
+
+    from src.models import CollectionTaskStatus
+    from src.services.task_handlers import FilterAnalyzeTaskHandler, TaskHandlerContext
+
+    task = await db.repos.tasks.get_active_filter_analyze_task()
+    assert task is not None
+    context = TaskHandlerContext(
+        collector=MagicMock(),
+        channel_bundle=MagicMock(),
+        tasks=db.repos.tasks,
+        stop_event=aio.Event(),
+        db=db,
+    )
+    await FilterAnalyzeTaskHandler(context).handle(task)
 
     channel = await db.get_channel_by_channel_id(-100551)
     assert channel is not None
     assert channel.is_filtered is True
+
+    latest = await db.repos.tasks.get_latest_filter_analyze_task()
+    assert latest is not None
+    assert latest.status == CollectionTaskStatus.COMPLETED
 
 
 @pytest.mark.anyio

@@ -319,6 +319,126 @@ async def test_translate_batch_no_db():
     assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
 
 
+def _filter_analyze_db(auto_delete: str = "0"):
+    db = MagicMock()
+    db.repos.settings.get_setting = AsyncMock(return_value=auto_delete)
+    return db
+
+
+def _filter_analyze_payload():
+    from src.models import FilterAnalyzeTaskPayload
+
+    return FilterAnalyzeTaskPayload()
+
+
+@pytest.mark.anyio
+async def test_filter_analyze_no_id():
+    d = _dispatcher(db=_filter_analyze_db())
+    await d._dispatch(
+        _task(CollectionTaskType.FILTER_ANALYZE, task_id=None, payload=_filter_analyze_payload())
+    )
+    d._tasks.update_collection_task.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_filter_analyze_wrong_payload():
+    d = _dispatcher(db=_filter_analyze_db())
+    await d._dispatch(_task(CollectionTaskType.FILTER_ANALYZE, payload={"bad": True}))
+    assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
+
+
+@pytest.mark.anyio
+async def test_filter_analyze_no_db():
+    d = _dispatcher(db=None)
+    await d._dispatch(_task(CollectionTaskType.FILTER_ANALYZE, payload=_filter_analyze_payload()))
+    assert d._tasks.update_collection_task.call_args[0][1] == CollectionTaskStatus.FAILED
+
+
+@pytest.mark.anyio
+async def test_filter_analyze_completes_and_applies_filters():
+    from src.filters.models import FilterReport
+
+    d = _dispatcher(db=_filter_analyze_db())
+    with patch("src.services.task_handlers.filter_analyze.ChannelAnalyzer") as mock_analyzer:
+        inst = mock_analyzer.return_value
+        inst.analyze_all = AsyncMock(
+            return_value=FilterReport(results=[], total_channels=10, filtered_count=2)
+        )
+        inst.apply_filters = AsyncMock(return_value=2)
+        await d._dispatch(_task(CollectionTaskType.FILTER_ANALYZE, payload=_filter_analyze_payload()))
+
+    inst.apply_filters.assert_awaited_once()
+    call = d._tasks.update_collection_task.call_args
+    assert call[0][1] == CollectionTaskStatus.COMPLETED
+    assert "filtered=2" in call.kwargs["note"]
+
+
+@pytest.mark.anyio
+async def test_filter_analyze_timeout_marks_failed():
+    import asyncio as aio
+    from types import SimpleNamespace
+
+    cfg = SimpleNamespace(scheduler=SimpleNamespace(filter_analyze_timeout_sec=0.05))
+    d = _dispatcher(db=_filter_analyze_db(), config=cfg)
+
+    async def _slow_analyze(*args, **kwargs):
+        await aio.sleep(5.0)
+
+    with patch("src.services.task_handlers.filter_analyze.ChannelAnalyzer") as mock_analyzer:
+        mock_analyzer.return_value.analyze_all = _slow_analyze
+        await d._dispatch(_task(CollectionTaskType.FILTER_ANALYZE, payload=_filter_analyze_payload()))
+
+    call = d._tasks.update_collection_task.call_args
+    assert call[0][1] == CollectionTaskStatus.FAILED
+    assert "timed out" in call.kwargs["error"]
+
+
+@pytest.mark.anyio
+async def test_filter_analyze_error_marks_failed():
+    d = _dispatcher(db=_filter_analyze_db())
+    with patch("src.services.task_handlers.filter_analyze.ChannelAnalyzer") as mock_analyzer:
+        mock_analyzer.return_value.analyze_all = AsyncMock(side_effect=RuntimeError("boom"))
+        await d._dispatch(_task(CollectionTaskType.FILTER_ANALYZE, payload=_filter_analyze_payload()))
+
+    call = d._tasks.update_collection_task.call_args
+    assert call[0][1] == CollectionTaskStatus.FAILED
+    assert "boom" in call.kwargs["error"]
+
+
+@pytest.mark.anyio
+async def test_filter_analyze_auto_purge_when_setting_enabled():
+    from src.filters.models import ChannelFilterResult, FilterReport
+    from src.services.filter_deletion_service import PurgeResult
+
+    db = _filter_analyze_db(auto_delete="1")
+    db.get_channels_with_counts = AsyncMock(
+        return_value=[MagicMock(channel_id=1, id=11), MagicMock(channel_id=2, id=22)]
+    )
+    d = _dispatcher(db=db)
+
+    report = FilterReport(
+        results=[ChannelFilterResult(channel_id=1, flags=["manual"], is_filtered=True)],
+        total_channels=2,
+        filtered_count=1,
+    )
+    with (
+        patch("src.services.task_handlers.filter_analyze.ChannelAnalyzer") as mock_analyzer,
+        patch("src.services.task_handlers.filter_analyze.FilterDeletionService") as mock_deletion,
+    ):
+        inst = mock_analyzer.return_value
+        inst.analyze_all = AsyncMock(return_value=report)
+        inst.apply_filters = AsyncMock(return_value=1)
+        mock_deletion.return_value.purge_channels_by_pks = AsyncMock(
+            return_value=PurgeResult(purged_count=1)
+        )
+        await d._dispatch(_task(CollectionTaskType.FILTER_ANALYZE, payload=_filter_analyze_payload()))
+
+    mock_deletion.return_value.purge_channels_by_pks.assert_awaited_once_with([11])
+    call = d._tasks.update_collection_task.call_args
+    assert call[0][1] == CollectionTaskStatus.COMPLETED
+    assert "purged=1" in call.kwargs["note"]
+
+
 @pytest.mark.anyio
 async def test_start_stop():
     d = _dispatcher()

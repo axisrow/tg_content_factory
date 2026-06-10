@@ -12,6 +12,7 @@ from src.live_runtime_pause import LiveRuntimePauseGate
 from src.models import CollectionTask, CollectionTaskStatus, CollectionTaskType
 from src.services.task_handlers import (
     ContentTaskHandler,
+    FilterAnalyzeTaskHandler,
     PhotoTaskHandler,
     PipelineTaskHandler,
     StatsTaskHandler,
@@ -35,6 +36,7 @@ TTaskHandler = TypeVar("TTaskHandler", bound=TaskHandler)
 
 _HANDLER_CLASSES = (
     StatsTaskHandler,
+    FilterAnalyzeTaskHandler,
     PhotoTaskHandler,
     PipelineTaskHandler,
     ContentTaskHandler,
@@ -49,6 +51,8 @@ HANDLED_TYPES = [
 _DB_BUSY_REQUEUE_TASK_TYPES = (
     CollectionTaskType.STATS_ALL,
     CollectionTaskType.SQ_STATS,
+    # Pure-SQL analysis with idempotent apply — safe to retry after a transient lock.
+    CollectionTaskType.FILTER_ANALYZE,
 )
 _DB_BUSY_REQUEUE_TYPE_VALUES = [task_type.value for task_type in _DB_BUSY_REQUEUE_TASK_TYPES]
 _DB_BUSY_NON_RETRY_TYPE_VALUES = [
@@ -252,6 +256,7 @@ class UnifiedDispatcher:
             self.__handler_map = {
                 CollectionTaskType.STATS_ALL: self._handle_stats_all,
                 CollectionTaskType.SQ_STATS: self._handle_sq_stats,
+                CollectionTaskType.FILTER_ANALYZE: self._handle_filter_analyze,
                 CollectionTaskType.PHOTO_DUE: self._handle_photo_due,
                 CollectionTaskType.PHOTO_AUTO: self._handle_photo_auto,
                 CollectionTaskType.PIPELINE_RUN: self._handle_pipeline_run,
@@ -277,6 +282,9 @@ class UnifiedDispatcher:
 
     async def _handle_sq_stats(self, task: CollectionTask) -> None:
         await self._handler(StatsTaskHandler).handle_sq_stats(task)
+
+    async def _handle_filter_analyze(self, task: CollectionTask) -> None:
+        await self._handler(FilterAnalyzeTaskHandler).handle(task)
 
     async def _handle_photo_due(self, task: CollectionTask) -> None:
         await self._handler(PhotoTaskHandler).handle_photo_due(task)

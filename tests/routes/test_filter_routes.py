@@ -546,34 +546,84 @@ async def test_hard_delete_all_no_filtered_channels(route_client, db):
 
 @pytest.mark.anyio
 async def test_analyze_redirects(route_client):
-    """Test analyze channels redirects."""
-    with patch("src.web.filter.handlers.ChannelAnalyzer") as mock_analyzer:
-        from src.filters.models import FilterReport
-        mock_instance = mock_analyzer.return_value
-        mock_instance.analyze_all = AsyncMock(
-            return_value=FilterReport(results=[], total_channels=0, filtered_count=0)
-        )
-        mock_instance.apply_filters = AsyncMock(return_value=0)
-        resp = await route_client.post("/channels/filter/analyze", follow_redirects=False)
-        assert resp.status_code == 303
-        assert "/channels/filter/manage" in resp.headers["location"]
+    """Test analyze channels redirects (queues a background task, #793)."""
+    resp = await route_client.post("/channels/filter/analyze", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "/channels/filter/manage" in resp.headers["location"]
+    assert "msg=filter_analyze_queued" in resp.headers["location"]
 
 
 @pytest.mark.anyio
 async def test_analyze_ignores_with_stats_query(route_client):
     """Test analyze route no longer runs stats collection inline."""
-    with patch("src.web.filter.handlers.ChannelAnalyzer") as mock_analyzer:
-        from src.filters.models import FilterReport
-        mock_instance = mock_analyzer.return_value
-        mock_instance.analyze_all = AsyncMock(
-            return_value=FilterReport(results=[], total_channels=0, filtered_count=0)
-        )
-        mock_instance.apply_filters = AsyncMock(return_value=0)
-        with patch("src.web.filter.handlers.deps.collection_service") as mock_collection:
-            resp = await route_client.post("/channels/filter/analyze?with_stats=1", follow_redirects=False)
+    with patch("src.web.filter.handlers.deps.collection_service") as mock_collection:
+        resp = await route_client.post("/channels/filter/analyze?with_stats=1", follow_redirects=False)
 
-        assert resp.status_code == 303
-        mock_collection.assert_not_called()
+    assert resp.status_code == 303
+    mock_collection.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_analyze_returns_immediately_and_creates_task(route_client, db):
+    """POST analyze enqueues a background task instead of running inline (#793)."""
+    with patch("src.web.filter.handlers.ChannelAnalyzer") as mock_analyzer:
+        mock_analyzer.return_value.analyze_all = AsyncMock(
+            side_effect=AssertionError("analysis must not run inline in the HTTP handler (#793)")
+        )
+        resp = await route_client.post("/channels/filter/analyze", follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert "msg=filter_analyze_queued" in resp.headers["location"]
+
+    task = await db.repos.tasks.get_active_filter_analyze_task()
+    assert task is not None
+
+
+@pytest.mark.anyio
+async def test_analyze_rejects_when_task_active(route_client, db):
+    """A second POST while a filter-analyze task is pending/running is rejected (#793)."""
+    from src.models import FilterAnalyzeTaskPayload
+
+    await db.repos.tasks.create_filter_analyze_task(FilterAnalyzeTaskPayload())
+
+    resp = await route_client.post("/channels/filter/analyze", follow_redirects=False)
+
+    assert resp.status_code == 303
+    assert "error=filter_analyze_running" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_analyze_status_endpoint_reports_progress_and_result(route_client, db):
+    """GET analyze/status reflects the latest filter-analyze task lifecycle (#793)."""
+    from src.models import CollectionTaskStatus, FilterAnalyzeTaskPayload
+
+    resp = await route_client.get("/channels/filter/analyze/status")
+    assert resp.status_code == 200
+    assert resp.json()["status"] is None
+
+    task_id = await db.repos.tasks.create_filter_analyze_task(FilterAnalyzeTaskPayload())
+    resp = await route_client.get("/channels/filter/analyze/status")
+    assert resp.json()["status"] == "pending"
+
+    await db.repos.tasks.update_collection_task(
+        task_id,
+        CollectionTaskStatus.COMPLETED,
+        messages_collected=3,
+        note="analyzed=10 filtered=3 purged=0",
+    )
+    body = (await route_client.get("/channels/filter/analyze/status")).json()
+    assert body["status"] == "completed"
+    assert "filtered=3" in body["note"]
+
+    task_id_2 = await db.repos.tasks.create_filter_analyze_task(FilterAnalyzeTaskPayload())
+    await db.repos.tasks.update_collection_task(
+        task_id_2,
+        CollectionTaskStatus.FAILED,
+        error="Analysis timed out after 600s",
+    )
+    body = (await route_client.get("/channels/filter/analyze/status")).json()
+    assert body["status"] == "failed"
+    assert "timed out" in body["error"]
 
 
 @pytest.mark.anyio
@@ -788,35 +838,17 @@ async def test_parse_snapshot_invalid_flag(route_client, db):
 
 @pytest.mark.anyio
 async def test_analyze_with_auto_delete(route_client, db):
-    """Test analyze channels with auto_delete enabled."""
+    """Auto-delete no longer runs inline in the HTTP handler — it moved into
+    FilterAnalyzeTaskHandler together with the analysis itself (#793)."""
     await _add_filtered_channel(db, channel_id=3100, title="Auto Delete")
     await db.set_setting("auto_delete_filtered", "1")
 
-    with patch("src.web.filter.handlers.ChannelAnalyzer") as mock_analyzer, patch(
-        "src.web.filter.handlers.deps.filter_deletion_service"
-    ) as mock_svc:
-        from src.filters.models import ChannelFilterResult, FilterReport
-
-        mock_instance = mock_analyzer.return_value
-        mock_instance.analyze_all = AsyncMock(
-            return_value=FilterReport(
-                results=[
-                    ChannelFilterResult(
-                        channel_id=3100, flags=["low_uniqueness"], is_filtered=True
-                    )
-                ],
-                total_channels=1,
-                filtered_count=1,
-            )
-        )
-        mock_instance.apply_filters = AsyncMock(return_value=1)
-        mock_svc.return_value.purge_channels_by_pks = AsyncMock(
-            return_value=PurgeResult(purged_count=1)
-        )
-
+    with patch("src.web.filter.handlers.deps.filter_deletion_service") as mock_svc:
         resp = await route_client.post("/channels/filter/analyze", follow_redirects=False)
-        assert resp.status_code == 303
-        assert "msg=purged_all_filtered" in resp.headers["location"]
+
+    assert resp.status_code == 303
+    assert "msg=filter_analyze_queued" in resp.headers["location"]
+    mock_svc.assert_not_called()
 
 
 @pytest.mark.anyio

@@ -23,6 +23,7 @@ def test_filter_success_codes_registered():
         "filter_reset_selected",
         "filter_applied",
         "filter_toggled",
+        "filter_analyze_queued",
     }
     missing = required - set(FLASH_MESSAGES.keys())
     assert not missing, f"FLASH_MESSAGES is missing: {sorted(missing)}"
@@ -37,6 +38,7 @@ def test_hard_delete_error_codes_registered():
         "hard_delete_confirm_required",
         "hard_delete_set_changed",
         "hard_delete_partial",
+        "filter_analyze_running",
     }
     missing = required - set(FLASH_ERRORS.keys())
     assert not missing, f"FLASH_ERRORS is missing: {sorted(missing)}"

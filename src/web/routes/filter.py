@@ -41,6 +41,11 @@ async def analyze_channels(request: Request):
     return filter_response(request, await handlers.analyze_channels(request))
 
 
+@router.get("/filter/analyze/status")
+async def analyze_status(request: Request):
+    return await handlers.analyze_status(request)
+
+
 @router.post("/filter/apply")
 async def apply_filters(request: Request):
     return filter_response(request, await handlers.apply_filters(request))
