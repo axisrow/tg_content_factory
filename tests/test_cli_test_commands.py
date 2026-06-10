@@ -35,6 +35,7 @@ from src.cli.commands.test import (
     _run_benchmark_step,
     _skip_remaining_tg_checks,
 )
+from src.database.repositories.messages import MessageSearchPage
 
 # ---------------------------------------------------------------------------
 # Status enum
@@ -328,7 +329,7 @@ class TestCheckLocalSearch:
     @pytest.mark.anyio
     async def test_pass(self):
         db = MagicMock()
-        db.search_messages = AsyncMock(return_value=([], 0))
+        db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
         result = await _check_local_search(db)
         assert result.status == Status.PASS
         assert "0 results" in result.detail

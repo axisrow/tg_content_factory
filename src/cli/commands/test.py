@@ -363,8 +363,9 @@ async def _check_notification_queries(db) -> CheckResult:
 
 async def _check_local_search(db) -> CheckResult:
     try:
-        messages, total = await db.search_messages("test", limit=5)
-        return CheckResult("local_search", Status.PASS, f"Query OK ({total} results)")
+        page = await db.search_messages("test", limit=5)
+        total_display = f"{page.total}+" if page.has_more else str(page.total)
+        return CheckResult("local_search", Status.PASS, f"Query OK ({total_display} results)")
     except Exception as exc:
         return CheckResult("local_search", Status.FAIL, str(exc))
 

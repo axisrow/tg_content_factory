@@ -51,14 +51,18 @@ class AISearchEngine:
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     coro = search.search_messages(query, limit=20)
                     future = executor.submit(asyncio.run, coro)
-                    messages, total = future.result()
+                    page = future.result()
             except RuntimeError:
-                messages, total = asyncio.run(search.search_messages(query, limit=20))
+                page = asyncio.run(search.search_messages(query, limit=20))
 
+            messages = page.messages
             if not messages:
                 return f"No results found for: {query}"
 
-            lines = [f"Found {total} results for '{query}'. Top results:"]
+            # total is a lower bound when has_more is set (#766) — keep the
+            # volume signal for the LLM so it knows the query is broad.
+            total_display = f"{page.total}+" if page.has_more else str(page.total)
+            lines = [f"Found {total_display} results for '{query}'. Top results:"]
             for m in messages:
                 text_preview = (m.text or "")[:200]
                 lines.append(f"- [{m.date}] Channel {m.channel_id}: {text_preview}")
@@ -82,10 +86,11 @@ class AISearchEngine:
         """Run AI-powered search."""
         if not self._agent:
             # Fallback to basic local search
-            messages, total = await self._search.search_messages(query, limit=20)
+            page = await self._search.search_messages(query, limit=20)
             return SearchResult(
-                messages=messages,
-                total=total,
+                messages=page.messages,
+                total=page.total,
+                has_more=page.has_more,
                 query=query,
                 ai_summary="AI search is not available. Showing local results.",
             )
@@ -95,20 +100,22 @@ class AISearchEngine:
             summary = str(response)
 
             # Also get raw messages for display
-            messages, total = await self._search.search_messages(query, limit=20)
+            page = await self._search.search_messages(query, limit=20)
 
             return SearchResult(
-                messages=messages,
-                total=total,
+                messages=page.messages,
+                total=page.total,
+                has_more=page.has_more,
                 query=query,
                 ai_summary=summary,
             )
         except Exception as e:
             logger.error("AI search error: %s", e)
-            messages, total = await self._search.search_messages(query, limit=20)
+            page = await self._search.search_messages(query, limit=20)
             return SearchResult(
-                messages=messages,
-                total=total,
+                messages=page.messages,
+                total=page.total,
+                has_more=page.has_more,
                 query=query,
                 ai_summary=f"AI search error: {e}. Showing local results.",
             )
