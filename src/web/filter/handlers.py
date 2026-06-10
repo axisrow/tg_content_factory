@@ -8,6 +8,7 @@ from fastapi import Request
 
 from src.filters.analyzer import ChannelAnalyzer
 from src.filters.models import FilterReport
+from src.models import FilterAnalyzeTaskPayload
 from src.web import deps
 from src.web.filter.forms import (
     HARD_DELETE_ALL_CONFIRM_PHRASE,
@@ -157,42 +158,34 @@ async def hard_delete_all(request: Request) -> FilterRedirect:
 
 
 async def analyze_channels(request: Request) -> FilterRedirect:
+    # The analysis scans the whole messages table (tens of seconds on a large DB),
+    # so it runs as a background FILTER_ANALYZE task picked up by the worker's
+    # UnifiedDispatcher; the UI polls analyze_status (#793). The auto-purge that
+    # used to run inline here lives in FilterAnalyzeTaskHandler now.
     db = deps.get_db(request)
-    analyzer = ChannelAnalyzer(db)
-    logger.info("filter/analyze: starting analysis")
-    report = await analyzer.analyze_all()
-    await analyzer.apply_filters(report)
-    logger.info(
-        "filter/analyze: applied filters — %d channels, %d filtered",
-        report.total_channels,
-        report.filtered_count,
-    )
+    # create_filter_analyze_task is atomic (INSERT ... WHERE NOT EXISTS) and
+    # returns None when a task is already pending/running — no check-then-create
+    # race between concurrent POSTs (review on #823).
+    task_id = await db.repos.tasks.create_filter_analyze_task(FilterAnalyzeTaskPayload())
+    if task_id is None:
+        return manage_redirect(error="filter_analyze_running")
 
-    purged_count = 0
-    auto_delete = await db.repos.settings.get_setting("auto_delete_filtered")
-    if auto_delete == "1" and report.filtered_count > 0:
-        channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
-        pk_map = {ch.channel_id: ch.id for ch in channels if ch.id is not None}
-        filtered_pks = [
-            pk_map[r.channel_id] for r in report.results if r.is_filtered and r.channel_id in pk_map
-        ]
-        if filtered_pks:
-            svc = deps.filter_deletion_service(request)
-            result = await svc.purge_channels_by_pks(filtered_pks)
-            purged_count = result.purged_count
-            # Auto-purge runs in the background of analysis; there's no dedicated flash
-            # slot for it, but a partial failure must not vanish (#676 review).
-            if result.errors:
-                logger.warning(
-                    "analyze_channels auto-purge: %d channel(s) failed: %s",
-                    len(result.errors),
-                    "; ".join(result.errors),
-                )
-            else:
-                logger.info("filter/analyze: auto-purged %d filtered channels", purged_count)
+    logger.info("filter/analyze: queued background analysis task")
+    return manage_redirect(msg="filter_analyze_queued")
 
-    msg = "purged_all_filtered" if purged_count else "filter_applied"
-    return manage_redirect(msg=msg)
+
+async def analyze_status(request: Request) -> dict:
+    """Status of the latest background filter-analyze task for UI polling (#793)."""
+    db = deps.get_db(request)
+    task = await db.repos.tasks.get_latest_filter_analyze_task()
+    if task is None:
+        return {"status": None, "error": None, "note": None, "filtered_count": None}
+    return {
+        "status": task.status.value,
+        "error": task.error,
+        "note": task.note,
+        "filtered_count": task.messages_collected,
+    }
 
 
 async def apply_filters(request: Request) -> FilterRedirect:

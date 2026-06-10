@@ -7,6 +7,7 @@ import pytest
 from src.models import CollectionTask, CollectionTaskStatus, CollectionTaskType
 from src.services.task_handlers import (
     ContentTaskHandler,
+    FilterAnalyzeTaskHandler,
     PhotoTaskHandler,
     PipelineTaskHandler,
     StatsTaskHandler,
@@ -36,6 +37,7 @@ def test_handled_types_are_derived_from_task_handlers():
         task_type.value
         for handler_cls in (
             StatsTaskHandler,
+            FilterAnalyzeTaskHandler,
             PhotoTaskHandler,
             PipelineTaskHandler,
             ContentTaskHandler,
@@ -61,6 +63,7 @@ async def test_dispatcher_routes_each_handled_type_to_compatibility_shim():
     for task_type, handler_name in (
         (CollectionTaskType.STATS_ALL, "_handle_stats_all"),
         (CollectionTaskType.SQ_STATS, "_handle_sq_stats"),
+        (CollectionTaskType.FILTER_ANALYZE, "_handle_filter_analyze"),
         (CollectionTaskType.PHOTO_DUE, "_handle_photo_due"),
         (CollectionTaskType.PHOTO_AUTO, "_handle_photo_auto"),
         (CollectionTaskType.PIPELINE_RUN, "_handle_pipeline_run"),
@@ -87,6 +90,7 @@ def test_task_handler_metadata_covers_only_supported_task_types():
     context = _context()
     handlers = [
         StatsTaskHandler(context),
+        FilterAnalyzeTaskHandler(context),
         PhotoTaskHandler(context),
         PipelineTaskHandler(context),
         ContentTaskHandler(context),

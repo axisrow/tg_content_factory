@@ -12,6 +12,7 @@ from src.live_runtime_pause import LiveRuntimePauseGate
 from src.models import CollectionTask, CollectionTaskStatus, CollectionTaskType
 from src.services.task_handlers import (
     ContentTaskHandler,
+    FilterAnalyzeTaskHandler,
     PhotoTaskHandler,
     PipelineTaskHandler,
     StatsTaskHandler,
@@ -35,6 +36,7 @@ TTaskHandler = TypeVar("TTaskHandler", bound=TaskHandler)
 
 _HANDLER_CLASSES = (
     StatsTaskHandler,
+    FilterAnalyzeTaskHandler,
     PhotoTaskHandler,
     PipelineTaskHandler,
     ContentTaskHandler,
@@ -46,6 +48,10 @@ HANDLED_TYPES = [
     for handler_cls in _HANDLER_CLASSES
     for task_type in handler_cls.task_types
 ]
+# FILTER_ANALYZE is intentionally NOT here: with auto_delete_filtered=1 it
+# purges messages after applying filters, so a crash-requeued rerun would
+# re-analyze the already-purged channels (now with empty history) and silently
+# unfilter them (Codex review on #823). Treated as side-effecting instead.
 _DB_BUSY_REQUEUE_TASK_TYPES = (
     CollectionTaskType.STATS_ALL,
     CollectionTaskType.SQ_STATS,
@@ -252,6 +258,7 @@ class UnifiedDispatcher:
             self.__handler_map = {
                 CollectionTaskType.STATS_ALL: self._handle_stats_all,
                 CollectionTaskType.SQ_STATS: self._handle_sq_stats,
+                CollectionTaskType.FILTER_ANALYZE: self._handle_filter_analyze,
                 CollectionTaskType.PHOTO_DUE: self._handle_photo_due,
                 CollectionTaskType.PHOTO_AUTO: self._handle_photo_auto,
                 CollectionTaskType.PIPELINE_RUN: self._handle_pipeline_run,
@@ -277,6 +284,9 @@ class UnifiedDispatcher:
 
     async def _handle_sq_stats(self, task: CollectionTask) -> None:
         await self._handler(StatsTaskHandler).handle_sq_stats(task)
+
+    async def _handle_filter_analyze(self, task: CollectionTask) -> None:
+        await self._handler(FilterAnalyzeTaskHandler).handle(task)
 
     async def _handle_photo_due(self, task: CollectionTask) -> None:
         await self._handler(PhotoTaskHandler).handle_photo_due(task)
