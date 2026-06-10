@@ -92,6 +92,15 @@ class TelegramSearch:
                 # that contract instead of letting the exception escape `async with`.
                 yield self._error_result(query, exc.info.detail, flood_wait=exc.info)
                 return
+            except Exception as exc:
+                # Non-flood warm-up failures (RPC/network/timeout) were likewise
+                # caught per-method and returned as an error SearchResult on main.
+                logger.exception(
+                    "Telegram dialog cache warm-up failed query_hash=%s",
+                    query_log_fields(query)["query_hash"],
+                )
+                yield self._error_result(query, f"Ошибка поиска в Telegram: {exc}")
+                return
             yield session, phone
         finally:
             await self._pool.release_client(phone)
