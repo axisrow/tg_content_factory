@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.database.repositories.messages import MessageSearchPage
 from src.models import Message, SearchResult
 from src.search.local_search import LocalSearch
 
@@ -14,10 +15,10 @@ from src.search.local_search import LocalSearch
 def mock_search_bundle():
     """Mock SearchBundle."""
     bundle = MagicMock()
-    bundle.search_messages = AsyncMock(return_value=([], 0))
+    bundle.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
     bundle.messages = MagicMock()
-    bundle.messages.search_semantic_messages = AsyncMock(return_value=([], 0))
-    bundle.messages.search_hybrid_messages = AsyncMock(return_value=([], 0))
+    bundle.messages.search_semantic_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
+    bundle.messages.search_hybrid_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
     return bundle
 
 
@@ -48,7 +49,7 @@ def make_message(**kwargs) -> Message:
 async def test_search_basic(mock_search_bundle):
     """Basic search returns SearchResult."""
     msg = make_message(text="test message", channel_id=1, message_id=1)
-    mock_search_bundle.search_messages.return_value = ([msg], 1)
+    mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[msg], total=1)
 
     local_search = LocalSearch(mock_search_bundle)
     result = await local_search.search(query="test")
@@ -62,7 +63,7 @@ async def test_search_basic(mock_search_bundle):
 @pytest.mark.anyio
 async def test_search_with_channel_filter(mock_search_bundle):
     """Search with channel_id filter."""
-    mock_search_bundle.search_messages.return_value = ([], 0)
+    mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[], total=0)
 
     local_search = LocalSearch(mock_search_bundle)
     await local_search.search(query="test", channel_id=123)
@@ -74,7 +75,7 @@ async def test_search_with_channel_filter(mock_search_bundle):
 @pytest.mark.anyio
 async def test_search_with_date_range(mock_search_bundle):
     """Search with date range."""
-    mock_search_bundle.search_messages.return_value = ([], 0)
+    mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[], total=0)
 
     local_search = LocalSearch(mock_search_bundle)
     await local_search.search(query="test", date_from="2024-01-01", date_to="2024-12-31")
@@ -87,7 +88,7 @@ async def test_search_with_date_range(mock_search_bundle):
 @pytest.mark.anyio
 async def test_search_with_length_filters(mock_search_bundle):
     """Search with min/max length filters."""
-    mock_search_bundle.search_messages.return_value = ([], 0)
+    mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[], total=0)
 
     local_search = LocalSearch(mock_search_bundle)
     await local_search.search(query="test", min_length=100, max_length=500)
@@ -100,7 +101,7 @@ async def test_search_with_length_filters(mock_search_bundle):
 @pytest.mark.anyio
 async def test_search_with_fts_flag(mock_search_bundle):
     """Search with FTS flag."""
-    mock_search_bundle.search_messages.return_value = ([], 0)
+    mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[], total=0)
 
     local_search = LocalSearch(mock_search_bundle)
     await local_search.search(query="test", is_fts=True)
@@ -112,7 +113,7 @@ async def test_search_with_fts_flag(mock_search_bundle):
 @pytest.mark.anyio
 async def test_search_with_pagination(mock_search_bundle):
     """Search with limit and offset."""
-    mock_search_bundle.search_messages.return_value = ([], 0)
+    mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[], total=0)
 
     local_search = LocalSearch(mock_search_bundle)
     await local_search.search(query="test", limit=10, offset=20)

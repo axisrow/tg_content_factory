@@ -44,11 +44,14 @@ def register(db, client_pool, embedding_service, **kwargs):
         total: int,
         empty_prefix: str,
         found_prefix: str,
+        has_more: bool = False,
     ) -> str:
         if not messages:
             return f"{empty_prefix}: {query!r}"
+        # total is a lower bound when has_more is set (#766) — show "N+".
+        total_display = f"{total}+" if has_more else str(total)
         lines = [
-            f"{found_prefix} {total} сообщений для '{query}'. "
+            f"{found_prefix} {total_display} сообщений для '{query}'. "
             f"Показаны первые {len(messages)}:"
         ]
         for message in messages:
@@ -86,7 +89,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         min_length = args.get("min_length")
         max_length = args.get("max_length")
         try:
-            messages, total = await db.search_messages(
+            page = await db.search_messages(
                 query=query,
                 channel_id=int(channel_id) if channel_id else None,
                 date_from=date_from,
@@ -97,10 +100,11 @@ def register(db, client_pool, embedding_service, **kwargs):
             )
             text = _render_search_result(
                 query=query,
-                messages=messages,
-                total=total,
+                messages=page.messages,
+                total=page.total,
                 empty_prefix="Ничего не найдено по запросу",
                 found_prefix="Найдено",
+                has_more=page.has_more,
             )
         except Exception as e:
             text = f"Ошибка поиска сообщений: {e}"
@@ -182,6 +186,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             total=result.total,
             empty_prefix="Ничего не найдено по запросу",
             found_prefix="Найдено",
+            has_more=getattr(result, "has_more", False),
         )
 
     # ------------------------------------------------------------------

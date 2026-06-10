@@ -66,7 +66,15 @@ async def test_search_local_pagination(db):
     engine = SearchEngine(db)
     result = await engine.search_local("Test", limit=5, offset=0)
     assert len(result.messages) == 5
-    assert result.total == 20
+    # total is a lower bound since #766 (offset + page size), has_more marks
+    # the remaining pages instead of an exact COUNT.
+    assert result.total == 5
+    assert result.has_more is True
+
+    last_page = await engine.search_local("Test", limit=5, offset=15)
+    assert len(last_page.messages) == 5
+    assert last_page.has_more is False
+    assert last_page.total == 20
 
 
 @pytest.mark.anyio

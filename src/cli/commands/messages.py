@@ -20,7 +20,7 @@ from src.telegram.reactions import (
 )
 
 
-def _print_messages(messages: list[Message], fmt: str, total: int) -> None:
+def _print_messages(messages: list[Message], fmt: str, total: int, has_more: bool = False) -> None:
     if fmt == "json":
         items = []
         for msg in messages:
@@ -49,7 +49,9 @@ def _print_messages(messages: list[Message], fmt: str, total: int) -> None:
             ])
         print(buf.getvalue(), end="")
     else:
-        print(f"Total: {total} messages (showing {len(messages)})\n")
+        # total is a lower bound when has_more is set (#766) — show "N+".
+        total_display = f"{total}+" if has_more else str(total)
+        print(f"Total: {total_display} messages (showing {len(messages)})\n")
         for msg in messages:
             date_str = str(msg.date)[:19] if msg.date else "—"
             text = (msg.text or "").strip()
@@ -194,7 +196,7 @@ def run(args: argparse.Namespace) -> None:
                             "Use --live to read directly from Telegram."
                         )
                         return
-                    messages, total = await db.search_messages(
+                    page = await db.search_messages(
                         query=args.query,
                         channel_id=ch.channel_id,
                         date_from=args.date_from,
@@ -202,10 +204,11 @@ def run(args: argparse.Namespace) -> None:
                         limit=args.limit,
                         topic_id=args.topic_id,
                     )
+                    messages = page.messages
                     if not messages:
                         print("No messages found.")
                         return
-                    _print_messages(messages, args.output_format, total)
+                    _print_messages(messages, args.output_format, page.total, has_more=page.has_more)
         finally:
             if pool:
                 await pool.disconnect_all()

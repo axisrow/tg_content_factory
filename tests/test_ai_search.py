@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.config import LLMConfig
+from src.database.repositories.messages import MessageSearchPage
 from src.models import Message
 from src.search.ai_search import AISearchEngine
 
@@ -18,7 +19,7 @@ def llm_config():
 @pytest.fixture
 def mock_search_bundle():
     bundle = MagicMock()
-    bundle.search_messages = AsyncMock(return_value=([], 0))
+    bundle.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
     return bundle
 
 
@@ -81,9 +82,9 @@ async def test_ai_search_run_success(llm_config, mock_search_bundle, fake_deepag
     mock_agent = MagicMock()
     mock_agent.run.return_value = "AI Summary Result"
 
-    mock_search_bundle.search_messages.return_value = (
-        [Message(channel_id=1, message_id=1, text="hello", date=datetime.now())],
-        1,
+    mock_search_bundle.search_messages.return_value = MessageSearchPage(
+        messages=[Message(channel_id=1, message_id=1, text="hello", date=datetime.now())],
+        total=1,
     )
 
     fake_deepagents.return_value = mock_agent
@@ -111,9 +112,9 @@ async def test_ai_search_run_error(llm_config, mock_search_bundle, fake_deepagen
 @pytest.mark.anyio
 async def test_search_posts_tool_logic(llm_config, mock_search_bundle, fake_deepagents):
     # This tests the tool function defined inside initialize
-    mock_search_bundle.search_messages.return_value = (
-        [Message(channel_id=1, message_id=1, text="content", date=datetime.now())],
-        1,
+    mock_search_bundle.search_messages.return_value = MessageSearchPage(
+        messages=[Message(channel_id=1, message_id=1, text="content", date=datetime.now())],
+        total=1,
     )
 
     engine = AISearchEngine(llm_config, mock_search_bundle)
@@ -132,7 +133,7 @@ async def test_search_posts_tool_logic(llm_config, mock_search_bundle, fake_deep
 
 @pytest.mark.anyio
 async def test_search_posts_tool_no_results(llm_config, mock_search_bundle, fake_deepagents):
-    mock_search_bundle.search_messages.return_value = ([], 0)
+    mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[], total=0)
 
     engine = AISearchEngine(llm_config, mock_search_bundle)
     engine.initialize()

@@ -19,6 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from src.cli.commands.filter import _build_deletion_service, _parse_pks, _print_result
 from src.cli.commands.messages import _print_live_messages, _print_messages
 from src.cli.commands.search_query import _chat_filter_warning
+from src.database.repositories.messages import MessageSearchPage
 from src.models import Account, Channel, Message, SearchQuery, SearchQueryDailyStat
 from tests.helpers import AsyncIterMessages, cli_ns
 
@@ -1595,7 +1596,7 @@ class TestMessagesReadDbMode:
         ch = Channel(id=1, channel_id=100, title="TestCh", username="testch")
         db = MagicMock()
         db.get_channels = AsyncMock(return_value=[ch])
-        db.search_messages = AsyncMock(return_value=([], 0))
+        db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
         db.close = AsyncMock()
 
         with patch("src.cli.commands.messages.runtime.init_db", side_effect=_make_coro((MagicMock(), db))):
@@ -1626,7 +1627,7 @@ class TestMessagesReadDbMode:
         )
         db = MagicMock()
         db.get_channels = AsyncMock(return_value=[ch])
-        db.search_messages = AsyncMock(return_value=([msg], 1))
+        db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[msg], total=1))
         db.close = AsyncMock()
 
         with patch("src.cli.commands.messages.runtime.init_db", side_effect=_make_coro((MagicMock(), db))):
@@ -1657,7 +1658,7 @@ class TestMessagesReadDbMode:
         )
         db = MagicMock()
         db.get_channels = AsyncMock(return_value=[ch])
-        db.search_messages = AsyncMock(return_value=([msg], 1))
+        db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[msg], total=1))
         db.close = AsyncMock()
 
         with patch("src.cli.commands.messages.runtime.init_db", side_effect=_make_coro((MagicMock(), db))):
@@ -1689,7 +1690,7 @@ class TestMessagesReadDbMode:
         )
         db = MagicMock()
         db.get_channels = AsyncMock(return_value=[ch])
-        db.search_messages = AsyncMock(return_value=([msg], 1))
+        db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[msg], total=1))
         db.close = AsyncMock()
 
         with patch("src.cli.commands.messages.runtime.init_db", side_effect=_make_coro((MagicMock(), db))):

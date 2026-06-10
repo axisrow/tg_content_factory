@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.database import Database
+from src.database.repositories.messages import MessageSearchPage
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -55,14 +56,14 @@ def _text(result: dict) -> str:
 
 class TestDeepagentsSyncSearchMessages:
     def test_no_results(self, mock_db):
-        mock_db.search_messages = AsyncMock(return_value=([], 0))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["search_messages"]("test query")
         assert "Ничего не найдено" in result
 
     def test_with_results(self, mock_db):
         msg = SimpleNamespace(date="2026-01-01", channel_id=10, text="hello world")
-        mock_db.search_messages = AsyncMock(return_value=([msg], 1))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[msg], total=1))
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["search_messages"]("hello")
         assert "hello world" in result
@@ -77,7 +78,7 @@ class TestDeepagentsSyncSearchMessages:
     def test_long_message_truncated(self, mock_db):
         long_text = "x" * 500
         msg = SimpleNamespace(date="2026-01-01", channel_id=5, text=long_text)
-        mock_db.search_messages = AsyncMock(return_value=([msg], 1))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[msg], total=1))
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["search_messages"]("x")
         # Preview capped at 200 chars + surrounding

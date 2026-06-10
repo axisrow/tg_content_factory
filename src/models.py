@@ -406,7 +406,10 @@ class SearchQueryDailyStat(BaseModel):
 
 class SearchResult(BaseModel):
     messages: list[Message]
+    # Lower bound for local DB search since #766 (offset + page size; exact only
+    # when has_more is False); other modes keep their own semantics.
     total: int
+    has_more: bool = False
     query: str
     ai_summary: str | None = None
     error: str | None = None

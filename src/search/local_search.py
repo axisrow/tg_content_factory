@@ -33,7 +33,7 @@ class LocalSearch:
         max_length: int | None = None,
         include_filtered: bool = False,
     ) -> SearchResult:
-        messages, total = await self._search.search_messages(
+        page = await self._search.search_messages(
             query=query,
             channel_id=channel_id,
             date_from=date_from,
@@ -45,7 +45,9 @@ class LocalSearch:
             max_length=max_length,
             include_filtered=include_filtered,
         )
-        return SearchResult(messages=messages, total=total, query=query)
+        return SearchResult(
+            messages=page.messages, total=page.total, has_more=page.has_more, query=query
+        )
 
     async def _ensure_numpy_index(self) -> NumpySemanticIndex:
         """Lazily load and build the numpy in-memory index from the JSON table."""

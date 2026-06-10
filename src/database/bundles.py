@@ -13,7 +13,7 @@ from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.generated_images import GeneratedImagesRepository
 from src.database.repositories.generation_runs import GenerationRunsRepository
-from src.database.repositories.messages import MessagesRepository
+from src.database.repositories.messages import MessageSearchPage, MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.pipeline_action_log import PipelineActionLogRepository
@@ -446,7 +446,7 @@ class CollectionBundle:
         min_length: int | None = None,
         max_length: int | None = None,
         include_filtered: bool = False,
-    ) -> tuple[list[Message], int]:
+    ) -> MessageSearchPage:
         return await self.messages.search_messages(
             query=query,
             channel_id=channel_id,
@@ -694,7 +694,7 @@ class SearchBundle:
         min_length: int | None = None,
         max_length: int | None = None,
         include_filtered: bool = False,
-    ) -> tuple[list[Message], int]:
+    ) -> MessageSearchPage:
         return await self.messages.search_messages(
             query=query,
             channel_id=channel_id,

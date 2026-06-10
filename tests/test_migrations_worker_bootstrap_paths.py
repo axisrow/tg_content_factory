@@ -28,6 +28,7 @@ from src.database.migrations import (
     _migrate_vec_to_portable,
     run_migrations,
 )
+from src.database.repositories.messages import MessageSearchPage
 from src.models import Message
 from src.search.local_search import LocalSearch
 from src.services.provider_service import RuntimeProviderRegistry, build_provider_service
@@ -1245,10 +1246,10 @@ async def test_search_passes_offset_and_limit(mock_search_bundle_for_local):
 def mock_search_bundle_for_local():
     """Mock SearchBundle for local search tests."""
     bundle = MagicMock()
-    bundle.search_messages = AsyncMock(return_value=([], 0))
+    bundle.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
     bundle.messages = MagicMock()
-    bundle.messages.search_semantic_messages = AsyncMock(return_value=([], 0))
-    bundle.messages.search_hybrid_messages = AsyncMock(return_value=([], 0))
+    bundle.messages.search_semantic_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
+    bundle.messages.search_hybrid_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
     return bundle
 
 

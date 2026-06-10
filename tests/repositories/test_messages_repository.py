@@ -443,10 +443,13 @@ async def test_search_messages_pagination(messages_repo):
     for i in range(10):
         await messages_repo.insert_message(make_message(1, 100 + i, f"Message {i}"))
 
-    # First page
-    messages, total = await messages_repo.search_messages(limit=3, offset=0)
+    # First page: total is a lower bound (offset + len) since #766, has_more
+    # signals the next page instead of an exact COUNT.
+    page = await messages_repo.search_messages(limit=3, offset=0)
+    messages = page.messages
     assert len(messages) == 3
-    assert total == 10
+    assert page.total == 3
+    assert page.has_more is True
 
     # Second page
     messages2, _ = await messages_repo.search_messages(limit=3, offset=3)
@@ -862,3 +865,65 @@ async def test_delete_premium_search_results_no_match_returns_zero(messages_repo
     assert await messages_repo.delete_premium_search_results("nothing") == 0
     cur = await messages_repo._db.execute("SELECT COUNT(*) FROM messages")
     assert (await cur.fetchone())[0] == 1
+
+
+# search_messages page contract (#766): no exact COUNT, LIMIT N+1 / has_more
+
+
+async def test_search_messages_has_more_true_when_results_exceed_limit(messages_repo):
+    """LIMIT N+1 probe: more rows than the limit → has_more=True, total is a lower bound."""
+    for i in range(3):
+        await messages_repo.insert_message(make_message(1, 100 + i, f"hello {i}"))
+
+    page = await messages_repo.search_messages(limit=2)
+
+    assert len(page.messages) == 2
+    assert page.has_more is True
+    assert page.total == 2  # offset + len(messages): lower bound, not an exact COUNT
+
+
+async def test_search_messages_has_more_false_on_last_page(messages_repo):
+    """On the last page total == offset + len(messages) is exact."""
+    for i in range(3):
+        await messages_repo.insert_message(make_message(1, 100 + i, f"hello {i}"))
+
+    page = await messages_repo.search_messages(limit=2, offset=2)
+
+    assert len(page.messages) == 1
+    assert page.has_more is False
+    assert page.total == 3
+
+
+async def test_search_messages_tuple_unpacking_still_works(messages_repo):
+    """Legacy `messages, total = ...` unpacking must keep working (#766)."""
+    await messages_repo.insert_message(make_message(1, 100, "hello"))
+
+    messages, total = await messages_repo.search_messages()
+
+    assert len(messages) == 1
+    assert total == 1
+
+
+async def test_search_messages_does_not_execute_count(messages_repo, monkeypatch):
+    """The expensive COUNT(*) is gone from all three branches (#766):
+    FTS, LIKE fallback and the empty-query browse."""
+    for i in range(3):
+        await messages_repo.insert_message(make_message(1, 100 + i, f"hello {i}"))
+
+    executed: list[str] = []
+    orig_execute = messages_repo._db.execute
+
+    async def spy(sql, *args, **kwargs):
+        executed.append(sql)
+        return await orig_execute(sql, *args, **kwargs)
+
+    monkeypatch.setattr(messages_repo._db, "execute", spy)
+
+    if messages_repo._fts_available:
+        await messages_repo.search_messages(query="hello", limit=2)
+    monkeypatch.setattr(messages_repo, "_fts_available", False)
+    await messages_repo.search_messages(query="hello", limit=2)
+    await messages_repo.search_messages(limit=2)
+
+    counts = [sql for sql in executed if "count(" in sql.lower()]
+    assert not counts, f"COUNT query still executed: {counts}"

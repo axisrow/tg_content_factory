@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiosqlite
 import pytest
 
+from src.database.repositories.messages import MessageSearchPage
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -409,7 +411,7 @@ class TestCLITestRunEntry:
         fake_db.get_accounts = AsyncMock(return_value=[])
         fake_db.get_channels_with_counts = AsyncMock(return_value=[])
         fake_db.get_notification_queries = AsyncMock(return_value=[])
-        fake_db.search_messages = AsyncMock(return_value=([], 0))
+        fake_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
         fake_db.get_collection_tasks = AsyncMock(return_value=[])
         fake_db.get_recent_searches = AsyncMock(return_value=[])
         fake_db.repos = MagicMock()
@@ -439,7 +441,7 @@ class TestCLITestRunEntry:
         fake_db.get_accounts = AsyncMock(return_value=[])
         fake_db.get_channels_with_counts = AsyncMock(return_value=[])
         fake_db.get_notification_queries = AsyncMock(return_value=[])
-        fake_db.search_messages = AsyncMock(return_value=([], 0))
+        fake_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
         fake_db.get_collection_tasks = AsyncMock(return_value=[])
         fake_db.get_recent_searches = AsyncMock(return_value=[])
         fake_db.repos = MagicMock()

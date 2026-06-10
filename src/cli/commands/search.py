@@ -82,7 +82,8 @@ def run(args: argparse.Namespace) -> None:
                     include_filtered=include_filtered,
                 )
 
-            print(f"Found {result.total} results for '{result.query}':\n")
+            total_display = f"{result.total}+" if result.has_more else str(result.total)
+            print(f"Found {total_display} results for '{result.query}':\n")
             for msg in result.messages:
                 text_preview = (msg.text or "")[:200]
                 print(f"[{msg.date}] Channel {msg.channel_id}: {text_preview}")

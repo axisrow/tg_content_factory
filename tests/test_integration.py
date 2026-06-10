@@ -567,8 +567,11 @@ class TestSearchPagination:
 
         assert len(page1.messages) == 5
         assert len(page2.messages) == 5
-        assert page1.total == 20
-        assert page2.total == 20
+        # total is a lower bound since #766; has_more marks remaining pages.
+        assert page1.total == 5
+        assert page1.has_more is True
+        assert page2.total == 10
+        assert page2.has_more is True
 
         # Pages should contain different messages
         ids_page1 = {m.message_id for m in page1.messages}
