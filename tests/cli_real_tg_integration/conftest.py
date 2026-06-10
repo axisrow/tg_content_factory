@@ -277,25 +277,6 @@ def _await_phone_flood_or_skip(cli_env: CliEnv, phone: str) -> None:
         pytest.skip(f"account {phone} flood-waited longer than {timeout:g}s; skipping write test")
 
 
-def _fetch_live_channel(db_path: Path) -> tuple[str | None, int | None, str | None]:
-    with sqlite3.connect(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT id, channel_id, username
-            FROM channels
-            WHERE COALESCE(is_active, 1) = 1
-            ORDER BY id ASC
-            LIMIT 1
-            """
-        ).fetchone()
-    if row is None:
-        return None, None, None
-    pk = str(row[0]) if row[0] is not None else None
-    channel_id = int(row[1]) if row[1] is not None else None
-    username = str(row[2]) if row[2] else None
-    return pk, channel_id, username
-
-
 def _fetch_live_channel(
     db_path: Path,
     *,

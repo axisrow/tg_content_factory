@@ -349,3 +349,46 @@ async def test_collect_channel_stats_deactivates_unresolvable_numeric_id(
 
     saved = await db.get_channel_stats(-100666)
     assert len(saved) == 0
+
+
+@pytest.mark.anyio
+async def test_collect_channel_stats_deactivates_on_username_fallback_failure(
+    db,
+    real_pool_harness_factory,
+):
+    """When a channel's username is stale (UsernameNotOccupiedError) AND the
+    numeric-id fallback also fails, the channel must be deactivated — not
+    left in eternal "no stats" limbo (#794 regression, username-fallback path).
+    """
+    await db.add_channel(Channel(channel_id=-100555, title="Stale", username="old_name"))
+    channel = (await db.get_channels())[0]
+
+    def _resolver_username(_peer):
+        # First call: resolve username → raise UsernameNotOccupiedError
+        raise ValueError("No user has \"old_name\" as username")
+
+    def _resolver_fallback(_peer):
+        # Second call: resolve PeerChannel → also fail
+        raise ValueError("Could not find the input entity for PeerChannel(channel_id=-100555)")
+
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(
+            entity_resolver=_resolver_username,
+            input_entity_resolver=_resolver_fallback,
+        ),
+    )
+    await harness.add_account("+7000", session_string="session-stale", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    collector = Collector(harness.pool, db, SchedulerConfig())
+    result = await collector.collect_channel_stats(channel)
+
+    assert result is None
+
+    updated = (await db.get_channels())[0]
+    assert updated.is_active is False
+
+    saved = await db.get_channel_stats(-100555)
+    assert len(saved) == 0

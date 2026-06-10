@@ -1701,13 +1701,25 @@ class Collector:
                             )
                         except HandledFloodWaitError:
                             raise
-                        except Exception:
+                        except (ValueError, TypeError):
                             logger.warning(
                                 "Stats: channel %d all entity lookups failed, deactivating",
                                 channel.channel_id,
                             )
                             if channel.id:
-                                await self._db.set_channel_active(channel.id, False)
+                                try:
+                                    await self._db.set_channel_active(channel.id, False)
+                                except Exception:
+                                    logger.debug(
+                                        "Stats: failed to deactivate channel %d",
+                                        channel.channel_id,
+                                        exc_info=True,
+                                    )
+                            else:
+                                logger.warning(
+                                    "Stats: cannot deactivate channel %d -- no DB pk",
+                                    channel.channel_id,
+                                )
                             return None
                         new_username = getattr(entity, "username", None)
                         new_title = (
@@ -1733,13 +1745,25 @@ class Collector:
                         )
                     except HandledFloodWaitError:
                         raise
-                    except Exception:
+                    except (ValueError, TypeError):
                         logger.warning(
                             "Stats: channel %d all entity lookups failed, deactivating",
                             channel.channel_id,
                         )
                         if channel.id:
-                            await self._db.set_channel_active(channel.id, False)
+                            try:
+                                await self._db.set_channel_active(channel.id, False)
+                            except Exception:
+                                logger.debug(
+                                    "Stats: failed to deactivate channel %d",
+                                    channel.channel_id,
+                                    exc_info=True,
+                                )
+                        else:
+                            logger.warning(
+                                "Stats: cannot deactivate channel %d -- no DB pk",
+                                channel.channel_id,
+                            )
                         return None
 
                 # Guard: entity resolved as a User/Bot (no ``title``) — not a channel.
