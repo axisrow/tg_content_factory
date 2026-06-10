@@ -257,8 +257,12 @@ async def test_zai_model_refresh_rejects_legacy_anthropic_models_endpoint(db, mo
     assert "Anthropic-compatible proxy" in entry.error
 
 
+# The param is named configured_base_url (not base_url) because pytest-base-url
+# (pulled in transitively by pytest-playwright) registers a session-scoped
+# fixture `base_url`; shadowing it with a function-scoped param breaks setup
+# with ScopeMismatch (#812).
 @pytest.mark.parametrize(
-    "provider,base_url,model,expected_url",
+    "provider,configured_base_url,model,expected_url",
     [
         # Expected URLs are hardcoded so the test catches changes to the
         # configured endpoint flowing through LangChain.
@@ -287,7 +291,7 @@ async def test_deepagents_chat_runs_real_init_chat_model_and_create_deep_agent(
     db,
     monkeypatch,
     provider,
-    base_url,
+    configured_base_url,
     model,
     expected_url,
 ):
@@ -305,7 +309,7 @@ async def test_deepagents_chat_runs_real_init_chat_model_and_create_deep_agent(
         enabled=True,
         priority=0,
         selected_model=model,
-        plain_fields={"base_url": base_url},
+        plain_fields={"base_url": configured_base_url},
         secret_fields={"api_key": f"{provider}-test-key"},
     )
     await DbProviderConfigService(db, config).save_provider_configs([cfg])
