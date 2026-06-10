@@ -455,9 +455,9 @@ class FakeClientPool(ResolveGuardMixin, MagicMock):
     def __init__(self, **kwargs):
         super().__init__()
         self._resolve_rate_limiter = ResolveRateLimiter()
-        self._resolve_username_backoff_until_utc = None
-        self._resolve_ramp_up_until_utc = None
-        self._resolve_ramp_up_last_call_utc = None
+        self._resolve_username_backoff_until_utc = {}
+        self._resolve_ramp_up_until_utc = {}
+        self._resolve_ramp_up_last_call_utc = {}
         self._resolve_ramp_up_min_interval_sec = 5.0
         self.clients = kwargs.pop("clients", {})
         self.release_client = kwargs.pop("release_client", AsyncMock())
@@ -490,6 +490,27 @@ class FakeClientPool(ResolveGuardMixin, MagicMock):
         from src.telegram.client_pool import ClientPool
 
         return await ClientPool.resolve_entity_with_warm(self, session, phone, peer, **kwargs)
+
+    async def has_rotatable_resolve_phone(self, exclude=frozenset()):
+        # Mirror production rotation eligibility (#790). Without a real lease
+        # pool the fake only knows the resolve-backoff map, so reuse the sync
+        # ``has_resolve_capable_phone`` from the mixin. Tests that need generic
+        # flood-wait semantics override this attribute explicitly.
+        return self.has_resolve_capable_phone(exclude=set(exclude))
+
+    async def next_resolve_capable_at(self):
+        # Resolve-backoff-only approximation of the production method (the
+        # fake has no DB-backed generic flood deadlines). Tests exercising
+        # the mixed state override this attribute explicitly.
+        now = datetime.now(timezone.utc)
+        earliest = None
+        for phone in self.connected_phones():
+            until = self.get_resolve_username_backoff_until(phone)
+            if until is None or until <= now:
+                return None
+            if earliest is None or until < earliest:
+                earliest = until
+        return earliest
 
 
 def make_mock_reactions(items: list[tuple[str, int]]) -> SimpleNamespace:

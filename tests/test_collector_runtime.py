@@ -392,3 +392,39 @@ async def test_collect_channel_stats_deactivates_on_username_fallback_failure(
 
     saved = await db.get_channel_stats(-100555)
     assert len(saved) == 0
+
+
+@pytest.mark.anyio
+async def test_collect_channel_stats_transient_error_skips_without_deactivation(
+    db,
+    real_pool_harness_factory,
+):
+    """A transient failure (timeout, connection drop — anything that is not a
+    ValueError/TypeError entity miss) must skip the stats run WITHOUT
+    deactivating the channel (#815 review follow-up): the channel is valid,
+    only this attempt failed.
+    """
+    await db.add_channel(Channel(channel_id=-100777, title="Flaky"))
+    channel = (await db.get_channels())[0]
+
+    def _resolver(_peer):
+        raise RuntimeError("connection reset mid-request")
+
+    harness = real_pool_harness_factory()
+    harness.queue_cli_client(
+        phone="+7000",
+        client=FakeCliTelethonClient(entity_resolver=_resolver),
+    )
+    await harness.add_account("+7000", session_string="session-flaky", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    collector = Collector(harness.pool, db, SchedulerConfig())
+    result = await collector.collect_channel_stats(channel)
+
+    assert result is None
+
+    updated = (await db.get_channels())[0]
+    assert updated.is_active is True
+
+    saved = await db.get_channel_stats(-100777)
+    assert len(saved) == 0

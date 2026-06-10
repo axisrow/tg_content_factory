@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -10,14 +11,17 @@ from telethon.errors import FloodWaitError
 from src.telegram.client_pool import ClientPool
 from src.telegram.flood_wait import HandledFloodWaitError
 from src.telegram.rate_limiter import ResolveRateLimiter, UsernameResolveRateLimitedError
-from src.telegram.resolve_guard import ResolveGuardMixin
+from src.telegram.resolve_guard import (
+    RESOLVE_BACKOFF_BY_PHONE_SETTING,
+    RESOLVE_BACKOFF_LEGACY_SETTING,
+    ResolveGuardMixin,
+)
 
 
 @pytest.mark.anyio
 async def test_live_username_resolve_uses_shared_rate_limiter():
     pool = ClientPool.__new__(ClientPool)
     pool.report_flood = AsyncMock()
-    pool._resolve_username_backoff_until_utc = None
     pool._resolve_rate_limiter = ResolveRateLimiter(
         max_calls=1,
         window_sec=60.0,
@@ -42,12 +46,13 @@ async def test_live_username_resolve_uses_shared_rate_limiter():
 
 
 @pytest.mark.anyio
-async def test_live_username_resolve_records_full_long_flood_backoff():
+async def test_live_username_resolve_records_per_phone_long_flood_backoff():
+    """#790: a long flood on one phone freezes only that phone, not the pool."""
     pool = ClientPool.__new__(ClientPool)
     pool.report_flood = AsyncMock()
     pool._db = SimpleNamespace(set_setting=AsyncMock())
-    pool._resolve_username_backoff_until_utc = None
-    pool._resolve_rate_limiter = ResolveRateLimiter(max_calls=1, jitter_sec=0.0)
+    pool.clients = {"+7001": object(), "+7002": object()}
+    pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
 
     async def _flood():
         raise FloodWaitError(request=None, capture=7200)
@@ -61,66 +66,382 @@ async def test_live_username_resolve_records_full_long_flood_backoff():
         )
 
     pool.report_flood.assert_awaited_once_with("+7001", 7200)
-    remaining = pool.get_resolve_username_backoff_remaining_sec()
-    assert 7100 < remaining <= 7200
+    remaining_a = pool.get_resolve_username_backoff_remaining_sec("+7001")
+    assert 7100 < remaining_a <= 7200
+    # The other connected phone is untouched...
+    assert pool.get_resolve_username_backoff_remaining_sec("+7002") == 0
+    # ...so the pool-level aggregate reports "a free phone exists".
+    assert pool.get_resolve_username_backoff_remaining_sec() == 0
     pool._db.set_setting.assert_awaited_once()
     key, value = pool._db.set_setting.await_args.args
-    assert key == "resolve_username_backoff_until_utc"
-    assert datetime.fromisoformat(value) == pool.get_resolve_username_backoff_until()
+    assert key == RESOLVE_BACKOFF_BY_PHONE_SETTING
+    stored = json.loads(value)
+    assert set(stored) == {"+7001"}
+    assert datetime.fromisoformat(stored["+7001"]) == pool.get_resolve_username_backoff_until(
+        "+7001"
+    )
 
 
-def _make_pool():
+def _make_pool(clients: dict | None = None):
     class FakePool(ResolveGuardMixin):
         def __init__(self):
             self._resolve_rate_limiter = None
-            self._resolve_username_backoff_until_utc = None
-            self._resolve_ramp_up_until_utc = None
-            self._resolve_ramp_up_last_call_utc = None
+            self._resolve_username_backoff_until_utc = {}
+            self._resolve_ramp_up_until_utc = {}
+            self._resolve_ramp_up_last_call_utc = {}
             self._resolve_ramp_up_min_interval_sec = 5.0
+            self.clients = clients or {}
 
     return FakePool()
 
 
+class TestPerPhoneBackoffIsolation:
+    def test_backoff_on_one_phone_does_not_block_other(self):
+        pool = _make_pool(clients={"+7001": object(), "+7002": object()})
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        assert pool.get_resolve_username_backoff_remaining_sec("+7001") > 500
+        assert pool.get_resolve_username_backoff_remaining_sec("+7002") == 0
+        # reserve on the free phone passes the backoff layer entirely
+        assert pool.reserve_resolve_username_call("+7002") == 0.0
+        # reserve on the backoff phone is deferred for its own remaining window
+        assert pool.reserve_resolve_username_call("+7001") > 500
+
+    def test_until_is_per_phone(self):
+        pool = _make_pool(clients={"+7001": object(), "+7002": object()})
+        deadline = pool.set_resolve_username_backoff(600, phone="+7001")
+        assert pool.get_resolve_username_backoff_until("+7001") == deadline
+        assert pool.get_resolve_username_backoff_until("+7002") is None
+
+
 class TestBackoffNeverShortens:
-    def test_keeps_longer_backoff(self):
+    def test_keeps_longer_backoff_same_phone(self):
         pool = _make_pool()
-        first = pool.set_resolve_username_backoff(10000)
-        second = pool.set_resolve_username_backoff(100)
+        first = pool.set_resolve_username_backoff(10000, phone="+7001")
+        second = pool.set_resolve_username_backoff(100, phone="+7001")
         assert second == first
-        assert pool.get_resolve_username_backoff_remaining_sec() > 9000
+        assert pool.get_resolve_username_backoff_remaining_sec("+7001") > 9000
 
-    def test_replaces_shorter_backoff(self):
+    def test_replaces_shorter_backoff_same_phone(self):
         pool = _make_pool()
-        pool.set_resolve_username_backoff(100)
-        pool.set_resolve_username_backoff(10000)
-        assert pool.get_resolve_username_backoff_remaining_sec() > 9000
+        pool.set_resolve_username_backoff(100, phone="+7001")
+        pool.set_resolve_username_backoff(10000, phone="+7001")
+        assert pool.get_resolve_username_backoff_remaining_sec("+7001") > 9000
 
-    def test_sets_backoff_when_none_active(self):
+    def test_other_phone_unaffected_by_never_shorten(self):
         pool = _make_pool()
-        pool.set_resolve_username_backoff(5000)
-        assert pool.get_resolve_username_backoff_remaining_sec() > 4000
+        pool.set_resolve_username_backoff(10000, phone="+7001")
+        pool.set_resolve_username_backoff(100, phone="+7002")
+        assert pool.get_resolve_username_backoff_remaining_sec("+7002") <= 100
+
+
+class TestAggregateBackoff:
+    def test_aggregate_zero_when_one_connected_phone_free(self):
+        pool = _make_pool(clients={"+7001": object(), "+7002": object()})
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        assert pool.get_resolve_username_backoff_remaining_sec() == 0
+        assert pool.get_resolve_username_backoff_until() is None
+
+    def test_aggregate_min_when_all_connected_phones_blocked(self):
+        pool = _make_pool(clients={"+7001": object(), "+7002": object()})
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        until_b = pool.set_resolve_username_backoff(300, phone="+7002")
+        remaining = pool.get_resolve_username_backoff_remaining_sec()
+        assert 200 < remaining <= 300
+        assert pool.get_resolve_username_backoff_until() == until_b
+
+    def test_aggregate_without_clients_uses_backoff_entries(self):
+        pool = _make_pool()
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        remaining = pool.get_resolve_username_backoff_remaining_sec()
+        assert 500 < remaining <= 600
+
+    def test_aggregate_zero_when_no_backoff(self):
+        pool = _make_pool(clients={"+7001": object()})
+        assert pool.get_resolve_username_backoff_remaining_sec() == 0
+
+
+class TestHasResolveCapablePhone:
+    def test_free_phone_is_capable(self):
+        pool = _make_pool(clients={"+7001": object(), "+7002": object()})
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        assert pool.has_resolve_capable_phone() is True
+        assert pool.has_resolve_capable_phone(exclude={"+7002"}) is False
+
+    def test_all_blocked_not_capable(self):
+        pool = _make_pool(clients={"+7001": object(), "+7002": object()})
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        pool.set_resolve_username_backoff(600, phone="+7002")
+        assert pool.has_resolve_capable_phone() is False
+
+    def test_exclude_respected(self):
+        pool = _make_pool(clients={"+7001": object(), "+7002": object()})
+        assert pool.has_resolve_capable_phone(exclude={"+7001"}) is True
+        assert pool.has_resolve_capable_phone(exclude={"+7001", "+7002"}) is False
+
+
+class TestHasRotatableResolvePhone:
+    """#790 F1: rotation eligibility must also reject *generic* flood-waited
+    accounts, not just resolve-backoff ones — that knowledge lives in the lease
+    pool (DB-backed), so the check is async and delegates the flood/in-use
+    filter to ``available_exclusive_count``."""
+
+    def _pool(self, clients, available_count):
+        pool = ClientPool.__new__(ClientPool)
+        pool._resolve_rate_limiter = ResolveRateLimiter()
+        pool._resolve_username_backoff_until_utc = {}
+        pool._resolve_ramp_up_until_utc = {}
+        pool._resolve_ramp_up_last_call_utc = {}
+        pool._resolve_ramp_up_min_interval_sec = 5.0
+        pool.clients = clients
+        # available_exclusive_count is the async lease-pool filter for generic
+        # flood wait + in-use; capture the candidate set it is asked about.
+        pool._lease_pool = SimpleNamespace(
+            available_exclusive_count=AsyncMock(side_effect=available_count)
+        )
+        return pool
+
+    @pytest.mark.anyio
+    async def test_false_when_only_free_phone_is_generically_flooded(self):
+        # +7001 in resolve backoff; +7002 free of backoff but the lease pool
+        # reports zero available (it is generically flooded) → not rotatable.
+        seen = {}
+
+        async def _count(candidates):
+            seen["candidates"] = set(candidates)
+            return 0
+
+        pool = self._pool({"+7001": object(), "+7002": object()}, _count)
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        assert await pool.has_rotatable_resolve_phone(exclude={"+7001"}) is False
+        # The backoff phone must be narrowed out before hitting the lease pool.
+        assert seen["candidates"] == {"+7002"}
+
+    @pytest.mark.anyio
+    async def test_true_when_free_phone_is_available(self):
+        pool = self._pool({"+7001": object(), "+7002": object()}, lambda c: 1)
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        assert await pool.has_rotatable_resolve_phone(exclude={"+7001"}) is True
+
+    @pytest.mark.anyio
+    async def test_false_when_all_phones_in_resolve_backoff(self):
+        # No candidate survives the sync backoff filter → lease pool not queried.
+        count = AsyncMock(return_value=5)
+        pool = self._pool({"+7001": object(), "+7002": object()}, count)
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        pool.set_resolve_username_backoff(600, phone="+7002")
+        assert await pool.has_rotatable_resolve_phone() is False
+        count.assert_not_awaited()
+
+
+class TestNextResolveCapableAt:
+    """#790 review P2: the defer deadline must combine the per-phone resolve
+    backoff with *generic* flood waits (``accounts.flood_wait_until``) — in the
+    mixed state (this phone resolve-blocked for hours, the other phone only
+    generically flooded for minutes) the channel must retry when the generic
+    flood clears, not after the hours-long resolve window."""
+
+    def _pool(self, clients, accounts, monkeypatch):
+        pool = ClientPool.__new__(ClientPool)
+        pool._resolve_rate_limiter = ResolveRateLimiter()
+        pool._resolve_username_backoff_until_utc = {}
+        pool._resolve_ramp_up_until_utc = {}
+        pool._resolve_ramp_up_last_call_utc = {}
+        pool._resolve_ramp_up_min_interval_sec = 5.0
+        pool.clients = clients
+        pool._db = SimpleNamespace()
+        monkeypatch.setattr(
+            "src.telegram.client_pool.load_live_usable_accounts",
+            AsyncMock(return_value=accounts),
+        )
+        return pool
+
+    @pytest.mark.anyio
+    async def test_mixed_state_uses_generic_flood_deadline(self, monkeypatch):
+        now = datetime.now(timezone.utc)
+        accounts = [
+            SimpleNamespace(phone="+7001", flood_wait_until=None),
+            SimpleNamespace(phone="+7002", flood_wait_until=now + timedelta(seconds=600)),
+        ]
+        pool = self._pool({"+7001": object(), "+7002": object()}, accounts, monkeypatch)
+        pool.set_resolve_username_backoff(7200, phone="+7001")
+
+        capable_at = await pool.next_resolve_capable_at()
+
+        assert capable_at is not None
+        remaining = (capable_at - now).total_seconds()
+        assert 590 < remaining <= 600
+
+    @pytest.mark.anyio
+    async def test_none_when_some_phone_is_capable_now(self, monkeypatch):
+        accounts = [
+            SimpleNamespace(phone="+7001", flood_wait_until=None),
+            SimpleNamespace(phone="+7002", flood_wait_until=None),
+        ]
+        pool = self._pool({"+7001": object(), "+7002": object()}, accounts, monkeypatch)
+        pool.set_resolve_username_backoff(7200, phone="+7001")
+        assert await pool.next_resolve_capable_at() is None
+
+    @pytest.mark.anyio
+    async def test_all_resolve_backoff_matches_aggregate(self, monkeypatch):
+        accounts = [
+            SimpleNamespace(phone="+7001", flood_wait_until=None),
+            SimpleNamespace(phone="+7002", flood_wait_until=None),
+        ]
+        pool = self._pool({"+7001": object(), "+7002": object()}, accounts, monkeypatch)
+        pool.set_resolve_username_backoff(7200, phone="+7001")
+        pool.set_resolve_username_backoff(400, phone="+7002")
+
+        capable_at = await pool.next_resolve_capable_at()
+
+        assert capable_at == pool.get_resolve_username_backoff_until()
+
+    @pytest.mark.anyio
+    async def test_per_phone_max_of_resolve_and_generic(self, monkeypatch):
+        # +7001: resolve 600s AND generic 1200s → ready at 1200s.
+        # +7002: resolve 3600s only → ready at 3600s. Earliest = 1200s.
+        now = datetime.now(timezone.utc)
+        accounts = [
+            SimpleNamespace(phone="+7001", flood_wait_until=now + timedelta(seconds=1200)),
+            SimpleNamespace(phone="+7002", flood_wait_until=None),
+        ]
+        pool = self._pool({"+7001": object(), "+7002": object()}, accounts, monkeypatch)
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        pool.set_resolve_username_backoff(3600, phone="+7002")
+
+        capable_at = await pool.next_resolve_capable_at()
+
+        assert capable_at is not None
+        remaining = (capable_at - now).total_seconds()
+        assert 1190 < remaining <= 1200
+
+    @pytest.mark.anyio
+    async def test_none_when_no_clients_connected(self, monkeypatch):
+        pool = self._pool({}, [], monkeypatch)
+        assert await pool.next_resolve_capable_at() is None
 
 
 class TestRampUpMode:
     def test_ramp_up_active_after_backoff_set(self):
         pool = _make_pool()
-        pool.set_resolve_username_backoff(600)
-        assert pool.is_resolve_ramp_up_active()
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        assert pool.is_resolve_ramp_up_active("+7001")
+        assert not pool.is_resolve_ramp_up_active("+7002")
 
-    def test_ramp_up_rate_limits(self):
+    def test_ramp_up_rate_limits_only_its_phone(self):
         pool = _make_pool()
-        pool._resolve_username_backoff_until_utc = datetime.now(timezone.utc) - timedelta(seconds=1)
-        pool._resolve_ramp_up_until_utc = datetime.now(timezone.utc) + timedelta(seconds=300)
+        now = datetime.now(timezone.utc)
+        pool._resolve_ramp_up_until_utc["+7001"] = now + timedelta(seconds=300)
         pool._resolve_ramp_up_min_interval_sec = 5.0
-        pool._resolve_ramp_up_last_call_utc = datetime.now(timezone.utc)
-        retry_after = pool.reserve_resolve_username_call("+1234567890")
-        assert retry_after > 0
+        pool._resolve_ramp_up_last_call_utc["+7001"] = now
+        assert pool.reserve_resolve_username_call("+7001") > 0
+        # The other phone has no ramp-up and an empty limiter window.
+        pool._resolve_rate_limiter = ResolveRateLimiter(jitter_sec=0.0)
+        assert pool.reserve_resolve_username_call("+7002") == 0.0
 
     def test_ramp_up_allows_slow_calls(self):
         pool = _make_pool()
-        pool._resolve_username_backoff_until_utc = datetime.now(timezone.utc) - timedelta(seconds=1)
-        pool._resolve_ramp_up_until_utc = datetime.now(timezone.utc) + timedelta(seconds=300)
+        now = datetime.now(timezone.utc)
+        pool._resolve_ramp_up_until_utc["+7001"] = now + timedelta(seconds=300)
         pool._resolve_ramp_up_min_interval_sec = 0.01
-        pool._resolve_ramp_up_last_call_utc = datetime.now(timezone.utc) - timedelta(seconds=1)
-        retry_after = pool.reserve_resolve_username_call("+1234567890")
-        assert retry_after == 0.0
+        pool._resolve_ramp_up_last_call_utc["+7001"] = now - timedelta(seconds=1)
+        assert pool.reserve_resolve_username_call("+7001") == 0.0
+
+
+class TestPersistence:
+    @pytest.mark.anyio
+    async def test_persist_writes_pruned_json_map(self):
+        pool = _make_pool()
+        pool._db = SimpleNamespace(set_setting=AsyncMock())
+        until = pool.set_resolve_username_backoff(600, phone="+7001")
+        # Expired entry must be pruned out of the persisted payload.
+        pool._resolve_username_backoff_until_utc["+7002"] = datetime.now(
+            timezone.utc
+        ) - timedelta(seconds=10)
+
+        await pool.persist_resolve_username_backoff()
+
+        key, value = pool._db.set_setting.await_args.args
+        assert key == RESOLVE_BACKOFF_BY_PHONE_SETTING
+        stored = json.loads(value)
+        assert set(stored) == {"+7001"}
+        assert datetime.fromisoformat(stored["+7001"]) == until
+
+    @pytest.mark.anyio
+    async def test_restore_round_trip(self):
+        until = datetime.now(timezone.utc) + timedelta(seconds=900)
+        payload = json.dumps({"+7001": until.isoformat()})
+
+        async def get_setting(key):
+            return payload if key == RESOLVE_BACKOFF_BY_PHONE_SETTING else None
+
+        pool = _make_pool(clients={"+7001": object(), "+7002": object()})
+        await pool.restore_resolve_username_backoff(
+            SimpleNamespace(get_setting=get_setting, set_setting=AsyncMock())
+        )
+
+        assert pool.get_resolve_username_backoff_until("+7001") == until
+        assert pool.get_resolve_username_backoff_remaining_sec("+7002") == 0
+        # Ramp-up restored for the blocked phone only.
+        assert pool.is_resolve_ramp_up_active("+7001")
+        assert not pool.is_resolve_ramp_up_active("+7002")
+
+    @pytest.mark.anyio
+    async def test_restore_skips_expired_entries(self):
+        until = datetime.now(timezone.utc) - timedelta(seconds=10)
+        payload = json.dumps({"+7001": until.isoformat()})
+
+        async def get_setting(key):
+            return payload if key == RESOLVE_BACKOFF_BY_PHONE_SETTING else None
+
+        pool = _make_pool()
+        await pool.restore_resolve_username_backoff(
+            SimpleNamespace(get_setting=get_setting, set_setting=AsyncMock())
+        )
+        assert pool.get_resolve_username_backoff_remaining_sec("+7001") == 0
+
+    @pytest.mark.anyio
+    async def test_legacy_global_value_migrates_to_all_known_phones(self):
+        """Upgrade mid-flood: the legacy single deadline conservatively applies
+        to every known phone, is re-persisted in the new format, and the legacy
+        key is cleared."""
+        legacy_until = datetime.now(timezone.utc) + timedelta(seconds=1800)
+
+        async def get_setting(key):
+            if key == RESOLVE_BACKOFF_BY_PHONE_SETTING:
+                return None
+            if key == RESOLVE_BACKOFF_LEGACY_SETTING:
+                return legacy_until.isoformat()
+            return None
+
+        set_setting = AsyncMock()
+        pool = _make_pool()
+        pool._db = SimpleNamespace(get_setting=get_setting, set_setting=set_setting)
+        await pool.restore_resolve_username_backoff(
+            pool._db, phones=["+7001", "+7002"]
+        )
+
+        assert pool.get_resolve_username_backoff_until("+7001") == legacy_until
+        assert pool.get_resolve_username_backoff_until("+7002") == legacy_until
+        written = {call.args[0]: call.args[1] for call in set_setting.await_args_list}
+        assert RESOLVE_BACKOFF_LEGACY_SETTING in written
+        assert written[RESOLVE_BACKOFF_LEGACY_SETTING] == ""
+        stored = json.loads(written[RESOLVE_BACKOFF_BY_PHONE_SETTING])
+        assert set(stored) == {"+7001", "+7002"}
+
+    @pytest.mark.anyio
+    async def test_legacy_migration_without_phones_is_skipped(self):
+        legacy_until = datetime.now(timezone.utc) + timedelta(seconds=1800)
+
+        async def get_setting(key):
+            if key == RESOLVE_BACKOFF_LEGACY_SETTING:
+                return legacy_until.isoformat()
+            return None
+
+        set_setting = AsyncMock()
+        pool = _make_pool()
+        await pool.restore_resolve_username_backoff(
+            SimpleNamespace(get_setting=get_setting, set_setting=set_setting)
+        )
+        # Nothing restored, legacy key left intact for the next start.
+        assert pool.get_resolve_username_backoff_remaining_sec() == 0
+        set_setting.assert_not_awaited()
