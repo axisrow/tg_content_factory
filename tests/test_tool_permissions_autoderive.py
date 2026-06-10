@@ -98,6 +98,27 @@ def test_tool_module_order_matches_registry_loop():
         assert (_TOOLS_ROOT / f"{module_name}.py").exists(), module_name
 
 
+def test_group_names_are_unique():
+    """#818 review: duplicate display-group names across modules would be
+    silently merged by setdefault — _build_metadata must reject them, and the
+    current declarations must not collide."""
+    names = list(MODULE_GROUPS.keys())
+    assert len(names) == len(set(names))
+
+
+def test_derived_mappings_are_immutable():
+    """#818 review: the derived mappings are process-wide singletons exposed
+    via module attributes — mutation must fail loudly, not corrupt the cache."""
+    import pytest
+
+    with pytest.raises(TypeError):
+        TOOL_CATEGORIES["__rogue__"] = next(iter(TOOL_CATEGORIES.values()))
+    with pytest.raises(TypeError):
+        MODULE_GROUPS["__rogue__"] = ()
+    first_group = next(iter(MODULE_GROUPS.values()))
+    assert isinstance(first_group, tuple)
+
+
 def test_lazy_attributes_are_importable_directly():
     """PEP 562 module __getattr__ must serve the legacy attribute names."""
     import src.agent.tools.permissions as permissions

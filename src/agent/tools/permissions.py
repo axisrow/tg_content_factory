@@ -16,7 +16,9 @@ import json
 import logging
 import time
 from collections import OrderedDict
+from collections.abc import Mapping
 from inspect import isawaitable
+from types import MappingProxyType
 
 from src.agent.tools._categories import (
     TOOL_MODULE_ORDER,
@@ -50,10 +52,12 @@ _BUILTIN_GROUP_NAME = "Веб-поиск"
 # Lazy derivation from per-module TOOL_GROUPS declarations.
 # ---------------------------------------------------------------------------
 
-_metadata_cache: tuple[dict[str, ToolCategory], OrderedDict[str, list[str]], frozenset[str]] | None = None
+_metadata_cache: (
+    tuple[Mapping[str, ToolCategory], Mapping[str, tuple[str, ...]], frozenset[str]] | None
+) = None
 
 
-def _build_metadata() -> tuple[dict[str, ToolCategory], OrderedDict[str, list[str]], frozenset[str]]:
+def _build_metadata() -> tuple[Mapping[str, ToolCategory], Mapping[str, tuple[str, ...]], frozenset[str]]:
     global _metadata_cache  # noqa: PLW0603
     if _metadata_cache is not None:
         return _metadata_cache
@@ -71,6 +75,12 @@ def _build_metadata() -> tuple[dict[str, ToolCategory], OrderedDict[str, list[st
                 "every registered tool module must classify its tools (#245)"
             )
         for group_name, tools in tool_groups:
+            if group_name in groups:
+                raise RuntimeError(
+                    f"Display group '{group_name}' declared twice "
+                    f"(second time in {module_name}.TOOL_GROUPS) — group names "
+                    "must be unique across tool modules"
+                )
             bucket = groups.setdefault(group_name, [])
             for tool_name, meta in tools.items():
                 if tool_name in categories:
@@ -87,15 +97,22 @@ def _build_metadata() -> tuple[dict[str, ToolCategory], OrderedDict[str, list[st
         categories[builtin] = ToolCategory.READ
     groups[_BUILTIN_GROUP_NAME] = list(BUILTIN_TOOLS)
 
-    _metadata_cache = (categories, groups, frozenset(phone_bound))
+    # Read-only views: these are process-wide singletons reachable through
+    # module attributes — a mutating caller must fail loudly, not silently
+    # corrupt every other consumer.
+    _metadata_cache = (
+        MappingProxyType(categories),
+        MappingProxyType(OrderedDict((name, tuple(tools)) for name, tools in groups.items())),
+        frozenset(phone_bound),
+    )
     return _metadata_cache
 
 
-def _tool_categories() -> dict[str, ToolCategory]:
+def _tool_categories() -> Mapping[str, ToolCategory]:
     return _build_metadata()[0]
 
 
-def _module_groups() -> OrderedDict[str, list[str]]:
+def _module_groups() -> Mapping[str, tuple[str, ...]]:
     return _build_metadata()[1]
 
 
