@@ -608,6 +608,31 @@ class ClientPool(ResolveGuardMixin):
                 return result
         return None
 
+    async def has_rotatable_resolve_phone(
+        self, exclude: set[str] | frozenset[str] = frozenset()
+    ) -> bool:
+        """True if some connected account outside ``exclude`` can run a live
+        username resolve right now (#790).
+
+        Stricter than the sync :meth:`has_resolve_capable_phone`, which only
+        knows the resolve-backoff map: this also rejects accounts in a *generic*
+        flood wait (``accounts.flood_wait_until``, known only to the DB) and
+        accounts already leased out. The collector uses it to decide whether
+        rotating a channel to another account can actually succeed — avoiding a
+        rotate-into-dead-end that would otherwise abort the whole run.
+        """
+        excluded = {str(p) for p in exclude}
+        # First narrow to phones that are not in resolve backoff (sync), then
+        # let the lease pool reject generic-flooded / in-use ones (async).
+        candidates = {
+            phone
+            for phone in self._connected_phones() - excluded
+            if self.get_resolve_username_backoff_remaining_sec(phone) == 0
+        }
+        if not candidates:
+            return False
+        return await self._lease_pool.available_exclusive_count(candidates) > 0
+
     async def available_stats_client_count(self) -> int:
         return await self._lease_pool.available_exclusive_count(self._connected_phones())
 

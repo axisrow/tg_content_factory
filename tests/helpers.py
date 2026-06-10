@@ -491,6 +491,13 @@ class FakeClientPool(ResolveGuardMixin, MagicMock):
 
         return await ClientPool.resolve_entity_with_warm(self, session, phone, peer, **kwargs)
 
+    async def has_rotatable_resolve_phone(self, exclude=frozenset()):
+        # Mirror production rotation eligibility (#790). Without a real lease
+        # pool the fake only knows the resolve-backoff map, so reuse the sync
+        # ``has_resolve_capable_phone`` from the mixin. Tests that need generic
+        # flood-wait semantics override this attribute explicitly.
+        return self.has_resolve_capable_phone(exclude=set(exclude))
+
 
 def make_mock_reactions(items: list[tuple[str, int]]) -> SimpleNamespace:
     """Create a mock MessageReactions object.

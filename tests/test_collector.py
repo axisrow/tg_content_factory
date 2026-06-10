@@ -465,6 +465,79 @@ async def test_collect_channel_rotates_on_cache_miss_during_backoff(db):
 
 
 @pytest.mark.anyio
+async def test_collect_channel_defers_when_only_other_account_is_flooded(db):
+    """#790 F1: the serving phone is in resolve backoff and the cache misses,
+    and the only other connected account is in a *generic* flood wait — so it
+    is NOT a valid rotation target. The channel must defer (raise), not abort
+    the run by rotating into a dead end.
+    """
+    ch = Channel(
+        channel_id=1970788987,
+        title="Flooded Neighbor",
+        username="flooded_neighbor",
+        last_collected_id=5,
+    )
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    raw1 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    pool = make_mock_pool(clients={"+7001": object(), "+7002": object()})
+    s1 = TelegramTransportSession(raw1, disconnect_on_close=False, phone="+7001", pool=pool)
+    # +7001 serves the channel (resolve backoff → cache-only). +7002 is the only
+    # other account but it is generically flooded, so get_available_client with
+    # +7001 excluded yields nothing and rotation is not possible.
+    pool.get_available_client = AsyncMock(side_effect=[(s1, "+7001"), None])
+    pool.set_resolve_username_backoff(600, phone="+7001")
+    # +7002 is free of resolve backoff but in a generic flood wait: rotation
+    # must report it as not capable.
+    pool.has_rotatable_resolve_phone = AsyncMock(return_value=False)
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+
+    with pytest.raises(UsernameResolveRateLimitedError):
+        await collector._collect_channel(stored)
+
+    raw1.get_input_entity.assert_not_awaited()
+    pool.report_flood.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_collect_channel_defer_uses_aggregate_backoff_window(db):
+    """#790 F2: when every account is in resolve backoff with different windows,
+    the deferral the channel raises must carry the *pool-wide minimum* remaining
+    (the moment the first account frees up), not the serving phone's own longer
+    window.
+    """
+    ch = Channel(
+        channel_id=1970788988,
+        title="Aggregate Defer",
+        username="aggregate_defer",
+        last_collected_id=5,
+    )
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    raw1 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    pool = make_mock_pool(clients={"+7001": object(), "+7002": object()})
+    s1 = TelegramTransportSession(raw1, disconnect_on_close=False, phone="+7001", pool=pool)
+    pool.get_available_client = AsyncMock(return_value=(s1, "+7001"))
+    # Serving phone has the long window; the other a much shorter one. Both in
+    # backoff → no rotation target → defer for the shorter (aggregate) window.
+    pool.set_resolve_username_backoff(7000, phone="+7001")
+    pool.set_resolve_username_backoff(100, phone="+7002")
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+
+    with pytest.raises(UsernameResolveRateLimitedError) as exc_info:
+        await collector._collect_channel(stored)
+
+    # Deferral window reflects +7002's ~100s, not +7001's ~7000s.
+    assert exc_info.value.retry_after_seconds <= 110
+    raw1.get_input_entity.assert_not_awaited()
+    pool.report_flood.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_collect_all_channels_continues_cache_only_during_backoff(db):
     """#552: a global resolve backoff no longer aborts the whole run. Channels
     that miss the cache are deferred while the run continues — cache-resolvable

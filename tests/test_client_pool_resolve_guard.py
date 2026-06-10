@@ -179,6 +179,60 @@ class TestHasResolveCapablePhone:
         assert pool.has_resolve_capable_phone(exclude={"+7001", "+7002"}) is False
 
 
+class TestHasRotatableResolvePhone:
+    """#790 F1: rotation eligibility must also reject *generic* flood-waited
+    accounts, not just resolve-backoff ones — that knowledge lives in the lease
+    pool (DB-backed), so the check is async and delegates the flood/in-use
+    filter to ``available_exclusive_count``."""
+
+    def _pool(self, clients, available_count):
+        pool = ClientPool.__new__(ClientPool)
+        pool._resolve_rate_limiter = ResolveRateLimiter()
+        pool._resolve_username_backoff_until_utc = {}
+        pool._resolve_ramp_up_until_utc = {}
+        pool._resolve_ramp_up_last_call_utc = {}
+        pool._resolve_ramp_up_min_interval_sec = 5.0
+        pool.clients = clients
+        # available_exclusive_count is the async lease-pool filter for generic
+        # flood wait + in-use; capture the candidate set it is asked about.
+        pool._lease_pool = SimpleNamespace(
+            available_exclusive_count=AsyncMock(side_effect=available_count)
+        )
+        return pool
+
+    @pytest.mark.anyio
+    async def test_false_when_only_free_phone_is_generically_flooded(self):
+        # +7001 in resolve backoff; +7002 free of backoff but the lease pool
+        # reports zero available (it is generically flooded) → not rotatable.
+        seen = {}
+
+        async def _count(candidates):
+            seen["candidates"] = set(candidates)
+            return 0
+
+        pool = self._pool({"+7001": object(), "+7002": object()}, _count)
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        assert await pool.has_rotatable_resolve_phone(exclude={"+7001"}) is False
+        # The backoff phone must be narrowed out before hitting the lease pool.
+        assert seen["candidates"] == {"+7002"}
+
+    @pytest.mark.anyio
+    async def test_true_when_free_phone_is_available(self):
+        pool = self._pool({"+7001": object(), "+7002": object()}, lambda c: 1)
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        assert await pool.has_rotatable_resolve_phone(exclude={"+7001"}) is True
+
+    @pytest.mark.anyio
+    async def test_false_when_all_phones_in_resolve_backoff(self):
+        # No candidate survives the sync backoff filter → lease pool not queried.
+        count = AsyncMock(return_value=5)
+        pool = self._pool({"+7001": object(), "+7002": object()}, count)
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        pool.set_resolve_username_backoff(600, phone="+7002")
+        assert await pool.has_rotatable_resolve_phone() is False
+        count.assert_not_awaited()
+
+
 class TestRampUpMode:
     def test_ramp_up_active_after_backoff_set(self):
         pool = _make_pool()
