@@ -21,6 +21,17 @@ logger = logging.getLogger(__name__)
 _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _EMBEDDING_DIMENSIONS_SETTING = "semantic_embedding_dimensions"
 
+# Sum of all reaction counts for a single message row (m.reactions_json).
+TOTAL_REACTIONS_SQL = (
+    "(SELECT COALESCE(SUM(json_extract(value, '$.count')), 0) FROM json_each(m.reactions_json))"
+)
+# Same sum guarded so it only evaluates for rows holding valid reactions JSON;
+# used inside AVG(...) over arbitrary message rows.
+TOTAL_REACTIONS_GUARDED_SQL = f"""CASE WHEN m.reactions_json IS NOT NULL AND m.reactions_json != ''
+          AND json_valid(m.reactions_json) = 1
+     THEN {TOTAL_REACTIONS_SQL}
+     ELSE 0 END"""
+
 
 def _parse_reactions_json(reactions_json: str) -> list[dict]:
     """Parse reactions_json string into a list of {emoji, count} dicts."""
@@ -69,6 +80,23 @@ class MessagesRepository:
             next_day = date.fromisoformat(value) + timedelta(days=1)
             return next_day.isoformat(), "<"
         return value, "<="
+
+    def _append_analytics_date_filter(
+        self,
+        conditions: list[str],
+        params: list,
+        date_from: str | None,
+        date_to: str | None,
+    ) -> None:
+        """Append normalized ``m.date`` bounds to analytics conditions/params in place."""
+        normalized_date_from = self._normalize_date_from(date_from)
+        normalized_date_to, date_to_operator = self._normalize_date_to(date_to)
+        if normalized_date_from:
+            conditions.append("m.date >= ?")
+            params.append(normalized_date_from)
+        if normalized_date_to:
+            conditions.append(f"m.date {date_to_operator} ?")
+            params.append(normalized_date_to)
 
     async def _get_setting(self, key: str) -> str | None:
         cur = await self._db.execute("SELECT value FROM settings WHERE key = ?", (key,))
@@ -1245,21 +1273,13 @@ class MessagesRepository:
             "json_valid(m.reactions_json) = 1",
         ]
         params: list = []
-        normalized_date_from = self._normalize_date_from(date_from)
-        normalized_date_to, date_to_operator = self._normalize_date_to(date_to)
-        if normalized_date_from:
-            conditions.append("m.date >= ?")
-            params.append(normalized_date_from)
-        if normalized_date_to:
-            conditions.append(f"m.date {date_to_operator} ?")
-            params.append(normalized_date_to)
+        self._append_analytics_date_filter(conditions, params, date_from, date_to)
         where = " WHERE " + " AND ".join(conditions)
         cur = await self._db.execute(
             f"""SELECT m.id, m.channel_id, m.message_id, m.text, m.media_type,
                        m.date, m.reactions_json,
                        c.title as channel_title, c.username as channel_username,
-                       (SELECT COALESCE(SUM(json_extract(value, '$.count')), 0)
-                        FROM json_each(m.reactions_json)) as total_reactions
+                       {TOTAL_REACTIONS_SQL} as total_reactions
                 FROM messages m{channel_join}
                 {where}
                 ORDER BY total_reactions DESC
@@ -1278,25 +1298,12 @@ class MessagesRepository:
         channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
         conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
         params: list = []
-        normalized_date_from = self._normalize_date_from(date_from)
-        normalized_date_to, date_to_operator = self._normalize_date_to(date_to)
-        if normalized_date_from:
-            conditions.append("m.date >= ?")
-            params.append(normalized_date_from)
-        if normalized_date_to:
-            conditions.append(f"m.date {date_to_operator} ?")
-            params.append(normalized_date_to)
+        self._append_analytics_date_filter(conditions, params, date_from, date_to)
         where = " WHERE " + " AND ".join(conditions)
         cur = await self._db.execute(
             f"""SELECT COALESCE(m.media_type, 'text') as content_type,
                        COUNT(*) as message_count,
-                       COALESCE(AVG(
-                           CASE WHEN m.reactions_json IS NOT NULL AND m.reactions_json != ''
-                                AND json_valid(m.reactions_json) = 1
-                           THEN (SELECT COALESCE(SUM(json_extract(value, '$.count')), 0)
-                                 FROM json_each(m.reactions_json))
-                           ELSE 0 END
-                       ), 0) as avg_reactions
+                       COALESCE(AVG({TOTAL_REACTIONS_GUARDED_SQL}), 0) as avg_reactions
                 FROM messages m{channel_join}
                 {where}
                 GROUP BY content_type
@@ -1315,25 +1322,12 @@ class MessagesRepository:
         channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
         conditions: list[str] = ["(c.is_filtered IS NULL OR c.is_filtered = 0)"]
         params: list = []
-        normalized_date_from = self._normalize_date_from(date_from)
-        normalized_date_to, date_to_operator = self._normalize_date_to(date_to)
-        if normalized_date_from:
-            conditions.append("m.date >= ?")
-            params.append(normalized_date_from)
-        if normalized_date_to:
-            conditions.append(f"m.date {date_to_operator} ?")
-            params.append(normalized_date_to)
+        self._append_analytics_date_filter(conditions, params, date_from, date_to)
         where = " WHERE " + " AND ".join(conditions)
         cur = await self._db.execute(
             f"""SELECT CAST(strftime('%H', m.date) AS INTEGER) as hour,
                        COUNT(*) as message_count,
-                       COALESCE(AVG(
-                           CASE WHEN m.reactions_json IS NOT NULL AND m.reactions_json != ''
-                                AND json_valid(m.reactions_json) = 1
-                           THEN (SELECT COALESCE(SUM(json_extract(value, '$.count')), 0)
-                                 FROM json_each(m.reactions_json))
-                           ELSE 0 END
-                       ), 0) as avg_reactions
+                       COALESCE(AVG({TOTAL_REACTIONS_GUARDED_SQL}), 0) as avg_reactions
                 FROM messages m{channel_join}
                 {where}
                 GROUP BY hour

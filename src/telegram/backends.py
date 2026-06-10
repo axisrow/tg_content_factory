@@ -95,26 +95,35 @@ class TelegramTransportSession:
             report_flood_wait=report_flood_wait,
         )
 
+    async def _translate_flood_wait(self, exc: Exception, operation: str) -> HandledFloodWaitError:
+        """Convert a raw Telethon FloodWaitError into a HandledFloodWaitError.
+
+        Re-raises ``exc`` unchanged when it is not a FloodWaitError or when no
+        phone is bound. Otherwise records the flood wait and returns the wrapped
+        error for the caller to ``raise ... from exc``.
+        """
+        from telethon.errors import FloodWaitError
+
+        if not isinstance(exc, FloodWaitError):
+            raise exc
+        if self._phone is None:
+            raise exc
+        info = await handle_flood_wait(
+            exc,
+            operation=operation,
+            phone=self._phone,
+            pool=self._pool if self._report_flood_wait else None,
+            logger_=self._logger,
+        )
+        return HandledFloodWaitError(info)
+
     async def _run(self, operation: str, awaitable: Any) -> Any:
         try:
             return await awaitable
         except HandledFloodWaitError:
             raise
         except Exception as exc:
-            from telethon.errors import FloodWaitError
-
-            if not isinstance(exc, FloodWaitError):
-                raise
-            if self._phone is None:
-                raise
-            info = await handle_flood_wait(
-                exc,
-                operation=operation,
-                phone=self._phone,
-                pool=self._pool if self._report_flood_wait else None,
-                logger_=self._logger,
-            )
-            raise HandledFloodWaitError(info) from exc
+            raise await self._translate_flood_wait(exc, operation) from exc
 
     async def _stream(self, operation: str, iterator: AsyncIterator[Any]) -> AsyncIterator[Any]:
         try:
@@ -141,20 +150,7 @@ class TelegramTransportSession:
         except HandledFloodWaitError:
             raise
         except Exception as exc:
-            from telethon.errors import FloodWaitError
-
-            if not isinstance(exc, FloodWaitError):
-                raise
-            if self._phone is None:
-                raise
-            info = await handle_flood_wait(
-                exc,
-                operation=operation,
-                phone=self._phone,
-                pool=self._pool if self._report_flood_wait else None,
-                logger_=self._logger,
-            )
-            raise HandledFloodWaitError(info) from exc
+            raise await self._translate_flood_wait(exc, operation) from exc
 
     async def close(self) -> None:
         if self._disconnect_on_close:
