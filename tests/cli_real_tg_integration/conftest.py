@@ -277,13 +277,25 @@ def _await_phone_flood_or_skip(cli_env: CliEnv, phone: str) -> None:
         pytest.skip(f"account {phone} flood-waited longer than {timeout:g}s; skipping write test")
 
 
-def _fetch_live_channel(db_path: Path) -> tuple[str | None, int | None, str | None]:
+def _fetch_live_channel(
+    db_path: Path,
+    *,
+    no_username: bool = False,
+) -> tuple[str | None, int | None, str | None]:
+    """Return (pk, channel_id, username) for an active channel.
+
+    When *no_username* is True, only channels with a NULL/empty username are
+    returned.  Used to pick channels whose numeric id must be resolved via
+    PeerChannel against a possibly-cold entity cache (#794 regression).
+    """
+    extra_where = "AND NULLIF(username, '') IS NULL" if no_username else ""
     with sqlite3.connect(db_path) as conn:
         row = conn.execute(
-            """
+            f"""
             SELECT id, channel_id, username
             FROM channels
             WHERE COALESCE(is_active, 1) = 1
+              {extra_where}
             ORDER BY id ASC
             LIMIT 1
             """
@@ -1347,6 +1359,16 @@ def live_channel(cli_real_cli_env: CliRealCliEnv) -> tuple[str, str]:
     if cli_real_cli_env.channel_pk is None or cli_real_cli_env.channel_id is None:
         pytest.skip("live CLI database has no active channel")
     return cli_real_cli_env.channel_pk, str(cli_real_cli_env.channel_id)
+
+
+@pytest.fixture
+def live_channel_no_username(cli_real_cli_env: CliRealCliEnv) -> tuple[str, str]:
+    pk, channel_id, _username = _fetch_live_channel(
+        cli_real_cli_env.db_path, no_username=True
+    )
+    if pk is None or channel_id is None:
+        pytest.skip("live CLI database has no active channel without a username")
+    return pk, str(channel_id)
 
 
 @pytest.fixture
