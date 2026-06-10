@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from telethon.errors import (
     ChannelInvalidError,
+    ChannelPrivateError,
     FloodWaitError,
     UsernameInvalidError,
     UsernameNotOccupiedError,
@@ -751,6 +752,310 @@ async def test_fetch_channel_meta_generic_error(pool):
             with patch.object(session, "invoke_request", side_effect=RuntimeError("fail")):
                 result = await pool.fetch_channel_meta(123, "channel")
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# ClientPool: fetch_channel_meta account routing (#808)
+# ---------------------------------------------------------------------------
+
+
+def _meta_session_with_full(linked_chat_id=42):
+    """Build a transport session whose fetch returns a full-channel result."""
+    client = AsyncMock()
+    entity = SimpleNamespace()
+    full_chat = MagicMock()
+    full_chat.about = "About"
+    full_chat.linked_chat_id = linked_chat_id
+    full_result = MagicMock()
+    full_result.full_chat = full_chat
+    session = TelegramTransportSession(client, disconnect_on_close=False)
+    return session, entity, full_result
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_routes_to_preferred_phone_from_map(pool):
+    session, entity, full_result = _meta_session_with_full()
+    pool.clients["+7001"] = session
+    pool.register_channel_phone(123, "+7001")
+    pool.mark_dialogs_fetched("+7001")
+
+    by_phone = AsyncMock(return_value=(session, "+7001"))
+    avail = AsyncMock()
+    with patch.object(pool, "get_client_by_phone", by_phone):
+        with patch.object(pool, "get_available_client", avail):
+            with patch.object(session, "resolve_entity", return_value=entity):
+                with patch.object(session, "invoke_request", return_value=full_result):
+                    result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is not None
+    by_phone.assert_awaited_once_with("+7001")
+    avail.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_routes_to_preferred_phone_from_db(pool, mock_db):
+    session, entity, full_result = _meta_session_with_full()
+    pool.clients["+7001"] = session
+    pool.mark_dialogs_fetched("+7001")
+    mock_db.repos.channels.get_preferred_phone.return_value = "+7001"
+
+    by_phone = AsyncMock(return_value=(session, "+7001"))
+    avail = AsyncMock()
+    with patch.object(pool, "get_client_by_phone", by_phone):
+        with patch.object(pool, "get_available_client", avail):
+            with patch.object(session, "resolve_entity", return_value=entity):
+                with patch.object(session, "invoke_request", return_value=full_result):
+                    result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is not None
+    by_phone.assert_awaited_once_with("+7001")
+    avail.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_waits_for_warm_when_unmapped(pool, mock_db):
+    session, entity, full_result = _meta_session_with_full()
+    pool.clients["+7001"] = session
+    pool.mark_dialogs_fetched("+7001")
+    mock_db.repos.channels.get_preferred_phone.return_value = None
+
+    async def _warm(timeout=30.0):
+        pool.register_channel_phone(123, "+7001")
+
+    with patch.object(pool, "is_warming", return_value=True):
+        with patch.object(pool, "wait_for_warm", AsyncMock(side_effect=_warm)) as waiter:
+            with patch.object(
+                pool, "get_client_by_phone", AsyncMock(return_value=(session, "+7001"))
+            ):
+                with patch.object(session, "resolve_entity", return_value=entity):
+                    with patch.object(session, "invoke_request", return_value=full_result):
+                        result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is not None
+    waiter.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_falls_back_to_available_client(pool, mock_db):
+    session, entity, full_result = _meta_session_with_full()
+    pool.clients["+7001"] = session
+    mock_db.repos.channels.get_preferred_phone.return_value = None
+
+    avail = AsyncMock(return_value=(session, "+7001"))
+    with patch.object(pool, "is_warming", return_value=False):
+        with patch.object(pool, "get_available_client", avail):
+            with patch.object(session, "resolve_entity", return_value=entity):
+                with patch.object(session, "invoke_request", return_value=full_result):
+                    result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is not None
+    avail.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_unresolved_entity_logs_debug_not_warning(pool, caplog):
+    session = TelegramTransportSession(AsyncMock(), disconnect_on_close=False)
+    pool.clients["+7001"] = session
+
+    with patch.object(pool, "get_available_client", return_value=(session, "+7001")):
+        with patch.object(
+            session,
+            "resolve_entity",
+            side_effect=ValueError("Could not find the input entity for PeerChannel"),
+        ):
+            with caplog.at_level(logging.DEBUG):
+                result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is None
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("entity unresolved" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_registers_phone_on_success(pool, mock_db):
+    session, entity, full_result = _meta_session_with_full()
+    pool.clients["+7001"] = session
+    mock_db.repos.channels.get_preferred_phone.return_value = None
+
+    with patch.object(pool, "is_warming", return_value=False):
+        with patch.object(pool, "get_available_client", return_value=(session, "+7001")):
+            with patch.object(session, "resolve_entity", return_value=entity):
+                with patch.object(session, "invoke_request", return_value=full_result):
+                    result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is not None
+    assert pool.get_phone_for_channel(123) == "+7001"
+    mock_db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(
+        123, "+7001"
+    )
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_does_not_persist_when_preferred_exists(pool, mock_db):
+    session, entity, full_result = _meta_session_with_full()
+    pool.clients["+7001"] = session
+    pool.mark_dialogs_fetched("+7001")
+    mock_db.repos.channels.get_preferred_phone.return_value = "+7001"
+
+    with patch.object(
+        pool, "get_client_by_phone", AsyncMock(return_value=(session, "+7001"))
+    ):
+        with patch.object(session, "resolve_entity", return_value=entity):
+            with patch.object(session, "invoke_request", return_value=full_result):
+                result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is not None
+    mock_db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_clears_stale_preferred_on_channel_private(pool, mock_db):
+    session = TelegramTransportSession(AsyncMock(), disconnect_on_close=False)
+    pool.clients["+7001"] = session
+    pool.register_channel_phone(123, "+7001")
+    pool.mark_dialogs_fetched("+7001")
+    mock_db.repos.channels.get_preferred_phone.return_value = "+7001"
+
+    with patch.object(
+        pool, "get_client_by_phone", AsyncMock(return_value=(session, "+7001"))
+    ):
+        with patch.object(
+            session, "resolve_entity", side_effect=ChannelPrivateError(request=None)
+        ):
+            result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is None
+    assert pool.get_phone_for_channel(123) is None
+    mock_db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(
+        123, None
+    )
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_prewarms_when_dialogs_not_fetched(pool):
+    session, entity, full_result = _meta_session_with_full()
+    pool.clients["+7001"] = session
+    pool.register_channel_phone(123, "+7001")
+    # dialogs NOT marked fetched → must warm first
+
+    with patch.object(
+        pool, "get_client_by_phone", AsyncMock(return_value=(session, "+7001"))
+    ):
+        with patch.object(session, "warm_dialog_cache", AsyncMock()) as warm:
+            with patch.object(session, "resolve_entity", return_value=entity):
+                with patch.object(session, "invoke_request", return_value=full_result):
+                    result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is not None
+    warm.assert_awaited()
+    assert pool.is_dialogs_fetched("+7001")
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_clears_stale_preferred_on_unresolved(pool, mock_db):
+    # A stored preferred phone that can no longer resolve the entity is stale
+    # (membership change) — ValueError path must clear it like ChannelPrivateError.
+    session = TelegramTransportSession(AsyncMock(), disconnect_on_close=False)
+    pool.clients["+7001"] = session
+    pool.register_channel_phone(123, "+7001")
+    pool.mark_dialogs_fetched("+7001")
+    mock_db.repos.channels.get_preferred_phone.return_value = "+7001"
+
+    with patch.object(
+        pool, "get_client_by_phone", AsyncMock(return_value=(session, "+7001"))
+    ):
+        with patch.object(
+            session,
+            "resolve_entity",
+            side_effect=ValueError("Could not find the input entity"),
+        ):
+            result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is None
+    assert pool.get_phone_for_channel(123) is None
+    mock_db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(
+        123, None
+    )
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_unresolved_keeps_map_on_available_client(pool, mock_db):
+    # On the available-client (non-preferred) path a ValueError just means no
+    # warmed account sees the channel — must NOT erase a good mapping on a guess.
+    session = TelegramTransportSession(AsyncMock(), disconnect_on_close=False)
+    pool.clients["+7001"] = session
+    # No mapping for channel 123 → routing falls back to get_available_client.
+    mock_db.repos.channels.get_preferred_phone.return_value = None
+    clear = MagicMock()
+
+    with patch.object(pool, "is_warming", return_value=False):
+        with patch.object(pool, "clear_channel_phone", clear):
+            with patch.object(
+                pool, "get_available_client", AsyncMock(return_value=(session, "+7001"))
+            ):
+                with patch.object(
+                    session,
+                    "resolve_entity",
+                    side_effect=ValueError("Could not find the input entity"),
+                ):
+                    result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is None
+    clear.assert_not_called()
+    mock_db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_updates_db_when_fallback_account_differs(pool, mock_db):
+    # DB preferred is "+7001" but unavailable (flood) → fall back to "+7002" and
+    # succeed. The DB must be corrected to the account that actually worked,
+    # not left pointing at the stale preferred (Claude review #1 on #809).
+    session, entity, full_result = _meta_session_with_full()
+    pool.clients["+7002"] = session
+    mock_db.repos.channels.get_preferred_phone.return_value = "+7001"
+
+    with patch.object(pool, "is_warming", return_value=False):
+        with patch.object(pool, "get_client_by_phone", AsyncMock(return_value=None)):
+            with patch.object(
+                pool, "get_available_client", AsyncMock(return_value=(session, "+7002"))
+            ):
+                with patch.object(session, "resolve_entity", return_value=entity):
+                    with patch.object(
+                        session, "invoke_request", return_value=full_result
+                    ):
+                        result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is not None
+    assert pool.get_phone_for_channel(123) == "+7002"
+    mock_db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(
+        123, "+7002"
+    )
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_keeps_db_preferred_when_map_stale(pool, mock_db):
+    # In-memory map points at "+7001" (stale) but DB preferred is a different
+    # valid account "+7002". A failure on "+7001" must NOT erase the good DB
+    # value (Codex review P2 on #809).
+    session = TelegramTransportSession(AsyncMock(), disconnect_on_close=False)
+    pool.clients["+7001"] = session
+    pool.register_channel_phone(123, "+7001")
+    pool.mark_dialogs_fetched("+7001")
+    mock_db.repos.channels.get_preferred_phone.return_value = "+7002"
+
+    with patch.object(
+        pool, "get_client_by_phone", AsyncMock(return_value=(session, "+7001"))
+    ):
+        with patch.object(
+            session, "resolve_entity", side_effect=ChannelPrivateError(request=None)
+        ):
+            result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is None
+    # in-memory map cleared (it pointed at the failed account)...
+    assert pool.get_phone_for_channel(123) is None
+    # ...but the valid DB preferred is left intact.
+    mock_db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
