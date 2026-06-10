@@ -22,7 +22,8 @@ ruff check src/ tests/ conftest.py
 # Auto-fix lint issues
 ruff check --fix src/ tests/ conftest.py
 
-# Run parallel-safe tests (all available CPUs minus one worker)
+# Run parallel-safe tests (-n auto is capped at 4 workers by root conftest.py;
+# override via TGCF_PYTEST_XDIST_WORKERS; single-test runs with :: force 1 worker)
 pytest tests/ -v -m "not aiosqlite_serial" -n auto
 
 # Run aiosqlite-backed tests serially
@@ -40,29 +41,31 @@ Full CLI reference:
 ```bash
 python -m src.main [--config CONFIG] serve [--web-pass PASS]
 python -m src.main [--config CONFIG] worker
-python -m src.main [--config CONFIG] collect [--channel-id ID]
+python -m src.main [--config CONFIG] collect [--channel-id ID] | collect sample
 python -m src.main [--config CONFIG] search "query" [--limit N] [--mode MODE]
 
 python -m src.main messages read <identifier> [--limit N] [--live] [--phone PHONE] [--query TEXT] [--date-from DATE] [--date-to DATE] [--topic-id ID] [--offset-id ID] [--format text|json|csv]
-python -m src.main channel list|add|delete|toggle|collect|stats|refresh-types|refresh-meta|import|add-bulk|tag
+python -m src.main channel list|add|delete|toggle|collect|stats|refresh-types|refresh-meta|import|add-bulk|list-for-import|tag (tag list|add|delete|set|get)
 python -m src.main filter analyze|apply|reset|precheck|toggle|purge|purge-messages|hard-delete
-python -m src.main account list|info|toggle|delete|send-code|verify-code|flood-status|flood-clear
-python -m src.main scheduler start|trigger|status|stop|job-toggle|set-interval|task-cancel|clear-pending
-python -m src.main notification setup|status|delete|set-account
+python -m src.main account list|info|toggle|set-primary|delete|send-code|verify-code|add|flood-status|flood-clear
+python -m src.main scheduler start|trigger|status|stop|job-toggle|set-interval|task-cancel|clear-pending|queue-pause|queue-resume
+python -m src.main notification setup|status|delete|test|dry-run|set-account
 python -m src.main test all|read|write|telegram|benchmark
 
 python -m src.main stop|restart
-python -m src.main search-query list|add|edit|delete|toggle|run|stats
-python -m src.main pipeline list|show|add|edit|delete|toggle|run|generate|runs|run-show|queue|publish|approve|reject|bulk-approve|bulk-reject|refinement-steps
-python -m src.main photo-loader dialogs|refresh|send|schedule-send|batch-create|batch-list|batch-cancel|auto-create|auto-list|auto-update|auto-toggle|auto-delete|run-due
-python -m src.main dialogs list|refresh|leave|topics|cache-clear|cache-status|send|forward|edit-message|delete-message|create-channel|pin-message|unpin-message|download-media|participants|edit-admin|edit-permissions|kick|broadcast-stats|archive|unarchive|mark-read
-python -m src.main agent threads|thread-create|thread-delete|chat|thread-rename|messages|context|test-escaping|test-tools
-python -m src.main analytics top|content-types|hourly|summary|daily|pipeline-stats|trending-topics|trending-channels|velocity|peak-hours|calendar|trending-emojis
+python -m src.main search-query list|get|add|edit|delete|toggle|run|stats
+python -m src.main pipeline list|show|add|dry-run-count|edit|delete|toggle|run|generate|generate-stream|runs|run-show|queue|moderation-list|moderation-view|publish|approve|reject|bulk-approve|bulk-reject|refinement-steps|export|import|templates|from-template|ai-edit|filter|node|edge|graph
+python -m src.main photo-loader dialogs|refresh|send|schedule-send|batch-create|batch-list|items|batch-cancel|auto-create|auto-list|auto-update|auto-toggle|auto-delete|run-due
+python -m src.main dialogs list|refresh|resolve|leave|join|topics|cache-clear|cache-status|send|forward|edit-message|delete-message|create-channel|create-group|pin-message|react|unpin-message|download-media|participants|edit-admin|edit-permissions|kick|broadcast-stats|archive|unarchive|mark-read|queue|status|cancel|clear-pending
+python -m src.main agent threads|thread-create|thread-delete|chat|thread-rename|thread-stop|messages|context|test-escaping|test-tools
+python -m src.main analytics top|content-types|hourly|summary|daily|pipeline-stats|trending-topics|trending-channels|velocity|peak-hours|calendar|trending-emojis|channel
 python -m src.main provider list|add|delete|probe|refresh|test-all
 python -m src.main export json|csv|rss
 python -m src.main translate stats|detect|run|message
-python -m src.main settings get|set|info|agent|filter-criteria|semantic
+python -m src.main settings get|set|info|server-time|agent|filter-criteria|reactions|semantic
 python -m src.main debug logs|memory|timing
+python -m src.main image generate|models|providers|generated
+python -m src.main mcp-server [--no-pool]   # expose agent tool registry as stdio MCP server (for external agents like Codex)
 ```
 
 Primary CLI name for Telegram dialogs is `dialogs`; legacy alias `my-telegram` is still accepted for backward compatibility.
@@ -84,7 +87,7 @@ Three layers: **CLI/Web** → **Telegram + Search + Scheduler + Agent/Pipeline**
 - Collection service (`src/services/collection_service.py`): orchestration layer between web/CLI and Collector/Queue — handles enqueue logic, stats collection
 - Parsers (`src/parsers.py`): identifier extraction for channel import — t.me links, @usernames, negative IDs; file parsing (txt/csv/xlsx)
 - Notification bot: personal bot created via BotFather through a connected account (`src/telegram/notifier.py`)
-- **Agent system**: `AgentProviderService` selects backend — `claude-agent-sdk` when `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN` is set, otherwise falls back to `deepagents` with provider adapters; developer override available in Settings UI
+- **Agent system**: three backends selected in `AgentManager.get_runtime_status()` (`src/agent/manager.py`) — auto-selection prefers `deepagents` when usable DB provider configs exist, then `claude-agent-sdk` (needs `ANTHROPIC_API_KEY` / `CLAUDE_CODE_OAUTH_TOKEN`), then `deepagents` again; the Codex SDK backend (`src/agent/codex_backend.py`) is intentionally NOT in the auto-fallback chain (blocking `codex` CLI subprocess + spawned mcp-server) and is opt-in only via the dev-mode `agent_backend_override` setting
 - **Provider system**: `ProviderService` auto-registers LLM providers from env vars (`OPENAI_API_KEY`, `COHERE_API_KEY`, `OLLAMA_BASE`, etc.); provider adapters in `src/services/provider_adapters.py` are lightweight HTTP wrappers (no heavy SDK deps)
 - **Content pipelines**: `PipelineService` + `ContentGenerationService` orchestrate generate → image → draft → notify → publish flow; tracked via `generation_runs` DB table
 - **Image generation**: `ImageGenerationService` routes to provider-specific HTTP adapters (Together/HuggingFace/OpenAI/Replicate) via `provider:model_id` convention; auto-registers from env vars; adapters defined in `src/services/provider_adapters.py`
@@ -147,8 +150,9 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 - **aiosqlite connection cleanup**: in tests using raw `aiosqlite.connect()`, always wrap in `try/finally` with `await conn.close()` — an unclosed worker-thread blocks pytest process exit
 - **SQL in triple-quoted strings**: Python does NOT concatenate adjacent string literals inside `"""..."""`; for values with quotes use parameterized `execute()` with `?`-placeholders, not inline values in `executescript()`
 - **JOIN on `channels`**: always `ON x.channel_id = c.channel_id`. `channels.id` is the DB primary key and is used only in dedicated pk-lookups (`get_by_pk`, `set_channel_type`, `delete_channel`). Every sidecar table (`messages`, `channel_stats`, `generated_images`, `forward_from_channel_id`, etc.) stores the Telegram channel_id, so joining on `c.id` silently returns zero rows for any channel whose pk differs from its Telegram id. Enforced by `tests/test_sql_conventions.py`.
-- **pytest-timeout**: global 30s timeout configured in `pyproject.toml` (`timeout = 30`), dependency `pytest-timeout` in `[dev]`
-- **Test parallelism split**: root `conftest.py` auto-marks tests as `aiosqlite_serial` if they use the `cli_db` fixture or contain `import aiosqlite` (raw aiosqlite calls); everything else runs with `-n auto`
+- **pytest-timeout**: global 120s timeout configured in `pyproject.toml` (`timeout = 120`) as a deadlock guard; dependency `pytest-timeout` in `[dev]`
+- **Warnings are errors**: `filterwarnings = ["error"]` in `pyproject.toml`; CI has a dedicated step that fails if this is ever relaxed — fix warnings, don't suppress them
+- **Test parallelism split**: root `conftest.py` auto-marks tests as `aiosqlite_serial` if they use the `cli_db` fixture or contain `import aiosqlite` (raw aiosqlite calls); everything else runs with `-n auto` (`--dist=loadfile`, worker count capped at 4 by default, `TGCF_PYTEST_XDIST_WORKERS` to override; `::`-style single-test invocations and real-TG gate envs force 1 worker)
 - **`db` fixture is `:memory:`**: `tests/conftest.py` provides `db` as `Database(":memory:")`. The `real_pool_harness_factory` fixture depends on `db` and passes it to the harness. Any fixture/test that creates a web app and calls `real_pool_harness_factory()` **must** accept `db` as a parameter and use it for `app.state.db` — creating a separate `Database(tmp_path / "test.db")` would give the app and the harness different DB instances, breaking account lookups.
 
 ## Conventions
@@ -164,21 +168,27 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 
 ## CI
 
-- GitHub Actions: `.github/workflows/ci.yml` — ruff lint + pytest on push to `main`/`fix/**`/`codex/**` and all PRs
-- CI runs parallel tests first (`-n auto -m "not aiosqlite_serial"`), then serial (`-m aiosqlite_serial`)
+- GitHub Actions: `.github/workflows/ci.yml` — ruff lint + pytest on push to `main`/`fix/**`/`codex/**` and all PRs; branch names containing `+` are rejected
+- Import architecture contracts: `lint-imports --config .importlinter` — CLI/web/agent-tools entrypoints must not import `telethon` directly (raw Telethon stays behind the telegram layer)
+- CI enforces `filterwarnings = ["error"]` in `pyproject.toml` (dedicated check step), then runs parallel tests (`-n auto -m "not aiosqlite_serial"`), then serial (`-m aiosqlite_serial`)
+- Other workflows: `real-provider.yml` (opt-in live provider smoke), `docs.yml` (mkdocs → GitHub Pages), `release.yml`
 
 ## Real Telegram Testing
 
-- Default rule: tests stay fake/harness-first; real Telegram is never the default path
-- Policy document: `docs/testing/real-telegram.md`
-- Any live Telegram pytest must use `real_telegram_sandbox` plus `@pytest.mark.real_tg_safe` or `@pytest.mark.real_tg_manual`
+- Default rule: tests stay fake/harness-first; real Telegram is never the default path; live tests are opt-in via gate env vars only
+- Real-CLI integration suite: `tests/cli_real_tg_integration/` (subdirs by category: `safe_ro`, `safe_write`, `mutation_safe`, `mutating`, `heavy`, `manual`, `dangerous`, …) with a `command_manifest.py`; every CLI leaf command must be either covered or manifested — invariants enforced by `test_real_telegram_policy.py`
+- Any live Telegram pytest must use `real_telegram_sandbox` plus a `real_tg_*` marker
 - Mutating flows such as BotFather, photo send, auth, and `leave_channels` must not be converted to generic live pytest cases
 
 ### pytest markers
 - `aiosqlite_serial` — auto-applied by conftest; runs serially (raw aiosqlite or `cli_db` fixture)
 - `native_backend_allowed` — explicitly exercises native Telethon allowlist flows
 - `real_tg_safe` — opt-in read-only sandbox; gate: `RUN_REAL_TELEGRAM_SAFE=1`
+- `real_tg_mutation_safe` — opt-in bounded operator-approved mutations; gate: `RUN_REAL_TELEGRAM_MUTATION_SAFE=1`
 - `real_tg_manual` — opt-in mutating sandbox, manual only; gate: `RUN_REAL_TELEGRAM_MANUAL=1`
 - `real_tg_never` — must never request a real Telegram client
 - `telegram_unit` — pure unit test, no transport wiring
 - `real_materializer` — uses real `SessionMaterializer` instead of stub
+- `real_provider_smoke` — opt-in live LLM/image provider API smoke
+- `codex_image_live` / `codex_cli_live` — opt-in live Codex SDK/CLI tests; gates: `RUN_CODEX_IMAGE_LIVE=1` / `RUN_CODEX_CLI_LIVE=1`
+- `e2e` — end-to-end browser test using Playwright

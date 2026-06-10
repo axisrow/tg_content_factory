@@ -72,3 +72,4 @@ docs/superpowers/
 
 # Playwright CLI artifacts
 .playwright-cli/
+.codegraph/
