@@ -248,7 +248,10 @@ class FilterRepository:
         return await cur.fetchall()
 
     async def fetch_maps_parallel(
-        self, channel_id: int | None = None
+        self,
+        channel_id: int | None = None,
+        *,
+        include_cross_dupe: bool = True,
     ) -> tuple[
         dict[int, tuple[int, int]],  # uniqueness_map
         dict[int, int],               # subscriber_map
@@ -256,7 +259,11 @@ class FilterRepository:
         dict[int, tuple[int, int]],  # cross_dupe_map
         dict[int, tuple[int, int]],  # cyrillic_map
     ]:
-        """Run all 5 map queries in parallel on separate read-only connections."""
+        """Run the map queries in parallel on separate read-only connections.
+
+        include_cross_dupe=False skips the cross-channel duplicate self-join —
+        by far the heaviest query on large DBs (#774) — returning an empty map.
+        """
         # Build parameterised SQL for each query
         u_sql = _SQL_UNIQUENESS + (" AND channel_id = ?" if channel_id is not None else "") + " GROUP BY channel_id"
         u_params: tuple = (channel_id,) if channel_id is not None else ()
@@ -289,14 +296,17 @@ class FilterRepository:
         )
         cy_params: tuple = (channel_id,) if channel_id is not None else ()
 
-        conns = [await self._open_readonly_conn() for _ in range(5)]
+        async def _no_rows() -> list[aiosqlite.Row]:
+            return []
+
+        conns = [await self._open_readonly_conn() for _ in range(4 + int(include_cross_dupe))]
         try:
-            rows_u, rows_s, rows_sm, rows_cd, rows_cy = await asyncio.gather(
+            rows_u, rows_s, rows_sm, rows_cy, rows_cd = await asyncio.gather(
                 self._run_on_conn(conns[0], u_sql, u_params),
                 self._run_on_conn(conns[1], s_sql, s_params),
                 self._run_on_conn(conns[2], sm_sql, sm_params),
-                self._run_on_conn(conns[3], cd_sql, cd_params),
-                self._run_on_conn(conns[4], cy_sql, cy_params),
+                self._run_on_conn(conns[3], cy_sql, cy_params),
+                self._run_on_conn(conns[4], cd_sql, cd_params) if include_cross_dupe else _no_rows(),
             )
         finally:
             for conn in conns:

@@ -62,7 +62,7 @@ def run(args: argparse.Namespace) -> None:
                 return
 
             if args.filter_action == "analyze":
-                report = await analyzer.analyze_all()
+                report = await analyzer.analyze_all(quick=getattr(args, "quick", False))
                 if not report.results:
                     print("No channels found.")
                     return
