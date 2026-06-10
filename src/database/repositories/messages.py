@@ -27,12 +27,10 @@ TOTAL_REACTIONS_SQL = (
 )
 # Same sum guarded so it only evaluates for rows holding valid reactions JSON;
 # used inside AVG(...) over arbitrary message rows.
-TOTAL_REACTIONS_GUARDED_SQL = (
-    "CASE WHEN m.reactions_json IS NOT NULL AND m.reactions_json != ''\n"
-    "          AND json_valid(m.reactions_json) = 1\n"
-    f"     THEN {TOTAL_REACTIONS_SQL}\n"
-    "     ELSE 0 END"
-)
+TOTAL_REACTIONS_GUARDED_SQL = f"""CASE WHEN m.reactions_json IS NOT NULL AND m.reactions_json != ''
+          AND json_valid(m.reactions_json) = 1
+     THEN {TOTAL_REACTIONS_SQL}
+     ELSE 0 END"""
 
 
 def _parse_reactions_json(reactions_json: str) -> list[dict]:

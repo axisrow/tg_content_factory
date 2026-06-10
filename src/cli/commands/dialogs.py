@@ -185,12 +185,8 @@ def run_with_dependencies(
                 if phone is None:
                     return
 
-                if not args.yes:
-                    print(f"Join/subscribe account {phone} to {args.target}")
-                    answer = input("Continue? [y/N] ").strip().lower()
-                    if answer != "y":
-                        print("Aborted.")
-                        return
+                if not _confirm_or_abort(args, f"Join/subscribe account {phone} to {args.target}"):
+                    return
 
                 try:
                     result = await TelegramActionService(pool).join_dialog(
@@ -235,13 +231,12 @@ def run_with_dependencies(
                 recipient = args.recipient
                 text = args.text
 
-                if not args.yes:
-                    print(f"Send message from {phone} to {recipient}:")
-                    print(f"  {text[:200]}{'...' if len(text) > 200 else ''}")
-                    answer = input("Continue? [y/N] ").strip().lower()
-                    if answer != "y":
-                        print("Aborted.")
-                        return
+                if not _confirm_or_abort(
+                    args,
+                    f"Send message from {phone} to {recipient}:",
+                    f"  {text[:200]}{'...' if len(text) > 200 else ''}",
+                ):
+                    return
 
                 try:
                     result = await TelegramActionService(pool).send_message(
@@ -365,17 +360,13 @@ def run_with_dependencies(
                             f"Supported reactions: {SUPPORTED_REACTION_EMOJIS_DISPLAY}"
                         )
                         return
-                if not args.yes:
-                    action = (
-                        f"Clear reaction from message #{args.message_id} in {args.chat_id}"
-                        if args.clear
-                        else f"Send reaction {emoji!r} to message #{args.message_id} in {args.chat_id}"
-                    )
-                    print(action)
-                    answer = input("Continue? [y/N] ").strip().lower()
-                    if answer != "y":
-                        print("Aborted.")
-                        return
+                action = (
+                    f"Clear reaction from message #{args.message_id} in {args.chat_id}"
+                    if args.clear
+                    else f"Send reaction {emoji!r} to message #{args.message_id} in {args.chat_id}"
+                )
+                if not _confirm_or_abort(args, action):
+                    return
                 try:
                     result = await TelegramActionService(pool).send_reaction(
                         phone=phone,
@@ -404,12 +395,8 @@ def run_with_dependencies(
                 phone = _resolve_phone(pool, args)
                 if phone is None:
                     return
-                if not args.yes:
-                    print(f"Pin message #{args.message_id} in {args.chat_id}")
-                    answer = input("Continue? [y/N] ").strip().lower()
-                    if answer != "y":
-                        print("Aborted.")
-                        return
+                if not _confirm_or_abort(args, f"Pin message #{args.message_id} in {args.chat_id}"):
+                    return
                 try:
                     await TelegramActionService(pool).pin_message(
                         phone=phone,
@@ -427,13 +414,9 @@ def run_with_dependencies(
                 phone = _resolve_phone(pool, args)
                 if phone is None:
                     return
-                if not args.yes:
-                    target = f"#{args.message_id}" if args.message_id else "all messages"
-                    print(f"Unpin {target} in {args.chat_id}")
-                    answer = input("Continue? [y/N] ").strip().lower()
-                    if answer != "y":
-                        print("Aborted.")
-                        return
+                target = f"#{args.message_id}" if args.message_id else "all messages"
+                if not _confirm_or_abort(args, f"Unpin {target} in {args.chat_id}"):
+                    return
                 try:
                     await TelegramActionService(pool).unpin_message(
                         phone=phone,
@@ -507,12 +490,8 @@ def run_with_dependencies(
                 phone = _resolve_phone(pool, args)
                 if phone is None:
                     return
-                if not args.yes:
-                    print(f"Edit admin rights for {args.user_id} in {args.chat_id}")
-                    answer = input("Continue? [y/N] ").strip().lower()
-                    if answer != "y":
-                        print("Aborted.")
-                        return
+                if not _confirm_or_abort(args, f"Edit admin rights for {args.user_id} in {args.chat_id}"):
+                    return
                 try:
                     await TelegramActionService(pool).edit_admin(
                         phone=phone,
@@ -531,12 +510,8 @@ def run_with_dependencies(
                 phone = _resolve_phone(pool, args)
                 if phone is None:
                     return
-                if not args.yes:
-                    print(f"Edit permissions for {args.user_id} in {args.chat_id}")
-                    answer = input("Continue? [y/N] ").strip().lower()
-                    if answer != "y":
-                        print("Aborted.")
-                        return
+                if not _confirm_or_abort(args, f"Edit permissions for {args.user_id} in {args.chat_id}"):
+                    return
                 try:
                     if args.send_messages is None and args.send_media is None:
                         print("Error: specify at least one flag (--send-messages or --send-media).")
@@ -570,12 +545,8 @@ def run_with_dependencies(
                 phone = _resolve_phone(pool, args)
                 if phone is None:
                     return
-                if not args.yes:
-                    print(f"Kick {args.user_id} from {args.chat_id}")
-                    answer = input("Continue? [y/N] ").strip().lower()
-                    if answer != "y":
-                        print("Aborted.")
-                        return
+                if not _confirm_or_abort(args, f"Kick {args.user_id} from {args.chat_id}"):
+                    return
                 try:
                     await TelegramActionService(pool).kick_participant(
                         phone=phone,
@@ -777,12 +748,8 @@ def run_with_dependencies(
                                 f"phone={payload_phone or '-'} run_after={run_after}"
                             )
                 elif args.queue_action == "cancel":
-                    if not args.yes:
-                        print(f"Cancel queue command #{args.command_id}")
-                        answer = input("Continue? [y/N] ").strip().lower()
-                        if answer != "y":
-                            print("Aborted.")
-                            return
+                    if not _confirm_or_abort(args, f"Cancel queue command #{args.command_id}"):
+                        return
                     ok = await service.cancel(int(args.command_id))
                     if ok:
                         print(f"Command #{args.command_id} cancelled.")
@@ -792,18 +759,14 @@ def run_with_dependencies(
                             f"(only PENDING commands can be cancelled)."
                         )
                 elif args.queue_action == "clear-pending":
-                    if not args.yes:
-                        filt = []
-                        if args.command_type:
-                            filt.append(f"type={args.command_type}")
-                        if args.phone:
-                            filt.append(f"phone={args.phone}")
-                        scope = ", ".join(filt) if filt else "ALL types and accounts"
-                        print(f"Bulk-cancel pending commands ({scope})")
-                        answer = input("Continue? [y/N] ").strip().lower()
-                        if answer != "y":
-                            print("Aborted.")
-                            return
+                    filt = []
+                    if args.command_type:
+                        filt.append(f"type={args.command_type}")
+                    if args.phone:
+                        filt.append(f"phone={args.phone}")
+                    scope = ", ".join(filt) if filt else "ALL types and accounts"
+                    if not _confirm_or_abort(args, f"Bulk-cancel pending commands ({scope})"):
+                        return
                     cancelled = await service.cancel_pending(
                         command_type=args.command_type or None,
                         phone=args.phone or None,
