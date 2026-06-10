@@ -951,6 +951,60 @@ async def test_fetch_channel_meta_prewarms_when_dialogs_not_fetched(pool):
     assert pool.is_dialogs_fetched("+7001")
 
 
+@pytest.mark.anyio
+async def test_fetch_channel_meta_clears_stale_preferred_on_unresolved(pool, mock_db):
+    # A stored preferred phone that can no longer resolve the entity is stale
+    # (membership change) — ValueError path must clear it like ChannelPrivateError.
+    session = TelegramTransportSession(AsyncMock(), disconnect_on_close=False)
+    pool.clients["+7001"] = session
+    pool.register_channel_phone(123, "+7001")
+    pool.mark_dialogs_fetched("+7001")
+    mock_db.repos.channels.get_preferred_phone.return_value = "+7001"
+
+    with patch.object(
+        pool, "get_client_by_phone", AsyncMock(return_value=(session, "+7001"))
+    ):
+        with patch.object(
+            session,
+            "resolve_entity",
+            side_effect=ValueError("Could not find the input entity"),
+        ):
+            result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is None
+    assert pool.get_phone_for_channel(123) is None
+    mock_db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(
+        123, None
+    )
+
+
+@pytest.mark.anyio
+async def test_fetch_channel_meta_unresolved_keeps_map_on_available_client(pool, mock_db):
+    # On the available-client (non-preferred) path a ValueError just means no
+    # warmed account sees the channel — must NOT erase a good mapping on a guess.
+    session = TelegramTransportSession(AsyncMock(), disconnect_on_close=False)
+    pool.clients["+7001"] = session
+    # No mapping for channel 123 → routing falls back to get_available_client.
+    mock_db.repos.channels.get_preferred_phone.return_value = None
+    clear = MagicMock()
+
+    with patch.object(pool, "is_warming", return_value=False):
+        with patch.object(pool, "clear_channel_phone", clear):
+            with patch.object(
+                pool, "get_available_client", AsyncMock(return_value=(session, "+7001"))
+            ):
+                with patch.object(
+                    session,
+                    "resolve_entity",
+                    side_effect=ValueError("Could not find the input entity"),
+                ):
+                    result = await pool.fetch_channel_meta(123, "channel")
+
+    assert result is None
+    clear.assert_not_called()
+    mock_db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
+
+
 # ---------------------------------------------------------------------------
 # ClientPool: _classify_entity edge cases
 # ---------------------------------------------------------------------------

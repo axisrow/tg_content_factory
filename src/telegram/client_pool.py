@@ -178,6 +178,24 @@ class ClientPool(ResolveGuardMixin):
                 exc_info=True,
             )
 
+    async def forget_channel_phone(self, channel_id: int) -> None:
+        """Drop the channel→phone mapping in memory and clear preferred in DB.
+
+        Used during error recovery when the routed account turned out to be stale
+        (lost access / can no longer resolve), so the next pass rediscovers a
+        working account. Best-effort: a failed DB write only repeats next pass.
+        """
+        self.clear_channel_phone(channel_id)
+        try:
+            await self._db.repos.channels.update_channel_preferred_phone(channel_id, None)
+        except Exception:
+            logger.debug(
+                "forget_channel_phone: failed to clear stale preferred_phone "
+                "for channel %d",
+                channel_id,
+                exc_info=True,
+            )
+
     def is_warming(self) -> bool:
         """True while warm_all_dialogs() is still running."""
         return self._warming_task is not None and not self._warming_task.done()
@@ -1349,18 +1367,7 @@ class ClientPool(ResolveGuardMixin):
             # next pass rediscovers. Leave it alone on the available-client path —
             # we'd be erasing a good record on a guess.
             if used_preferred:
-                self.clear_channel_phone(channel_id)
-                try:
-                    await self._db.repos.channels.update_channel_preferred_phone(
-                        channel_id, None
-                    )
-                except Exception:
-                    logger.debug(
-                        "fetch_channel_meta: failed to clear stale preferred_phone "
-                        "for channel_id %s",
-                        channel_id,
-                        exc_info=True,
-                    )
+                await self.forget_channel_phone(channel_id)
             return None
         except (ValueError, TypeError):
             # Telethon raises ValueError("Could not find the input entity ...")
@@ -1371,6 +1378,11 @@ class ClientPool(ResolveGuardMixin):
                 "(not in any warmed account)",
                 channel_id,
             )
+            # A stored preferred phone that can no longer resolve the entity is
+            # stale (membership change) — clear it so the next pass rediscovers
+            # instead of pinning the same dead account (Codex review on #809).
+            if used_preferred:
+                await self.forget_channel_phone(channel_id)
             return None
         except Exception as e:
             logger.warning(
