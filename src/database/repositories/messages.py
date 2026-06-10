@@ -218,17 +218,26 @@ class MessagesRepository:
     async def _upsert_reactions(
         self, channel_id: int, message_id: int, reactions_json: str
     ) -> None:
-        """Parse reactions_json and upsert rows into message_reactions."""
+        """Replace message_reactions rows for the message with reactions_json contents.
+
+        Delete-then-insert (not bare INSERT OR REPLACE) so emoji that vanished
+        from the refreshed JSON don't linger and inflate the analytics
+        aggregates built on this table (#826/#827 review).
+        """
         items = _parse_reactions_json(reactions_json)
-        if not items:
-            return
         data = [(channel_id, message_id, r["emoji"], r.get("count", 0)) for r in items]
         try:
-            await self._database.executemany_write(
-                """INSERT OR REPLACE INTO message_reactions
-                   (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)""",
-                data,
-            )
+            async with self._database.transaction() as conn:
+                await conn.execute(
+                    "DELETE FROM message_reactions WHERE channel_id = ? AND message_id = ?",
+                    (channel_id, message_id),
+                )
+                if data:
+                    await conn.executemany(
+                        """INSERT OR REPLACE INTO message_reactions
+                           (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)""",
+                        data,
+                    )
         except Exception:
             logger.exception(
                 "Failed to upsert reactions for channel_id=%s message_id=%s",
@@ -315,19 +324,29 @@ class MessagesRepository:
                     clear_premium_search_query=premium_search_query is None,
                 )
 
+        # Replace, not append: drop the messages' old rows first so emoji that
+        # vanished from a refreshed reactions_json don't linger and inflate the
+        # analytics aggregates built on this table (#826/#827 review).
+        reaction_keys = list({(m.channel_id, m.message_id) for m in messages if m.reactions_json})
         reactions_data = [
             (m.channel_id, m.message_id, r["emoji"], r.get("count", 0))
             for m in messages
             if m.reactions_json
             for r in _parse_reactions_json(m.reactions_json)
         ]
-        if reactions_data:
+        if reaction_keys:
             try:
-                await self._database.executemany_write(
-                    """INSERT OR REPLACE INTO message_reactions
-                       (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)""",
-                    reactions_data,
-                )
+                async with self._database.transaction() as conn:
+                    await conn.executemany(
+                        "DELETE FROM message_reactions WHERE channel_id = ? AND message_id = ?",
+                        reaction_keys,
+                    )
+                    if reactions_data:
+                        await conn.executemany(
+                            """INSERT OR REPLACE INTO message_reactions
+                               (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)""",
+                            reactions_data,
+                        )
             except Exception as exc:
                 logger.error("Failed to upsert reactions for batch: %s", exc)
 

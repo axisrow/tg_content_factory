@@ -1731,6 +1731,69 @@ async def test_get_top_messages_excludes_filtered_channels(db):
     assert [r["channel_id"] for r in result] == [-100507]
 
 
+@pytest.mark.anyio
+async def test_reaction_refresh_removes_stale_emoji_rows(db):
+    """Re-collecting a message with fewer reactions must drop vanished emoji rows
+    from message_reactions so analytics mirror the current reactions_json."""
+    await db.add_channel(Channel(channel_id=-100509, title="StaleSingle"))
+    base = dict(channel_id=-100509, message_id=1, text="msg", date=datetime(2025, 1, 1, tzinfo=timezone.utc))
+    await db.insert_message(
+        Message(**base, reactions_json='[{"emoji": "👍", "count": 5}, {"emoji": "🔥", "count": 2}]')
+    )
+    # Same Telegram message re-collected after the 🔥 reactions were removed
+    await db.insert_message(Message(**base, reactions_json='[{"emoji": "👍", "count": 3}]'))
+
+    result = await db.get_top_messages(limit=10)
+    assert len(result) == 1
+    assert result[0]["total_reactions"] == 3  # not 3 + stale 🔥=2
+
+    cur = await db.execute(
+        "SELECT emoji, count FROM message_reactions WHERE channel_id = ? AND message_id = ?",
+        (-100509, 1),
+    )
+    rows = await cur.fetchall()
+    assert [(r["emoji"], r["count"]) for r in rows] == [("👍", 3)]
+
+
+@pytest.mark.anyio
+async def test_reaction_refresh_batch_removes_stale_emoji_rows(db):
+    """insert_messages_batch refresh path must also drop vanished emoji rows."""
+    await db.add_channel(Channel(channel_id=-100510, title="StaleBatch"))
+    base = dict(channel_id=-100510, message_id=1, text="msg", date=datetime(2025, 1, 1, tzinfo=timezone.utc))
+    await db.insert_messages_batch(
+        [Message(**base, reactions_json='[{"emoji": "👍", "count": 5}, {"emoji": "🔥", "count": 2}]')]
+    )
+    await db.insert_messages_batch([Message(**base, reactions_json='[{"emoji": "👍", "count": 3}]')])
+
+    result = await db.get_top_messages(limit=10)
+    assert len(result) == 1
+    assert result[0]["total_reactions"] == 3
+
+    cur = await db.execute(
+        "SELECT emoji, count FROM message_reactions WHERE channel_id = ? AND message_id = ?",
+        (-100510, 1),
+    )
+    rows = await cur.fetchall()
+    assert [(r["emoji"], r["count"]) for r in rows] == [("👍", 3)]
+
+
+@pytest.mark.anyio
+async def test_reaction_refresh_with_empty_list_clears_rows(db):
+    """An explicit empty reactions list ('[]') clears message_reactions for the message."""
+    await db.add_channel(Channel(channel_id=-100511, title="StaleEmpty"))
+    base = dict(channel_id=-100511, message_id=1, text="msg", date=datetime(2025, 1, 1, tzinfo=timezone.utc))
+    await db.insert_message(Message(**base, reactions_json='[{"emoji": "👍", "count": 5}]'))
+    await db.insert_message(Message(**base, reactions_json="[]"))
+
+    assert await db.get_top_messages(limit=10) == []
+    cur = await db.execute(
+        "SELECT COUNT(*) AS cnt FROM message_reactions WHERE channel_id = ? AND message_id = ?",
+        (-100511, 1),
+    )
+    row = await cur.fetchone()
+    assert row["cnt"] == 0
+
+
 @pytest.mark.aiosqlite_serial
 @pytest.mark.anyio
 async def test_migration_creates_message_reactions_without_backfill(tmp_path):
