@@ -1366,8 +1366,12 @@ def test_zai_provider_spec_uses_openai_package_hint():
     assert spec.package_name == "langchain-openai"
 
 
+# The param is named default_base_url (not base_url) because pytest-base-url
+# (pulled in transitively by pytest-playwright) registers a session-scoped
+# fixture `base_url`; shadowing it with a function-scoped param breaks setup
+# with ScopeMismatch (#812).
 @pytest.mark.parametrize(
-    ("provider", "base_url"),
+    ("provider", "default_base_url"),
     [
         ("openai", "https://api.openai.com/v1"),
         ("groq", "https://api.groq.com/openai/v1"),
@@ -1379,14 +1383,14 @@ def test_zai_provider_spec_uses_openai_package_hint():
         ("mistralai", "https://api.mistral.ai/v1"),
     ],
 )
-def test_openai_compatible_provider_specs_expose_default_base_urls(provider, base_url):
+def test_openai_compatible_provider_specs_expose_default_base_urls(provider, default_base_url):
     spec = provider_spec(provider)
 
     assert spec is not None
     assert spec.openai_compatible is True
     assert spec.supports_lightweight_adapter is True
-    assert spec.default_base_url == base_url
-    assert default_base_url_for(provider) == base_url
+    assert spec.default_base_url == default_base_url
+    assert default_base_url_for(provider) == default_base_url
 
 
 def test_registry_normalization_helpers_keep_zai_and_ollama_policy():
