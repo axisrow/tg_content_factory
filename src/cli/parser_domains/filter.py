@@ -6,7 +6,12 @@ import argparse
 def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser | None:
     flt_parser = subparsers.add_parser("filter", help="Channel content filter")
     flt_sub = flt_parser.add_subparsers(dest="filter_action")
-    flt_sub.add_parser("analyze", help="Analyze channels and show report")
+    flt_analyze = flt_sub.add_parser("analyze", help="Analyze channels and show report")
+    flt_analyze.add_argument(
+        "--quick",
+        action="store_true",
+        help="Skip cross-channel duplicate analysis (fast on large DBs)",
+    )
     flt_sub.add_parser("apply", help="Analyze and mark filtered channels")
     flt_reset = flt_sub.add_parser("reset", help="Reset channel filter flag")
     flt_reset.add_argument("--pks", default=None, help="Comma-separated PKs (default: all)")
