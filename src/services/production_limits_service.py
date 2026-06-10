@@ -9,12 +9,18 @@ from typing import TYPE_CHECKING, Awaitable, Callable, TypeVar
 from tenacity import AsyncRetrying, RetryCallState, retry_if_exception, stop_after_attempt
 from tenacity.wait import wait_exponential_jitter
 
+from src.utils.json import safe_json_dumps, safe_json_loads_dict
+
 if TYPE_CHECKING:
     from src.database import Database
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+# settings key under which the daily cost counter is persisted so it survives restarts (#233)
+_COST_STATE_KEY = "production_limits_daily_cost"
+_DAY_SECONDS = 86400
 
 
 class _AcquireLimitError(RuntimeError):
@@ -154,11 +160,68 @@ class RateLimiter:
 class CostTracker:
     """Track and enforce cost caps for API usage."""
 
-    def __init__(self, config: CostConfig | None = None):
+    def __init__(self, config: CostConfig | None = None, db: "Database | None" = None):
         self._config = config or CostConfig()
         self._daily_cost = 0.0
         self._day_start = time.time()
         self._lock = asyncio.Lock()
+        # When a DB is provided, the daily cost is persisted to the settings table and
+        # restored lazily on first use so a process restart cannot reset the counter and
+        # let usage blow past daily_cost_cap (#233). db=None keeps pure in-memory behaviour.
+        self._db = db
+        self._loaded = False
+
+    async def _ensure_loaded(self) -> None:
+        """Restore the persisted daily cost on first use. Must be called under self._lock."""
+        if self._db is None or self._loaded:
+            return
+        try:
+            raw = await self._db.get_setting(_COST_STATE_KEY)
+        except Exception:
+            # Leave _loaded False so a transient startup error (e.g. SQLite busy) is retried
+            # on the next call instead of silently disabling persistence for the whole
+            # process — which would let a restart reset the counter past daily_cost_cap.
+            logger.warning("CostTracker: failed to load persisted daily cost", exc_info=True)
+            return
+        # A successful read (even of malformed/empty state) is authoritative — mark loaded so
+        # we don't re-read every call; retrying only helps when the read itself failed.
+        self._loaded = True
+        state = safe_json_loads_dict(raw)
+        if not state:
+            return
+        try:
+            day_start = float(state["day_start"])
+            daily_cost = float(state["daily_cost"])
+        except (KeyError, TypeError, ValueError):
+            logger.warning("CostTracker: malformed persisted daily cost: %r", raw)
+            return
+        # Only restore if the saved window is still the current day; otherwise start fresh.
+        if time.time() - day_start < _DAY_SECONDS:
+            self._daily_cost = daily_cost
+            self._day_start = day_start
+
+    def _maybe_reset_day(self, now: float) -> bool:
+        """Reset the daily counter when the day window rolls over. Caller holds self._lock.
+
+        Returns True if a reset happened, so callers can decide whether to persist.
+        """
+        if now - self._day_start >= _DAY_SECONDS:
+            self._daily_cost = 0.0
+            self._day_start = now
+            return True
+        return False
+
+    async def _persist(self) -> None:
+        """Persist the current daily cost. Must be called under self._lock."""
+        if self._db is None:
+            return
+        try:
+            await self._db.set_setting(
+                _COST_STATE_KEY,
+                safe_json_dumps({"daily_cost": self._daily_cost, "day_start": self._day_start}),
+            )
+        except Exception:
+            logger.warning("CostTracker: failed to persist daily cost", exc_info=True)
 
     async def estimate_cost(
         self,
@@ -193,10 +256,9 @@ class CostTracker:
             Tuple of (allowed, estimated_cost)
         """
         async with self._lock:
-            now = time.time()
-            if now - self._day_start >= 86400:
-                self._daily_cost = 0.0
-                self._day_start = now
+            await self._ensure_loaded()
+            if self._maybe_reset_day(time.time()):
+                await self._persist()
 
             estimated = await self.estimate_cost(tokens, is_image)
 
@@ -208,13 +270,12 @@ class CostTracker:
     async def record_cost(self, tokens: int = 0, is_image: bool = False) -> float:
         """Record cost for a request after it actually executes."""
         async with self._lock:
-            now = time.time()
-            if now - self._day_start >= 86400:
-                self._daily_cost = 0.0
-                self._day_start = now
+            await self._ensure_loaded()
+            self._maybe_reset_day(time.time())
 
             estimated = await self.estimate_cost(tokens, is_image)
             self._daily_cost += estimated
+            await self._persist()
             return estimated
 
     def get_daily_cost(self) -> float:
@@ -243,7 +304,7 @@ class ProductionLimitsService:
     ):
         self._db = db
         self._rate_limiter = RateLimiter(rate_config)
-        self._cost_tracker = CostTracker(cost_config)
+        self._cost_tracker = CostTracker(cost_config, db=db)
 
     async def acquire(
         self,
