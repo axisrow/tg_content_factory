@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import time
+from contextlib import asynccontextmanager
 from datetime import timezone
 
 from src.models import Channel, Message, SearchResult
@@ -56,6 +57,53 @@ class TelegramSearch:
             result = marker(phone)
             if inspect.isawaitable(result):
                 await result
+
+    @staticmethod
+    def _error_result(query: str, error: str, flood_wait=None) -> SearchResult:
+        """Build an empty SearchResult carrying an error (and optional flood wait)."""
+        return SearchResult(messages=[], total=0, query=query, error=error, flood_wait=flood_wait)
+
+    @asynccontextmanager
+    async def _acquire_search_client(self, query: str):
+        """Yield an adapted (session, phone) for a live search, or an error SearchResult.
+
+        Handles the shared prelude (no pool / no available client / transport
+        adaptation / dialog-cache warm-up) and always releases the client on exit.
+        Consumers must check ``isinstance(acquired, SearchResult)`` to detect the
+        error path before using the tuple.
+        """
+        if not self._pool:
+            yield self._error_result(query, "Нет подключённых Telegram-аккаунтов.")
+            return
+
+        result = await self._pool.get_available_client()
+        if result is None:
+            yield self._error_result(query, "Нет доступных Telegram-аккаунтов. Проверьте подключение.")
+            return
+
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
+        try:
+            try:
+                await self._warm_dialog_cache_if_needed(session, phone)
+            except HandledFloodWaitError as exc:
+                # Warm-up flood waits were converted to an error SearchResult by
+                # the per-method try/except before the prelude was extracted; keep
+                # that contract instead of letting the exception escape `async with`.
+                yield self._error_result(query, exc.info.detail, flood_wait=exc.info)
+                return
+            except Exception as exc:
+                # Non-flood warm-up failures (RPC/network/timeout) were likewise
+                # caught per-method and returned as an error SearchResult on main.
+                logger.exception(
+                    "Telegram dialog cache warm-up failed query_hash=%s",
+                    query_log_fields(query)["query_hash"],
+                )
+                yield self._error_result(query, f"Ошибка поиска в Telegram: {exc}")
+                return
+            yield session, phone
+        finally:
+            await self._pool.release_client(phone)
 
     async def _load_search_quota_with_flood_handling(
         self,
@@ -424,27 +472,10 @@ class TelegramSearch:
         return messages, seen_channels
 
     async def search_my_chats(self, query: str, limit: int = 50) -> SearchResult:
-        if not self._pool:
-            return SearchResult(
-                messages=[],
-                total=0,
-                query=query,
-                error="Нет подключённых Telegram-аккаунтов.",
-            )
-
-        result = await self._pool.get_available_client()
-        if result is None:
-            return SearchResult(
-                messages=[],
-                total=0,
-                query=query,
-                error="Нет доступных Telegram-аккаунтов. Проверьте подключение.",
-            )
-
-        session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
-        try:
-            await self._warm_dialog_cache_if_needed(session, phone)
+        async with self._acquire_search_client(query) as acquired:
+            if isinstance(acquired, SearchResult):
+                return acquired
+            session, phone = acquired
 
             async def _collect_my_chats() -> tuple[list[Message], dict[int, Channel]]:
                 collected: list[Message] = []
@@ -466,38 +497,26 @@ class TelegramSearch:
                         )
                 return collected, seen
 
-            messages, seen_channels = await run_with_flood_wait(
-                _collect_my_chats(),
-                operation="search_my_chats",
-                phone=phone,
-                pool=self._pool,
-                logger_=logger,
-                timeout=90.0,
-            )
+            try:
+                messages, seen_channels = await run_with_flood_wait(
+                    _collect_my_chats(),
+                    operation="search_my_chats",
+                    phone=phone,
+                    pool=self._pool,
+                    logger_=logger,
+                    timeout=90.0,
+                )
 
-            messages = await self._persistence.cache_messages_and_channels(seen_channels, messages)
-            return SearchResult(messages=messages, total=len(messages), query=query)
-        except HandledFloodWaitError as exc:
-            return SearchResult(
-                messages=[],
-                total=0,
-                query=query,
-                error=exc.info.detail,
-                flood_wait=exc.info,
-            )
-        except Exception as exc:
-            logger.exception(
-                "Telegram my_chats search failed query_hash=%s",
-                query_log_fields(query)["query_hash"],
-            )
-            return SearchResult(
-                messages=[],
-                total=0,
-                query=query,
-                error=f"Ошибка поиска в Telegram: {exc}",
-            )
-        finally:
-            await self._pool.release_client(phone)
+                messages = await self._persistence.cache_messages_and_channels(seen_channels, messages)
+                return SearchResult(messages=messages, total=len(messages), query=query)
+            except HandledFloodWaitError as exc:
+                return self._error_result(query, exc.info.detail, flood_wait=exc.info)
+            except Exception as exc:
+                logger.exception(
+                    "Telegram my_chats search failed query_hash=%s",
+                    query_log_fields(query)["query_hash"],
+                )
+                return self._error_result(query, f"Ошибка поиска в Telegram: {exc}")
 
     async def search_in_channel(
         self,
@@ -505,136 +524,98 @@ class TelegramSearch:
         query: str,
         limit: int = 50,
     ) -> SearchResult:
-        if not self._pool:
-            return SearchResult(
-                messages=[],
-                total=0,
-                query=query,
-                error="Нет подключённых Telegram-аккаунтов.",
-            )
-
-        result = await self._pool.get_available_client()
-        if result is None:
-            return SearchResult(
-                messages=[],
-                total=0,
-                query=query,
-                error="Нет доступных Telegram-аккаунтов. Проверьте подключение.",
-            )
-
-        session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
-        try:
-            await self._warm_dialog_cache_if_needed(session, phone)
-
-            entity = None
-            if channel_id:
-                try:
-                    entity = await run_with_flood_wait(
-                        session.resolve_entity(PeerChannel(channel_id)),
-                        operation="search_in_channel_resolve_entity",
-                        phone=phone,
-                        pool=self._pool,
-                        logger_=logger,
-                        timeout=30.0,
-                    )
-                except HandledFloodWaitError:
-                    raise
-                except Exception:
-                    logger.debug(
-                        "PeerChannel(%s) not in cache, trying username fallback",
-                        channel_id,
-                    )
-                    ch_record = await self._persistence._search.channels.get_channel_by_channel_id(
-                        channel_id
-                    )
-                    username = ch_record.username if ch_record else None
-                    if username:
-                        try:
-                            entity = await self._pool.run_live_username_resolve(
-                                lambda: session.resolve_entity(username),
-                                operation="search_in_channel_resolve_username",
-                                phone=phone,
-                                username=str(username),
-                                logger_=logger,
-                                timeout=30.0,
-                            )
-                        except HandledFloodWaitError:
-                            raise
-                        except Exception as exc2:
-                            logger.warning(
-                                "Cannot resolve channel %s (@%s): %s",
-                                channel_id,
-                                username,
-                                exc2,
-                            )
-                            return SearchResult(
-                                messages=[],
-                                total=0,
-                                query=query,
-                                error=f"Не удалось найти канал {channel_id}: {exc2}",
-                            )
-                    else:
-                        return SearchResult(
-                            messages=[],
-                            total=0,
-                            query=query,
-                            error=(
-                                f"Не удалось найти канал {channel_id}"
-                                " (нет username для fallback)"
-                            ),
+        async with self._acquire_search_client(query) as acquired:
+            if isinstance(acquired, SearchResult):
+                return acquired
+            session, phone = acquired
+            try:
+                entity = None
+                if channel_id:
+                    try:
+                        entity = await run_with_flood_wait(
+                            session.resolve_entity(PeerChannel(channel_id)),
+                            operation="search_in_channel_resolve_entity",
+                            phone=phone,
+                            pool=self._pool,
+                            logger_=logger,
+                            timeout=30.0,
                         )
-
-            async def _collect_in_channel() -> tuple[list[Message], dict[int, Channel]]:
-                collected: list[Message] = []
-                seen: dict[int, Channel] = {}
-                async for msg in session.stream_messages(entity, search=query, limit=limit):
-                    converted = TelegramMessageTransformer.convert_telethon_message(msg)
-                    if converted is None:
+                    except HandledFloodWaitError:
+                        raise
+                    except Exception:
                         logger.debug(
-                            "Skipping message in search_in_channel: id=%s has no chat context",
-                            getattr(msg, "id", None),
+                            "PeerChannel(%s) not in cache, trying username fallback",
+                            channel_id,
                         )
-                        continue
-                    collected.append(converted)
-                    if converted.channel_id not in seen:
-                        seen[converted.channel_id] = Channel(
-                            channel_id=converted.channel_id,
-                            title=converted.channel_title,
-                            username=converted.channel_username,
+                        ch_record = await self._persistence._search.channels.get_channel_by_channel_id(
+                            channel_id
                         )
-                return collected, seen
+                        username = ch_record.username if ch_record else None
+                        if username:
+                            try:
+                                entity = await self._pool.run_live_username_resolve(
+                                    lambda: session.resolve_entity(username),
+                                    operation="search_in_channel_resolve_username",
+                                    phone=phone,
+                                    username=str(username),
+                                    logger_=logger,
+                                    timeout=30.0,
+                                )
+                            except HandledFloodWaitError:
+                                raise
+                            except Exception as exc2:
+                                logger.warning(
+                                    "Cannot resolve channel %s (@%s): %s",
+                                    channel_id,
+                                    username,
+                                    exc2,
+                                )
+                                return self._error_result(
+                                    query, f"Не удалось найти канал {channel_id}: {exc2}"
+                                )
+                        else:
+                            return self._error_result(
+                                query,
+                                f"Не удалось найти канал {channel_id} (нет username для fallback)",
+                            )
 
-            messages, seen_channels = await run_with_flood_wait(
-                _collect_in_channel(),
-                operation="search_in_channel",
-                phone=phone,
-                pool=self._pool,
-                logger_=logger,
-                timeout=90.0,
-            )
+                async def _collect_in_channel() -> tuple[list[Message], dict[int, Channel]]:
+                    collected: list[Message] = []
+                    seen: dict[int, Channel] = {}
+                    async for msg in session.stream_messages(entity, search=query, limit=limit):
+                        converted = TelegramMessageTransformer.convert_telethon_message(msg)
+                        if converted is None:
+                            logger.debug(
+                                "Skipping message in search_in_channel: id=%s has no chat context",
+                                getattr(msg, "id", None),
+                            )
+                            continue
+                        collected.append(converted)
+                        if converted.channel_id not in seen:
+                            seen[converted.channel_id] = Channel(
+                                channel_id=converted.channel_id,
+                                title=converted.channel_title,
+                                username=converted.channel_username,
+                            )
+                    return collected, seen
 
-            messages = await self._persistence.cache_messages_and_channels(seen_channels, messages)
-            return SearchResult(messages=messages, total=len(messages), query=query)
-        except HandledFloodWaitError as exc:
-            return SearchResult(
-                messages=[],
-                total=0,
-                query=query,
-                error=exc.info.detail,
-                flood_wait=exc.info,
-            )
-        except Exception as exc:
-            logger.exception(
-                "Telegram channel search failed channel_id=%s query_hash=%s",
-                channel_id,
-                query_log_fields(query)["query_hash"],
-            )
-            return SearchResult(
-                messages=[],
-                total=0,
-                query=query,
-                error=f"Ошибка поиска в Telegram: {exc}",
-            )
-        finally:
-            await self._pool.release_client(phone)
+                messages, seen_channels = await run_with_flood_wait(
+                    _collect_in_channel(),
+                    operation="search_in_channel",
+                    phone=phone,
+                    pool=self._pool,
+                    logger_=logger,
+                    timeout=90.0,
+                )
+
+                messages = await self._persistence.cache_messages_and_channels(seen_channels, messages)
+                return SearchResult(messages=messages, total=len(messages), query=query)
+            except HandledFloodWaitError as exc:
+                return self._error_result(query, exc.info.detail, flood_wait=exc.info)
+            except Exception as exc:
+                logger.exception(
+                    "Telegram channel search failed channel_id=%s query_hash=%s",
+                    channel_id,
+                    query_log_fields(query)["query_hash"],
+                )
+                return self._error_result(query, f"Ошибка поиска в Telegram: {exc}")

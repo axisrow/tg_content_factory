@@ -90,25 +90,10 @@ async def resolve_default_image_model(requested_model, db, image_service) -> str
 
 
 def register(db, client_pool, embedding_service, **kwargs):
+    from src.agent.tools._pipeline_runtime import build_image_service
+
     config = kwargs.get("config")
     tools = []
-
-    async def _build_image_service():
-        """Build ImageGenerationService with DB providers + env fallback."""
-        from src.services.image_generation_service import ImageGenerationService
-
-        if db and config:
-            try:
-                from src.services.image_provider_service import ImageProviderService
-
-                svc = ImageProviderService(db, config)
-                configs = await svc.load_provider_configs()
-                adapters = svc.build_adapters(configs)
-                if adapters:
-                    return ImageGenerationService(adapters=adapters)
-            except Exception:
-                logger.warning("Failed to load image providers from DB", exc_info=True)
-        return ImageGenerationService()
 
     @tool(
         "generate_image",
@@ -123,7 +108,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response("Ошибка: prompt обязателен.")
         model = args.get("model")
         try:
-            svc = await _build_image_service()
+            svc = await build_image_service(db, config)
             if not await svc.is_available():
                 return _text_response("Генерация изображений не настроена. Добавьте провайдера в настройках.")
             resolved_model = await resolve_default_image_model(model, db, svc)
@@ -192,7 +177,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response("Ошибка: provider обязателен.")
         query = args.get("query", "")
         try:
-            svc = await _build_image_service()
+            svc = await build_image_service(db, config)
             models = await svc.search_models(provider=provider, query=query)
             if not models:
                 return _text_response(f"Модели для {provider} не найдены.")
@@ -216,7 +201,7 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool("list_image_providers", "List configured image generation providers", {})
     async def list_image_providers(args):
         try:
-            svc = await _build_image_service()
+            svc = await build_image_service(db, config)
             names = svc.adapter_names
             if not names:
                 return _text_response("Провайдеры изображений не настроены.")
