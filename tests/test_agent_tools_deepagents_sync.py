@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.database.repositories.messages import MessageSearchPage
 from src.filters.models import ChannelFilterResult
 from src.models import NotificationBot
 
@@ -408,7 +409,7 @@ class TestDeepagentsSyncSearchMessages:
             text="Labeled message",
             date="2025-01-01",
         )
-        mock_db.search_messages = AsyncMock(return_value=([msg], 1))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[msg], total=1))
         tools = build_deepagents_tools(mock_db)
         tool_map = {t.__name__: t for t in tools}
 
@@ -428,7 +429,7 @@ class TestDeepagentsSyncSearchMessages:
             text="Fallback message",
             date="2025-01-01",
         )
-        mock_db.search_messages = AsyncMock(return_value=([msg], 1))
+        mock_db.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[msg], total=1))
         tools = build_deepagents_tools(mock_db)
         tool_map = {t.__name__: t for t in tools}
 

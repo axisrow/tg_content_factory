@@ -5,13 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.database.repositories.messages import MessageSearchPage
 from src.models import Message, SearchResult
 from src.search.local_search import LocalSearch
 
 
 def _mock_search_bundle(**overrides):
     bundle = MagicMock()
-    bundle.search_messages = AsyncMock(return_value=([], 0))
+    bundle.search_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
     bundle.vec_available = overrides.get("vec_available", False)
     bundle.numpy_available = overrides.get("numpy_available", True)
     return bundle
@@ -60,7 +61,7 @@ async def test_search_semantic_with_vec():
     bundle = _mock_search_bundle(vec_available=True)
     embedding = _mock_embedding_service()
     bundle.messages = MagicMock()
-    bundle.messages.search_semantic_messages = AsyncMock(return_value=([], 0))
+    bundle.messages.search_semantic_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
     ls = LocalSearch(bundle, embedding_service=embedding)
     result = await ls.search_semantic("test")
     assert result.total == 0
@@ -121,7 +122,7 @@ async def test_search_hybrid_with_embedding():
     bundle = _mock_search_bundle()
     embedding = _mock_embedding_service()
     bundle.messages = MagicMock()
-    bundle.messages.search_hybrid_messages = AsyncMock(return_value=([], 0))
+    bundle.messages.search_hybrid_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
     ls = LocalSearch(bundle, embedding_service=embedding)
     result = await ls.search_hybrid("test")
     assert result.total == 0
@@ -131,7 +132,7 @@ async def test_search_hybrid_with_filters():
     bundle = _mock_search_bundle()
     embedding = _mock_embedding_service()
     bundle.messages = MagicMock()
-    bundle.messages.search_hybrid_messages = AsyncMock(return_value=([], 0))
+    bundle.messages.search_hybrid_messages = AsyncMock(return_value=MessageSearchPage(messages=[], total=0))
     ls = LocalSearch(bundle, embedding_service=embedding)
     result = await ls.search_hybrid(
         "test", channel_id=1, date_from="2026-01-01", date_to="2026-12-31",
