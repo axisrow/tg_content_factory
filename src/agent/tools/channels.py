@@ -5,6 +5,7 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
+from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._formatters import format_channel_identity, format_channel_stats
 from src.agent.tools._registry import (
     ToolInputError,
@@ -16,6 +17,30 @@ from src.agent.tools._registry import (
     require_confirmation,
 )
 
+# Permission metadata for this module's tools (#245). Single source of
+# truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
+# PHONE_BINDED_TOOLS from these declarations; invariants in
+# tests/test_tool_permissions_autoderive.py keep them in sync with the
+# @tool() definitions.
+TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
+    ("Каналы", {
+        "list_channels": ToolMeta(ToolCategory.READ),
+        "get_channel_stats": ToolMeta(ToolCategory.READ),
+        "add_channel": ToolMeta(ToolCategory.WRITE),
+        "delete_channel": ToolMeta(ToolCategory.DELETE),
+        "toggle_channel": ToolMeta(ToolCategory.WRITE),
+        "import_channels": ToolMeta(ToolCategory.WRITE),
+        "refresh_channel_types": ToolMeta(ToolCategory.WRITE),
+        "refresh_channel_meta": ToolMeta(ToolCategory.WRITE),
+        "list_tags": ToolMeta(ToolCategory.READ),
+        "create_tag": ToolMeta(ToolCategory.WRITE),
+        "delete_tag": ToolMeta(ToolCategory.DELETE),
+        "set_channel_tags": ToolMeta(ToolCategory.WRITE),
+        "get_channel_tags": ToolMeta(ToolCategory.READ),
+        "add_channels_bulk": ToolMeta(ToolCategory.WRITE),
+        "list_dialogs_for_import": ToolMeta(ToolCategory.READ),
+    }),
+]
 
 def register(db, client_pool, embedding_service, **kwargs):
     """Register channel-related agent tools."""

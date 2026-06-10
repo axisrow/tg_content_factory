@@ -7,8 +7,24 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
+from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._registry import _text_response, require_confirmation
 
+# Permission metadata for this module's tools (#245). Single source of
+# truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
+# PHONE_BINDED_TOOLS from these declarations; invariants in
+# tests/test_tool_permissions_autoderive.py keep them in sync with the
+# @tool() definitions.
+TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
+    ("Модерация", {
+        "list_pending_moderation": ToolMeta(ToolCategory.READ),
+        "view_moderation_run": ToolMeta(ToolCategory.READ),
+        "approve_run": ToolMeta(ToolCategory.WRITE),
+        "reject_run": ToolMeta(ToolCategory.WRITE),
+        "bulk_approve_runs": ToolMeta(ToolCategory.WRITE),
+        "bulk_reject_runs": ToolMeta(ToolCategory.WRITE),
+    }),
+]
 
 def register(db, client_pool, embedding_service, **kwargs):
     tools = []

@@ -8,6 +8,7 @@ from typing import Annotated
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
+from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._registry import (
     ToolInputError,
     _text_response,
@@ -30,6 +31,29 @@ _TYPE_ALIASES: dict[str, set[str]] = {
     "chats": {"dm", "bot", "saved"},
 }
 
+
+
+
+# Permission metadata for this module's tools (#245). Single source of
+# truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
+# PHONE_BINDED_TOOLS from these declarations; invariants in
+# tests/test_tool_permissions_autoderive.py keep them in sync with the
+# @tool() definitions.
+TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
+    ("Диалоги", {
+        "search_dialogs": ToolMeta(ToolCategory.READ, phone_bound=True),
+        "refresh_dialogs": ToolMeta(ToolCategory.WRITE, phone_bound=True),
+        "leave_dialogs": ToolMeta(ToolCategory.DELETE, phone_bound=True),
+        "join_channel": ToolMeta(ToolCategory.WRITE, phone_bound=True),
+        "join_chat": ToolMeta(ToolCategory.WRITE, phone_bound=True),
+        "subscribe_channel": ToolMeta(ToolCategory.WRITE, phone_bound=True),
+        "create_telegram_channel": ToolMeta(ToolCategory.WRITE, phone_bound=True),
+        "get_forum_topics": ToolMeta(ToolCategory.READ),
+        "clear_dialog_cache": ToolMeta(ToolCategory.WRITE, phone_bound=True),
+        "get_cache_status": ToolMeta(ToolCategory.READ),
+        "resolve_entity": ToolMeta(ToolCategory.READ, phone_bound=True),
+    }),
+]
 
 def register(db, client_pool, embedding_service, **kwargs):
     ctx = get_tool_context(kwargs, db=db, client_pool=client_pool, embedding_service=embedding_service)

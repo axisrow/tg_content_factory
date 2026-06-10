@@ -9,10 +9,13 @@ Usage::
 from __future__ import annotations
 
 import functools
+import importlib
+import sys
 
 from claude_agent_sdk import SdkMcpTool, create_sdk_mcp_server
 
 from src.agent.runtime_context import AgentRuntimeContext
+from src.agent.tools._categories import TOOL_MODULE_ORDER
 from src.agent.tools._registry import AgentToolContext, _text_response  # noqa: F401
 
 
@@ -71,26 +74,9 @@ def build_agent_tool_registry(
 
     embedding_service = EmbeddingService(db, config=config)
 
-    # Import all tool modules
-    from src.agent.tools import (
-        accounts,
-        agent_threads,
-        analytics,
-        channels,
-        collection,
-        dialogs,
-        filters,
-        images,
-        messaging,
-        moderation,
-        notifications,
-        photo_loader,
-        pipelines,
-        scheduler,
-        search,
-        search_queries,
-        settings,
-    )
+    # Tool modules are resolved through TOOL_MODULE_ORDER — the same constant
+    # the permissions derivation uses, so registration order and settings-UI
+    # group order can never drift apart (#245).
 
     # Extra context passed alongside the standard (db, client_pool, embedding_service)
     runtime_context = runtime_context or AgentRuntimeContext.build(
@@ -115,25 +101,13 @@ def build_agent_tool_registry(
     }
 
     all_tools = []
-    for module in [
-        search,
-        channels,
-        collection,
-        pipelines,
-        moderation,
-        search_queries,
-        accounts,
-        filters,
-        analytics,
-        scheduler,
-        notifications,
-        photo_loader,
-        dialogs,
-        messaging,
-        images,
-        settings,
-        agent_threads,
-    ]:
+    package = sys.modules[__name__]
+    for module_name in TOOL_MODULE_ORDER:
+        # Prefer the package attribute so tests can patch
+        # ``src.agent.tools.<name>``; fall back to a real import on first use.
+        module = getattr(package, module_name, None)
+        if module is None:
+            module = importlib.import_module(f"src.agent.tools.{module_name}")
         for tool_obj in module.register(db, client_pool, embedding_service, **extras):
             all_tools.append(_wrap_with_session_gate(tool_obj) if wrap_session_gate else tool_obj)
 

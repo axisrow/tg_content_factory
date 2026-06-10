@@ -1,70 +1,137 @@
-"""Agent tool permission registry — classifies tools into read/write/delete categories."""
+"""Agent tool permission registry — classifies tools into read/write/delete categories.
+
+Since #245 the authoritative metadata lives NEXT TO the tool definitions: each
+registered tool module declares a module-level ``TOOL_GROUPS`` list of
+``(display_group_name, {tool_name: ToolMeta})`` pairs. This module derives the
+legacy ``TOOL_CATEGORIES`` / ``MODULE_GROUPS`` / ``PHONE_BINDED_TOOLS``
+attributes from those declarations lazily (PEP 562 module ``__getattr__``), so
+all existing importers keep working unchanged while adding a tool now means
+editing exactly one file.
+"""
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 import time
 from collections import OrderedDict
-from enum import Enum
+from collections.abc import Mapping
 from inspect import isawaitable
+from types import MappingProxyType
+
+from src.agent.tools._categories import (
+    TOOL_MODULE_ORDER,
+    ToolAccessState,
+    ToolCategory,
+    ToolMeta,
+)
+
+__all__ = [  # noqa: F822 — TOOL_CATEGORIES & co. are served by module __getattr__
+    "TOOL_CATEGORIES",
+    "MODULE_GROUPS",
+    "PHONE_BINDED_TOOLS",
+    "ToolAccessState",
+    "ToolCategory",
+    "ToolMeta",
+]
 
 logger = logging.getLogger(__name__)
 
 _PERMISSIONS_CACHE_TTL = 60.0  # seconds
 _permissions_cache: tuple[dict[str, bool], float] | None = None
-_access_policy_cache: tuple[dict[str, "ToolAccessState"], float] | None = None
+_access_policy_cache: tuple[dict[str, ToolAccessState], float] | None = None
 
 TOOL_PERMISSIONS_SETTING = "agent_tool_permissions"
 MCP_PREFIX = "mcp__telegram_db__"
 BUILTIN_TOOLS = ["WebSearch", "WebFetch"]
+_BUILTIN_GROUP_NAME = "Веб-поиск"
 
-# Tools that bind to a specific Telegram account and route through
-# require_phone_permission (directly or via prepare_telegram_tool). For these
-# tools tri-state access policy treats explicit grants/denies separately from
-# missing ACL entries. Missing phone-bound entries are requestable in
-# interactive agent sessions and blocked in unattended contexts.
-#
-# Kept in sync with the static scan in
-# `tests/test_tool_permissions.py::test_every_phone_binded_tool_is_registered_in_tool_categories`.
-PHONE_BINDED_TOOLS: frozenset[str] = frozenset({
-    "archive_chat",
-    "cancel_telegram_command",
-    "clear_dialog_cache",
-    "clear_pending_telegram_commands",
-    "create_auto_upload",
-    "create_photo_batch",
-    "create_telegram_channel",
-    "delete_message",
-    "download_media",
-    "edit_admin",
-    "edit_message",
-    "edit_permissions",
-    "forward_messages",
-    "get_broadcast_stats",
-    "get_participants",
-    "get_telegram_queue_status",
-    "kick_participant",
-    "join_channel",
-    "join_chat",
-    "leave_dialogs",
-    "list_photo_dialogs",
-    "mark_read",
-    "pin_message",
-    "read_messages",
-    "refresh_dialogs",
-    "refresh_photo_dialogs",
-    "resolve_entity",
-    "schedule_photos",
-    "search_dialogs",
-    "send_message",
-    "send_photos_now",
-    "send_reaction",
-    "send_reactions",
-    "subscribe_channel",
-    "unarchive_chat",
-    "unpin_message",
-})
+
+# ---------------------------------------------------------------------------
+# Lazy derivation from per-module TOOL_GROUPS declarations.
+# ---------------------------------------------------------------------------
+
+_metadata_cache: (
+    tuple[Mapping[str, ToolCategory], Mapping[str, tuple[str, ...]], frozenset[str]] | None
+) = None
+
+
+def _build_metadata() -> tuple[Mapping[str, ToolCategory], Mapping[str, tuple[str, ...]], frozenset[str]]:
+    global _metadata_cache  # noqa: PLW0603
+    if _metadata_cache is not None:
+        return _metadata_cache
+
+    categories: dict[str, ToolCategory] = {}
+    groups: OrderedDict[str, list[str]] = OrderedDict()
+    phone_bound: set[str] = set()
+
+    for module_name in TOOL_MODULE_ORDER:
+        module = importlib.import_module(f"src.agent.tools.{module_name}")
+        tool_groups = getattr(module, "TOOL_GROUPS", None)
+        if not tool_groups:
+            raise RuntimeError(
+                f"src.agent.tools.{module_name} does not declare TOOL_GROUPS — "
+                "every registered tool module must classify its tools (#245)"
+            )
+        for group_name, tools in tool_groups:
+            if group_name in groups:
+                raise RuntimeError(
+                    f"Display group '{group_name}' declared twice "
+                    f"(second time in {module_name}.TOOL_GROUPS) — group names "
+                    "must be unique across tool modules"
+                )
+            bucket = groups.setdefault(group_name, [])
+            for tool_name, meta in tools.items():
+                if tool_name in categories:
+                    raise RuntimeError(
+                        f"Tool '{tool_name}' classified twice "
+                        f"(second time in {module_name}.TOOL_GROUPS)"
+                    )
+                categories[tool_name] = meta.category
+                bucket.append(tool_name)
+                if meta.phone_bound:
+                    phone_bound.add(tool_name)
+
+    for builtin in BUILTIN_TOOLS:
+        categories[builtin] = ToolCategory.READ
+    groups[_BUILTIN_GROUP_NAME] = list(BUILTIN_TOOLS)
+
+    # Read-only views: these are process-wide singletons reachable through
+    # module attributes — a mutating caller must fail loudly, not silently
+    # corrupt every other consumer.
+    _metadata_cache = (
+        MappingProxyType(categories),
+        MappingProxyType(OrderedDict((name, tuple(tools)) for name, tools in groups.items())),
+        frozenset(phone_bound),
+    )
+    return _metadata_cache
+
+
+def _tool_categories() -> Mapping[str, ToolCategory]:
+    return _build_metadata()[0]
+
+
+def _module_groups() -> Mapping[str, tuple[str, ...]]:
+    return _build_metadata()[1]
+
+
+def _phone_binded_tools() -> frozenset[str]:
+    return _build_metadata()[2]
+
+
+def __getattr__(name: str):
+    # PEP 562: keep the historical module attributes working for all existing
+    # importers while building them lazily (tool modules pull the agent SDK —
+    # CLI paths that import permissions for constants must not pay for that
+    # until the mappings are actually needed).
+    if name == "TOOL_CATEGORIES":
+        return _tool_categories()
+    if name == "MODULE_GROUPS":
+        return _module_groups()
+    if name == "PHONE_BINDED_TOOLS":
+        return _phone_binded_tools()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 async def _load_account_records(db) -> list[object]:
@@ -80,308 +147,6 @@ async def _load_account_records(db) -> list[object]:
     return []
 
 
-class ToolCategory(str, Enum):
-    READ = "read"
-    WRITE = "write"
-    DELETE = "delete"
-
-
-class ToolAccessState(str, Enum):
-    ALLOWED = "allowed"
-    REQUESTABLE = "requestable"
-    DENIED = "denied"
-
-
-# ---------------------------------------------------------------------------
-# Authoritative tool → category mapping.  get_all_allowed_tools() derives the
-# MCP-prefixed allow-list from this dict.  Bare name is used as the key.
-# ---------------------------------------------------------------------------
-
-TOOL_CATEGORIES: dict[str, ToolCategory] = {
-    # Search
-    "search_messages": ToolCategory.READ,
-    "semantic_search": ToolCategory.READ,
-    "index_messages": ToolCategory.WRITE,
-    "search_telegram": ToolCategory.READ,
-    "search_my_chats": ToolCategory.READ,
-    "search_in_channel": ToolCategory.READ,
-    "search_hybrid": ToolCategory.READ,
-    "purge_search_cache": ToolCategory.DELETE,
-    # Channels
-    "list_channels": ToolCategory.READ,
-    "get_channel_stats": ToolCategory.READ,
-    "add_channel": ToolCategory.WRITE,
-    "delete_channel": ToolCategory.DELETE,
-    "toggle_channel": ToolCategory.WRITE,
-    "import_channels": ToolCategory.WRITE,
-    "refresh_channel_types": ToolCategory.WRITE,
-    "refresh_channel_meta": ToolCategory.WRITE,
-    "list_tags": ToolCategory.READ,
-    "create_tag": ToolCategory.WRITE,
-    "delete_tag": ToolCategory.DELETE,
-    "set_channel_tags": ToolCategory.WRITE,
-    "get_channel_tags": ToolCategory.READ,
-    "add_channels_bulk": ToolCategory.WRITE,
-    "list_dialogs_for_import": ToolCategory.READ,
-    # Collection
-    "collect_channel": ToolCategory.WRITE,
-    "collect_all_channels": ToolCategory.WRITE,
-    "collect_channel_stats": ToolCategory.READ,
-    "collect_all_stats": ToolCategory.READ,
-    # Pipelines
-    "list_pipelines": ToolCategory.READ,
-    "get_pipeline_detail": ToolCategory.READ,
-    "add_pipeline": ToolCategory.WRITE,
-    "edit_pipeline": ToolCategory.WRITE,
-    "toggle_pipeline": ToolCategory.WRITE,
-    "delete_pipeline": ToolCategory.DELETE,
-    "run_pipeline": ToolCategory.WRITE,
-    "generate_draft": ToolCategory.WRITE,
-    "list_pipeline_runs": ToolCategory.READ,
-    "get_pipeline_run": ToolCategory.READ,
-    "publish_pipeline_run": ToolCategory.WRITE,
-    "get_pipeline_queue": ToolCategory.READ,
-    "get_refinement_steps": ToolCategory.READ,
-    "get_pipeline_dry_run_count": ToolCategory.READ,
-    "set_refinement_steps": ToolCategory.WRITE,
-    "export_pipeline_json": ToolCategory.READ,
-    "import_pipeline_json": ToolCategory.WRITE,
-    "list_pipeline_templates": ToolCategory.READ,
-    "create_pipeline_from_template": ToolCategory.WRITE,
-    "ai_edit_pipeline": ToolCategory.WRITE,
-    # Moderation
-    "list_pending_moderation": ToolCategory.READ,
-    "view_moderation_run": ToolCategory.READ,
-    "approve_run": ToolCategory.WRITE,
-    "reject_run": ToolCategory.WRITE,
-    "bulk_approve_runs": ToolCategory.WRITE,
-    "bulk_reject_runs": ToolCategory.WRITE,
-    # Search Queries
-    "list_search_queries": ToolCategory.READ,
-    "get_search_query": ToolCategory.READ,
-    "add_search_query": ToolCategory.WRITE,
-    "edit_search_query": ToolCategory.WRITE,
-    "delete_search_query": ToolCategory.DELETE,
-    "toggle_search_query": ToolCategory.WRITE,
-    "run_search_query": ToolCategory.WRITE,
-    "get_search_query_stats": ToolCategory.READ,
-    # Accounts
-    "list_accounts": ToolCategory.READ,
-    "toggle_account": ToolCategory.WRITE,
-    "delete_account": ToolCategory.DELETE,
-    "get_flood_status": ToolCategory.READ,
-    "get_account_availability": ToolCategory.READ,
-    "get_runtime_diagnostics": ToolCategory.READ,
-    "clear_flood_status": ToolCategory.WRITE,
-    "get_account_info": ToolCategory.READ,
-    # Filters
-    "analyze_filters": ToolCategory.READ,
-    "apply_filters": ToolCategory.WRITE,
-    "reset_filters": ToolCategory.WRITE,
-    "toggle_channel_filter": ToolCategory.WRITE,
-    "purge_filtered_channels": ToolCategory.DELETE,
-    "hard_delete_channels": ToolCategory.DELETE,
-    "precheck_filters": ToolCategory.WRITE,
-    "purge_channel_messages": ToolCategory.DELETE,
-    # Analytics
-    "get_analytics_summary": ToolCategory.READ,
-    "get_pipeline_stats": ToolCategory.READ,
-    "get_daily_stats": ToolCategory.READ,
-    "get_trending_topics": ToolCategory.READ,
-    "get_trending_channels": ToolCategory.READ,
-    "get_message_velocity": ToolCategory.READ,
-    "get_peak_hours": ToolCategory.READ,
-    "get_calendar": ToolCategory.READ,
-    "get_top_messages": ToolCategory.READ,
-    "get_content_type_stats": ToolCategory.READ,
-    "get_hourly_activity": ToolCategory.READ,
-    "get_trending_emojis": ToolCategory.READ,
-    "get_channel_analytics": ToolCategory.READ,
-    # Scheduler
-    "get_scheduler_status": ToolCategory.READ,
-    "start_scheduler": ToolCategory.WRITE,
-    "stop_scheduler": ToolCategory.WRITE,
-    "trigger_collection": ToolCategory.WRITE,
-    "toggle_scheduler_job": ToolCategory.WRITE,
-    "set_scheduler_interval": ToolCategory.WRITE,
-    "cancel_scheduler_task": ToolCategory.WRITE,
-    "clear_pending_tasks": ToolCategory.WRITE,
-    # Notifications
-    "get_notification_status": ToolCategory.READ,
-    "setup_notification_bot": ToolCategory.WRITE,
-    "delete_notification_bot": ToolCategory.DELETE,
-    "test_notification": ToolCategory.WRITE,
-    "notification_dry_run": ToolCategory.READ,
-    # Photo Loader
-    "list_photo_batches": ToolCategory.READ,
-    "list_photo_items": ToolCategory.READ,
-    "send_photos_now": ToolCategory.WRITE,
-    "schedule_photos": ToolCategory.WRITE,
-    "cancel_photo_item": ToolCategory.WRITE,
-    "list_auto_uploads": ToolCategory.READ,
-    "toggle_auto_upload": ToolCategory.WRITE,
-    "delete_auto_upload": ToolCategory.DELETE,
-    "create_photo_batch": ToolCategory.WRITE,
-    "run_photo_due": ToolCategory.WRITE,
-    "create_auto_upload": ToolCategory.WRITE,
-    "update_auto_upload": ToolCategory.WRITE,
-    "list_photo_dialogs": ToolCategory.READ,
-    "refresh_photo_dialogs": ToolCategory.WRITE,
-    # Dialogs
-    "search_dialogs": ToolCategory.READ,
-    "refresh_dialogs": ToolCategory.WRITE,
-    "leave_dialogs": ToolCategory.DELETE,
-    "join_channel": ToolCategory.WRITE,
-    "join_chat": ToolCategory.WRITE,
-    "subscribe_channel": ToolCategory.WRITE,
-    "create_telegram_channel": ToolCategory.WRITE,
-    "get_forum_topics": ToolCategory.READ,
-    "clear_dialog_cache": ToolCategory.WRITE,
-    "get_cache_status": ToolCategory.READ,
-    "resolve_entity": ToolCategory.READ,
-    # Messaging
-    "send_message": ToolCategory.WRITE,
-    "send_reaction": ToolCategory.WRITE,
-    "send_reactions": ToolCategory.WRITE,
-    "get_telegram_queue_status": ToolCategory.READ,
-    "cancel_telegram_command": ToolCategory.WRITE,
-    "clear_pending_telegram_commands": ToolCategory.WRITE,
-    "forward_messages": ToolCategory.WRITE,
-    "edit_message": ToolCategory.WRITE,
-    "delete_message": ToolCategory.DELETE,
-    "pin_message": ToolCategory.WRITE,
-    "unpin_message": ToolCategory.WRITE,
-    "download_media": ToolCategory.READ,
-    "translate_message": ToolCategory.WRITE,
-    "get_participants": ToolCategory.READ,
-    "edit_admin": ToolCategory.WRITE,
-    "edit_permissions": ToolCategory.WRITE,
-    "kick_participant": ToolCategory.DELETE,
-    "get_broadcast_stats": ToolCategory.READ,
-    "archive_chat": ToolCategory.WRITE,
-    "unarchive_chat": ToolCategory.WRITE,
-    "mark_read": ToolCategory.WRITE,
-    "read_messages": ToolCategory.READ,
-    # Images
-    "generate_image": ToolCategory.WRITE,
-    "list_image_models": ToolCategory.READ,
-    "list_image_providers": ToolCategory.READ,
-    "list_generated_images": ToolCategory.READ,
-    # Settings
-    "get_settings": ToolCategory.READ,
-    "save_scheduler_settings": ToolCategory.WRITE,
-    "save_agent_settings": ToolCategory.WRITE,
-    "save_filter_settings": ToolCategory.WRITE,
-    "get_system_info": ToolCategory.READ,
-    "get_server_time": ToolCategory.READ,
-    # Agent Threads
-    "list_agent_threads": ToolCategory.READ,
-    "create_agent_thread": ToolCategory.WRITE,
-    "delete_agent_thread": ToolCategory.DELETE,
-    "rename_agent_thread": ToolCategory.WRITE,
-    "get_thread_messages": ToolCategory.READ,
-    # Built-in Claude tools (no MCP prefix)
-    "WebSearch": ToolCategory.READ,
-    "WebFetch": ToolCategory.READ,
-}
-
-# ---------------------------------------------------------------------------
-# Module groups — ordered dict mapping display name → list of bare tool names.
-# Order matches the registration order in tools/__init__.py.
-# ---------------------------------------------------------------------------
-
-MODULE_GROUPS: OrderedDict[str, list[str]] = OrderedDict([
-    ("Поиск", [
-        "search_messages", "semantic_search", "index_messages",
-        "search_telegram", "search_my_chats", "search_in_channel", "search_hybrid",
-        "purge_search_cache",
-    ]),
-    ("Каналы", [
-        "list_channels", "get_channel_stats", "add_channel", "delete_channel",
-        "toggle_channel", "import_channels", "refresh_channel_types", "refresh_channel_meta",
-        "list_tags", "create_tag", "delete_tag", "set_channel_tags",
-        "get_channel_tags", "add_channels_bulk", "list_dialogs_for_import",
-    ]),
-    ("Сбор", [
-        "collect_channel", "collect_all_channels", "collect_channel_stats", "collect_all_stats",
-    ]),
-    ("Пайплайны", [
-        "list_pipelines", "get_pipeline_detail", "add_pipeline", "edit_pipeline",
-        "toggle_pipeline", "delete_pipeline", "run_pipeline", "generate_draft",
-        "list_pipeline_runs", "get_pipeline_run", "publish_pipeline_run",
-        "get_pipeline_queue", "get_refinement_steps", "set_refinement_steps",
-        "export_pipeline_json", "import_pipeline_json", "list_pipeline_templates",
-        "create_pipeline_from_template", "ai_edit_pipeline", "get_pipeline_dry_run_count",
-    ]),
-    ("Модерация", [
-        "list_pending_moderation", "view_moderation_run", "approve_run", "reject_run",
-        "bulk_approve_runs", "bulk_reject_runs",
-    ]),
-    ("Поисковые запросы", [
-        "list_search_queries", "get_search_query", "add_search_query", "edit_search_query",
-        "delete_search_query", "toggle_search_query", "run_search_query",
-        "get_search_query_stats",
-    ]),
-    ("Аккаунты", [
-        "list_accounts", "toggle_account", "delete_account", "get_flood_status",
-        "get_account_availability", "get_runtime_diagnostics", "clear_flood_status",
-        "get_account_info",
-    ]),
-    ("Фильтры", [
-        "analyze_filters", "apply_filters", "reset_filters", "toggle_channel_filter",
-        "purge_filtered_channels", "hard_delete_channels", "precheck_filters",
-        "purge_channel_messages",
-    ]),
-    ("Аналитика", [
-        "get_analytics_summary", "get_pipeline_stats", "get_daily_stats",
-        "get_trending_topics", "get_trending_channels", "get_message_velocity",
-        "get_peak_hours", "get_calendar",
-        "get_top_messages", "get_content_type_stats", "get_hourly_activity",
-        "get_trending_emojis", "get_channel_analytics",
-    ]),
-    ("Планировщик", [
-        "get_scheduler_status", "start_scheduler", "stop_scheduler",
-        "trigger_collection", "toggle_scheduler_job",
-        "set_scheduler_interval", "cancel_scheduler_task", "clear_pending_tasks",
-    ]),
-    ("Уведомления", [
-        "get_notification_status", "setup_notification_bot", "delete_notification_bot",
-        "test_notification", "notification_dry_run",
-    ]),
-    ("Фото", [
-        "list_photo_batches", "list_photo_items", "send_photos_now", "schedule_photos",
-        "cancel_photo_item", "list_auto_uploads", "toggle_auto_upload", "delete_auto_upload",
-        "create_photo_batch", "run_photo_due", "create_auto_upload", "update_auto_upload",
-        "list_photo_dialogs", "refresh_photo_dialogs",
-    ]),
-    ("Диалоги", [
-        "search_dialogs", "refresh_dialogs", "leave_dialogs",
-        "join_channel", "join_chat", "subscribe_channel", "create_telegram_channel",
-        "get_forum_topics", "clear_dialog_cache", "get_cache_status", "resolve_entity",
-    ]),
-    ("Сообщения", [
-        "send_message", "send_reaction", "send_reactions", "forward_messages", "edit_message", "delete_message",
-        "pin_message", "unpin_message", "download_media", "read_messages",
-        "get_telegram_queue_status", "cancel_telegram_command", "clear_pending_telegram_commands",
-        "translate_message",
-    ]),
-    ("Управление чатом", [
-        "get_participants", "edit_admin", "edit_permissions", "kick_participant",
-        "get_broadcast_stats", "archive_chat", "unarchive_chat", "mark_read",
-    ]),
-    ("Изображения", [
-        "list_image_models", "list_image_providers", "generate_image", "list_generated_images",
-    ]),
-    ("Настройки", [
-        "get_settings", "save_scheduler_settings", "save_agent_settings",
-        "save_filter_settings", "get_system_info", "get_server_time",
-    ]),
-    ("Треды агента", [
-        "list_agent_threads", "create_agent_thread", "delete_agent_thread",
-        "rename_agent_thread", "get_thread_messages",
-    ]),
-    ("Веб-поиск", ["WebSearch", "WebFetch"]),
-])
 
 
 # ---------------------------------------------------------------------------
@@ -413,10 +178,10 @@ def _default_permissions(*, for_missing_in_saved: bool = False) -> dict[str, boo
     """
     if for_missing_in_saved:
         return {
-            name: (cat == ToolCategory.READ and name not in PHONE_BINDED_TOOLS)
-            for name, cat in TOOL_CATEGORIES.items()
+            name: (cat == ToolCategory.READ and name not in _phone_binded_tools())
+            for name, cat in _tool_categories().items()
         }
-    return {name: True for name in TOOL_CATEGORIES}
+    return {name: True for name in _tool_categories()}
 
 
 def _is_per_phone_format(saved: dict) -> bool:
@@ -488,25 +253,25 @@ async def load_tool_access_policy(db, *, use_cache: bool = False) -> dict[str, T
 
     saved, malformed = await _load_raw_permissions_strict(db)
     if malformed:
-        result = {name: ToolAccessState.DENIED for name in TOOL_CATEGORIES}
+        result = {name: ToolAccessState.DENIED for name in _tool_categories()}
     elif not saved:
-        result = {name: ToolAccessState.ALLOWED for name in TOOL_CATEGORIES}
+        result = {name: ToolAccessState.ALLOWED for name in _tool_categories()}
     elif not _is_per_phone_format(saved):
         result = {
             name: _state_from_saved_value(saved.get(name))
-            for name in TOOL_CATEGORIES
+            for name in _tool_categories()
         }
     else:
         phone_dicts = [v for v in saved.values() if isinstance(v, dict)]
         if not phone_dicts:
-            result = {name: ToolAccessState.REQUESTABLE for name in TOOL_CATEGORIES}
+            result = {name: ToolAccessState.REQUESTABLE for name in _tool_categories()}
         else:
             result = {
                 name: _merge_access_states([
                     _state_from_saved_value(phone_perms.get(name))
                     for phone_perms in phone_dicts
                 ])
-                for name in TOOL_CATEGORIES
+                for name in _tool_categories()
             }
 
     _access_policy_cache = (result, time.monotonic() + _PERMISSIONS_CACHE_TTL)
@@ -515,7 +280,7 @@ async def load_tool_access_policy(db, *, use_cache: bool = False) -> dict[str, T
 
 async def get_tool_access_state(db, tool_name: str, *, phone: str = "") -> ToolAccessState:
     """Return access state for one tool, optionally scoped to a phone."""
-    if tool_name not in TOOL_CATEGORIES:
+    if tool_name not in _tool_categories():
         return ToolAccessState.DENIED
     try:
         saved, malformed = await _load_raw_permissions_strict(db)
@@ -603,11 +368,11 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
                 "Tool permissions: phone=%s not in saved per-phone ACL, denying everything",
                 phone_used,
             )
-            return {name: False for name in TOOL_CATEGORIES}
-        result = {name: phone_perms.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
+            return {name: False for name in _tool_categories()}
+        result = {name: phone_perms.get(name, missing_defaults[name]) for name in _tool_categories()}
     else:
         phone_used = "(flat/legacy)"
-        result = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
+        result = {name: saved.get(name, missing_defaults[name]) for name in _tool_categories()}
 
     enabled = sum(1 for v in result.values() if v)
     disabled = sum(1 for v in result.values() if not v)
@@ -623,7 +388,7 @@ async def load_tool_permissions_all_phones(db, accounts) -> dict[str, dict[str, 
     # behaviour of require_phone_permission (deny for absent phones) so the
     # settings UI never shows pre-checked grants for an account the admin has
     # not explicitly authorized.
-    all_denied = {name: False for name in TOOL_CATEGORIES}
+    all_denied = {name: False for name in _tool_categories()}
     saved = await _load_raw_permissions(db)
 
     result = {}
@@ -631,7 +396,7 @@ async def load_tool_permissions_all_phones(db, accounts) -> dict[str, dict[str, 
     for acc in accounts:
         if saved_is_per_phone and acc.phone in saved:
             phone_perms = saved[acc.phone]
-            result[acc.phone] = {name: phone_perms.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
+            result[acc.phone] = {name: phone_perms.get(name, missing_defaults[name]) for name in _tool_categories()}
         elif saved_is_per_phone:
             # Per-phone ACL exists but this account is absent — render the
             # settings UI fully fail-closed.  Admin must explicitly opt-in
@@ -640,7 +405,7 @@ async def load_tool_permissions_all_phones(db, accounts) -> dict[str, dict[str, 
             result[acc.phone] = dict(all_denied)
         elif saved:
             # Legacy flat → apply to all phones
-            result[acc.phone] = {name: saved.get(name, missing_defaults[name]) for name in TOOL_CATEGORIES}
+            result[acc.phone] = {name: saved.get(name, missing_defaults[name]) for name in _tool_categories()}
         else:
             result[acc.phone] = dict(defaults)
     return result
@@ -702,16 +467,16 @@ _all_allowed_tools_cache: list[str] | None = None
 
 
 def get_all_allowed_tools() -> list[str]:
-    """Build the full list of tool names from TOOL_CATEGORIES.
+    """Build the full list of tool names from _tool_categories().
 
     MCP tools get the prefix; built-in tools use bare names.
-    Result is computed once and cached (TOOL_CATEGORIES is static).
+    Result is computed once and cached (_tool_categories() is static).
     """
     global _all_allowed_tools_cache  # noqa: PLW0603
     if _all_allowed_tools_cache is not None:
         return _all_allowed_tools_cache
     result = []
-    for name in TOOL_CATEGORIES:
+    for name in _tool_categories():
         if name in BUILTIN_TOOLS:
             result.append(name)
         else:
@@ -778,11 +543,11 @@ def build_template_context(permissions: dict[str, bool]) -> dict:
     categories: dict[str, list[dict]] = {"read": [], "write": [], "delete": []}
     # Reverse lookup: tool → module display name
     tool_to_module: dict[str, str] = {}
-    for mod_name, tool_names in MODULE_GROUPS.items():
+    for mod_name, tool_names in _module_groups().items():
         for t in tool_names:
             tool_to_module[t] = mod_name
 
-    for tool_name, cat in TOOL_CATEGORIES.items():
+    for tool_name, cat in _tool_categories().items():
         entry = {
             "name": tool_name,
             "module": tool_to_module.get(tool_name, ""),
@@ -792,10 +557,10 @@ def build_template_context(permissions: dict[str, bool]) -> dict:
 
     # By module
     modules = []
-    for mod_name, tool_names in MODULE_GROUPS.items():
+    for mod_name, tool_names in _module_groups().items():
         tools = []
         for t in tool_names:
-            cat = TOOL_CATEGORIES.get(t, ToolCategory.READ)
+            cat = _tool_categories().get(t, ToolCategory.READ)
             tools.append({
                 "name": t,
                 "category": cat.value,
