@@ -204,13 +204,46 @@ async function refreshFilters(button) {
         if (!actionResp.ok) throw new Error('refresh action failed');
         if (queueStatsOnly) {
             await window.TGConfirm.alert('Сбор статистики запущен. После завершения вернитесь на эту страницу и снова обновите фильтры.');
+            window.location = actionResp.url || window.location.href;
+            return;
         }
-        window.location = actionResp.url || window.location.href;
+        // Анализ выполняется фоновой задачей (#793) — поллим её статус, чтобы
+        // кнопка не «висела» молча и страница обновилась с готовым отчётом.
+        setAsyncButtonBusy(button, true, 'Анализ выполняется...');
+        await pollAnalyzeStatus(button);
     } catch (e) {
         console.error('Failed to refresh filters:', e);
         setAsyncButtonBusy(button, false);
         await window.TGConfirm.alert('Не удалось обновить фильтры. Попробуйте еще раз.');
     }
+}
+
+async function pollAnalyzeStatus(button) {
+    // 200 попыток × 3с = 10 минут: если задача висит (например, воркер не
+    // запущен в --no-worker деплое), не зацикливаем вкладку навсегда.
+    var maxAttempts = 200;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+        await new Promise(function(resolve) { setTimeout(resolve, 3000); });
+        var resp;
+        try {
+            resp = await fetch('/channels/filter/analyze/status');
+        } catch (e) {
+            continue; // временный сбой сети — продолжаем поллить
+        }
+        if (!resp.ok) continue;
+        var data = await resp.json();
+        if (data.status === 'completed') {
+            window.location = '/channels/filter/manage?msg=filter_applied';
+            return;
+        }
+        if (data.status === 'failed' || data.status === 'cancelled') {
+            setAsyncButtonBusy(button, false);
+            await window.TGConfirm.alert('Анализ фильтров не завершился: ' + (data.error || data.status));
+            return;
+        }
+    }
+    setAsyncButtonBusy(button, false);
+    await window.TGConfirm.alert('Анализ выполняется дольше обычного. Обновите страницу позже, чтобы увидеть результат.');
 }
 </script>
 {% endblock %}

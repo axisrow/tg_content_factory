@@ -112,6 +112,7 @@ class CollectionTaskType(StrEnum):
     CHANNEL_COLLECT = "channel_collect"
     STATS_ALL = "stats_all"
     SQ_STATS = "sq_stats"
+    FILTER_ANALYZE = "filter_analyze"
     PHOTO_DUE = "photo_due"
     PHOTO_AUTO = "photo_auto"
     PIPELINE_RUN = "pipeline_run"
@@ -173,6 +174,13 @@ class SqStatsTaskPayload(BaseModel):
     sq_id: int
 
 
+class FilterAnalyzeTaskPayload(BaseModel):
+    task_kind: str = CollectionTaskType.FILTER_ANALYZE.value
+    total_channels: int | None = None
+    filtered_count: int | None = None
+    purged_count: int | None = None
+
+
 class TranslateBatchTaskPayload(BaseModel):
     task_kind: str = "translate_batch"
     target_lang: str = "en"
@@ -196,6 +204,7 @@ class CollectionTask(BaseModel):
         dict[str, Any]
         | StatsAllTaskPayload
         | SqStatsTaskPayload
+        | FilterAnalyzeTaskPayload
         | PipelineRunTaskPayload
         | ContentGenerateTaskPayload
         | ContentPublishTaskPayload

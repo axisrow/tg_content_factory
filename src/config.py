@@ -28,6 +28,9 @@ class SchedulerConfig(BaseModel):
     delay_between_requests_sec: int = 1
     # Per-post idle timeout while streaming a channel. 0/negative = disabled.
     collection_stream_timeout_sec: float = 120.0
+    # asyncio.wait_for timeout for the background filter-analyze task (#793);
+    # 0 or negative disables the timeout.
+    filter_analyze_timeout_sec: float = 600.0
     # asyncio.wait_for timeout around runtime-snapshot publishing. 0/negative or
     # garbage is NOT "disabled" — it falls back to the safe default (a zero
     # timeout would abort every heartbeat); see resolve_snapshot_publish_timeout.

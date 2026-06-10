@@ -12,6 +12,7 @@ from src.models import (
     CollectionTaskType,
     ContentGenerateTaskPayload,
     ContentPublishTaskPayload,
+    FilterAnalyzeTaskPayload,
     PipelineRunTaskPayload,
     SqStatsTaskPayload,
     StatsAllTaskPayload,
@@ -48,7 +49,8 @@ class CollectionTasksRepository:
     def _deserialize_payload(
         raw: str | None,
     ) -> (
-        dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | PipelineRunTaskPayload
+        dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | FilterAnalyzeTaskPayload
+        | PipelineRunTaskPayload | ContentGenerateTaskPayload | ContentPublishTaskPayload
         | TranslateBatchTaskPayload | None
     ):
         if not raw:
@@ -64,6 +66,8 @@ class CollectionTasksRepository:
             return StatsAllTaskPayload.model_validate(parsed)
         if task_kind == CollectionTaskType.SQ_STATS.value:
             return SqStatsTaskPayload.model_validate(parsed)
+        if task_kind == CollectionTaskType.FILTER_ANALYZE.value:
+            return FilterAnalyzeTaskPayload.model_validate(parsed)
         if task_kind == CollectionTaskType.PIPELINE_RUN.value:
             return PipelineRunTaskPayload.model_validate(parsed)
         if task_kind == CollectionTaskType.CONTENT_GENERATE.value:
@@ -80,6 +84,7 @@ class CollectionTasksRepository:
             dict[str, Any]
             | StatsAllTaskPayload
             | SqStatsTaskPayload
+            | FilterAnalyzeTaskPayload
             | PipelineRunTaskPayload
             | ContentGenerateTaskPayload
             | ContentPublishTaskPayload
@@ -94,6 +99,7 @@ class CollectionTasksRepository:
             (
                 StatsAllTaskPayload,
                 SqStatsTaskPayload,
+                FilterAnalyzeTaskPayload,
                 PipelineRunTaskPayload,
                 ContentGenerateTaskPayload,
                 ContentPublishTaskPayload,
@@ -224,6 +230,61 @@ class CollectionTasksRepository:
             ),
         )
         return cur.lastrowid or 0
+
+    async def create_filter_analyze_task(self, payload: FilterAnalyzeTaskPayload) -> int | None:
+        """Atomically create a filter-analyze task unless one is already active.
+
+        INSERT ... WHERE NOT EXISTS closes the check-then-create race between
+        concurrent POSTs (review on #823). Returns the new task id, or ``None``
+        when a pending/running task already exists.
+        """
+        cur = await self._database.execute_write(
+            "INSERT INTO collection_tasks "
+            "(channel_id, channel_title, channel_username, task_type, payload) "
+            "SELECT ?, ?, ?, ?, ? "
+            "WHERE NOT EXISTS ("
+            "  SELECT 1 FROM collection_tasks WHERE task_type = ? AND status IN (?, ?)"
+            ")",
+            (
+                None,
+                "Обновление фильтров",
+                None,
+                CollectionTaskType.FILTER_ANALYZE.value,
+                self._serialize_payload(payload),
+                CollectionTaskType.FILTER_ANALYZE.value,
+                CollectionTaskStatus.PENDING.value,
+                CollectionTaskStatus.RUNNING.value,
+            ),
+        )
+        if cur.rowcount == 1:
+            return cur.lastrowid or 0
+        return None
+
+    async def get_active_filter_analyze_task(self) -> CollectionTask | None:
+        cur = await self._db.execute(
+            "SELECT * FROM collection_tasks "
+            "WHERE task_type = ? AND status IN (?, ?) "
+            "ORDER BY id ASC LIMIT 1",
+            (
+                CollectionTaskType.FILTER_ANALYZE.value,
+                CollectionTaskStatus.PENDING.value,
+                CollectionTaskStatus.RUNNING.value,
+            ),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return self._to_task(row)
+
+    async def get_latest_filter_analyze_task(self) -> CollectionTask | None:
+        cur = await self._db.execute(
+            "SELECT * FROM collection_tasks WHERE task_type = ? ORDER BY id DESC LIMIT 1",
+            (CollectionTaskType.FILTER_ANALYZE.value,),
+        )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        return self._to_task(row)
 
     async def update_collection_task_progress(self, task_id: int, messages_collected: int) -> None:
         now = datetime.now(tz=timezone.utc).isoformat()
