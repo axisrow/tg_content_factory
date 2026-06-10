@@ -5,17 +5,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.services.content_calendar_service import ContentCalendarService
 from src.web import deps
+from src.web.query_params import parse_optional_int
 
 router = APIRouter()
-
-
-def _parse_pipeline_id(value: str | None) -> int | None:
-    if value is None or value.strip() == "":
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -27,7 +19,7 @@ async def calendar_page(
     """Render content calendar page."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
-    selected_pipeline_id = _parse_pipeline_id(pipeline_id)
+    selected_pipeline_id = parse_optional_int(pipeline_id)
 
     calendar_days = await calendar.get_calendar(days=days, pipeline_id=selected_pipeline_id)
     stats = await calendar.get_stats()
@@ -58,7 +50,7 @@ async def api_calendar(
     """Get calendar data as JSON."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
-    selected_pipeline_id = _parse_pipeline_id(pipeline_id)
+    selected_pipeline_id = parse_optional_int(pipeline_id)
 
     calendar_days = await calendar.get_calendar(days=days, pipeline_id=selected_pipeline_id)
 
@@ -91,7 +83,7 @@ async def api_upcoming(
     """Get upcoming events as JSON."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
-    selected_pipeline_id = _parse_pipeline_id(pipeline_id)
+    selected_pipeline_id = parse_optional_int(pipeline_id)
 
     events = await calendar.get_upcoming(limit=limit, pipeline_id=selected_pipeline_id)
 

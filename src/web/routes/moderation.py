@@ -7,6 +7,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.services.publish_service import PublishService  # noqa: F401
 from src.web import deps
+from src.web.query_params import parse_clamped_int, parse_optional_int
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -20,15 +21,21 @@ def _moderation_redirect(code: str, *, error: bool = False) -> RedirectResponse:
 @router.get("/", response_class=HTMLResponse)
 async def moderation_queue_page(
     request: Request,
-    pipeline_id: int | None = None,
-    limit: int = 50,
-    offset: int = 0,
+    pipeline_id: str | None = None,
+    limit: str | None = None,
+    offset: str | None = None,
 ):
+    # The filter form submits empty values (?pipeline_id=) and pagination links
+    # may carry "None" — parse leniently instead of letting FastAPI 422 (#779).
+    parsed_pipeline_id = parse_optional_int(pipeline_id)
+    parsed_limit = parse_clamped_int(limit, default=50, minimum=1, maximum=200)
+    parsed_offset = max(0, parse_optional_int(offset, 0) or 0)
+
     db = deps.get_db(request)
     pending_runs = await db.repos.generation_runs.list_pending_moderation(
-        pipeline_id=pipeline_id,
-        limit=limit,
-        offset=offset,
+        pipeline_id=parsed_pipeline_id,
+        limit=parsed_limit,
+        offset=parsed_offset,
     )
 
     pipelines_svc = deps.pipeline_service(request)
@@ -40,9 +47,9 @@ async def moderation_queue_page(
         {
             "pending_runs": pending_runs,
             "pipelines": pipelines,
-            "selected_pipeline_id": pipeline_id,
-            "limit": limit,
-            "offset": offset,
+            "selected_pipeline_id": parsed_pipeline_id,
+            "limit": parsed_limit,
+            "offset": parsed_offset,
         },
     )
 
