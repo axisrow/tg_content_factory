@@ -88,6 +88,11 @@ class DBConnection:
         await self.db.execute("PRAGMA cache_size=-64000")  # 64MB
         await self.db.execute("PRAGMA temp_store=MEMORY")
         await self.db.execute("PRAGMA mmap_size=30000000")  # 30MB
+        # WAL hygiene (#766): make the autocheckpoint threshold explicit and
+        # trim a WAL grown by a previous run. PASSIVE never blocks other
+        # connections — it simply does nothing while readers hold snapshots.
+        await self.db.execute("PRAGMA wal_autocheckpoint=1000")
+        await self.db.execute("PRAGMA wal_checkpoint(PASSIVE)")
         if _PROFILING_ENABLED:
             self.db = ProfilingConnection(self.db)  # type: ignore[assignment]
         return self.db
