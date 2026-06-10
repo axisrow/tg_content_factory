@@ -686,6 +686,50 @@ async def test_deferred_error_wait_seconds_matches_aggregate_deadline(db):
 
 
 @pytest.mark.anyio
+async def test_rate_limited_defer_uses_pool_capable_deadline_in_mixed_state(db):
+    """#790 review P2: this phone is in an hours-long resolve backoff while the
+    only alternative is blocked by a *generic* flood that clears much earlier —
+    the deferred error must carry the pool-wide capable-again deadline, not
+    this phone's own resolve window."""
+    ch_id = await db.add_channel(
+        Channel(channel_id=1970788997, title="Mixed Defer", username="mixed_defer")
+    )
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    raw1 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    pool = make_mock_pool(clients={"+7001": object(), "+7002": object()})
+    # +7001 sits in a long resolve backoff → its resolves run cache-only and
+    # the cache miss raises UsernameResolveRateLimitedError (hours).
+    pool.set_resolve_username_backoff(7200, phone="+7001")
+    # +7002 is free of resolve backoff but generically flooded: rotation is
+    # impossible, yet the pool knows it becomes capable again in ~600s.
+    capable_at = datetime.now(timezone.utc) + timedelta(seconds=600)
+
+    async def _no_rotation(exclude=frozenset()):
+        return False
+
+    async def _capable():
+        return capable_at
+
+    pool.has_rotatable_resolve_phone = _no_rotation
+    pool.next_resolve_capable_at = _capable
+    s1 = TelegramTransportSession(raw1, disconnect_on_close=False, phone="+7001", pool=pool)
+    pool.get_available_client = AsyncMock(return_value=(s1, "+7001"))
+    collector = Collector(
+        pool, db, SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10)
+    )
+
+    with pytest.raises(UsernameResolveRateLimitedError) as exc_info:
+        await collector._collect_channel(stored)
+
+    exc = exc_info.value
+    assert abs((exc.next_available_at - capable_at).total_seconds()) <= 2
+    # The ~600s generic window must win over the 7200s resolve backoff.
+    assert exc.retry_after_sec <= 600
+
+
+@pytest.mark.anyio
 async def test_collect_channel_defensive_backoff_when_guard_returns_none(db):
     """#785: if the pool's backoff is None after a long resolve FloodWait, the
     collector sets it defensively rather than letting all subsequent channels

@@ -233,6 +233,93 @@ class TestHasRotatableResolvePhone:
         count.assert_not_awaited()
 
 
+class TestNextResolveCapableAt:
+    """#790 review P2: the defer deadline must combine the per-phone resolve
+    backoff with *generic* flood waits (``accounts.flood_wait_until``) — in the
+    mixed state (this phone resolve-blocked for hours, the other phone only
+    generically flooded for minutes) the channel must retry when the generic
+    flood clears, not after the hours-long resolve window."""
+
+    def _pool(self, clients, accounts, monkeypatch):
+        pool = ClientPool.__new__(ClientPool)
+        pool._resolve_rate_limiter = ResolveRateLimiter()
+        pool._resolve_username_backoff_until_utc = {}
+        pool._resolve_ramp_up_until_utc = {}
+        pool._resolve_ramp_up_last_call_utc = {}
+        pool._resolve_ramp_up_min_interval_sec = 5.0
+        pool.clients = clients
+        pool._db = SimpleNamespace()
+        monkeypatch.setattr(
+            "src.telegram.client_pool.load_live_usable_accounts",
+            AsyncMock(return_value=accounts),
+        )
+        return pool
+
+    @pytest.mark.anyio
+    async def test_mixed_state_uses_generic_flood_deadline(self, monkeypatch):
+        now = datetime.now(timezone.utc)
+        accounts = [
+            SimpleNamespace(phone="+7001", flood_wait_until=None),
+            SimpleNamespace(phone="+7002", flood_wait_until=now + timedelta(seconds=600)),
+        ]
+        pool = self._pool({"+7001": object(), "+7002": object()}, accounts, monkeypatch)
+        pool.set_resolve_username_backoff(7200, phone="+7001")
+
+        capable_at = await pool.next_resolve_capable_at()
+
+        assert capable_at is not None
+        remaining = (capable_at - now).total_seconds()
+        assert 590 < remaining <= 600
+
+    @pytest.mark.anyio
+    async def test_none_when_some_phone_is_capable_now(self, monkeypatch):
+        accounts = [
+            SimpleNamespace(phone="+7001", flood_wait_until=None),
+            SimpleNamespace(phone="+7002", flood_wait_until=None),
+        ]
+        pool = self._pool({"+7001": object(), "+7002": object()}, accounts, monkeypatch)
+        pool.set_resolve_username_backoff(7200, phone="+7001")
+        assert await pool.next_resolve_capable_at() is None
+
+    @pytest.mark.anyio
+    async def test_all_resolve_backoff_matches_aggregate(self, monkeypatch):
+        accounts = [
+            SimpleNamespace(phone="+7001", flood_wait_until=None),
+            SimpleNamespace(phone="+7002", flood_wait_until=None),
+        ]
+        pool = self._pool({"+7001": object(), "+7002": object()}, accounts, monkeypatch)
+        pool.set_resolve_username_backoff(7200, phone="+7001")
+        pool.set_resolve_username_backoff(400, phone="+7002")
+
+        capable_at = await pool.next_resolve_capable_at()
+
+        assert capable_at == pool.get_resolve_username_backoff_until()
+
+    @pytest.mark.anyio
+    async def test_per_phone_max_of_resolve_and_generic(self, monkeypatch):
+        # +7001: resolve 600s AND generic 1200s → ready at 1200s.
+        # +7002: resolve 3600s only → ready at 3600s. Earliest = 1200s.
+        now = datetime.now(timezone.utc)
+        accounts = [
+            SimpleNamespace(phone="+7001", flood_wait_until=now + timedelta(seconds=1200)),
+            SimpleNamespace(phone="+7002", flood_wait_until=None),
+        ]
+        pool = self._pool({"+7001": object(), "+7002": object()}, accounts, monkeypatch)
+        pool.set_resolve_username_backoff(600, phone="+7001")
+        pool.set_resolve_username_backoff(3600, phone="+7002")
+
+        capable_at = await pool.next_resolve_capable_at()
+
+        assert capable_at is not None
+        remaining = (capable_at - now).total_seconds()
+        assert 1190 < remaining <= 1200
+
+    @pytest.mark.anyio
+    async def test_none_when_no_clients_connected(self, monkeypatch):
+        pool = self._pool({}, [], monkeypatch)
+        assert await pool.next_resolve_capable_at() is None
+
+
 class TestRampUpMode:
     def test_ramp_up_active_after_backoff_set(self):
         pool = _make_pool()

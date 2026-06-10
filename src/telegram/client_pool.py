@@ -633,6 +633,43 @@ class ClientPool(ResolveGuardMixin):
             return False
         return await self._lease_pool.available_exclusive_count(candidates) > 0
 
+    async def next_resolve_capable_at(self) -> datetime | None:
+        """Earliest UTC moment any connected account can run a live username
+        resolve again (#790).
+
+        Per phone the readiness is ``max(resolve backoff, generic
+        accounts.flood_wait_until)``; the result is the minimum across
+        connected phones. Returns ``None`` when some account is capable right
+        now (even if transiently leased) or when nothing is connected — the
+        caller then falls back to its own deadline.
+        """
+        connected = self._connected_phones()
+        if not connected:
+            return None
+        now = datetime.now(timezone.utc)
+        accounts = await load_live_usable_accounts(self._db, active_only=True)
+        generic: dict[str, datetime] = {}
+        for account in accounts:
+            until = normalize_utc(getattr(account, "flood_wait_until", None))
+            if until is not None:
+                generic[account.phone] = until
+        earliest: datetime | None = None
+        for phone in connected:
+            deadlines = [
+                until
+                for until in (
+                    self.get_resolve_username_backoff_until(phone),
+                    generic.get(phone),
+                )
+                if until is not None and until > now
+            ]
+            if not deadlines:
+                return None
+            ready = max(deadlines)
+            if earliest is None or ready < earliest:
+                earliest = ready
+        return earliest
+
     async def available_stats_client_count(self) -> int:
         return await self._lease_pool.available_exclusive_count(self._connected_phones())
 

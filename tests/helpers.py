@@ -498,6 +498,20 @@ class FakeClientPool(ResolveGuardMixin, MagicMock):
         # flood-wait semantics override this attribute explicitly.
         return self.has_resolve_capable_phone(exclude=set(exclude))
 
+    async def next_resolve_capable_at(self):
+        # Resolve-backoff-only approximation of the production method (the
+        # fake has no DB-backed generic flood deadlines). Tests exercising
+        # the mixed state override this attribute explicitly.
+        now = datetime.now(timezone.utc)
+        earliest = None
+        for phone in self.connected_phones():
+            until = self.get_resolve_username_backoff_until(phone)
+            if until is None or until <= now:
+                return None
+            if earliest is None or until < earliest:
+                earliest = until
+        return earliest
+
 
 def make_mock_reactions(items: list[tuple[str, int]]) -> SimpleNamespace:
     """Create a mock MessageReactions object.

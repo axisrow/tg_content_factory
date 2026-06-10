@@ -168,6 +168,23 @@ class Collector:
             return False
         return bool(has_capable(exclude=attempted_phones))
 
+    async def _next_resolve_capable_at(self) -> datetime | None:
+        """Earliest moment any connected account can live-resolve again (#790).
+
+        Prefers the async pool method, which also accounts for *generic*
+        flood waits — in the mixed state (this phone resolve-blocked for
+        hours, another phone generically flooded for minutes) the channel
+        must retry when the generic flood clears. Falls back to the
+        resolve-backoff-only aggregate for doubles lacking the async method.
+        """
+        getter = getattr(self._pool, "next_resolve_capable_at", None)
+        if callable(getter):
+            result = getter()
+            if isawaitable(result):
+                result = await result
+            return result
+        return self._pool.get_resolve_username_backoff_until()
+
     async def get_collection_availability(self):
         availability_fn = getattr(self._pool, "get_stats_availability", None)
         if callable(availability_fn):
@@ -935,15 +952,18 @@ class Collector:
                                 mask_phone(phone),
                             )
                             continue
-                        # Every account is in resolve backoff — defer the channel
-                        # for the moment the *first* account frees up (pool-wide
-                        # aggregate), not for this arbitrary phone's window (#790 F2).
-                        aggregate_until = self._pool.get_resolve_username_backoff_until()
-                        if aggregate_until is not None:
+                        # No account can live-resolve right now — defer the
+                        # channel for the moment the *first* account becomes
+                        # capable again, combining per-phone resolve backoff
+                        # with generic flood waits; this phone's own (possibly
+                        # hours-long) window must not dictate the retry when
+                        # another account frees up sooner (#790 review P2).
+                        capable_at = await self._next_resolve_capable_at()
+                        if capable_at is not None:
                             now = datetime.now(timezone.utc)
                             raise UsernameResolveRateLimitedError(
                                 phone,
-                                (aggregate_until - now).total_seconds(),
+                                (capable_at - now).total_seconds(),
                                 now=now,
                             )
                         raise
@@ -1476,9 +1496,9 @@ class Collector:
                         total_collected += collected_count
                         progress_offset += collected_count
                         continue
-                    aggregate_until = self._pool.get_resolve_username_backoff_until()
-                    if aggregate_until is not None:
-                        next_available_at = aggregate_until
+                    capable_at = await self._next_resolve_capable_at()
+                    if capable_at is not None:
+                        next_available_at = capable_at
                     logger.warning(
                         "%s got FloodWait %ss on %s; pausing username resolves on "
                         "that account until %s (no free account to rotate to)",
