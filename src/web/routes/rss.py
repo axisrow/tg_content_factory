@@ -4,11 +4,12 @@ import html
 import logging
 from datetime import datetime, timezone
 from email.utils import format_datetime
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
-from src.utils.text_safety import escape_xml_text
+from src.utils.text_safety import escape_xml_text, strip_xml_illegal
 from src.web import deps
 
 logger = logging.getLogger(__name__)
@@ -64,12 +65,16 @@ async def rss_feed(
         ch_id = getattr(msg, "channel_id", "")
         pub_date = _rfc822(getattr(msg, "date", None))
         item_title = text[:80].replace("\n", " ")
-        item_link = f"{base_url}/search?q={html.escape(item_title[:40])}"
+        # The query embeds user-controlled message text. URL-encode it (quote_plus percent-encodes
+        # XML-illegal C0 controls to %01 etc.) over strip_xml_illegal, so a control byte in the
+        # message cannot break the <link> element and the whole feed — html.escape alone does NOT
+        # strip C0 controls and left /rss.xml not well-formed (#837/8 regression).
+        item_link = f"{base_url}/search?q={quote_plus(strip_xml_illegal(item_title[:40]))}"
         guid = f"tg-msg-{ch_id}-{msg_id}"
         items.append(
             f"  <item>\n"
             f"    <title>{escape_xml_text(item_title)}</title>\n"
-            f"    <link>{html.escape(item_link)}</link>\n"
+            f"    <link>{escape_xml_text(item_link)}</link>\n"
             f"    <description>{escape_xml_text(text[:500])}</description>\n"
             f"    <pubDate>{pub_date}</pubDate>\n"
             f"    <guid isPermaLink='false'>{guid}</guid>\n"
