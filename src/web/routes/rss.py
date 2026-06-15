@@ -8,6 +8,7 @@ from email.utils import format_datetime
 from fastapi import APIRouter, Request
 from fastapi.responses import Response
 
+from src.utils.text_safety import escape_xml_text
 from src.web import deps
 
 logger = logging.getLogger(__name__)
@@ -67,9 +68,9 @@ async def rss_feed(
         guid = f"tg-msg-{ch_id}-{msg_id}"
         items.append(
             f"  <item>\n"
-            f"    <title>{html.escape(item_title)}</title>\n"
+            f"    <title>{escape_xml_text(item_title)}</title>\n"
             f"    <link>{html.escape(item_link)}</link>\n"
-            f"    <description>{html.escape(text[:500])}</description>\n"
+            f"    <description>{escape_xml_text(text[:500])}</description>\n"
             f"    <pubDate>{pub_date}</pubDate>\n"
             f"    <guid isPermaLink='false'>{guid}</guid>\n"
             f"  </item>"
@@ -119,9 +120,9 @@ async def atom_feed(
         entries.append(
             f"  <entry>\n"
             f"    <id>{html.escape(entry_id)}</id>\n"
-            f"    <title>{html.escape(entry_title)}</title>\n"
+            f"    <title>{escape_xml_text(entry_title)}</title>\n"
             f"    <updated>{updated}</updated>\n"
-            f"    <content type='text'>{html.escape(text[:1000])}</content>\n"
+            f"    <content type='text'>{escape_xml_text(text[:1000])}</content>\n"
             f"  </entry>"
         )
 
