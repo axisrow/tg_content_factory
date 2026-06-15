@@ -347,8 +347,10 @@ class TestMyTelegramCommand:
         called_phone = fake_pool.leave_channels.call_args[0][0]
         assert called_phone == "+10001112233"
 
-    def test_leave_dm_uses_dm_type(self, cli_env_with_pool, capsys):
-        """Test dialogs leave infers 'dm' type for positive IDs not in cache."""
+    def test_leave_unknown_positive_id_uses_channel_type(self, cli_env_with_pool, capsys):
+        """A positive ID not in the dialog cache must fall back to 'channel' -> PeerChannel,
+        NOT a guessed 'dm' -> PeerUser. Channel ids here are bare-positive, so guessing 'dm'
+        for an unknown positive id would target the wrong peer (#842 review)."""
         cli_env, fake_pool = cli_env_with_pool
         fake_pool.clients = {"+10001112233": AsyncMock()}
 
@@ -370,7 +372,7 @@ class TestMyTelegramCommand:
             )
 
         called_dialogs = fake_pool.leave_channels.call_args[0][1]
-        assert (123456, "dm") in called_dialogs
+        assert (123456, "channel") in called_dialogs
 
     def test_cache_clear_all(self, cli_env_with_pool, capsys):
         """Test cache-clear without phone clears all accounts."""

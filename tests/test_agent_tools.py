@@ -1135,23 +1135,42 @@ class TestNotificationDryRunTool:
         assert "0 совпадений" in text
 
     @pytest.mark.anyio
-    async def test_returns_actual_match_counts(self, mock_db):
+    async def test_returns_actual_match_counts_via_production_predicate(self, mock_db):
+        # Agent dry-run must use the SAME predicate as CLI/web (regex/substring), NOT FTS,
+        # and count uncapped over the whole window (#838/3 + 5000-cap review). It now pages
+        # via iter_messages_collected_since and matches with message_matches_query.
         from datetime import datetime, timezone
+
+        from src.models import Message, SearchQuery
 
         mock_db.repos = MagicMock()
         completed_task = SimpleNamespace(
             completed_at=datetime(2025, 1, 15, 12, 0, tzinfo=timezone.utc)
         )
         mock_db.repos.tasks.get_last_completed_collect_task = AsyncMock(return_value=completed_task)
-        sq = SimpleNamespace(id=1, query="test", name="Test Query")
+        sq = SearchQuery(id=1, query="hit", name="Test Query", is_regex=False, is_fts=False)
         mock_db.get_notification_queries = AsyncMock(return_value=[sq])
         mock_db.repos.settings.get_setting = AsyncMock(return_value=None)
-        mock_db.search_messages_for_query_since = AsyncMock(return_value=([], 5))
+        mock_db.get_channels = AsyncMock(return_value=[])
+        # FTS path must NOT be used anymore.
+        mock_db.search_messages_for_query_since = AsyncMock(return_value=([], 999))
+
+        now = datetime(2025, 1, 15, 13, 0, tzinfo=timezone.utc)
+        page = [
+            Message(channel_id=1, message_id=i, text=("a hit here" if i < 5 else "no match"), date=now)
+            for i in range(7)
+        ]  # 5 of 7 contain "hit"
+
+        async def _iter(since, page_size=5000):
+            yield page
+
+        mock_db.repos.messages.iter_messages_collected_since = _iter
+
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["notification_dry_run"]({})
         text = _text(result)
         assert "5 совпадений" in text
-        mock_db.search_messages_for_query_since.assert_awaited_once()
+        mock_db.search_messages_for_query_since.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

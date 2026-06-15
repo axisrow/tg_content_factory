@@ -287,6 +287,18 @@ async def test_build_web_container_does_not_connect_telethon(tmp_path, monkeypat
 
 
 @pytest.mark.anyio
+async def test_build_web_container_enables_semantic_search(tmp_path):
+    """Web SearchBundle must be built via from_database so the numpy probe runs and
+    semantic/hybrid search is available — the positional ctor left it False (#837/2)."""
+    config = AppConfig(database=DatabaseConfig(path=str(tmp_path / "test.db")))
+    container = await build_web_container(config, log_buffer=LogBuffer())
+    try:
+        assert container.search_engine.semantic_available is True
+    finally:
+        await container.db.close()
+
+
+@pytest.mark.anyio
 async def test_log_task_exception_logs_failed_task(caplog):
     """#633 bug #31: a failed background task is surfaced as a warning log."""
 

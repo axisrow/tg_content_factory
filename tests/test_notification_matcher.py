@@ -370,3 +370,104 @@ def test_fts_query_matches_and():
 def test_fts_query_matches_case_insensitive():
     """FTS matching is case-insensitive."""
     assert _fts_query_matches("HELLO", "hello world") is True
+
+
+# === audit #838/1 dedup + retry, #836/12 display name ===
+
+
+class _FakeNotifiedStore:
+    def __init__(self):
+        self.recorded: set[tuple[int, int, int]] = set()
+
+    async def filter_unnotified(self, query_id, channel_id, message_ids):
+        return {mid for mid in message_ids if (query_id, channel_id, mid) not in self.recorded}
+
+    async def record(self, query_id, channel_id, message_ids):
+        for mid in message_ids:
+            self.recorded.add((query_id, channel_id, mid))
+
+    async def has_any(self, channel_ids):
+        cids = set(channel_ids)
+        return any(cid in cids for (_q, cid, _m) in self.recorded)
+
+
+@pytest.mark.anyio
+async def test_dedup_skips_already_notified_message():
+    notifier = AsyncMock()
+    store = _FakeNotifiedStore()
+    matcher = NotificationMatcher(notifier, notified_store=store)
+    messages = [make_message("hello world", message_id=10)]
+    queries = [make_query("world")]
+
+    first = await matcher.match_and_notify(messages, queries)
+    assert first == {1: 1}
+    assert notifier.notify.await_count == 1
+
+    # Same message on a later pass must NOT re-notify.
+    second = await matcher.match_and_notify(messages, queries)
+    assert second == {}
+    assert notifier.notify.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_failed_send_is_not_recorded_and_retries():
+    notifier = AsyncMock()
+    notifier.notify = AsyncMock(side_effect=[False, True])
+    store = _FakeNotifiedStore()
+    matcher = NotificationMatcher(notifier, notified_store=store)
+    messages = [make_message("hello world", message_id=10)]
+    queries = [make_query("world")]
+
+    # First send fails -> not recorded, not counted.
+    first = await matcher.match_and_notify(messages, queries)
+    assert first == {}
+    assert store.recorded == set()
+
+    # Second pass re-presents the same message -> retried and now recorded.
+    second = await matcher.match_and_notify(messages, queries)
+    assert second == {1: 1}
+    assert (1, -1001234567890, 10) in store.recorded
+
+
+@pytest.mark.anyio
+async def test_notification_uses_query_name_not_raw_query():
+    notifier = AsyncMock()
+    matcher = NotificationMatcher(notifier)
+    sq = SearchQuery(id=1, query="прода(ю|жа)", name="Лиды на продажу", is_regex=True)
+    messages = [make_message("продаю квартиру")]
+
+    await matcher.match_and_notify(messages, [sq])
+
+    sent_text = notifier.notify.await_args.args[0]
+    assert "Лиды на продажу" in sent_text
+    assert "прода(ю|жа)" not in sent_text
+
+
+# === audit #838/3: dry-run uses production predicate, not FTS ===
+
+
+def test_dry_run_matches_regex_query():
+    from src.services.notification_matcher import dry_run_matches
+
+    msgs = [
+        make_message("продаю квартиру срочно", message_id=1),
+        make_message("просто текст", message_id=2),
+    ]
+    regex_q = SearchQuery(id=1, query="прода(ю|жа)", is_regex=True)
+    matched, total = dry_run_matches(msgs, regex_q)
+    assert total == 1
+    assert matched[0].message_id == 1
+
+
+def test_dry_run_matches_partial_substring():
+    from src.services.notification_matcher import dry_run_matches
+
+    msgs = [
+        make_message("теплоход отправляется", message_id=1),
+        make_message("самолёт", message_id=2),
+    ]
+    # "теплох" is a partial substring (not a whole FTS token) — must still match.
+    partial_q = SearchQuery(id=2, query="теплох")
+    matched, total = dry_run_matches(msgs, partial_q)
+    assert total == 1
+    assert matched[0].message_id == 1

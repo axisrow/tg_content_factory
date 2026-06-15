@@ -131,3 +131,27 @@ def test_documented_web_endpoints_exist_in_app_routes():
         if not _route_exists(actual_routes, method, path)
     ]
     assert missing_routes == []
+
+
+def test_configure_app_tolerates_unnamed_included_routers():
+    """Starlette >= 1.x adds an unnamed _IncludedRouter to app.routes per include_router(),
+    which has no .name attribute. configure_app must not crash reading route names while
+    deciding whether the static / data-image mounts already exist (FastAPI/Starlette compat)."""
+    from fastapi import APIRouter, FastAPI
+
+    from src.web.assembly import configure_app
+
+    app = FastAPI()
+    extra = APIRouter()
+
+    @extra.get("/_compat_probe")
+    def _probe():
+        return {}
+
+    app.include_router(extra)  # produces a _IncludedRouter on new Starlette
+
+    # Must not raise AttributeError: '_IncludedRouter' object has no attribute 'name'.
+    configure_app(app, None)
+
+    # The static mount is still added (its name is reachable via getattr default).
+    assert any(getattr(r, "name", None) == "static" for r in app.routes)
