@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta, timezone
 from inspect import isawaitable
 
-from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
+from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import (
     PeerChannel,
 )
@@ -136,6 +136,10 @@ class Collector:
         self._stats_running = False
         self._stats_all_running = False
         self._cancel_event = asyncio.Event()
+        # Stats-only stop signal. STATS_ALL cancellation must NOT use the global
+        # _cancel_event, which channel-collect workers also watch — sharing it let
+        # a STATS_ALL cancel abort unrelated in-flight collection (audit #835/6).
+        self._stats_cancel_event = asyncio.Event()
         self._lock = asyncio.Lock()
         self._stats_lock = asyncio.Lock()
         self._stats_all_lock = asyncio.Lock()
@@ -399,6 +403,15 @@ class Collector:
 
     async def cancel(self) -> None:
         self._cancel_event.set()
+
+    async def cancel_stats(self) -> None:
+        """Cancel an in-flight STATS_ALL run without touching channel collection."""
+        self._stats_cancel_event.set()
+
+    def _is_stats_cancelled(self) -> bool:
+        # Global shutdown (cancel()) also stops stats; a stats-only cancel does not
+        # stop channel collection.
+        return self._cancel_event.is_set() or self._stats_cancel_event.is_set()
 
     @property
     def is_cancelled(self) -> bool:
@@ -1611,8 +1624,13 @@ class Collector:
                     self._pool.mark_dialogs_fetched(p)
                 await session.resolve_entity(PeerChannel(channel_id))
                 return p
-            except FloodWaitError as fwe:
-                await self._pool.report_flood(p, fwe.seconds)
+            except HandledFloodWaitError as exc:
+                # The transport already reported the flood for this phone; the old
+                # `except FloodWaitError` was dead — the transport raises
+                # HandledFloodWaitError, never the raw telethon error (audit #835/16).
+                logger.warning(
+                    "_discover_phone_for_channel: flood wait on %s: %s", mask_phone(p), exc.info.detail
+                )
                 continue
             except Exception:
                 continue
@@ -1852,6 +1870,10 @@ class Collector:
                             new_title,
                             log_prefix="Stats",
                         )
+                        # Channel quarantined for rename review — stop here instead
+                        # of writing stats/created_at/type for it, mirroring the
+                        # collect path (audit #835/13).
+                        return None
                 else:
                     # Warm cache for numeric-id channels; bare resolve loops forever (#794).
                     try:
@@ -1928,7 +1950,7 @@ class Collector:
                         limit=50,
                         wait_time=self._config.delay_between_requests_sec,
                     ):
-                        if self._cancel_event.is_set():
+                        if self._is_stats_cancelled():
                             break
                         if getattr(msg, "views", None) is not None:
                             views_list.append(msg.views)
@@ -2043,6 +2065,8 @@ class Collector:
     async def collect_all_stats(self, *, max_channels: int | None = None) -> dict:
         async with self._stats_all_lock:
             self._stats_all_running = True
+            # Fresh run — drop any stale stats-cancel from a previous STATS_ALL.
+            self._stats_cancel_event.clear()
             try:
                 channels = await self._db.get_channels(active_only=True, include_filtered=False)
                 skip_fresh_hours = int(getattr(self._config, "stats_all_skip_fresh_hours", 24) or 0)
@@ -2107,7 +2131,7 @@ class Collector:
 
                 async def _worker() -> None:
                     nonlocal stop_workers
-                    while not self._cancel_event.is_set():
+                    while not self._is_stats_cancelled():
                         async with state_lock:
                             if stop_workers or not queue:
                                 return

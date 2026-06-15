@@ -90,6 +90,9 @@ class SnapshotCollector:
     async def cancel(self) -> None:
         return None
 
+    async def cancel_stats(self) -> None:
+        return None
+
 
 class SnapshotSchedulerManager:
     def __init__(self, db: Database, default_interval_minutes: int):
