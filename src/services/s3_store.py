@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import urllib.request
+import uuid
 from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
@@ -11,6 +12,22 @@ logger = logging.getLogger(__name__)
 # Presigned GET URL lifetime. Must outlive the moderation/publish delay; 7 days
 # is the SigV4 maximum.
 PRESIGNED_TTL_SEC = 7 * 24 * 3600
+
+
+def _unique_key(source: str) -> str:
+    """Build a collision-free S3 object key from a source path/URL basename.
+
+    Provider results frequently share generic basenames ("output.png", "image.png"),
+    so keying on the basename alone made two generations write the SAME object — an
+    existing presigned URL would then serve a later run's image (cross-run overwrite /
+    exposure). Prefix a uuid4 so every upload gets a distinct key while keeping a
+    readable, correctly-suffixed name (#862 review).
+    """
+    base = os.path.basename(source) or "image"
+    ext = os.path.splitext(base)[1]
+    if not ext or len(ext) > 10:
+        ext = ".png"
+    return f"images/{uuid.uuid4().hex}{ext}"
 
 
 class S3Store:
@@ -55,7 +72,7 @@ class S3Store:
     async def upload_file(self, local_path: str) -> str | None:
         """Upload *local_path* to S3 and return a presigned GET URL, or None."""
         try:
-            key = os.path.basename(local_path)
+            key = _unique_key(local_path)
 
             def _upload() -> str:
                 s3 = self._client()
@@ -80,7 +97,9 @@ class S3Store:
         if not url or urlsplit(url).scheme not in ("http", "https"):
             return None
         try:
-            object_key = key or os.path.basename(urlsplit(url).path) or "image"
+            # Honor an explicit caller key; otherwise build a collision-free unique key
+            # (provider URLs often share a generic basename like output.png).
+            object_key = key or _unique_key(urlsplit(url).path)
 
             def _upload() -> str:
                 with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310 - provider URL
