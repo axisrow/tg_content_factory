@@ -48,11 +48,16 @@ def _msg(
     return m
 
 
-def _search_engine(messages=None, semantic_available=True):
+def _search_engine(messages=None, semantic_available=True, has_index=None):
     result = MagicMock()
     result.messages = messages if messages is not None else [_msg()]
     engine = AsyncMock()
     engine.semantic_available = semantic_available
+    # has_semantic_index() = "semantic backend available AND embeddings actually indexed".
+    # Default mirrors semantic_available so existing tests keep their meaning; pass has_index
+    # explicitly to exercise the "available but never indexed" gate.
+    indexed = semantic_available if has_index is None else has_index
+    engine.has_semantic_index = AsyncMock(return_value=indexed)
     engine.search_hybrid = AsyncMock(return_value=result)
     engine.search_semantic = AsyncMock(return_value=result)
     engine.search_local = AsyncMock(return_value=result)
@@ -107,6 +112,29 @@ async def test_retrieve_context_fallback_to_local():
     await RetrieveContextHandler().execute({"method": "hybrid"}, ctx, {"search_engine": engine})
     engine.search_local.assert_awaited_once()
     assert ctx.get_global("context_messages")[0].text == "local"
+
+
+@pytest.mark.anyio
+async def test_retrieve_context_hybrid_without_index_uses_local():
+    # Regression: semantic backend importable (numpy is a base dep) but NOTHING indexed.
+    # Must NOT call search_hybrid (which would embed the query via an external provider) —
+    # fall back to local search so an LLM-only, never-indexed deployment makes no embedding call.
+    ctx = NodeContext()
+    engine = _search_engine([_msg("local")], semantic_available=True, has_index=False)
+    await RetrieveContextHandler().execute({"method": "hybrid"}, ctx, {"search_engine": engine})
+    engine.search_local.assert_awaited_once()
+    engine.search_hybrid.assert_not_awaited()
+    assert ctx.get_global("context_messages")[0].text == "local"
+
+
+@pytest.mark.anyio
+async def test_retrieve_context_semantic_without_index_uses_local():
+    # Same gate for the explicit "semantic" method.
+    ctx = NodeContext()
+    engine = _search_engine([_msg("local")], semantic_available=True, has_index=False)
+    await RetrieveContextHandler().execute({"method": "semantic"}, ctx, {"search_engine": engine})
+    engine.search_local.assert_awaited_once()
+    engine.search_semantic.assert_not_awaited()
 
 
 @pytest.mark.anyio
