@@ -25,6 +25,11 @@ class GenerationService:
         self._search = search_engine
         self._provider = provider_callable
         self._default_prompt = default_prompt_template
+        # Resolve the index-aware semantic gate once; None for search backends that don't expose it
+        # (e.g. test doubles) so _collect_context falls back to the legacy semantic_available check.
+        self._search_has_semantic_index: Callable[[], Awaitable[bool]] | None = getattr(
+            search_engine, "has_semantic_index", None
+        )
 
     async def _collect_context(
         self, query: str, limit: int = 8, channel_id: int | None = None
@@ -36,7 +41,15 @@ class GenerationService:
         """
         import logging
 
-        if getattr(self._search, "semantic_available", True):
+        # Gate on an actual semantic index (embeddings indexed), not merely numpy being importable:
+        # search_hybrid embeds the query via an external provider before checking the index, so a
+        # never-indexed (LLM-only) deployment must use local search to avoid an external embedding call.
+        has_index = self._search_has_semantic_index
+        if has_index is not None:
+            use_hybrid = await has_index()
+        else:
+            use_hybrid = getattr(self._search, "semantic_available", True)
+        if use_hybrid:
             try:
                 result: SearchResult = await self._search.search_hybrid(
                     query, channel_id=channel_id, limit=limit
@@ -49,7 +62,7 @@ class GenerationService:
                 )
         else:
             logging.getLogger(__name__).warning(
-                "Semantic search unavailable, falling back to FTS local search for context retrieval"
+                "Semantic search unavailable or not indexed, falling back to FTS local search for context retrieval"
             )
         result = await self._search.search_local(query, channel_id=channel_id, limit=limit)
         return result.messages
