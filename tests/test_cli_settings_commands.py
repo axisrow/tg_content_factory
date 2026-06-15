@@ -90,7 +90,8 @@ def test_agent_set_backend(capsys):
     with patch("src.cli.commands.settings.runtime.init_db", AsyncMock(return_value=(make_cli_config(), db))), \
          patch("asyncio.run", fake_asyncio_run):
         run(_args(settings_action="agent", backend="claude", prompt_template=None))
-    db.set_setting.assert_called_with("agent_backend", "claude")
+    # Must write the key the runtime reads (agent_backend_override), not a dead one (#838/7).
+    db.set_setting.assert_called_with("agent_backend_override", "claude")
 
 
 def test_agent_set_prompt_template(capsys):
@@ -147,7 +148,8 @@ def test_semantic_set_values(capsys):
         run(_args(settings_action="semantic", provider="openai", model="text-embedding-3-small",
                    api_key=None))
     out = capsys.readouterr().out
-    assert "semantic_provider" in out
+    # Runtime reads semantic_embeddings_* keys (#838/7).
+    assert "semantic_embeddings_provider" in out
 
 
 def test_semantic_api_key_truncation(capsys):
@@ -166,7 +168,7 @@ def test_semantic_show_current(capsys):
          patch("asyncio.run", fake_asyncio_run):
         run(_args(settings_action="semantic", provider=None, model=None, api_key=None))
     out = capsys.readouterr().out
-    assert "semantic_provider" in out
+    assert "semantic_embeddings_provider" in out
 
 
 def test_semantic_show_api_key_masked(capsys):
