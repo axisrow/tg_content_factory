@@ -159,3 +159,25 @@ async def test_content_analytics_daily_stats_accepts_naive_db_timestamps(db):
 
     assert stats[0].generations == 1
     assert stats[0].rejections == 1
+
+
+@pytest.mark.anyio
+async def test_content_analytics_daily_stats_space_separated_db_timestamp(db):
+    """A run timestamped with the real SQLite datetime('now') shape (space
+    separator, no offset) must fall inside today's window — isoformat() bounds
+    ('T' + '+00:00') sorted it out under TEXT comparison (audit #838/2)."""
+    analytics = ContentAnalyticsService(db)
+    pipeline_id = await _create_pipeline(db, "Pipeline SpaceTS")
+
+    run_id = await db.repos.generation_runs.create_run(pipeline_id, "pending")
+    await db.repos.generation_runs.save_result(run_id, "post")
+    # datetime('now') yields 'YYYY-MM-DD HH:MM:SS' — the exact production format.
+    await db.execute(
+        "UPDATE generation_runs SET created_at = datetime('now') WHERE id = ?",
+        (run_id,),
+    )
+    await db.db.commit()
+
+    stats = await analytics.get_daily_stats(days=1)
+
+    assert stats[0].generations == 1

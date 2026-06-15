@@ -2246,3 +2246,28 @@ async def test_run_loop_survives_busy_error_from_claim():
         await d._run_loop()
 
     assert calls == 2
+
+
+# ── _unwrap_result_payload (audit #838/9, #838/4) ──────────────────────────────
+
+
+class TestUnwrapResultPayload:
+    def test_uses_envelope_when_present(self):
+        assert TelegramCommandDispatcher._unwrap_result_payload({"result": {"a": 1}}) == {"a": 1}
+
+    def test_preserves_flat_dict(self):
+        # ~40 handlers return a flat dict; it must be persisted, not dropped to {}.
+        flat = {"phone": "+7", "scope": "all", "total": 3, "participants": [{"id": 1}]}
+        assert TelegramCommandDispatcher._unwrap_result_payload(flat) == flat
+
+    def test_excludes_reserved_payload_update(self):
+        out = TelegramCommandDispatcher._unwrap_result_payload(
+            {"updated": 2, "payload_update": {"x": 1}}
+        )
+        assert out == {"updated": 2}
+
+    def test_non_dict_returns_empty(self):
+        assert TelegramCommandDispatcher._unwrap_result_payload(None) == {}
+
+    def test_envelope_non_dict_inner_returns_empty(self):
+        assert TelegramCommandDispatcher._unwrap_result_payload({"result": "x"}) == {}

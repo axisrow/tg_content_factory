@@ -209,12 +209,10 @@ async def build_container_with_templates(
     )
     pipeline_bundle = PipelineBundle.from_database(db)
     photo_loader_bundle = PhotoLoaderBundle(repos.photo_loader)
-    search_bundle = SearchBundle(
-        repos.messages,
-        repos.search_log,
-        repos.channels,
-        repos.settings,
-    )
+    # from_database() runs the numpy probe that sets numpy_available — the
+    # positional constructor leaves it False, disabling semantic/hybrid search
+    # for the whole web/worker process (audit #837/2).
+    search_bundle = SearchBundle.from_database(db)
     scheduler_bundle = SchedulerBundle(
         repos.settings,
         repos.search_queries,

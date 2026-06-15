@@ -154,6 +154,41 @@ async def test_generation_service_uses_hybrid_when_semantic_available():
     assert "GENERATED:" in out["generated_text"]
 
 
+async def test_generation_service_skips_hybrid_when_no_embeddings_indexed():
+    """Regression: semantic backend importable but NOTHING indexed (has_semantic_index() is False).
+
+    _collect_context must use search_local, not search_hybrid, so an LLM-only / never-indexed
+    deployment never sends the generation query to an external embedding provider.
+    """
+
+    class EngineNoIndex:
+        def __init__(self):
+            self.hybrid_called = False
+            self.local_called = False
+
+        @property
+        def semantic_available(self):
+            return True
+
+        async def has_semantic_index(self):
+            return False
+
+        async def search_hybrid(self, query, **kwargs):
+            self.hybrid_called = True
+            raise AssertionError("search_hybrid must not be called when no embeddings are indexed")
+
+        async def search_local(self, query, **kwargs):
+            self.local_called = True
+            return SearchResult(messages=[], total=0, query=query)
+
+    engine = EngineNoIndex()
+    service = GenerationService(search_engine=engine, provider_callable=fake_provider)
+    out = await service.generate(query="test")
+    assert engine.local_called, "Should fall back to search_local when nothing is indexed"
+    assert not engine.hybrid_called
+    assert "GENERATED:" in out["generated_text"]
+
+
 async def test_generation_service_uses_default_prompt():
     """Test generation uses default prompt template."""
     engine = DummySearchEngine([])

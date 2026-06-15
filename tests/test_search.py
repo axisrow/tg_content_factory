@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -852,3 +853,43 @@ async def test_search_hybrid_unavailable_returns_friendly_error(db):
     assert result.messages == []
     assert result.total == 0
     assert result.error and "Семантический поиск недоступен" in result.error
+
+
+def _set_semantic_backend(engine, *, vec=False, numpy=False):
+    # SearchBundle is a frozen dataclass — rebuild it with the desired availability flags
+    # instead of mutating in place.
+    engine._search_bundle = replace(engine._search_bundle, vec_available=vec, numpy_available=numpy)
+
+
+@pytest.mark.anyio
+async def test_has_semantic_index_false_when_backend_unavailable(db):
+    # No semantic backend at all → never index-usable, even with embeddings present.
+    await db.insert_messages_batch(
+        [Message(channel_id=-100123, message_id=1, text="hi", date=datetime.now(timezone.utc))]
+    )
+    await db.repos.messages.upsert_message_embeddings([(1, [0.1, 0.2, 0.3])])
+    engine = SearchEngine(db)
+    _set_semantic_backend(engine, vec=False, numpy=False)
+    assert await engine.has_semantic_index() is False
+
+
+@pytest.mark.anyio
+async def test_has_semantic_index_false_when_no_embeddings_indexed(db):
+    # Backend importable (numpy) but nothing indexed → must report False so retrieval
+    # falls back to local search and never embeds the query via an external provider.
+    engine = SearchEngine(db)
+    _set_semantic_backend(engine, numpy=True)
+    assert await db.repos.messages.count_embeddings() == 0
+    assert await engine.has_semantic_index() is False
+
+
+@pytest.mark.anyio
+async def test_has_semantic_index_true_after_embeddings_indexed(db):
+    await db.insert_messages_batch(
+        [Message(channel_id=-100123, message_id=1, text="hi", date=datetime.now(timezone.utc))]
+    )
+    await db.repos.messages.upsert_message_embeddings([(1, [0.1, 0.2, 0.3])])
+    engine = SearchEngine(db)
+    _set_semantic_backend(engine, numpy=True)
+    assert await db.repos.messages.count_embeddings() == 1
+    assert await engine.has_semantic_index() is True

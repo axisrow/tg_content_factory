@@ -18,6 +18,7 @@ from src.telegram.reactions import (
     normalize_reaction_users_limit,
     parse_reactions_json,
 )
+from src.utils.text_safety import csv_safe_cell
 
 
 def _print_messages(messages: list[Message], fmt: str, total: int, has_more: bool = False) -> None:
@@ -43,7 +44,7 @@ def _print_messages(messages: list[Message], fmt: str, total: int, has_more: boo
             writer.writerow([
                 msg.id, msg.channel_id, msg.message_id,
                 str(msg.date) if msg.date else "",
-                (msg.text or "")[:500],
+                csv_safe_cell((msg.text or "")[:500]),
                 msg.views, msg.forwards,
                 format_reactions_json(msg.reactions_json),
             ])
