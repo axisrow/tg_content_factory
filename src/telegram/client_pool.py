@@ -1236,12 +1236,19 @@ class ClientPool(ResolveGuardMixin):
         result.sort(key=lambda u: (not u.is_primary, u.phone))
         return result
 
-    async def resolve_channel(self, identifier: str) -> dict | None:
+    async def resolve_channel(self, identifier: str, *, signal_gone: bool = False) -> dict | None:
         """Resolve channel by @username or t.me/ link. Returns dict with channel info.
+
+        When ``signal_gone`` is True, a *definitive* not-found (username no longer
+        occupied/invalid, or forbidden) returns the sentinel ``{"gone": True}``
+        instead of None, so callers like ``channel refresh-types`` can deactivate
+        the channel — while a *transient* failure (timeout / flood / no client)
+        still returns None and the channel is left active (audit #835/8).
 
         Raises:
             RuntimeError("no_client") — no connected/available Telegram accounts.
         """
+        gone: dict | None = {"gone": True} if signal_gone else None
         # Normalize post links: https://t.me/channel/123 → https://t.me/channel
         identifier = re.sub(r"(t\.me/[^/\s]+)/\d+$", r"\1", identifier)
 
@@ -1264,10 +1271,10 @@ class ClientPool(ResolveGuardMixin):
                 entity = await self.resolve_entity_with_warm(
                     session, phone, peer, operation="resolve_channel"
                 )
+                if isinstance(entity, ChannelForbidden):
+                    return gone
                 if not hasattr(entity, "title"):
                     logger.info("resolve_channel: '%s' is a user, not a channel/group", identifier)
-                    return None
-                if isinstance(entity, ChannelForbidden):
                     return None
                 channel_type, deactivate = self._classify_entity(entity)
                 return {
@@ -1291,7 +1298,7 @@ class ClientPool(ResolveGuardMixin):
                 continue
             except (UsernameNotOccupiedError, UsernameInvalidError) as e:
                 logger.warning("resolve_channel: username not found '%s': %s", identifier, e)
-                return None
+                return gone
             except Exception as e:
                 logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
                 return None
