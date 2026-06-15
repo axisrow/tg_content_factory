@@ -314,6 +314,40 @@ async def test_csrf_no_origin_no_referer_no_cookie_passes():
     call_next.assert_awaited_once()
 
 
+async def test_csrf_logout_cross_origin_blocked():
+    """/logout is a state-changing POST and must not be CSRF-exempt (audit #836/9)."""
+    middleware = OriginCSRFMiddleware(MagicMock())
+
+    request = MagicMock()
+    request.method = "POST"
+    request.url.path = "/logout"
+    request.url.scheme = "http"
+    request.url.netloc = "localhost"
+    request.headers = {"origin": "http://evil.com"}
+    request.cookies = {}
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    response = await middleware.dispatch(request, call_next)
+    assert response.status_code == 403
+    call_next.assert_not_awaited()
+
+
+async def test_csrf_logout_same_origin_passes():
+    middleware = OriginCSRFMiddleware(MagicMock())
+
+    request = MagicMock()
+    request.method = "POST"
+    request.url.path = "/logout"
+    request.url.scheme = "http"
+    request.url.netloc = "localhost"
+    request.headers = {"origin": "http://localhost"}
+    request.cookies = {}
+
+    call_next = AsyncMock(return_value=MagicMock(status_code=200))
+    await middleware.dispatch(request, call_next)
+    call_next.assert_awaited_once()
+
+
 async def test_csrf_no_origin_referer_with_cookie_blocked():
     from src.web.session import COOKIE_NAME
 
