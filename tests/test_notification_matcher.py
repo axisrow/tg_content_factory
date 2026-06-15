@@ -386,6 +386,10 @@ class _FakeNotifiedStore:
         for mid in message_ids:
             self.recorded.add((query_id, channel_id, mid))
 
+    async def has_any(self, channel_ids):
+        cids = set(channel_ids)
+        return any(cid in cids for (_q, cid, _m) in self.recorded)
+
 
 @pytest.mark.anyio
 async def test_dedup_skips_already_notified_message():

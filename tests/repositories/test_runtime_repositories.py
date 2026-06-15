@@ -54,6 +54,13 @@ async def test_notified_messages_filter_and_record(tmp_path):
         assert await repo.filter_unnotified(1, 100, [1, 2, 3]) == {3}
 
         assert await repo.filter_unnotified(1, 100, []) == set()
+
+        # has_any: True only for channels with at least one recorded row (gates the
+        # backlog rescan so an empty ledger never replays history — #850 review).
+        assert await repo.has_any([100]) is True
+        assert await repo.has_any([999]) is False
+        assert await repo.has_any([999, 100]) is True
+        assert await repo.has_any([]) is False
     finally:
         await db.close()
 
