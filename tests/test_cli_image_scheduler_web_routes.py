@@ -402,13 +402,15 @@ class TestCLISchedulerCommand:
         assert "45" in out
 
     def test_set_interval_clamps_min(self, cli_env_scheduler, capsys):
-        """set-interval clamps below-minimum value to 1."""
+        """set-interval clamps below-minimum value to 1. Uses a real job id (collect_all):
+        an unknown job_id now correctly prints 'Unknown job_id' and returns (#835/9), so the
+        clamp must be asserted on a job the command actually accepts."""
         cli_env, fake_pool = cli_env_scheduler
         fake_pool.clients = {"dummy": MagicMock()}
 
         from src.cli.commands.scheduler import run
 
-        run(_ns(scheduler_action="set-interval", job_id="some_job", minutes=0))
+        run(_ns(scheduler_action="set-interval", job_id="collect_all", minutes=0))
         out = capsys.readouterr().out
         assert "1 min" in out
 

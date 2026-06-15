@@ -87,7 +87,11 @@ def run(args: argparse.Namespace) -> None:
                 print("Scheduler autostart disabled. Running scheduler will stop on next restart.")
 
             elif args.scheduler_action == "job-toggle":
+                # pipeline_run_ is no longer a periodic job (#835/2) — canonicalize to the live
+                # content_generate_ id so toggling it disables the real job, not a dead key.
                 job_id = args.job_id
+                if job_id.startswith("pipeline_run_"):
+                    job_id = "content_generate_" + job_id.removeprefix("pipeline_run_")
                 key = f"scheduler_job_disabled:{job_id}"
                 current = await db.repos.settings.get_setting(key)
                 new_disabled = current != "1"

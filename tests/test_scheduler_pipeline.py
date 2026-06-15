@@ -72,6 +72,78 @@ async def test_sync_pipeline_jobs_registers_only_content_generate():
     assert "pipeline_run_3" in scheduler.removed
 
 
+class FakeSchedulerBundle:
+    def __init__(self, settings=None):
+        self.settings = dict(settings or {})
+
+    async def get_setting(self, key):
+        return self.settings.get(key)
+
+    async def set_setting(self, key, value):
+        self.settings[key] = value
+
+
+@pytest.mark.anyio
+async def test_sync_pipeline_jobs_canonicalizes_legacy_split_disabled_state():
+    """Pre-#835/2 an operator could disable content_generate_<id> while leaving
+    pipeline_run_<id> enabled (the live job). After the fix content_generate_ is the
+    only periodic job, so honoring that stale disabled flag would drop the pipeline's
+    only job. sync must re-enable content_generate_ in that legacy split state."""
+    p1 = FakePipeline(1, 10, is_active=True)
+    bundle = FakePipelineBundle([p1])
+    mgr = SchedulerManager()
+    mgr._pipeline_bundle = bundle
+    mgr._scheduler = FakeScheduler()
+    # legacy split: content_generate_1 disabled, pipeline_run_1 enabled (the live toggle)
+    mgr._scheduler_bundle = FakeSchedulerBundle(
+        {"scheduler_job_disabled:content_generate_1": "1"}
+    )
+
+    await mgr.sync_pipeline_jobs()
+
+    ids = [a["id"] for a in mgr._scheduler.added]
+    assert "content_generate_1" in ids, "the surviving job must be re-enabled, not dropped"
+    # the disabled flag is cleared and the one-time guard is set
+    assert mgr._scheduler_bundle.settings["scheduler_job_disabled:content_generate_1"] == "0"
+    assert mgr._scheduler_bundle.settings["scheduler_pipeline_jobs_canonicalized"] == "1"
+
+
+@pytest.mark.anyio
+async def test_sync_pipeline_jobs_respects_deliberate_disable_after_canonicalization():
+    """Once canonicalized, a deliberate later disable of content_generate_ must be honored
+    (the one-time guard prevents re-enabling it)."""
+    p1 = FakePipeline(1, 10, is_active=True)
+    mgr = SchedulerManager()
+    mgr._pipeline_bundle = FakePipelineBundle([p1])
+    mgr._scheduler = FakeScheduler()
+    mgr._scheduler_bundle = FakeSchedulerBundle(
+        {
+            "scheduler_job_disabled:content_generate_1": "1",
+            "scheduler_pipeline_jobs_canonicalized": "1",
+        }
+    )
+
+    await mgr.sync_pipeline_jobs()
+
+    ids = [a["id"] for a in mgr._scheduler.added]
+    assert "content_generate_1" not in ids, "deliberate disable after canonicalization is honored"
+    assert mgr._scheduler_bundle.settings["scheduler_job_disabled:content_generate_1"] == "1"
+
+
+@pytest.mark.anyio
+async def test_get_potential_jobs_does_not_advertise_pipeline_run():
+    """get_potential_jobs must not list pipeline_run_<id> (it is no longer a periodic job);
+    only content_generate_<id> is a togglable potential job."""
+    p1 = FakePipeline(1, 10, is_active=True)
+    mgr = SchedulerManager()
+    mgr._pipeline_bundle = FakePipelineBundle([p1])
+
+    jobs = await mgr.get_potential_jobs()
+    job_ids = [j["job_id"] for j in jobs]
+    assert "content_generate_1" in job_ids
+    assert "pipeline_run_1" not in job_ids
+
+
 
 # --- UnifiedDispatcher pipeline run handling (missing env) ---
 class FakeTasksRepo:

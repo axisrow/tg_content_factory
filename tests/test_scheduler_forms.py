@@ -24,3 +24,17 @@ def test_warm_all_dialogs_is_valid():
 @pytest.mark.parametrize("job_id", ["custom_job", "sq_", "warm", "", "pipeline_run_"])
 def test_invalid_job_ids(job_id):
     assert forms.is_valid_job_id(job_id) is False
+
+
+def test_canonical_job_id_maps_pipeline_run_to_content_generate():
+    # pipeline_run_ is no longer a periodic job (#835/2): toggling/configuring it must act on
+    # the live content_generate_ job, not a dead scheduler_job_disabled:pipeline_run_<id> key.
+    assert forms.canonical_job_id("pipeline_run_7") == "content_generate_7"
+
+
+@pytest.mark.parametrize(
+    "job_id",
+    ["content_generate_7", "collect_all", "sq_3", "warm_all_dialogs"],
+)
+def test_canonical_job_id_passes_through_others(job_id):
+    assert forms.canonical_job_id(job_id) == job_id

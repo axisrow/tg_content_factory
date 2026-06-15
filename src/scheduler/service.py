@@ -409,6 +409,8 @@ class SchedulerManager:
         active_pipelines = [p for p in all_active if p.is_active]
         active_gen_ids = {f"content_generate_{p.id}" for p in active_pipelines if p.id is not None}
 
+        await self._canonicalize_legacy_pipeline_disabled_state(active_pipelines)
+
         existing_jobs = self._scheduler.get_jobs()
         for job in existing_jobs:
             # pipeline_run_ is no longer a periodic job — content_generate_ is the
@@ -438,6 +440,38 @@ class SchedulerManager:
                     args=[p.id],
                 )
         logger.info("Synced %d pipeline jobs", len(active_pipelines))
+
+    async def _canonicalize_legacy_pipeline_disabled_state(self, active_pipelines: list) -> None:
+        """One-time migration of the pre-#835/2 split per-pipeline disabled state.
+
+        Before #835/2 both pipeline_run_<id> and content_generate_<id> were independently
+        registered and toggleable. An operator could disable content_generate_<id> (to stop the
+        duplicate generation) while leaving pipeline_run_<id> enabled — the live job. Now that
+        content_generate_ is the SINGLE periodic job, honoring that stale content_generate_
+        disabled flag would silently leave the pipeline with no periodic job. So for each active
+        pipeline where content_generate_ is disabled but pipeline_run_ is NOT, clear the
+        content_generate_ disabled flag (pipeline_run_ was the operator's live toggle). Guarded by
+        a one-time settings flag so a later deliberate disable is never re-enabled.
+        """
+        if not self._scheduler_bundle:
+            return
+        already = await self._scheduler_bundle.get_setting("scheduler_pipeline_jobs_canonicalized")
+        if already == "1":
+            return
+        for p in active_pipelines:
+            if p.id is None:
+                continue
+            gen_disabled = await self._scheduler_bundle.get_setting(f"scheduler_job_disabled:content_generate_{p.id}")
+            run_disabled = await self._scheduler_bundle.get_setting(f"scheduler_job_disabled:pipeline_run_{p.id}")
+            if gen_disabled == "1" and run_disabled != "1":
+                # pipeline_run_ was the live toggle; content_generate_ is now canonical → enable it.
+                await self._scheduler_bundle.set_setting(f"scheduler_job_disabled:content_generate_{p.id}", "0")
+                logger.info(
+                    "Canonicalized legacy disabled state for pipeline %d: re-enabled content_generate_%d",
+                    p.id,
+                    p.id,
+                )
+        await self._scheduler_bundle.set_setting("scheduler_pipeline_jobs_canonicalized", "1")
 
     async def _run_pipeline_job(self, pipeline_id: int) -> None:
         """Enqueue a pipeline run task for the given pipeline id."""
@@ -518,10 +552,12 @@ class SchedulerManager:
                 all_active = await self._pipeline_bundle.get_all(active_only=True)
                 for p in all_active:
                     if p.id is not None and p.is_active:
-                        jobs.append({
-                            "job_id": f"pipeline_run_{p.id}",
-                            "interval_minutes": p.generate_interval_minutes,
-                        })
+                        # Only content_generate_ is a periodic job now (#835/2). Do NOT advertise
+                        # pipeline_run_ as a togglable potential job: sync_pipeline_jobs always
+                        # removes it, so disabling that UI/CLI row would only write a dead
+                        # scheduler_job_disabled:pipeline_run_<id> key while content_generate_
+                        # keeps generating/auto-publishing — an operator would think they disabled
+                        # generation when it is still running.
                         jobs.append({
                             "job_id": f"content_generate_{p.id}",
                             "interval_minutes": p.generate_interval_minutes,

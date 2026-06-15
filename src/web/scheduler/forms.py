@@ -15,6 +15,19 @@ def is_valid_job_id(job_id: str) -> bool:
     return bool(_VALID_JOB_ID_RE.match(job_id))
 
 
+def canonical_job_id(job_id: str) -> str:
+    """Map a deprecated pipeline_run_<id> job id to its live content_generate_<id> equivalent.
+
+    pipeline_run_ is no longer a periodic scheduler job (#835/2): content_generate_ is the
+    single periodic job per pipeline. Toggling/configuring the stale pipeline_run_ row must
+    act on the real content_generate_ job, not a dead scheduler_job_disabled:pipeline_run_<id>
+    key. Other job ids pass through unchanged.
+    """
+    if job_id.startswith("pipeline_run_"):
+        return "content_generate_" + job_id.removeprefix("pipeline_run_")
+    return job_id
+
+
 def normalize_page(page: int) -> int:
     return max(1, page)
 
