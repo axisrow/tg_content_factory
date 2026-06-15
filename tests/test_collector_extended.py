@@ -48,6 +48,9 @@ def mock_db():
     db.save_channel_stats = AsyncMock()
     db.set_channel_type = AsyncMock()
     db.create_rename_event = AsyncMock()
+    # No persistent dedup store in these unit tests — exercise the in-memory
+    # matching path directly (the dedup ledger has its own dedicated tests).
+    db.repos.notified_messages = None
     return db
 
 

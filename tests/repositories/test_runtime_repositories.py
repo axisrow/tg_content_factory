@@ -35,6 +35,30 @@ async def test_telegram_commands_repository_round_trip(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_notified_messages_filter_and_record(tmp_path):
+    """notified_messages ledger: filter_unnotified + idempotent record (audit #838/1)."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        repo = db.repos.notified_messages
+        assert await repo.filter_unnotified(1, 100, [1, 2, 3]) == {1, 2, 3}
+
+        await repo.record(1, 100, [1, 2])
+        assert await repo.filter_unnotified(1, 100, [1, 2, 3]) == {3}
+
+        # Different query id is an independent ledger.
+        assert await repo.filter_unnotified(2, 100, [1, 2, 3]) == {1, 2, 3}
+
+        # record is idempotent (INSERT OR IGNORE on the composite PK).
+        await repo.record(1, 100, [1, 2])
+        assert await repo.filter_unnotified(1, 100, [1, 2, 3]) == {3}
+
+        assert await repo.filter_unnotified(1, 100, []) == set()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_claim_next_command_rolls_back_on_error(tmp_path):
     """If an exception happens mid-claim, the DB must not stay locked."""
     db = Database(str(tmp_path / "test.db"))
