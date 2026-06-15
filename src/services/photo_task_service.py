@@ -295,10 +295,13 @@ class PhotoTaskService:
 
     async def cancel_item(self, item_id: int) -> bool:
         item = await self._bundle.get_item(item_id)
-        # A SCHEDULED item is already queued server-side on Telegram; cancel it
-        # there too, otherwise the post still goes out at its scheduled time
-        # (audit #835/3). Guard the RPC so the DB cancellation proceeds even if it
-        # fails (e.g. flood/network).
+        # A SCHEDULED item is already queued server-side on Telegram; it MUST be
+        # cancelled there too, otherwise the post still goes out at its scheduled
+        # time (audit #835/3). Server-side unschedule is a PRECONDITION for marking
+        # such an item CANCELLED: if the RPC fails (flood/network/missing client),
+        # do NOT mark it cancelled — that would report success while Telegram still
+        # publishes the post, and lose the telegram_message_ids retry target. Leave
+        # it SCHEDULED with the error recorded so cancellation can be retried.
         if (
             item is not None
             and item.status == PhotoBatchStatus.SCHEDULED
@@ -311,10 +314,15 @@ class PhotoTaskService:
                     target_type=item.target_type,
                     message_ids=item.telegram_message_ids,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
-                    "cancel_item: failed to unschedule item %s on Telegram", item_id, exc_info=True
+                    "cancel_item: failed to unschedule item %s on Telegram; "
+                    "leaving it SCHEDULED so the post can still be cancelled",
+                    item_id,
+                    exc_info=True,
                 )
+                await self._bundle.update_item(item_id, error=f"unschedule failed: {exc}")
+                return False
         cancelled = await self._bundle.cancel_item(item_id)
         if cancelled and item is not None and item.batch_id:
             await self._sync_batch_status(item.batch_id, last_run_at=datetime.now(timezone.utc))

@@ -114,6 +114,37 @@ async def test_cancel_pending_item_does_not_unschedule():
     publish.unschedule.assert_not_awaited()
 
 
+@pytest.mark.anyio
+async def test_cancel_scheduled_item_not_marked_when_unschedule_fails():
+    """Regression (#864 review): if the server-side unschedule fails for a SCHEDULED item
+    with telegram_message_ids, the item must NOT be marked CANCELLED — otherwise the UI
+    reports success while Telegram still publishes the post. cancel_item returns False and
+    records the error; the item stays SCHEDULED so cancellation can be retried."""
+    item = SimpleNamespace(
+        id=5,
+        status=PhotoBatchStatus.SCHEDULED,
+        telegram_message_ids=[101, 102],
+        phone="+7",
+        target_dialog_id=-100,
+        target_type="channel",
+        batch_id=9,
+    )
+    bundle = MagicMock()
+    bundle.get_item = AsyncMock(return_value=item)
+    bundle.cancel_item = AsyncMock(return_value=True)
+    bundle.update_item = AsyncMock()
+    publish = MagicMock()
+    publish.unschedule = AsyncMock(side_effect=RuntimeError("flood wait"))
+
+    svc = PhotoTaskService(bundle, publish)
+    result = await svc.cancel_item(5)
+
+    assert result is False, "cancel must report failure when the server-side unschedule fails"
+    bundle.cancel_item.assert_not_awaited()  # item NOT marked CANCELLED
+    bundle.update_item.assert_awaited_once()  # error recorded
+    assert "unschedule failed" in bundle.update_item.await_args.kwargs["error"]
+
+
 # ── 835#4: per-file progress callback ─────────────────────────────────────────
 
 
