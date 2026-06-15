@@ -56,6 +56,46 @@ async def test_get_messages_collected_since(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_iter_messages_collected_since_pages_entire_window(tmp_path):
+    """iter_messages_collected_since must yield EVERY message in the window across pages,
+    so the dry-run total is uncapped (the live notification path has no LIMIT) — a single
+    capped fetch would undercount when the window exceeds one page (#838/3 review)."""
+    from src.models import Channel, Message
+
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        await db.add_channel(Channel(channel_id=100, title="C"))
+        # 12 messages, distinct dates so the keyset cursor advances deterministically.
+        for i in range(1, 13):
+            await db.insert_message(
+                Message(
+                    channel_id=100,
+                    message_id=i,
+                    text=f"msg {i}",
+                    date=f"2025-01-01T00:00:{i:02d}",
+                )
+            )
+
+        seen: list[int] = []
+        # page_size=5 forces 3 pages (5 + 5 + 2) — exercises the keyset cursor.
+        async for page in db.repos.messages.iter_messages_collected_since(
+            "2000-01-01 00:00:00", page_size=5
+        ):
+            seen.extend(m.message_id for m in page)
+
+        # Every message returned exactly once (no cap, no duplicate across page boundaries).
+        assert sorted(seen) == list(range(1, 13))
+        assert len(seen) == 12
+
+        # Empty window yields nothing.
+        empty = [p async for p in db.repos.messages.iter_messages_collected_since("2999-01-01 00:00:00")]
+        assert empty == []
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_notified_messages_filter_and_record(tmp_path):
     """notified_messages ledger: filter_unnotified + idempotent record (audit #838/1)."""
     db = Database(str(tmp_path / "test.db"))
