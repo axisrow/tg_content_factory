@@ -852,23 +852,26 @@ class TelegramCommandDispatcher:
         channels = await self._db.get_channels(active_only=True)
         updated = 0
         failed = 0
+        deactivated = 0
         for ch in channels:
             identifier = ch.username or str(ch.channel_id)
             try:
-                info = await self._pool.resolve_channel(identifier)
+                info = await self._pool.resolve_channel(identifier, signal_gone=True)
             except Exception:
                 info = None
-            if info is False:
+            # Definitive not-found → deactivate; transient None → skip and leave
+            # active (audit #835/8; old `if info is False` was unreachable).
+            if info and info.get("gone"):
                 await self._db.set_channel_active(ch.id, False)
                 await self._db.set_channel_type(ch.channel_id, "unavailable")
-                failed += 1
+                deactivated += 1
                 continue
             if not info or info.get("channel_type") is None:
                 failed += 1
                 continue
             await self._db.set_channel_type(ch.channel_id, info["channel_type"])
             updated += 1
-        return {"updated": updated, "failed": failed}
+        return {"updated": updated, "failed": failed, "deactivated": deactivated}
 
     async def _handle_channels_refresh_meta(self, payload: dict[str, Any]) -> dict[str, Any]:
         channels = await self._db.get_channels(active_only=True)

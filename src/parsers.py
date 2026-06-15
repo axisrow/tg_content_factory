@@ -3,10 +3,17 @@ from __future__ import annotations
 import re
 from io import BytesIO
 
-# Pattern for a single t.me link — used by normalize_identifier.
-# Captures the username from: https://t.me/user, t.me/user, t.me/+invite, t.me/user/123
+# Pattern for a single public t.me link — used by normalize_identifier.
+# Captures the username from: https://t.me/user, t.me/user, t.me/user/123.
+# NOTE: no `\+?` here — an invite link (t.me/+hash) is NOT a public username and
+# is handled separately by _TME_INVITE_RE below (audit #835/17).
 _TME_LINK_RE = re.compile(
-    r"^(?:https?://)?t\.me/\+?([a-zA-Z][a-zA-Z0-9_]{3,31})(?:/\d+)?$"
+    r"^(?:https?://)?t\.me/([a-zA-Z][a-zA-Z0-9_]{3,31})(?:/\d+)?$"
+)
+
+# Private invite links: t.me/+<hash> and t.me/joinchat/<hash>.
+_TME_INVITE_RE = re.compile(
+    r"^(?:https?://)?t\.me/(?:\+|joinchat/)([a-zA-Z0-9_-]+)$"
 )
 
 # Bare username pattern (without @) — 4-32 chars, starts with letter.
@@ -23,12 +30,18 @@ def normalize_identifier(raw: str) -> tuple[str, str]:
 
     Returns ``(clean_value, kind)`` where *kind* is:
     - ``'username'`` — *clean_value* is the lowercase username without ``@``
+    - ``'invite'`` — *clean_value* is the private invite hash (case-preserved)
     - ``'numeric_id'`` — *clean_value* is the numeric string (may be negative)
     - ``'unknown'`` — couldn't parse; *clean_value* is the stripped original
     """
     raw = raw.strip()
     if not raw:
         return raw, "unknown"
+
+    # Private invite link (t.me/+hash, t.me/joinchat/hash) — NOT a public username.
+    inv = _TME_INVITE_RE.match(raw)
+    if inv:
+        return inv.group(1), "invite"
 
     # t.me link (with or without scheme, with optional post id)
     m = _TME_LINK_RE.match(raw)

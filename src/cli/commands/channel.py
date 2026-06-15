@@ -303,11 +303,13 @@ def run(args: argparse.Namespace) -> None:
                 for ch in channels:
                     identifier = ch.username or str(ch.channel_id)
                     try:
-                        info = await pool.resolve_channel(identifier)
+                        info = await pool.resolve_channel(identifier, signal_gone=True)
                     except Exception as e:
                         logging.warning("Failed to resolve %s: %s", identifier, e)
                         info = None
-                    if info is False:
+                    # Definitive not-found → deactivate; transient None → skip and
+                    # leave active (audit #835/8; old `if info is False` was dead).
+                    if info and info.get("gone"):
                         await db.set_channel_active(ch.id, False)
                         await db.set_channel_type(ch.channel_id, "unavailable")
                         print(
