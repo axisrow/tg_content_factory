@@ -159,6 +159,10 @@ async def toggle_scheduler_job(request: Request, job_id: str) -> SchedulerRedire
     if not forms.is_valid_job_id(job_id):
         return SchedulerRedirect(error="invalid_job")
     db = deps.get_db(request)
+    # pipeline_run_ is no longer a periodic job (#835/2) — content_generate_ is the live one.
+    # Normalize so a stale UI row / external caller toggling pipeline_run_<id> disables the
+    # real content_generate_<id> job, not a dead scheduler_job_disabled:pipeline_run_<id> key.
+    job_id = forms.canonical_job_id(job_id)
     key = f"scheduler_job_disabled:{job_id}"
     current = await db.repos.settings.get_setting(key)
     new_disabled = current != "1"
