@@ -68,6 +68,38 @@ def test_export_rss(cli_env, capsys):
     assert "rss test content" in out
 
 
+def test_export_csv_neutralizes_formula_injection(cli_env, capsys):
+    import csv as _csv
+    import io as _io
+
+    _add_channel(cli_env, channel_id=100)
+    _add_message(cli_env, channel_id=100, message_id=1, text='=HYPERLINK("http://evil","x")')
+
+    from src.cli.commands.export import run
+
+    run(_ns(export_action="csv", limit=10, channel_id=None, output=None))
+    out = capsys.readouterr().out
+
+    rows = list(_csv.reader(_io.StringIO(out)))
+    text_cell = rows[1][4]  # id, channel_id, message_id, date, text, ...
+    assert not text_cell.startswith("=")
+    assert text_cell.startswith("'=")
+
+
+def test_export_rss_strips_xml_illegal_chars(cli_env, capsys):
+    import xml.etree.ElementTree as ET
+
+    _add_channel(cli_env, channel_id=100)
+    _add_message(cli_env, channel_id=100, message_id=1, text="bad\x01char in feed")
+
+    from src.cli.commands.export import run
+
+    run(_ns(export_action="rss", limit=10, channel_id=None, output=None))
+    out = capsys.readouterr().out
+
+    ET.fromstring(out)  # must parse — an unstripped \x01 makes it not well-formed
+
+
 def test_export_empty(cli_env, capsys):
     from src.cli.commands.export import run
 

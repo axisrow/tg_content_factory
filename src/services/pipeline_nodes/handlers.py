@@ -148,10 +148,14 @@ class RetrieveContextHandler(BaseNodeHandler):
         channel_id = source_channel_ids[0] if len(source_channel_ids) == 1 else context.get_global("channel_id")
 
         try:
-            if method == "hybrid" and search_engine.semantic_available:
+            # Gate on an actual semantic index, not merely numpy being importable: hybrid/semantic
+            # retrieval embeds the query via an external provider before checking the index, so a
+            # never-indexed (LLM-only) deployment must fall back to local search instead.
+            semantic_usable = method in ("hybrid", "semantic") and await search_engine.has_semantic_index()
+            if method == "hybrid" and semantic_usable:
                 effective_method = "hybrid"
                 result = await search_engine.search_hybrid(query, channel_id=channel_id, limit=limit)
-            elif method == "semantic" and search_engine.semantic_available:
+            elif method == "semantic" and semantic_usable:
                 effective_method = "semantic"
                 result = await search_engine.search_semantic(query, channel_id=channel_id, limit=limit)
             else:

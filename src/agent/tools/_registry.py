@@ -119,8 +119,28 @@ def get_tool_context(
     )
 
 
+_AFFIRMATIVE_VALUES = {"true", "1", "yes", "y", "on", "да"}
+
+
+def is_affirmative(value: object) -> bool:
+    """True only for an explicit affirmative value.
+
+    A bare truthiness check (``bool("false")``) treats every non-empty string as
+    True, so a model emitting the JSON string ``"false"`` / ``"no"`` / ``"0"`` for
+    a confirm/flag argument would bypass the gate (audit #837/1). Coerce
+    explicitly: real bool as-is, ``1``/``1.0`` numeric, affirmative strings only.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value == 1
+    if isinstance(value, str):
+        return value.strip().lower() in _AFFIRMATIVE_VALUES
+    return False
+
+
 def arg_bool(args: dict[str, Any], name: str, default: bool = False) -> bool:
-    return bool(args.get(name, default))
+    return is_affirmative(args.get(name, default))
 
 
 def arg_str(args: dict[str, Any], name: str, default: str = "", *, required: bool = False) -> str:
@@ -570,7 +590,7 @@ def require_confirmation(action_description: str, args: dict) -> dict | None:
             return gate
         # ... execute dangerous action
     """
-    if args.get("confirm"):
+    if is_affirmative(args.get("confirm")):
         return None
     return _text_response(
         f"⚠️ Эта операция {action_description}. "
