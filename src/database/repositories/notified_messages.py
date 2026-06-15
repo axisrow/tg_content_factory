@@ -38,6 +38,24 @@ class NotifiedMessagesRepository:
         already = {int(row["message_id"]) for row in rows}
         return {mid for mid in message_ids if mid not in already}
 
+    async def has_any(self, channel_ids: list[int]) -> bool:
+        """Return True if the ledger already has at least one row for any of these channels.
+
+        Used to distinguish a populated ledger from a brand-new empty one: on the first pass
+        after the table is created the ledger is empty, so the 24h backlog rescan must NOT be
+        replayed (it would treat every already-delivered historical match as un-notified and
+        re-send it). Once a channel has any ledger row, the rescan is safe — the ledger filters
+        out everything already sent, leaving only genuinely failed/new matches to retry.
+        """
+        if not channel_ids:
+            return False
+        placeholders = ",".join("?" * len(channel_ids))
+        cur = await self._db.execute(
+            f"SELECT 1 FROM notified_messages WHERE channel_id IN ({placeholders}) LIMIT 1",
+            tuple(channel_ids),
+        )
+        return await cur.fetchone() is not None
+
     async def record(self, query_id: int, channel_id: int, message_ids: list[int]) -> None:
         if not message_ids:
             return
