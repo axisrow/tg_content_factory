@@ -5,6 +5,7 @@ import logging
 from collections import deque
 from datetime import date, datetime, timedelta, timezone
 
+from src.database import DatabaseBusyError
 from src.models import (
     CollectionTask,
     CollectionTaskStatus,
@@ -245,9 +246,18 @@ class StatsTaskHandler:
             # TaskGroup so a worker exception cancels its siblings and surfaces as
             # an ExceptionGroup, instead of gather() leaving detached workers
             # running ("Task exception was never retrieved") (audit #836/10).
-            async with asyncio.TaskGroup() as tg:
-                for _ in range(worker_count):
-                    tg.create_task(_worker())
+            try:
+                async with asyncio.TaskGroup() as tg:
+                    for _ in range(worker_count):
+                        tg.create_task(_worker())
+            except* DatabaseBusyError as eg:
+                # A worker can raise DatabaseBusyError from a stats write (it sits outside
+                # the per-channel try/except). gather() re-raised it un-wrapped so the
+                # dispatcher's `except DatabaseBusyError` requeued STATS_ALL; TaskGroup
+                # instead wraps it in an ExceptionGroup that bypasses that handler and marks
+                # the task permanently FAILED on a transient lock. Re-raise a plain
+                # DatabaseBusyError so the requeue path still fires (#868 review).
+                raise DatabaseBusyError(str(eg.exceptions[0])) from eg.exceptions[0]
         finally:
             self._set_stats_all_running(False)
 

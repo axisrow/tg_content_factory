@@ -811,11 +811,14 @@ class ClientPool(ResolveGuardMixin):
             lease = None
             stack = self._active_leases.get(phone)
             if stack:
-                idx = next(
-                    (i for i in range(len(stack) - 1, -1, -1) if stack[i].disconnect_on_release),
-                    len(stack) - 1,
-                )
-                lease = stack.pop(idx)
+                # Strict LIFO: release the most-recently-acquired lease for this phone.
+                # release_client takes only a phone (not a lease handle), so it cannot know
+                # WHICH caller is finishing. Scanning the stack for any disconnect_on_release
+                # lease could pop a native lease still in use by another caller while a live
+                # direct lease sits on top — closing that session mid-operation (#868 review).
+                # The leak this scan targeted (native acquired LAST) is already covered by
+                # LIFO: a native lease acquired last is on top, so pop() tears it down promptly.
+                lease = stack.pop()
                 if not stack:
                     self._active_leases.pop(phone, None)
             should_release = not self._active_leases.get(phone)
