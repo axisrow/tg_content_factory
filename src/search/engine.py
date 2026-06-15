@@ -43,6 +43,22 @@ class SearchEngine:
         """Return True if any semantic backend (vec or numpy) is available."""
         return self._search_bundle.vec_available or self._search_bundle.numpy_available
 
+    async def has_semantic_index(self) -> bool:
+        """Return True only if semantic search is usable AND embeddings have actually been indexed.
+
+        ``semantic_available`` is True whenever numpy/sqlite-vec is importable (numpy is a base
+        dependency), so it cannot distinguish "could do semantic search" from "should do semantic
+        search". Hybrid/semantic retrieval embeds the query via an external embedding provider
+        *before* it ever looks at the index, so gating only on ``semantic_available`` would send
+        every pipeline generation query to an external embedding API on deployments that configured
+        only LLM generation and never opted into semantic indexing. Requiring at least one indexed
+        embedding keeps semantic retrieval working once the user indexes, while never making an
+        external embedding call on a never-indexed deployment.
+        """
+        if not self.semantic_available:
+            return False
+        return await self._search_bundle.messages.count_embeddings() > 0
+
     def invalidate_numpy_index(self) -> None:
         """Invalidate the cached numpy semantic index after new embeddings are indexed."""
         self._local.invalidate_numpy_index()
