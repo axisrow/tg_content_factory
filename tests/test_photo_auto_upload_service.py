@@ -194,6 +194,17 @@ async def test_run_job_sends_files(service, bundle, tmp_path):
     bundle.get_auto_job.return_value = job
     bundle.has_sent_auto_file.return_value = False
 
+    # send_now now records progress per file via the on_file_sent callback
+    # (audit #835/4) — simulate that so the dedup marks are exercised.
+    async def _fake_send_now(**kwargs):
+        cb = kwargs.get("on_file_sent")
+        if cb is not None:
+            for path in kwargs["file_paths"]:
+                await cb(path, [1])
+        return [1] * len(kwargs["file_paths"])
+
+    service._publish.send_now = AsyncMock(side_effect=_fake_send_now)
+
     # Create test images
     (tmp_path / "img1.jpg").write_bytes(b"\xff\xd8\xff")
     (tmp_path / "img2.png").write_bytes(b"\x89PNG")

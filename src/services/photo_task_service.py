@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,8 @@ from src.database.bundles import PhotoLoaderBundle
 from src.models import PhotoBatch, PhotoBatchItem, PhotoBatchStatus, PhotoSendMode
 from src.services.photo_publish_service import PhotoPublishService
 from src.utils.datetime import parse_required_schedule_datetime
+
+logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -291,7 +294,31 @@ class PhotoTaskService:
                 )
 
     async def cancel_item(self, item_id: int) -> bool:
-        return await self._bundle.cancel_item(item_id)
+        item = await self._bundle.get_item(item_id)
+        # A SCHEDULED item is already queued server-side on Telegram; cancel it
+        # there too, otherwise the post still goes out at its scheduled time
+        # (audit #835/3). Guard the RPC so the DB cancellation proceeds even if it
+        # fails (e.g. flood/network).
+        if (
+            item is not None
+            and item.status == PhotoBatchStatus.SCHEDULED
+            and item.telegram_message_ids
+        ):
+            try:
+                await self._publish.unschedule(
+                    phone=item.phone,
+                    target_dialog_id=item.target_dialog_id,
+                    target_type=item.target_type,
+                    message_ids=item.telegram_message_ids,
+                )
+            except Exception:
+                logger.warning(
+                    "cancel_item: failed to unschedule item %s on Telegram", item_id, exc_info=True
+                )
+        cancelled = await self._bundle.cancel_item(item_id)
+        if cancelled and item is not None and item.batch_id:
+            await self._sync_batch_status(item.batch_id, last_run_at=datetime.now(timezone.utc))
+        return cancelled
 
     async def recover_running(self) -> int:
         return await self._bundle.requeue_running_items_on_startup(datetime.now(timezone.utc))
@@ -305,30 +332,40 @@ class PhotoTaskService:
     ) -> None:
         items = await self._bundle.list_items_for_batch(batch_id)
         statuses = {item.status for item in items}
-        if statuses <= {PhotoBatchStatus.COMPLETED}:
-            await self._bundle.update_batch(
-                batch_id,
-                status=PhotoBatchStatus.COMPLETED,
-                last_run_at=last_run_at,
-            )
-            return
-        terminal_pending = {
+        # SCHEDULED is a server-side in-flight state; PENDING/RUNNING are local
+        # in-flight. While any item is in-flight the batch is not terminal.
+        in_flight = {
             PhotoBatchStatus.PENDING,
             PhotoBatchStatus.RUNNING,
+            PhotoBatchStatus.SCHEDULED,
         }
-        if PhotoBatchStatus.FAILED in statuses and statuses.isdisjoint(terminal_pending):
+        if statuses & in_flight:
+            # All-SCHEDULED batches surface as SCHEDULED, otherwise RUNNING.
+            status = (
+                PhotoBatchStatus.SCHEDULED
+                if statuses <= {PhotoBatchStatus.SCHEDULED}
+                else PhotoBatchStatus.RUNNING
+            )
+            await self._bundle.update_batch(batch_id, status=status, last_run_at=last_run_at)
+            return
+        # Every item is terminal (COMPLETED / FAILED / CANCELLED). Recognise
+        # CANCELLED so a COMPLETED+CANCELLED mix doesn't get stuck RUNNING
+        # (audit #837/11).
+        if PhotoBatchStatus.FAILED in statuses:
             await self._bundle.update_batch(
                 batch_id,
                 status=PhotoBatchStatus.FAILED,
                 error=fallback_error,
                 last_run_at=last_run_at,
             )
-            return
-        await self._bundle.update_batch(
-            batch_id,
-            status=PhotoBatchStatus.RUNNING,
-            last_run_at=last_run_at,
-        )
+        elif statuses <= {PhotoBatchStatus.CANCELLED}:
+            await self._bundle.update_batch(
+                batch_id, status=PhotoBatchStatus.CANCELLED, last_run_at=last_run_at
+            )
+        else:
+            await self._bundle.update_batch(
+                batch_id, status=PhotoBatchStatus.COMPLETED, last_run_at=last_run_at
+            )
 
     def load_manifest(self, manifest_path: str) -> list[dict]:
         path = Path(manifest_path)

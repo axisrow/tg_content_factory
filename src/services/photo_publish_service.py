@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 
 from src.models import PhotoSendMode
@@ -26,6 +27,7 @@ class PhotoPublishService:
         send_mode: PhotoSendMode,
         caption: str | None = None,
         schedule_at: datetime | None = None,
+        on_file_sent: Callable[[str, list[int]], Awaitable[None]] | None = None,
     ) -> list[int]:
         result = await self._pool.get_client_by_phone(phone, wait_for_flood=True)
         if result is None:
@@ -56,7 +58,12 @@ class PhotoPublishService:
                     pool=self._pool,
                     logger_=logger,
                 )
-                return [int(msg.id) for msg in sent]
+                album_ids = [int(msg.id) for msg in sent]
+                if on_file_sent is not None:
+                    # Atomic album send — record all files only after it succeeds.
+                    for path in file_paths:
+                        await on_file_sent(path, album_ids)
+                return album_ids
 
             message_ids: list[int] = []
             for path in file_paths:
@@ -72,7 +79,44 @@ class PhotoPublishService:
                     pool=self._pool,
                     logger_=logger,
                 )
-                message_ids.append(int(sent.id))
+                msg_id = int(sent.id)
+                message_ids.append(msg_id)
+                # Record progress per file so a mid-batch failure doesn't cause the
+                # already-sent files to be re-sent next cycle (audit #835/4).
+                if on_file_sent is not None:
+                    await on_file_sent(path, [msg_id])
             return message_ids
+        finally:
+            await self._pool.release_client(acquired_phone)
+
+    async def unschedule(
+        self,
+        *,
+        phone: str,
+        target_dialog_id: int,
+        target_type: str | None = None,
+        message_ids: list[int],
+    ) -> None:
+        """Cancel previously server-scheduled messages on Telegram (audit #835/3)."""
+        if not message_ids:
+            return
+        result = await self._pool.get_client_by_phone(phone, wait_for_flood=True)
+        if result is None:
+            raise RuntimeError("no_client")
+        session, acquired_phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
+        try:
+            entity = target_dialog_id
+            resolver = getattr(self._pool, "resolve_dialog_entity", None)
+            if callable(resolver):
+                resolved = resolver(session, acquired_phone, target_dialog_id, target_type)
+                entity = await resolved if inspect.isawaitable(resolved) else resolved
+            await run_with_flood_wait(
+                session.delete_scheduled_messages(entity, message_ids),
+                operation="photo_unschedule",
+                phone=acquired_phone,
+                pool=self._pool,
+                logger_=logger,
+            )
         finally:
             await self._pool.release_client(acquired_phone)
