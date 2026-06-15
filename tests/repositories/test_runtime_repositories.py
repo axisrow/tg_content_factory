@@ -115,6 +115,45 @@ async def test_notified_messages_filter_and_record(tmp_path):
         assert await repo.filter_unnotified(1, 100, [1, 2, 3]) == {3}
 
         assert await repo.filter_unnotified(1, 100, []) == set()
+
+        # has_any: True only for channels with at least one recorded row (gates the
+        # backlog rescan so an empty ledger never replays history — #850 review).
+        assert await repo.has_any([100]) is True
+        assert await repo.has_any([999]) is False
+        assert await repo.has_any([999, 100]) is True
+        assert await repo.has_any([]) is False
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_update_command_terminal_preserves_prior_result_payload(tmp_path):
+    """A terminal update without a fresh result_payload must keep earlier
+    diagnostics (e.g. flood-wait context) instead of wiping them (audit #835/15)."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        cmd_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(command_type="dialogs.refresh", payload={"phone": "+7"})
+        )
+        diagnostics = {"operation": "resolve", "phone": "+7", "next_available_at_utc": "2026-06-15T10:00:00+00:00"}
+        await db.repos.telegram_commands.update_command(
+            cmd_id,
+            status=TelegramCommandStatus.PENDING,
+            result_payload=diagnostics,
+        )
+
+        # Terminal FAILED with no fresh result_payload — prior must survive.
+        await db.repos.telegram_commands.update_command(
+            cmd_id,
+            status=TelegramCommandStatus.FAILED,
+            error="boom",
+        )
+
+        stored = await db.repos.telegram_commands.get_command(cmd_id)
+        assert stored.status == TelegramCommandStatus.FAILED
+        assert stored.error == "boom"
+        assert stored.result_payload == diagnostics
     finally:
         await db.close()
 

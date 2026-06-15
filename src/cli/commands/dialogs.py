@@ -157,8 +157,12 @@ def run_with_dependencies(
                 type_map = {dialog["channel_id"]: dialog["channel_type"] for dialog in dialogs_info}
                 title_map = {dialog["channel_id"]: dialog["title"] for dialog in dialogs_info}
 
+                # Unknown ids (not in the dialog cache) fall back to "channel" -> PeerChannel,
+                # not a guessed "dm" -> PeerUser. Channel ids here are bare-positive, so guessing
+                # an unknown positive id as "dm" would target the wrong peer (parity with the
+                # agent leave_dialogs tool).
                 dialogs = [
-                    (channel_id, type_map.get(channel_id, "channel" if channel_id < 0 else "dm"))
+                    (channel_id, type_map.get(channel_id, "channel"))
                     for channel_id in dialog_ids
                 ]
 

@@ -1676,7 +1676,21 @@ class Collector:
         if notified_store is not None:
             channel_ids = {m.channel_id for m in messages if m.channel_id is not None}
             get_recent = getattr(getattr(repos, "messages", None), "get_recent_for_channels", None)
-            if channel_ids and callable(get_recent):
+            # Only replay the 24h backlog once the ledger already has rows for these channels.
+            # On the very first pass after the table is created the ledger is empty, and the
+            # backlog would otherwise re-present every already-delivered match as un-notified,
+            # producing a duplicate-notification burst on upgrade (the ledger that is supposed to
+            # prevent duplicates has nothing recorded yet). Empty ledger => fresh-only candidates,
+            # i.e. the pre-#838/1 first-pass behavior; the rescan kicks in once delivery is tracked.
+            ledger_seeded = False
+            has_any = getattr(notified_store, "has_any", None)
+            if channel_ids and callable(has_any):
+                try:
+                    ledger_seeded = await has_any(list(channel_ids))
+                except Exception:
+                    logger.warning("notification ledger has_any check failed", exc_info=True)
+                    ledger_seeded = False
+            if ledger_seeded and channel_ids and callable(get_recent):
                 try:
                     backlog = await get_recent(list(channel_ids), NOTIFICATION_BACKLOG_LOOKBACK_HOURS)
                 except Exception:

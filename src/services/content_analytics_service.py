@@ -88,14 +88,15 @@ class ContentAnalyticsService:
                 OR (updated_at IS NOT NULL AND updated_at >= ? AND updated_at < ?)
             )
         """
-        params: tuple[object, ...] = (
-            start.isoformat(),
-            end.isoformat(),
-            start.isoformat(),
-            end.isoformat(),
-            start.isoformat(),
-            end.isoformat(),
-        )
+        # generation_runs timestamps are written via SQLite datetime('now') —
+        # 'YYYY-MM-DD HH:MM:SS' (space separator, no offset). isoformat() emits a
+        # 'T' separator + '+00:00', and SQLite compares as plain TEXT, so the
+        # earliest day of the window sorts before the lower bound and drops out
+        # (audit #838/2). Bounds are tz-aware UTC and stored values are UTC, so
+        # formatting to the same space-separated shape is correct.
+        start_s = start.strftime("%Y-%m-%d %H:%M:%S")
+        end_s = end.strftime("%Y-%m-%d %H:%M:%S")
+        params: tuple[object, ...] = (start_s, end_s, start_s, end_s, start_s, end_s)
         if pipeline_id is not None:
             sql += " AND pipeline_id = ?"
             params += (pipeline_id,)
