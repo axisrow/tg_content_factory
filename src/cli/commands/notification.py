@@ -107,17 +107,15 @@ def run(args: argparse.Namespace) -> None:
                 if not queries:
                     print("No active notification queries.")
                     return
+                # Match with the SAME engine production uses (regex/substring),
+                # not FTS, so the preview agrees with what would actually fire (#838/3).
+                from src.services.notification_matcher import dry_run_matches
+
+                messages = await db.get_messages_collected_since(since) if since else []
+                channels = await db.get_channels() if messages else []
                 total_matches = 0
                 for sq in queries:
-                    if since:
-                        try:
-                            _, total = await db.search_messages_for_query_since(
-                                sq, since, limit=0
-                            )
-                        except Exception:
-                            total = 0
-                    else:
-                        total = 0
+                    _, total = dry_run_matches(messages, sq, channels)
                     name = sq.name or sq.query
                     print(f"  {name}: {total} matches")
                     total_matches += total
