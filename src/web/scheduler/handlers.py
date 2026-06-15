@@ -301,20 +301,30 @@ async def dry_run_notifications(request: Request) -> SchedulerTemplate:
             {"results": [], "since": since, "no_queries": True},
         )
 
+    # Match with the SAME engine production uses (regex/substring), not FTS, so the preview
+    # agrees with what would actually fire (#838/3). Counts are uncapped via dry_run_counts
+    # (paged over the whole window); a capped fetch backs the 2 example previews only.
+    from src.services.notification_matcher import dry_run_counts, dry_run_matches
+
+    try:
+        counts = await dry_run_counts(db, queries, since)
+    except Exception:
+        logger.exception("Dry-run failed to count matches")
+        counts = {sq.id: 0 for sq in queries}
+    try:
+        preview_messages = await db.repos.messages.get_messages_collected_since(since) if since else []
+    except Exception:
+        logger.exception("Dry-run failed to load recent messages")
+        preview_messages = []
+    channels = await db.get_channels() if preview_messages else []
+
     results = []
     for sq in queries:
-        if since:
-            try:
-                previews, total = await db.search_messages_for_query_since(sq, since, limit=2)
-            except Exception:
-                logger.exception("Dry-run match error for sq_id=%s", sq.id)
-                previews, total = [], 0
-        else:
-            previews, total = [], 0
+        matched, _ = dry_run_matches(preview_messages, sq, channels)
         results.append({
             "query": sq.name or sq.query,
-            "count": total,
-            "previews": [(m.text or "")[:150] for m in previews],
+            "count": counts.get(sq.id, 0),
+            "previews": [(m.text or "")[:150] for m in matched[:2]],
         })
 
     total_matches = sum(r["count"] for r in results)

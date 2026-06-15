@@ -49,6 +49,39 @@ def message_matches_query(sq: SearchQuery, msg: Message, channels: list[Channel]
     return sq.query.lower() in msg.text.lower()
 
 
+def dry_run_matches(
+    messages: list[Message], sq: SearchQuery, channels: list[Channel] | None = None
+) -> tuple[list[Message], int]:
+    """Preview matches for *sq* using the production predicate (not FTS).
+
+    Returns (matched_messages, count) so the dry-run preview agrees with what the
+    live NotificationMatcher would actually fire on (audit #838/3).
+    """
+    matched = [m for m in messages if message_matches_query(sq, m, channels)]
+    return matched, len(matched)
+
+
+async def dry_run_counts(db, queries: list[SearchQuery], since: str | None) -> dict[int | None, int]:
+    """Exact dry-run match counts per query over the whole window collected since *since*.
+
+    Single shared engine for the CLI, web and agent dry-run surfaces (CLI/Web/agent parity):
+    pages through ALL messages in the window via iter_messages_collected_since and counts via
+    the production predicate, so the preview is uncapped and uses the same regex/substring
+    semantics the live NotificationMatcher would (#838/3 + its 5000-cap review). Returns
+    {sq.id: total}; an empty/absent window yields 0 for every query.
+    """
+    totals: dict[int | None, int] = {sq.id: 0 for sq in queries}
+    if not since or not queries:
+        return totals
+    channels = await db.get_channels()
+    async for page in db.repos.messages.iter_messages_collected_since(since):
+        for sq in queries:
+            for m in page:
+                if message_matches_query(sq, m, channels):
+                    totals[sq.id] += 1
+    return totals
+
+
 @dataclass
 class _QueryMatch:
     name: str
