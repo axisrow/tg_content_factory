@@ -190,27 +190,38 @@ async def _run_handler(ctx, translate_results):
         await TranslationTaskHandler(ctx).handle_translate_batch(task)
 
 
-@pytest.mark.anyio
-async def test_handler_cursor_advances_to_translated_prefix():
+def _tmsg(mid, detected_lang="ru", text="x"):
+    """A message that NEEDS translation (foreign source, has text) unless overridden."""
     from types import SimpleNamespace
 
-    msgs = [SimpleNamespace(id=10), SimpleNamespace(id=11), SimpleNamespace(id=12)]
-    ctx, _ = _translate_ctx(msgs, [SimpleNamespace(id=20)])
-    # Only the first two ids translated; id=12 fails -> prefix stops at 11.
+    return SimpleNamespace(id=mid, detected_lang=detected_lang, text=text)
+
+
+@pytest.mark.anyio
+async def test_handler_cursor_advances_past_translated_then_stops_at_genuine_failure():
+    # All three need translation; provider returns only 10,11; id=12 is a GENUINE failure.
+    msgs = [_tmsg(10), _tmsg(11), _tmsg(12)]
+    ctx, _ = _translate_ctx(msgs, [_tmsg(20)])
     await _run_handler(ctx, [(10, "x"), (11, "y")])
 
+    # Cursor steps one past the failed head (12) so the tail is never starved; a follow-up
+    # is enqueued from 12 (the failed row stays untranslated, re-selectable on a full re-run).
     ctx.tasks.create_generic_task.assert_awaited_once()
     follow_up = ctx.tasks.create_generic_task.await_args.kwargs["payload"]
-    assert follow_up.last_processed_id == 11  # not 12 (the untranslated one)
+    assert follow_up.last_processed_id == 12
 
 
 @pytest.mark.anyio
-async def test_handler_stops_chain_when_no_progress():
-    from types import SimpleNamespace
+async def test_handler_no_work_head_does_not_starve_tail():
+    # Regression (#866 review): a source==target head row (detected_lang == target 'en')
+    # is excluded by translate_batch — it must NOT stall the chain. The cursor advances past
+    # it and the genuinely-foreign tail rows still get translated.
+    msgs = [_tmsg(10, detected_lang="en"), _tmsg(11, detected_lang="ru"), _tmsg(12, detected_lang="ru")]
+    ctx, _ = _translate_ctx(msgs, [_tmsg(20)])
+    # translate_batch returns the two foreign rows (it filters out the en head).
+    await _run_handler(ctx, [(11, "y"), (12, "z")])
 
-    msgs = [SimpleNamespace(id=10), SimpleNamespace(id=11)]
-    ctx, _ = _translate_ctx(msgs, [SimpleNamespace(id=20)])
-    # Head (id=10) untranslatable -> zero progress -> no follow-up enqueued.
-    await _run_handler(ctx, [])
-
-    ctx.tasks.create_generic_task.assert_not_awaited()
+    # Chain continues (not stalled at the en head), cursor at 12, follow-up enqueued.
+    ctx.tasks.create_generic_task.assert_awaited_once()
+    follow_up = ctx.tasks.create_generic_task.await_args.kwargs["payload"]
+    assert follow_up.last_processed_id == 12

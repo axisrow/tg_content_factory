@@ -80,15 +80,38 @@ class TranslationTaskHandler:
             for msg_id, translated in results:
                 await ctx.db.repos.messages.update_translation(msg_id, target_lang, translated)
 
-            # Advance the cursor only past a contiguous prefix of successfully
-            # translated messages. The old max(all selected) skipped any message
-            # the LLM failed to translate, losing it forever (audit #835/12).
+            # Advance the cursor past a contiguous prefix of messages that are either
+            # successfully translated OR legitimately need no work this pass. The old
+            # max(all selected) skipped genuinely-failed rows, losing them forever
+            # (audit #835/12). But advancing ONLY over translated rows stalls the whole
+            # chain when a no-work row (source==target, which translate_batch excludes
+            # by design, or empty text) sits at the head — every later row is then
+            # starved (#866 review). Treat no-work rows as skippable so the cursor moves
+            # past them; only a row that SHOULD translate but got no result is a genuine
+            # non-progress stall, and even then we step one id past it so the tail is not
+            # starved (the failed row stays translation NULL and is re-selected on a full
+            # re-run / explicit retry, not silently dropped).
             written_ids = {msg_id for msg_id, _ in results}
+            # Mirror translate_batch's eligibility predicate: a row needs translation only
+            # if it has a detected source language different from the target and has text.
+            def _needs_translation(m) -> bool:
+                detected = getattr(m, "detected_lang", None)
+                return bool(detected and detected != target_lang and getattr(m, "text", None))
+
+            no_work_ids = {m.id for m in msgs if not _needs_translation(m)}
+            skippable = written_ids | no_work_ids
+            ordered = sorted(msgs, key=lambda x: x.id or 0)
             new_last_id = last_id
-            for m in sorted(msgs, key=lambda x: x.id or 0):
-                if m.id in written_ids:
+            for m in ordered:
+                if m.id is None:
+                    continue
+                if m.id in skippable:
                     new_last_id = m.id
                 else:
+                    # Genuine failure: an eligible row the provider returned no result for.
+                    # Step the cursor one past it so later rows are not starved; the row
+                    # itself stays untranslated and re-selectable on a later full pass.
+                    new_last_id = m.id
                     break
             made_progress = new_last_id > last_id
 
