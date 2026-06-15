@@ -407,16 +407,18 @@ class SchedulerManager:
 
         all_active = await self._pipeline_bundle.get_all(active_only=True)
         active_pipelines = [p for p in all_active if p.is_active]
-        active_ids = {f"pipeline_run_{p.id}" for p in active_pipelines if p.id is not None}
         active_gen_ids = {f"content_generate_{p.id}" for p in active_pipelines if p.id is not None}
 
         existing_jobs = self._scheduler.get_jobs()
         for job in existing_jobs:
-            if job.id.startswith("pipeline_run_") and (
-                job.id not in active_ids or not await self.is_job_enabled(job.id)
-            ):
+            # pipeline_run_ is no longer a periodic job — content_generate_ is the
+            # single periodic job per pipeline (it handles effective_publish_mode +
+            # AUTO publish). Registering both fired generation twice per interval
+            # (audit #835/2). Drop any leftover periodic pipeline_run_ jobs;
+            # PIPELINE_RUN stays for explicit one-off / dry-run triggers only.
+            if job.id.startswith("pipeline_run_"):
                 self._scheduler.remove_job(job.id)
-                logger.info("Removed pipeline job %s", job.id)
+                logger.info("Removed deprecated periodic pipeline job %s", job.id)
             if job.id.startswith("content_generate_") and (
                 job.id not in active_gen_ids or not await self.is_job_enabled(job.id)
             ):
@@ -426,15 +428,6 @@ class SchedulerManager:
         for p in active_pipelines:
             if p.id is None:
                 continue
-            job_id = f"pipeline_run_{p.id}"
-            if await self.is_job_enabled(job_id):
-                self._scheduler.add_job(
-                    self._run_pipeline_job,
-                    IntervalTrigger(minutes=p.generate_interval_minutes),
-                    id=job_id,
-                    replace_existing=True,
-                    args=[p.id],
-                )
             gen_job_id = f"content_generate_{p.id}"
             if await self.is_job_enabled(gen_job_id):
                 self._scheduler.add_job(

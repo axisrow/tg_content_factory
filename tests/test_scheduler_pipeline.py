@@ -50,13 +50,16 @@ class FakeScheduler:
 
 
 @pytest.mark.anyio
-async def test_sync_pipeline_jobs_adds_and_removes():
+async def test_sync_pipeline_jobs_registers_only_content_generate():
+    """Exactly one periodic job per pipeline (content_generate_). Registering
+    pipeline_run_ too generated content twice per interval (audit #835/2), and any
+    leftover periodic pipeline_run_ job must be cleaned up."""
     p1 = FakePipeline(1, 10, is_active=True)
     p2 = FakePipeline(2, 20, is_active=True)
     bundle = FakePipelineBundle([p1, p2])
     mgr = SchedulerManager()
     mgr._pipeline_bundle = bundle
-    # existing job for a deleted pipeline
+    # leftover periodic pipeline_run_ job from before the fix
     fake_existing_job = FakeJob("pipeline_run_3")
     scheduler = FakeScheduler(existing_jobs=[fake_existing_job])
     mgr._scheduler = scheduler
@@ -64,8 +67,8 @@ async def test_sync_pipeline_jobs_adds_and_removes():
     await mgr.sync_pipeline_jobs()
 
     ids = [a["id"] for a in scheduler.added]
-    assert "pipeline_run_1" in ids
-    assert "pipeline_run_2" in ids
+    assert ids == ["content_generate_1", "content_generate_2"]
+    assert not any(i.startswith("pipeline_run_") for i in ids)
     assert "pipeline_run_3" in scheduler.removed
 
 

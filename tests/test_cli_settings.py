@@ -29,27 +29,27 @@ class TestAgent:
         run(_ns(settings_action="agent"))
         out = capsys.readouterr().out
         assert "agent_backend" in out
-        assert "agent_default_prompt_template" in out
+        assert "agent_prompt_template" in out
         assert "(not set)" in out
 
     def test_agent_set_backend(self, cli_env, capsys):
         from src.cli.commands.settings import run
         run(_ns(settings_action="agent", backend="claude-agent-sdk"))
         out = capsys.readouterr().out
-        assert "agent_backend = claude-agent-sdk" in out
+        assert "agent_backend_override = claude-agent-sdk" in out
 
     def test_agent_set_prompt_template(self, cli_env, capsys):
         from src.cli.commands.settings import run
         run(_ns(settings_action="agent", prompt_template="You are a helpful assistant."))
         out = capsys.readouterr().out
-        assert "agent_default_prompt_template" in out
+        assert "agent_prompt_template" in out
 
     def test_agent_set_both(self, cli_env, capsys):
         from src.cli.commands.settings import run
         run(_ns(settings_action="agent", backend="deepagents", prompt_template="Be concise."))
         out = capsys.readouterr().out
-        assert "agent_backend = deepagents" in out
-        assert "agent_default_prompt_template" in out
+        assert "agent_backend_override = deepagents" in out
+        assert "agent_prompt_template" in out
 
     def test_agent_show_after_set(self, cli_env, capsys):
         from src.cli.commands.settings import run
@@ -150,27 +150,27 @@ class TestSemantic:
         from src.cli.commands.settings import run
         run(_ns(settings_action="semantic"))
         out = capsys.readouterr().out
-        assert "semantic_provider" in out
-        assert "semantic_model" in out
-        assert "semantic_api_key" in out
+        assert "semantic_embeddings_provider" in out
+        assert "semantic_embeddings_model" in out
+        assert "semantic_embeddings_api_key" in out
 
     def test_semantic_set_provider(self, cli_env, capsys):
         from src.cli.commands.settings import run
         run(_ns(settings_action="semantic", provider="openai"))
         out = capsys.readouterr().out
-        assert "semantic_provider = openai" in out
+        assert "semantic_embeddings_provider = openai" in out
 
     def test_semantic_set_model(self, cli_env, capsys):
         from src.cli.commands.settings import run
         run(_ns(settings_action="semantic", model="text-embedding-3-small"))
         out = capsys.readouterr().out
-        assert "semantic_model = text-embedding-3-small" in out
+        assert "semantic_embeddings_model = text-embedding-3-small" in out
 
     def test_semantic_set_api_key_short(self, cli_env, capsys):
         from src.cli.commands.settings import run
         run(_ns(settings_action="semantic", api_key="short"))
         out = capsys.readouterr().out
-        assert "semantic_api_key = short" in out
+        assert "semantic_embeddings_api_key = short" in out
 
     def test_semantic_set_api_key_long_truncates(self, cli_env, capsys):
         from src.cli.commands.settings import run
@@ -183,8 +183,8 @@ class TestSemantic:
         from src.cli.commands.settings import run
         run(_ns(settings_action="semantic", provider="ollama", model="nomic-embed"))
         out = capsys.readouterr().out
-        assert "semantic_provider = ollama" in out
-        assert "semantic_model = nomic-embed" in out
+        assert "semantic_embeddings_provider = ollama" in out
+        assert "semantic_embeddings_model = nomic-embed" in out
 
     def test_semantic_show_after_set(self, cli_env, capsys):
         from src.cli.commands.settings import run

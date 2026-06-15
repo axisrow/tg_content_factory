@@ -7,7 +7,7 @@ import re
 VALID_STATUS_FILTERS = {"all", "active", "completed"}
 
 _VALID_JOB_ID_RE = re.compile(
-    r"^(collect_all|photo_due|photo_auto|sq_\d+|pipeline_run_\d+|content_generate_\d+)$"
+    r"^(collect_all|photo_due|photo_auto|warm_all_dialogs|sq_\d+|pipeline_run_\d+|content_generate_\d+)$"
 )
 
 

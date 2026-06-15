@@ -98,12 +98,33 @@ def run(args: argparse.Namespace) -> None:
             elif args.scheduler_action == "set-interval":
                 job_id = args.job_id
                 minutes = max(1, min(args.minutes, 1440))
+                # Mirror the web set_job_interval handler — sq_/pipeline intervals
+                # live on their own records, not in a settings key nobody reads
+                # (the old scheduler_job_{id}_interval write was a silent no-op,
+                # audit #835/9).
                 if job_id == "collect_all":
                     await db.repos.settings.set_setting("collect_interval_minutes", str(minutes))
-                else:
-                    await db.repos.settings.set_setting(
-                        f"scheduler_job_{job_id}_interval", str(minutes)
+                elif job_id == "warm_all_dialogs":
+                    await db.repos.settings.set_setting("warm_dialogs_interval_minutes", str(minutes))
+                elif job_id.startswith("sq_"):
+                    sq_id = int(job_id.removeprefix("sq_"))
+                    sq = await db.repos.search_queries.get_by_id(sq_id)
+                    if not sq:
+                        print(f"Search query {sq_id} not found.")
+                        return
+                    await db.repos.search_queries.update(
+                        sq_id, sq.model_copy(update={"interval_minutes": minutes})
                     )
+                elif job_id.startswith(("pipeline_run_", "content_generate_")):
+                    pid = int(job_id.removeprefix("pipeline_run_").removeprefix("content_generate_"))
+                    pipeline = await db.repos.content_pipelines.get_by_id(pid)
+                    if not pipeline:
+                        print(f"Pipeline {pid} not found.")
+                        return
+                    await db.repos.content_pipelines.update_generate_interval(pid, minutes)
+                else:
+                    print(f"Unknown job_id '{job_id}'.")
+                    return
                 print(f"Interval for '{job_id}' set to {minutes} min.")
 
             elif args.scheduler_action == "task-cancel":
@@ -119,6 +140,13 @@ def run(args: argparse.Namespace) -> None:
 
             elif args.scheduler_action == "queue-pause":
                 await db.set_setting("collection_queue_paused", "1")
+                # Setting alone is read only at worker startup; signal a running
+                # worker too so the pause actually takes effect now (audit #835/5).
+                from src.services.telegram_command_service import TelegramCommandService
+
+                await TelegramCommandService(db).enqueue(
+                    "collection.pause", payload={}, requested_by="cli:scheduler.queue-pause"
+                )
                 print(
                     "Collection queue paused. The running worker stops pulling new tasks; "
                     "queued tasks remain pending."
@@ -126,6 +154,11 @@ def run(args: argparse.Namespace) -> None:
 
             elif args.scheduler_action == "queue-resume":
                 await db.set_setting("collection_queue_paused", "0")
+                from src.services.telegram_command_service import TelegramCommandService
+
+                await TelegramCommandService(db).enqueue(
+                    "collection.resume", payload={}, requested_by="cli:scheduler.queue-resume"
+                )
                 print("Collection queue resumed.")
         finally:
             if pool is not None:

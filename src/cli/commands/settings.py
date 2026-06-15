@@ -48,20 +48,26 @@ def run(args: argparse.Namespace) -> None:
                 print(f"  Читаемо: {now.strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
             elif action == "agent":
+                # Write the keys the runtime/web actually read — the old
+                # agent_backend / agent_default_prompt_template keys were dead
+                # (nothing read them), so CLI config had zero effect (audit #838/7).
+                from src.agent.prompt_template import AGENT_PROMPT_TEMPLATE_SETTING
+
+                agent_backend_setting = "agent_backend_override"
                 updated = []
                 backend = getattr(args, "backend", None)
                 prompt_template = getattr(args, "prompt_template", None)
                 if backend:
-                    await db.set_setting("agent_backend", backend)
-                    updated.append(f"agent_backend = {backend}")
+                    await db.set_setting(agent_backend_setting, backend)
+                    updated.append(f"{agent_backend_setting} = {backend}")
                 if prompt_template:
-                    await db.set_setting("agent_default_prompt_template", prompt_template)
-                    updated.append(f"agent_default_prompt_template = {prompt_template[:60]}...")
+                    await db.set_setting(AGENT_PROMPT_TEMPLATE_SETTING, prompt_template)
+                    updated.append(f"{AGENT_PROMPT_TEMPLATE_SETTING} = {prompt_template[:60]}...")
                 if updated:
                     for u in updated:
                         print(f"Set {u}")
                 else:
-                    for key in ("agent_backend", "agent_default_prompt_template"):
+                    for key in (agent_backend_setting, AGENT_PROMPT_TEMPLATE_SETTING):
                         val = await db.get_setting(key)
                         print(f"  {key} = {val or '(not set)'}")
 
@@ -108,12 +114,21 @@ def run(args: argparse.Namespace) -> None:
                     print(f"  {REACTION_MIN_INTERVAL_SETTING} = {val or '(not set)'}")
 
             elif action == "semantic":
+                # Write the embeddings keys the runtime reads — the old
+                # semantic_provider/_model/_api_key keys were dead (audit #838/7).
+                from src.services.embedding_service import (
+                    EMBEDDINGS_API_KEY_SETTING,
+                    EMBEDDINGS_MODEL_SETTING,
+                    EMBEDDINGS_PROVIDER_SETTING,
+                )
+
+                semantic_keys = [
+                    ("provider", EMBEDDINGS_PROVIDER_SETTING),
+                    ("model", EMBEDDINGS_MODEL_SETTING),
+                    ("api_key", EMBEDDINGS_API_KEY_SETTING),
+                ]
                 updated = []
-                for attr, setting_key in [
-                    ("provider", "semantic_provider"),
-                    ("model", "semantic_model"),
-                    ("api_key", "semantic_api_key"),
-                ]:
+                for attr, setting_key in semantic_keys:
                     val = getattr(args, attr, None)
                     if val is not None:
                         await db.set_setting(setting_key, val)
@@ -123,9 +138,9 @@ def run(args: argparse.Namespace) -> None:
                     for u in updated:
                         print(f"Set {u}")
                 else:
-                    for setting_key in ("semantic_provider", "semantic_model", "semantic_api_key"):
+                    for _attr, setting_key in semantic_keys:
                         val = await db.get_setting(setting_key)
-                        if setting_key == "semantic_api_key" and val:
+                        if setting_key == EMBEDDINGS_API_KEY_SETTING and val:
                             val = val[:8] + "..."
                         print(f"  {setting_key} = {val or '(not set)'}")
         finally:
