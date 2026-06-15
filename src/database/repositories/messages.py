@@ -1668,6 +1668,26 @@ class MessagesRepository:
         )
         return [dict(r) for r in await cur.fetchall()]
 
+    async def get_messages_collected_since(self, since: str, limit: int = 5000) -> list[Message]:
+        """Return non-empty messages collected at/after *since* (across all channels).
+
+        Used by the notification dry-run preview, which then matches them with the
+        SAME predicate as production (NotificationMatcher) instead of FTS, so the
+        preview no longer diverges for regex/partial-substring queries (#838/3).
+        """
+        cur = await self._db.execute(
+            f"""SELECT m.*, c.title AS channel_title, c.username AS channel_username
+                FROM messages m{self._CHANNEL_JOIN}
+                WHERE {self._BASE_FILTER}
+                  AND m.collected_at >= ?
+                  AND m.text IS NOT NULL AND m.text != ''
+                ORDER BY m.date DESC
+                LIMIT ?""",
+            (since, limit),
+        )
+        rows = await cur.fetchall()
+        return self._rows_to_messages(rows)
+
     async def get_recent_for_channels(
         self, channel_ids: list[int], since_hours: float
     ) -> list[Message]:

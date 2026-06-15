@@ -301,20 +301,24 @@ async def dry_run_notifications(request: Request) -> SchedulerTemplate:
             {"results": [], "since": since, "no_queries": True},
         )
 
+    # Match with the SAME engine production uses (regex/substring), not FTS, so
+    # the preview agrees with what would actually fire (#838/3).
+    from src.services.notification_matcher import dry_run_matches
+
+    try:
+        messages = await db.get_messages_collected_since(since) if since else []
+    except Exception:
+        logger.exception("Dry-run failed to load recent messages")
+        messages = []
+    channels = await db.get_channels() if messages else []
+
     results = []
     for sq in queries:
-        if since:
-            try:
-                previews, total = await db.search_messages_for_query_since(sq, since, limit=2)
-            except Exception:
-                logger.exception("Dry-run match error for sq_id=%s", sq.id)
-                previews, total = [], 0
-        else:
-            previews, total = [], 0
+        matched, total = dry_run_matches(messages, sq, channels)
         results.append({
             "query": sq.name or sq.query,
             "count": total,
-            "previews": [(m.text or "")[:150] for m in previews],
+            "previews": [(m.text or "")[:150] for m in matched[:2]],
         })
 
     total_matches = sum(r["count"] for r in results)

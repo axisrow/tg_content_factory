@@ -437,3 +437,33 @@ async def test_notification_uses_query_name_not_raw_query():
     sent_text = notifier.notify.await_args.args[0]
     assert "Лиды на продажу" in sent_text
     assert "прода(ю|жа)" not in sent_text
+
+
+# === audit #838/3: dry-run uses production predicate, not FTS ===
+
+
+def test_dry_run_matches_regex_query():
+    from src.services.notification_matcher import dry_run_matches
+
+    msgs = [
+        make_message("продаю квартиру срочно", message_id=1),
+        make_message("просто текст", message_id=2),
+    ]
+    regex_q = SearchQuery(id=1, query="прода(ю|жа)", is_regex=True)
+    matched, total = dry_run_matches(msgs, regex_q)
+    assert total == 1
+    assert matched[0].message_id == 1
+
+
+def test_dry_run_matches_partial_substring():
+    from src.services.notification_matcher import dry_run_matches
+
+    msgs = [
+        make_message("теплоход отправляется", message_id=1),
+        make_message("самолёт", message_id=2),
+    ]
+    # "теплох" is a partial substring (not a whole FTS token) — must still match.
+    partial_q = SearchQuery(id=2, query="теплох")
+    matched, total = dry_run_matches(msgs, partial_q)
+    assert total == 1
+    assert matched[0].message_id == 1

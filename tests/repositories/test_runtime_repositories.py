@@ -35,6 +35,27 @@ async def test_telegram_commands_repository_round_trip(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_get_messages_collected_since(tmp_path):
+    """Notification dry-run scans messages collected since a timestamp (audit #838/3)."""
+    from src.models import Channel, Message
+
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        await db.add_channel(Channel(channel_id=100, title="C"))
+        await db.insert_message(
+            Message(channel_id=100, message_id=1, text="продаю", date="2025-01-01T00:00:00")
+        )
+
+        recent = await db.get_messages_collected_since("2000-01-01 00:00:00")
+        assert [m.message_id for m in recent] == [1]
+
+        assert await db.get_messages_collected_since("2999-01-01 00:00:00") == []
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_notified_messages_filter_and_record(tmp_path):
     """notified_messages ledger: filter_unnotified + idempotent record (audit #838/1)."""
     db = Database(str(tmp_path / "test.db"))

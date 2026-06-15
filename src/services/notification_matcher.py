@@ -49,6 +49,18 @@ def message_matches_query(sq: SearchQuery, msg: Message, channels: list[Channel]
     return sq.query.lower() in msg.text.lower()
 
 
+def dry_run_matches(
+    messages: list[Message], sq: SearchQuery, channels: list[Channel] | None = None
+) -> tuple[list[Message], int]:
+    """Preview matches for *sq* using the production predicate (not FTS).
+
+    Returns (matched_messages, count) so the dry-run preview agrees with what the
+    live NotificationMatcher would actually fire on (audit #838/3).
+    """
+    matched = [m for m in messages if message_matches_query(sq, m, channels)]
+    return matched, len(matched)
+
+
 @dataclass
 class _QueryMatch:
     name: str
