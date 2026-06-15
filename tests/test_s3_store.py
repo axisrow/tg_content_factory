@@ -45,12 +45,15 @@ async def test_upload_file_success():
     mock_s3 = MagicMock()
     mock_client = MagicMock()
     mock_s3.client.return_value = mock_client
+    mock_client.generate_presigned_url.return_value = "https://s3.test/bucket/test_image.png?sig=abc"
 
     with patch.dict("sys.modules", {"boto3": mock_s3, "botocore": MagicMock(), "botocore.config": MagicMock()}):
         store = S3Store("https://s3.test", "bucket", "ak", "sk")
         url = await store.upload_file("/tmp/test_image.png")
-        assert url == "https://s3.test/bucket/test_image.png"
+        # Returns a presigned GET URL so a private object stays readable (audit #836/3).
+        assert url == "https://s3.test/bucket/test_image.png?sig=abc"
         mock_client.upload_file.assert_called_once()
+        mock_client.generate_presigned_url.assert_called_once()
 
 
 @pytest.mark.anyio

@@ -3,8 +3,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import urllib.request
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
+
+# Presigned GET URL lifetime. Must outlive the moderation/publish delay; 7 days
+# is the SigV4 maximum.
+PRESIGNED_TTL_SEC = 7 * 24 * 3600
 
 
 class S3Store:
@@ -20,24 +26,41 @@ class S3Store:
         self._access_key = access_key
         self._secret_key = secret_key
 
-    async def upload_file(self, local_path: str) -> str | None:
-        """Upload *local_path* to S3 and return the object URL, or None on failure."""
-        try:
-            import boto3
-            from botocore.config import Config
+    def owns_url(self, url: str) -> bool:
+        """True if *url* already points at this S3 endpoint (avoid re-mirroring)."""
+        return bool(url) and url.startswith(self._endpoint)
 
+    def _client(self):
+        import boto3
+        from botocore.config import Config
+
+        return boto3.client(
+            "s3",
+            endpoint_url=self._endpoint,
+            aws_access_key_id=self._access_key,
+            aws_secret_access_key=self._secret_key,
+            config=Config(signature_version="s3v4"),
+        )
+
+    def _presigned_get(self, s3, key: str) -> str:
+        # Presigned URL so a private (default-ACL) object is still readable by the
+        # moderation UI and Telegram, instead of a bare object URL that 403s
+        # (audit #836/3).
+        return s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self._bucket, "Key": key},
+            ExpiresIn=PRESIGNED_TTL_SEC,
+        )
+
+    async def upload_file(self, local_path: str) -> str | None:
+        """Upload *local_path* to S3 and return a presigned GET URL, or None."""
+        try:
             key = os.path.basename(local_path)
 
             def _upload() -> str:
-                s3 = boto3.client(
-                    "s3",
-                    endpoint_url=self._endpoint,
-                    aws_access_key_id=self._access_key,
-                    aws_secret_access_key=self._secret_key,
-                    config=Config(signature_version="s3v4"),
-                )
+                s3 = self._client()
                 s3.upload_file(local_path, self._bucket, key)
-                return f"{self._endpoint}/{self._bucket}/{key}"
+                return self._presigned_get(s3, key)
 
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, _upload)
@@ -46,6 +69,33 @@ class S3Store:
             return None
         except Exception as exc:
             logger.warning("S3 upload failed for %s: %s", local_path, exc)
+            return None
+
+    async def upload_url(self, url: str, key: str | None = None) -> str | None:
+        """Mirror a remote image URL into S3 and return a durable presigned URL.
+
+        Used for provider results that are ephemeral host URLs (e.g. Replicate,
+        which expire ~24h) so a saved run does not 404 later (audit #836/4).
+        """
+        if not url or urlsplit(url).scheme not in ("http", "https"):
+            return None
+        try:
+            object_key = key or os.path.basename(urlsplit(url).path) or "image"
+
+            def _upload() -> str:
+                with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310 - provider URL
+                    data = resp.read()
+                s3 = self._client()
+                s3.put_object(Bucket=self._bucket, Key=object_key, Body=data)
+                return self._presigned_get(s3, object_key)
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, _upload)
+        except ImportError:
+            logger.warning("boto3 not installed; S3 mirror skipped for %s", url)
+            return None
+        except Exception as exc:
+            logger.warning("S3 mirror failed for %s: %s", url, exc)
             return None
 
     @classmethod
