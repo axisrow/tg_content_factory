@@ -108,9 +108,12 @@ def register_send_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
             if not phone or not target or not files or not schedule_at_str:
                 return _text_response("Ошибка: phone, target, file_paths и schedule_at обязательны.")
             schedule_at = parse_required_schedule_datetime(schedule_at_str)
+            # Resolve 'me'/dialog-name targets like send_photos_now does — a raw
+            # int(target) crashes on the documented 'me' literal (audit #838/10).
+            target_id = await resolve_photo_target_id(client_pool, phone, target)
             result = await svc.schedule_send(
                 phone=phone,
-                target=photo_task_module.PhotoTarget(dialog_id=int(target)),
+                target=photo_task_module.PhotoTarget(dialog_id=target_id),
                 file_paths=files,
                 mode=mode,
                 schedule_at=schedule_at,

@@ -205,6 +205,39 @@ class TestDialogsToolLeaveDialogs:
         )
         assert "Подтвердите" in _text(result)
 
+    @pytest.mark.anyio
+    async def test_resolves_channel_type_per_dialog(self, mock_db):
+        """leave_dialogs must resolve each dialog's channel_type (audit #837/7) so
+        DMs/bots/legacy-groups route to the right Peer instead of PeerChannel."""
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        mock_db.get_setting = AsyncMock(return_value=None)
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(
+            return_value=[
+                {"channel_id": 777, "channel_type": "bot", "title": "B"},
+                {"channel_id": -100123, "channel_type": "channel", "title": "C"},
+            ]
+        )
+        action = MagicMock()
+        action.leave_dialogs = AsyncMock(
+            return_value=SimpleNamespace(success_count=2, results={777: True, -100123: True})
+        )
+        with (
+            patch("src.services.channel_service.ChannelService", return_value=ch_svc),
+            patch("src.agent.tools.dialogs.TelegramActionService", return_value=action),
+        ):
+            handlers = _get_tool_handlers(mock_db, client_pool=MagicMock())
+            await handlers["leave_dialogs"](
+                {"phone": "+79001234567", "dialog_ids": "777,-100123,999", "confirm": True}
+            )
+        passed = dict(action.leave_dialogs.await_args.kwargs["dialogs"])
+        assert passed[777] == "bot"
+        assert passed[-100123] == "channel"
+        # id absent from the dialog listing falls back by sign (positive -> dm)
+        assert passed[999] == "dm"
+
 
 JOIN_TOOL_NAMES = ("join_channel", "join_chat", "subscribe_channel")
 

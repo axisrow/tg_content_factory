@@ -227,6 +227,34 @@ class TestSchedulePhotos:
         text = _text(result)
         assert "запланированы" in text
 
+    @pytest.mark.anyio
+    async def test_me_target_is_resolved_not_int_cast(self, mock_db):
+        """target='me' must be resolved like send_photos_now, not int('me') which
+        crashes with 'invalid literal for int' (audit #838/10)."""
+        photo_task_svc, auto_upload_svc = _make_photo_services()
+        mock_pool, _ = _make_mock_pool()
+        session = MagicMock()
+        session.fetch_me = AsyncMock(return_value=MagicMock(id=555))
+        mock_pool.get_client_by_phone = AsyncMock(return_value=(session, None))
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+
+        with (
+            _photo_ctx(photo_task_svc, auto_upload_svc),
+            patch("src.services.photo_task_service.PhotoTarget"),
+        ):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["schedule_photos"](
+                {
+                    "phone": "+79001234567",
+                    "target": "me",
+                    "file_paths": "a.jpg",
+                    "schedule_at": "2025-01-01T10:00:00",
+                    "confirm": True,
+                }
+            )
+        assert "запланированы" in _text(result)
+        photo_task_svc.schedule_send.assert_awaited_once()
+
 
 class TestCancelPhotoItem:
     @pytest.mark.anyio
