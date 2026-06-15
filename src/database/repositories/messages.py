@@ -1453,7 +1453,15 @@ class MessagesRepository:
     ) -> list[Message]:
         """Get messages needing translation for a given target ('en' or 'custom')."""
         col = "translation_en" if target == "en" else "translation_custom"
-        conditions = [f"m.{col} IS NULL", "m.text IS NOT NULL", "m.text != ''", "m.detected_lang IS NOT NULL"]
+        # Exclude the 'und' sentinel (undetectable source language) — translating
+        # those wastes LLM calls on emoji/too-short messages (audit #836/1).
+        conditions = [
+            f"m.{col} IS NULL",
+            "m.text IS NOT NULL",
+            "m.text != ''",
+            "m.detected_lang IS NOT NULL",
+            "m.detected_lang != 'und'",
+        ]
         params: list = []
         if after_id:
             conditions.append("m.id > ?")
@@ -1496,35 +1504,40 @@ class MessagesRepository:
         return [(r["detected_lang"], r["cnt"]) for r in rows]
 
     async def backfill_language_detection(self, batch_size: int = 1000) -> int:
-        """Detect language for messages with detected_lang IS NULL and text IS NOT NULL."""
+        """Detect language for messages with detected_lang IS NULL.
+
+        Returns the number of rows *considered* (not just successfully detected) so
+        a caller's ``while considered == batch_size`` loop terminates correctly.
+        Undetectable rows (too short / emoji-only) are stamped with the sentinel
+        ``'und'`` so they are not re-selected forever, and the scan is ordered by
+        id for stable progress (audit #836/1).
+        """
         import asyncio
 
         from src.services.translation_service import TranslationService
 
         cur = await self._db.execute(
-            "SELECT id, text FROM messages WHERE detected_lang IS NULL AND text IS NOT NULL AND text != '' LIMIT ?",
+            "SELECT id, text FROM messages WHERE detected_lang IS NULL "
+            "AND text IS NOT NULL AND text != '' ORDER BY id LIMIT ?",
             (batch_size,),
         )
         rows = await cur.fetchall()
+        if not rows:
+            return 0
         # Run CPU-bound detection in thread to avoid blocking the event loop
         detect_results = await asyncio.to_thread(
             lambda: [(row["id"], TranslationService.detect_language(row["text"])) for row in rows]
         )
-        if not detect_results:
-            return 0
         assert self._database is not None, (
             "MessagesRepository.backfill_language_detection requires a Database reference"
         )
-        updated = 0
         async with self._database.transaction() as conn:
             for row_id, lang in detect_results:
-                if lang:
-                    await conn.execute(
-                        "UPDATE messages SET detected_lang = ? WHERE id = ?",
-                        (lang, row_id),
-                    )
-                    updated += 1
-        return updated
+                await conn.execute(
+                    "UPDATE messages SET detected_lang = ? WHERE id = ?",
+                    (lang or "und", row_id),
+                )
+        return len(rows)
 
     async def get_views_timeseries(
         self, channel_id: int, days: int = 30

@@ -80,14 +80,17 @@ class TranslationTaskHandler:
             for msg_id, translated in results:
                 await ctx.db.repos.messages.update_translation(msg_id, target_lang, translated)
 
-            new_last_id = max(m.id for m in msgs if m.id is not None) if msgs else last_id
-
-            remaining = await ctx.db.repos.messages.get_untranslated_messages(
-                target=target_lang,
-                source_langs=source_filter or None,
-                limit=1,
-                after_id=new_last_id,
-            )
+            # Advance the cursor only past a contiguous prefix of successfully
+            # translated messages. The old max(all selected) skipped any message
+            # the LLM failed to translate, losing it forever (audit #835/12).
+            written_ids = {msg_id for msg_id, _ in results}
+            new_last_id = last_id
+            for m in sorted(msgs, key=lambda x: x.id or 0):
+                if m.id in written_ids:
+                    new_last_id = m.id
+                else:
+                    break
+            made_progress = new_last_id > last_id
 
             await ctx.tasks.update_collection_task(
                 task.id,
@@ -96,7 +99,14 @@ class TranslationTaskHandler:
                 note=f"Translated {len(results)}/{len(msgs)} messages",
             )
 
-            if remaining:
+            remaining = await ctx.db.repos.messages.get_untranslated_messages(
+                target=target_lang,
+                source_langs=source_filter or None,
+                limit=1,
+                after_id=new_last_id,
+            )
+
+            if remaining and made_progress:
                 follow_up = TranslateBatchTaskPayload(
                     target_lang=target_lang,
                     source_filter=source_filter,
@@ -107,6 +117,15 @@ class TranslationTaskHandler:
                     CollectionTaskType.TRANSLATE_BATCH,
                     title=f"Translation batch ({target_lang}) cont.",
                     payload=follow_up,
+                )
+            elif remaining and not made_progress:
+                # Head message could not be translated; re-enqueuing would loop
+                # forever. Stop and surface it instead of silently skipping.
+                logger.warning(
+                    "Translate batch made no progress past id=%s (head untranslatable); "
+                    "stopping chain with %d message(s) still pending",
+                    last_id,
+                    len(msgs),
                 )
 
         except Exception as exc:
