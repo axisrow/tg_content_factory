@@ -59,6 +59,9 @@ RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
 MESSAGE_FLUSH_BATCH_SIZE = 500
 PERSISTED_ID_VERIFY_CHUNK_SIZE = 500
 STREAM_CLEANUP_TIMEOUT_SEC = 10.0
+# How far back the notification check re-scans persisted messages so a send that
+# failed on an earlier pass is retried (the dedup ledger prevents duplicates).
+NOTIFICATION_BACKLOG_LOOKBACK_HOURS = 24.0
 
 
 def _format_channel_log_name(channel: Channel) -> str:
@@ -1661,8 +1664,35 @@ class Collector:
             channels = await maybe_channels if inspect.isawaitable(maybe_channels) else maybe_channels
             if not isinstance(channels, list):
                 channels = []
-        matcher = NotificationMatcher(self._notifier, channels=channels)
-        await matcher.match_and_notify(messages, queries)
+
+        repos = getattr(self._db, "repos", None)
+        notified_store = getattr(repos, "notified_messages", None)
+
+        # Re-present recently persisted messages for the involved channels next to
+        # the freshly-collected batch, so a notification that failed to send on an
+        # earlier pass is retried — the dedup ledger prevents duplicates. This
+        # decouples delivery from the forward-only collection cursor (audit #838/1).
+        candidates = list(messages)
+        if notified_store is not None:
+            channel_ids = {m.channel_id for m in messages if m.channel_id is not None}
+            get_recent = getattr(getattr(repos, "messages", None), "get_recent_for_channels", None)
+            if channel_ids and callable(get_recent):
+                try:
+                    backlog = await get_recent(list(channel_ids), NOTIFICATION_BACKLOG_LOOKBACK_HOURS)
+                except Exception:
+                    logger.warning("notification backlog rescan failed", exc_info=True)
+                    backlog = []
+                seen = {(m.channel_id, m.message_id) for m in candidates}
+                for m in backlog:
+                    key = (m.channel_id, m.message_id)
+                    if key not in seen:
+                        seen.add(key)
+                        candidates.append(m)
+
+        matcher = NotificationMatcher(
+            self._notifier, channels=channels, notified_store=notified_store
+        )
+        await matcher.match_and_notify(candidates, queries)
 
     async def _channel_still_exists(self, channel_id: int) -> bool:
         return await self._db.get_channel_by_channel_id(channel_id) is not None
