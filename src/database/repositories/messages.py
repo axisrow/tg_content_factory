@@ -6,7 +6,7 @@ import re
 import struct
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, AsyncIterator
 
 import aiosqlite
 
@@ -1674,6 +1674,10 @@ class MessagesRepository:
         Used by the notification dry-run preview, which then matches them with the
         SAME predicate as production (NotificationMatcher) instead of FTS, so the
         preview no longer diverges for regex/partial-substring queries (#838/3).
+
+        Note: capped at *limit*. For an exact dry-run total that the uncapped production
+        path would agree with, use iter_messages_collected_since, which pages through the
+        whole window so the count is never silently truncated.
         """
         cur = await self._db.execute(
             f"""SELECT m.*, c.title AS channel_title, c.username AS channel_username
@@ -1687,6 +1691,52 @@ class MessagesRepository:
         )
         rows = await cur.fetchall()
         return self._rows_to_messages(rows)
+
+    async def iter_messages_collected_since(
+        self, since: str, page_size: int = 5000
+    ) -> AsyncIterator[list[Message]]:
+        """Yield ALL non-empty messages collected at/after *since*, in pages.
+
+        Keyset-paginated on the stable (date, message_id) ordering so the dry-run preview
+        can evaluate the production predicate over the entire window. The live notification
+        path is uncapped, so a single LIMIT made the preview undercount (even report 0) when
+        a window held more than one page of messages (#838/3 review).
+        """
+        last_date: str | None = None
+        last_message_id: int | None = None
+        while True:
+            if last_date is None:
+                cur = await self._db.execute(
+                    f"""SELECT m.*, c.title AS channel_title, c.username AS channel_username
+                        FROM messages m{self._CHANNEL_JOIN}
+                        WHERE {self._BASE_FILTER}
+                          AND m.collected_at >= ?
+                          AND m.text IS NOT NULL AND m.text != ''
+                        ORDER BY m.date DESC, m.message_id DESC
+                        LIMIT ?""",
+                    (since, page_size),
+                )
+            else:
+                cur = await self._db.execute(
+                    f"""SELECT m.*, c.title AS channel_title, c.username AS channel_username
+                        FROM messages m{self._CHANNEL_JOIN}
+                        WHERE {self._BASE_FILTER}
+                          AND m.collected_at >= ?
+                          AND m.text IS NOT NULL AND m.text != ''
+                          AND (m.date < ? OR (m.date = ? AND m.message_id < ?))
+                        ORDER BY m.date DESC, m.message_id DESC
+                        LIMIT ?""",
+                    (since, last_date, last_date, last_message_id, page_size),
+                )
+            rows = await cur.fetchall()
+            if not rows:
+                return
+            yield self._rows_to_messages(rows)
+            if len(rows) < page_size:
+                return
+            last_row = rows[-1]
+            last_date = last_row["date"]
+            last_message_id = last_row["message_id"]
 
     async def get_recent_for_channels(
         self, channel_ids: list[int], since_hours: float
