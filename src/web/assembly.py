@@ -60,12 +60,16 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
         configure_template_globals(app.state.templates, getattr(app.state, "config", None))
     if not hasattr(app.state, "session_secret"):
         app.state.session_secret = secrets.token_hex(32)
+    # Starlette >= 1.x adds an unnamed _IncludedRouter to app.routes for each
+    # include_router() call; it has no .name attribute, so plain route.name raises
+    # AttributeError. Use getattr(..., None) — only Mount routes carry the names we
+    # check for here, so the _IncludedRouter entries correctly resolve to None.
     if STATIC_DIR.exists():
-        mount_names = {route.name for route in app.routes}
+        mount_names = {getattr(route, "name", None) for route in app.routes}
         if "static" not in mount_names:
             app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     # Serve generated images from data/image/
-    if DATA_IMAGE_DIR.exists() and "data-image" not in {r.name for r in app.routes}:
+    if DATA_IMAGE_DIR.exists() and "data-image" not in {getattr(r, "name", None) for r in app.routes}:
         app.mount("/data/image", StaticFiles(directory=str(DATA_IMAGE_DIR)), name="data-image")
 
 
