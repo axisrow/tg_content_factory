@@ -610,10 +610,6 @@ class Database:
         self._require()
         return await self._messages.search_messages_for_query(sq, limit)
 
-    async def get_messages_collected_since(self, since: str, limit: int = 5000) -> list[Message]:
-        self._require()
-        return await self._messages.get_messages_collected_since(since, limit)
-
     async def search_messages_for_query_since(
         self,
         sq: "SearchQuery",

@@ -312,7 +312,7 @@ async def dry_run_notifications(request: Request) -> SchedulerTemplate:
         logger.exception("Dry-run failed to count matches")
         counts = {sq.id: 0 for sq in queries}
     try:
-        preview_messages = await db.get_messages_collected_since(since) if since else []
+        preview_messages = await db.repos.messages.get_messages_collected_since(since) if since else []
     except Exception:
         logger.exception("Dry-run failed to load recent messages")
         preview_messages = []
