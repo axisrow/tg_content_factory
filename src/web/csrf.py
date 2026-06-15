@@ -9,7 +9,11 @@ from starlette.responses import Response
 from src.web.session import COOKIE_NAME
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
-_CSRF_EXEMPT_PATHS = {"/login", "/logout", "/health"}
+# /logout is NOT exempt: it is a state-changing POST (clears the session cookie),
+# so a cross-site auto-submitted form would force-logout the admin. It is a normal
+# same-origin form POST in real use and passes the Origin/Referer check. /login
+# stays exempt (no cookie yet, password-protected). (audit #836/9)
+_CSRF_EXEMPT_PATHS = {"/login", "/health"}
 
 
 def _normalize_port(scheme: str, port: int | None) -> int:

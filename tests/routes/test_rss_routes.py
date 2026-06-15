@@ -115,3 +115,40 @@ async def test_atom_feed_with_messages(route_client, base_app):
     assert resp.status_code == 200
     assert "Atom test message" in resp.text
     assert "<entry>" in resp.text
+
+
+# --- XML well-formedness with hostile message text (#837/8 regression) ---
+
+
+@pytest.mark.anyio
+async def test_rss_feed_well_formed_with_control_byte_in_message(route_client, base_app):
+    """A C0 control byte in message text must not break /rss.xml — it reaches the <link>
+    query too, where html.escape (unlike escape_xml_text/quote_plus) left it raw and made
+    the whole feed not well-formed. The full document must parse."""
+    import xml.etree.ElementTree as ET
+
+    _, db, _ = base_app
+    await db.insert_message(
+        Message(channel_id=100, message_id=1, text="bad\x01title with control & <stuff>", date=NOW)
+    )
+
+    resp = await route_client.get("/rss.xml")
+    assert resp.status_code == 200
+    # The load-bearing assertion: the document parses. A raw \x01 anywhere (incl. <link>) raises.
+    ET.fromstring(resp.text)
+    assert "\x01" not in resp.text
+
+
+@pytest.mark.anyio
+async def test_atom_feed_well_formed_with_control_byte_in_message(route_client, base_app):
+    import xml.etree.ElementTree as ET
+
+    _, db, _ = base_app
+    await db.insert_message(
+        Message(channel_id=100, message_id=1, text="atom\x01bad & <x>", date=NOW)
+    )
+
+    resp = await route_client.get("/atom.xml")
+    assert resp.status_code == 200
+    ET.fromstring(resp.text)
+    assert "\x01" not in resp.text

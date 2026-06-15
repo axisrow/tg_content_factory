@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
-import html
 import io
 import json
 import sys
@@ -11,6 +10,7 @@ from datetime import datetime, timezone
 from email.utils import format_datetime
 
 from src.cli import runtime
+from src.utils.text_safety import csv_safe_cell, escape_xml_text
 
 
 def _rfc822(dt: datetime | None) -> str:
@@ -84,7 +84,7 @@ def _export_csv(messages) -> str:
         writer.writerow([
             msg.id, msg.channel_id, msg.message_id,
             str(msg.date) if msg.date else "",
-            msg.text or "",
+            csv_safe_cell(msg.text or ""),
             msg.views, msg.forwards,
         ])
     return buf.getvalue()
@@ -103,8 +103,8 @@ def _export_rss(messages) -> str:
         guid = f"tg-msg-{ch_id}-{msg_id}"
         items.append(
             f"  <item>\n"
-            f"    <title>{html.escape(item_title)}</title>\n"
-            f"    <description>{html.escape(text[:500])}</description>\n"
+            f"    <title>{escape_xml_text(item_title)}</title>\n"
+            f"    <description>{escape_xml_text(text[:500])}</description>\n"
             f"    <pubDate>{pub_date}</pubDate>\n"
             f"    <guid isPermaLink='false'>{guid}</guid>\n"
             f"  </item>"
