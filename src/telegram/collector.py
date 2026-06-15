@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from datetime import date, datetime, timedelta, timezone
 from inspect import isawaitable
 
-from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
+from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import (
     PeerChannel,
 )
@@ -31,6 +31,7 @@ from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
 from src.telegram.flood_wait import (
     HandledFloodWaitError,
+    coerce_flood_wait_seconds,
     is_transient_flood_wait_seconds,
     run_with_flood_wait,
     run_with_flood_wait_retry,
@@ -1628,11 +1629,23 @@ class Collector:
                 await session.resolve_entity(PeerChannel(channel_id))
                 return p
             except HandledFloodWaitError as exc:
-                # The transport already reported the flood for this phone; the old
-                # `except FloodWaitError` was dead — the transport raises
-                # HandledFloodWaitError, never the raw telethon error (audit #835/16).
+                # Transport already reported the flood (phone+pool were bound on the
+                # session), so just log and move on.
                 logger.warning(
                     "_discover_phone_for_channel: flood wait on %s: %s", mask_phone(p), exc.info.detail
+                )
+                continue
+            except FloodWaitError as exc:
+                # adapt_transport_session() binds neither phone nor pool here, so the
+                # transport re-raises the raw FloodWaitError instead of reporting it
+                # (handle_flood_wait short-circuits when phone is None). Report it
+                # ourselves so the flooded account is marked and rotated out (#495);
+                # dropping this — as the "dead branch" cleanup did — silently lost the
+                # flood signal on private-group discovery (audit #835/16 regression).
+                wait_seconds = coerce_flood_wait_seconds(getattr(exc, "seconds", 0))
+                await self._pool.report_flood(p, wait_seconds)
+                logger.warning(
+                    "_discover_phone_for_channel: flood wait on %s: %ds", mask_phone(p), wait_seconds
                 )
                 continue
             except Exception:
