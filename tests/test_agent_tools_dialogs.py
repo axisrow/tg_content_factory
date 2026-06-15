@@ -235,8 +235,11 @@ class TestDialogsToolLeaveDialogs:
         passed = dict(action.leave_dialogs.await_args.kwargs["dialogs"])
         assert passed[777] == "bot"
         assert passed[-100123] == "channel"
-        # id absent from the dialog listing falls back by sign (positive -> dm)
-        assert passed[999] == "dm"
+        # An id absent from the dialog listing (stale/empty cache, or a manually supplied id)
+        # must fall back to "channel" -> PeerChannel, NOT a guessed "dm" -> PeerUser. Channel
+        # ids here are bare-positive, so guessing "dm" for an unknown positive id would try to
+        # remove the wrong peer (the same numeric id as a user). Regression for #842 review.
+        assert passed[999] == "channel"
 
 
 JOIN_TOOL_NAMES = ("join_channel", "join_chat", "subscribe_channel")

@@ -8,7 +8,7 @@ from mcp.types import ToolAnnotations
 from src.agent.tools._photo_loader_runtime import (
     photo_auto_upload_service,
     photo_task_service,
-    resolve_photo_target_id,
+    resolve_photo_target,
     split_file_paths,
 )
 from src.agent.tools._registry import (
@@ -63,10 +63,10 @@ def register_send_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
             caption = args.get("caption")
             if not phone or not target or not files:
                 return _text_response("Ошибка: phone, target и file_paths обязательны.")
-            target_id = await resolve_photo_target_id(client_pool, phone, target)
+            photo_target = await resolve_photo_target(client_pool, phone, target)
             result = await svc.send_now(
                 phone=phone,
-                target=photo_task_module.PhotoTarget(dialog_id=target_id),
+                target=photo_target,
                 file_paths=files,
                 mode=mode,
                 caption=caption,
@@ -108,12 +108,13 @@ def register_send_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
             if not phone or not target or not files or not schedule_at_str:
                 return _text_response("Ошибка: phone, target, file_paths и schedule_at обязательны.")
             schedule_at = parse_required_schedule_datetime(schedule_at_str)
-            # Resolve 'me'/dialog-name targets like send_photos_now does — a raw
-            # int(target) crashes on the documented 'me' literal (audit #838/10).
-            target_id = await resolve_photo_target_id(client_pool, phone, target)
+            # Resolve 'me'/'self'/dialog-name targets like send_photos_now does — a raw
+            # int(target) crashes on the documented 'me' literal (audit #838/10), and a
+            # bare id loses target_type="saved" so Saved Messages mis-resolves to a channel.
+            photo_target = await resolve_photo_target(client_pool, phone, target)
             result = await svc.schedule_send(
                 phone=phone,
-                target=photo_task_module.PhotoTarget(dialog_id=target_id),
+                target=photo_target,
                 file_paths=files,
                 mode=mode,
                 schedule_at=schedule_at,

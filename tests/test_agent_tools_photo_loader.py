@@ -255,6 +255,62 @@ class TestSchedulePhotos:
         assert "запланированы" in _text(result)
         photo_task_svc.schedule_send.assert_awaited_once()
 
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("alias", ["me", "self"])
+    async def test_self_target_carries_saved_type(self, mock_db, alias):
+        """target='me'/'self' must build a PhotoTarget with target_type='saved' so a cleared
+        cache resolves Saved Messages to PeerUser, not PeerChannel(abs(own user-id)) (#842 review).
+        Also asserts 'self' is accepted (previously only 'me' was, so int('self') crashed)."""
+        photo_task_svc, auto_upload_svc = _make_photo_services()
+        mock_pool, _ = _make_mock_pool()
+        session = MagicMock()
+        session.fetch_me = AsyncMock(return_value=MagicMock(id=555))
+        mock_pool.get_client_by_phone = AsyncMock(return_value=(session, None))
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+
+        # Do NOT patch PhotoTarget — we want to inspect the real target fields.
+        with _photo_ctx(photo_task_svc, auto_upload_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["schedule_photos"](
+                {
+                    "phone": "+79001234567",
+                    "target": alias,
+                    "file_paths": "a.jpg",
+                    "schedule_at": "2025-01-01T10:00:00",
+                    "confirm": True,
+                }
+            )
+        assert "запланированы" in _text(result)
+        target = photo_task_svc.schedule_send.await_args.kwargs["target"]
+        assert target.dialog_id == 555
+        assert target.target_type == "saved"
+        assert target.title == "Saved Messages"
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("alias", ["me", "self"])
+    async def test_send_now_self_target_carries_saved_type(self, mock_db, alias):
+        """send_photos_now mirrors schedule_photos: 'me'/'self' -> Saved Messages (#842 review)."""
+        photo_task_svc, auto_upload_svc = _make_photo_services()
+        mock_pool, _ = _make_mock_pool()
+        session = MagicMock()
+        session.fetch_me = AsyncMock(return_value=MagicMock(id=555))
+        mock_pool.get_client_by_phone = AsyncMock(return_value=(session, None))
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+
+        with _photo_ctx(photo_task_svc, auto_upload_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            await handlers["send_photos_now"](
+                {
+                    "phone": "+79001234567",
+                    "target": alias,
+                    "file_paths": "a.jpg",
+                    "confirm": True,
+                }
+            )
+        target = photo_task_svc.send_now.await_args.kwargs["target"]
+        assert target.dialog_id == 555
+        assert target.target_type == "saved"
+
 
 class TestCancelPhotoItem:
     @pytest.mark.anyio
