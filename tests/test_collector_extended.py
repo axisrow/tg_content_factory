@@ -48,6 +48,9 @@ def mock_db():
     db.save_channel_stats = AsyncMock()
     db.set_channel_type = AsyncMock()
     db.create_rename_event = AsyncMock()
+    # No persistent dedup store in these unit tests — exercise the in-memory
+    # matching path directly (the dedup ledger has its own dedicated tests).
+    db.repos.notified_messages = None
     return db
 
 
@@ -174,6 +177,73 @@ async def test_notification_queries_private_channel_link(collector, mock_db):
     notifier.notify.assert_called_once()
     call_text = notifier.notify.call_args[0][0]
     assert "https://t.me/c/1234567890/99" in call_text
+
+
+class _LedgerStore:
+    """Minimal notified_messages stand-in tracking recorded sends + has_any."""
+
+    def __init__(self, seeded_channels=()):
+        self.recorded: set[tuple[int, int, int]] = set()
+        self._seeded = set(seeded_channels)
+
+    async def filter_unnotified(self, query_id, channel_id, message_ids):
+        return {mid for mid in message_ids if (query_id, channel_id, mid) not in self.recorded}
+
+    async def record(self, query_id, channel_id, message_ids):
+        for mid in message_ids:
+            self.recorded.add((query_id, channel_id, mid))
+
+    async def has_any(self, channel_ids):
+        cids = set(channel_ids)
+        return bool(self._seeded & cids) or any(cid in cids for (_q, cid, _m) in self.recorded)
+
+
+@pytest.mark.anyio
+async def test_empty_ledger_does_not_replay_backlog(collector, mock_db):
+    """Regression (#850 review): on the first pass after the ledger table is created it is
+    empty, so the 24h backlog must NOT be replayed — otherwise every already-delivered
+    historical match is re-sent as a duplicate burst. With an empty ledger only freshly
+    collected messages are matched; the backlog rescan is skipped entirely."""
+    notifier = AsyncMock()
+    collector._notifier = notifier
+    sq = SearchQuery(id=1, query="hit", is_regex=False, is_fts=False)
+    mock_db.get_notification_queries.return_value = [sq]
+
+    store = _LedgerStore()  # empty ledger -> has_any() is False
+    mock_db.repos.notified_messages = store
+    # A backlog message that would match if replayed — must NOT be fetched/sent.
+    backlog_msg = Message(channel_id=1, message_id=1, text="old hit", date=datetime.now())
+    get_recent = AsyncMock(return_value=[backlog_msg])
+    mock_db.repos.messages.get_recent_for_channels = get_recent
+
+    fresh = [Message(channel_id=1, message_id=50, text="fresh hit", date=datetime.now(), channel_username="c")]
+    await collector._check_notification_queries(fresh)
+
+    # Backlog rescan skipped on empty ledger, so get_recent_for_channels was never called...
+    get_recent.assert_not_awaited()
+    # ...and only the single fresh message produced a notification (no historical replay).
+    assert notifier.notify.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_seeded_ledger_replays_backlog_for_retry(collector, mock_db):
+    """Once the ledger has rows for a channel, the backlog rescan runs so a previously
+    failed send is retried (dedup keeps it from duplicating already-sent ones)."""
+    notifier = AsyncMock()
+    collector._notifier = notifier
+    sq = SearchQuery(id=1, query="hit", is_regex=False, is_fts=False)
+    mock_db.get_notification_queries.return_value = [sq]
+
+    store = _LedgerStore(seeded_channels={1})  # ledger already has rows for channel 1
+    mock_db.repos.notified_messages = store
+    backlog_msg = Message(channel_id=1, message_id=7, text="retry hit", date=datetime.now(), channel_username="c")
+    get_recent = AsyncMock(return_value=[backlog_msg])
+    mock_db.repos.messages.get_recent_for_channels = get_recent
+
+    fresh = [Message(channel_id=1, message_id=50, text="fresh hit", date=datetime.now(), channel_username="c")]
+    await collector._check_notification_queries(fresh)
+
+    get_recent.assert_awaited_once()
 
 
 @pytest.mark.anyio
