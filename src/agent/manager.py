@@ -1060,7 +1060,11 @@ class DeepagentsBackend:
         # (e.g., non-anthropic providers) or when an explicit fallback API key is provided.
         try:
             legacy_model = self.legacy_fallback_model
-            if legacy_model:
+            # Only let the legacy fallback short-circuit the verdict when there is
+            # no usable non-legacy DB provider config; otherwise a legacy
+            # anthropic fallback without AGENT_FALLBACK_API_KEY would falsely
+            # declare deepagents unavailable despite a working DB config (#837/5).
+            if legacy_model and not self.has_usable_db_provider_configs:
                 legacy_provider = self._provider_from_model(legacy_model)
                 if legacy_provider is None:
                     return False
