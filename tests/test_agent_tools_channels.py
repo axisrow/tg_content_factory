@@ -406,3 +406,49 @@ class TestAddChannelsBulkTool:
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["add_channels_bulk"]({"channel_ids": "100", "confirm": True})
         assert "Ошибка массового добавления" in _text(result)
+
+
+class TestRefreshChannelTypesTool:
+    @pytest.mark.anyio
+    async def test_resolves_with_signal_gone_and_deactivates_gone_channel(self, mock_db):
+        """Parity with CLI/worker (#858 review): the agent refresh-types tool must pass
+        signal_gone=True and deactivate a definitively-gone channel via the {"gone": True}
+        sentinel — the old dead `if info is False` branch never fired."""
+        gone_ch = _make_channel(pk=1, channel_id=111, title="Gone", username="gone")
+        live_ch = _make_channel(pk=2, channel_id=222, title="Live", username="live")
+        mock_db.get_channels = AsyncMock(return_value=[gone_ch, live_ch])
+        mock_db.set_channel_active = AsyncMock()
+        mock_db.set_channel_type = AsyncMock()
+        pool = MagicMock()
+        pool.resolve_channel = AsyncMock(
+            side_effect=[{"gone": True}, {"channel_type": "channel"}]
+        )
+
+        handlers = _get_tool_handlers(mock_db, client_pool=pool)
+        result = await handlers["refresh_channel_types"]({"confirm": True})
+        text = _text(result)
+
+        # signal_gone=True is passed for every channel
+        assert all(c.kwargs.get("signal_gone") is True for c in pool.resolve_channel.await_args_list)
+        # gone channel deactivated + marked unavailable; live channel typed
+        mock_db.set_channel_active.assert_awaited_once_with(1, False)
+        mock_db.set_channel_type.assert_any_await(111, "unavailable")
+        mock_db.set_channel_type.assert_any_await(222, "channel")
+        assert "деактивировано: 1" in text
+
+    @pytest.mark.anyio
+    async def test_forbidden_channel_is_not_deactivated(self, mock_db):
+        """A channel that resolves to None (e.g. ChannelForbidden access error) is counted as
+        failed and left active — never deactivated (#858 review)."""
+        ch = _make_channel(pk=1, channel_id=111, title="Private", username=None)
+        mock_db.get_channels = AsyncMock(return_value=[ch])
+        mock_db.set_channel_active = AsyncMock()
+        mock_db.set_channel_type = AsyncMock()
+        pool = MagicMock()
+        pool.resolve_channel = AsyncMock(return_value=None)  # forbidden -> None, not gone
+
+        handlers = _get_tool_handlers(mock_db, client_pool=pool)
+        result = await handlers["refresh_channel_types"]({"confirm": True})
+
+        mock_db.set_channel_active.assert_not_awaited()
+        assert "не удалось: 1" in _text(result)

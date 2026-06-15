@@ -263,16 +263,20 @@ def register(db, client_pool, embedding_service, **kwargs):
             null_type = [ch for ch in channels if ch.channel_type is None]
             updated = 0
             failed = 0
+            deactivated = 0
             for ch in channels:
                 identifier = ch.username or str(ch.channel_id)
                 try:
-                    info = await client_pool.resolve_channel(identifier)
+                    # signal_gone=True so a *definitive* not-found deactivates the channel
+                    # (parity with the CLI/worker refresh-types, audit #835/8). The old
+                    # `if info is False` branch was dead — resolve_channel returns dict|None.
+                    info = await client_pool.resolve_channel(identifier, signal_gone=True)
                 except Exception:
                     info = None
-                if info is False:
+                if info and info.get("gone"):
                     await db.set_channel_active(ch.id, False)
                     await db.set_channel_type(ch.channel_id, "unavailable")
-                    failed += 1
+                    deactivated += 1
                     continue
                 if not info or info.get("channel_type") is None:
                     failed += 1
@@ -282,7 +286,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(
                 f"Обновление типов завершено.\n"
                 f"Всего каналов: {len(channels)} (без типа: {len(null_type)}).\n"
-                f"Обновлено: {updated}, не удалось: {failed}."
+                f"Обновлено: {updated}, деактивировано: {deactivated}, не удалось: {failed}."
             )
         except Exception as e:
             return _text_response(f"Ошибка обновления типов каналов: {e}")
