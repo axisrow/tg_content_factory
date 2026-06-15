@@ -15,6 +15,7 @@ from src.database.repositories.generated_images import GeneratedImagesRepository
 from src.database.repositories.generation_runs import GenerationRunsRepository
 from src.database.repositories.messages import MessageSearchPage, MessagesRepository
 from src.database.repositories.notification_bots import NotificationBotsRepository
+from src.database.repositories.notified_messages import NotifiedMessagesRepository
 from src.database.repositories.photo_loader import PhotoLoaderRepository
 from src.database.repositories.pipeline_action_log import PipelineActionLogRepository
 from src.database.repositories.pipeline_templates import PipelineTemplatesRepository
@@ -70,6 +71,7 @@ class DatabaseRepositories:
     telegram_commands: TelegramCommandsRepository
     runtime_snapshots: RuntimeSnapshotsRepository
     pipeline_action_log: PipelineActionLogRepository
+    notified_messages: NotifiedMessagesRepository
 
 
 @dataclass(frozen=True)

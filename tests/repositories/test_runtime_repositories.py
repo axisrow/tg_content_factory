@@ -35,6 +35,37 @@ async def test_telegram_commands_repository_round_trip(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_notified_messages_filter_and_record(tmp_path):
+    """notified_messages ledger: filter_unnotified + idempotent record (audit #838/1)."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        repo = db.repos.notified_messages
+        assert await repo.filter_unnotified(1, 100, [1, 2, 3]) == {1, 2, 3}
+
+        await repo.record(1, 100, [1, 2])
+        assert await repo.filter_unnotified(1, 100, [1, 2, 3]) == {3}
+
+        # Different query id is an independent ledger.
+        assert await repo.filter_unnotified(2, 100, [1, 2, 3]) == {1, 2, 3}
+
+        # record is idempotent (INSERT OR IGNORE on the composite PK).
+        await repo.record(1, 100, [1, 2])
+        assert await repo.filter_unnotified(1, 100, [1, 2, 3]) == {3}
+
+        assert await repo.filter_unnotified(1, 100, []) == set()
+
+        # has_any: True only for channels with at least one recorded row (gates the
+        # backlog rescan so an empty ledger never replays history — #850 review).
+        assert await repo.has_any([100]) is True
+        assert await repo.has_any([999]) is False
+        assert await repo.has_any([999, 100]) is True
+        assert await repo.has_any([]) is False
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_update_command_terminal_preserves_prior_result_payload(tmp_path):
     """A terminal update without a fresh result_payload must keep earlier
     diagnostics (e.g. flood-wait context) instead of wiping them (audit #835/15)."""
