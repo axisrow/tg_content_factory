@@ -107,17 +107,15 @@ def run(args: argparse.Namespace) -> None:
                 if not queries:
                     print("No active notification queries.")
                     return
+                # Match with the SAME engine production uses (regex/substring), not FTS, so the
+                # preview agrees with what would actually fire (#838/3). Counts are uncapped —
+                # dry_run_counts pages over the whole window so >5000 messages don't undercount.
+                from src.services.notification_matcher import dry_run_counts
+
+                counts = await dry_run_counts(db, queries, since)
                 total_matches = 0
                 for sq in queries:
-                    if since:
-                        try:
-                            _, total = await db.search_messages_for_query_since(
-                                sq, since, limit=0
-                            )
-                        except Exception:
-                            total = 0
-                    else:
-                        total = 0
+                    total = counts.get(sq.id, 0)
                     name = sq.name or sq.query
                     print(f"  {name}: {total} matches")
                     total_matches += total

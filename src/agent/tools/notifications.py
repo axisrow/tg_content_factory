@@ -170,15 +170,16 @@ def register(db, client_pool, embedding_service, **kwargs):
             queries = filtered
             if not queries:
                 return _text_response("Нет активных запросов уведомлений.")
+            # Use the SAME production predicate (regex/substring) as CLI/web dry-run, not FTS,
+            # so the agent preview agrees with what would actually fire (#838/3 parity); counts
+            # are uncapped (paged over the whole window), not truncated at 5000.
+            from src.services.notification_matcher import dry_run_counts
+
+            counts = await dry_run_counts(db, queries, since)
             total_matches = 0
             lines = [f"Dry-run уведомлений (с {since or 'N/A'}):"]
             for sq in queries:
-                count = 0
-                if since:
-                    try:
-                        _, count = await db.search_messages_for_query_since(sq, since, limit=0)
-                    except Exception:
-                        count = 0
+                count = counts.get(sq.id, 0)
                 name = getattr(sq, "name", None) or sq.query
                 lines.append(f"  {name}: {count} совпадений")
                 total_matches += count
