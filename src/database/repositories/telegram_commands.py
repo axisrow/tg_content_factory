@@ -335,7 +335,10 @@ class TelegramCommandsRepository:
             sets = [
                 "status = ?",
                 "error = ?",
-                "result_payload = ?",
+                # COALESCE so a terminal update without a fresh payload (e.g. a
+                # FAILED retry) preserves earlier diagnostics instead of wiping
+                # them to NULL (audit #835/15) — mirrors the payload/run_after guards.
+                "result_payload = COALESCE(?, result_payload)",
                 "run_after = NULL",
                 "finished_at = COALESCE(?, finished_at)",
             ]

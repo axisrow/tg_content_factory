@@ -35,6 +35,130 @@ async def test_telegram_commands_repository_round_trip(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_get_messages_collected_since(tmp_path):
+    """Notification dry-run scans messages collected since a timestamp (audit #838/3)."""
+    from src.models import Channel, Message
+
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        await db.add_channel(Channel(channel_id=100, title="C"))
+        await db.insert_message(
+            Message(channel_id=100, message_id=1, text="продаю", date="2025-01-01T00:00:00")
+        )
+
+        recent = await db.repos.messages.get_messages_collected_since("2000-01-01 00:00:00")
+        assert [m.message_id for m in recent] == [1]
+
+        assert await db.repos.messages.get_messages_collected_since("2999-01-01 00:00:00") == []
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_iter_messages_collected_since_pages_entire_window(tmp_path):
+    """iter_messages_collected_since must yield EVERY message in the window across pages,
+    so the dry-run total is uncapped (the live notification path has no LIMIT) — a single
+    capped fetch would undercount when the window exceeds one page (#838/3 review)."""
+    from src.models import Channel, Message
+
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        await db.add_channel(Channel(channel_id=100, title="C"))
+        # 12 messages, distinct dates so the keyset cursor advances deterministically.
+        for i in range(1, 13):
+            await db.insert_message(
+                Message(
+                    channel_id=100,
+                    message_id=i,
+                    text=f"msg {i}",
+                    date=f"2025-01-01T00:00:{i:02d}",
+                )
+            )
+
+        seen: list[int] = []
+        # page_size=5 forces 3 pages (5 + 5 + 2) — exercises the keyset cursor.
+        async for page in db.repos.messages.iter_messages_collected_since(
+            "2000-01-01 00:00:00", page_size=5
+        ):
+            seen.extend(m.message_id for m in page)
+
+        # Every message returned exactly once (no cap, no duplicate across page boundaries).
+        assert sorted(seen) == list(range(1, 13))
+        assert len(seen) == 12
+
+        # Empty window yields nothing.
+        empty = [p async for p in db.repos.messages.iter_messages_collected_since("2999-01-01 00:00:00")]
+        assert empty == []
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_notified_messages_filter_and_record(tmp_path):
+    """notified_messages ledger: filter_unnotified + idempotent record (audit #838/1)."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        repo = db.repos.notified_messages
+        assert await repo.filter_unnotified(1, 100, [1, 2, 3]) == {1, 2, 3}
+
+        await repo.record(1, 100, [1, 2])
+        assert await repo.filter_unnotified(1, 100, [1, 2, 3]) == {3}
+
+        # Different query id is an independent ledger.
+        assert await repo.filter_unnotified(2, 100, [1, 2, 3]) == {1, 2, 3}
+
+        # record is idempotent (INSERT OR IGNORE on the composite PK).
+        await repo.record(1, 100, [1, 2])
+        assert await repo.filter_unnotified(1, 100, [1, 2, 3]) == {3}
+
+        assert await repo.filter_unnotified(1, 100, []) == set()
+
+        # has_any: True only for channels with at least one recorded row (gates the
+        # backlog rescan so an empty ledger never replays history — #850 review).
+        assert await repo.has_any([100]) is True
+        assert await repo.has_any([999]) is False
+        assert await repo.has_any([999, 100]) is True
+        assert await repo.has_any([]) is False
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_update_command_terminal_preserves_prior_result_payload(tmp_path):
+    """A terminal update without a fresh result_payload must keep earlier
+    diagnostics (e.g. flood-wait context) instead of wiping them (audit #835/15)."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        cmd_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(command_type="dialogs.refresh", payload={"phone": "+7"})
+        )
+        diagnostics = {"operation": "resolve", "phone": "+7", "next_available_at_utc": "2026-06-15T10:00:00+00:00"}
+        await db.repos.telegram_commands.update_command(
+            cmd_id,
+            status=TelegramCommandStatus.PENDING,
+            result_payload=diagnostics,
+        )
+
+        # Terminal FAILED with no fresh result_payload — prior must survive.
+        await db.repos.telegram_commands.update_command(
+            cmd_id,
+            status=TelegramCommandStatus.FAILED,
+            error="boom",
+        )
+
+        stored = await db.repos.telegram_commands.get_command(cmd_id)
+        assert stored.status == TelegramCommandStatus.FAILED
+        assert stored.error == "boom"
+        assert stored.result_payload == diagnostics
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_claim_next_command_rolls_back_on_error(tmp_path):
     """If an exception happens mid-claim, the DB must not stay locked."""
     db = Database(str(tmp_path / "test.db"))

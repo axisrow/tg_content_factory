@@ -890,12 +890,17 @@ class TestEndToEndPermissionFlow:
         mock_db.get_setting = AsyncMock(return_value=None)
         pool = MagicMock()
         pool.leave_channels = AsyncMock(return_value={123: True})
-        handlers = _get_tool_handlers(mock_db, client_pool=pool)
-        result = await handlers["leave_dialogs"]({
-            "phone": "+79990001111",
-            "dialog_ids": "123",
-            "confirm": True,
-        })
+        # leave_dialogs resolves per-dialog channel_type via ChannelService.get_my_dialogs
+        # (audit #837/7); mock it so resolution does not hit a bare MagicMock.
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(return_value=[])
+        with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["leave_dialogs"]({
+                "phone": "+79990001111",
+                "dialog_ids": "123",
+                "confirm": True,
+            })
         assert "покинут" in _text(result)
 
     async def test_no_confirm_returns_warning(self, mock_db):
@@ -911,17 +916,20 @@ class TestEndToEndPermissionFlow:
     async def test_retry_with_confirm_succeeds(self, mock_db):
         mock_db.get_setting = AsyncMock(return_value=None)
         pool = MagicMock()
-        handlers = _get_tool_handlers(mock_db, client_pool=pool)
-        # First call — no confirm
-        r1 = await handlers["leave_dialogs"]({"phone": "+79990001111", "dialog_ids": "123"})
-        assert "Подтвердите" in _text(r1)
-        # Retry with confirm
-        pool.leave_channels = AsyncMock(return_value={123: True})
-        r2 = await handlers["leave_dialogs"]({
-            "phone": "+79990001111",
-            "dialog_ids": "123",
-            "confirm": True,
-        })
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(return_value=[])
+        with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            # First call — no confirm
+            r1 = await handlers["leave_dialogs"]({"phone": "+79990001111", "dialog_ids": "123"})
+            assert "Подтвердите" in _text(r1)
+            # Retry with confirm
+            pool.leave_channels = AsyncMock(return_value={123: True})
+            r2 = await handlers["leave_dialogs"]({
+                "phone": "+79990001111",
+                "dialog_ids": "123",
+                "confirm": True,
+            })
         assert "покинут" in _text(r2)
 
     async def test_phone_not_allowed(self, mock_db):

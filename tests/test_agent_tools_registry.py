@@ -86,6 +86,15 @@ class TestRequireConfirmation:
         assert result is not None
         assert "confirm=true" in result["content"][0]["text"]
 
+    @pytest.mark.parametrize("value", ["false", "no", "0", "cancel", "нет", "off"])
+    def test_string_negative_does_not_confirm(self, value):
+        """A JSON string "false"/"no"/"0" must NOT bypass the gate (audit #837/1)."""
+        assert require_confirmation("удалит канал", {"confirm": value}) is not None
+
+    @pytest.mark.parametrize("value", ["true", "1", "yes", "да", "on", "  TRUE  "])
+    def test_string_affirmative_confirms(self, value):
+        assert require_confirmation("удалит канал", {"confirm": value}) is None
+
 
 # ── argument helpers / tool context ───────────────────────────────────────────
 
@@ -109,6 +118,14 @@ class TestArgumentHelpers:
     def test_arg_bool_preserves_existing_truthy_semantics(self):
         assert arg_bool({"confirm": 1}, "confirm") is True
         assert arg_bool({"confirm": False}, "confirm") is False
+
+    def test_arg_bool_rejects_negative_strings(self):
+        """String "false"/"no"/"0" must coerce to False, not bare-truthy True (#837/1)."""
+        assert arg_bool({"flag": "false"}, "flag") is False
+        assert arg_bool({"flag": "no"}, "flag") is False
+        assert arg_bool({"flag": "0"}, "flag") is False
+        assert arg_bool({"flag": "true"}, "flag") is True
+        assert arg_bool({"flag": "yes"}, "flag") is True
 
 
 class TestAgentToolContext:

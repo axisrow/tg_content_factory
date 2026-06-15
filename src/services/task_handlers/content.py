@@ -77,7 +77,7 @@ class ContentTaskHandler:
             if effective_mode == PipelinePublishMode.AUTO.value and run is not None:
                 publish_svc = PublishService(db, ctx.client_pool)
                 try:
-                    await publish_svc.publish_run(run, pipeline)
+                    results = await publish_svc.publish_run(run, pipeline)
                 except Exception as pub_exc:
                     logger.exception(
                         "Auto-publish failed for run id=%s (pipeline_id=%d); generation already saved",
@@ -88,6 +88,27 @@ class ContentTaskHandler:
                         task.id,
                         CollectionTaskStatus.FAILED,
                         error=f"Generation ok but publish failed: {pub_exc!s:.400}",
+                    )
+                    return
+                # publish_run() does not raise on delivery errors (no client,
+                # unresolved dialog, write-forbidden, timeout) — it returns
+                # PublishResult(success=False). Inspect the list, else a silent
+                # delivery loss is reported as COMPLETED (audit #835/1).
+                if not results or not all(r.success for r in results):
+                    err = next(
+                        (r.error for r in results if not r.success and r.error),
+                        "publish returned no results" if not results else "publish failed",
+                    )
+                    logger.warning(
+                        "Auto-publish delivery failed for run id=%s (pipeline_id=%d): %s",
+                        run.id,
+                        pipeline_id,
+                        err,
+                    )
+                    await ctx.tasks.update_collection_task(
+                        task.id,
+                        CollectionTaskStatus.FAILED,
+                        error=f"Generation ok but publish failed: {err}"[:500],
                     )
                     return
 
@@ -159,21 +180,43 @@ class ContentTaskHandler:
 
             pipeline_svc = PipelineService(ctx.pipeline_bundle)
             published = 0
+            attempted = 0
+            failures: list[str] = []
             for run in runs:
                 if run.pipeline_id is None:
                     continue
                 pipeline = await pipeline_svc.get(run.pipeline_id)
                 if pipeline is None:
                     continue
+                attempted += 1
                 results = await publish_svc.publish_run(run, pipeline)
-                if any(r.success for r in results):
+                # A run is published only when *every* target succeeded — mirrors
+                # PublishService.set_published_at. Counting any(r.success) as a
+                # publish hides partial delivery (audit #838/5).
+                if results and all(r.success for r in results):
                     published += 1
+                else:
+                    err = next(
+                        (r.error for r in results if not r.success and r.error),
+                        "no results" if not results else "publish failed",
+                    )
+                    failures.append(f"run {run.id}: {err}")
+
+            if failures:
+                await ctx.tasks.update_collection_task(
+                    task.id,
+                    CollectionTaskStatus.FAILED,
+                    messages_collected=published,
+                    error=f"Published {published}/{attempted} runs; failures: "
+                    + "; ".join(failures[:5]),
+                )
+                return
 
             await ctx.tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.COMPLETED,
                 messages_collected=published,
-                note=f"Published {published}/{len(runs)} runs",
+                note=f"Published {published}/{attempted} runs",
             )
         except Exception as exc:
             logger.exception("Content publish handler failed")
