@@ -316,8 +316,17 @@ async def _rebuild_collection_tasks_if_channel_id_notnull(db: aiosqlite.Connecti
         FROM collection_tasks
         """
     )
-    await db.execute("DROP TABLE collection_tasks")
-    await db.execute("ALTER TABLE collection_tasks_tmp RENAME TO collection_tasks")
+    # The connection runs in autocommit (isolation_level=None), so without an
+    # explicit transaction a crash between DROP and RENAME would lose the table
+    # permanently. Make the swap atomic (audit #836/7).
+    await db.execute("BEGIN IMMEDIATE")
+    try:
+        await db.execute("DROP TABLE collection_tasks")
+        await db.execute("ALTER TABLE collection_tasks_tmp RENAME TO collection_tasks")
+    except Exception:
+        await db.execute("ROLLBACK")
+        raise
+    await db.commit()
     logger.info("Migrated collection_tasks: removed NOT NULL from channel_id")
 
 

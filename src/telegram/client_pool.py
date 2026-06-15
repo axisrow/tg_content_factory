@@ -800,12 +800,22 @@ class ClientPool(ResolveGuardMixin):
         )
 
     async def release_client(self, phone: str) -> None:
-        """Mark client as no longer in active use."""
+        """Mark client as no longer in active use.
+
+        When the lease stack mixes an ephemeral native lease
+        (disconnect_on_release=True) and a direct-pool lease, prefer releasing the
+        disconnect-on-release one so the native client/connection is torn down
+        promptly instead of lingering until an unrelated caller releases (#838/8).
+        """
         async with self._lock:
             lease = None
             stack = self._active_leases.get(phone)
             if stack:
-                lease = stack.pop()
+                idx = next(
+                    (i for i in range(len(stack) - 1, -1, -1) if stack[i].disconnect_on_release),
+                    len(stack) - 1,
+                )
+                lease = stack.pop(idx)
                 if not stack:
                     self._active_leases.pop(phone, None)
             should_release = not self._active_leases.get(phone)
@@ -962,6 +972,23 @@ class ClientPool(ResolveGuardMixin):
         watchdog = getattr(self, "_mtproto_watchdog", None)
         if watchdog is not None:
             watchdog.uninstall()
+        # Cancel long-lived background tasks the pool spawned (warm_all_dialogs,
+        # per-(phone,mode) dialog refresh) so they don't keep running — and
+        # operating on a disconnected client — after teardown (audit #836/11).
+        bg_tasks: list[asyncio.Task] = []
+        warming = getattr(self, "_warming_task", None)
+        if warming is not None and not warming.done() and warming is not asyncio.current_task():
+            warming.cancel()
+            bg_tasks.append(warming)
+        refresh_tasks = getattr(self, "_dialog_refresh_tasks", None)
+        if isinstance(refresh_tasks, dict):
+            for task in list(refresh_tasks.values()):
+                if not task.done():
+                    task.cancel()
+                    bg_tasks.append(task)
+            refresh_tasks.clear()
+        if bg_tasks:
+            await asyncio.gather(*bg_tasks, return_exceptions=True)
         had_clients = bool(self.clients)
         for phone in list(self.clients):
             try:

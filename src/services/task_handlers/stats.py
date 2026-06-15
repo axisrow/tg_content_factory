@@ -242,8 +242,12 @@ class StatsTaskHandler:
         self._set_stats_all_running(True)
         try:
             worker_count = await self._stats_worker_count(len(batch_queue))
-            workers = [asyncio.create_task(_worker()) for _ in range(worker_count)]
-            await asyncio.gather(*workers)
+            # TaskGroup so a worker exception cancels its siblings and surfaces as
+            # an ExceptionGroup, instead of gather() leaving detached workers
+            # running ("Task exception was never retrieved") (audit #836/10).
+            async with asyncio.TaskGroup() as tg:
+                for _ in range(worker_count):
+                    tg.create_task(_worker())
         finally:
             self._set_stats_all_running(False)
 
