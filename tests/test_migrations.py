@@ -211,6 +211,12 @@ async def test_run_migrations_rebuilds_legacy_collection_tasks_channel_id_notnul
         await conn.execute(
             "INSERT INTO collection_tasks (id, channel_id, channel_title) VALUES (1, 0, 'All')"
         )
+        await conn.execute(
+            "INSERT INTO collection_tasks (id, channel_id, channel_title) VALUES (2, -1001, 'Chan')"
+        )
+        await conn.execute(
+            "INSERT INTO collection_tasks (id, channel_id, channel_title) VALUES (3, 777, 'Other')"
+        )
         await conn.commit()
 
         await run_migrations(conn)
@@ -225,11 +231,26 @@ async def test_run_migrations_rebuilds_legacy_collection_tasks_channel_id_notnul
         assert row["channel_id"] is None
         assert row["task_type"] == "stats_all"
 
+        # Regression (#868 review): the rebuild copies the snapshot, drops, and renames
+        # under ONE BEGIN IMMEDIATE — every original row must survive the swap, not just
+        # the first. (The snapshot-then-swap window was previously outside the lock, so a
+        # concurrent writer could be lost; here we at least lock down full data retention.)
+        cur = await conn.execute("SELECT id, channel_id FROM collection_tasks ORDER BY id")
+        rows = {r["id"]: r["channel_id"] for r in await cur.fetchall()}
+        assert rows == {1: None, 2: -1001, 3: 777}
+
         await conn.execute(
             "INSERT INTO collection_tasks (channel_id, channel_title, task_type) "
             "VALUES (NULL, 'Stats', 'stats_all')"
         )
         await conn.commit()
+
+        # Idempotent: re-running migrations on the already-rebuilt table is a no-op
+        # (channel_id is now nullable, so the rebuild branch is skipped) and must not
+        # drop the row just inserted or leave a dangling transaction.
+        await run_migrations(conn)
+        cur = await conn.execute("SELECT COUNT(*) AS c FROM collection_tasks")
+        assert (await cur.fetchone())["c"] == 4
     finally:
         await conn.close()
 
