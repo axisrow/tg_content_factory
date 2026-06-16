@@ -303,7 +303,11 @@ def run(args: argparse.Namespace) -> None:
                 for ch in channels:
                     identifier = ch.username or str(ch.channel_id)
                     try:
-                        info = await pool.resolve_channel(identifier, signal_gone=True)
+                        # numeric_fallback so a stale @username doesn't deactivate a
+                        # live channel — gone is retried by numeric id first (#858 review).
+                        info = await pool.resolve_channel(
+                            identifier, signal_gone=True, numeric_fallback=str(ch.channel_id)
+                        )
                     except Exception as e:
                         logging.warning("Failed to resolve %s: %s", identifier, e)
                         info = None
