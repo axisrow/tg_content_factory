@@ -162,6 +162,26 @@ class PhotoTaskService:
                 status=PhotoBatchStatus.SCHEDULED,
             )
         )
+        # Accumulate server-scheduled message ids progressively. In SEPARATE mode
+        # send_now schedules files one-by-one; if a later file fails, the earlier
+        # ones are already queued on Telegram. Persisting their ids onto the item
+        # as a still-SCHEDULED (cancellable) state means a partial failure never
+        # strands an already-scheduled post without a cancel handle — the same
+        # ghost-publish class this PR fixes (audit #835/3,4).
+        accumulated: list[int] = []
+
+        async def _record_scheduled(_path: str, ids: list[int]) -> None:
+            # ALBUM fires the callback once per path sharing the same id set, so
+            # de-dupe to store the album's ids exactly once.
+            for mid in ids:
+                if mid not in accumulated:
+                    accumulated.append(mid)
+            await self._bundle.update_item(
+                item_id,
+                status=PhotoBatchStatus.SCHEDULED,
+                telegram_message_ids=list(accumulated),
+            )
+
         try:
             message_ids = await self._publish.send_now(
                 phone=phone,
@@ -171,6 +191,7 @@ class PhotoTaskService:
                 send_mode=send_mode,
                 caption=caption,
                 schedule_at=schedule_at,
+                on_file_sent=_record_scheduled,
             )
             await self._bundle.update_item(
                 item_id,
@@ -178,16 +199,29 @@ class PhotoTaskService:
                 telegram_message_ids=message_ids,
             )
         except Exception as exc:
-            await self._bundle.update_item(
-                item_id,
-                status=PhotoBatchStatus.FAILED,
-                error=str(exc),
-            )
-            await self._bundle.update_batch(
-                batch_id,
-                status=PhotoBatchStatus.FAILED,
-                error=str(exc),
-            )
+            if accumulated:
+                # Some files were already scheduled server-side: keep the item
+                # SCHEDULED with their ids so cancel_item can still unschedule
+                # them. Never lose the cancel handle — record the error but leave
+                # the item (and batch) in-flight so the post stays cancellable.
+                await self._bundle.update_item(
+                    item_id,
+                    status=PhotoBatchStatus.SCHEDULED,
+                    telegram_message_ids=list(accumulated),
+                    error=f"partial schedule failure: {exc}",
+                )
+            else:
+                # Nothing was scheduled — failing with no ids is correct.
+                await self._bundle.update_item(
+                    item_id,
+                    status=PhotoBatchStatus.FAILED,
+                    error=str(exc),
+                )
+                await self._bundle.update_batch(
+                    batch_id,
+                    status=PhotoBatchStatus.FAILED,
+                    error=str(exc),
+                )
             raise
         item = await self._bundle.get_item(item_id)
         assert item is not None

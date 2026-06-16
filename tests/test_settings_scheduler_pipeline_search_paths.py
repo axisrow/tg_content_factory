@@ -1313,6 +1313,53 @@ class TestPhotoTaskServiceScheduleSend:
                 schedule_at=datetime.now(timezone.utc),
             )
 
+    @pytest.mark.anyio
+    async def test_schedule_send_separate_partial_failure_keeps_scheduled_with_ids(self, tmp_path):
+        """Regression (#864 review): in SEPARATE mode, if file 1 is scheduled server-side
+        and file 2 fails, the item must stay SCHEDULED with file 1's id (cancellable) — never
+        FAILED-with-no-ids, which would strand a queued post with no cancel handle (ghost publish)."""
+        from src.services.photo_task_service import PhotoTarget, PhotoTaskService
+
+        img = tmp_path / "photo.jpg"
+        img.write_bytes(b"\xff\xd8\xff")
+        img2 = tmp_path / "photo2.jpg"
+        img2.write_bytes(b"\xff\xd8\xff")
+
+        bundle = MagicMock()
+        bundle.create_batch = AsyncMock(return_value=5)
+        bundle.create_item = AsyncMock(return_value=50)
+        bundle.update_item = AsyncMock()
+        bundle.update_batch = AsyncMock()
+
+        # send_now schedules file 1 (fires on_file_sent) then fails on file 2, mirroring the
+        # real SEPARATE loop where earlier files are already queued before a later one raises.
+        async def _send_now(*, file_paths, on_file_sent=None, **_kwargs):
+            if on_file_sent is not None:
+                await on_file_sent(file_paths[0], [100])
+            raise RuntimeError("file 2 failed")
+
+        publish = MagicMock()
+        publish.send_now = AsyncMock(side_effect=_send_now)
+
+        svc = PhotoTaskService(bundle, publish)
+        target = PhotoTarget(dialog_id=300)
+        with pytest.raises(RuntimeError, match="file 2 failed"):
+            await svc.schedule_send(
+                phone="+3",
+                target=target,
+                file_paths=[str(img), str(img2)],
+                mode="separate",
+                schedule_at=datetime.now(timezone.utc),
+            )
+
+        # Last update_item must keep the item SCHEDULED with file 1's id — the cancel handle.
+        last = bundle.update_item.call_args_list[-1].kwargs
+        assert last.get("status") == PhotoBatchStatus.SCHEDULED
+        assert last.get("telegram_message_ids") == [100]
+        # The batch must NOT be force-marked FAILED while a post is still scheduled & cancellable.
+        for call in bundle.update_batch.call_args_list:
+            assert call.kwargs.get("status") != PhotoBatchStatus.FAILED
+
 
 class TestPhotoTaskServiceCancelItem:
     @pytest.mark.anyio
