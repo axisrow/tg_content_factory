@@ -2,9 +2,40 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 import os
+import urllib.request
+import uuid
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
+
+# Presigned GET URL lifetime. Must outlive the moderation/publish delay; 7 days
+# is the SigV4 maximum.
+PRESIGNED_TTL_SEC = 7 * 24 * 3600
+
+# Upper bound on a mirrored remote image. A hostile/oversized provider response must
+# not be read fully into the worker's memory (OOM risk on worker/pipeline paths).
+# Mirrors the 50 MB cap the agent image downloader already enforces (#862 review).
+MAX_MIRROR_BYTES = 50 * 1024 * 1024
+_MIRROR_CHUNK = 1 << 16  # 64 KiB
+
+
+def _unique_key(source: str) -> str:
+    """Build a collision-free S3 object key from a source path/URL basename.
+
+    Provider results frequently share generic basenames ("output.png", "image.png"),
+    so keying on the basename alone made two generations write the SAME object — an
+    existing presigned URL would then serve a later run's image (cross-run overwrite /
+    exposure). The key is ``images/{uuid4}{ext}``: the uuid guarantees a distinct
+    object per upload, and the extension is carried over from *source* (falling back
+    to ``.png``) so the object keeps a correct suffix/content type (#862 review).
+    """
+    base = os.path.basename(source) or "image"
+    ext = os.path.splitext(base)[1]
+    if not ext or len(ext) > 10:
+        ext = ".png"
+    return f"images/{uuid.uuid4().hex}{ext}"
 
 
 class S3Store:
@@ -20,24 +51,58 @@ class S3Store:
         self._access_key = access_key
         self._secret_key = secret_key
 
-    async def upload_file(self, local_path: str) -> str | None:
-        """Upload *local_path* to S3 and return the object URL, or None on failure."""
-        try:
-            import boto3
-            from botocore.config import Config
+    def owns_url(self, url: str) -> bool:
+        """True if *url* already points at this endpoint AND bucket (avoid re-mirroring).
 
-            key = os.path.basename(local_path)
+        Compare on host, not a string prefix: a bare ``startswith`` would treat a
+        look-alike host like ``s3.example.com.evil.com`` as ours and skip mirroring,
+        persisting an ephemeral URL that 404s later (#862 review).
+
+        Host alone is not ownership either: path-style S3/MinIO share one host across
+        all buckets/tenants, so a foreign bucket's ephemeral URL on the same host would
+        otherwise be skipped and persisted (later 403). This store emits path-style
+        presigned URLs (``{endpoint}/{bucket}/{key}``), so a genuinely owned URL always
+        has a path under ``/{bucket}/`` — requiring that prefix never false-negates our
+        own URLs while rejecting same-host foreign buckets (#862 review).
+        """
+        if not url:
+            return False
+        parts = urlsplit(url)
+        if parts.netloc != urlsplit(self._endpoint).netloc:
+            return False
+        return parts.path.startswith(f"/{self._bucket}/")
+
+    def _client(self):
+        import boto3
+        from botocore.config import Config
+
+        return boto3.client(
+            "s3",
+            endpoint_url=self._endpoint,
+            aws_access_key_id=self._access_key,
+            aws_secret_access_key=self._secret_key,
+            config=Config(signature_version="s3v4"),
+        )
+
+    def _presigned_get(self, s3, key: str) -> str:
+        # Presigned URL so a private (default-ACL) object is still readable by the
+        # moderation UI and Telegram, instead of a bare object URL that 403s
+        # (audit #836/3).
+        return s3.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self._bucket, "Key": key},
+            ExpiresIn=PRESIGNED_TTL_SEC,
+        )
+
+    async def upload_file(self, local_path: str) -> str | None:
+        """Upload *local_path* to S3 and return a presigned GET URL, or None."""
+        try:
+            key = _unique_key(local_path)
 
             def _upload() -> str:
-                s3 = boto3.client(
-                    "s3",
-                    endpoint_url=self._endpoint,
-                    aws_access_key_id=self._access_key,
-                    aws_secret_access_key=self._secret_key,
-                    config=Config(signature_version="s3v4"),
-                )
+                s3 = self._client()
                 s3.upload_file(local_path, self._bucket, key)
-                return f"{self._endpoint}/{self._bucket}/{key}"
+                return self._presigned_get(s3, key)
 
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(None, _upload)
@@ -46,6 +111,56 @@ class S3Store:
             return None
         except Exception as exc:
             logger.warning("S3 upload failed for %s: %s", local_path, exc)
+            return None
+
+    async def upload_url(self, url: str, key: str | None = None) -> str | None:
+        """Mirror a remote image URL into S3 and return a durable presigned URL.
+
+        Used for provider results that are ephemeral host URLs (e.g. Replicate,
+        which expire ~24h) so a saved run does not 404 later (audit #836/4).
+        """
+        if not url or urlsplit(url).scheme not in ("http", "https"):
+            return None
+        try:
+            # Honor an explicit caller key; otherwise build a collision-free unique key
+            # (provider URLs often share a generic basename like output.png).
+            object_key = key or _unique_key(urlsplit(url).path)
+
+            def _upload() -> str:
+                with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310 - provider URL
+                    # Bounded read: never load an unbounded body into memory. Reject
+                    # anything over the cap up front (Content-Length) AND while reading
+                    # (a missing/lying header can't bypass the limit) (#862 review).
+                    declared = resp.headers.get("Content-Length")
+                    if declared is not None and declared.isdigit() and int(declared) > MAX_MIRROR_BYTES:
+                        raise ValueError(f"remote image exceeds {MAX_MIRROR_BYTES} bytes (Content-Length)")
+                    chunks: list[bytes] = []
+                    total = 0
+                    while True:
+                        chunk = resp.read(_MIRROR_CHUNK)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > MAX_MIRROR_BYTES:
+                            raise ValueError(f"remote image exceeds {MAX_MIRROR_BYTES} bytes")
+                        chunks.append(chunk)
+                    data = b"".join(chunks)
+                s3 = self._client()
+                # put_object (unlike upload_file) does not auto-derive ContentType, so
+                # without this the mirrored image is stored as binary/octet-stream and a
+                # presigned GET makes browsers download it instead of inline-render it
+                # (#862 review). _unique_key preserves the extension, so guess_type works.
+                content_type = mimetypes.guess_type(object_key)[0] or "application/octet-stream"
+                s3.put_object(Bucket=self._bucket, Key=object_key, Body=data, ContentType=content_type)
+                return self._presigned_get(s3, object_key)
+
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, _upload)
+        except ImportError:
+            logger.warning("boto3 not installed; S3 mirror skipped for %s", url)
+            return None
+        except Exception as exc:
+            logger.warning("S3 mirror failed for %s: %s", url, exc)
             return None
 
     @classmethod
