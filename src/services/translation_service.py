@@ -18,6 +18,11 @@ TRANSLATION_TARGET_LANG = "translation_target_lang"
 TRANSLATION_SOURCE_FILTER = "translation_source_filter"
 TRANSLATION_AUTO_ON_COLLECT = "translation_auto_on_collect"
 
+# Per-message input cap for batch translation (raised from the old silent 2000;
+# truncation beyond this is logged). Full chunking is deferred to the dedicated
+# translate-subsystem refactor the audit recommends.
+MAX_TRANSLATE_INPUT_CHARS = 8000
+
 
 class TranslationService:
     """Language detection and LLM-powered translation for messages."""
@@ -110,8 +115,18 @@ class TranslationService:
         # Build numbered prompt
         lines = []
         for i, m in enumerate(to_translate, 1):
-            # Truncate very long messages to avoid token limits
-            text = m.text[:2000] if m.text else ""
+            # Cap very long messages to avoid token limits. Surface truncation in
+            # the log instead of silently dropping the tail — full chunking is left
+            # to the dedicated translate-subsystem refactor (audit #836/5).
+            text = m.text or ""
+            if len(text) > MAX_TRANSLATE_INPUT_CHARS:
+                logger.warning(
+                    "translate_batch: message id=%s truncated from %d to %d chars",
+                    m.id,
+                    len(text),
+                    MAX_TRANSLATE_INPUT_CHARS,
+                )
+                text = text[:MAX_TRANSLATE_INPUT_CHARS]
             lines.append(f"{i}: {text}")
 
         numbered_block = "\n".join(lines)
