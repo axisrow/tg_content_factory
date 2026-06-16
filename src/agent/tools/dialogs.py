@@ -230,7 +230,22 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            dialog_ids = [(int(x.strip()), "") for x in dialog_ids_str.split(",") if x.strip()]
+            ids = [int(x.strip()) for x in dialog_ids_str.split(",") if x.strip()]
+            # Resolve per-dialog channel_type so leave_channels routes DMs/bots/
+            # legacy-groups to the right Peer instead of defaulting to PeerChannel
+            # (audit #837/7). Mirrors the CLI leave path (cli/commands/dialogs.py).
+            from src.services.channel_service import ChannelService
+
+            my_dialogs = await ChannelService(db, client_pool, None).get_my_dialogs(phone)
+            type_map = {d["channel_id"]: d["channel_type"] for d in my_dialogs}
+            # For IDs present in the dialog cache, pass the exact type so leave_channels
+            # routes DMs/bots/legacy-groups to the right Peer (audit #837/7). For an UNKNOWN
+            # id (stale/empty cache, or a manually supplied id) fall back to "channel" —
+            # leave_channels then builds PeerChannel, the safe default. Channel ids here are
+            # bare-positive, so guessing an unknown positive id as "dm" would build a PeerUser
+            # and try to remove the wrong peer; "channel" preserves the pre-#837/7 PeerChannel
+            # behavior for unknown ids.
+            dialog_ids = [(cid, type_map.get(cid, "channel")) for cid in ids]
             result = await TelegramActionService(client_pool).leave_dialogs(
                 phone=phone,
                 dialogs=dialog_ids,

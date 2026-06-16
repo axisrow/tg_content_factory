@@ -1319,10 +1319,12 @@ async def test_channels_refresh_types_unavailable():
     db = _mock_db()
     pool = _mock_pool()
     db.get_channels.return_value = [Channel(id=1, channel_id=-100, title="T", username="t")]
-    pool.resolve_channel.return_value = False
+    # Definitive not-found now returns the {"gone": True} sentinel, not False
+    # (which resolve_channel never returned — audit #835/8).
+    pool.resolve_channel.return_value = {"gone": True}
     d = _dispatcher(db=db, pool=pool)
     r = await d._handle_channels_refresh_types({})
-    assert r["failed"] == 1
+    assert r["deactivated"] == 1
     db.set_channel_active.assert_awaited_once_with(1, False)
     db.set_channel_type.assert_awaited_once_with(-100, "unavailable")
 
@@ -1370,7 +1372,7 @@ async def test_channels_refresh_types_no_username():
     d = _dispatcher(db=db, pool=pool)
     r = await d._handle_channels_refresh_types({})
     assert r["updated"] == 1
-    pool.resolve_channel.assert_awaited_once_with("-100")
+    pool.resolve_channel.assert_awaited_once_with("-100", signal_gone=True)
 
 
 # --- _handle_channels_refresh_types: resolve returns info with None channel_type ---
@@ -2246,3 +2248,61 @@ async def test_run_loop_survives_busy_error_from_claim():
         await d._run_loop()
 
     assert calls == 2
+
+
+# ── channels.refresh_types deactivation (audit #835/8) ─────────────────────────
+
+
+class TestRefreshTypesDeactivation:
+    @pytest.mark.anyio
+    async def test_deactivates_gone_skips_transient_updates_ok(self):
+        from types import SimpleNamespace
+
+        db = MagicMock()
+        ch_gone = SimpleNamespace(id=1, channel_id=111, username="gone", title="Gone")
+        ch_transient = SimpleNamespace(id=2, channel_id=222, username="slow", title="Slow")
+        ch_ok = SimpleNamespace(id=3, channel_id=333, username="ok", title="Ok")
+        db.get_channels = AsyncMock(return_value=[ch_gone, ch_transient, ch_ok])
+        db.set_channel_active = AsyncMock()
+        db.set_channel_type = AsyncMock()
+        pool = MagicMock()
+        pool.resolve_channel = AsyncMock(
+            side_effect=[
+                {"gone": True},               # definitive not-found -> deactivate
+                None,                          # transient failure -> skip, stay active
+                {"channel_type": "channel"},   # resolved -> update
+            ]
+        )
+
+        d = TelegramCommandDispatcher(db, pool)
+        result = await d._handle_channels_refresh_types({})
+
+        assert result == {"updated": 1, "failed": 1, "deactivated": 1}
+        db.set_channel_active.assert_awaited_once_with(1, False)
+        # transient channel must NOT be deactivated
+        assert all(call.args[0] != 2 for call in db.set_channel_active.await_args_list)
+
+
+# ── _unwrap_result_payload (audit #838/9, #838/4) ──────────────────────────────
+
+
+class TestUnwrapResultPayload:
+    def test_uses_envelope_when_present(self):
+        assert TelegramCommandDispatcher._unwrap_result_payload({"result": {"a": 1}}) == {"a": 1}
+
+    def test_preserves_flat_dict(self):
+        # ~40 handlers return a flat dict; it must be persisted, not dropped to {}.
+        flat = {"phone": "+7", "scope": "all", "total": 3, "participants": [{"id": 1}]}
+        assert TelegramCommandDispatcher._unwrap_result_payload(flat) == flat
+
+    def test_excludes_reserved_payload_update(self):
+        out = TelegramCommandDispatcher._unwrap_result_payload(
+            {"updated": 2, "payload_update": {"x": 1}}
+        )
+        assert out == {"updated": 2}
+
+    def test_non_dict_returns_empty(self):
+        assert TelegramCommandDispatcher._unwrap_result_payload(None) == {}
+
+    def test_envelope_non_dict_inner_returns_empty(self):
+        assert TelegramCommandDispatcher._unwrap_result_payload({"result": "x"}) == {}

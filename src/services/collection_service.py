@@ -116,7 +116,9 @@ class CollectionService:
 
         cancelled = await self._channels.cancel_collection_task(task_id, note=note)
         if cancelled and task.task_type == CollectionTaskType.STATS_ALL:
-            await self._collector.cancel()
+            # Stats-only stop signal — must not abort unrelated in-flight channel
+            # collection that shares the collector (audit #835/6).
+            await self._collector.cancel_stats()
         return cancelled
 
     async def clear_pending_collect_tasks(self) -> int:
