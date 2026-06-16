@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 import os
 import urllib.request
 import uuid
@@ -51,8 +52,15 @@ class S3Store:
         self._secret_key = secret_key
 
     def owns_url(self, url: str) -> bool:
-        """True if *url* already points at this S3 endpoint (avoid re-mirroring)."""
-        return bool(url) and url.startswith(self._endpoint)
+        """True if *url* already points at this S3 endpoint (avoid re-mirroring).
+
+        Compare on host, not a string prefix: a bare ``startswith`` would treat a
+        look-alike host like ``s3.example.com.evil.com`` as ours and skip mirroring,
+        persisting an ephemeral URL that 404s later (#862 review).
+        """
+        if not url:
+            return False
+        return urlsplit(url).netloc == urlsplit(self._endpoint).netloc
 
     def _client(self):
         import boto3
@@ -128,7 +136,12 @@ class S3Store:
                         chunks.append(chunk)
                     data = b"".join(chunks)
                 s3 = self._client()
-                s3.put_object(Bucket=self._bucket, Key=object_key, Body=data)
+                # put_object (unlike upload_file) does not auto-derive ContentType, so
+                # without this the mirrored image is stored as binary/octet-stream and a
+                # presigned GET makes browsers download it instead of inline-render it
+                # (#862 review). _unique_key preserves the extension, so guess_type works.
+                content_type = mimetypes.guess_type(object_key)[0] or "application/octet-stream"
+                s3.put_object(Bucket=self._bucket, Key=object_key, Body=data, ContentType=content_type)
                 return self._presigned_get(s3, object_key)
 
             loop = asyncio.get_running_loop()

@@ -40,6 +40,21 @@ def test_from_env_partial(monkeypatch):
     assert store is None
 
 
+def test_owns_url_matches_on_host_not_prefix():
+    """Regression (#862 review): owns_url must compare on host, not a string prefix.
+    A look-alike host like ``s3.example.com.evil.com`` must NOT be treated as ours,
+    otherwise generate() skips mirroring and persists an ephemeral URL that 404s later."""
+    store = S3Store("https://s3.example.com", "bucket", "ak", "sk")
+    # Our endpoint (with and without a path) → owned.
+    assert store.owns_url("https://s3.example.com/bucket/k?sig=abc") is True
+    assert store.owns_url("https://s3.example.com") is True
+    # Look-alike suffix host → NOT owned (the prefix-match bug would return True here).
+    assert store.owns_url("https://s3.example.com.evil.com/x.png") is False
+    # Unrelated host and empty input → NOT owned.
+    assert store.owns_url("https://provider.test/output.png") is False
+    assert store.owns_url("") is False
+
+
 @pytest.mark.anyio
 async def test_upload_file_success():
     mock_s3 = MagicMock()
@@ -157,6 +172,9 @@ async def test_upload_url_mirrors_to_s3():
     assert url == "https://s3.test/bucket/k?sig=abc"
     body = mock_client.put_object.call_args.kwargs["Body"]
     assert body == b"PNGDATA"
+    # put_object must set ContentType (unlike upload_file it does not auto-derive it),
+    # else the mirrored object is stored as octet-stream and browsers download it (#862 review).
+    assert mock_client.put_object.call_args.kwargs["ContentType"] == "image/png"
 
 
 @pytest.mark.anyio
