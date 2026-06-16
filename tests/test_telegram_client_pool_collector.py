@@ -1202,9 +1202,14 @@ async def test_resolve_channel_stale_username_falls_back_to_numeric_id(pool):
     client.get_entity = AsyncMock(side_effect=fake_get_entity)
     pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
 
-    with patch.object(pool, "get_available_client", return_value=(
-        TelegramTransportSession(client, disconnect_on_close=False), "+7001"
-    )):
+    # Live numeric resolution routes through the owning account (#875 review).
+    with patch.object(pool, "_owner_phone_for", AsyncMock(return_value="+7001")), \
+         patch.object(pool, "get_available_client", return_value=(
+            TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+         )), \
+         patch.object(pool, "get_client_by_phone", AsyncMock(return_value=(
+            TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+         ))):
         result = await pool.resolve_channel(
             "@oldname", signal_gone=True, numeric_fallback="123"
         )
@@ -1217,11 +1222,12 @@ async def test_resolve_channel_stale_username_falls_back_to_numeric_id(pool):
 
 
 @pytest.mark.anyio
-async def test_resolve_channel_gone_by_both_username_and_numeric_is_gone(pool):
-    """A truly deleted channel: the username peer raises UsernameNotOccupiedError and the
-    numeric PeerChannel raises the REAL Telethon error (a plain ValueError, never a username
-    error) → the second definitive not-found yields the gone sentinel, so the dead channel
-    still gets deactivated (#858 review follow-up)."""
+async def test_resolve_channel_gone_by_both_confirmed_via_owner_account(pool):
+    """A truly deleted channel: username peer raises UsernameNotOccupiedError, and the
+    numeric PeerChannel raises the REAL Telethon error (a plain ValueError) ON THE OWNING
+    ACCOUNT → the second definitive not-found yields the gone sentinel, so the dead channel
+    still gets deactivated. The numeric miss is only trusted as gone when it runs on the
+    account that owns the channel (#875 review)."""
     client = AsyncMock()
 
     async def fake_get_entity(peer, *a, **kw):
@@ -1233,13 +1239,70 @@ async def test_resolve_channel_gone_by_both_username_and_numeric_is_gone(pool):
     client.get_entity = AsyncMock(side_effect=fake_get_entity)
     pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
 
-    with patch.object(pool, "get_available_client", return_value=(
-        TelegramTransportSession(client, disconnect_on_close=False), "+7001"
-    )):
+    with patch.object(pool, "_owner_phone_for", AsyncMock(return_value="+7001")), \
+         patch.object(pool, "get_available_client", return_value=(
+            TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+         )), \
+         patch.object(pool, "get_client_by_phone", AsyncMock(return_value=(
+            TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+         ))):
         result = await pool.resolve_channel(
             "@oldname", signal_gone=True, numeric_fallback="123"
         )
     assert result == {"gone": True}
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_numeric_miss_without_owner_is_review(pool):
+    """#875 redesign (the core fix): when NO owning account is known, a numeric-peer
+    ValueError is just an arbitrary account's local cache-miss, NOT proof of deletion.
+    It must NOT deactivate (never gone) — and rather than a silent skip it surfaces the
+    review sentinel so the uncertain channel is quarantined for human review."""
+    client = AsyncMock()
+
+    async def fake_get_entity(peer, *a, **kw):
+        if isinstance(peer, str):
+            raise UsernameNotOccupiedError("nope")
+        raise ValueError("Could not find the input entity for PeerChannel(channel_id=123)")
+
+    client.get_entity = AsyncMock(side_effect=fake_get_entity)
+    pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
+
+    # No owner known → the numeric retry runs on an arbitrary account and must NOT confirm gone.
+    with patch.object(pool, "_owner_phone_for", AsyncMock(return_value=None)), \
+         patch.object(pool, "get_available_client", return_value=(
+            TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+         )):
+        result = await pool.resolve_channel(
+            "@oldname", signal_gone=True, numeric_fallback="123"
+        )
+    assert result == {"review": True, "reason": "numeric_unresolved"}  # NOT {"gone": True}
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_review_when_owner_unavailable(pool):
+    """#875 redesign: when the owning account is known but currently unavailable
+    (flood/disconnected), we cannot trustworthily confirm deletion → quarantine for
+    review (uncertain), never gone and never a silent skip."""
+    client = AsyncMock()
+
+    async def fake_get_entity(peer, *a, **kw):
+        if isinstance(peer, str):
+            raise UsernameNotOccupiedError("nope")
+        raise ValueError("Could not find the input entity")
+
+    client.get_entity = AsyncMock(side_effect=fake_get_entity)
+    pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
+
+    with patch.object(pool, "_owner_phone_for", AsyncMock(return_value="+7001")), \
+         patch.object(pool, "get_available_client", return_value=(
+            TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+         )), \
+         patch.object(pool, "get_client_by_phone", AsyncMock(return_value=None)):
+        result = await pool.resolve_channel(
+            "@oldname", signal_gone=True, numeric_fallback="123"
+        )
+    assert result == {"review": True, "reason": "numeric_unresolved"}  # owner unavailable → review
 
 
 @pytest.mark.anyio
@@ -1257,9 +1320,13 @@ async def test_resolve_channel_numeric_access_denied_is_not_gone(pool):
     client.get_entity = AsyncMock(side_effect=fake_get_entity)
     pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
 
-    with patch.object(pool, "get_available_client", return_value=(
-        TelegramTransportSession(client, disconnect_on_close=False), "+7001"
-    )):
+    with patch.object(pool, "_owner_phone_for", AsyncMock(return_value="+7001")), \
+         patch.object(pool, "get_available_client", return_value=(
+            TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+         )), \
+         patch.object(pool, "get_client_by_phone", AsyncMock(return_value=(
+            TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+         ))):
         result = await pool.resolve_channel(
             "@oldname", signal_gone=True, numeric_fallback="123"
         )
@@ -1267,10 +1334,65 @@ async def test_resolve_channel_numeric_access_denied_is_not_gone(pool):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("ident,expected_peer_id", [("123", 123), ("-100123", 123)])
+async def test_resolve_channel_purely_numeric_unresolved_is_review(pool):
+    """#875 redesign: a channel with no @username resolves only by numeric id. A bare
+    numeric identifier (numeric_fallback == identifier) has no username-gone signal to
+    escalate from, so its first lookup routes through the owning account. With no owner
+    known the numeric miss is uncertain → review (quarantine), never an auto-deactivation.
+    A username-less channel can therefore only be deactivated via manual review-confirm."""
+    client = AsyncMock()
+
+    async def fake_get_entity(peer, *a, **kw):
+        raise ValueError("Could not find the input entity for PeerChannel(channel_id=123)")
+
+    client.get_entity = AsyncMock(side_effect=fake_get_entity)
+    pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
+
+    with patch.object(pool, "_owner_phone_for", AsyncMock(return_value=None)), \
+         patch.object(pool, "get_available_client", return_value=(
+            TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+         )):
+        result = await pool.resolve_channel(
+            "123", signal_gone=True, numeric_fallback="123"
+        )
+    assert result == {"review": True, "reason": "numeric_unresolved"}
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_purely_numeric_gone_via_owner(pool):
+    """#875 redesign: a username-less channel CAN still auto-deactivate when its known
+    owning account confirms the not-found — that is a trusted deletion signal, not a
+    cache-miss."""
+    client = AsyncMock()
+
+    async def fake_get_entity(peer, *a, **kw):
+        raise ValueError("Could not find the input entity for PeerChannel(channel_id=123)")
+
+    client.get_entity = AsyncMock(side_effect=fake_get_entity)
+    pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
+
+    with patch.object(pool, "_owner_phone_for", AsyncMock(return_value="+7001")), \
+         patch.object(pool, "get_client_by_phone", AsyncMock(return_value=(
+            TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+         ))):
+        result = await pool.resolve_channel(
+            "123", signal_gone=True, numeric_fallback="123"
+        )
+    assert result == {"gone": True}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "ident,expected_peer_id",
+    # Bare-positive stays as-is; a real MTProto marked id (-100<bare>, i.e. the bare id
+    # plus the 1e12 marker) is stripped back to the bare id. A short value like "-100123"
+    # is NOT a marked id (markers are 1e12+) and must be left untouched (#875 review):
+    # bare_channel_id only strips genuine markers, unlike the old naive 3-char slice.
+    [("123", 123), ("-1000000000123", 123)],
+)
 async def test_resolve_channel_strips_bot_api_prefix(pool, ident, expected_peer_id):
     """#858 review follow-up (framing A): a numeric identifier builds a PeerChannel with the
-    Bot-API -100 prefix stripped (mirror resolve_any_entity), so a -100<bare> input hits the
+    Bot-API -100 prefix stripped (via bare_channel_id), so a -100<bare> input hits the
     correct peer rather than PeerChannel(100<bare>)."""
     seen = {}
     entity = SimpleNamespace(id=expected_peer_id, title="Ch", broadcast=True, megagroup=False,
@@ -1295,22 +1417,26 @@ async def test_resolve_channel_strips_bot_api_prefix(pool, ident, expected_peer_
 
 @pytest.mark.anyio
 async def test_resolve_channel_no_fallback_when_identifier_is_already_numeric(pool):
-    """When the channel has no username the identifier already IS the numeric id, so a
-    gone verdict needs no retry (fallback == identifier → skipped). A numeric peer that no
-    longer exists raises the real Telethon ValueError → gone, deactivating the dead channel."""
+    """When the channel has no username the identifier already IS the numeric id
+    (fallback == identifier → no redundant retry). A numeric peer that no longer resolves
+    raises the real Telethon ValueError; with NO owning account known this miss is just a
+    cache-miss on an arbitrary account → review (quarantine), never an auto-gone (#875
+    redesign). Deactivation of a username-less channel only happens via manual
+    review-confirm or an owner-confirmed not-found."""
     client = AsyncMock()
     client.get_entity = AsyncMock(
         side_effect=ValueError("Could not find the input entity for PeerChannel(channel_id=123)")
     )
     pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
 
-    with patch.object(pool, "get_available_client", return_value=(
-        TelegramTransportSession(client, disconnect_on_close=False), "+7001"
-    )):
+    with patch.object(pool, "_owner_phone_for", AsyncMock(return_value=None)), \
+         patch.object(pool, "get_available_client", return_value=(
+            TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+         )):
         result = await pool.resolve_channel(
-            "-100123", signal_gone=True, numeric_fallback="-100123"
+            "123", signal_gone=True, numeric_fallback="123"
         )
-    assert result == {"gone": True}
+    assert result == {"review": True, "reason": "numeric_unresolved"}
     # identifier == fallback → resolved exactly once, no redundant retry.
     # (Telethon warms the dialog cache once on the first ValueError, then retries the same
     # peer — both calls are the same numeric resolution, so this is one logical attempt.)

@@ -176,6 +176,38 @@ def run(args: argparse.Namespace) -> None:
                 await db.set_channel_active(ch.id, new_state)
                 print(f"Channel '{ch.title}' (pk={ch.id}): active={new_state}")
 
+            elif args.channel_action == "review-list":
+                pending = await db.repos.channels.list_channels_for_review()
+                if not pending:
+                    print("No channels are quarantined for review.")
+                else:
+                    print(f"Channels quarantined for review: {len(pending)}")
+                    for ch in pending:
+                        print(
+                            f"  {ch.id}\t{ch.title} "
+                            f"(@{ch.username or ch.channel_id})\t— {ch.review_reason}"
+                        )
+
+            elif args.channel_action == "review-confirm":
+                channels = await db.get_channels()
+                ch = resolve_channel(channels, args.identifier)
+                if not ch:
+                    print(f"Channel '{args.identifier}' not found")
+                    return
+                await db.set_channel_active(ch.id, False)
+                await db.set_channel_type(ch.channel_id, "unavailable")
+                await db.repos.channels.clear_channel_review(ch.id)
+                print(f"DEACTIVATED: {ch.title} (pk={ch.id}) — confirmed dead, removed from review")
+
+            elif args.channel_action == "review-keep":
+                channels = await db.get_channels()
+                ch = resolve_channel(channels, args.identifier)
+                if not ch:
+                    print(f"Channel '{args.identifier}' not found")
+                    return
+                await db.repos.channels.clear_channel_review(ch.id)
+                print(f"KEPT ACTIVE: {ch.title} (pk={ch.id}) — cleared from review")
+
             elif args.channel_action == "import":
                 source = args.source
                 source_path = Path(source)
@@ -299,7 +331,7 @@ def run(args: argparse.Namespace) -> None:
                         logging.warning("Failed to pre-fetch dialogs: %s", e)
                     finally:
                         await pool.release_client(phone)
-                updated = failed = deactivated = 0
+                updated = failed = deactivated = quarantined = 0
                 for ch in channels:
                     identifier = ch.username or str(ch.channel_id)
                     try:
@@ -311,6 +343,16 @@ def run(args: argparse.Namespace) -> None:
                     except Exception as e:
                         logging.warning("Failed to resolve %s: %s", identifier, e)
                         info = None
+                    # Uncertain (cache-miss vs deleted, owner unknown/unavailable) →
+                    # quarantine for human review, never silent deactivation (#875 redesign).
+                    if info and info.get("review"):
+                        await db.repos.channels.set_channel_review(ch.id, info.get("reason", "uncertain"))
+                        print(
+                            f"QUARANTINE: {ch.title} (@{ch.username or ch.channel_id}) "
+                            f"— {info.get('reason', 'uncertain')}"
+                        )
+                        quarantined += 1
+                        continue
                     # Definitive not-found → deactivate; transient None → skip and
                     # leave active (audit #835/8; old `if info is False` was dead).
                     if info and info.get("gone"):
@@ -331,10 +373,16 @@ def run(args: argparse.Namespace) -> None:
                         print(f"DEACTIVATED ({info['channel_type']}): {ch.title}")
                         deactivated += 1
                         continue
+                    # Resolved live: clear any stale quarantine flag (channel recovered).
+                    if getattr(ch, "needs_review", False):
+                        await db.repos.channels.clear_channel_review(ch.id)
                     await db.set_channel_type(ch.channel_id, info["channel_type"])
                     print(f"OK: {ch.title} → {info['channel_type']}")
                     updated += 1
-                print(f"\nUpdated: {updated}, Deactivated: {deactivated}, Skipped: {failed}")
+                print(
+                    f"\nUpdated: {updated}, Deactivated: {deactivated}, "
+                    f"Quarantined: {quarantined}, Skipped: {failed}"
+                )
 
             elif args.channel_action == "refresh-meta":
                 _, pool = await runtime.init_pool(config, db)

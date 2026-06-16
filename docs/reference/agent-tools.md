@@ -29,6 +29,9 @@
 | `import_channels` | WRITE | Массовый импорт |
 | `refresh_channel_types` | WRITE | Обновить типы каналов |
 | `refresh_channel_meta` | WRITE | Обновить метаданные (about, linked_chat_id, has_comments) |
+| `list_channels_for_review` | READ | Список каналов на ручном ревью (карантин неоднозначных not-found) |
+| `review_keep_channel` | WRITE | Снять канал с ревью, оставить активным (ложная тревога) |
+| `confirm_channel_dead` | DELETE | Подтвердить, что канал мёртв, и деактивировать его |
 | `list_tags` | READ | Список тегов |
 | `create_tag` | WRITE | Создать тег |
 | `delete_tag` | DELETE | Удалить тег |

@@ -870,6 +870,7 @@ class TelegramCommandDispatcher:
         updated = 0
         failed = 0
         deactivated = 0
+        quarantined = 0
         for ch in channels:
             identifier = ch.username or str(ch.channel_id)
             try:
@@ -880,6 +881,13 @@ class TelegramCommandDispatcher:
                 )
             except Exception:
                 info = None
+            # Uncertain (cache-miss vs deleted, owner unknown/unavailable) → quarantine
+            # for human review. This runs in the background worker with no interactive
+            # user, so flagging for review is the only safe move (#875 redesign).
+            if info and info.get("review"):
+                await self._db.repos.channels.set_channel_review(ch.id, info.get("reason", "uncertain"))
+                quarantined += 1
+                continue
             # Definitive not-found → deactivate; transient None → skip and leave
             # active (audit #835/8; old `if info is False` was unreachable).
             if info and info.get("gone"):
@@ -890,9 +898,17 @@ class TelegramCommandDispatcher:
             if not info or info.get("channel_type") is None:
                 failed += 1
                 continue
+            # Resolved live: clear any stale quarantine flag (channel recovered).
+            if getattr(ch, "needs_review", False):
+                await self._db.repos.channels.clear_channel_review(ch.id)
             await self._db.set_channel_type(ch.channel_id, info["channel_type"])
             updated += 1
-        return {"updated": updated, "failed": failed, "deactivated": deactivated}
+        return {
+            "updated": updated,
+            "failed": failed,
+            "deactivated": deactivated,
+            "quarantined": quarantined,
+        }
 
     async def _handle_channels_refresh_meta(self, payload: dict[str, Any]) -> dict[str, Any]:
         channels = await self._db.get_channels(active_only=True)

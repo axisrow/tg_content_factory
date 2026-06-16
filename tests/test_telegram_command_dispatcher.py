@@ -2277,30 +2277,41 @@ async def test_run_loop_survives_busy_error_from_claim():
 
 class TestRefreshTypesDeactivation:
     @pytest.mark.anyio
-    async def test_deactivates_gone_skips_transient_updates_ok(self):
+    async def test_deactivates_gone_quarantines_review_skips_transient_updates_ok(self):
         from types import SimpleNamespace
 
         db = MagicMock()
-        ch_gone = SimpleNamespace(id=1, channel_id=111, username="gone", title="Gone")
-        ch_transient = SimpleNamespace(id=2, channel_id=222, username="slow", title="Slow")
-        ch_ok = SimpleNamespace(id=3, channel_id=333, username="ok", title="Ok")
-        db.get_channels = AsyncMock(return_value=[ch_gone, ch_transient, ch_ok])
+        ch_gone = SimpleNamespace(id=1, channel_id=111, username="gone", title="Gone",
+                                  needs_review=False)
+        ch_transient = SimpleNamespace(id=2, channel_id=222, username="slow", title="Slow",
+                                       needs_review=False)
+        ch_ok = SimpleNamespace(id=3, channel_id=333, username="ok", title="Ok",
+                                needs_review=False)
+        ch_review = SimpleNamespace(id=4, channel_id=444, username="maybe", title="Maybe",
+                                    needs_review=False)
+        db.get_channels = AsyncMock(return_value=[ch_gone, ch_transient, ch_ok, ch_review])
         db.set_channel_active = AsyncMock()
         db.set_channel_type = AsyncMock()
+        db.repos.channels.set_channel_review = AsyncMock()
+        db.repos.channels.clear_channel_review = AsyncMock()
         pool = MagicMock()
         pool.resolve_channel = AsyncMock(
             side_effect=[
                 {"gone": True},               # definitive not-found -> deactivate
                 None,                          # transient failure -> skip, stay active
                 {"channel_type": "channel"},   # resolved -> update
+                {"review": True, "reason": "numeric_unresolved"},  # uncertain -> quarantine
             ]
         )
 
         d = TelegramCommandDispatcher(db, pool)
         result = await d._handle_channels_refresh_types({})
 
-        assert result == {"updated": 1, "failed": 1, "deactivated": 1}
+        assert result == {"updated": 1, "failed": 1, "deactivated": 1, "quarantined": 1}
         db.set_channel_active.assert_awaited_once_with(1, False)
+        # uncertain channel must be quarantined, NOT deactivated
+        db.repos.channels.set_channel_review.assert_awaited_once_with(4, "numeric_unresolved")
+        assert all(call.args[0] != 4 for call in db.set_channel_active.await_args_list)
         # transient channel must NOT be deactivated
         assert all(call.args[0] != 2 for call in db.set_channel_active.await_args_list)
 

@@ -25,6 +25,7 @@ from src.config import TelegramRuntimeConfig
 from src.database import Database
 from src.database.live_accounts import load_live_usable_accounts
 from src.models import Account, TelegramUserInfo
+from src.parsers import bare_channel_id
 from src.telegram.account_lease_pool import AccountLease, AccountLeasePool
 from src.telegram.auth import TelegramAuth
 from src.telegram.backends import (
@@ -1301,7 +1302,18 @@ class ClientPool(ResolveGuardMixin):
         Raises:
             RuntimeError("no_client") — no connected/available Telegram accounts.
         """
-        result = await self._resolve_channel_once(identifier, signal_gone=signal_gone)
+        # A purely numeric identifier (channel has no @username) has no separate
+        # username-gone signal to escalate from: route its first lookup through the
+        # owning account directly, and treat an untrusted numeric miss as review
+        # (uncertain → quarantine) rather than a silent skip (#875 redesign).
+        primary_numeric = signal_gone and identifier.lstrip("-").isdigit()
+        owner_phone = await self._owner_phone_for(identifier) if primary_numeric else None
+        result = await self._resolve_channel_once(
+            identifier,
+            signal_gone=signal_gone,
+            gone_phone=owner_phone,
+            review_on_uncertain=primary_numeric,
+        )
         # Stale-username guard: a gone-by-username verdict is not proof the channel is
         # dead — retry by the stable numeric id before signalling gone (#858 review).
         if (
@@ -1311,11 +1323,61 @@ class ClientPool(ResolveGuardMixin):
             and numeric_fallback
             and numeric_fallback != identifier
         ):
-            return await self._resolve_channel_once(numeric_fallback, signal_gone=signal_gone)
+            # The numeric retry may only CONFIRM gone when it runs on the account that
+            # actually owns/collects the channel: a bare PeerChannel lookup on an
+            # arbitrary account raises a *local* cache-miss ValueError (no cached
+            # access_hash) that is indistinguishable from deletion, so confirming gone
+            # from an arbitrary account would falsely deactivate a live channel that is
+            # collected by a different account (#875 review). Route the retry through the
+            # owning account; when the miss cannot be trusted as gone (owner unknown or
+            # unavailable) the numeric lookup yields the review sentinel — the channel is
+            # quarantined for human review instead of silently deactivated or skipped
+            # (#875 redesign).
+            retry_owner = await self._owner_phone_for(numeric_fallback)
+            return await self._resolve_channel_once(
+                numeric_fallback,
+                signal_gone=signal_gone,
+                gone_phone=retry_owner,
+                review_on_uncertain=True,
+            )
         return result
 
-    async def _resolve_channel_once(self, identifier: str, *, signal_gone: bool = False) -> dict | None:
+    async def _owner_phone_for(self, identifier: str) -> str | None:
+        """Phone known to own/collect the numeric channel id, or None.
+
+        Checks the in-memory channel→phone map first (populated by warm_all_dialogs),
+        then the persisted preferred_phone. Returns None for a non-numeric identifier.
+        """
+        if not identifier.lstrip("-").isdigit():
+            return None
+        cid = bare_channel_id(int(identifier))
+        phone = self.get_phone_for_channel(cid)
+        if phone:
+            return phone
+        try:
+            return await self._db.repos.channels.get_preferred_phone(cid)
+        except Exception:
+            logger.debug("resolve_channel: preferred_phone lookup failed for %d", cid, exc_info=True)
+            return None
+
+    async def _resolve_channel_once(
+        self,
+        identifier: str,
+        *,
+        signal_gone: bool = False,
+        gone_phone: str | None = None,
+        review_on_uncertain: bool = False,
+    ) -> dict | None:
         gone: dict | None = {"gone": True} if signal_gone else None
+        # When ``review_on_uncertain`` is set, an ambiguous numeric not-found (cache-miss
+        # vs deletion) that cannot be trusted as gone is surfaced as a quarantine sentinel
+        # instead of a silent None, so the channel is flagged for human review rather than
+        # left invisibly active (#875 redesign). Only meaningful under signal_gone.
+        review: dict | None = (
+            {"review": True, "reason": "numeric_unresolved"}
+            if signal_gone and review_on_uncertain
+            else None
+        )
         # Normalize post links: https://t.me/channel/123 → https://t.me/channel
         identifier = re.sub(r"(t\.me/[^/\s]+)/\d+$", r"\1", identifier)
 
@@ -1325,19 +1387,32 @@ class ClientPool(ResolveGuardMixin):
         # channel_id is bare-positive, but a caller may still pass a -100-style string.
         numeric_peer = identifier.lstrip("-").isdigit()
         if numeric_peer:
-            raw_id = int(identifier)
-            if raw_id < 0:
-                str_abs = str(abs(raw_id))
-                bare_id = int(str_abs[3:]) if str_abs.startswith("100") else abs(raw_id)
-            else:
-                bare_id = raw_id
-            peer: str | PeerChannel = PeerChannel(bare_id)
+            peer: str | PeerChannel = PeerChannel(bare_channel_id(int(identifier)))
         else:
             peer = identifier
 
+        # A numeric not-found may be trusted as "gone" ONLY when this lookup runs on the
+        # account that owns the channel (gone_phone) — an arbitrary account's bare-peer
+        # miss is just a local cache-miss, not a deletion (#875 review).
+        gone_trusted = numeric_peer and gone_phone is not None
+
         last_flood_error: HandledFloodWaitError | None = None
+        used_owner = False
         for _attempt in range(3):
-            result = await self.get_available_client()
+            if gone_phone is not None:
+                result = await self.get_client_by_phone(gone_phone)
+                if not result:
+                    # The owning account is unavailable (flood/disconnected): we cannot
+                    # trustworthily confirm gone, so do NOT deactivate. Flag for review
+                    # (uncertain) instead of a silent skip when asked (#875 redesign).
+                    logger.info(
+                        "resolve_channel: owner account for '%s' unavailable; not confirming gone",
+                        identifier,
+                    )
+                    return review
+                used_owner = True
+            else:
+                result = await self.get_available_client()
             if not result:
                 if last_flood_error is not None:
                     raise last_flood_error
@@ -1356,6 +1431,14 @@ class ClientPool(ResolveGuardMixin):
                     logger.info("resolve_channel: '%s' is a user, not a channel/group", identifier)
                     return None
                 channel_type, deactivate = self._classify_entity(entity)
+                # Self-heal the channel→phone map: remember the account that just
+                # resolved this channel so the next pass routes there directly. Mirrors
+                # fetch_channel_meta — only on the gone-detection path (signal_gone), where
+                # owner routing matters; a plain lookup stays side-effect-free.
+                if signal_gone and numeric_peer:
+                    await self.remember_channel_phone(
+                        bare_channel_id(int(identifier)), phone, force=not used_owner
+                    )
                 return {
                     "channel_id": entity.id,
                     "title": entity.title,
@@ -1382,17 +1465,27 @@ class ClientPool(ResolveGuardMixin):
                 # Access denied for THIS account, not a deletion — never deactivate
                 # (the channel may be live and collectible via another account). #858
                 logger.info("resolve_channel: access denied for '%s': %s", identifier, e)
+                # If the routed owner account lost access, its mapping is stale — drop it
+                # so the next pass rediscovers a working account (mirror fetch_channel_meta).
+                if used_owner and numeric_peer:
+                    await self.forget_channel_phone(
+                        bare_channel_id(int(identifier)), only_if_phone=phone
+                    )
                 return None
             except (ChannelInvalidError, ValueError, TypeError) as e:
-                # A numeric peer that Telethon definitively cannot resolve raises a plain
-                # ValueError("Could not find the input entity ...") / ChannelInvalidError —
-                # never UsernameNotOccupiedError. For a numeric lookup under signal_gone this
-                # IS the "second definitive not-found" that confirms the channel is gone, so
-                # surface the gone sentinel instead of swallowing it to None (which left a
-                # genuinely-deleted channel active forever, #858 review follow-up). A
-                # non-numeric (username) peer keeps the old None (transient/parse error).
+                # A numeric peer that Telethon cannot resolve raises a plain
+                # ValueError("Could not find the input entity ...") / ChannelInvalidError.
+                # This confirms "gone" ONLY when the lookup ran on the OWNING account
+                # (gone_trusted): there, a post-warm miss means the channel is really
+                # deleted. On an arbitrary account the same ValueError is just a local
+                # cache-miss (no cached access_hash) and must NOT deactivate a live
+                # channel collected elsewhere (#875 review) — surface it for human review
+                # instead of a silent skip. A username peer always keeps the old None
+                # (transient/parse error).
                 logger.warning("resolve_channel: could not resolve '%s': %s", identifier, e)
-                return gone if numeric_peer else None
+                if gone_trusted:
+                    return gone
+                return review if numeric_peer else None
             except Exception as e:
                 logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
                 return None
