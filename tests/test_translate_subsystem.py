@@ -225,3 +225,30 @@ async def test_handler_no_work_head_does_not_starve_tail():
     ctx.tasks.create_generic_task.assert_awaited_once()
     follow_up = ctx.tasks.create_generic_task.await_args.kwargs["payload"]
     assert follow_up.last_processed_id == 12
+
+
+@pytest.mark.anyio
+async def test_handler_failed_head_still_enqueues_followup_when_work_remains():
+    """The cursor strictly advances even when the FIRST row is a genuine failure, so the
+    chain always makes progress and a follow-up is enqueued while work remains — there is
+    no dead "no-progress stop" branch that could strand the tail (#866 review cleanup)."""
+    # id=10 is eligible but the provider returns nothing for it (failure at the head).
+    msgs = [_tmsg(10), _tmsg(11)]
+    ctx, _ = _translate_ctx(msgs, [_tmsg(20)])
+    await _run_handler(ctx, [])  # provider returned no results at all
+
+    # Cursor steps past the failed head (10) instead of stalling; follow-up from 10.
+    ctx.tasks.create_generic_task.assert_awaited_once()
+    follow_up = ctx.tasks.create_generic_task.await_args.kwargs["payload"]
+    assert follow_up.last_processed_id == 10
+
+
+@pytest.mark.anyio
+async def test_handler_no_followup_when_nothing_remains():
+    """When the remaining-probe finds no more untranslated rows, the chain ends — no
+    follow-up task is created."""
+    msgs = [_tmsg(10), _tmsg(11)]
+    ctx, _ = _translate_ctx(msgs, [])  # remaining probe returns empty
+    await _run_handler(ctx, [(10, "x"), (11, "y")])
+
+    ctx.tasks.create_generic_task.assert_not_awaited()

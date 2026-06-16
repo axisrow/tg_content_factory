@@ -113,7 +113,13 @@ class TranslationTaskHandler:
                     # itself stays untranslated and re-selectable on a later full pass.
                     new_last_id = m.id
                     break
-            made_progress = new_last_id > last_id
+            # Every selected row has id > last_id (query filter `m.id > ?`), and the loop
+            # always lands on some real row's id, so new_last_id > last_id whenever any
+            # row was processed — the cursor strictly advances. This deliberately favours
+            # "never starve the tail" over a strict contiguous prefix: a poison row is
+            # stepped past (re-selectable on a full re-run), not allowed to stall the
+            # whole queue (#835/12, #866 review; locked by test_handler_cursor_advances_
+            # past_translated_then_stops_at_genuine_failure).
 
             await ctx.tasks.update_collection_task(
                 task.id,
@@ -129,7 +135,7 @@ class TranslationTaskHandler:
                 after_id=new_last_id,
             )
 
-            if remaining and made_progress:
+            if remaining:
                 follow_up = TranslateBatchTaskPayload(
                     target_lang=target_lang,
                     source_filter=source_filter,
@@ -140,15 +146,6 @@ class TranslationTaskHandler:
                     CollectionTaskType.TRANSLATE_BATCH,
                     title=f"Translation batch ({target_lang}) cont.",
                     payload=follow_up,
-                )
-            elif remaining and not made_progress:
-                # Head message could not be translated; re-enqueuing would loop
-                # forever. Stop and surface it instead of silently skipping.
-                logger.warning(
-                    "Translate batch made no progress past id=%s (head untranslatable); "
-                    "stopping chain with %d message(s) still pending",
-                    last_id,
-                    len(msgs),
                 )
 
         except Exception as exc:
