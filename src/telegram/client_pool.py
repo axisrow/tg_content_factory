@@ -1319,9 +1319,19 @@ class ClientPool(ResolveGuardMixin):
         # Normalize post links: https://t.me/channel/123 → https://t.me/channel
         identifier = re.sub(r"(t\.me/[^/\s]+)/\d+$", r"\1", identifier)
 
-        # Use PeerChannel for numeric IDs so Telethon treats them as channels, not users
-        if identifier.lstrip("-").isdigit():
-            peer: str | PeerChannel = PeerChannel(abs(int(identifier)))
+        # Use PeerChannel for numeric IDs so Telethon treats them as channels, not users.
+        # Strip the Bot-API -100 prefix for negative ids (mirror resolve_any_entity) so a
+        # -100<bare> input resolves the correct peer, not PeerChannel(100<bare>). Stored
+        # channel_id is bare-positive, but a caller may still pass a -100-style string.
+        numeric_peer = identifier.lstrip("-").isdigit()
+        if numeric_peer:
+            raw_id = int(identifier)
+            if raw_id < 0:
+                str_abs = str(abs(raw_id))
+                bare_id = int(str_abs[3:]) if str_abs.startswith("100") else abs(raw_id)
+            else:
+                bare_id = raw_id
+            peer: str | PeerChannel = PeerChannel(bare_id)
         else:
             peer = identifier
 
@@ -1368,6 +1378,21 @@ class ClientPool(ResolveGuardMixin):
             except (UsernameNotOccupiedError, UsernameInvalidError) as e:
                 logger.warning("resolve_channel: username not found '%s': %s", identifier, e)
                 return gone
+            except ChannelPrivateError as e:
+                # Access denied for THIS account, not a deletion — never deactivate
+                # (the channel may be live and collectible via another account). #858
+                logger.info("resolve_channel: access denied for '%s': %s", identifier, e)
+                return None
+            except (ChannelInvalidError, ValueError, TypeError) as e:
+                # A numeric peer that Telethon definitively cannot resolve raises a plain
+                # ValueError("Could not find the input entity ...") / ChannelInvalidError —
+                # never UsernameNotOccupiedError. For a numeric lookup under signal_gone this
+                # IS the "second definitive not-found" that confirms the channel is gone, so
+                # surface the gone sentinel instead of swallowing it to None (which left a
+                # genuinely-deleted channel active forever, #858 review follow-up). A
+                # non-numeric (username) peer keeps the old None (transient/parse error).
+                logger.warning("resolve_channel: could not resolve '%s': %s", identifier, e)
+                return gone if numeric_peer else None
             except Exception as e:
                 logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
                 return None
