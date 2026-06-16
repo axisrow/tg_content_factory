@@ -286,6 +286,10 @@ class TestNormalizeIdentifier:
             ("t.me/channel1", "channel1", "username"),
             ("t.me/channel/123", "channel", "username"),
             ("https://t.me/channel/456", "channel", "username"),
+            # Invite links are NOT public usernames (audit #835/17).
+            ("https://t.me/+AbCdEfGh123", "AbCdEfGh123", "invite"),
+            ("t.me/+AbCdEfGh123", "AbCdEfGh123", "invite"),
+            ("t.me/joinchat/AbCdEfGh", "AbCdEfGh", "invite"),
             ("-1001234567890", "-1001234567890", "numeric_id"),
             ("123456789", "123456789", "numeric_id"),
             ("testchan", "testchan", "username"),

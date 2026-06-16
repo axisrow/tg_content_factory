@@ -195,6 +195,9 @@ def _normalize_token(token: str) -> str | None:
             if not parts:
                 return None
         if parts[0] == "c" and len(parts) > 1 and parts[1].isdigit():
-            return f"-100{parts[1]}"
+            # channel_id is stored bare-positive in the DB; the old -100 prefix
+            # never matched m.channel_id / c.id, so the filter silently found
+            # nothing (audit #835/7).
+            return parts[1]
         return parts[0].strip().lstrip("@")
     return token
