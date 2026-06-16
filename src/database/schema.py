@@ -197,6 +197,17 @@ CREATE TABLE IF NOT EXISTS notification_bots (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Dedup ledger for sent notifications: decouples delivery from the collection
+-- cursor so a transient send failure is retried (and never double-notified) on a
+-- later pass instead of silently losing the matched lead (audit #838/1).
+CREATE TABLE IF NOT EXISTS notified_messages (
+    query_id    INTEGER NOT NULL,
+    channel_id  INTEGER NOT NULL,
+    message_id  INTEGER NOT NULL,
+    notified_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (query_id, channel_id, message_id)
+);
+
 CREATE TABLE IF NOT EXISTS forum_topics (
     id INTEGER PRIMARY KEY,
     channel_id INTEGER NOT NULL,

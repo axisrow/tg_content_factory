@@ -286,10 +286,27 @@ class TelegramCommandDispatcher:
                 await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.SUCCEEDED,
-                    result_payload=result.get("result") or {},
+                    result_payload=self._unwrap_result_payload(result),
                     payload=result.get("payload_update"),
                     log_action="succeeded",
                 )
+
+    @staticmethod
+    def _unwrap_result_payload(result: object) -> dict:
+        """Normalize a handler return into the persisted result_payload.
+
+        Only a few handlers wrap their output in {"result": {...}}; ~40 others
+        return a flat dict. Persisting result.get("result") alone dropped every
+        flat result to {} (audit #838/9, and #838/4 for search participants).
+        Use the inner envelope when present, otherwise the whole dict minus the
+        reserved payload_update key.
+        """
+        if not isinstance(result, dict):
+            return {}
+        if "result" in result:
+            inner = result.get("result")
+            return inner if isinstance(inner, dict) else {}
+        return {k: v for k, v in result.items() if k != "payload_update"}
 
     async def _update_command_safely(
         self,
@@ -852,23 +869,26 @@ class TelegramCommandDispatcher:
         channels = await self._db.get_channels(active_only=True)
         updated = 0
         failed = 0
+        deactivated = 0
         for ch in channels:
             identifier = ch.username or str(ch.channel_id)
             try:
-                info = await self._pool.resolve_channel(identifier)
+                info = await self._pool.resolve_channel(identifier, signal_gone=True)
             except Exception:
                 info = None
-            if info is False:
+            # Definitive not-found → deactivate; transient None → skip and leave
+            # active (audit #835/8; old `if info is False` was unreachable).
+            if info and info.get("gone"):
                 await self._db.set_channel_active(ch.id, False)
                 await self._db.set_channel_type(ch.channel_id, "unavailable")
-                failed += 1
+                deactivated += 1
                 continue
             if not info or info.get("channel_type") is None:
                 failed += 1
                 continue
             await self._db.set_channel_type(ch.channel_id, info["channel_type"])
             updated += 1
-        return {"updated": updated, "failed": failed}
+        return {"updated": updated, "failed": failed, "deactivated": deactivated}
 
     async def _handle_channels_refresh_meta(self, payload: dict[str, Any]) -> dict[str, Any]:
         channels = await self._db.get_channels(active_only=True)

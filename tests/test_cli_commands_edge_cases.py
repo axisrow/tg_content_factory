@@ -669,7 +669,29 @@ class TestSchedulerSetInterval:
         assert "30 min" in out
         db.repos.settings.set_setting.assert_awaited_once_with("collect_interval_minutes", "30")
 
-    def test_set_interval_other_job(self, capsys):
+    def test_set_interval_sq_job_updates_record(self, capsys):
+        """sq_ interval must update the search_queries record, not a dead key (audit #835/9)."""
+        from src.cli.commands.scheduler import run
+
+        db = MagicMock()
+        db.repos = MagicMock()
+        sq = MagicMock()
+        sq.model_copy = MagicMock(return_value="updated_sq")
+        db.repos.search_queries.get_by_id = AsyncMock(return_value=sq)
+        db.repos.search_queries.update = AsyncMock()
+        db.close = AsyncMock()
+
+        config = MagicMock()
+        with patch("src.cli.commands.scheduler.runtime.init_db", side_effect=_make_coro((config, db))):
+            run(cli_ns(scheduler_action="set-interval", job_id="sq_5", minutes=60))
+
+        out = capsys.readouterr().out
+        assert "60 min" in out
+        sq.model_copy.assert_called_once_with(update={"interval_minutes": 60})
+        db.repos.search_queries.update.assert_awaited_once()
+
+    def test_set_interval_unknown_job_is_rejected(self, capsys):
+        """An unrecognized job_id must not silently write a dead settings key (audit #835/9)."""
         from src.cli.commands.scheduler import run
 
         db = MagicMock()
@@ -678,17 +700,12 @@ class TestSchedulerSetInterval:
         db.close = AsyncMock()
 
         config = MagicMock()
-        pool = MagicMock()
-        pool.clients = {"+1": MagicMock()}
-        pool.disconnect_all = AsyncMock()
-
-        with patch("src.cli.commands.scheduler.runtime.init_db", side_effect=_make_coro((config, db))), \
-             patch("src.cli.commands.scheduler.runtime.init_pool", side_effect=_make_coro((MagicMock(), pool))):
+        with patch("src.cli.commands.scheduler.runtime.init_db", side_effect=_make_coro((config, db))):
             run(cli_ns(scheduler_action="set-interval", job_id="custom_job", minutes=60))
 
         out = capsys.readouterr().out
-        assert "60 min" in out
-        db.repos.settings.set_setting.assert_awaited_once_with("scheduler_job_custom_job_interval", "60")
+        assert "Unknown job_id" in out
+        db.repos.settings.set_setting.assert_not_awaited()
 
     def test_set_interval_clamped(self, capsys):
         from src.cli.commands.scheduler import run
@@ -709,6 +726,46 @@ class TestSchedulerSetInterval:
 
         out = capsys.readouterr().out
         assert "1 min" in out  # clamped to 1
+
+
+class TestSchedulerQueuePauseResume:
+    def test_queue_pause_enqueues_collection_pause_command(self, capsys):
+        """Pausing from the CLI must signal the running worker, not just write a
+        setting it reads only at startup (audit #835/5)."""
+        from src.cli.commands.scheduler import run
+
+        db = MagicMock()
+        db.set_setting = AsyncMock()
+        db.close = AsyncMock()
+        config = MagicMock()
+        svc = MagicMock()
+        svc.enqueue = AsyncMock(return_value=1)
+
+        with patch("src.cli.commands.scheduler.runtime.init_db", side_effect=_make_coro((config, db))), \
+             patch("src.services.telegram_command_service.TelegramCommandService", return_value=svc):
+            run(cli_ns(scheduler_action="queue-pause"))
+
+        db.set_setting.assert_awaited_with("collection_queue_paused", "1")
+        svc.enqueue.assert_awaited_once()
+        assert svc.enqueue.await_args.args[0] == "collection.pause"
+
+    def test_queue_resume_enqueues_collection_resume_command(self, capsys):
+        from src.cli.commands.scheduler import run
+
+        db = MagicMock()
+        db.set_setting = AsyncMock()
+        db.close = AsyncMock()
+        config = MagicMock()
+        svc = MagicMock()
+        svc.enqueue = AsyncMock(return_value=1)
+
+        with patch("src.cli.commands.scheduler.runtime.init_db", side_effect=_make_coro((config, db))), \
+             patch("src.services.telegram_command_service.TelegramCommandService", return_value=svc):
+            run(cli_ns(scheduler_action="queue-resume"))
+
+        db.set_setting.assert_awaited_with("collection_queue_paused", "0")
+        svc.enqueue.assert_awaited_once()
+        assert svc.enqueue.await_args.args[0] == "collection.resume"
 
 
 class TestSchedulerTaskCancel:

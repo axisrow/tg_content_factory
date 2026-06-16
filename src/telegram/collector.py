@@ -31,6 +31,7 @@ from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
 from src.telegram.flood_wait import (
     HandledFloodWaitError,
+    coerce_flood_wait_seconds,
     is_transient_flood_wait_seconds,
     run_with_flood_wait,
     run_with_flood_wait_retry,
@@ -59,6 +60,9 @@ RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
 MESSAGE_FLUSH_BATCH_SIZE = 500
 PERSISTED_ID_VERIFY_CHUNK_SIZE = 500
 STREAM_CLEANUP_TIMEOUT_SEC = 10.0
+# How far back the notification check re-scans persisted messages so a send that
+# failed on an earlier pass is retried (the dedup ledger prevents duplicates).
+NOTIFICATION_BACKLOG_LOOKBACK_HOURS = 24.0
 
 
 def _format_channel_log_name(channel: Channel) -> str:
@@ -136,6 +140,10 @@ class Collector:
         self._stats_running = False
         self._stats_all_running = False
         self._cancel_event = asyncio.Event()
+        # Stats-only stop signal. STATS_ALL cancellation must NOT use the global
+        # _cancel_event, which channel-collect workers also watch — sharing it let
+        # a STATS_ALL cancel abort unrelated in-flight collection (audit #835/6).
+        self._stats_cancel_event = asyncio.Event()
         self._lock = asyncio.Lock()
         self._stats_lock = asyncio.Lock()
         self._stats_all_lock = asyncio.Lock()
@@ -399,6 +407,15 @@ class Collector:
 
     async def cancel(self) -> None:
         self._cancel_event.set()
+
+    async def cancel_stats(self) -> None:
+        """Cancel an in-flight STATS_ALL run without touching channel collection."""
+        self._stats_cancel_event.set()
+
+    def _is_stats_cancelled(self) -> bool:
+        # Global shutdown (cancel()) also stops stats; a stats-only cancel does not
+        # stop channel collection.
+        return self._cancel_event.is_set() or self._stats_cancel_event.is_set()
 
     @property
     def is_cancelled(self) -> bool:
@@ -1611,8 +1628,25 @@ class Collector:
                     self._pool.mark_dialogs_fetched(p)
                 await session.resolve_entity(PeerChannel(channel_id))
                 return p
-            except FloodWaitError as fwe:
-                await self._pool.report_flood(p, fwe.seconds)
+            except HandledFloodWaitError as exc:
+                # Transport already reported the flood (phone+pool were bound on the
+                # session), so just log and move on.
+                logger.warning(
+                    "_discover_phone_for_channel: flood wait on %s: %s", mask_phone(p), exc.info.detail
+                )
+                continue
+            except FloodWaitError as exc:
+                # adapt_transport_session() binds neither phone nor pool here, so the
+                # transport re-raises the raw FloodWaitError instead of reporting it
+                # (handle_flood_wait short-circuits when phone is None). Report it
+                # ourselves so the flooded account is marked and rotated out (#495);
+                # dropping this — as the "dead branch" cleanup did — silently lost the
+                # flood signal on private-group discovery (audit #835/16 regression).
+                wait_seconds = coerce_flood_wait_seconds(getattr(exc, "seconds", 0))
+                await self._pool.report_flood(p, wait_seconds)
+                logger.warning(
+                    "_discover_phone_for_channel: flood wait on %s: %ds", mask_phone(p), wait_seconds
+                )
                 continue
             except Exception:
                 continue
@@ -1661,8 +1695,49 @@ class Collector:
             channels = await maybe_channels if inspect.isawaitable(maybe_channels) else maybe_channels
             if not isinstance(channels, list):
                 channels = []
-        matcher = NotificationMatcher(self._notifier, channels=channels)
-        await matcher.match_and_notify(messages, queries)
+
+        repos = getattr(self._db, "repos", None)
+        notified_store = getattr(repos, "notified_messages", None)
+
+        # Re-present recently persisted messages for the involved channels next to
+        # the freshly-collected batch, so a notification that failed to send on an
+        # earlier pass is retried — the dedup ledger prevents duplicates. This
+        # decouples delivery from the forward-only collection cursor (audit #838/1).
+        candidates = list(messages)
+        if notified_store is not None:
+            channel_ids = {m.channel_id for m in messages if m.channel_id is not None}
+            get_recent = getattr(getattr(repos, "messages", None), "get_recent_for_channels", None)
+            # Only replay the 24h backlog once the ledger already has rows for these channels.
+            # On the very first pass after the table is created the ledger is empty, and the
+            # backlog would otherwise re-present every already-delivered match as un-notified,
+            # producing a duplicate-notification burst on upgrade (the ledger that is supposed to
+            # prevent duplicates has nothing recorded yet). Empty ledger => fresh-only candidates,
+            # i.e. the pre-#838/1 first-pass behavior; the rescan kicks in once delivery is tracked.
+            ledger_seeded = False
+            has_any = getattr(notified_store, "has_any", None)
+            if channel_ids and callable(has_any):
+                try:
+                    ledger_seeded = await has_any(list(channel_ids))
+                except Exception:
+                    logger.warning("notification ledger has_any check failed", exc_info=True)
+                    ledger_seeded = False
+            if ledger_seeded and channel_ids and callable(get_recent):
+                try:
+                    backlog = await get_recent(list(channel_ids), NOTIFICATION_BACKLOG_LOOKBACK_HOURS)
+                except Exception:
+                    logger.warning("notification backlog rescan failed", exc_info=True)
+                    backlog = []
+                seen = {(m.channel_id, m.message_id) for m in candidates}
+                for m in backlog:
+                    key = (m.channel_id, m.message_id)
+                    if key not in seen:
+                        seen.add(key)
+                        candidates.append(m)
+
+        matcher = NotificationMatcher(
+            self._notifier, channels=channels, notified_store=notified_store
+        )
+        await matcher.match_and_notify(candidates, queries)
 
     async def _channel_still_exists(self, channel_id: int) -> bool:
         return await self._db.get_channel_by_channel_id(channel_id) is not None
@@ -1852,6 +1927,10 @@ class Collector:
                             new_title,
                             log_prefix="Stats",
                         )
+                        # Channel quarantined for rename review — stop here instead
+                        # of writing stats/created_at/type for it, mirroring the
+                        # collect path (audit #835/13).
+                        return None
                 else:
                     # Warm cache for numeric-id channels; bare resolve loops forever (#794).
                     try:
@@ -1928,7 +2007,7 @@ class Collector:
                         limit=50,
                         wait_time=self._config.delay_between_requests_sec,
                     ):
-                        if self._cancel_event.is_set():
+                        if self._is_stats_cancelled():
                             break
                         if getattr(msg, "views", None) is not None:
                             views_list.append(msg.views)
@@ -2043,6 +2122,8 @@ class Collector:
     async def collect_all_stats(self, *, max_channels: int | None = None) -> dict:
         async with self._stats_all_lock:
             self._stats_all_running = True
+            # Fresh run — drop any stale stats-cancel from a previous STATS_ALL.
+            self._stats_cancel_event.clear()
             try:
                 channels = await self._db.get_channels(active_only=True, include_filtered=False)
                 skip_fresh_hours = int(getattr(self._config, "stats_all_skip_fresh_hours", 24) or 0)
@@ -2107,7 +2188,7 @@ class Collector:
 
                 async def _worker() -> None:
                     nonlocal stop_workers
-                    while not self._cancel_event.is_set():
+                    while not self._is_stats_cancelled():
                         async with state_lock:
                             if stop_workers or not queue:
                                 return
