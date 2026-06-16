@@ -1148,6 +1148,39 @@ async def test_resolve_channel_channel_forbidden(pool):
 
 
 @pytest.mark.anyio
+async def test_resolve_channel_forbidden_is_not_gone_even_with_signal_gone(pool):
+    """Regression (#858 review): ChannelForbidden is an access error for the resolving
+    account, NOT a deletion. Even with signal_gone=True it must return None (not the
+    {"gone": True} sentinel), so refresh-types never deactivates a live private channel
+    just because an arbitrary account can't see it."""
+    client = AsyncMock()
+    cf = ChannelForbidden(id=1, access_hash=1, title="Forbidden", broadcast=False)
+    client.get_entity = AsyncMock(return_value=cf)
+    pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
+
+    with patch.object(pool, "get_available_client", return_value=(
+        TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+    )):
+        result = await pool.resolve_channel("@forbidden", signal_gone=True)
+    assert result is None  # NOT {"gone": True}
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_username_invalid_is_gone_with_signal_gone(pool):
+    """A genuinely definitive not-found (invalid/unoccupied username) DOES return the
+    gone sentinel under signal_gone — that path is unchanged by the #858 fix."""
+    client = AsyncMock()
+    client.get_entity = AsyncMock(side_effect=UsernameInvalidError("inv"))
+    pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
+
+    with patch.object(pool, "get_available_client", return_value=(
+        TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+    )):
+        result = await pool.resolve_channel("@invalid", signal_gone=True)
+    assert result == {"gone": True}
+
+
+@pytest.mark.anyio
 async def test_resolve_channel_numeric_id(pool):
     client = AsyncMock()
     entity = SimpleNamespace(id=123, title="Ch", broadcast=True, megagroup=False, gigagroup=False,

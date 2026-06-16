@@ -350,7 +350,8 @@ class TestCLIChannelExtended:
                 Channel(channel_id=101, title="T1", is_active=True),
             )
         )
-        pool.resolve_channel.return_value = False  # Simulation of not found
+        # Definitive not-found returns the {"gone": True} sentinel (audit #835/8).
+        pool.resolve_channel.return_value = {"gone": True}
         from src.cli.commands.channel import run
 
         run(_ns(channel_action="refresh-types"))
