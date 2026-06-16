@@ -1421,9 +1421,19 @@ class TestPhotoTaskServiceScheduleSend:
 class TestPhotoTaskServiceCancelItem:
     @pytest.mark.anyio
     async def test_cancel_delegates_to_bundle(self):
+        from types import SimpleNamespace
+
+        from src.models import PhotoBatchStatus
         from src.services.photo_task_service import PhotoTaskService
 
         bundle = MagicMock()
+        # A non-SCHEDULED item with no batch: cancel_item skips the Telegram
+        # unschedule precondition and the batch-status sync, delegating straight
+        # to the repository (#864 changed cancel_item to look up the item first).
+        item = SimpleNamespace(
+            status=PhotoBatchStatus.PENDING, telegram_message_ids=None, batch_id=None
+        )
+        bundle.get_item = AsyncMock(return_value=item)
         bundle.cancel_item = AsyncMock(return_value=True)
         svc = PhotoTaskService(bundle, MagicMock())
         result = await svc.cancel_item(99)
@@ -1435,6 +1445,7 @@ class TestPhotoTaskServiceCancelItem:
         from src.services.photo_task_service import PhotoTaskService
 
         bundle = MagicMock()
+        bundle.get_item = AsyncMock(return_value=None)
         bundle.cancel_item = AsyncMock(return_value=False)
         svc = PhotoTaskService(bundle, MagicMock())
         result = await svc.cancel_item(123)
