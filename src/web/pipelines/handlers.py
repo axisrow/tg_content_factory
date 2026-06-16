@@ -635,6 +635,25 @@ async def get_refinement_steps(request: Request, pipeline_id: int):
 # ------------------------------------------------------------------
 
 
+def _apply_fetch_limit(pipeline, messages: list) -> list:
+    """Cap candidates by the fetch_messages node's `limit`, mirroring the real run.
+
+    FetchMessagesHandler trims messages[:limit] before the filter; dry-run ignored
+    it and over-counted (audit #837/10)."""
+    if pipeline.pipeline_json is None:
+        return messages
+    fetch_node = next(
+        (n for n in pipeline.pipeline_json.nodes if n.type.value == "fetch_messages"),
+        None,
+    )
+    if fetch_node is None:
+        return messages
+    limit = fetch_node.config.get("limit")
+    if limit is not None and len(messages) > int(limit):
+        return messages[: int(limit)]
+    return messages
+
+
 def _apply_pipeline_filter(pipeline, messages: list) -> int:
     """Count messages that would pass the filter node, if any."""
     if pipeline.pipeline_json is None:
@@ -672,8 +691,10 @@ async def dry_run_count(request: Request, pipeline_id: int,
         sources = await db.repos.content_pipelines.list_sources(pipeline_id)
         ids = [s.channel_id for s in sources]
     messages = await db.repos.messages.get_recent_for_channels(ids, since_hours)
-    after_filter = _apply_pipeline_filter(pipeline, messages)
-    return PipelineJson({"total": len(messages), "after_filter": after_filter})
+    # Mirror the real run order: fetch -> limit -> filter (audit #837/10).
+    limited = _apply_fetch_limit(pipeline, messages)
+    after_filter = _apply_pipeline_filter(pipeline, limited)
+    return PipelineJson({"total": len(limited), "after_filter": after_filter})
 
 
 # ------------------------------------------------------------------
