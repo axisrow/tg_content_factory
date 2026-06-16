@@ -26,8 +26,9 @@ def _unique_key(source: str) -> str:
     Provider results frequently share generic basenames ("output.png", "image.png"),
     so keying on the basename alone made two generations write the SAME object — an
     existing presigned URL would then serve a later run's image (cross-run overwrite /
-    exposure). Prefix a uuid4 so every upload gets a distinct key while keeping a
-    readable, correctly-suffixed name (#862 review).
+    exposure). The key is ``images/{uuid4}{ext}``: the uuid guarantees a distinct
+    object per upload, and the extension is carried over from *source* (falling back
+    to ``.png``) so the object keeps a correct suffix/content type (#862 review).
     """
     base = os.path.basename(source) or "image"
     ext = os.path.splitext(base)[1]
