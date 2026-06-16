@@ -51,6 +51,23 @@ async def refresh_channel_meta(request: Request):
     return channels_response(request, await handlers.refresh_channel_meta(request))
 
 
+# ── Quarantine review (channels flagged uncertain by refresh-types, #875) ──────
+
+@router.get("/review", response_class=HTMLResponse)
+async def review_list(request: Request):
+    return channels_response(request, await handlers.review_list(request))
+
+
+@router.post("/{pk}/review-confirm")
+async def review_confirm(request: Request, pk: int):
+    return channels_response(request, await handlers.review_confirm(request, pk))
+
+
+@router.post("/{pk}/review-keep")
+async def review_keep(request: Request, pk: int):
+    return channels_response(request, await handlers.review_keep(request, pk))
+
+
 # ── Tag endpoints ────────────────────────────────────────────────────────────
 
 @router.get("/tags")

@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Каналы на ревью — TG Agent{% endblock %}
+{% block content %}
+<h1>Каналы на ревью</h1>
+<p class="text-muted">
+    Каналы ниже не удалось однозначно разрешить при обновлении типов: они либо удалены,
+    либо просто недоступны выбранному аккаунту (cache-miss). Чтобы не выключить живой
+    канал по ошибке, они помечены на ручную проверку и остаются активными. Решите по каждому.
+</p>
+
+{% if channels %}
+<p>Ожидают решения: <strong>{{ channels | length }}</strong></p>
+<div class="table-responsive">
+<table class="table table-bordered table-sm align-middle">
+    <thead class="table-light">
+        <tr>
+            <th>Канал</th>
+            <th>ID</th>
+            <th>Причина</th>
+            <th>Действие</th>
+        </tr>
+    </thead>
+    <tbody>
+    {% for ch in channels %}
+    <tr>
+        <td>
+            <div class="fw-semibold">{{ ch.title or "—" }}</div>
+            {% if ch.username %}<small class="text-muted">@{{ ch.username }}</small>{% endif %}
+        </td>
+        <td><small class="text-muted">{{ ch.channel_id }}</small></td>
+        <td><span class="badge bg-warning text-dark">{{ ch.review_reason or "uncertain" }}</span></td>
+        <td>
+            <div class="d-flex gap-2">
+                <form method="post" action="/channels/{{ ch.id }}/review-keep">
+                    <button type="submit" class="btn btn-sm btn-success"
+                            title="Ложная тревога — снять с ревью, оставить канал активным">
+                        Оставить активным
+                    </button>
+                </form>
+                <form method="post" action="/channels/{{ ch.id }}/review-confirm">
+                    <button type="submit" class="btn btn-sm btn-outline-danger"
+                            title="Подтвердить, что канал мёртв — деактивировать его">
+                        Подтвердить удаление
+                    </button>
+                </form>
+            </div>
+        </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="alert alert-success">Нет каналов, ожидающих ревью.</div>
+{% endif %}
+{% endblock %}

@@ -285,3 +285,59 @@ async def test_add_tag_missing_name(route_client):
     """POST /channels/tags without name returns 422."""
     resp = await route_client.post("/channels/tags", data={}, follow_redirects=False)
     assert resp.status_code == 303
+
+
+# ── Quarantine review routes (#875) ────────────────────────────────────────────
+
+async def _seed_quarantined(db, channel_id, title, username):
+    """Insert a channel and flag it for review; return its pk (base_app already seeds one)."""
+    await db.execute_write(
+        "INSERT INTO channels (channel_id, title, username, is_active) VALUES (?,?,?,1)",
+        (channel_id, title, username),
+    )
+    ch = next(c for c in await db.get_channels() if c.channel_id == channel_id)
+    await db.repos.channels.set_channel_review(ch.id, "numeric_unresolved")
+    return ch.id
+
+
+@pytest.mark.anyio
+async def test_review_list_page_renders(route_client, db):
+    """GET /channels/review renders the quarantine list, including a flagged channel."""
+    await _seed_quarantined(db, 700, "Maybe Dead", "maybe")
+    resp = await route_client.get("/channels/review")
+    assert resp.status_code == 200
+    assert "Maybe Dead" in resp.text
+    assert "numeric_unresolved" in resp.text
+
+
+@pytest.mark.anyio
+async def test_review_keep_clears_flag(route_client, db):
+    """POST /channels/{pk}/review-keep clears the flag and keeps the channel active."""
+    pk = await _seed_quarantined(db, 701, "Keep Me", "keep")
+    resp = await route_client.post(f"/channels/{pk}/review-keep", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=channel_review_kept" in resp.headers["location"]
+    refreshed = await db.get_channel_by_pk(pk)
+    assert refreshed.needs_review is False
+    assert refreshed.is_active is True
+
+
+@pytest.mark.anyio
+async def test_review_confirm_deactivates(route_client, db):
+    """POST /channels/{pk}/review-confirm deactivates the channel and clears the flag."""
+    pk = await _seed_quarantined(db, 702, "Dead For Real", "dead")
+    resp = await route_client.post(f"/channels/{pk}/review-confirm", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "msg=channel_review_confirmed" in resp.headers["location"]
+    refreshed = await db.get_channel_by_pk(pk)
+    assert refreshed.needs_review is False
+    assert refreshed.is_active is False
+    assert refreshed.channel_type == "unavailable"
+
+
+@pytest.mark.anyio
+async def test_review_confirm_missing_channel(route_client):
+    """POST review-confirm for a non-existent pk redirects with an error, not a 500."""
+    resp = await route_client.post("/channels/99999/review-confirm", follow_redirects=False)
+    assert resp.status_code == 303
+    assert "error=resolve" in resp.headers["location"]

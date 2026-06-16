@@ -32,6 +32,9 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
         "import_channels": ToolMeta(ToolCategory.WRITE),
         "refresh_channel_types": ToolMeta(ToolCategory.WRITE),
         "refresh_channel_meta": ToolMeta(ToolCategory.WRITE),
+        "list_channels_for_review": ToolMeta(ToolCategory.READ),
+        "review_keep_channel": ToolMeta(ToolCategory.WRITE),
+        "confirm_channel_dead": ToolMeta(ToolCategory.DELETE),
         "list_tags": ToolMeta(ToolCategory.READ),
         "create_tag": ToolMeta(ToolCategory.WRITE),
         "delete_tag": ToolMeta(ToolCategory.DELETE),
@@ -264,6 +267,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             updated = 0
             failed = 0
             deactivated = 0
+            quarantined = 0
             for ch in channels:
                 identifier = ch.username or str(ch.channel_id)
                 try:
@@ -277,6 +281,12 @@ def register(db, client_pool, embedding_service, **kwargs):
                     )
                 except Exception:
                     info = None
+                # Uncertain (cache-miss vs deleted) → quarantine for human review, not a
+                # silent deactivation (#875 redesign).
+                if info and info.get("review"):
+                    await db.repos.channels.set_channel_review(ch.id, info.get("reason", "uncertain"))
+                    quarantined += 1
+                    continue
                 if info and info.get("gone"):
                     await db.set_channel_active(ch.id, False)
                     await db.set_channel_type(ch.channel_id, "unavailable")
@@ -285,17 +295,113 @@ def register(db, client_pool, embedding_service, **kwargs):
                 if not info or info.get("channel_type") is None:
                     failed += 1
                     continue
+                # Resolved live: clear any stale quarantine flag (channel recovered).
+                if getattr(ch, "needs_review", False):
+                    await db.repos.channels.clear_channel_review(ch.id)
                 await db.set_channel_type(ch.channel_id, info["channel_type"])
                 updated += 1
             return _text_response(
                 f"Обновление типов завершено.\n"
                 f"Всего каналов: {len(channels)} (без типа: {len(null_type)}).\n"
-                f"Обновлено: {updated}, деактивировано: {deactivated}, не удалось: {failed}."
+                f"Обновлено: {updated}, деактивировано: {deactivated}, "
+                f"на ревью: {quarantined}, не удалось: {failed}."
             )
         except Exception as e:
             return _text_response(f"Ошибка обновления типов каналов: {e}")
 
     tools.append(refresh_channel_types)
+
+    # ------------------------------------------------------------------
+    # list_channels_for_review (READ) — quarantine queue (#875)
+    # ------------------------------------------------------------------
+
+    @tool(
+        "list_channels_for_review",
+        "List channels quarantined for human review by refresh_channel_types: they could "
+        "not be resolved unambiguously (deleted vs. an account-local cache-miss), so they "
+        "stay active and await a manual decision. Each row has pk, channel_id, title, "
+        "username and review_reason. Use review_keep_channel or confirm_channel_dead to act.",
+        {},
+    )
+    async def list_channels_for_review(args):
+        try:
+            channels = await db.repos.channels.list_channels_for_review()
+            if not channels:
+                return _text_response("Нет каналов, ожидающих ревью.")
+            lines = [f"Каналов на ревью: {len(channels)}."]
+            for ch in channels:
+                lines.append(
+                    f"  pk={ch.id} {ch.title} (@{ch.username or ch.channel_id}) "
+                    f"— {ch.review_reason or 'uncertain'}"
+                )
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка получения списка на ревью: {e}")
+
+    tools.append(list_channels_for_review)
+
+    # ------------------------------------------------------------------
+    # review_keep_channel (WRITE) — false alarm, clear the flag
+    # ------------------------------------------------------------------
+
+    @tool(
+        "review_keep_channel",
+        "Clear the quarantine flag for a channel (false alarm): keep it active and remove "
+        "it from the review queue. pk = DB primary key — get it from list_channels_for_review.",
+        {"pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels_for_review)"]},
+    )
+    async def review_keep_channel(args):
+        try:
+            pk = arg_int(args, "pk", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        try:
+            ch = await db.get_channel_by_pk(pk)
+            if not ch:
+                return _text_response(f"Канал pk={pk} не найден.")
+            await db.repos.channels.clear_channel_review(pk)
+            return _text_response(f"Канал '{ch.title}' (pk={pk}) снят с ревью, остаётся активным.")
+        except Exception as e:
+            return _text_response(f"Ошибка снятия с ревью: {e}")
+
+    tools.append(review_keep_channel)
+
+    # ------------------------------------------------------------------
+    # confirm_channel_dead (DELETE + confirm) — operator agrees it is gone
+    # ------------------------------------------------------------------
+
+    @tool(
+        "confirm_channel_dead",
+        "DANGEROUS: Confirm a quarantined channel is really dead and deactivate it "
+        "(is_active=0, channel_type=unavailable), then remove it from the review queue. "
+        "pk = DB primary key — get it from list_channels_for_review. Requires confirmation.",
+        {
+            "pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels_for_review)"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
+        annotations=ToolAnnotations(destructiveHint=True),
+    )
+    async def confirm_channel_dead(args):
+        try:
+            pk = arg_int(args, "pk", required=True)
+        except ToolInputError as exc:
+            return exc.to_response()
+        ch = await db.get_channel_by_pk(pk)
+        name = ch.title if ch else f"id={pk}"
+        gate = require_confirmation(f"деактивирует канал '{name}' как удалённый", args)
+        if gate:
+            return gate
+        if not ch:
+            return _text_response(f"Канал pk={pk} не найден.")
+        try:
+            await db.set_channel_active(pk, False)
+            await db.set_channel_type(ch.channel_id, "unavailable")
+            await db.repos.channels.clear_channel_review(pk)
+            return _text_response(f"Канал '{name}' (pk={pk}) деактивирован и снят с ревью.")
+        except Exception as e:
+            return _text_response(f"Ошибка деактивации канала: {e}")
+
+    tools.append(confirm_channel_dead)
 
     # ------------------------------------------------------------------
     # refresh_channel_meta (WRITE + confirm) — about, linked_chat_id, has_comments

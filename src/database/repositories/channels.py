@@ -81,6 +81,10 @@ class ChannelsRepository:
             preferred_phone=(
                 row["preferred_phone"] if "preferred_phone" in keys else None
             ),
+            needs_review=bool(row["needs_review"]) if "needs_review" in keys and row["needs_review"] else False,
+            review_reason=(
+                row["review_reason"] if "review_reason" in keys and row["review_reason"] else None
+            ),
         )
 
     async def get_channels(
@@ -168,6 +172,28 @@ class ChannelsRepository:
 
     async def set_channel_active(self, pk: int, active: bool) -> None:
         await self._database.execute_write("UPDATE channels SET is_active = ? WHERE id = ?", (int(active), pk))
+
+    async def set_channel_review(self, pk: int, reason: str) -> None:
+        """Flag a channel for human review (quarantine) — stays active until resolved."""
+        await self._database.execute_write(
+            "UPDATE channels SET needs_review = 1, review_reason = ? WHERE id = ?",
+            (reason, pk),
+        )
+
+    async def clear_channel_review(self, pk: int) -> None:
+        """Clear the review flag (operator decided, or the channel resolved live again)."""
+        await self._database.execute_write(
+            "UPDATE channels SET needs_review = 0, review_reason = '' WHERE id = ?",
+            (pk,),
+        )
+
+    async def list_channels_for_review(self) -> list[Channel]:
+        """Channels currently quarantined for human review (needs_review = 1)."""
+        cur = await self._db.execute(
+            "SELECT * FROM channels WHERE needs_review = 1 ORDER BY id ASC"
+        )
+        rows = await cur.fetchall()
+        return [self._map_channel(row) for row in rows]
 
     async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
         assert self._database is not None, (

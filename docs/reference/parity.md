@@ -14,6 +14,9 @@
 | Импорт каналов | `channel import` | `POST /channels/import` | `import_channels` |
 | Обновить типы | `channel refresh-types` | `POST /channels/refresh-types` | `refresh_channel_types` |
 | Обновить метаданные | `channel refresh-meta` | `POST /channels/refresh-meta` | `refresh_channel_meta` |
+| Список на ревью | `channel review-list` | `GET /channels/review` | `list_channels_for_review` |
+| Подтвердить удаление | `channel review-confirm` | `POST /channels/{pk}/review-confirm` | `confirm_channel_dead` |
+| Оставить активным | `channel review-keep` | `POST /channels/{pk}/review-keep` | `review_keep_channel` |
 | Массовое добавление из диалогов | `channel add-bulk` | `POST /channels/add-bulk` | `add_channels_bulk` |
 | Список тегов | `channel tag list` | `GET /channels/tags` | `list_tags` |
 | Создать тег | `channel tag add` | `POST /channels/tags` | `create_tag` |

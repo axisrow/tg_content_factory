@@ -91,6 +91,39 @@ async def refresh_channel_meta(request: Request) -> ChannelsRedirect:
     return await _enqueue_channel_command(request, "channels.refresh_meta", {})
 
 
+async def review_list(request: Request) -> ChannelsTemplate:
+    db = deps.get_db(request)
+    channels = await db.repos.channels.list_channels_for_review()
+    return ChannelsTemplate(
+        "channel_review.html",
+        {
+            "channels": channels,
+            "error": request.query_params.get("error"),
+            "msg": request.query_params.get("msg"),
+        },
+    )
+
+
+async def review_confirm(request: Request, pk: int) -> ChannelsRedirect:
+    # Operator confirmed the quarantined channel is dead → deactivate. DB-only, no
+    # Telegram call needed (the uncertainty was already adjudicated by the human).
+    db = deps.get_db(request)
+    ch = await db.get_channel_by_pk(pk)
+    if ch is None:
+        return ChannelsRedirect(error="resolve")
+    await db.set_channel_active(pk, False)
+    await db.set_channel_type(ch.channel_id, "unavailable")
+    await db.repos.channels.clear_channel_review(pk)
+    return ChannelsRedirect(msg="channel_review_confirmed")
+
+
+async def review_keep(request: Request, pk: int) -> ChannelsRedirect:
+    # False alarm → clear the quarantine flag, channel stays active.
+    db = deps.get_db(request)
+    await db.repos.channels.clear_channel_review(pk)
+    return ChannelsRedirect(msg="channel_review_kept")
+
+
 async def list_tags(request: Request) -> ChannelsJson:
     db = deps.get_db(request)
     tags = await db.repos.channels.list_all_tags()

@@ -29,7 +29,9 @@ CREATE TABLE IF NOT EXISTS channels (
     linked_chat_id INTEGER,
     has_comments INTEGER DEFAULT 0,
     created_at TEXT,
-    preferred_phone TEXT
+    preferred_phone TEXT,
+    needs_review INTEGER DEFAULT 0,
+    review_reason TEXT
 );
 
 CREATE TABLE IF NOT EXISTS messages (
