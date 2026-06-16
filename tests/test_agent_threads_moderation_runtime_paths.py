@@ -974,14 +974,17 @@ class TestImageGenerationService:
         assert result == "http://img.example.com/x.png"
 
     @pytest.mark.anyio
-    async def test_generate_unknown_provider_uses_fallback(self):
+    async def test_generate_unknown_explicit_provider_returns_none(self):
         from src.services.image_generation_service import ImageGenerationService
 
         adapter = AsyncMock(return_value="http://fallback.example.com/img.png")
         svc = ImageGenerationService(adapters={"together": adapter})
-        # 'replicate' not in adapters, should fall back to first adapter
+        # An EXPLICIT but unregistered provider must NOT silently route to another
+        # provider's adapter (which would generate off-brand images from an
+        # incompatible model) — it returns None (audit #835/11).
         result = await svc.generate("replicate:some-model", "text")
-        assert result == "http://fallback.example.com/img.png"
+        assert result is None
+        adapter.assert_not_awaited()
 
     @pytest.mark.anyio
     async def test_generate_os_error_returns_none(self):
