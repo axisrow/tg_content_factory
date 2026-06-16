@@ -29,6 +29,8 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "created_at": "created_at TEXT",
         "preferred_phone": "preferred_phone TEXT",
         "last_collected_id": "last_collected_id INTEGER DEFAULT 0",
+        "needs_review": "needs_review INTEGER DEFAULT 0",
+        "review_reason": "review_reason TEXT",
     },
     "messages": {
         "sender_first_name": "sender_first_name TEXT",

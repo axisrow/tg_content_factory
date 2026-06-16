@@ -59,6 +59,19 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         help="Refresh metadata for all active channels",
     )
 
+    # ── quarantine review (channels flagged uncertain by refresh-types, #875) ──
+    ch_sub.add_parser(
+        "review-list", help="List channels quarantined for human review (uncertain not-found)"
+    )
+    ch_rev_confirm = ch_sub.add_parser(
+        "review-confirm", help="Confirm a quarantined channel is dead (deactivate it)"
+    )
+    ch_rev_confirm.add_argument("identifier", help="Channel pk, channel_id, or @username")
+    ch_rev_keep = ch_sub.add_parser(
+        "review-keep", help="Clear the quarantine flag, keep the channel active"
+    )
+    ch_rev_keep.add_argument("identifier", help="Channel pk, channel_id, or @username")
+
     ch_import = ch_sub.add_parser("import", help="Bulk import from file or text")
     ch_import.add_argument("source", help="Path to .txt/.csv file, or comma-separated identifiers")
 

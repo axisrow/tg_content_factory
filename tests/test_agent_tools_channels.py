@@ -26,6 +26,7 @@ def _make_channel(
     ch.is_active = is_active
     ch.is_filtered = is_filtered
     ch.channel_type = channel_type
+    ch.needs_review = False
     return ch
 
 
@@ -452,3 +453,81 @@ class TestRefreshChannelTypesTool:
 
         mock_db.set_channel_active.assert_not_awaited()
         assert "не удалось: 1" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_uncertain_channel_is_quarantined_not_deactivated(self, mock_db):
+        """#875 redesign: a {"review": ...} verdict (cache-miss vs deleted, uncertain) must
+        flag the channel for review and NOT deactivate it."""
+        ch = _make_channel(pk=1, channel_id=111, title="Maybe", username="maybe")
+        mock_db.get_channels = AsyncMock(return_value=[ch])
+        mock_db.set_channel_active = AsyncMock()
+        mock_db.repos.channels.set_channel_review = AsyncMock()
+        pool = MagicMock()
+        pool.resolve_channel = AsyncMock(
+            return_value={"review": True, "reason": "numeric_unresolved"}
+        )
+
+        handlers = _get_tool_handlers(mock_db, client_pool=pool)
+        result = await handlers["refresh_channel_types"]({"confirm": True})
+
+        mock_db.set_channel_active.assert_not_awaited()
+        mock_db.repos.channels.set_channel_review.assert_awaited_once_with(1, "numeric_unresolved")
+        assert "на ревью: 1" in _text(result)
+
+
+class TestChannelReviewTools:
+    @pytest.mark.anyio
+    async def test_list_channels_for_review_empty(self, mock_db):
+        mock_db.repos.channels.list_channels_for_review = AsyncMock(return_value=[])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["list_channels_for_review"]({})
+        assert "Нет каналов" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_list_channels_for_review_lists(self, mock_db):
+        ch = _make_channel(pk=7, channel_id=111, title="Maybe", username="maybe")
+        ch.review_reason = "numeric_unresolved"
+        mock_db.repos.channels.list_channels_for_review = AsyncMock(return_value=[ch])
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["list_channels_for_review"]({})
+        text = _text(result)
+        assert "pk=7" in text
+        assert "Maybe" in text
+        assert "numeric_unresolved" in text
+
+    @pytest.mark.anyio
+    async def test_review_keep_missing_pk_returns_error(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["review_keep_channel"]({})
+        assert "pk обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_review_keep_clears_flag(self, mock_db):
+        ch = _make_channel(pk=3, title="KeepMe")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.repos.channels.clear_channel_review = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["review_keep_channel"]({"pk": 3})
+        mock_db.repos.channels.clear_channel_review.assert_awaited_once_with(3)
+        assert "снят с ревью" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_confirm_dead_requires_confirmation(self, mock_db):
+        mock_db.get_channel_by_pk = AsyncMock(return_value=_make_channel(title="Dead"))
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["confirm_channel_dead"]({"pk": 1})
+        assert "confirm=true" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_confirm_dead_deactivates_and_clears(self, mock_db):
+        ch = _make_channel(pk=4, channel_id=444, title="Dead")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.set_channel_active = AsyncMock()
+        mock_db.set_channel_type = AsyncMock()
+        mock_db.repos.channels.clear_channel_review = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["confirm_channel_dead"]({"pk": 4, "confirm": True})
+        mock_db.set_channel_active.assert_awaited_once_with(4, False)
+        mock_db.set_channel_type.assert_awaited_once_with(444, "unavailable")
+        mock_db.repos.channels.clear_channel_review.assert_awaited_once_with(4)
+        assert "деактивирован" in _text(result)
