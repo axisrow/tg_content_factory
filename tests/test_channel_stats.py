@@ -292,7 +292,13 @@ async def test_collect_channel_stats_releases_client(db):
 
 @pytest.mark.anyio
 async def test_collect_channel_stats_fallback_on_stale_username(db):
-    """Stale username in DB → resolve via numeric ID and mark channel filtered."""
+    """Stale username → resolve via numeric ID, quarantine for rename review, write NO stats.
+
+    When the numeric-ID fallback reveals the channel was renamed, the stats path
+    mirrors the collect path (audit #835/13): it records the meta change + sticky
+    filter flags and stops *before* writing stats, returning None so the channel
+    awaits a user decision instead of silently persisting numbers under a new name.
+    """
     from telethon.errors import UsernameNotOccupiedError
 
     ch = Channel(channel_id=-100555, title="Old Title", username="S0IMD1EDUAW")
@@ -319,11 +325,11 @@ async def test_collect_channel_stats_fallback_on_stale_username(db):
     collector = Collector(pool, db, SchedulerConfig())
     stats = await collector.collect_channel_stats(ch)
 
-    assert stats is not None
-    assert stats.subscriber_count == 42
+    # Quarantined for rename review → no stats written this run.
+    assert stats is None
     assert mock_client.get_entity.await_count == 2
 
-    # DB should have updated meta + sticky filter flags.
+    # DB should still have updated meta + sticky filter flags before bailing out.
     channels = await db.get_channels()
     updated = next(c for c in channels if c.channel_id == -100555)
     assert updated.username == "new_handle"

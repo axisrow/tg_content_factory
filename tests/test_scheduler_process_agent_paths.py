@@ -248,8 +248,10 @@ class TestSchedulerSyncPipelineJobs:
             await mgr.sync_pipeline_jobs()
             jobs = mgr._scheduler.get_jobs()
             job_ids = {j.id for j in jobs}
-            assert "pipeline_run_10" in job_ids
+            # content_generate_ is the single periodic job per pipeline (#835/2);
+            # pipeline_run_ is no longer registered as a periodic job.
             assert "content_generate_10" in job_ids
+            assert "pipeline_run_10" not in job_ids
         finally:
             await mgr.stop()
 
@@ -264,11 +266,13 @@ class TestSchedulerSyncPipelineJobs:
         await mgr.start()
         try:
             await mgr.sync_pipeline_jobs()
-            assert any(j.id == "pipeline_run_11" for j in mgr._scheduler.get_jobs())
+            # content_generate_ is the periodic job now (#835/2), not pipeline_run_.
+            assert any(j.id == "content_generate_11" for j in mgr._scheduler.get_jobs())
+            assert not any(j.id == "pipeline_run_11" for j in mgr._scheduler.get_jobs())
 
             pl_bundle.get_all.return_value = []
             await mgr.sync_pipeline_jobs()
-            assert not any(j.id == "pipeline_run_11" for j in mgr._scheduler.get_jobs())
+            assert not any(j.id == "content_generate_11" for j in mgr._scheduler.get_jobs())
         finally:
             await mgr.stop()
 
@@ -316,8 +320,10 @@ class TestSchedulerGetPotentialJobs:
         mgr = await _make_mgr(pipeline_bundle=pl_bundle)
         jobs = await mgr.get_potential_jobs()
         job_ids = {j["job_id"] for j in jobs}
-        assert "pipeline_run_99" in job_ids
+        # Only content_generate_ is advertised; pipeline_run_ is no longer a togglable
+        # periodic job (#835/2) and must not appear as a potential job.
         assert "content_generate_99" in job_ids
+        assert "pipeline_run_99" not in job_ids
 
 
 class TestSchedulerLoadSettings:

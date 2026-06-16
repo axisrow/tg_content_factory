@@ -271,9 +271,10 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         message_id = args.get("message_id")
         if not message_id:
             return _text_response("Ошибка: message_id обязателен.")
-        try:
-            message_id_int = int(message_id)
-        except (TypeError, ValueError):
+        # Reject a fractional id instead of truncating it (int(10.9) -> 10 reacts
+        # to the wrong message); mirrors the send_reactions batch path (#835/10).
+        message_id_int = _coerce_exact_int(message_id)
+        if message_id_int is None:
             return _text_response("Ошибка: message_id должен быть целым числом.")
         perm_gate = await ctx.require_phone_permission(phone, "send_reaction")
         if perm_gate:

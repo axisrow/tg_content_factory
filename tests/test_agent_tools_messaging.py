@@ -125,6 +125,18 @@ class TestSendReaction:
         assert "confirm=true" in _text(result)
 
     @pytest.mark.anyio
+    async def test_fractional_message_id_rejected(self, mock_db):
+        """A fractional message_id must be rejected, not silently truncated to react
+        to the wrong message (int(10.9) -> 10); mirrors send_reactions (audit #835/10)."""
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+        result = await handlers["send_reaction"](
+            {"phone": "+79001234567", "chat_id": "@chat", "message_id": 10.9, "emoji": "🔥", "confirm": True}
+        )
+        assert "целым числом" in _text(result)
+
+    @pytest.mark.anyio
     async def test_with_confirm_success(self, mock_db):
         mock_pool, mock_client = _make_mock_pool()
         mock_db.get_accounts = AsyncMock(return_value=[_make_account()])

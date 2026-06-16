@@ -1130,6 +1130,46 @@ class TestDeepagentsBackendInit:
         assert backend.configured is False
 
 
+class TestDeepagentsBackendAvailable:
+    @staticmethod
+    def _openai_cfg() -> ProviderRuntimeConfig:
+        return ProviderRuntimeConfig(
+            provider="openai",
+            enabled=True,
+            priority=0,
+            selected_model="gpt-4",
+            plain_fields={},
+            secret_fields={"api_key": "test-key"},
+        )
+
+    def test_available_prefers_db_config_over_legacy_anthropic_fallback(self, mock_db):
+        """A legacy anthropic fallback without AGENT_FALLBACK_API_KEY must not declare
+        deepagents unavailable when a usable non-legacy DB config exists (audit #837/5)."""
+        config = AppConfig()
+        config.agent.fallback_model = "anthropic:claude-3"
+        config.agent.fallback_api_key = ""
+        backend = DeepagentsBackend(mock_db, config)
+        backend._preflight_available = None
+        backend._cached_db_configs = [self._openai_cfg()]
+
+        with patch.object(
+            DeepagentsBackend,
+            "_validation_error",
+            lambda self, cfg: "" if cfg.provider == "openai" else "legacy-err",
+        ):
+            assert backend.available is True
+
+    def test_available_false_for_legacy_anthropic_without_key_and_no_db(self, mock_db):
+        config = AppConfig()
+        config.agent.fallback_model = "anthropic:claude-3"
+        config.agent.fallback_api_key = ""
+        backend = DeepagentsBackend(mock_db, config)
+        backend._preflight_available = None
+        backend._cached_db_configs = []
+
+        assert backend.available is False
+
+
 class TestDeepagentsBackendBuildAgent:
     def test_build_agent_empty_model_raises(self, mock_db):
         """_build_agent raises RuntimeError when selected_model is empty."""

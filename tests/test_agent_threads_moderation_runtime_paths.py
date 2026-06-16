@@ -587,10 +587,15 @@ class TestLeaveDialogs:
             return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
         )
         pool.leave_channels = AsyncMock(return_value={100: True, 200: True})
-        handlers = _get_tool_handlers(mock_db, client_pool=pool)
-        result = await handlers["leave_dialogs"](
-            {"phone": "+79001234567", "dialog_ids": "100,200", "confirm": True}
-        )
+        # leave_dialogs resolves per-dialog channel_type via ChannelService.get_my_dialogs
+        # (audit #837/7); mock it so the resolution does not hit a bare MagicMock.
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(return_value=[])
+        with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["leave_dialogs"](
+                {"phone": "+79001234567", "dialog_ids": "100,200", "confirm": True}
+            )
         assert "2/2" in _text(result)
 
     @pytest.mark.anyio
@@ -600,10 +605,13 @@ class TestLeaveDialogs:
             return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
         )
         pool.leave_channels = AsyncMock(side_effect=Exception("net"))
-        handlers = _get_tool_handlers(mock_db, client_pool=pool)
-        result = await handlers["leave_dialogs"](
-            {"phone": "+79001234567", "dialog_ids": "100", "confirm": True}
-        )
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(return_value=[])
+        with patch("src.services.channel_service.ChannelService", return_value=ch_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=pool)
+            result = await handlers["leave_dialogs"](
+                {"phone": "+79001234567", "dialog_ids": "100", "confirm": True}
+            )
         assert "Ошибка выхода" in _text(result)
 
 

@@ -270,6 +270,7 @@ async def test_cancel_task_stats_all_bypasses_queue_and_cancels_collector():
     channels.cancel_collection_task = AsyncMock(return_value=True)
     collector = MagicMock()
     collector.cancel = AsyncMock()
+    collector.cancel_stats = AsyncMock()
     queue = MagicMock()
     queue.cancel_task = AsyncMock(return_value=True)
 
@@ -278,7 +279,10 @@ async def test_cancel_task_stats_all_bypasses_queue_and_cancels_collector():
 
     assert result is True
     channels.cancel_collection_task.assert_awaited_once_with(88, note="stop stats")
-    collector.cancel.assert_awaited_once()
+    # Stats-only stop signal — must NOT use the global collector.cancel() which
+    # also aborts channel collection (audit #835/6).
+    collector.cancel_stats.assert_awaited_once()
+    collector.cancel.assert_not_called()
     queue.cancel_task.assert_not_called()
 
 
