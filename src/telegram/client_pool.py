@@ -1236,7 +1236,13 @@ class ClientPool(ResolveGuardMixin):
         result.sort(key=lambda u: (not u.is_primary, u.phone))
         return result
 
-    async def resolve_channel(self, identifier: str, *, signal_gone: bool = False) -> dict | None:
+    async def resolve_channel(
+        self,
+        identifier: str,
+        *,
+        signal_gone: bool = False,
+        numeric_fallback: str | None = None,
+    ) -> dict | None:
         """Resolve channel by @username or t.me/ link. Returns dict with channel info.
 
         When ``signal_gone`` is True, a *definitive* not-found (username no longer
@@ -1244,6 +1250,16 @@ class ClientPool(ResolveGuardMixin):
         so callers like ``channel refresh-types`` can deactivate the channel — while
         a *transient* failure (timeout / flood / no client) still returns None and
         the channel is left active (audit #835/8).
+
+        ``numeric_fallback`` guards against deactivating a *live* channel whose stored
+        @username merely went stale: a ``UsernameNotOccupiedError`` only proves the
+        username is no longer occupied, not that the channel row is dead — the channel
+        keeps a stable numeric id and may have just renamed/dropped its @username. When
+        the primary (username) resolution returns the gone sentinel and a distinct
+        ``numeric_fallback`` is given, resolution is retried by that numeric id; only a
+        *second* definitive not-found yields ``{"gone": True}``. A successful numeric
+        resolution returns the live channel dict, so refresh-types leaves it active
+        (#858 review).
 
         ChannelForbidden is NOT treated as gone: it is an access/permission error
         (the *resolving* account is not a member of a private/restricted channel),
@@ -1255,6 +1271,20 @@ class ClientPool(ResolveGuardMixin):
         Raises:
             RuntimeError("no_client") — no connected/available Telegram accounts.
         """
+        result = await self._resolve_channel_once(identifier, signal_gone=signal_gone)
+        # Stale-username guard: a gone-by-username verdict is not proof the channel is
+        # dead — retry by the stable numeric id before signalling gone (#858 review).
+        if (
+            signal_gone
+            and isinstance(result, dict)
+            and result.get("gone")
+            and numeric_fallback
+            and numeric_fallback != identifier
+        ):
+            return await self._resolve_channel_once(numeric_fallback, signal_gone=signal_gone)
+        return result
+
+    async def _resolve_channel_once(self, identifier: str, *, signal_gone: bool = False) -> dict | None:
         gone: dict | None = {"gone": True} if signal_gone else None
         # Normalize post links: https://t.me/channel/123 → https://t.me/channel
         identifier = re.sub(r"(t\.me/[^/\s]+)/\d+$", r"\1", identifier)

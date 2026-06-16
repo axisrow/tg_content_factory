@@ -1372,7 +1372,29 @@ async def test_channels_refresh_types_no_username():
     d = _dispatcher(db=db, pool=pool)
     r = await d._handle_channels_refresh_types({})
     assert r["updated"] == 1
-    pool.resolve_channel.assert_awaited_once_with("-100", signal_gone=True)
+    pool.resolve_channel.assert_awaited_once_with(
+        "-100", signal_gone=True, numeric_fallback="-100"
+    )
+
+
+# --- _handle_channels_refresh_types: stale @username must not deactivate a live channel ---
+
+
+async def test_channels_refresh_types_passes_numeric_fallback():
+    """#858 review: refresh-types resolves by @username but must pass the numeric
+    channel_id as fallback so a stale username can't deactivate a live channel."""
+    from src.models import Channel
+
+    db = _mock_db()
+    pool = _mock_pool()
+    db.get_channels.return_value = [Channel(id=1, channel_id=-100, title="T", username="oldname")]
+    pool.resolve_channel.return_value = {"channel_id": -100, "channel_type": "channel"}
+    d = _dispatcher(db=db, pool=pool)
+    r = await d._handle_channels_refresh_types({})
+    assert r["updated"] == 1
+    pool.resolve_channel.assert_awaited_once_with(
+        "oldname", signal_gone=True, numeric_fallback="-100"
+    )
 
 
 # --- _handle_channels_refresh_types: resolve returns info with None channel_type ---
