@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 # is the SigV4 maximum.
 PRESIGNED_TTL_SEC = 7 * 24 * 3600
 
+# Upper bound on a mirrored remote image. A hostile/oversized provider response must
+# not be read fully into the worker's memory (OOM risk on worker/pipeline paths).
+# Mirrors the 50 MB cap the agent image downloader already enforces (#862 review).
+MAX_MIRROR_BYTES = 50 * 1024 * 1024
+_MIRROR_CHUNK = 1 << 16  # 64 KiB
+
 
 def _unique_key(source: str) -> str:
     """Build a collision-free S3 object key from a source path/URL basename.
@@ -103,7 +109,23 @@ class S3Store:
 
             def _upload() -> str:
                 with urllib.request.urlopen(url, timeout=30) as resp:  # noqa: S310 - provider URL
-                    data = resp.read()
+                    # Bounded read: never load an unbounded body into memory. Reject
+                    # anything over the cap up front (Content-Length) AND while reading
+                    # (a missing/lying header can't bypass the limit) (#862 review).
+                    declared = resp.headers.get("Content-Length")
+                    if declared is not None and declared.isdigit() and int(declared) > MAX_MIRROR_BYTES:
+                        raise ValueError(f"remote image exceeds {MAX_MIRROR_BYTES} bytes (Content-Length)")
+                    chunks: list[bytes] = []
+                    total = 0
+                    while True:
+                        chunk = resp.read(_MIRROR_CHUNK)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > MAX_MIRROR_BYTES:
+                            raise ValueError(f"remote image exceeds {MAX_MIRROR_BYTES} bytes")
+                        chunks.append(chunk)
+                    data = b"".join(chunks)
                 s3 = self._client()
                 s3.put_object(Bucket=self._bucket, Key=object_key, Body=data)
                 return self._presigned_get(s3, object_key)

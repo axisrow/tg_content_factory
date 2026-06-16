@@ -110,3 +110,89 @@ async def test_upload_file_failure():
         store = S3Store("https://s3.test", "bucket", "ak", "sk")
         result = await store.upload_file("/tmp/test_image.png")
         assert result is None
+
+
+# ── upload_url: bounded-read mirroring (#862 review) ──
+
+
+class _FakeResp:
+    """Minimal urlopen() context-manager stand-in with a chunked .read(n)."""
+
+    def __init__(self, body: bytes, content_length: str | None = None) -> None:
+        self._buf = body
+        self._pos = 0
+        self.headers = {} if content_length is None else {"Content-Length": content_length}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self, n: int = -1) -> bytes:
+        if n is None or n < 0:
+            chunk = self._buf[self._pos:]
+            self._pos = len(self._buf)
+            return chunk
+        chunk = self._buf[self._pos:self._pos + n]
+        self._pos += len(chunk)
+        return chunk
+
+
+def _mock_s3_modules():
+    mock_s3 = MagicMock()
+    mock_client = MagicMock()
+    mock_s3.client.return_value = mock_client
+    mock_client.generate_presigned_url.return_value = "https://s3.test/bucket/k?sig=abc"
+    return mock_s3, mock_client
+
+
+@pytest.mark.anyio
+async def test_upload_url_mirrors_to_s3():
+    mock_s3, mock_client = _mock_s3_modules()
+    with patch.dict("sys.modules", {"boto3": mock_s3, "botocore": MagicMock(), "botocore.config": MagicMock()}), \
+         patch("urllib.request.urlopen", return_value=_FakeResp(b"PNGDATA", "7")):
+        store = S3Store("https://s3.test", "bucket", "ak", "sk")
+        url = await store.upload_url("https://provider.test/output.png")
+    assert url == "https://s3.test/bucket/k?sig=abc"
+    body = mock_client.put_object.call_args.kwargs["Body"]
+    assert body == b"PNGDATA"
+
+
+@pytest.mark.anyio
+async def test_upload_url_rejects_oversize_content_length():
+    """A Content-Length over the cap is rejected up front — body is never read into RAM."""
+    from src.services.s3_store import MAX_MIRROR_BYTES
+
+    mock_s3, mock_client = _mock_s3_modules()
+    resp = _FakeResp(b"x", content_length=str(MAX_MIRROR_BYTES + 1))
+    with patch.dict("sys.modules", {"boto3": mock_s3, "botocore": MagicMock(), "botocore.config": MagicMock()}), \
+         patch("urllib.request.urlopen", return_value=resp):
+        store = S3Store("https://s3.test", "bucket", "ak", "sk")
+        url = await store.upload_url("https://provider.test/huge.png")
+    assert url is None
+    mock_client.put_object.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_upload_url_rejects_oversize_body_despite_lying_header():
+    """A missing/understated Content-Length cannot bypass the cap — the streaming read
+    still aborts once the body exceeds MAX_MIRROR_BYTES."""
+    from src.services.s3_store import MAX_MIRROR_BYTES
+
+    mock_s3, mock_client = _mock_s3_modules()
+    oversized = b"a" * (MAX_MIRROR_BYTES + 1024)
+    # No Content-Length header at all → must still be caught while reading.
+    with patch.dict("sys.modules", {"boto3": mock_s3, "botocore": MagicMock(), "botocore.config": MagicMock()}), \
+         patch("urllib.request.urlopen", return_value=_FakeResp(oversized, content_length=None)):
+        store = S3Store("https://s3.test", "bucket", "ak", "sk")
+        url = await store.upload_url("https://provider.test/lying.png")
+    assert url is None
+    mock_client.put_object.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_upload_url_rejects_non_http_scheme():
+    store = S3Store("https://s3.test", "bucket", "ak", "sk")
+    assert await store.upload_url("file:///etc/passwd") is None
+    assert await store.upload_url("") is None
