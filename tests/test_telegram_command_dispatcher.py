@@ -2281,3 +2281,28 @@ class TestRefreshTypesDeactivation:
         db.set_channel_active.assert_awaited_once_with(1, False)
         # transient channel must NOT be deactivated
         assert all(call.args[0] != 2 for call in db.set_channel_active.await_args_list)
+
+
+# ── _unwrap_result_payload (audit #838/9, #838/4) ──────────────────────────────
+
+
+class TestUnwrapResultPayload:
+    def test_uses_envelope_when_present(self):
+        assert TelegramCommandDispatcher._unwrap_result_payload({"result": {"a": 1}}) == {"a": 1}
+
+    def test_preserves_flat_dict(self):
+        # ~40 handlers return a flat dict; it must be persisted, not dropped to {}.
+        flat = {"phone": "+7", "scope": "all", "total": 3, "participants": [{"id": 1}]}
+        assert TelegramCommandDispatcher._unwrap_result_payload(flat) == flat
+
+    def test_excludes_reserved_payload_update(self):
+        out = TelegramCommandDispatcher._unwrap_result_payload(
+            {"updated": 2, "payload_update": {"x": 1}}
+        )
+        assert out == {"updated": 2}
+
+    def test_non_dict_returns_empty(self):
+        assert TelegramCommandDispatcher._unwrap_result_payload(None) == {}
+
+    def test_envelope_non_dict_inner_returns_empty(self):
+        assert TelegramCommandDispatcher._unwrap_result_payload({"result": "x"}) == {}

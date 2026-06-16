@@ -286,10 +286,27 @@ class TelegramCommandDispatcher:
                 await self._update_command_safely(
                     command.id,
                     status=TelegramCommandStatus.SUCCEEDED,
-                    result_payload=result.get("result") or {},
+                    result_payload=self._unwrap_result_payload(result),
                     payload=result.get("payload_update"),
                     log_action="succeeded",
                 )
+
+    @staticmethod
+    def _unwrap_result_payload(result: object) -> dict:
+        """Normalize a handler return into the persisted result_payload.
+
+        Only a few handlers wrap their output in {"result": {...}}; ~40 others
+        return a flat dict. Persisting result.get("result") alone dropped every
+        flat result to {} (audit #838/9, and #838/4 for search participants).
+        Use the inner envelope when present, otherwise the whole dict minus the
+        reserved payload_update key.
+        """
+        if not isinstance(result, dict):
+            return {}
+        if "result" in result:
+            inner = result.get("result")
+            return inner if isinstance(inner, dict) else {}
+        return {k: v for k, v in result.items() if k != "payload_update"}
 
     async def _update_command_safely(
         self,
