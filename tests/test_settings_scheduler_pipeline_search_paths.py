@@ -1315,9 +1315,11 @@ class TestPhotoTaskServiceScheduleSend:
 
     @pytest.mark.anyio
     async def test_schedule_send_separate_partial_failure_keeps_scheduled_with_ids(self, tmp_path):
-        """Regression (#864 review): in SEPARATE mode, if file 1 is scheduled server-side
-        and file 2 fails, the item must stay SCHEDULED with file 1's id (cancellable) — never
-        FAILED-with-no-ids, which would strand a queued post with no cancel handle (ghost publish)."""
+        """Regression (#864 review): in SEPARATE mode, if file 1 is scheduled server-side and
+        file 2 fails, the item must stay SCHEDULED with file 1's id (cancellable) — never
+        FAILED-with-no-ids, which would strand a queued post with no cancel handle (ghost publish).
+        And partial success must NOT raise: raising makes the dispatcher/CLI report the schedule as
+        FAILED, so the user retries and schedules a duplicate while the first stays queued."""
         from src.services.photo_task_service import PhotoTarget, PhotoTaskService
 
         img = tmp_path / "photo.jpg"
@@ -1330,6 +1332,9 @@ class TestPhotoTaskServiceScheduleSend:
         bundle.create_item = AsyncMock(return_value=50)
         bundle.update_item = AsyncMock()
         bundle.update_batch = AsyncMock()
+        returned_item = MagicMock()
+        returned_item.id = 50
+        bundle.get_item = AsyncMock(return_value=returned_item)
 
         # send_now schedules file 1 (fires on_file_sent) then fails on file 2, mirroring the
         # real SEPARATE loop where earlier files are already queued before a later one raises.
@@ -1343,19 +1348,21 @@ class TestPhotoTaskServiceScheduleSend:
 
         svc = PhotoTaskService(bundle, publish)
         target = PhotoTarget(dialog_id=300)
-        with pytest.raises(RuntimeError, match="file 2 failed"):
-            await svc.schedule_send(
-                phone="+3",
-                target=target,
-                file_paths=[str(img), str(img2)],
-                mode="separate",
-                schedule_at=datetime.now(timezone.utc),
-            )
+        # Partial success returns the durable, cancellable item — it does NOT raise.
+        item = await svc.schedule_send(
+            phone="+3",
+            target=target,
+            file_paths=[str(img), str(img2)],
+            mode="separate",
+            schedule_at=datetime.now(timezone.utc),
+        )
+        assert item is returned_item
 
         # Last update_item must keep the item SCHEDULED with file 1's id — the cancel handle.
         last = bundle.update_item.call_args_list[-1].kwargs
         assert last.get("status") == PhotoBatchStatus.SCHEDULED
         assert last.get("telegram_message_ids") == [100]
+        assert "partial schedule failure" in (last.get("error") or "")
         # The batch must NOT be force-marked FAILED while a post is still scheduled & cancellable.
         for call in bundle.update_batch.call_args_list:
             assert call.kwargs.get("status") != PhotoBatchStatus.FAILED

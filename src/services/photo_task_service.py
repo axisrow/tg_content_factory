@@ -204,6 +204,13 @@ class PhotoTaskService:
                 # SCHEDULED with their ids so cancel_item can still unschedule
                 # them. Never lose the cancel handle — record the error but leave
                 # the item (and batch) in-flight so the post stays cancellable.
+                #
+                # This is a *partial success*, not a failed operation: do NOT
+                # raise. Raising would make the command dispatcher / CLI / agent
+                # report the schedule as FAILED, so the user retries and schedules
+                # a SECOND copy while the first stays queued (duplicate publish).
+                # Fall through to return the durably-created, cancellable item;
+                # the recorded error surfaces the partial failure (#864 review).
                 await self._bundle.update_item(
                     item_id,
                     status=PhotoBatchStatus.SCHEDULED,
@@ -211,7 +218,8 @@ class PhotoTaskService:
                     error=f"partial schedule failure: {exc}",
                 )
             else:
-                # Nothing was scheduled — failing with no ids is correct.
+                # Nothing was scheduled — failing with no ids is correct; raise so
+                # the caller/dispatcher reports a genuine failure.
                 await self._bundle.update_item(
                     item_id,
                     status=PhotoBatchStatus.FAILED,
@@ -222,7 +230,7 @@ class PhotoTaskService:
                     status=PhotoBatchStatus.FAILED,
                     error=str(exc),
                 )
-            raise
+                raise
         item = await self._bundle.get_item(item_id)
         assert item is not None
         return item
