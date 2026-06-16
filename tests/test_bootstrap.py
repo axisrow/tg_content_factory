@@ -110,6 +110,45 @@ async def test_start_container_calls_load_settings(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_start_container_web_mode_skips_inflight_recovery(tmp_path):
+    """Web restart must not reset the live worker's in-flight photo/generation
+    rows on the shared DB in a split deploy (audit #836/2)."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    container.runtime_mode = "web"
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+
+    try:
+        await start_container(container)
+        container.photo_task_service.recover_running.assert_not_called()
+        container.db.repos.generation_runs.reset_running_on_startup.assert_not_called()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_worker_mode_runs_inflight_recovery(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    container = _make_container(db)
+    container.runtime_mode = "worker"
+    container.auth.is_configured = False
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+
+    try:
+        await start_container(container)
+        container.photo_task_service.recover_running.assert_awaited_once()
+        container.db.repos.generation_runs.reset_running_on_startup.assert_awaited_once()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
 async def test_start_container_does_not_fail_running_channel_tasks(tmp_path):
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()

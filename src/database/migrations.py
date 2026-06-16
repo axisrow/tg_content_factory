@@ -258,66 +258,83 @@ async def _rebuild_collection_tasks_if_channel_id_notnull(db: aiosqlite.Connecti
         else "CASE WHEN channel_id = 0 THEN 'stats_all' ELSE 'channel_collect' END"
     )
 
+    # Clean up any orphan tmp left by a previous crashed run (this is throwaway
+    # scratch data, not the live table — safe to drop outside the transaction).
     await db.execute("DROP TABLE IF EXISTS collection_tasks_tmp")
-    await db.execute("""
-        CREATE TABLE collection_tasks_tmp (
-            id INTEGER PRIMARY KEY,
-            channel_id INTEGER,
-            channel_title TEXT,
-            channel_username TEXT,
-            task_type TEXT NOT NULL DEFAULT 'channel_collect',
-            status TEXT DEFAULT 'pending',
-            messages_collected INTEGER DEFAULT 0,
-            error TEXT,
-            note TEXT,
-            run_after TEXT,
-            payload TEXT,
-            parent_task_id INTEGER,
-            created_at TEXT DEFAULT (datetime('now')),
-            started_at TEXT,
-            completed_at TEXT
+
+    # The connection runs in autocommit (isolation_level=None). The ENTIRE rebuild —
+    # snapshot copy, drop, rename — must run under one BEGIN IMMEDIATE write lock,
+    # not just the swap: with only the swap wrapped, a concurrent writer (e.g. the
+    # web process in a split deploy enqueuing a task) could INSERT into
+    # collection_tasks AFTER the snapshot SELECT but BEFORE the lock, and that row
+    # would be permanently lost when the stale tmp replaces the live table. Taking
+    # the lock before the copy blocks any interleaved write for the whole operation
+    # (audit #836/7, #868 review).
+    await db.execute("BEGIN IMMEDIATE")
+    try:
+        await db.execute("""
+            CREATE TABLE collection_tasks_tmp (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER,
+                channel_title TEXT,
+                channel_username TEXT,
+                task_type TEXT NOT NULL DEFAULT 'channel_collect',
+                status TEXT DEFAULT 'pending',
+                messages_collected INTEGER DEFAULT 0,
+                error TEXT,
+                note TEXT,
+                run_after TEXT,
+                payload TEXT,
+                parent_task_id INTEGER,
+                created_at TEXT DEFAULT (datetime('now')),
+                started_at TEXT,
+                completed_at TEXT
+            )
+            """)
+        await db.execute(
+            f"""
+            INSERT INTO collection_tasks_tmp (
+                id,
+                channel_id,
+                channel_title,
+                channel_username,
+                task_type,
+                status,
+                messages_collected,
+                error,
+                note,
+                run_after,
+                payload,
+                parent_task_id,
+                created_at,
+                started_at,
+                completed_at
+            )
+            SELECT
+                {expr("id")},
+                {channel_id_expr},
+                {expr("channel_title")},
+                {expr("channel_username")},
+                {task_type_expr},
+                {expr("status", "'pending'")},
+                {expr("messages_collected", "0")},
+                {expr("error")},
+                {expr("note")},
+                {expr("run_after")},
+                {expr("payload")},
+                {expr("parent_task_id")},
+                {expr("created_at", "datetime('now')")},
+                {expr("started_at")},
+                {expr("completed_at")}
+            FROM collection_tasks
+            """
         )
-        """)
-    await db.execute(
-        f"""
-        INSERT INTO collection_tasks_tmp (
-            id,
-            channel_id,
-            channel_title,
-            channel_username,
-            task_type,
-            status,
-            messages_collected,
-            error,
-            note,
-            run_after,
-            payload,
-            parent_task_id,
-            created_at,
-            started_at,
-            completed_at
-        )
-        SELECT
-            {expr("id")},
-            {channel_id_expr},
-            {expr("channel_title")},
-            {expr("channel_username")},
-            {task_type_expr},
-            {expr("status", "'pending'")},
-            {expr("messages_collected", "0")},
-            {expr("error")},
-            {expr("note")},
-            {expr("run_after")},
-            {expr("payload")},
-            {expr("parent_task_id")},
-            {expr("created_at", "datetime('now')")},
-            {expr("started_at")},
-            {expr("completed_at")}
-        FROM collection_tasks
-        """
-    )
-    await db.execute("DROP TABLE collection_tasks")
-    await db.execute("ALTER TABLE collection_tasks_tmp RENAME TO collection_tasks")
+        await db.execute("DROP TABLE collection_tasks")
+        await db.execute("ALTER TABLE collection_tasks_tmp RENAME TO collection_tasks")
+    except Exception:
+        await db.execute("ROLLBACK")
+        raise
+    await db.commit()
     logger.info("Migrated collection_tasks: removed NOT NULL from channel_id")
 
 

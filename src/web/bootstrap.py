@@ -392,13 +392,18 @@ async def start_container(container: AppContainer) -> None:
     if _is_dev:
         t1 = time.monotonic()
 
-    photo_recovered = await container.photo_task_service.recover_running()
-    if photo_recovered:
-        logger.warning("Requeued %d interrupted photo tasks on startup", photo_recovered)
-    gr_recovered = await container.db.repos.generation_runs.reset_running_on_startup()
-    if gr_recovered:
-        logger.warning("Reset %d stuck generation_runs to 'failed' on startup", gr_recovered)
+    # Startup recovery resets RUNNING rows on the shared SQLite file. In a split
+    # deploy (serve --no-worker + separate worker) a web restart must NOT touch
+    # the live worker's in-flight photo/generation/command rows, or it corrupts
+    # them (false failures, re-sent posts). Gate ALL recovery on worker mode
+    # (audit #836/2).
     if runtime_mode == "worker":
+        photo_recovered = await container.photo_task_service.recover_running()
+        if photo_recovered:
+            logger.warning("Requeued %d interrupted photo tasks on startup", photo_recovered)
+        gr_recovered = await container.db.repos.generation_runs.reset_running_on_startup()
+        if gr_recovered:
+            logger.warning("Reset %d stuck generation_runs to 'failed' on startup", gr_recovered)
         tc_recovered = await container.db.repos.telegram_commands.reset_running_on_startup()
         if tc_recovered:
             logger.warning(
