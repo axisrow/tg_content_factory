@@ -61,6 +61,31 @@ async def test_get_untranslated_excludes_und_sentinel(tmp_path):
         await db.close()
 
 
+@pytest.mark.anyio
+async def test_get_untranslated_excludes_source_equals_target(tmp_path):
+    """Rows already in the target language are excluded at the query level so the cursor
+    chain doesn't churn no-work batches over them (#866 review cleanup)."""
+    db = Database(str(tmp_path / "t.db"))
+    await db.initialize()
+    try:
+        await db.insert_message(
+            Message(channel_id=100, message_id=1, text="hello", date="2025-01-01T00:00:00")
+        )
+        await db.insert_message(
+            Message(channel_id=100, message_id=2, text="привет", date="2025-01-01T00:00:00")
+        )
+        await db.execute("UPDATE messages SET detected_lang='en' WHERE message_id=1")
+        await db.execute("UPDATE messages SET detected_lang='ru' WHERE message_id=2")
+        await db.db.commit()
+
+        msgs = await db.repos.messages.get_untranslated_messages(target="en", limit=10)
+        ids = {m.message_id for m in msgs}
+        assert 2 in ids  # 'ru' → 'en' needs translation
+        assert 1 not in ids  # already 'en' (source == target) is excluded
+    finally:
+        await db.close()
+
+
 # ── 836#5: translate_batch caps very long input (and logs) ────────────────────
 
 

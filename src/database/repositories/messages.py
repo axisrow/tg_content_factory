@@ -1451,18 +1451,26 @@ class MessagesRepository:
         limit: int = 20,
         after_id: int = 0,
     ) -> list[Message]:
-        """Get messages needing translation for a given target ('en' or 'custom')."""
+        """Get messages needing translation for a given target language.
+
+        ``target`` is the destination language code (e.g. 'en'); it also selects the
+        storage column ('en' → translation_en, otherwise translation_custom).
+        """
         col = "translation_en" if target == "en" else "translation_custom"
         # Exclude the 'und' sentinel (undetectable source language) — translating
         # those wastes LLM calls on emoji/too-short messages (audit #836/1).
+        # Also exclude rows already in the target language: translate_batch skips
+        # source==target by design, so selecting them only churns no-work batches
+        # through the cursor chain (#866 review cleanup).
         conditions = [
             f"m.{col} IS NULL",
             "m.text IS NOT NULL",
             "m.text != ''",
             "m.detected_lang IS NOT NULL",
             "m.detected_lang != 'und'",
+            "m.detected_lang != ?",
         ]
-        params: list = []
+        params: list = [target]
         if after_id:
             conditions.append("m.id > ?")
             params.append(after_id)
