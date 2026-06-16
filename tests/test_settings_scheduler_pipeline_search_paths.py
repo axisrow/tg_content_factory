@@ -1251,6 +1251,56 @@ class TestPhotoTaskServiceSendNow:
         assert call_kwargs.kwargs.get("status") == PhotoBatchStatus.FAILED or \
                (call_kwargs.args and PhotoBatchStatus.FAILED in str(call_kwargs))
 
+    @pytest.mark.anyio
+    async def test_send_now_separate_partial_failure_keeps_published_ids(self, tmp_path):
+        """Regression (#864 review): an immediate SEPARATE send that publishes file 1 then fails
+        on file 2 must persist file 1's id and NOT raise. Raising makes the CLI/agent/UI report
+        failure, the user reruns, and file 1 is published a second time (duplicate)."""
+        from src.services.photo_task_service import PhotoTarget, PhotoTaskService
+
+        img = tmp_path / "photo.jpg"
+        img.write_bytes(b"\xff\xd8\xff")
+        img2 = tmp_path / "photo2.jpg"
+        img2.write_bytes(b"\xff\xd8\xff")
+
+        bundle = MagicMock()
+        bundle.create_batch = AsyncMock(return_value=6)
+        bundle.create_item = AsyncMock(return_value=60)
+        bundle.update_item = AsyncMock()
+        bundle.update_batch = AsyncMock()
+        returned_item = MagicMock()
+        returned_item.id = 60
+        bundle.get_item = AsyncMock(return_value=returned_item)
+
+        # send_now publishes file 1 (fires on_file_sent immediately) then fails on file 2.
+        async def _send_now(*, file_paths, on_file_sent=None, **_kwargs):
+            if on_file_sent is not None:
+                await on_file_sent(file_paths[0], [42])
+            raise RuntimeError("file 2 failed")
+
+        publish = MagicMock()
+        publish.send_now = AsyncMock(side_effect=_send_now)
+
+        svc = PhotoTaskService(bundle, publish)
+        target = PhotoTarget(dialog_id=100)
+        # Partial publish returns the item (file 1 is live, irreversible) — it does NOT raise.
+        item = await svc.send_now(
+            phone="+1",
+            target=target,
+            file_paths=[str(img), str(img2)],
+            mode="separate",
+        )
+        assert item is returned_item
+
+        # Last update_item must record the published id and mark the item COMPLETED (not FAILED).
+        last = bundle.update_item.call_args_list[-1].kwargs
+        assert last.get("status") == PhotoBatchStatus.COMPLETED
+        assert last.get("telegram_message_ids") == [42]
+        assert "partial send failure" in (last.get("error") or "")
+        # The batch must NOT be marked FAILED — that would prompt a duplicate retry.
+        for call in bundle.update_batch.call_args_list:
+            assert call.kwargs.get("status") != PhotoBatchStatus.FAILED
+
 
 class TestPhotoTaskServiceScheduleSend:
     @pytest.mark.anyio

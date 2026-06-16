@@ -85,6 +85,25 @@ class PhotoTaskService:
                 started_at=datetime.now(timezone.utc),
             )
         )
+        # Accumulate ids of files already published live on Telegram. In SEPARATE
+        # mode send_now publishes file-by-file immediately, so if a later file
+        # fails the earlier ones are irreversibly live. Without this, the item is
+        # marked FAILED with no ids → the CLI/agent/UI report failure → the user
+        # reruns the command → file 1 is published a SECOND time (#864 review).
+        accumulated: list[int] = []
+
+        async def _record_sent(_path: str, ids: list[int]) -> None:
+            # ALBUM fires the callback once per path sharing the same id set, so
+            # de-dupe to store the album's ids exactly once.
+            for mid in ids:
+                if mid not in accumulated:
+                    accumulated.append(mid)
+            await self._bundle.update_item(
+                item_id,
+                status=PhotoBatchStatus.RUNNING,
+                telegram_message_ids=list(accumulated),
+            )
+
         try:
             message_ids = await self._publish.send_now(
                 phone=phone,
@@ -93,6 +112,7 @@ class PhotoTaskService:
                 file_paths=files,
                 send_mode=send_mode,
                 caption=caption,
+                on_file_sent=_record_sent,
             )
             now = datetime.now(timezone.utc)
             await self._bundle.update_item(
@@ -108,19 +128,42 @@ class PhotoTaskService:
             )
         except Exception as exc:
             now = datetime.now(timezone.utc)
-            await self._bundle.update_item(
-                item_id,
-                status=PhotoBatchStatus.FAILED,
-                error=str(exc),
-                completed_at=now,
-            )
-            await self._bundle.update_batch(
-                batch_id,
-                status=PhotoBatchStatus.FAILED,
-                error=str(exc),
-                last_run_at=now,
-            )
-            raise
+            if accumulated:
+                # Some files are already published live (irreversible — there is no
+                # unschedule handle for an immediate send). Persist their ids so the
+                # live posts are tied to the record for audit/cleanup, and mark the
+                # item COMPLETED-with-error rather than FAILED. Do NOT raise: a
+                # FAILED report makes callers tell the user it failed, the user
+                # reruns, and the published files are duplicated (#864 review).
+                await self._bundle.update_item(
+                    item_id,
+                    status=PhotoBatchStatus.COMPLETED,
+                    telegram_message_ids=list(accumulated),
+                    error=f"partial send failure: {exc}",
+                    completed_at=now,
+                )
+                await self._bundle.update_batch(
+                    batch_id,
+                    status=PhotoBatchStatus.COMPLETED,
+                    error=f"partial send failure: {exc}",
+                    last_run_at=now,
+                )
+            else:
+                # Nothing was published — failing with no ids is correct; raise so
+                # the caller/dispatcher reports a genuine failure.
+                await self._bundle.update_item(
+                    item_id,
+                    status=PhotoBatchStatus.FAILED,
+                    error=str(exc),
+                    completed_at=now,
+                )
+                await self._bundle.update_batch(
+                    batch_id,
+                    status=PhotoBatchStatus.FAILED,
+                    error=str(exc),
+                    last_run_at=now,
+                )
+                raise
         item = await self._bundle.get_item(item_id)
         assert item is not None
         return item
@@ -304,6 +347,11 @@ class PhotoTaskService:
 
     async def _run_claimed_item(self, item: PhotoBatchItem) -> None:
         now = datetime.now(timezone.utc)
+        # NB: this due-execution path intentionally omits on_file_sent. A FAILED due
+        # item is terminal — claim_next_due_item only claims status='pending' and no
+        # verb resets FAILED→PENDING — so it is never re-run and cannot double-publish.
+        # If a retry/requeue-failed verb is ever added, wire on_file_sent here (mirror
+        # send_now) AND add skip-already-sent logic, or partial sends will duplicate.
         try:
             message_ids = await self._publish.send_now(
                 phone=item.phone,
