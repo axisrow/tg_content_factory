@@ -850,6 +850,8 @@ class Collector:
 
             async def _check_collected_notification_queries() -> None:
                 nonlocal all_messages
+                # Auto-translate runs regardless of notifications (audit #836/6).
+                await self._maybe_enqueue_auto_translate()
                 if not should_notify or not all_messages:
                     return
                 for message in all_messages:
@@ -1674,6 +1676,38 @@ class Collector:
             if msg.text and len(msg.text) > 10:
                 prefixes.append(msg.text[:100])
         return prefixes
+
+    async def _maybe_enqueue_auto_translate(self) -> None:
+        """Enqueue a TRANSLATE_BATCH after collection if auto-translate is enabled.
+
+        The settings toggle was previously inert — nothing read it (audit #836/6).
+        Deduplicated so at most one TRANSLATE_BATCH is pending/running at a time.
+        """
+        try:
+            from src.models import CollectionTaskType, TranslateBatchTaskPayload
+            from src.services.translation_service import (
+                TRANSLATION_AUTO_ON_COLLECT,
+                TRANSLATION_SOURCE_FILTER,
+                TRANSLATION_TARGET_LANG,
+            )
+
+            if (await self._db.get_setting(TRANSLATION_AUTO_ON_COLLECT)) != "1":
+                return
+            tasks = getattr(getattr(self._db, "repos", None), "tasks", None)
+            if tasks is None:
+                return
+            if await tasks.has_active_task(CollectionTaskType.TRANSLATE_BATCH):
+                return
+            target = (await self._db.get_setting(TRANSLATION_TARGET_LANG)) or "en"
+            source_raw = (await self._db.get_setting(TRANSLATION_SOURCE_FILTER)) or ""
+            source_filter = [s.strip() for s in source_raw.split(",") if s.strip()]
+            await tasks.create_generic_task(
+                CollectionTaskType.TRANSLATE_BATCH,
+                title="Auto-translate after collect",
+                payload=TranslateBatchTaskPayload(target_lang=target, source_filter=source_filter),
+            )
+        except Exception:
+            logger.warning("auto-translate enqueue failed", exc_info=True)
 
     async def _check_notification_queries(self, messages: list[Message]) -> None:
         """Check messages against active notification queries and send batched notifications."""
