@@ -270,7 +270,11 @@ def register(db, client_pool, embedding_service, **kwargs):
                     # signal_gone=True so a *definitive* not-found deactivates the channel
                     # (parity with the CLI/worker refresh-types, audit #835/8). The old
                     # `if info is False` branch was dead — resolve_channel returns dict|None.
-                    info = await client_pool.resolve_channel(identifier, signal_gone=True)
+                    # numeric_fallback so a stale @username doesn't deactivate a live
+                    # channel — gone is retried by numeric id first (#858 review).
+                    info = await client_pool.resolve_channel(
+                        identifier, signal_gone=True, numeric_fallback=str(ch.channel_id)
+                    )
                 except Exception:
                     info = None
                 if info and info.get("gone"):

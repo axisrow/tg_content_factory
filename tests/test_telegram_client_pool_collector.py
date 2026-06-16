@@ -1181,6 +1181,72 @@ async def test_resolve_channel_username_invalid_is_gone_with_signal_gone(pool):
 
 
 @pytest.mark.anyio
+async def test_resolve_channel_stale_username_falls_back_to_numeric_id(pool):
+    """#858 review: a live channel that dropped/renamed its @username must NOT be
+    deactivated. When username resolution is gone but the numeric id resolves to a
+    live entity, the live dict is returned (refresh-types leaves the channel active)."""
+    client = AsyncMock()
+    live = SimpleNamespace(id=123, title="Renamed", broadcast=True, megagroup=False,
+                           gigagroup=False, forum=False, monoforum=False, scam=False,
+                           fake=False, restricted=False)
+
+    async def fake_get_entity(peer, *a, **kw):
+        # username peer raises gone; numeric PeerChannel resolves to the live entity
+        if isinstance(peer, str):
+            raise UsernameNotOccupiedError("nope")
+        return live
+
+    client.get_entity = AsyncMock(side_effect=fake_get_entity)
+    pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
+
+    with patch.object(pool, "get_available_client", return_value=(
+        TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+    )):
+        result = await pool.resolve_channel(
+            "@oldname", signal_gone=True, numeric_fallback="-100123"
+        )
+    assert result is not None
+    assert result.get("gone") is None
+    assert result["channel_id"] == 123
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_gone_by_both_username_and_numeric_is_gone(pool):
+    """Only a *second* definitive not-found (numeric id also gone) yields the gone
+    sentinel — so a truly deleted channel still gets deactivated (#858 review)."""
+    client = AsyncMock()
+    client.get_entity = AsyncMock(side_effect=UsernameNotOccupiedError("nope"))
+    pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
+
+    with patch.object(pool, "get_available_client", return_value=(
+        TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+    )):
+        result = await pool.resolve_channel(
+            "@oldname", signal_gone=True, numeric_fallback="-100123"
+        )
+    assert result == {"gone": True}
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_no_fallback_when_identifier_is_already_numeric(pool):
+    """When the channel has no username the identifier already IS the numeric id, so a
+    gone verdict needs no retry (fallback == identifier → skipped) and stays gone."""
+    client = AsyncMock()
+    client.get_entity = AsyncMock(side_effect=UsernameInvalidError("inv"))
+    pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
+
+    with patch.object(pool, "get_available_client", return_value=(
+        TelegramTransportSession(client, disconnect_on_close=False), "+7001"
+    )):
+        result = await pool.resolve_channel(
+            "-100123", signal_gone=True, numeric_fallback="-100123"
+        )
+    assert result == {"gone": True}
+    # identifier == fallback → resolved exactly once, no redundant retry
+    assert client.get_entity.await_count == 1
+
+
+@pytest.mark.anyio
 async def test_resolve_channel_numeric_id(pool):
     client = AsyncMock()
     entity = SimpleNamespace(id=123, title="Ch", broadcast=True, megagroup=False, gigagroup=False,
