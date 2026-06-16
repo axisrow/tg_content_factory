@@ -52,15 +52,25 @@ class S3Store:
         self._secret_key = secret_key
 
     def owns_url(self, url: str) -> bool:
-        """True if *url* already points at this S3 endpoint (avoid re-mirroring).
+        """True if *url* already points at this endpoint AND bucket (avoid re-mirroring).
 
         Compare on host, not a string prefix: a bare ``startswith`` would treat a
         look-alike host like ``s3.example.com.evil.com`` as ours and skip mirroring,
         persisting an ephemeral URL that 404s later (#862 review).
+
+        Host alone is not ownership either: path-style S3/MinIO share one host across
+        all buckets/tenants, so a foreign bucket's ephemeral URL on the same host would
+        otherwise be skipped and persisted (later 403). This store emits path-style
+        presigned URLs (``{endpoint}/{bucket}/{key}``), so a genuinely owned URL always
+        has a path under ``/{bucket}/`` — requiring that prefix never false-negates our
+        own URLs while rejecting same-host foreign buckets (#862 review).
         """
         if not url:
             return False
-        return urlsplit(url).netloc == urlsplit(self._endpoint).netloc
+        parts = urlsplit(url)
+        if parts.netloc != urlsplit(self._endpoint).netloc:
+            return False
+        return parts.path.startswith(f"/{self._bucket}/")
 
     def _client(self):
         import boto3

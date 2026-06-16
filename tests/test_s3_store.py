@@ -40,16 +40,21 @@ def test_from_env_partial(monkeypatch):
     assert store is None
 
 
-def test_owns_url_matches_on_host_not_prefix():
-    """Regression (#862 review): owns_url must compare on host, not a string prefix.
-    A look-alike host like ``s3.example.com.evil.com`` must NOT be treated as ours,
-    otherwise generate() skips mirroring and persists an ephemeral URL that 404s later."""
+def test_owns_url_matches_on_host_and_bucket():
+    """Regression (#862 review): owns_url must match on host AND bucket path, not a string
+    prefix or host alone. Path-style S3/MinIO share one host across buckets, so a same-host
+    foreign-bucket URL must NOT be treated as ours, otherwise generate() skips mirroring and
+    persists an ephemeral URL that 404s later."""
     store = S3Store("https://s3.example.com", "bucket", "ak", "sk")
-    # Our endpoint (with and without a path) → owned.
+    # Our endpoint + our bucket path → owned (this is the shape _presigned_get produces).
+    assert store.owns_url("https://s3.example.com/bucket/images/abc.png?sig=x") is True
     assert store.owns_url("https://s3.example.com/bucket/k?sig=abc") is True
-    assert store.owns_url("https://s3.example.com") is True
+    # Same host, DIFFERENT bucket → NOT owned (host-only check would wrongly return True).
+    assert store.owns_url("https://s3.example.com/other-bucket/k?sig=abc") is False
+    # Bare endpoint with no bucket path → NOT owned (this store never emits such URLs).
+    assert store.owns_url("https://s3.example.com") is False
     # Look-alike suffix host → NOT owned (the prefix-match bug would return True here).
-    assert store.owns_url("https://s3.example.com.evil.com/x.png") is False
+    assert store.owns_url("https://s3.example.com.evil.com/bucket/x.png") is False
     # Unrelated host and empty input → NOT owned.
     assert store.owns_url("https://provider.test/output.png") is False
     assert store.owns_url("") is False
