@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,8 @@ from src.database.bundles import PhotoLoaderBundle
 from src.models import PhotoBatch, PhotoBatchItem, PhotoBatchStatus, PhotoSendMode
 from src.services.photo_publish_service import PhotoPublishService
 from src.utils.datetime import parse_required_schedule_datetime
+
+logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
@@ -82,6 +85,25 @@ class PhotoTaskService:
                 started_at=datetime.now(timezone.utc),
             )
         )
+        # Accumulate ids of files already published live on Telegram. In SEPARATE
+        # mode send_now publishes file-by-file immediately, so if a later file
+        # fails the earlier ones are irreversibly live. Without this, the item is
+        # marked FAILED with no ids → the CLI/agent/UI report failure → the user
+        # reruns the command → file 1 is published a SECOND time (#864 review).
+        accumulated: list[int] = []
+
+        async def _record_sent(_path: str, ids: list[int]) -> None:
+            # ALBUM fires the callback once per path sharing the same id set, so
+            # de-dupe to store the album's ids exactly once.
+            for mid in ids:
+                if mid not in accumulated:
+                    accumulated.append(mid)
+            await self._bundle.update_item(
+                item_id,
+                status=PhotoBatchStatus.RUNNING,
+                telegram_message_ids=list(accumulated),
+            )
+
         try:
             message_ids = await self._publish.send_now(
                 phone=phone,
@@ -90,6 +112,7 @@ class PhotoTaskService:
                 file_paths=files,
                 send_mode=send_mode,
                 caption=caption,
+                on_file_sent=_record_sent,
             )
             now = datetime.now(timezone.utc)
             await self._bundle.update_item(
@@ -105,19 +128,42 @@ class PhotoTaskService:
             )
         except Exception as exc:
             now = datetime.now(timezone.utc)
-            await self._bundle.update_item(
-                item_id,
-                status=PhotoBatchStatus.FAILED,
-                error=str(exc),
-                completed_at=now,
-            )
-            await self._bundle.update_batch(
-                batch_id,
-                status=PhotoBatchStatus.FAILED,
-                error=str(exc),
-                last_run_at=now,
-            )
-            raise
+            if accumulated:
+                # Some files are already published live (irreversible — there is no
+                # unschedule handle for an immediate send). Persist their ids so the
+                # live posts are tied to the record for audit/cleanup, and mark the
+                # item COMPLETED-with-error rather than FAILED. Do NOT raise: a
+                # FAILED report makes callers tell the user it failed, the user
+                # reruns, and the published files are duplicated (#864 review).
+                await self._bundle.update_item(
+                    item_id,
+                    status=PhotoBatchStatus.COMPLETED,
+                    telegram_message_ids=list(accumulated),
+                    error=f"partial send failure: {exc}",
+                    completed_at=now,
+                )
+                await self._bundle.update_batch(
+                    batch_id,
+                    status=PhotoBatchStatus.COMPLETED,
+                    error=f"partial send failure: {exc}",
+                    last_run_at=now,
+                )
+            else:
+                # Nothing was published — failing with no ids is correct; raise so
+                # the caller/dispatcher reports a genuine failure.
+                await self._bundle.update_item(
+                    item_id,
+                    status=PhotoBatchStatus.FAILED,
+                    error=str(exc),
+                    completed_at=now,
+                )
+                await self._bundle.update_batch(
+                    batch_id,
+                    status=PhotoBatchStatus.FAILED,
+                    error=str(exc),
+                    last_run_at=now,
+                )
+                raise
         item = await self._bundle.get_item(item_id)
         assert item is not None
         return item
@@ -159,6 +205,26 @@ class PhotoTaskService:
                 status=PhotoBatchStatus.SCHEDULED,
             )
         )
+        # Accumulate server-scheduled message ids progressively. In SEPARATE mode
+        # send_now schedules files one-by-one; if a later file fails, the earlier
+        # ones are already queued on Telegram. Persisting their ids onto the item
+        # as a still-SCHEDULED (cancellable) state means a partial failure never
+        # strands an already-scheduled post without a cancel handle — the same
+        # ghost-publish class this PR fixes (audit #835/3,4).
+        accumulated: list[int] = []
+
+        async def _record_scheduled(_path: str, ids: list[int]) -> None:
+            # ALBUM fires the callback once per path sharing the same id set, so
+            # de-dupe to store the album's ids exactly once.
+            for mid in ids:
+                if mid not in accumulated:
+                    accumulated.append(mid)
+            await self._bundle.update_item(
+                item_id,
+                status=PhotoBatchStatus.SCHEDULED,
+                telegram_message_ids=list(accumulated),
+            )
+
         try:
             message_ids = await self._publish.send_now(
                 phone=phone,
@@ -168,6 +234,7 @@ class PhotoTaskService:
                 send_mode=send_mode,
                 caption=caption,
                 schedule_at=schedule_at,
+                on_file_sent=_record_scheduled,
             )
             await self._bundle.update_item(
                 item_id,
@@ -175,17 +242,38 @@ class PhotoTaskService:
                 telegram_message_ids=message_ids,
             )
         except Exception as exc:
-            await self._bundle.update_item(
-                item_id,
-                status=PhotoBatchStatus.FAILED,
-                error=str(exc),
-            )
-            await self._bundle.update_batch(
-                batch_id,
-                status=PhotoBatchStatus.FAILED,
-                error=str(exc),
-            )
-            raise
+            if accumulated:
+                # Some files were already scheduled server-side: keep the item
+                # SCHEDULED with their ids so cancel_item can still unschedule
+                # them. Never lose the cancel handle — record the error but leave
+                # the item (and batch) in-flight so the post stays cancellable.
+                #
+                # This is a *partial success*, not a failed operation: do NOT
+                # raise. Raising would make the command dispatcher / CLI / agent
+                # report the schedule as FAILED, so the user retries and schedules
+                # a SECOND copy while the first stays queued (duplicate publish).
+                # Fall through to return the durably-created, cancellable item;
+                # the recorded error surfaces the partial failure (#864 review).
+                await self._bundle.update_item(
+                    item_id,
+                    status=PhotoBatchStatus.SCHEDULED,
+                    telegram_message_ids=list(accumulated),
+                    error=f"partial schedule failure: {exc}",
+                )
+            else:
+                # Nothing was scheduled — failing with no ids is correct; raise so
+                # the caller/dispatcher reports a genuine failure.
+                await self._bundle.update_item(
+                    item_id,
+                    status=PhotoBatchStatus.FAILED,
+                    error=str(exc),
+                )
+                await self._bundle.update_batch(
+                    batch_id,
+                    status=PhotoBatchStatus.FAILED,
+                    error=str(exc),
+                )
+                raise
         item = await self._bundle.get_item(item_id)
         assert item is not None
         return item
@@ -259,6 +347,11 @@ class PhotoTaskService:
 
     async def _run_claimed_item(self, item: PhotoBatchItem) -> None:
         now = datetime.now(timezone.utc)
+        # NB: this due-execution path intentionally omits on_file_sent. A FAILED due
+        # item is terminal — claim_next_due_item only claims status='pending' and no
+        # verb resets FAILED→PENDING — so it is never re-run and cannot double-publish.
+        # If a retry/requeue-failed verb is ever added, wire on_file_sent here (mirror
+        # send_now) AND add skip-already-sent logic, or partial sends will duplicate.
         try:
             message_ids = await self._publish.send_now(
                 phone=item.phone,
@@ -291,7 +384,39 @@ class PhotoTaskService:
                 )
 
     async def cancel_item(self, item_id: int) -> bool:
-        return await self._bundle.cancel_item(item_id)
+        item = await self._bundle.get_item(item_id)
+        # A SCHEDULED item is already queued server-side on Telegram; it MUST be
+        # cancelled there too, otherwise the post still goes out at its scheduled
+        # time (audit #835/3). Server-side unschedule is a PRECONDITION for marking
+        # such an item CANCELLED: if the RPC fails (flood/network/missing client),
+        # do NOT mark it cancelled — that would report success while Telegram still
+        # publishes the post, and lose the telegram_message_ids retry target. Leave
+        # it SCHEDULED with the error recorded so cancellation can be retried.
+        if (
+            item is not None
+            and item.status == PhotoBatchStatus.SCHEDULED
+            and item.telegram_message_ids
+        ):
+            try:
+                await self._publish.unschedule(
+                    phone=item.phone,
+                    target_dialog_id=item.target_dialog_id,
+                    target_type=item.target_type,
+                    message_ids=item.telegram_message_ids,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "cancel_item: failed to unschedule item %s on Telegram; "
+                    "leaving it SCHEDULED so the post can still be cancelled",
+                    item_id,
+                    exc_info=True,
+                )
+                await self._bundle.update_item(item_id, error=f"unschedule failed: {exc}")
+                return False
+        cancelled = await self._bundle.cancel_item(item_id)
+        if cancelled and item is not None and item.batch_id:
+            await self._sync_batch_status(item.batch_id, last_run_at=datetime.now(timezone.utc))
+        return cancelled
 
     async def recover_running(self) -> int:
         return await self._bundle.requeue_running_items_on_startup(datetime.now(timezone.utc))
@@ -305,30 +430,40 @@ class PhotoTaskService:
     ) -> None:
         items = await self._bundle.list_items_for_batch(batch_id)
         statuses = {item.status for item in items}
-        if statuses <= {PhotoBatchStatus.COMPLETED}:
-            await self._bundle.update_batch(
-                batch_id,
-                status=PhotoBatchStatus.COMPLETED,
-                last_run_at=last_run_at,
-            )
-            return
-        terminal_pending = {
+        # SCHEDULED is a server-side in-flight state; PENDING/RUNNING are local
+        # in-flight. While any item is in-flight the batch is not terminal.
+        in_flight = {
             PhotoBatchStatus.PENDING,
             PhotoBatchStatus.RUNNING,
+            PhotoBatchStatus.SCHEDULED,
         }
-        if PhotoBatchStatus.FAILED in statuses and statuses.isdisjoint(terminal_pending):
+        if statuses & in_flight:
+            # All-SCHEDULED batches surface as SCHEDULED, otherwise RUNNING.
+            status = (
+                PhotoBatchStatus.SCHEDULED
+                if statuses <= {PhotoBatchStatus.SCHEDULED}
+                else PhotoBatchStatus.RUNNING
+            )
+            await self._bundle.update_batch(batch_id, status=status, last_run_at=last_run_at)
+            return
+        # Every item is terminal (COMPLETED / FAILED / CANCELLED). Recognise
+        # CANCELLED so a COMPLETED+CANCELLED mix doesn't get stuck RUNNING
+        # (audit #837/11).
+        if PhotoBatchStatus.FAILED in statuses:
             await self._bundle.update_batch(
                 batch_id,
                 status=PhotoBatchStatus.FAILED,
                 error=fallback_error,
                 last_run_at=last_run_at,
             )
-            return
-        await self._bundle.update_batch(
-            batch_id,
-            status=PhotoBatchStatus.RUNNING,
-            last_run_at=last_run_at,
-        )
+        elif statuses <= {PhotoBatchStatus.CANCELLED}:
+            await self._bundle.update_batch(
+                batch_id, status=PhotoBatchStatus.CANCELLED, last_run_at=last_run_at
+            )
+        else:
+            await self._bundle.update_batch(
+                batch_id, status=PhotoBatchStatus.COMPLETED, last_run_at=last_run_at
+            )
 
     def load_manifest(self, manifest_path: str) -> list[dict]:
         path = Path(manifest_path)

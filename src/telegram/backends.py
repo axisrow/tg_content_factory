@@ -263,6 +263,18 @@ class TelegramTransportSession:
             self._client.delete_messages(entity, message_ids),
         )
 
+    async def delete_scheduled_messages(self, entity: Any, message_ids: list[int]) -> Any:
+        """Cancel server-side scheduled messages (Telethon raw API)."""
+        try:
+            from telethon.tl.functions.messages import DeleteScheduledMessagesRequest
+        except ImportError:
+            # Telethon not available (e.g. test env with stub backend).
+            return None
+        return await self._run(
+            "telegram_delete_scheduled_messages",
+            self._client(DeleteScheduledMessagesRequest(peer=entity, id=list(message_ids))),
+        )
+
     async def send_reaction(self, entity: Any, message_id: int, emoji: str | None) -> Any:
         """Set or clear a reaction to a message using the Telethon raw API."""
         try:

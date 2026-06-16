@@ -1251,6 +1251,56 @@ class TestPhotoTaskServiceSendNow:
         assert call_kwargs.kwargs.get("status") == PhotoBatchStatus.FAILED or \
                (call_kwargs.args and PhotoBatchStatus.FAILED in str(call_kwargs))
 
+    @pytest.mark.anyio
+    async def test_send_now_separate_partial_failure_keeps_published_ids(self, tmp_path):
+        """Regression (#864 review): an immediate SEPARATE send that publishes file 1 then fails
+        on file 2 must persist file 1's id and NOT raise. Raising makes the CLI/agent/UI report
+        failure, the user reruns, and file 1 is published a second time (duplicate)."""
+        from src.services.photo_task_service import PhotoTarget, PhotoTaskService
+
+        img = tmp_path / "photo.jpg"
+        img.write_bytes(b"\xff\xd8\xff")
+        img2 = tmp_path / "photo2.jpg"
+        img2.write_bytes(b"\xff\xd8\xff")
+
+        bundle = MagicMock()
+        bundle.create_batch = AsyncMock(return_value=6)
+        bundle.create_item = AsyncMock(return_value=60)
+        bundle.update_item = AsyncMock()
+        bundle.update_batch = AsyncMock()
+        returned_item = MagicMock()
+        returned_item.id = 60
+        bundle.get_item = AsyncMock(return_value=returned_item)
+
+        # send_now publishes file 1 (fires on_file_sent immediately) then fails on file 2.
+        async def _send_now(*, file_paths, on_file_sent=None, **_kwargs):
+            if on_file_sent is not None:
+                await on_file_sent(file_paths[0], [42])
+            raise RuntimeError("file 2 failed")
+
+        publish = MagicMock()
+        publish.send_now = AsyncMock(side_effect=_send_now)
+
+        svc = PhotoTaskService(bundle, publish)
+        target = PhotoTarget(dialog_id=100)
+        # Partial publish returns the item (file 1 is live, irreversible) — it does NOT raise.
+        item = await svc.send_now(
+            phone="+1",
+            target=target,
+            file_paths=[str(img), str(img2)],
+            mode="separate",
+        )
+        assert item is returned_item
+
+        # Last update_item must record the published id and mark the item COMPLETED (not FAILED).
+        last = bundle.update_item.call_args_list[-1].kwargs
+        assert last.get("status") == PhotoBatchStatus.COMPLETED
+        assert last.get("telegram_message_ids") == [42]
+        assert "partial send failure" in (last.get("error") or "")
+        # The batch must NOT be marked FAILED — that would prompt a duplicate retry.
+        for call in bundle.update_batch.call_args_list:
+            assert call.kwargs.get("status") != PhotoBatchStatus.FAILED
+
 
 class TestPhotoTaskServiceScheduleSend:
     @pytest.mark.anyio
@@ -1313,13 +1363,77 @@ class TestPhotoTaskServiceScheduleSend:
                 schedule_at=datetime.now(timezone.utc),
             )
 
+    @pytest.mark.anyio
+    async def test_schedule_send_separate_partial_failure_keeps_scheduled_with_ids(self, tmp_path):
+        """Regression (#864 review): in SEPARATE mode, if file 1 is scheduled server-side and
+        file 2 fails, the item must stay SCHEDULED with file 1's id (cancellable) — never
+        FAILED-with-no-ids, which would strand a queued post with no cancel handle (ghost publish).
+        And partial success must NOT raise: raising makes the dispatcher/CLI report the schedule as
+        FAILED, so the user retries and schedules a duplicate while the first stays queued."""
+        from src.services.photo_task_service import PhotoTarget, PhotoTaskService
+
+        img = tmp_path / "photo.jpg"
+        img.write_bytes(b"\xff\xd8\xff")
+        img2 = tmp_path / "photo2.jpg"
+        img2.write_bytes(b"\xff\xd8\xff")
+
+        bundle = MagicMock()
+        bundle.create_batch = AsyncMock(return_value=5)
+        bundle.create_item = AsyncMock(return_value=50)
+        bundle.update_item = AsyncMock()
+        bundle.update_batch = AsyncMock()
+        returned_item = MagicMock()
+        returned_item.id = 50
+        bundle.get_item = AsyncMock(return_value=returned_item)
+
+        # send_now schedules file 1 (fires on_file_sent) then fails on file 2, mirroring the
+        # real SEPARATE loop where earlier files are already queued before a later one raises.
+        async def _send_now(*, file_paths, on_file_sent=None, **_kwargs):
+            if on_file_sent is not None:
+                await on_file_sent(file_paths[0], [100])
+            raise RuntimeError("file 2 failed")
+
+        publish = MagicMock()
+        publish.send_now = AsyncMock(side_effect=_send_now)
+
+        svc = PhotoTaskService(bundle, publish)
+        target = PhotoTarget(dialog_id=300)
+        # Partial success returns the durable, cancellable item — it does NOT raise.
+        item = await svc.schedule_send(
+            phone="+3",
+            target=target,
+            file_paths=[str(img), str(img2)],
+            mode="separate",
+            schedule_at=datetime.now(timezone.utc),
+        )
+        assert item is returned_item
+
+        # Last update_item must keep the item SCHEDULED with file 1's id — the cancel handle.
+        last = bundle.update_item.call_args_list[-1].kwargs
+        assert last.get("status") == PhotoBatchStatus.SCHEDULED
+        assert last.get("telegram_message_ids") == [100]
+        assert "partial schedule failure" in (last.get("error") or "")
+        # The batch must NOT be force-marked FAILED while a post is still scheduled & cancellable.
+        for call in bundle.update_batch.call_args_list:
+            assert call.kwargs.get("status") != PhotoBatchStatus.FAILED
+
 
 class TestPhotoTaskServiceCancelItem:
     @pytest.mark.anyio
     async def test_cancel_delegates_to_bundle(self):
+        from types import SimpleNamespace
+
+        from src.models import PhotoBatchStatus
         from src.services.photo_task_service import PhotoTaskService
 
         bundle = MagicMock()
+        # A non-SCHEDULED item with no batch: cancel_item skips the Telegram
+        # unschedule precondition and the batch-status sync, delegating straight
+        # to the repository (#864 changed cancel_item to look up the item first).
+        item = SimpleNamespace(
+            status=PhotoBatchStatus.PENDING, telegram_message_ids=None, batch_id=None
+        )
+        bundle.get_item = AsyncMock(return_value=item)
         bundle.cancel_item = AsyncMock(return_value=True)
         svc = PhotoTaskService(bundle, MagicMock())
         result = await svc.cancel_item(99)
@@ -1331,6 +1445,7 @@ class TestPhotoTaskServiceCancelItem:
         from src.services.photo_task_service import PhotoTaskService
 
         bundle = MagicMock()
+        bundle.get_item = AsyncMock(return_value=None)
         bundle.cancel_item = AsyncMock(return_value=False)
         svc = PhotoTaskService(bundle, MagicMock())
         result = await svc.cancel_item(123)

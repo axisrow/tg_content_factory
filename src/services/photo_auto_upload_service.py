@@ -76,6 +76,12 @@ class PhotoAutoUploadService:
             send_mode = job.send_mode
             if send_mode == PhotoSendMode.ALBUM and len(files) < 2:
                 send_mode = PhotoSendMode.SEPARATE
+
+            async def _mark_sent(file_path: str, _ids: list[int], _jid: int = job.id or 0) -> None:
+                # Mark each file the moment it is published so a mid-batch failure
+                # doesn't re-send already-sent files next cycle (audit #835/4).
+                await self._bundle.mark_auto_file_sent(_jid, file_path)
+
             await self._publish.send_now(
                 phone=job.phone,
                 target_dialog_id=job.target_dialog_id,
@@ -83,9 +89,8 @@ class PhotoAutoUploadService:
                 file_paths=files,
                 send_mode=send_mode,
                 caption=job.caption,
+                on_file_sent=_mark_sent,
             )
-            for file_path in files:
-                await self._bundle.mark_auto_file_sent(job.id or 0, file_path)
             await self._bundle.update_auto_job(
                 job.id or 0,
                 error="",
