@@ -1035,3 +1035,10 @@ async def test_codex_image_adapter_raises_when_no_file(monkeypatch, tmp_path):
     adapter = make_codex_image_adapter(output_dir=str(tmp_path))
     with pytest.raises(RuntimeError, match="no image file"):
         await adapter("x", "gpt-5.4")
+
+
+@pytest.mark.anyio
+async def test_parse_json_openai_content_null_returns_empty():
+    """OpenAI content can be JSON null (tool-call/refusal) — coerce to "" not None (#836/8)."""
+    data = {"choices": [{"message": {"content": None}}]}
+    assert await _parse_json_for_text(data) == ""

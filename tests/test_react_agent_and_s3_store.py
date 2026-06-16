@@ -540,7 +540,7 @@ class TestS3StoreUploadFile:
 
     @pytest.mark.anyio
     async def test_upload_file_success(self):
-        """upload_file returns URL on successful upload."""
+        """upload_file returns a presigned GET URL on successful upload (audit #836/3)."""
         store = S3Store(
             endpoint="https://s3.example.com",
             bucket="my-bucket",
@@ -551,6 +551,9 @@ class TestS3StoreUploadFile:
         mock_boto3 = MagicMock()
         mock_client = MagicMock()
         mock_client.upload_file.return_value = None
+        mock_client.generate_presigned_url.return_value = (
+            "https://s3.example.com/my-bucket/images/abc.jpg?sig=xyz"
+        )
         mock_boto3.client.return_value = mock_client
 
         mock_config = MagicMock()
@@ -563,12 +566,15 @@ class TestS3StoreUploadFile:
 
         with patch.dict("sys.modules", modules):
             result = await store.upload_file("/tmp/test_image.jpg")
-            assert result == "https://s3.example.com/my-bucket/test_image.jpg"
+            # Returns the presigned GET URL, not a bare (private) object URL that 403s.
+            assert result == "https://s3.example.com/my-bucket/images/abc.jpg?sig=xyz"
             mock_client.upload_file.assert_called_once()
+            mock_client.generate_presigned_url.assert_called_once()
 
     @pytest.mark.anyio
-    async def test_upload_file_uses_basename(self):
-        """upload_file uses basename of path as S3 key."""
+    async def test_upload_file_uses_unique_key_not_basename(self):
+        """upload_file writes a collision-free images/{uuid}{ext} key, not the bare
+        basename, so two uploads of the same filename don't overwrite (#862 review)."""
         store = S3Store(
             endpoint="https://example.com",
             bucket="bucket",
@@ -588,6 +594,8 @@ class TestS3StoreUploadFile:
 
         with patch.dict("sys.modules", modules):
             await store.upload_file("/some/deep/path/to/file.png")
-            # Check that only basename was used as key
             call_args = mock_client.upload_file.call_args
-            assert call_args[0][2] == "file.png"
+            key = call_args[0][2]
+            assert key != "file.png"  # no longer the bare basename
+            assert key.startswith("images/")
+            assert key.endswith(".png")  # extension preserved

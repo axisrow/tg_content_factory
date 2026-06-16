@@ -98,8 +98,11 @@ async def _parse_json_for_text(data: Any) -> str:
                 c = data["choices"][0]
                 if isinstance(c, dict):
                     if "message" in c:
-                        return c["message"].get("content", "")
-                    return c.get("text", "")
+                        # `content` can be JSON null (tool-call/refusal/filter);
+                        # dict.get(default) keeps the stored None, breaking the
+                        # -> str contract downstream (audit #836/8). Coerce to "".
+                        return c["message"].get("content") or ""
+                    return c.get("text") or ""
             except Exception:
                 pass
         # Cohere style

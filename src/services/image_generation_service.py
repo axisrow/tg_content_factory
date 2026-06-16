@@ -115,10 +115,20 @@ class ImageGenerationService:
                 kind="error", provider=provider_name, model=model, message=str(exc),
             )
             return None
-        if result and not result.startswith("http") and getattr(self, "_s3", None) is not None:
-            s3_url = await self._s3.upload_file(result)
-            if s3_url:
-                return s3_url
+        s3 = getattr(self, "_s3", None)
+        if result and s3 is not None:
+            if result.startswith("http"):
+                # Provider returned an ephemeral host URL (e.g. Replicate, expires
+                # ~24h). Mirror it into durable S3 so saved runs don't 404 later
+                # (audit #836/4); skip URLs already pointing at our S3 endpoint.
+                if not s3.owns_url(result):
+                    s3_url = await s3.upload_url(result)
+                    if s3_url:
+                        return s3_url
+            else:
+                s3_url = await s3.upload_file(result)
+                if s3_url:
+                    return s3_url
         return result
 
     async def is_available(self) -> bool:
@@ -182,9 +192,12 @@ class ImageGenerationService:
         return None, model
 
     def _resolve_adapter(self, provider_name: Optional[str]) -> Optional[ImageAdapter]:
-        if provider_name and provider_name in self._adapters:
-            return self._adapters[provider_name]
-        # Implicit fallback (no/unknown provider): first adapter that is allowed
+        if provider_name:
+            # An explicit provider must use its own adapter or fail cleanly —
+            # never silently route to another provider's adapter, which would
+            # generate off-brand images from an incompatible model (audit #835/11).
+            return self._adapters.get(provider_name)
+        # Implicit fallback (no provider specified): first adapter that is allowed
         # to be a default. Spec-flagged explicit-only providers (e.g. Codex,
         # which spawns a blocking subprocess) are skipped so an unqualified
         # generate() never silently triggers them.

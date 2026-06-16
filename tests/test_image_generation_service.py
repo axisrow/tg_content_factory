@@ -804,3 +804,55 @@ async def test_search_models_replicate_with_token(monkeypatch):
     models = await svc.search_models("replicate", api_key="fake-token")
     assert len(models) == 1
     assert models[0]["id"] == "testowner/test-model"
+
+
+# === audit #835/11 explicit-provider routing + #836/4 S3 mirror ===
+
+
+@pytest.mark.anyio
+async def test_explicit_unknown_provider_does_not_fall_back():
+    """An explicit provider must fail cleanly, not route to another adapter (#835/11)."""
+    svc = _make_clean_service()
+
+    async def together_adapter(prompt: str, model: str) -> str:
+        return "https://together/img.png"
+
+    svc.register_adapter("together", together_adapter)
+    result = await svc.generate("openai:dall-e-3", "x")
+    assert result is None
+
+
+@pytest.mark.anyio
+async def test_http_result_mirrored_to_s3():
+    """Ephemeral provider URLs (Replicate) are mirrored into durable S3 (#836/4)."""
+    svc = _make_clean_service()
+
+    async def replicate_adapter(prompt: str, model: str) -> str:
+        return "https://replicate.delivery/x.png"
+
+    svc.register_adapter("replicate", replicate_adapter)
+    s3 = MagicMock()
+    s3.owns_url = MagicMock(return_value=False)
+    s3.upload_url = AsyncMock(return_value="https://s3.example.com/presigned")
+    svc._s3 = s3
+
+    result = await svc.generate("replicate:m", "x")
+    assert result == "https://s3.example.com/presigned"
+    s3.upload_url.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_local_path_uploaded_via_upload_file():
+    svc = _make_clean_service()
+
+    async def local_adapter(prompt: str, model: str) -> str:
+        return "/tmp/generated.png"
+
+    svc.register_adapter("hf", local_adapter)
+    s3 = MagicMock()
+    s3.upload_file = AsyncMock(return_value="https://s3.example.com/presigned")
+    svc._s3 = s3
+
+    result = await svc.generate("hf:m", "x")
+    assert result == "https://s3.example.com/presigned"
+    s3.upload_file.assert_awaited_once()
