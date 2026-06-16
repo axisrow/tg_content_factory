@@ -485,6 +485,29 @@ async def test_import_json_from_dict(svc, pipeline_id):
 
 
 @pytest.mark.anyio
+async def test_import_json_restores_refinement_steps_and_publish_times(svc):
+    """export -> import must keep refinement_steps and publish_times (audit #837/4)."""
+    export = {
+        "name": "RoundTrip",
+        "prompt_template": "Summarize {source_messages}",
+        "llm_model": "m",
+        "image_model": None,
+        "publish_mode": "moderated",
+        "generation_backend": "chain",
+        "generate_interval_minutes": 30,
+        "publish_times": '["09:00", "18:00"]',
+        "refinement_steps": [{"name": "s1", "prompt": "tighten {text}"}],
+        "source_ids": [],
+        "target_refs": [],
+    }
+    new_id = await svc.import_json(export, name_override="RoundTrip")
+    detail = await svc.get_detail(new_id)
+    pipeline = detail["pipeline"]
+    assert pipeline.publish_times == '["09:00", "18:00"]'
+    assert pipeline.refinement_steps == [{"name": "s1", "prompt": "tighten {text}"}]
+
+
+@pytest.mark.anyio
 async def test_import_json_from_string(svc, pipeline_id):
     """Import a pipeline from a JSON string."""
     export = await svc.export_json(pipeline_id)

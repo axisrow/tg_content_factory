@@ -55,22 +55,6 @@ class PipelineExecutor:
     - ``db``: Database (optional)
     """
 
-    @staticmethod
-    def _downstream_nodes(graph: PipelineGraph, start_id: str) -> set[str]:
-        """Return all node IDs reachable from start_id via BFS on graph edges."""
-        adj: dict[str, list[str]] = defaultdict(list)
-        for edge in graph.edges:
-            adj[edge.from_node].append(edge.to_node)
-        visited: set[str] = set()
-        queue = deque([start_id])
-        while queue:
-            nid = queue.popleft()
-            for neighbor in adj[nid]:
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
-        return visited
-
     async def execute(
         self,
         pipeline: ContentPipeline,
@@ -95,12 +79,22 @@ class PipelineExecutor:
         context.set_global("default_model", pipeline.llm_model or "")
 
         ordered = _topological_sort(graph)
-        skipped: set[str] = set()
+        incoming: dict[str, list[str]] = defaultdict(list)
+        for edge in graph.edges:
+            incoming[edge.to_node].append(edge.from_node)
+        # Nodes whose OUTGOING edges are dead: condition/trigger nodes that did
+        # not pass, plus nodes skipped because every inbound path is dead.
+        suppressed: set[str] = set()
         node_errors: list[dict[str, Any]] = []
 
         for node in ordered:
-                if node.id in skipped:
-                    logger.debug("Skipping node %s (downstream of failed condition/trigger)", node.id)
+                preds = incoming.get(node.id, [])
+                # Skip only when EVERY inbound edge originates from a suppressed
+                # node — a merge node still reachable from an independent live
+                # branch must run, not be flood-filled away (audit #837/3).
+                if preds and all(p in suppressed for p in preds):
+                    logger.debug("Skipping node %s (all inbound paths suppressed)", node.id)
+                    suppressed.add(node.id)
                     continue
 
                 handler = get_handler(node.type)
@@ -110,17 +104,17 @@ class PipelineExecutor:
                     logger.debug("Executing node %s (%s)", node.id, node.type)
                     await handler.execute(node.config, context, services)
 
-                    # Short-circuit condition nodes: skip only downstream subtree if False
+                    # Condition False / trigger not matched suppress only THIS
+                    # node's outgoing edges; downstream skip is decided per-node above.
                     if node.type == PipelineNodeType.CONDITION:
                         if not context.get_global("condition_result", True):
-                            logger.debug("Condition node %s is False; skipping downstream nodes", node.id)
-                            skipped.update(self._downstream_nodes(graph, node.id))
+                            logger.debug("Condition node %s is False; suppressing its edges", node.id)
+                            suppressed.add(node.id)
 
-                    # Short-circuit trigger nodes: skip downstream if not matched
                     if node.type == PipelineNodeType.SEARCH_QUERY_TRIGGER:
                         if not context.get_global("trigger_matched", False):
-                            logger.debug("Trigger node %s did not match; skipping downstream nodes", node.id)
-                            skipped.update(self._downstream_nodes(graph, node.id))
+                            logger.debug("Trigger node %s did not match; suppressing its edges", node.id)
+                            suppressed.add(node.id)
                 except Exception as exc:
                     logger.exception("Node %s (%s) failed during pipeline execution", node.id, node.type)
                     errors = context.get_errors()

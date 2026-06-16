@@ -517,14 +517,24 @@ class PipelineService:
             account_phone=data.get("account_phone"),
         )
         self._inject_runtime_refs(pipeline_json, source_ids, target_refs)
-        pipeline = pipeline.model_copy(update={"pipeline_json": pipeline_json})
+        # Restore publish_times here (add() persists it) and refinement_steps after
+        # add() (not in the add() INSERT) so an export→import round-trip keeps both
+        # fields instead of resetting them to defaults (audit #837/4).
+        update: dict[str, Any] = {"pipeline_json": pipeline_json}
+        if data.get("publish_times") is not None:
+            update["publish_times"] = data["publish_times"]
+        pipeline = pipeline.model_copy(update=update)
 
         # Imported pipelines may not include runtime data (source/target IDs valid in
         # the target environment); allow empty and create as inactive for later config.
         sources = await self._normalize_sources(source_ids) if source_ids else []
         targets = await self._normalize_targets(target_refs) if target_refs else []
 
-        return await self._bundle.add(pipeline, sources, targets)
+        new_id = await self._bundle.add(pipeline, sources, targets)
+        refinement_steps = data.get("refinement_steps")
+        if refinement_steps:
+            await self._bundle.content_pipelines.set_refinement_steps(new_id, refinement_steps)
+        return new_id
 
     # ------------------------------------------------------------------
     # Template operations

@@ -126,50 +126,6 @@ class TestTopologicalSortDisconnected:
 
 
 # ---------------------------------------------------------------------------
-# 6. _downstream_nodes — basic
-# ---------------------------------------------------------------------------
-
-class TestDownstreamNodesBasic:
-    def test_downstream_chain(self):
-        graph = PipelineGraph(
-            nodes=[_node("a"), _node("b"), _node("c"), _node("d")],
-            edges=[_edge("a", "b"), _edge("b", "c"), _edge("c", "d")],
-        )
-        result = PipelineExecutor._downstream_nodes(graph, "b")
-        assert result == {"c", "d"}
-
-    def test_downstream_branching(self):
-        graph = PipelineGraph(
-            nodes=[_node("a"), _node("b"), _node("c"), _node("d")],
-            edges=[_edge("a", "b"), _edge("a", "c"), _edge("b", "d"), _edge("c", "d")],
-        )
-        result = PipelineExecutor._downstream_nodes(graph, "a")
-        assert result == {"b", "c", "d"}
-
-
-# ---------------------------------------------------------------------------
-# 7. _downstream_nodes — no edges
-# ---------------------------------------------------------------------------
-
-class TestDownstreamNodesNoEdges:
-    def test_no_edges_returns_empty(self):
-        graph = PipelineGraph(
-            nodes=[_node("a"), _node("b")],
-            edges=[],
-        )
-        result = PipelineExecutor._downstream_nodes(graph, "a")
-        assert result == set()
-
-    def test_disconnected_start(self):
-        graph = PipelineGraph(
-            nodes=[_node("a"), _node("b"), _node("c")],
-            edges=[_edge("b", "c")],
-        )
-        result = PipelineExecutor._downstream_nodes(graph, "a")
-        assert result == set()
-
-
-# ---------------------------------------------------------------------------
 # 8. execute — happy path with mock handlers
 # ---------------------------------------------------------------------------
 
@@ -250,6 +206,49 @@ class TestExecuteConditionSkip:
         assert "gen" not in call_log
         # generated_text stays at default ""
         assert result["generated_text"] == ""
+
+    @pytest.mark.anyio
+    async def test_condition_false_does_not_skip_merge_reachable_via_live_branch(self):
+        """Diamond DAG: cond->merge, src->fetch, fetch->merge, merge->publish with
+        cond False. merge/publish must still run via the live src branch — the old
+        flood-fill skip wrongly removed the whole subtree (audit #837/3)."""
+        graph = PipelineGraph(
+            nodes=[
+                _node("cond", PipelineNodeType.CONDITION),
+                _node("src"),
+                _node("fetch"),
+                _node("merge"),
+                _node("publish"),
+            ],
+            edges=[
+                _edge("cond", "merge"),
+                _edge("src", "fetch"),
+                _edge("fetch", "merge"),
+                _edge("merge", "publish"),
+            ],
+        )
+        pipeline = _pipeline()
+        call_log: list[str] = []
+
+        def fake_get_handler(node_type):
+            handler = AsyncMock()
+
+            async def _run(config, ctx, services):
+                nid = services.get("_current_node_id")
+                call_log.append(nid)
+                if node_type == PipelineNodeType.CONDITION:
+                    ctx.set_global("condition_result", False)
+
+            handler.execute.side_effect = _run
+            return handler
+
+        with patch("src.services.pipeline_executor.get_handler", side_effect=fake_get_handler):
+            result = await PipelineExecutor().execute(pipeline, graph, {})
+
+        assert "cond" in call_log
+        assert "merge" in call_log  # reachable via src->fetch->merge
+        assert "publish" in call_log
+        assert isinstance(result["context"], NodeContext)
 
 
 # ---------------------------------------------------------------------------
