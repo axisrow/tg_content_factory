@@ -219,13 +219,15 @@ async def test_scheduler_autoreload_is_capped(client):
     resp = await client.get("/scheduler/fragments/tasks")
     assert resp.status_code == 200
     text = resp.text
-    # Active tasks => the reload script is present, but bounded by a counter.
-    assert "window.location.reload" in text
+    # Active tasks => auto-refresh the tasks fragment ONLY (not a full-page reload,
+    # which would re-fire the health/jobs fragments too and defeat lazyload — #878).
+    assert "window.location.reload" not in text
+    assert 'hx-target="#tasks-fragment"' in text
+    assert "tasksAutoReload" in text
+    # Still bounded by a counter so a stuck task can't refresh forever.
     assert "MAX_AUTO_RELOADS" in text
     assert "scheduler-autoreload-count" in text
-    assert "isNaN(raw) ? 0 : raw + 1" in text
-    assert "storageAvailable = false" in text
-    assert "!storageAvailable || count >= MAX_AUTO_RELOADS" in text
+    assert "count >= MAX_AUTO_RELOADS" in text
     assert 'id="autoreload-paused"' in text
 
 

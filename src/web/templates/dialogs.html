@@ -24,12 +24,15 @@
     {% if accounts %}
     <div class="mb-0" style="max-width:400px">
         <label class="form-label">Аккаунт</label>
+        {# No hx-push-url here: the address bar must keep the real /dialogs/ URL, not the
+           bare /dialogs/fragments/list partial (a reload/bookmark would render chrome-less).
+           The "Обновить диалоги" form lives INSIDE the swapped #dialogs-list fragment so its
+           hidden phone always matches the account currently shown (see dialogs/_list.html). #}
         <select name="phone" class="form-select"
                 hx-get="/dialogs/fragments/list"
                 hx-include="this"
                 hx-target="#dialogs-list"
                 hx-swap="innerHTML"
-                hx-push-url="true"
                 hx-trigger="change"
                 hx-indicator="#dialogs-loading">
             <option value="" {% if not selected_phone %}selected{% endif %}>Выберите аккаунт</option>
@@ -38,10 +41,6 @@
             {% endfor %}
         </select>
         <span id="dialogs-loading" class="htmx-indicator d-inline-block mt-2">{{ icon("loading") }} Загрузка диалогов…</span>
-        <form method="post" action="/dialogs/refresh" class="mt-2" data-busy>
-            <input type="hidden" name="phone" value="{{ selected_phone or '' }}">
-            <button class="btn btn-outline-secondary btn-sm" type="submit" {% if not selected_phone %}disabled{% endif %}>Обновить диалоги</button>
-        </form>
     </div>
     {% endif %}
 </div>

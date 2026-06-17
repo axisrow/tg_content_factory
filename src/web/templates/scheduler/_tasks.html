@@ -173,42 +173,43 @@
 </div>
 {% endif %}
 
-<script>
 {% if has_active_tasks %}
-// Auto-refresh while tasks are active, but cap the number of automatic reloads
-// so a stuck/hung task can't make the page reload forever (#633 bug #24).
+{# Auto-refresh ONLY this tasks fragment while tasks are active — not the whole
+   page, which would re-fire the health/jobs fragments too and defeat the lazyload
+   split. Capped so a stuck/hung task can't refresh forever (#633 bug #24). The
+   cap counter lives in sessionStorage; once exhausted we render no trigger. #}
+<div id="tasks-autoreload-trigger"
+     hx-get="/scheduler/fragments/tasks?status={{ status_filter or 'all' }}&page={{ page }}&limit={{ limit }}"
+     hx-target="#tasks-fragment" hx-swap="innerHTML"
+     hx-trigger="tasksAutoReload"></div>
+<script>
 (function() {
     var MAX_AUTO_RELOADS = 60;  // ~5 min at 5s; then stop and let the user refresh
     var COUNT_KEY = 'scheduler-autoreload-count';
-    var FLAG_KEY = 'scheduler-autoreloading';
+    var trigger = document.getElementById('tasks-autoreload-trigger');
+    if (!trigger) { return; }
     var count = 0;
-    var storageAvailable = true;
     try {
-        if (sessionStorage.getItem(FLAG_KEY) === '1') {
-            // This load was triggered by our own auto-reload — count it.
-            var raw = parseInt(sessionStorage.getItem(COUNT_KEY), 10);
-            count = isNaN(raw) ? 0 : raw + 1;
-            sessionStorage.removeItem(FLAG_KEY);
-        } else {
-            // Fresh navigation by the user — reset the counter.
-            count = 0;
-        }
-        sessionStorage.setItem(COUNT_KEY, String(count));
+        var raw = parseInt(sessionStorage.getItem(COUNT_KEY), 10);
+        count = isNaN(raw) ? 0 : raw;
     } catch (e) {
-        // sessionStorage is the only reload-persistent state we can trust here.
-        // If it is unavailable, disable auto-reload instead of recreating the
-        // original infinite reload loop.
-        storageAvailable = false;
-    }
-    if (!storageAvailable || count >= MAX_AUTO_RELOADS) {
+        // sessionStorage is the only refresh-persistent state we can trust here.
+        // If it is unavailable, disable auto-refresh instead of recreating an
+        // uncapped refresh loop.
         var note = document.getElementById('autoreload-paused');
         if (note) { note.style.display = ''; }
         return;
     }
+    if (count >= MAX_AUTO_RELOADS) {
+        var paused = document.getElementById('autoreload-paused');
+        if (paused) { paused.style.display = ''; }
+        try { sessionStorage.removeItem(COUNT_KEY); } catch (e) {}
+        return;
+    }
     setTimeout(function() {
-        try { sessionStorage.setItem(FLAG_KEY, '1'); } catch (e) {}
-        window.location.reload();
+        try { sessionStorage.setItem(COUNT_KEY, String(count + 1)); } catch (e) {}
+        if (window.htmx) { window.htmx.trigger(trigger, 'tasksAutoReload'); }
     }, 5000);
 })();
-{% endif %}
 </script>
+{% endif %}

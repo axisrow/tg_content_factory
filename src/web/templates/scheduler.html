@@ -72,11 +72,17 @@
 <!-- Dry-run results (populated via fetch) -->
 <div id="dry-run-results" class="mb-4" style="display:none"></div>
 
-<div hx-get="/scheduler/fragments/tasks{{ _frag_qs }}" hx-trigger="load" hx-swap="innerHTML">
+<div id="tasks-fragment"
+     hx-get="/scheduler/fragments/tasks{{ _frag_qs }}" hx-trigger="load" hx-swap="innerHTML">
     {{ loading(class="my-4") }}
 </div>
 
 <script>
+// Fresh full-page load by the user resets the tasks auto-refresh cap. The cap
+// counter then only grows across fragment self-refreshes (#633 bug #24); this
+// inline script runs once per real navigation, not on HTMX fragment swaps.
+try { sessionStorage.removeItem('scheduler-autoreload-count'); } catch (e) {}
+
 function dryRunNotifications() {
     var btn = document.getElementById('dry-run-btn');
     var container = document.getElementById('dry-run-results');
