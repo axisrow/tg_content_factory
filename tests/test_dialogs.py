@@ -159,7 +159,10 @@ async def test_dialogs_page_renders(client):
     assert 'href="/dialogs/photos"' in resp.text
     assert "Если аккаунт не выбран, откроется первый доступный профиль." in resp.text
     assert "Выберите аккаунт" in resp.text
-    assert "загрузить список диалогов" in resp.text
+    # The dialog list (incl. the empty-state prompt) now loads in the lazy fragment (#756).
+    assert 'hx-get="/dialogs/fragments/list' in resp.text
+    frag = await client.get("/dialogs/fragments/list")
+    assert "загрузить список диалогов" in frag.text
 
 
 @pytest.mark.anyio
@@ -169,7 +172,8 @@ async def test_dialogs_page_shows_dialogs(db, real_pool_harness_factory):
     app, db, harness = await _build_dialogs_app(db, real_pool_harness_factory)
     await db.repos.dialog_cache.replace_dialogs("+1234567890", list(_FAKE_DIALOGS))
     async with make_auth_client(app) as client:
-        resp = await client.get("/dialogs/?phone=%2B1234567890")
+        # The dialog list renders in the lazy fragment (#756).
+        resp = await client.get("/dialogs/fragments/list?phone=%2B1234567890")
     assert resp.status_code == 200
     assert "My Channel" in resp.text
     assert "My Group" in resp.text
@@ -352,8 +356,8 @@ async def test_refresh_dialogs_post_enqueues_command(db, real_pool_harness_facto
 
 @pytest.mark.anyio
 async def test_leave_dialogs_flash_message(client):
-    """GET with left/failed params shows flash banner."""
-    resp = await client.get("/dialogs/?phone=%2B1234567890&left=2&failed=1")
+    """GET with left/failed params shows flash banner (now in the list fragment, #756)."""
+    resp = await client.get("/dialogs/fragments/list?phone=%2B1234567890&left=2&failed=1")
     assert resp.status_code == 200
     assert "Отписались" in resp.text
     assert "<strong>2</strong>" in resp.text

@@ -1,0 +1,214 @@
+{% from "_macros.html" import icon %}
+{% from "_macros_ui.html" import empty_state, task_status_badge, task_status_text, scheduler_filter_qs %}
+
+{% macro task_type_label(t) %}
+    {% if t.task_type.value == 'channel_collect' %}Сбор канала
+    {% elif t.task_type.value == 'stats_all' %}Статистика
+    {% elif t.task_type.value == 'sq_stats' %}Статистика запроса
+    {% elif t.task_type.value == 'photo_due' %}Фото
+    {% elif t.task_type.value == 'photo_auto' %}Автофото
+    {% else %}{{ t.task_type.value }}
+    {% endif %}
+{% endmacro %}
+
+{# Preserve the current filter/page/limit on every POST (cancel etc.), same as the page (#457 round 3). #}
+{% set filter_qs = scheduler_filter_qs(status_filter, page, limit) %}
+
+{% if all_count > 0 %}
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Задачи</div>
+    <div class="card-body p-0">
+        <p class="px-3 pt-3"><small class="text-muted">Все задачи: сбор каналов, статистика, фото.</small></p>
+        {% if pending_collect_count > 0 %}
+        <div class="px-3 pb-2">
+            <form method="post" action="/scheduler/tasks/clear-pending-collect{{ filter_qs }}" data-busy>
+                <button type="submit" class="btn btn-outline-danger btn-sm">
+                    Очистить очередь загрузки ({{ pending_collect_count }})
+                </button>
+            </form>
+        </div>
+        {% endif %}
+        {% if has_active_tasks %}
+        <div id="autoreload-paused" class="alert alert-warning mx-3" style="display:none">
+            Автообновление приостановлено после долгого ожидания. Обновите страницу вручную, чтобы продолжить.
+        </div>
+        {% endif %}
+
+        <!-- Filter tabs -->
+        <div class="px-3 pb-2">
+            <div class="btn-group flex-wrap scheduler-filter-group" role="tablist">
+                <a href="/scheduler?status=all&page=1&limit={{ limit }}" class="btn btn-sm {% if status_filter == 'all' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    Все ({{ all_count }})
+                </a>
+                <a href="/scheduler?status=active&page=1&limit={{ limit }}" class="btn btn-sm {% if status_filter == 'active' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    Активные ({{ active_count }})
+                </a>
+                <a href="/scheduler?status=completed&page=1&limit={{ limit }}" class="btn btn-sm {% if status_filter == 'completed' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+                    Завершенные ({{ completed_count }})
+                </a>
+            </div>
+        </div>
+
+        {% if tasks %}
+        <!-- Desktop -->
+        <div class="table-responsive d-none d-lg-block">
+        <table class="tga-table-striped mb-0">
+            <thead>
+                <tr>
+                    <th>Тип</th>
+                    <th>Канал / Описание</th>
+                    <th>Статус</th>
+                    <th>{{ result_column_title }}</th>
+                    <th>Создана</th>
+                    <th>Завершена</th>
+                    <th>Действие</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in tasks %}
+                <tr>
+                    <td><span class="badge text-bg-info">{{ task_type_label(t) }}</span></td>
+                    <td>
+                        {{ t.channel_title or t.channel_id or '—' }}
+                        {% if t.channel_username %}
+                        <br><small class="text-muted">@{{ t.channel_username }}</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {{ task_status_text(t) }}
+                    </td>
+                    <td>
+                        {% set pipeline_meta = pipeline_result_meta.get(t.id) if pipeline_result_meta else None %}
+                        {% if t.task_type == 'stats_all' and t.payload and t.payload.channel_ids %}
+                            {{ t.messages_collected }}/{{ t.payload.channel_ids|length }}
+                        {% elif t.task_type.value == 'pipeline_run' and pipeline_meta %}
+                            <small class="text-muted d-block">{{ pipeline_meta.label }}</small>
+                            {{ pipeline_meta.count }}
+                            {% if pipeline_meta.errors_count %}
+                                <span class="badge text-bg-warning pipe-run-warning ms-1"
+                                      title="{{ pipeline_meta.first_error_detail or '' }}">⚠ {{ pipeline_meta.errors_count }}</span>
+                            {% endif %}
+                        {% else %}
+                            {{ t | format_task_result }}
+                        {% endif %}
+                    </td>
+                    <td>{{ t.created_at|local_dt }}</td>
+                    <td>{{ t.completed_at|local_dt }}</td>
+                    <td>
+                        {% if t.status == 'running' %}
+                            <form method="post" action="/scheduler/tasks/{{ t.id }}/cancel{{ filter_qs }}" class="mb-0" data-busy>
+                                <button type="submit" class="btn btn-outline-secondary btn-sm">Отменить</button>
+                            </form>
+                        {% elif t.status == 'pending' %}
+                            <form method="post" action="/scheduler/tasks/{{ t.id }}/cancel{{ filter_qs }}" class="mb-0" data-busy>
+                                <button type="submit" class="btn btn-outline-secondary btn-sm">Удалить</button>
+                            </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <!-- Mobile -->
+        <div class="d-lg-none mobile-cards p-2">
+            {% for t in tasks %}
+            <div class="card mb-2">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <div>
+                            <span class="badge text-bg-info me-1">{{ task_type_label(t) }}</span>
+                            <strong>{{ t.channel_title or t.channel_id or '—' }}</strong>
+                            {% if t.channel_username %}<br><small class="text-muted">@{{ t.channel_username }}</small>{% endif %}
+                        </div>
+                        <span>
+                            {{ task_status_badge(t) }}
+                        </span>
+                    </div>
+                    <small class="text-muted">
+                        {% set pipeline_meta = pipeline_result_meta.get(t.id) if pipeline_result_meta else None %}
+                        {% if t.task_type == 'stats_all' and t.payload and t.payload.channel_ids %}
+                            {{ t.messages_collected }}/{{ t.payload.channel_ids|length }}
+                        {% elif t.task_type.value == 'pipeline_run' and pipeline_meta %}
+                            {{ pipeline_meta.label }}: {{ pipeline_meta.count }}
+                            {% if pipeline_meta.errors_count %}
+                                <span class="badge text-bg-warning pipe-run-warning ms-1"
+                                      title="{{ pipeline_meta.first_error_detail or '' }}">⚠ {{ pipeline_meta.errors_count }}</span>
+                            {% endif %}
+                        {% else %}
+                            {{ t | format_task_result }}{% if t.task_type.value != 'channel_collect' %} сообщ.{% endif %}
+                        {% endif %}
+                        {% if t.created_at %}&middot; {{ t.created_at|local_dt }}{% endif %}
+                    </small>
+                    {% if t.status == 'running' or t.status == 'pending' %}
+                    <div class="mt-1">
+                        <form method="post" action="/scheduler/tasks/{{ t.id }}/cancel{{ filter_qs }}" class="mb-0" data-busy>
+                            <button type="submit" class="btn btn-outline-secondary btn-sm">{{ 'Отменить' if t.status == 'running' else 'Удалить' }}</button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Pagination -->
+        {% if total_pages > 1 %}
+        <nav>
+            <ul class="pagination justify-content-center mb-0">
+                {% if page > 1 %}
+                <li class="page-item"><a class="page-link" href="/scheduler?status={{ status_filter }}&page={{ page - 1 }}&limit={{ limit }}">Назад</a></li>
+                {% endif %}
+                <li class="page-item disabled"><span class="page-link">Страница {{ page }} из {{ total_pages }}</span></li>
+                {% if page < total_pages %}
+                <li class="page-item"><a class="page-link" href="/scheduler?status={{ status_filter }}&page={{ page + 1 }}&limit={{ limit }}">Далее</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+        {% endif %}
+        {% else %}
+        {{ empty_state("Нет задач с выбранным фильтром.") }}
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<script>
+{% if has_active_tasks %}
+// Auto-refresh while tasks are active, but cap the number of automatic reloads
+// so a stuck/hung task can't make the page reload forever (#633 bug #24).
+(function() {
+    var MAX_AUTO_RELOADS = 60;  // ~5 min at 5s; then stop and let the user refresh
+    var COUNT_KEY = 'scheduler-autoreload-count';
+    var FLAG_KEY = 'scheduler-autoreloading';
+    var count = 0;
+    var storageAvailable = true;
+    try {
+        if (sessionStorage.getItem(FLAG_KEY) === '1') {
+            // This load was triggered by our own auto-reload — count it.
+            var raw = parseInt(sessionStorage.getItem(COUNT_KEY), 10);
+            count = isNaN(raw) ? 0 : raw + 1;
+            sessionStorage.removeItem(FLAG_KEY);
+        } else {
+            // Fresh navigation by the user — reset the counter.
+            count = 0;
+        }
+        sessionStorage.setItem(COUNT_KEY, String(count));
+    } catch (e) {
+        // sessionStorage is the only reload-persistent state we can trust here.
+        // If it is unavailable, disable auto-reload instead of recreating the
+        // original infinite reload loop.
+        storageAvailable = false;
+    }
+    if (!storageAvailable || count >= MAX_AUTO_RELOADS) {
+        var note = document.getElementById('autoreload-paused');
+        if (note) { note.style.display = ''; }
+        return;
+    }
+    setTimeout(function() {
+        try { sessionStorage.setItem(FLAG_KEY, '1'); } catch (e) {}
+        window.location.reload();
+    }, 5000);
+})();
+{% endif %}
+</script>

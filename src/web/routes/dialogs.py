@@ -30,6 +30,18 @@ async def dialogs_page(
     return dialog_response(request, await handlers.dialogs_page(request, phone, left, failed))
 
 
+@router.get("/fragments/list", response_class=HTMLResponse)
+async def dialogs_list_fragment(
+    request: Request,
+    phone: str | None = None,
+    left: int = 0,
+    failed: int = 0,
+):
+    return dialog_response(
+        request, await handlers.dialogs_list_fragment(request, phone, left, failed)
+    )
+
+
 @router.post("/refresh")
 async def refresh_dialogs(request: Request):
     return dialog_response(request, await handlers.refresh_dialogs(request))

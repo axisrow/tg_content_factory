@@ -1,0 +1,144 @@
+{% from "_macros.html" import icon %}
+{% if left or failed %}
+<p class="mb-3">
+    Отписались: <strong>{{ left }}</strong>{% if failed %}, не удалось: <strong>{{ failed }}</strong>{% endif %}
+</p>
+{% endif %}
+
+{% if selected_phone %}
+<small class="text-muted d-block mb-2">
+    Показан сохранённый список диалогов{% if dialogs_cached_at %} от {{ dialogs_cached_at|local_dt }}{% endif %}. Кнопка «Обновить диалоги» заново загружает данные из Telegram.
+</small>
+{% endif %}
+
+{% if dialogs %}
+{% set channels = dialogs | selectattr("channel_type", "in", ["channel", "monoforum", "scam", "fake", "restricted"]) | list %}
+{% set groups = dialogs | selectattr("channel_type", "in", ["supergroup", "group", "gigagroup", "forum"]) | list %}
+{% set dms = dialogs | selectattr("channel_type", "equalto", "dm") | list %}
+{% set bots = dialogs | selectattr("channel_type", "equalto", "bot") | list %}
+{% set own = dialogs | selectattr("is_own") | list %}
+
+<p class="text-muted">Всего диалогов: <strong>{{ dialogs|length }}</strong></p>
+
+<form method="post" action="/dialogs/leave" id="leave-form" data-busy
+      data-confirm="Отписаться от выбранных диалогов?">
+<input type="hidden" name="phone" value="{{ selected_phone }}">
+
+<div id="leave-bar" class="d-none gap-3 align-items-center mb-3">
+    <span id="leave-count">0 выбрано</span>
+    <button type="submit" class="btn btn-danger btn-sm">
+        Отписаться
+    </button>
+    <button type="button" class="btn btn-secondary btn-sm" onclick="clearSelection()">Сбросить</button>
+</div>
+
+<ul class="nav nav-tabs nav-fill mb-3" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active" id="tab-channels" data-bs-toggle="tab" data-bs-target="#pane-channels" type="button" role="tab">Каналы ({{ channels|length }})</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-own" data-bs-toggle="tab" data-bs-target="#pane-own" type="button" role="tab">Созданные ({{ own|length }})</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-dms" data-bs-toggle="tab" data-bs-target="#pane-dms" type="button" role="tab">ДМ ({{ dms|length }})</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-groups" data-bs-toggle="tab" data-bs-target="#pane-groups" type="button" role="tab">Группы ({{ groups|length }})</button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="tab-bots" data-bs-toggle="tab" data-bs-target="#pane-bots" type="button" role="tab">Боты ({{ bots|length }})</button>
+    </li>
+</ul>
+
+{% macro dialog_pane(items, pane_id, empty_text, with_type=True, active=False) %}
+<div class="tab-pane fade{% if active %} show active{% endif %}" id="pane-{{ pane_id }}" role="tabpanel">
+    {% if items %}
+    <!-- Desktop -->
+    <div class="table-responsive d-none d-md-block">
+    <table class="tga-table-striped">
+        <thead><tr>
+            <th><input type="checkbox" class="form-check-input" id="select-all-{{ pane_id }}"
+                       onchange="selectAll('{{ pane_id }}', this.checked)"></th>
+            {% if with_type %}<th>Тип</th>{% endif %}<th>Название</th><th>Username</th>{% if with_type %}<th>В базе</th>{% endif %}
+        </tr></thead>
+        <tbody>
+        {% for d in items %}
+        <tr>
+            <td><input type="checkbox" class="form-check-input cb-{{ pane_id }}" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
+                       onchange="updateLeaveBar()"></td>
+            {% if with_type %}<td><span class="badge-active">{{ d.channel_type }}</span></td>{% endif %}
+            <td>{{ d.title }}</td>
+            <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            {% if with_type %}<td>{% if d.already_added %}<span class="badge-active">{{ icon("success") }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>{% endif %}
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <!-- Mobile -->
+    <div class="d-md-none mobile-cards">
+        {% for d in items %}
+        <div class="card mb-2">
+            <div class="card-body py-2 d-flex align-items-center gap-2">
+                <input type="checkbox" class="form-check-input cb-{{ pane_id }}" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
+                <div class="flex-fill min-w-0">
+                    <div class="text-truncate"><strong>{{ d.title }}</strong></div>
+                    {% if with_type %}
+                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; {{ icon("success") }}{% endif %}</small>
+                    {% elif d.username %}
+                    <small class="text-muted">@{{ d.username }}</small>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}<p>{{ empty_text }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+<div class="tab-content">
+    {{ dialog_pane(own, 'own', 'Нет своих каналов/групп.') }}
+    {{ dialog_pane(channels, 'channels', 'Нет каналов.', active=True) }}
+    {{ dialog_pane(groups, 'groups', 'Нет групп.') }}
+    {{ dialog_pane(dms, 'dms', 'Нет личных диалогов.', with_type=False) }}
+    {{ dialog_pane(bots, 'bots', 'Нет ботов.', with_type=False) }}
+</div>
+
+</form>
+
+<script>
+function updateLeaveBar() {
+    var n = document.querySelectorAll('input[name="channel_ids"]:checked').length;
+    document.getElementById('leave-count').textContent = n + ' выбрано';
+    var bar = document.getElementById('leave-bar');
+    if (n > 0) {
+        bar.classList.remove('d-none');
+        bar.classList.add('d-flex');
+    } else {
+        bar.classList.add('d-none');
+        bar.classList.remove('d-flex');
+    }
+}
+function selectAll(pane, checked) {
+    document.querySelectorAll('.cb-' + pane).forEach(function(cb) {
+        cb.checked = checked;
+    });
+    updateLeaveBar();
+}
+function clearSelection() {
+    document.querySelectorAll('input[name="channel_ids"]').forEach(function(cb) {
+        cb.checked = false;
+    });
+    document.querySelectorAll('[id^="select-all-"]').forEach(function(cb) {
+        cb.checked = false;
+    });
+    updateLeaveBar();
+}
+</script>
+
+{% elif selected_phone %}
+<p>Нет диалогов.</p>
+{% else %}
+<p class="text-muted">Выберите аккаунт, чтобы загрузить список диалогов.</p>
+{% endif %}
