@@ -66,7 +66,8 @@ async def test_content_analytics_pipeline_links_use_edit_route(route_client):
         targets=[],
     )
 
-    resp = await route_client.get("/analytics/content")
+    # Pipeline stats now render in the lazy-loaded fragment (#756).
+    resp = await route_client.get("/analytics/content/fragments/pipelines")
 
     assert resp.status_code == 200
     assert f'href="/pipelines/{pipeline_id}/edit"' in resp.text
@@ -321,3 +322,45 @@ async def test_api_peak_hours_clamps_days(route_client):
 
     assert resp.status_code == 200
     instance.get_peak_hours.assert_awaited_once_with(days=1)
+
+
+# ── #756: lazyload skeletons for content & trends ────────────────────
+
+
+@pytest.mark.anyio
+async def test_content_page_lazy_loads_fragments(route_client):
+    """#756: the content page paints a skeleton wired to HTMX fragment endpoints."""
+    resp = await route_client.get("/analytics/content")
+    assert resp.status_code == 200
+    assert 'hx-get="/analytics/content/fragments/summary"' in resp.text
+    assert 'hx-get="/analytics/content/fragments/pipelines"' in resp.text
+    assert 'hx-trigger="load"' in resp.text
+
+
+@pytest.mark.anyio
+async def test_trends_page_lazy_loads_fragments(route_client):
+    """#756: the trends page paints a skeleton; NLP aggregations load as fragments."""
+    resp = await route_client.get("/analytics/trends?days=14")
+    assert resp.status_code == 200
+    assert 'hx-get="/analytics/trends/fragments/topics?days=14"' in resp.text
+    assert 'hx-get="/analytics/trends/fragments/channels?days=14"' in resp.text
+    assert 'hx-get="/analytics/trends/fragments/emojis?days=14"' in resp.text
+    assert 'hx-trigger="load"' in resp.text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/analytics/content/fragments/summary",
+        "/analytics/content/fragments/pipelines",
+        "/analytics/trends/fragments/topics?days=7",
+        "/analytics/trends/fragments/channels?days=7",
+        "/analytics/trends/fragments/emojis?days=7",
+    ],
+)
+async def test_analytics_lazy_fragments_return_partial_html(route_client, path):
+    """Content/trends fragment endpoints return bare partials, not a full page."""
+    resp = await route_client.get(path)
+    assert resp.status_code == 200
+    assert "<html" not in resp.text.lower()

@@ -24,6 +24,18 @@ def _norm_limit(limit: int) -> int:
     return limit if limit in (20, 50, 100) else 50
 
 
+def _norm_days(days: int) -> int:
+    return days if days in (7, 14, 30) else 7
+
+
+def _content_svc(request: Request) -> ContentAnalyticsService:
+    return ContentAnalyticsService(deps.get_db(request))
+
+
+def _trend_svc(request: Request) -> TrendService:
+    return TrendService(deps.get_db(request))
+
+
 @router.get("", response_class=HTMLResponse)
 async def analytics_page(
     request: Request,
@@ -83,20 +95,23 @@ async def fragment_hourly(request: Request, date_from: str = "", date_to: str = 
 
 @router.get("/content", response_class=HTMLResponse)
 async def content_analytics_page(request: Request):
-    """Render content analytics dashboard page."""
-    db = deps.get_db(request)
-    analytics = ContentAnalyticsService(db)
+    """Render the content-analytics skeleton; summary/pipelines load lazily (#756)."""
+    return deps.get_templates(request).TemplateResponse(request, "analytics/content.html", {})
 
-    summary = await analytics.get_summary()
-    pipeline_stats = await analytics.get_pipeline_stats()
 
+@router.get("/content/fragments/summary", response_class=HTMLResponse)
+async def fragment_content_summary(request: Request):
+    summary = await _content_svc(request).get_summary()
     return deps.get_templates(request).TemplateResponse(
-        request,
-        "analytics/content.html",
-        {
-            "summary": summary,
-            "pipeline_stats": pipeline_stats,
-        },
+        request, "analytics/_content_summary.html", {"summary": summary}
+    )
+
+
+@router.get("/content/fragments/pipelines", response_class=HTMLResponse)
+async def fragment_content_pipelines(request: Request):
+    pipeline_stats = await _content_svc(request).get_pipeline_stats()
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_content_pipelines.html", {"pipeline_stats": pipeline_stats}
     )
 
 
@@ -151,22 +166,33 @@ async def api_daily_stats(request: Request, days: int = 30, pipeline_id: int | N
 
 @router.get("/trends", response_class=HTMLResponse)
 async def trends_page(request: Request, days: int = 7):
-    """Render trending topics and channels page."""
-    days = days if days in (7, 14, 30) else 7
-    db = deps.get_db(request)
-    trend = TrendService(db)
-    topics = await trend.get_trending_topics(days=days, limit=20)
-    channels = await trend.get_trending_channels(days=days, limit=10)
-    emojis = await trend.get_trending_emojis(days=days, limit=15)
+    """Render the trends skeleton; the NLP-heavy aggregations load lazily (#756)."""
     return deps.get_templates(request).TemplateResponse(
-        request,
-        "analytics/trends.html",
-        {
-            "topics": topics,
-            "channels": channels,
-            "emojis": emojis,
-            "days": days,
-        },
+        request, "analytics/trends.html", {"days": _norm_days(days)}
+    )
+
+
+@router.get("/trends/fragments/topics", response_class=HTMLResponse)
+async def fragment_trends_topics(request: Request, days: int = 7):
+    topics = await _trend_svc(request).get_trending_topics(days=_norm_days(days), limit=20)
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_trends_topics.html", {"topics": topics}
+    )
+
+
+@router.get("/trends/fragments/channels", response_class=HTMLResponse)
+async def fragment_trends_channels(request: Request, days: int = 7):
+    channels = await _trend_svc(request).get_trending_channels(days=_norm_days(days), limit=10)
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_trends_channels.html", {"channels": channels}
+    )
+
+
+@router.get("/trends/fragments/emojis", response_class=HTMLResponse)
+async def fragment_trends_emojis(request: Request, days: int = 7):
+    emojis = await _trend_svc(request).get_trending_emojis(days=_norm_days(days), limit=15)
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_trends_emojis.html", {"emojis": emojis}
     )
 
 
