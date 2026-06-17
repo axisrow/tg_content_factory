@@ -223,7 +223,8 @@ class TestChannelCRUD:
         ch = Channel(channel_id=-100999, title="Visible Channel")
         await test_db.add_channel(ch)
 
-        resp = await auth_client.get("/channels/")
+        # The channel list renders in the lazy-loaded fragment (#756).
+        resp = await auth_client.get("/channels/fragments/list")
         assert resp.status_code == 200
         assert "Visible Channel" in resp.text
 

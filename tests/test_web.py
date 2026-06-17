@@ -2264,8 +2264,8 @@ async def test_add_bulk(client):
         data={"channel_ids": ["-100111", "-100222"]},
     )
     assert resp.status_code == 200
-    # Verify channels page shows added channels
-    resp = await client.get("/channels/")
+    # Added channels show in the lazy-loaded list fragment (#756).
+    resp = await client.get("/channels/fragments/list")
     assert "Dialog Chan 1" in resp.text
     assert "Dialog Chan 2" in resp.text
 
@@ -2351,7 +2351,8 @@ async def test_channel_type_displayed(client):
     await client._transport.app.state.db.add_channel(
         Channel(channel_id=-100123, title="Test", username="testchan", channel_type="channel")
     )
-    resp = await client.get("/channels/")
+    # The channel table now renders in the lazy-loaded fragment (#756).
+    resp = await client.get("/channels/fragments/list")
     assert resp.status_code == 200
     assert "Канал" in resp.text
     assert "Тип" in resp.text
