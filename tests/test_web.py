@@ -1447,12 +1447,12 @@ async def test_scheduler_filter_active(client):
     done_id = await db.create_collection_task(-100902, "Done Task")
     await db.update_collection_task(done_id, "completed", messages_collected=10)
 
-    resp = await client.get("/scheduler/?status=active")
+    resp = await client.get("/scheduler/fragments/tasks?status=active")
     assert resp.status_code == 200
     assert "Active Task" in resp.text
     assert "Done Task" not in resp.text
 
-    resp = await client.get("/scheduler/?status=completed")
+    resp = await client.get("/scheduler/fragments/tasks?status=completed")
     assert resp.status_code == 200
     assert "Done Task" in resp.text
     assert "Active Task" not in resp.text
@@ -1469,7 +1469,7 @@ async def test_scheduler_pagination_out_of_range(client):
     db = client._transport.app.state.db
     await db.create_collection_task(-100950, "Some Task")
 
-    resp = await client.get("/scheduler/?page=999")
+    resp = await client.get("/scheduler/fragments/tasks?page=999")
     assert resp.status_code == 200
     assert "Some Task" in resp.text
 

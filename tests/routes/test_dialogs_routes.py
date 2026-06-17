@@ -80,6 +80,29 @@ async def test_dialogs_page_with_phone(client):
 
 
 @pytest.mark.anyio
+async def test_dialogs_page_lazy_loads_list(client):
+    """#756: the dialogs page paints a skeleton wired to the HTMX list fragment, and the
+    account selector swaps only #dialogs-list (not the whole body)."""
+    resp = await client.get("/dialogs/")
+    assert resp.status_code == 200
+    assert 'hx-get="/dialogs/fragments/list' in resp.text
+    assert 'hx-trigger="load"' in resp.text
+    # The selector retargets the list container, not body (lazyload, not full reload).
+    assert 'hx-target="#dialogs-list"' in resp.text
+    assert 'hx-target="body"' not in resp.text
+
+
+@pytest.mark.anyio
+async def test_dialogs_list_fragment_is_bare_partial(client):
+    """#756: the list fragment returns a bare partial, not a full page."""
+    resp = await client.get("/dialogs/fragments/list")
+    assert resp.status_code == 200
+    assert "<html" not in resp.text.lower()
+    # No phone selected → the empty-state prompt.
+    assert "Выберите аккаунт" in resp.text
+
+
+@pytest.mark.anyio
 async def test_legacy_dialogs_route_redirects_to_dialogs(client):
     legacy_prefix = "/my" + "-telegram"
     resp = await client.get(f"{legacy_prefix}/?phone=%2B1234567890", follow_redirects=False)

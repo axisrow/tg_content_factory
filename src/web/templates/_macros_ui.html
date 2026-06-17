@@ -11,6 +11,18 @@
 <div class="text-muted {{ class }}">{{ icon("loading") }} {{ text }}</div>
 {% endmacro %}
 
+{# Scheduler filter/page/limit query-string, omitting defaults (status=all/page=1/limit=50).
+   Preserves the user's filter on every POST: handlers read these via request.query_params
+   and echo them in the redirect Location (#457 round 3). Shared by scheduler.html and the
+   _jobs/_tasks fragments. #}
+{% macro scheduler_filter_qs(status_filter, page, limit) -%}
+{%- set _parts = [] -%}
+{%- if status_filter and status_filter != 'all' %}{% set _ = _parts.append('status=' ~ status_filter) %}{% endif -%}
+{%- if page and page != 1 %}{% set _ = _parts.append('page=' ~ page) %}{% endif -%}
+{%- if limit and limit != 50 %}{% set _ = _parts.append('limit=' ~ limit) %}{% endif -%}
+{{- ('?' ~ _parts|join('&')) if _parts else '' -}}
+{%- endmacro %}
+
 {% macro card(title) %}
 <div class="card mb-3">
   <div class="card-header fw-semibold">{{ title }}</div>

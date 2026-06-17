@@ -615,7 +615,8 @@ async def test_scheduler_page_renders_worker_down_banner(client, base_app):
         )
     )
 
-    resp = await client.get("/scheduler/")
+    # The collector-health banner moved into the lazy health fragment (#756).
+    resp = await client.get("/scheduler/fragments/health")
     assert resp.status_code == 200
     body = resp.text
     assert "Telegram-воркер не запущен" in body
@@ -647,7 +648,8 @@ async def test_scheduler_page_renders_stuck_collector_banner_for_stale_progress(
         (stale, task_id),
     )
 
-    resp = await client.get("/scheduler/")
+    # The collector-health banner moved into the lazy health fragment (#756).
+    resp = await client.get("/scheduler/fragments/health")
     assert resp.status_code == 200
     body = resp.text
     assert "Сбор завис" in body
@@ -684,7 +686,8 @@ async def test_scheduler_page_shows_worker_down_when_progress_stale_and_heartbea
         (progress_stale, task_id),
     )
 
-    resp = await client.get("/scheduler/")
+    # The collector-health banner moved into the lazy health fragment (#756).
+    resp = await client.get("/scheduler/fragments/health")
     assert resp.status_code == 200
     body = resp.text
     assert "Telegram-воркер не запущен" in body
@@ -727,7 +730,8 @@ async def test_scheduler_page_shows_worker_down_when_progress_fresh_but_heartbea
         (fresh, task_id),
     )
 
-    resp = await client.get("/scheduler/")
+    # The collector-health banner moved into the lazy health fragment (#756).
+    resp = await client.get("/scheduler/fragments/health")
     assert resp.status_code == 200
     body = resp.text
     assert "Telegram-воркер не запущен" in body
@@ -767,7 +771,8 @@ async def test_scheduler_page_marks_stuck_when_any_parallel_running_task_is_stal
         (datetime.now(timezone.utc).isoformat(), fresh_task_id),
     )
 
-    resp = await client.get("/scheduler/")
+    # The collector-health banner moved into the lazy health fragment (#756).
+    resp = await client.get("/scheduler/fragments/health")
 
     assert resp.status_code == 200
     assert "Сбор завис" in resp.text

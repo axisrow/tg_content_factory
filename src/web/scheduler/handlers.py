@@ -72,37 +72,75 @@ async def clear_pending_collect_tasks(request: Request) -> SchedulerRedirect:
 async def render_scheduler_page(
     request: Request, page: int, status: str, limit: int
 ) -> SchedulerPage:
+    """Skeleton — only the lightweight controls. Health/jobs/tasks load lazily (#756)."""
     sched = deps.get_scheduler(request)
     db = deps.get_db(request)
-    msg = request.query_params.get("msg")
 
-    # Validation
+    # Filter/page/limit are echoed into the controls' forms and the lazy fragment URLs.
     page = forms.normalize_page(page)
     limit = forms.normalize_limit(limit)
     status_filter = forms.normalize_status(status)
 
-    offset = (page - 1) * limit
-
     notification_snapshot = await _notification_snapshot_payload(request)
     bot_payload = notification_snapshot.get("bot")
     bot_configured = bool(isinstance(bot_payload, dict) and bot_payload.get("configured"))
+    queue_paused = (await db.repos.settings.get_setting("collection_queue_paused")) == "1"
 
-    (
-        tasks_page,
-        all_count,
-        active_count,
-        pending_collect,
-        search_log,
-        scheduler_jobs,
-        collector_health,
-    ) = await asyncio.gather(
+    context = {
+        "is_running": sched.is_running,
+        "queue_paused": queue_paused,
+        "interval_minutes": sched.interval_minutes,
+        "msg": request.query_params.get("msg"),
+        "bot_configured": bot_configured,
+        "status_filter": status_filter,
+        "page": page,
+        "limit": limit,
+    }
+    return SchedulerPage(context)
+
+
+async def render_scheduler_health_fragment(request: Request) -> SchedulerTemplate:
+    collector_health = await _build_collector_health_context(request)
+    return SchedulerTemplate("scheduler/_health.html", {"collector_health": collector_health})
+
+
+async def render_scheduler_jobs_fragment(
+    request: Request, page: int, status: str, limit: int
+) -> SchedulerTemplate:
+    sched = deps.get_scheduler(request)
+    db = deps.get_db(request)
+    scheduler_jobs, search_log = await asyncio.gather(
+        _build_jobs_context(sched, db),
+        db.get_recent_searches(),
+    )
+    return SchedulerTemplate(
+        "scheduler/_jobs.html",
+        {
+            "scheduler_jobs": scheduler_jobs,
+            "search_log": search_log,
+            "is_running": sched.is_running,
+            # Echoed into the job toggle/set-interval forms' filter_qs.
+            "status_filter": forms.normalize_status(status),
+            "page": forms.normalize_page(page),
+            "limit": forms.normalize_limit(limit),
+        },
+    )
+
+
+async def render_scheduler_tasks_fragment(
+    request: Request, page: int, status: str, limit: int
+) -> SchedulerTemplate:
+    db = deps.get_db(request)
+    page = forms.normalize_page(page)
+    limit = forms.normalize_limit(limit)
+    status_filter = forms.normalize_status(status)
+    offset = (page - 1) * limit
+
+    (tasks_page, all_count, active_count, pending_collect) = await asyncio.gather(
         db.get_collection_tasks_paginated(limit=limit, offset=offset, status_filter=status_filter),
         db.count_collection_tasks(),
         db.count_collection_tasks("active"),
         db.get_pending_channel_tasks(),
-        db.get_recent_searches(),
-        _build_jobs_context(sched, db),
-        _build_collector_health_context(request),
     )
     tasks, filtered_count = tasks_page
     pipeline_result_meta = await _load_pipeline_run_result_meta(db, tasks)
@@ -123,34 +161,23 @@ async def render_scheduler_page(
             limit=limit, offset=offset, status_filter=status_filter
         )
 
-    completed_count = all_count - active_count
-    has_active_tasks = active_count > 0
-    pending_collect_count = len(pending_collect)
-    queue_paused = (await db.repos.settings.get_setting("collection_queue_paused")) == "1"
-
-    context = {
-        "is_running": sched.is_running,
-        "queue_paused": queue_paused,
-        "interval_minutes": sched.interval_minutes,
-        "msg": msg,
-        "tasks": tasks,
-        "has_active_tasks": has_active_tasks,
-        "page": page,
-        "total_pages": total_pages,
-        "all_count": all_count,
-        "active_count": active_count,
-        "completed_count": completed_count,
-        "status_filter": status_filter,
-        "limit": limit,
-        "search_log": search_log,
-        "bot_configured": bot_configured,
-        "pending_collect_count": pending_collect_count,
-        "scheduler_jobs": scheduler_jobs,
-        "collector_health": collector_health,
-        "pipeline_result_meta": pipeline_result_meta,
-        "result_column_title": result_column_title,
-    }
-    return SchedulerPage(context)
+    return SchedulerTemplate(
+        "scheduler/_tasks.html",
+        {
+            "tasks": tasks,
+            "has_active_tasks": active_count > 0,
+            "page": page,
+            "total_pages": total_pages,
+            "all_count": all_count,
+            "active_count": active_count,
+            "completed_count": all_count - active_count,
+            "status_filter": status_filter,
+            "limit": limit,
+            "pending_collect_count": len(pending_collect),
+            "pipeline_result_meta": pipeline_result_meta,
+            "result_column_title": result_column_title,
+        },
+    )
 
 
 async def toggle_scheduler_job(request: Request, job_id: str) -> SchedulerRedirect:

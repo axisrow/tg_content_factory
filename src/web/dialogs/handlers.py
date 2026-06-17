@@ -80,6 +80,27 @@ async def dialogs_page(
     left: int = 0,
     failed: int = 0,
 ) -> DialogTemplate:
+    """Skeleton — account selector only. The dialog list (a network/cache fetch) loads
+    lazily via the fragment, so changing accounts no longer reloads the whole page (#756)."""
+    db = deps.get_db(request)
+    accounts = await _ok_accounts(db)
+    selected_phone = phone if phone in accounts else None
+    return DialogTemplate(
+        "dialogs.html",
+        {
+            "accounts": accounts,
+            "selected_phone": selected_phone,
+        },
+    )
+
+
+async def dialogs_list_fragment(
+    request: Request,
+    phone: str | None = None,
+    left: int = 0,
+    failed: int = 0,
+) -> DialogTemplate:
+    """Heavy fragment: the selected account's dialog list (#756)."""
     started_at = time.perf_counter()
     db = deps.get_db(request)
     channel_service = deps.channel_service(request)
@@ -87,28 +108,25 @@ async def dialogs_page(
     selected_phone = phone if phone in accounts else None
     dialogs = []
     dialogs_cached_at = None
-    command = await _get_command_state(request, request.query_params.get("command_id"))
     if selected_phone:
         dialogs = await channel_service.get_my_dialogs(selected_phone)
         dialogs_cached_at = await db.repos.dialog_cache.get_cached_at(selected_phone)
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
     logger.info(
-        "dialogs_page: phone=%s accounts=%d dialogs=%d duration_ms=%d",
+        "dialogs_list_fragment: phone=%s accounts=%d dialogs=%d duration_ms=%d",
         selected_phone,
         len(accounts),
         len(dialogs),
         elapsed_ms,
     )
     return DialogTemplate(
-        "dialogs.html",
+        "dialogs/_list.html",
         {
-            "accounts": accounts,
             "selected_phone": selected_phone,
             "dialogs": dialogs,
             "dialogs_cached_at": dialogs_cached_at,
             "left": left,
             "failed": failed,
-            "command": command,
         },
     )
 
