@@ -20,6 +20,10 @@ def _clamp_positive(value: int, upper: int) -> int:
     return max(1, min(value, upper))
 
 
+def _norm_limit(limit: int) -> int:
+    return limit if limit in (20, 50, 100) else 50
+
+
 @router.get("", response_class=HTMLResponse)
 async def analytics_page(
     request: Request,
@@ -27,26 +31,53 @@ async def analytics_page(
     date_to: str = "",
     limit: int = 50,
 ):
-    limit = limit if limit in (20, 50, 100) else 50
-    db = deps.get_db(request)
-    df = date_from or None
-    dt = date_to or None
-
-    top_messages = await db.get_top_messages(limit=limit, date_from=df, date_to=dt)
-    by_media_type = await db.get_engagement_by_media_type(date_from=df, date_to=dt)
-    hourly = await db.get_hourly_activity(date_from=df, date_to=dt)
-
+    # Render the page skeleton immediately; the three heavy aggregations
+    # (top messages, engagement, hourly) are loaded lazily via HTMX fragments
+    # below so the page paints instantly on large databases (#756).
     return deps.get_templates(request).TemplateResponse(
         request,
         "analytics.html",
         {
-            "top_messages": top_messages,
-            "by_media_type": by_media_type,
-            "hourly": hourly,
             "date_from": date_from,
             "date_to": date_to,
-            "limit": limit,
+            "limit": _norm_limit(limit),
         },
+    )
+
+
+@router.get("/fragments/top-messages", response_class=HTMLResponse)
+async def fragment_top_messages(
+    request: Request,
+    date_from: str = "",
+    date_to: str = "",
+    limit: int = 50,
+):
+    db = deps.get_db(request)
+    top_messages = await db.get_top_messages(
+        limit=_norm_limit(limit), date_from=date_from or None, date_to=date_to or None
+    )
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_top_messages.html", {"top_messages": top_messages}
+    )
+
+
+@router.get("/fragments/engagement", response_class=HTMLResponse)
+async def fragment_engagement(request: Request, date_from: str = "", date_to: str = ""):
+    db = deps.get_db(request)
+    by_media_type = await db.get_engagement_by_media_type(
+        date_from=date_from or None, date_to=date_to or None
+    )
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_engagement.html", {"by_media_type": by_media_type}
+    )
+
+
+@router.get("/fragments/hourly", response_class=HTMLResponse)
+async def fragment_hourly(request: Request, date_from: str = "", date_to: str = ""):
+    db = deps.get_db(request)
+    hourly = await db.get_hourly_activity(date_from=date_from or None, date_to=date_to or None)
+    return deps.get_templates(request).TemplateResponse(
+        request, "analytics/_hourly.html", {"hourly": hourly}
     )
 
 

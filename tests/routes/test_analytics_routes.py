@@ -101,7 +101,8 @@ async def test_analytics_top_message_link_uses_bare_channel_id(route_client):
         ]
     )
 
-    resp = await route_client.get("/analytics")
+    # Top messages now render in the lazy-loaded fragment (#756).
+    resp = await route_client.get("/analytics/fragments/top-messages")
 
     assert resp.status_code == 200
     assert "https://t.me/c/1005551782/789" in resp.text

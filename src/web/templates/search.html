@@ -37,26 +37,30 @@
             <input class="form-check-input" type="radio" name="mode" id="mode-local" value="local" {{ 'checked' if mode == 'local' else '' }}>
             <label class="form-check-label" for="mode-local">Локальная база</label>
         </div>
-        <div class="col-12 col-sm-6 col-lg-auto form-check" title="{{ 'Недоступно: не установлен numpy / sqlite-vec' if not semantic_available else 'Семантический поиск по локальной базе через embeddings и semantic backend' }}">
-            <input class="form-check-input" type="radio" name="mode" id="mode-semantic" value="semantic" {{ 'checked' if mode == 'semantic' else '' }} {{ 'disabled' if not semantic_available else '' }}>
-            <label class="form-check-label {{ 'text-muted' if not semantic_available else '' }}" for="mode-semantic">Семантический</label>
+        {% if 'semantic' in available_modes %}
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="Семантический поиск по локальной базе через embeddings и semantic backend">
+            <input class="form-check-input" type="radio" name="mode" id="mode-semantic" value="semantic" {{ 'checked' if mode == 'semantic' else '' }}>
+            <label class="form-check-label" for="mode-semantic">Семантический</label>
         </div>
-        <div class="col-12 col-sm-6 col-lg-auto form-check" title="{{ 'Недоступно: не установлен numpy / sqlite-vec' if not semantic_available else 'Гибридный поиск: объединяет FTS5 и semantic retrieval' }}">
-            <input class="form-check-input" type="radio" name="mode" id="mode-hybrid" value="hybrid" {{ 'checked' if mode == 'hybrid' else '' }} {{ 'disabled' if not semantic_available else '' }}>
-            <label class="form-check-label {{ 'text-muted' if not semantic_available else '' }}" for="mode-hybrid">Гибридный</label>
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="Гибридный поиск: объединяет FTS5 и semantic retrieval">
+            <input class="form-check-input" type="radio" name="mode" id="mode-hybrid" value="hybrid" {{ 'checked' if mode == 'hybrid' else '' }}>
+            <label class="form-check-label" for="mode-hybrid">Гибридный</label>
         </div>
-        <div class="col-12 col-sm-6 col-lg-auto form-check" title="{{ 'Недоступно: нет подключённого Telegram-аккаунта' if not telegram_available else 'Поиск по всем чатам и каналам подключённого аккаунта через Telegram API' }}">
-            <input class="form-check-input" type="radio" name="mode" id="mode-my-chats" value="my_chats" {{ 'checked' if mode == 'my_chats' else '' }} {{ 'disabled' if not telegram_available else '' }}>
-            <label class="form-check-label {{ 'text-muted' if not telegram_available else '' }}" for="mode-my-chats">Мои чаты</label>
+        {% endif %}
+        {% if 'my_chats' in available_modes %}
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="Поиск по всем чатам и каналам подключённого аккаунта через Telegram API">
+            <input class="form-check-input" type="radio" name="mode" id="mode-my-chats" value="my_chats" {{ 'checked' if mode == 'my_chats' else '' }}>
+            <label class="form-check-label" for="mode-my-chats">Мои чаты</label>
         </div>
-        <div class="col-12 col-sm-6 col-lg-auto form-check" title="{{ 'Недоступно: нет подключённого Telegram-аккаунта' if not telegram_available else 'Поиск внутри выбранного канала через Telegram API' }}">
-            <input class="form-check-input" type="radio" name="mode" id="mode-channel" value="channel" {{ 'checked' if mode == 'channel' else '' }} {{ 'disabled' if not telegram_available else '' }}>
-            <label class="form-check-label {{ 'text-muted' if not telegram_available else '' }}" for="mode-channel">В канале</label>
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="Поиск внутри выбранного канала через Telegram API">
+            <input class="form-check-input" type="radio" name="mode" id="mode-channel" value="channel" {{ 'checked' if mode == 'channel' else '' }}>
+            <label class="form-check-label" for="mode-channel">В канале</label>
         </div>
-        <div class="col-12 col-sm-6 col-lg-auto form-check" title="{{ 'Недоступно: нет подключённого Telegram-аккаунта' if not telegram_available else 'Глобальный поиск по публичным каналам (требуется Telegram Premium)' }}">
-            <input class="form-check-input" type="radio" name="mode" id="mode-telegram" value="telegram" {{ 'checked' if mode == 'telegram' else '' }} {{ 'disabled' if not telegram_available else '' }}>
-            <label class="form-check-label {{ 'text-muted' if not telegram_available else '' }}" for="mode-telegram">Публичные (Premium)</label>
+        <div class="col-12 col-sm-6 col-lg-auto form-check" title="Глобальный поиск по публичным каналам (требуется Telegram Premium)">
+            <input class="form-check-input" type="radio" name="mode" id="mode-telegram" value="telegram" {{ 'checked' if mode == 'telegram' else '' }}>
+            <label class="form-check-label" for="mode-telegram">Публичные (Premium)</label>
         </div>
+        {% endif %}
         {% if search_quota and search_quota.remains is not none %}
         <div class="col-12 col-lg-auto">
             <small id="quota-info" class="text-muted">
@@ -64,7 +68,7 @@
             </small>
         </div>
         {% endif %}
-        {% if ai_enabled %}
+        {% if 'ai' in available_modes %}
         <div class="col-12 col-sm-6 col-lg-auto form-check" title="Семантический поиск с помощью LLM по локальной базе">
             <input class="form-check-input" type="radio" name="mode" id="mode-ai" value="ai" {{ 'checked' if mode == 'ai' else '' }}>
             <label class="form-check-label" for="mode-ai">AI-поиск</label>

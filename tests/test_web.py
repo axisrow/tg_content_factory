@@ -1499,11 +1499,14 @@ async def test_search_with_invalid_channel_id_returns_error(client):
     assert "Некорректный ID канала: abc" in resp.text
 
 
-@pytest.mark.anyio
-async def test_search_modes_disabled_when_backends_unavailable(client):
-    """#618: unavailable search modes are disabled in the UI, no raw errors leak."""
-    import re
+def _connect_pool(client, phone="+1234567890"):
+    """Stub a connected ClientPool so telegram search modes are offered (#833)."""
+    client._transport.app.state.pool = SimpleNamespace(clients={phone: object()})
 
+
+@pytest.mark.anyio
+async def test_search_modes_hidden_when_backends_unavailable(client):
+    """#833: unavailable search modes are hidden from the UI (not just disabled)."""
     app = client._transport.app
     app.state.pool = SimpleNamespace(clients={})
     app.state.search_engine = SimpleNamespace(
@@ -1515,31 +1518,33 @@ async def test_search_modes_disabled_when_backends_unavailable(client):
     assert resp.status_code == 200
     text = resp.text
 
-    def radio(mode_id):
-        m = re.search(r'id="' + re.escape(mode_id) + r'"[^>]*>', text)
-        assert m, f"radio {mode_id} not found"
-        return m.group(0)
-
     for mode_id in ("mode-semantic", "mode-hybrid", "mode-my-chats", "mode-channel", "mode-telegram"):
-        assert "disabled" in radio(mode_id), f"{mode_id} should be disabled"
-    assert "disabled" not in radio("mode-local")
+        assert f'id="{mode_id}"' not in text, f"{mode_id} should be hidden"
+    assert 'id="mode-local"' in text
     assert "Semantic search is unavailable" not in text
 
 
 @pytest.mark.anyio
-async def test_search_semantic_unavailable_shows_friendly_message(client):
-    """#618: requesting a semantic search without backend yields a friendly message."""
+async def test_search_semantic_unavailable_falls_back_to_local(client):
+    """#833: a semantic-mode URL with no backend silently falls back to a local search.
+
+    The semantic radio is hidden when the backend is unavailable, but a direct
+    URL can still carry ``mode=semantic``; the handler normalises it to ``local``
+    so the page renders a normal local search instead of a semantic-error banner.
+    """
     app = client._transport.app
-    # Force the real engine's semantic backend to report unavailable so the
-    # facade guard returns a friendly SearchResult instead of raising.
+    # Force the real engine's semantic backend to report unavailable.
     app.state.search_engine._search_bundle = SimpleNamespace(
         vec_available=False, numpy_available=False
     )
 
     resp = await client.get("/search?q=paris&mode=semantic")
     assert resp.status_code == 200
+    # No semantic-unavailable banner — the mode was normalised away before searching.
+    assert "Семантический поиск недоступен" not in resp.text
     assert "Semantic search is unavailable" not in resp.text
-    assert "Семантический поиск недоступен" in resp.text
+    # The hidden semantic radio is not rendered.
+    assert 'id="mode-semantic"' not in resp.text
 
 
 @pytest.mark.anyio
@@ -1606,6 +1611,7 @@ async def test_search_runtime_error_is_rendered(client, monkeypatch):
 async def test_search_telegram_proxy_when_worker_down(client, monkeypatch):
     """Telegram-mode search in web runtime fails fast when no worker is alive (#643)."""
     monkeypatch.setattr("src.web.routes.scheduler._is_worker_alive", AsyncMock(return_value=False))
+    _connect_pool(client)
 
     resp = await client.get("/search?q=test&mode=telegram")
 
@@ -1620,6 +1626,7 @@ async def test_search_telegram_proxy_renders_worker_result(client, monkeypatch):
     from src.web import deps
 
     monkeypatch.setattr("src.web.routes.scheduler._is_worker_alive", AsyncMock(return_value=True))
+    _connect_pool(client)
 
     msg = Message(
         channel_id=-100, message_id=7, text="proxied premium hit",
@@ -1664,6 +1671,7 @@ async def test_search_telegram_proxy_timeout_logs_command_context(client, monkey
     monkeypatch.setattr(search_handlers, "_WORKER_SEARCH_TIMEOUT_SEC", 0.01)
     monkeypatch.setattr(search_handlers, "_WORKER_SEARCH_POLL_SEC", 0.001)
     caplog.set_level(logging.WARNING, logger="src.web.search.handlers")
+    _connect_pool(client)
 
     command = TelegramCommand(
         id=123,
@@ -3899,6 +3907,38 @@ async def test_analytics_page_with_date_filter(client):
     assert "Аналитика" in resp.text
     assert 'value="2025-01-01"' in resp.text
     assert 'value="2025-12-31"' in resp.text
+
+
+@pytest.mark.anyio
+async def test_analytics_page_loads_fragments_lazily(client):
+    """#756: the analytics page paints a skeleton that lazy-loads the heavy tables."""
+    resp = await client.get("/analytics")
+    assert resp.status_code == 200
+    # The page wires the three heavy sections to HTMX fragment endpoints…
+    assert 'hx-get="/analytics/fragments/top-messages' in resp.text
+    assert 'hx-get="/analytics/fragments/engagement' in resp.text
+    assert 'hx-get="/analytics/fragments/hourly' in resp.text
+    assert 'hx-trigger="load"' in resp.text
+    # …and does NOT inline the table headers (they live in the fragments now).
+    assert "Реакции" not in resp.text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "path,marker",
+    [
+        ("/analytics/fragments/top-messages", "Реакции собираются"),
+        ("/analytics/fragments/engagement", "Нет данных"),
+        ("/analytics/fragments/hourly", "Нет данных"),
+    ],
+)
+async def test_analytics_fragments_return_partial_html(client, path, marker):
+    """Fragment endpoints return a bare partial (empty-state on a fresh DB), not a full page."""
+    resp = await client.get(f"{path}?date_from=2025-01-01&date_to=2025-12-31&limit=20")
+    assert resp.status_code == 200
+    assert marker in resp.text
+    # Bare fragment — no base-layout wrapper.
+    assert "<html" not in resp.text.lower()
 
 
 # ── Backend override validation tests ──────────────────────────────────────────────

@@ -10,34 +10,61 @@ from src.web.query_params import parse_optional_int
 router = APIRouter()
 
 
+def _calendar(request: Request) -> ContentCalendarService:
+    return ContentCalendarService(deps.get_db(request))
+
+
 @router.get("/", response_class=HTMLResponse)
 async def calendar_page(
     request: Request,
     days: int = Query(default=7, ge=1, le=90),
     pipeline_id: str | None = None,
 ):
-    """Render content calendar page."""
+    """Render the calendar skeleton; the grid/stats/upcoming load lazily (#756)."""
     db = deps.get_db(request)
-    calendar = ContentCalendarService(db)
     selected_pipeline_id = parse_optional_int(pipeline_id)
-
-    calendar_days = await calendar.get_calendar(days=days, pipeline_id=selected_pipeline_id)
-    stats = await calendar.get_stats()
-    upcoming = await calendar.get_upcoming(limit=10, pipeline_id=selected_pipeline_id)
-
     pipelines = await db.repos.content_pipelines.get_all()
 
     return deps.get_templates(request).TemplateResponse(
         request,
         "calendar.html",
         {
-            "calendar_days": calendar_days,
-            "stats": stats,
-            "upcoming": upcoming,
             "pipelines": pipelines,
             "selected_pipeline_id": selected_pipeline_id,
             "days": days,
         },
+    )
+
+
+@router.get("/fragments/stats", response_class=HTMLResponse)
+async def fragment_stats(request: Request):
+    stats = await _calendar(request).get_stats()
+    return deps.get_templates(request).TemplateResponse(
+        request, "calendar/_stats.html", {"stats": stats}
+    )
+
+
+@router.get("/fragments/grid", response_class=HTMLResponse)
+async def fragment_grid(
+    request: Request,
+    days: int = Query(default=7, ge=1, le=90),
+    pipeline_id: str | None = None,
+):
+    calendar_days = await _calendar(request).get_calendar(
+        days=days, pipeline_id=parse_optional_int(pipeline_id)
+    )
+    return deps.get_templates(request).TemplateResponse(
+        request, "calendar/_grid.html", {"calendar_days": calendar_days, "days": days}
+    )
+
+
+@router.get("/fragments/upcoming", response_class=HTMLResponse)
+async def fragment_upcoming(request: Request, pipeline_id: str | None = None):
+    upcoming = await _calendar(request).get_upcoming(
+        limit=10, pipeline_id=parse_optional_int(pipeline_id)
+    )
+    return deps.get_templates(request).TemplateResponse(
+        request, "calendar/_upcoming.html", {"upcoming": upcoming}
     )
 
 

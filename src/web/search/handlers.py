@@ -21,6 +21,9 @@ logger = logging.getLogger(__name__)
 # Telegram-backed search modes need a live ClientPool. The web container has
 # none (runtime_mode="web"), so these are proxied to the worker process (#643).
 _TELEGRAM_SEARCH_MODES = {"telegram", "my_chats", "channel"}
+# Local-DB-backed modes (no Telegram round-trip): plain local search plus the
+# semantic/hybrid retrievers that read the same SQLite store.
+_DB_SEARCH_MODES = {"local", "semantic", "hybrid"}
 _WORKER_SEARCH_TIMEOUT_SEC = 130.0
 _WORKER_SEARCH_POLL_SEC = 0.4
 
@@ -189,15 +192,31 @@ async def render_search_page(
     channel_id_int, channel_id_error = parse_channel_id(channel_id)
 
     fts_query, min_length, max_length = extract_length(q)
-    if mode not in {"local", "semantic", "hybrid"}:
+    if mode not in _DB_SEARCH_MODES:
         min_length, max_length = None, None
 
     service = deps.search_service(request)
     channels = await db.repos.channels.get_channels()
     runtime_mode = getattr(request.app.state, "runtime_mode", "web")
 
+    # Single source of truth for which modes are offered: the template hides the
+    # radios for modes not in this set, and the handler normalises an unavailable
+    # mode (reachable via a hand-crafted URL/POST) back to "local" before searching (#833).
+    semantic_available = deps.get_search_engine(request).semantic_available
+    telegram_available = bool(deps.get_pool(request).clients)
+    ai_enabled = deps.get_ai_search(request).enabled
+    available_modes = {"local"}
+    if semantic_available:
+        available_modes |= {"semantic", "hybrid"}
+    if telegram_available:
+        available_modes |= _TELEGRAM_SEARCH_MODES
+    if ai_enabled:
+        available_modes.add("ai")
+    if mode not in available_modes:
+        mode = "local"
+
     # Browse mode: channel_id without query shows latest messages from that channel
-    if not q and channel_id_int and mode in {"local", "semantic", "hybrid"}:
+    if not q and channel_id_int and mode in _DB_SEARCH_MODES:
         try:
             result = await service.search(
                 mode="local",
@@ -219,7 +238,7 @@ async def render_search_page(
                 error=f"Ошибка загрузки сообщений: {exc}",
             )
     elif q:
-        if channel_id_error and mode in {"local", "semantic", "hybrid", "channel"}:
+        if channel_id_error and mode in _DB_SEARCH_MODES | {"channel"}:
             result = SearchResult(messages=[], total=0, query=q, error=channel_id_error)
         elif mode in _TELEGRAM_SEARCH_MODES and runtime_mode == "web":
             # Web container has no live ClientPool — run it on the worker (#643).
@@ -262,9 +281,6 @@ async def render_search_page(
                     error=f"Ошибка поиска: {exc}",
                 )
 
-    semantic_available = deps.get_search_engine(request).semantic_available
-    telegram_available = bool(deps.get_pool(request).clients)
-    ai_enabled = deps.get_ai_search(request).enabled
     try:
         search_quota = await service.check_quota()
     except Exception:
@@ -278,7 +294,7 @@ async def render_search_page(
     has_more = bool(result and (result.has_more or result.total > page * limit))
 
     # Browse mode: viewing channel messages without search query
-    browse_mode = bool(not q and channel_id_int and mode in {"local", "semantic", "hybrid"})
+    browse_mode = bool(not q and channel_id_int and mode in _DB_SEARCH_MODES)
     selected_channel = None
     if browse_mode and channel_id_int:
         selected_channel = next((ch for ch in channels if ch.channel_id == channel_id_int), None)
@@ -297,9 +313,7 @@ async def render_search_page(
             "include_filtered": include_filtered,
             "page": page,
             "has_more": has_more,
-            "semantic_available": semantic_available,
-            "telegram_available": telegram_available,
-            "ai_enabled": ai_enabled,
+            "available_modes": available_modes,
             "search_quota": search_quota,
             "browse_mode": browse_mode,
             "selected_channel": selected_channel,

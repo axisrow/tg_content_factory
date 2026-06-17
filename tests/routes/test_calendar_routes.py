@@ -55,14 +55,38 @@ async def test_calendar_page_accepts_empty_pipeline_filter(route_client):
 
 @pytest.mark.anyio
 async def test_calendar_open_links_use_moderation_view(route_client):
-    """Calendar cards link to the existing moderation run view route."""
+    """Calendar cards (now in the lazy grid fragment) link to the moderation run view."""
     run_id = await _create_calendar_run(route_client)
 
-    resp = await route_client.get("/calendar/")
+    resp = await route_client.get("/calendar/fragments/grid")
 
     assert resp.status_code == 200
     assert f"/moderation/{run_id}/view" in resp.text
     assert f"/pipelines/runs/{run_id}" not in resp.text
+
+
+@pytest.mark.anyio
+async def test_calendar_page_lazy_loads_fragments(route_client):
+    """#756: the calendar page paints a skeleton wired to HTMX fragment endpoints."""
+    resp = await route_client.get("/calendar/")
+    assert resp.status_code == 200
+    assert 'hx-get="/calendar/fragments/stats"' in resp.text
+    assert 'hx-get="/calendar/fragments/grid' in resp.text
+    assert 'hx-get="/calendar/fragments/upcoming' in resp.text
+    assert 'hx-trigger="load"' in resp.text
+
+
+@pytest.mark.anyio
+async def test_calendar_fragments_return_partial_html(route_client):
+    """Calendar fragment endpoints return bare partials, not a full page."""
+    for path in (
+        "/calendar/fragments/stats",
+        "/calendar/fragments/grid?days=7",
+        "/calendar/fragments/upcoming",
+    ):
+        resp = await route_client.get(path)
+        assert resp.status_code == 200, path
+        assert "<html" not in resp.text.lower(), path
 
 
 @pytest.mark.anyio
