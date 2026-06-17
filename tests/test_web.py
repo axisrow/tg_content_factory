@@ -1620,6 +1620,22 @@ async def test_search_telegram_proxy_when_worker_down(client, monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_search_telegram_proxied_in_web_even_with_empty_snapshot_pool(client, monkeypatch):
+    """#876 (Codex): in web runtime a telegram search must reach the worker proxy even
+    when the snapshot pool shows no clients (stale/timing) — not silently fall back to local."""
+    app = client._transport.app
+    app.state.runtime_mode = "web"
+    app.state.pool = SimpleNamespace(clients={})  # empty snapshot — no clients visible
+    monkeypatch.setattr("src.web.routes.scheduler._is_worker_alive", AsyncMock(return_value=False))
+
+    resp = await client.get("/search?q=test&mode=telegram")
+
+    assert resp.status_code == 200
+    # Reached the worker-proxy branch (which reports the worker is down), NOT a local search.
+    assert "Telegram-worker не запущен" in resp.text
+
+
+@pytest.mark.anyio
 async def test_search_telegram_proxy_renders_worker_result(client, monkeypatch):
     """Web proxies premium search to the worker and renders its result (#643)."""
     from src.models import Message, SearchResult, TelegramCommand, TelegramCommandStatus

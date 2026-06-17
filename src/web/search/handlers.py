@@ -191,9 +191,7 @@ async def render_search_page(
     offset = (page - 1) * limit
     channel_id_int, channel_id_error = parse_channel_id(channel_id)
 
-    fts_query, min_length, max_length = extract_length(q)
-    if mode not in _DB_SEARCH_MODES:
-        min_length, max_length = None, None
+    fts_query, _length_lo, _length_hi = extract_length(q)
 
     service = deps.search_service(request)
     channels = await db.repos.channels.get_channels()
@@ -212,8 +210,21 @@ async def render_search_page(
         available_modes |= _TELEGRAM_SEARCH_MODES
     if ai_enabled:
         available_modes.add("ai")
-    if mode not in available_modes:
+
+    # `available_modes` drives which radios the template shows. Normalisation uses a
+    # slightly wider set: in web runtime the snapshot pool can show no clients even
+    # though the worker is connected (timing/stale snapshot), and telegram modes are
+    # proxied to the worker (line below) which surfaces its own worker-down/no-account
+    # error — so don't silently fold them into a local search here (Codex review #876).
+    runnable_modes = (
+        available_modes | _TELEGRAM_SEARCH_MODES if runtime_mode == "web" else available_modes
+    )
+    if mode not in runnable_modes:
         mode = "local"
+
+    # Length filters (e.g. "foo:50") only apply to local-DB modes; resolve them
+    # against the *normalised* mode so a fallback to local keeps/drops them correctly.
+    min_length, max_length = (_length_lo, _length_hi) if mode in _DB_SEARCH_MODES else (None, None)
 
     # Browse mode: channel_id without query shows latest messages from that channel
     if not q and channel_id_int and mode in _DB_SEARCH_MODES:
