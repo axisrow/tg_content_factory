@@ -1,0 +1,12 @@
+{% from "_macros_ui.html" import empty_state %}
+{% if emojis %}
+<div class="d-flex flex-wrap gap-2">
+    {% for e in emojis %}
+    <span class="badge bg-secondary fs-6" title="{{ e.count }} реакций">
+        {{ e.emoji }} <span class="fw-normal text-white-50">{{ e.count }}</span>
+    </span>
+    {% endfor %}
+</div>
+{% else %}
+{{ empty_state("Нет данных за выбранный период.", class="mb-0") }}
+{% endif %}

@@ -183,6 +183,7 @@ async def build_container_with_templates(
     db = Database(
         config.database.path,
         session_encryption_secret=resolve_session_encryption_secret(config),
+        read_pool_size=config.database.read_pool_size,
     )
     if _is_dev:
         t1 = time.monotonic()

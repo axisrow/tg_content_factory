@@ -1,0 +1,25 @@
+{% from "_macros_ui.html" import empty_state %}
+{% if channels %}
+<table class="tga-table-hover mb-0">
+    <thead><tr><th>Канал</th><th class="text-end">Avg views</th><th class="text-end">Сообщений</th></tr></thead>
+    <tbody>
+    {% for ch in channels %}
+    <tr>
+        <td>
+            {% if ch.username %}
+            <a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener noreferrer">
+                {{ ch.title or ch.username }}
+            </a>
+            {% else %}
+            {{ ch.title or ch.channel_id }}
+            {% endif %}
+        </td>
+        <td class="text-end">{{ "%.0f"|format(ch.avg_views) }}</td>
+        <td class="text-end">{{ ch.message_count }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+{{ empty_state("Нет данных за выбранный период.", class="p-3 mb-0") }}
+{% endif %}

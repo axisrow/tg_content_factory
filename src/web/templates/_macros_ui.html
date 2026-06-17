@@ -7,6 +7,10 @@
 </p>
 {% endmacro %}
 
+{% macro loading(text='Загрузка…', class='') %}
+<div class="text-muted {{ class }}">{{ icon("loading") }} {{ text }}</div>
+{% endmacro %}
+
 {% macro card(title) %}
 <div class="card mb-3">
   <div class="card-header fw-semibold">{{ title }}</div>

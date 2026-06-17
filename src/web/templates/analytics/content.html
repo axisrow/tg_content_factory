@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros_ui.html" import empty_state %}
+{% from "_macros_ui.html" import loading %}
 
 {% block title %}Content Analytics{% endblock %}
 
@@ -14,88 +14,17 @@
       <a href="/analytics/content" class="btn btn-outline-secondary active">Контент</a>
     </div>
 
-    <div class="row mb-4">
-        <div class="col-md-3">
-            <div class="card">
-                <div class="card-body text-center">
-                    <h2 class="h4">{{ summary.total_generations }}</h2>
-                    <p class="text-muted mb-0">Generations</p>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card">
-                <div class="card-body text-center">
-                    <h2 class="h4 text-success">{{ summary.total_published }}</h2>
-                    <p class="text-muted mb-0">Published</p>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card">
-                <div class="card-body text-center">
-                    <h2 class="h4 text-warning">{{ summary.total_pending }}</h2>
-                    <p class="text-muted mb-0">Pending</p>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-3">
-            <div class="card">
-                <div class="card-body text-center">
-                    <h2 class="h4 text-danger">{{ summary.total_rejected }}</h2>
-                    <p class="text-muted mb-0">Rejected</p>
-                </div>
-            </div>
-        </div>
+    {# Skeleton paints instantly; heavy aggregations load lazily via HTMX (#756). #}
+    <div class="row mb-4" hx-get="/analytics/content/fragments/summary" hx-trigger="load" hx-swap="innerHTML">
+        {{ loading(class="col-12") }}
     </div>
 
     <div class="card">
         <div class="card-header">
             <h5 class="mb-0">Pipeline Statistics</h5>
         </div>
-        <div class="card-body">
-            {% if pipeline_stats %}
-            <div class="table-responsive">
-                <table class="tga-table tga-table-hover tga-table-lg">
-                    <thead>
-                        <tr>
-                            <th>Pipeline</th>
-                            <th>Generated</th>
-                            <th>Published</th>
-                            <th>Rejected</th>
-                            <th>Pending</th>
-                            <th>Success Rate</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for stat in pipeline_stats %}
-                        <tr>
-                            <td>
-                                <a href="/pipelines/{{ stat.pipeline_id }}/edit">{{ stat.pipeline_name }}</a>
-                            </td>
-                            <td>{{ stat.total_generations }}</td>
-                            <td class="text-success">{{ stat.total_published }}</td>
-                            <td class="text-danger">{{ stat.total_rejected }}</td>
-                            <td class="text-warning">{{ stat.pending_moderation }}</td>
-                            <td>
-                                <div class="progress" style="height: 20px;">
-                                    <div class="progress-bar" role="progressbar" 
-                                         style="width: {{ stat.success_rate }}%;" 
-                                         aria-valuenow="{{ stat.success_rate }}" 
-                                         aria-valuemin="0" 
-                                         aria-valuemax="100">
-                                        {{ "%.1f"|format(stat.success_rate) }}%
-                                    </div>
-                                </div>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            {{ empty_state("No pipelines configured.") }}
-            {% endif %}
+        <div class="card-body" hx-get="/analytics/content/fragments/pipelines" hx-trigger="load" hx-swap="innerHTML">
+            {{ loading() }}
         </div>
     </div>
 

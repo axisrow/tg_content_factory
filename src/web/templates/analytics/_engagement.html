@@ -1,0 +1,19 @@
+{% from "_macros_ui.html" import empty_state %}
+{% if by_media_type %}
+<div class="table-responsive">
+<table class="tga-table mb-0">
+    <thead><tr><th>Тип</th><th>Сообщений</th><th>Ср. реакций</th></tr></thead>
+    <tbody>
+        {% for row in by_media_type %}
+        <tr>
+            <td><span class="badge text-bg-secondary">{{ row.content_type }}</span></td>
+            <td>{{ row.message_count }}</td>
+            <td>{{ "%.1f"|format(row.avg_reactions) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+{{ empty_state("Нет данных.", class="card-body mb-0") }}
+{% endif %}

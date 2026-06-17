@@ -136,19 +136,18 @@ def test_get_source_filter():
 @pytest.mark.anyio
 async def test_language_stats(db):
     # Insert messages with detected_lang
-    await db.repos.messages._db.execute(
+    await db.execute_write(
         "INSERT INTO messages (channel_id, message_id, text, date, detected_lang) VALUES (?, ?, ?, ?, ?)",
         (1, 1, "Hello", "2024-01-01T00:00:00", "en"),
     )
-    await db.repos.messages._db.execute(
+    await db.execute_write(
         "INSERT INTO messages (channel_id, message_id, text, date, detected_lang) VALUES (?, ?, ?, ?, ?)",
         (1, 2, "Привет", "2024-01-01T00:00:00", "ru"),
     )
-    await db.repos.messages._db.execute(
+    await db.execute_write(
         "INSERT INTO messages (channel_id, message_id, text, date, detected_lang) VALUES (?, ?, ?, ?, ?)",
         (1, 3, "Hi there", "2024-01-01T00:00:00", "en"),
     )
-    await db.repos.messages._db.commit()
 
     stats = await db.repos.messages.get_language_stats()
     lang_map = dict(stats)
@@ -158,11 +157,10 @@ async def test_language_stats(db):
 
 @pytest.mark.anyio
 async def test_update_translation(db):
-    await db.repos.messages._db.execute(
+    await db.execute_write(
         "INSERT INTO messages (channel_id, message_id, text, date, detected_lang) VALUES (?, ?, ?, ?, ?)",
         (1, 1, "Привет", "2024-01-01T00:00:00", "ru"),
     )
-    await db.repos.messages._db.commit()
 
     # Get the id
     cur = await db.repos.messages._db.execute("SELECT id FROM messages WHERE message_id = 1")
@@ -186,20 +184,19 @@ async def test_update_translation(db):
 @pytest.mark.anyio
 async def test_get_untranslated_messages(db):
     # Insert channels first for JOIN
-    await db.repos.messages._db.execute(
+    await db.execute_write(
         "INSERT OR IGNORE INTO channels (channel_id, title, username) VALUES (?, ?, ?)",
         (1, "Test Channel", "test"),
     )
-    await db.repos.messages._db.execute(
+    await db.execute_write(
         "INSERT INTO messages (channel_id, message_id, text, date, detected_lang) VALUES (?, ?, ?, ?, ?)",
         (1, 1, "你好", "2024-01-01T00:00:00", "zh-cn"),
     )
-    await db.repos.messages._db.execute(
+    await db.execute_write(
         "INSERT INTO messages (channel_id, message_id, text, date, detected_lang, translation_en)"
         " VALUES (?, ?, ?, ?, ?, ?)",
         (1, 2, "Привет", "2024-01-01T00:00:00", "ru", "Hello"),
     )
-    await db.repos.messages._db.commit()
 
     msgs = await db.repos.messages.get_untranslated_messages(target="en")
     assert len(msgs) == 1
@@ -208,19 +205,18 @@ async def test_get_untranslated_messages(db):
 
 @pytest.mark.anyio
 async def test_get_untranslated_with_source_filter(db):
-    await db.repos.messages._db.execute(
+    await db.execute_write(
         "INSERT OR IGNORE INTO channels (channel_id, title, username) VALUES (?, ?, ?)",
         (1, "Test Channel", "test"),
     )
-    await db.repos.messages._db.execute(
+    await db.execute_write(
         "INSERT INTO messages (channel_id, message_id, text, date, detected_lang) VALUES (?, ?, ?, ?, ?)",
         (1, 1, "你好", "2024-01-01T00:00:00", "zh-cn"),
     )
-    await db.repos.messages._db.execute(
+    await db.execute_write(
         "INSERT INTO messages (channel_id, message_id, text, date, detected_lang) VALUES (?, ?, ?, ?, ?)",
         (1, 2, "Bonjour", "2024-01-01T00:00:00", "fr"),
     )
-    await db.repos.messages._db.commit()
 
     # Filter only zh-cn
     msgs = await db.repos.messages.get_untranslated_messages(target="en", source_langs=["zh-cn"])
@@ -230,11 +226,10 @@ async def test_get_untranslated_with_source_filter(db):
 
 @pytest.mark.anyio
 async def test_backfill_language_detection(db):
-    await db.repos.messages._db.execute(
+    await db.execute_write(
         "INSERT INTO messages (channel_id, message_id, text, date) VALUES (?, ?, ?, ?)",
         (1, 1, "Hello, this is a test message in English.", "2024-01-01T00:00:00"),
     )
-    await db.repos.messages._db.commit()
 
     updated = await db.repos.messages.backfill_language_detection(batch_size=100)
     assert updated == 1

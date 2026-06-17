@@ -1,0 +1,16 @@
+{% from "_macros_ui.html" import empty_state %}
+{% if topics %}
+<table class="tga-table-hover mb-0">
+    <thead><tr><th>Слово</th><th class="text-end">Упоминания</th></tr></thead>
+    <tbody>
+    {% for t in topics %}
+    <tr>
+        <td>{{ t.keyword }}</td>
+        <td class="text-end">{{ t.count }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+</table>
+{% else %}
+{{ empty_state("Нет данных за выбранный период.", class="p-3 mb-0") }}
+{% endif %}

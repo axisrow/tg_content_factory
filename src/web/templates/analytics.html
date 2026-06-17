@@ -1,9 +1,8 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon %}
-{% from "_macros_ui.html" import empty_state %}
+{% from "_macros_ui.html" import loading %}
 {% block title %}Аналитика — TG Agent{% endblock %}
 {% block content %}
-{% macro msg_text(text, max_len=100) %}{{ (text or '')[:max_len] }}{{ '…' if text and text|length > max_len else '' }}{% endmacro %}
+{% set _qs = "date_from=" ~ date_from|urlencode ~ "&date_to=" ~ date_to|urlencode ~ "&limit=" ~ limit %}
 <h1 class="h3">Аналитика сообщений</h1>
 <div class="btn-group btn-group-sm mb-3" role="group">
   <a href="/analytics" class="btn btn-outline-secondary active">Сообщения</a>
@@ -38,112 +37,26 @@
 
 <div class="card mb-4">
     <div class="card-header fw-semibold">Топ сообщений по реакциям</div>
-    {% if top_messages %}
-    <!-- Desktop -->
-    <div class="table-responsive d-none d-md-block">
-    <table class="tga-table-striped-hover mb-0">
-        <thead>
-            <tr>
-                <th>#</th>
-                <th>Дата</th>
-                <th>Канал</th>
-                <th>Тип</th>
-                <th>Текст</th>
-                <th>Реакции</th>
-                <th></th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for msg in top_messages %}
-            <tr>
-                <td class="text-muted">{{ loop.index }}</td>
-                <td class="text-nowrap">{{ msg.date|local_dt }}</td>
-                <td>{{ msg.channel_title or msg.channel_username or msg.channel_id }}</td>
-                <td><span class="badge text-bg-secondary">{{ msg.media_type or 'text' }}</span></td>
-                <td>{{ msg_text(msg.text) }}</td>
-                <td><strong>{{ msg.total_reactions }}</strong></td>
-                <td>
-                    {% if msg.channel_username %}
-                    <a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener">{{ icon("link") }}</a>
-                    {% else %}
-                    <a href="https://t.me/c/{{ msg.channel_id | tme_channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener">{{ icon("link") }}</a>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div hx-get="/analytics/fragments/top-messages?{{ _qs }}" hx-trigger="load" hx-swap="innerHTML">
+        {{ loading(class="card-body") }}
     </div>
-    <!-- Mobile -->
-    <div class="d-md-none mobile-cards p-2">
-        {% for msg in top_messages %}
-        <div class="card mb-2">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-center mb-1">
-                    <strong class="text-truncate me-2">{{ msg.channel_title or msg.channel_username or msg.channel_id }}</strong>
-                    <span class="badge text-bg-primary">{{ msg.total_reactions }} 👍</span>
-                </div>
-                <small class="text-muted">{{ msg.date|local_dt }} &middot; {{ msg.media_type or 'text' }}</small>
-                <p class="mb-1 mt-1" style="font-size:0.85rem">{{ msg_text(msg.text) }}</p>
-                {% if msg.channel_username %}
-                <a href="https://t.me/{{ msg.channel_username }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть {{ icon("link") }}</a>
-                {% else %}
-                <a href="https://t.me/c/{{ msg.channel_id | tme_channel_id }}/{{ msg.message_id }}" target="_blank" rel="noopener" class="btn btn-sm btn-outline-secondary">Открыть {{ icon("link") }}</a>
-                {% endif %}
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}
-    {{ empty_state("Нет данных. Реакции собираются при сборе сообщений.", class="card-body mb-0") }}
-    {% endif %}
 </div>
 
 <div class="row g-4 mb-4">
     <div class="col-12 col-md-6">
         <div class="card h-100">
             <div class="card-header fw-semibold">Вовлечённость по типу контента</div>
-            {% if by_media_type %}
-            <div class="table-responsive">
-            <table class="tga-table mb-0">
-                <thead><tr><th>Тип</th><th>Сообщений</th><th>Ср. реакций</th></tr></thead>
-                <tbody>
-                    {% for row in by_media_type %}
-                    <tr>
-                        <td><span class="badge text-bg-secondary">{{ row.content_type }}</span></td>
-                        <td>{{ row.message_count }}</td>
-                        <td>{{ "%.1f"|format(row.avg_reactions) }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <div hx-get="/analytics/fragments/engagement?{{ _qs }}" hx-trigger="load" hx-swap="innerHTML">
+                {{ loading(class="card-body") }}
             </div>
-            {% else %}
-            {{ empty_state("Нет данных.", class="card-body mb-0") }}
-            {% endif %}
         </div>
     </div>
     <div class="col-12 col-md-6">
         <div class="card h-100">
             <div class="card-header fw-semibold">Активность по часам (UTC)</div>
-            {% if hourly %}
-            <div class="table-responsive">
-            <table class="tga-table mb-0">
-                <thead><tr><th>Час</th><th>Сообщений</th><th>Ср. реакций</th></tr></thead>
-                <tbody>
-                    {% for row in hourly %}
-                    <tr>
-                        <td>{{ '%02d:00'|format(row.hour) }}</td>
-                        <td>{{ row.message_count }}</td>
-                        <td>{{ "%.1f"|format(row.avg_reactions) }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            <div hx-get="/analytics/fragments/hourly?{{ _qs }}" hx-trigger="load" hx-swap="innerHTML">
+                {{ loading(class="card-body") }}
             </div>
-            {% else %}
-            {{ empty_state("Нет данных.", class="card-body mb-0") }}
-            {% endif %}
         </div>
     </div>
 </div>

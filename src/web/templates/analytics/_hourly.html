@@ -1,0 +1,19 @@
+{% from "_macros_ui.html" import empty_state %}
+{% if hourly %}
+<div class="table-responsive">
+<table class="tga-table mb-0">
+    <thead><tr><th>Час</th><th>Сообщений</th><th>Ср. реакций</th></tr></thead>
+    <tbody>
+        {% for row in hourly %}
+        <tr>
+            <td>{{ '%02d:00'|format(row.hour) }}</td>
+            <td>{{ row.message_count }}</td>
+            <td>{{ "%.1f"|format(row.avg_reactions) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+{{ empty_state("Нет данных.", class="card-body mb-0") }}
+{% endif %}
