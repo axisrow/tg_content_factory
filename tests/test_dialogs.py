@@ -161,6 +161,11 @@ async def test_dialogs_page_renders(client):
     assert "Выберите аккаунт" in resp.text
     # The dialog list (incl. the empty-state prompt) now loads in the lazy fragment (#756).
     assert 'hx-get="/dialogs/fragments/list' in resp.text
+    # The account selector swaps only #dialogs-list, so the Photo Loader link (an
+    # account-scoped control outside the fragment) is kept in sync via JS (#878 review).
+    assert 'id="photo-loader-link"' in resp.text
+    assert 'id="account-select"' in resp.text
+    assert "link.href = '/dialogs/photos'" in resp.text
     frag = await client.get("/dialogs/fragments/list")
     assert "загрузить список диалогов" in frag.text
 

@@ -11,7 +11,7 @@
 <div class="d-flex flex-column flex-md-row align-items-md-start gap-3 mb-4">
     {% if accounts %}
     <div class="d-flex flex-column gap-1">
-        <a class="btn btn-outline-primary btn-sm align-self-start" href="/dialogs/photos{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}">Открыть Photo Loader</a>
+        <a id="photo-loader-link" class="btn btn-outline-primary btn-sm align-self-start" href="/dialogs/photos{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}">Открыть Photo Loader</a>
         <small class="text-muted">Если аккаунт не выбран, откроется первый доступный профиль.</small>
     </div>
     {% else %}
@@ -28,7 +28,7 @@
            bare /dialogs/fragments/list partial (a reload/bookmark would render chrome-less).
            The "Обновить диалоги" form lives INSIDE the swapped #dialogs-list fragment so its
            hidden phone always matches the account currently shown (see dialogs/_list.html). #}
-        <select name="phone" class="form-select"
+        <select name="phone" id="account-select" class="form-select"
                 hx-get="/dialogs/fragments/list"
                 hx-include="this"
                 hx-target="#dialogs-list"
@@ -55,5 +55,23 @@
      hx-trigger="load" hx-swap="innerHTML">
     {{ loading(class="my-4") }}
 </div>
+{% endif %}
+
+{% if accounts %}
+<script>
+// The account selector swaps only #dialogs-list, so any account-scoped control
+// OUTSIDE that fragment must be kept in sync here. The Photo Loader link is such
+// a control; without this it would keep the phone from the initial page render
+// and send the user to the wrong account after a switch (#878 review).
+(function() {
+    var sel = document.getElementById('account-select');
+    var link = document.getElementById('photo-loader-link');
+    if (!sel || !link) { return; }
+    sel.addEventListener('change', function() {
+        var phone = sel.value;
+        link.href = '/dialogs/photos' + (phone ? '?phone=' + encodeURIComponent(phone) : '');
+    });
+})();
+</script>
 {% endif %}
 {% endblock %}
