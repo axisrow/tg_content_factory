@@ -1,6 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import icon, filter_flags, channel_actions %}
-{% from "_macros_ui.html" import status_dot %}
+{% from "_macros_ui.html" import loading %}
 {% block title %}Каналы — TG Agent{% endblock %}
 {% block content %}
 <h1>Каналы</h1>
@@ -23,10 +22,7 @@
     </div>
 </div>
 
-{% if channels or show_all %}
 <div class="d-flex gap-2 align-items-center flex-wrap mb-3">
-    <a href="/channels" class="btn btn-sm {{ 'btn-primary' if not show_all else 'btn-outline-primary' }}">Активные ({{ active_count }})</a>
-    <a href="/channels?view=all" class="btn btn-sm {{ 'btn-primary' if show_all else 'btn-outline-primary' }}">Все каналы ({{ total_count }})</a>
     <span class="flex-fill"></span>
     <form method="post" action="/channels/stats/all" class="d-inline" data-busy>
         <button type="submit" class="btn btn-outline-primary btn-sm">Обновить статистику</button>
@@ -41,119 +37,13 @@
         </form>
     </span>
 </div>
-<!-- Desktop: table -->
-<div class="table-responsive d-none d-lg-block">
-<table class="tga-table-striped-hover channels-table">
-    <thead>
-        <tr>
-            <th>ID канала</th>
-            <th>Название</th>
-            <th>Username</th>
-            <th>Описание</th>
-            <th>Тип</th>
-            <th>Статус</th>
-            <th>Сообщений</th>
-            <th>Подписчики</th>
-            <th>Просмотры</th>
-            <th>Реакции</th>
-            <th>Репосты</th>
-            <th>Фильтр</th>
-            <th>Действия</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for ch in channels %}
-        {% set st = latest_stats.get(ch.channel_id) if latest_stats else None %}
-        <tr{% if ch.is_filtered %} class="opacity-50"{% endif %}>
-            <td>{{ ch.channel_id }}</td>
-            <td>{{ ch.title or "—" }}</td>
-            <td>{% if ch.username %}<a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener">@{{ ch.username }}</a>{% else %}—{% endif %}</td>
-            <td><small>{% if ch.about %}{{ ch.about[:60] }}{% if ch.about|length > 60 %}…{% endif %}{% else %}—{% endif %}</small></td>
-            <td>{% if ch.channel_type == "channel" %}{% if not ch.username %}Канал <span title="Приватный">{{ icon("private") }}</span>{% else %}Канал{% endif %}{% elif ch.channel_type == "supergroup" %}{% if not ch.username %}Супергруппа <span title="Приватная">{{ icon("private") }}</span>{% else %}Супергруппа{% endif %}{% elif ch.channel_type == "gigagroup" %}{% if not ch.username %}Гигагруппа <span title="Приватная">{{ icon("private") }}</span>{% else %}Гигагруппа{% endif %}{% elif ch.channel_type == "group" %}{% if not ch.username %}Группа <span title="Приватная">{{ icon("private") }}</span>{% else %}Группа{% endif %}{% elif ch.channel_type == "forum" %}{% if not ch.username %}Форум <span title="Приватный">{{ icon("private") }}</span>{% else %}Форум{% endif %}{% elif ch.channel_type == "monoforum" %}Монофорум{% elif ch.channel_type == "restricted" %}<span class="text-danger">Ограничен</span>{% elif ch.channel_type == "scam" %}<span class="text-danger">Скам {{ icon("warning") }}</span>{% elif ch.channel_type == "fake" %}<span class="text-danger">Фейк {{ icon("warning") }}</span>{% elif ch.channel_type == "unavailable" %}<span class="text-muted">Недоступен</span>{% else %}<span class="text-muted">Непроверен</span>{% endif %}{% if ch.has_comments %} <span title="Есть комментарии">{{ icon("comments") }}</span>{% endif %}</td>
-            <td>
-              {{ status_dot(ch) }}
-            </td>
-            <td>{{ ch.message_count }}</td>
-            <td>
-                {%- set sub = st.subscriber_count if st and st.subscriber_count is not none else none -%}
-                {%- set prev_sub = prev_subscriber_counts.get(ch.channel_id) if prev_subscriber_counts else none -%}
-                {%- if sub is not none -%}
-                    {{ sub }}
-                    {%- if prev_sub is not none -%}
-                        {%- if sub > prev_sub -%}
-                            <span class="text-success ms-1" title="Рост: +{{ sub - prev_sub }}">{{ icon("trend_up") }}</span>
-                        {%- elif sub < prev_sub -%}
-                            <span class="text-danger ms-1" title="Падение: {{ sub - prev_sub }}">{{ icon("trend_down") }}</span>
-                        {%- else -%}
-                            <span class="text-muted ms-1" title="Без изменений">{{ icon("trend_flat") }}</span>
-                        {%- endif -%}
-                    {%- endif -%}
-                {%- else -%}—{%- endif -%}
-            </td>
-            <td>{{ "%.0f"|format(st.avg_views) if st and st.avg_views is not none else "—" }}</td>
-            <td>{{ "%.0f"|format(st.avg_reactions) if st and st.avg_reactions is not none else "—" }}</td>
-            <td>{{ "%.0f"|format(st.avg_forwards) if st and st.avg_forwards is not none else "—" }}</td>
-            <td>
-                {% if ch.is_filtered %}
-                    {{ filter_flags(ch.filter_flags) }}
-                {% else %}
-                    —
-                {% endif %}
-            </td>
-            <td class="text-nowrap">
-                {{ channel_actions(ch) }}
-            </td>
-        </tr>
-        {% endfor %}
-    </tbody>
-</table>
-</div>
 
-<!-- Mobile: cards -->
-<div class="d-lg-none mobile-cards">
-    {% for ch in channels %}
-    {% set st = latest_stats.get(ch.channel_id) if latest_stats else None %}
-    <div class="card mb-2{% if ch.is_filtered %} opacity-50{% endif %}">
-        <div class="card-body">
-            <div class="d-flex justify-content-between align-items-start">
-                <div class="min-w-0 flex-fill">
-                    <div class="d-flex align-items-center gap-1 mb-1">
-                        {{ status_dot(ch) }}
-                        <strong class="text-truncate">{{ ch.title or "—" }}</strong>
-                        {% if ch.has_comments %}<span title="Есть комментарии">{{ icon("comments") }}</span>{% endif %}
-                    </div>
-                    {% if ch.about %}<small class="d-block text-muted mb-1" title="{{ ch.about }}">{{ ch.about[:60] }}{% if ch.about|length > 60 %}…{% endif %}</small>{% endif %}
-                    <small class="text-muted">
-                        {% if ch.username %}<a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener">@{{ ch.username }}</a> &middot; {% endif %}
-                        ID: {{ ch.channel_id }} &middot; {{ ch.message_count }} сообщ.
-                        {%- if st -%}
-                            {%- if st.subscriber_count is not none %}
-                                &middot; {{ st.subscriber_count }}
-                                {%- set prev_sub = prev_subscriber_counts.get(ch.channel_id) if prev_subscriber_counts else none -%}
-                                {%- if prev_sub is not none -%}
-                                    {%- if st.subscriber_count > prev_sub %}<span class="text-success" title="Рост">{{ icon("trend_up") }}</span>
-                                    {%- elif st.subscriber_count < prev_sub %}<span class="text-danger" title="Падение">{{ icon("trend_down") }}</span>
-                                    {%- else %}<span class="text-muted">{{ icon("trend_flat") }}</span>
-                                    {%- endif -%}
-                                {%- endif %} подп.
-                            {%- endif -%}
-                            {%- if st.avg_views is not none %} &middot; {{ icon("view") }} {{ "%.0f"|format(st.avg_views) }}{%- endif -%}
-                            {%- if st.avg_reactions is not none %} &middot; ❤️ {{ "%.0f"|format(st.avg_reactions) }}{%- endif -%}
-                            {%- if st.avg_forwards is not none %} &middot; ↪ {{ "%.0f"|format(st.avg_forwards) }}{%- endif -%}
-                        {%- endif -%}
-                    </small>
-                </div>
-            </div>
-            <div class="card-actions">
-                {{ channel_actions(ch, prefix="m-") }}
-            </div>
-        </div>
-    </div>
-    {% endfor %}
+{# Skeleton paints instantly; the channel table (heavy JOIN+COUNT) loads lazily (#756).
+   Desktop table AND mobile cards live together in the fragment so the per-row collect
+   buttons' OOB targets (-{pk} and -m-{pk}) both exist in the DOM. #}
+<div hx-get="/channels/fragments/list{{ '?view=all' if show_all else '' }}" hx-trigger="load" hx-swap="innerHTML">
+    {{ loading(class="my-4") }}
 </div>
-{% else %}
-<p>Нет добавленных каналов.</p>
-{% endif %}
 
 <div class="modal fade" id="subscriptions-modal" tabindex="-1">
     <div class="modal-dialog modal-lg">

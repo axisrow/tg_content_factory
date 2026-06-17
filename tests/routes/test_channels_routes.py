@@ -341,3 +341,34 @@ async def test_review_confirm_missing_channel(route_client):
     resp = await route_client.post("/channels/99999/review-confirm", follow_redirects=False)
     assert resp.status_code == 303
     assert "error=resolve" in resp.headers["location"]
+
+
+@pytest.mark.anyio
+async def test_channels_page_lazy_loads_list(route_client):
+    """#756: the channels page paints a skeleton wired to the HTMX list fragment."""
+    resp = await route_client.get("/channels/")
+    assert resp.status_code == 200
+    assert 'hx-get="/channels/fragments/list' in resp.text
+    assert 'hx-trigger="load"' in resp.text
+    # The collect-all button (independent OOB target) stays in the skeleton.
+    assert 'id="collect-all-btn"' in resp.text
+
+
+@pytest.mark.anyio
+async def test_channels_fragment_is_bare_partial_with_both_oob_copies(route_client, db):
+    """#756: the list fragment is a bare partial and renders BOTH per-row collect
+    button copies (desktop -{pk} and mobile -m-{pk}) so OOB swaps resolve."""
+    from src.models import Channel
+
+    await db.add_channel(
+        Channel(channel_id=-100777, title="OOB Chan", username="oobchan", channel_type="channel")
+    )
+    pk = (await db.get_channel_by_channel_id(-100777)).id
+
+    resp = await route_client.get("/channels/fragments/list")
+    assert resp.status_code == 200
+    assert "<html" not in resp.text.lower()
+    assert "OOB Chan" in resp.text
+    # Both OOB copies present (collect-btn-{pk} and collect-btn-m-{pk}).
+    assert f"collect-btn-{pk}" in resp.text
+    assert f"collect-btn-m-{pk}" in resp.text

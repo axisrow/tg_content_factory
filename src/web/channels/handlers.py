@@ -24,6 +24,17 @@ async def _enqueue_channel_command(request: Request, command_type: str, payload:
 
 
 async def channels_list(request: Request) -> ChannelsTemplate:
+    """Skeleton — no heavy queries; the channel table loads via the lazy fragment (#756).
+
+    Flash msg/error render globally in base.html from the query string, so they are
+    not part of this context (the table template never referenced them).
+    """
+    show_all = request.query_params.get("view") == "all"
+    return ChannelsTemplate("channels.html", {"show_all": show_all})
+
+
+async def channels_list_fragment(request: Request) -> ChannelsTemplate:
+    """Heavy table fragment: channel list with counts + stats (#756)."""
     service = deps.channel_service(request)
     db = deps.get_db(request)
     show_all = request.query_params.get("view") == "all"
@@ -33,13 +44,11 @@ async def channels_list(request: Request) -> ChannelsTemplate:
     active_count = await db.repos.channels.count_channels(active_only=True, include_filtered=False)
     total_count = await db.repos.channels.count_channels()
     return ChannelsTemplate(
-        "channels.html",
+        "channels/_list.html",
         {
             "channels": channels,
             "latest_stats": latest_stats,
             "prev_subscriber_counts": prev_subscriber_counts,
-            "error": request.query_params.get("error"),
-            "msg": request.query_params.get("msg"),
             "show_all": show_all,
             "active_count": active_count,
             "total_count": total_count,

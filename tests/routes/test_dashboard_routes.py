@@ -10,13 +10,17 @@ import pytest
 async def test_dashboard_renders_with_data(route_client, base_app):
     """Dashboard renders with stats cards when auth configured and accounts exist."""
     app, db, pool = base_app
-    # base_app already adds an account, so dashboard should render
+    # base_app already adds an account, so dashboard should render the skeleton
     resp = await route_client.get("/dashboard/")
     assert resp.status_code == 200
     assert "Панель" in resp.text
-    # Required dashboard cards
-    assert "Аккаунты" in resp.text
-    assert "Каналы" in resp.text
+    assert 'hx-get="/dashboard/fragments/overview"' in resp.text
+    assert 'hx-trigger="load"' in resp.text
+    # The stats cards now render in the lazy-loaded overview fragment (#756).
+    frag = await route_client.get("/dashboard/fragments/overview")
+    assert frag.status_code == 200
+    assert "Аккаунты" in frag.text
+    assert "Каналы" in frag.text
 
 
 @pytest.mark.anyio
@@ -61,10 +65,9 @@ async def test_dashboard_contains_stats(route_client, base_app):
     # db.get_stats() must expose the counters the template depends on.
     for key in ("accounts", "channels", "channels_filtered", "channels_tracked"):
         assert key in stats
-    resp = await route_client.get("/dashboard/")
+    # Stats numbers now render in the lazy overview fragment (#756).
+    resp = await route_client.get("/dashboard/fragments/overview")
     assert resp.status_code == 200
-    # The template renders the raw numbers from stats — check at least the
-    # accounts and channels counters appear in the rendered HTML.
     assert f"<strong>{stats['accounts']}</strong> в базе" in resp.text
     assert f"В базе: <strong>{stats['channels']}</strong>" in resp.text
 
@@ -170,9 +173,9 @@ async def test_dashboard_with_active_flood_wait(route_client, base_app):
     for acc in accounts:
         await db.update_account_flood(acc.phone, future_time)
 
-    resp = await route_client.get("/dashboard/")
+    resp = await route_client.get("/dashboard/fragments/overview")
     assert resp.status_code == 200
-    # Template renders an explicit flood-wait warning when >0 accounts are flooded.
+    # Flood-wait warning now lives in the overview fragment (#756).
     assert "flood-wait" in resp.text
 
 
@@ -185,7 +188,7 @@ async def test_dashboard_with_expired_flood_wait(route_client, base_app):
     for acc in accounts:
         await db.update_account_flood(acc.phone, past_time)
 
-    resp = await route_client.get("/dashboard/")
+    resp = await route_client.get("/dashboard/fragments/overview")
     assert resp.status_code == 200
     # Expired flood wait must not surface as an active warning.
     assert "flood-wait" not in resp.text
@@ -200,9 +203,9 @@ async def test_dashboard_all_connected_flooded(route_client, base_app):
     for acc in accounts:
         await db.update_account_flood(acc.phone, future_time)
 
-    resp = await route_client.get("/dashboard/")
+    resp = await route_client.get("/dashboard/fragments/overview")
     assert resp.status_code == 200
-    # Template only renders this link when collector_attention is truthy.
+    # collector_attention link now lives in the overview fragment (#756).
     assert "Коллектор ограничен" in resp.text
 
 
@@ -215,7 +218,7 @@ async def test_dashboard_ignores_transient_flood_wait(route_client, base_app):
     for acc in accounts:
         await db.update_account_flood(acc.phone, future_time)
 
-    resp = await route_client.get("/dashboard/")
+    resp = await route_client.get("/dashboard/fragments/overview")
     assert resp.status_code == 200
     assert "Коллектор ограничен" not in resp.text
     assert "flood-wait" not in resp.text
@@ -247,7 +250,16 @@ async def test_dashboard_no_connected_clients(route_client, base_app):
 
 @pytest.mark.anyio
 async def test_dashboard_with_pipeline_data(route_client, base_app):
-    """Dashboard renders with pipeline statistics."""
+    """Dashboard renders with pipeline statistics (now in the overview fragment, #756)."""
     app, db, pool = base_app
-    resp = await route_client.get("/dashboard/")
+    resp = await route_client.get("/dashboard/fragments/overview")
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_dashboard_overview_fragment_is_bare_partial(route_client, base_app):
+    """#756: the overview fragment returns a bare partial, not a full page."""
+    resp = await route_client.get("/dashboard/fragments/overview")
+    assert resp.status_code == 200
+    assert "<html" not in resp.text.lower()
+    assert "Аккаунты" in resp.text
