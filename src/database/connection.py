@@ -72,29 +72,55 @@ class ProfilingConnection:
             profiler.record_db(time.perf_counter_ns() - t0)
 
 
+async def apply_pragmas(conn: aiosqlite.Connection, *, role: str = "write") -> None:
+    """Apply the connection-tuning PRAGMAs shared by every connection (#760).
+
+    ``role="write"`` runs the full set including WAL setup/hygiene; ``role="read"``
+    skips the write-only checkpoint PRAGMAs (a read connection never checkpoints)
+    but keeps the per-connection cache/mmap/temp tuning so pool readers are as fast
+    as the writer.
+    """
+    await conn.execute("PRAGMA synchronous=NORMAL")
+    await conn.execute("PRAGMA foreign_keys=ON")
+    await conn.execute("PRAGMA cache_size=-64000")  # 64MB
+    await conn.execute("PRAGMA temp_store=MEMORY")
+    await conn.execute("PRAGMA mmap_size=30000000")  # 30MB
+    if role == "write":
+        await conn.execute("PRAGMA journal_mode=WAL")
+        # WAL hygiene (#766): make the autocheckpoint threshold explicit and
+        # trim a WAL grown by a previous run. PASSIVE never blocks other
+        # connections — it simply does nothing while readers hold snapshots.
+        await conn.execute("PRAGMA wal_autocheckpoint=1000")
+        await conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+
+
+def maybe_wrap_profiling(conn: aiosqlite.Connection) -> aiosqlite.Connection:
+    """Wrap a connection in ProfilingConnection when profiling is enabled (ENV=DEV)."""
+    if _PROFILING_ENABLED:
+        return ProfilingConnection(conn)  # type: ignore[return-value]
+    return conn
+
+
+async def open_connection(db_path: str, *, role: str = "write") -> aiosqlite.Connection:
+    """Open a single aiosqlite connection with the shared tuning applied.
+
+    Used both for the lone write connection and for each reader in the pool (#760).
+    """
+    if db_path != ":memory:":
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    conn = await aiosqlite.connect(db_path, timeout=10.0, isolation_level=None)
+    conn.row_factory = aiosqlite.Row
+    await apply_pragmas(conn, role=role)
+    return maybe_wrap_profiling(conn)
+
+
 class DBConnection:
     def __init__(self, db_path: str):
         self._db_path = db_path
         self.db: aiosqlite.Connection | None = None
 
     async def connect(self) -> aiosqlite.Connection:
-        if self._db_path != ":memory:":
-            Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
-        self.db = await aiosqlite.connect(self._db_path, timeout=10.0, isolation_level=None)
-        self.db.row_factory = aiosqlite.Row
-        await self.db.execute("PRAGMA journal_mode=WAL")
-        await self.db.execute("PRAGMA synchronous=NORMAL")
-        await self.db.execute("PRAGMA foreign_keys=ON")
-        await self.db.execute("PRAGMA cache_size=-64000")  # 64MB
-        await self.db.execute("PRAGMA temp_store=MEMORY")
-        await self.db.execute("PRAGMA mmap_size=30000000")  # 30MB
-        # WAL hygiene (#766): make the autocheckpoint threshold explicit and
-        # trim a WAL grown by a previous run. PASSIVE never blocks other
-        # connections — it simply does nothing while readers hold snapshots.
-        await self.db.execute("PRAGMA wal_autocheckpoint=1000")
-        await self.db.execute("PRAGMA wal_checkpoint(PASSIVE)")
-        if _PROFILING_ENABLED:
-            self.db = ProfilingConnection(self.db)  # type: ignore[assignment]
+        self.db = await open_connection(self._db_path, role="write")
         return self.db
 
     async def close(self) -> None:

@@ -13,6 +13,7 @@ import aiosqlite
 from src.database.bundles import DatabaseRepositories
 from src.database.connection import DBConnection
 from src.database.migrations import run_migrations
+from src.database.pool import BufferedCursor, ReadConnectionPool, ReadPoolProxy
 from src.database.repositories._transactions import begin_immediate
 from src.database.repositories.accounts import AccountsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
@@ -72,11 +73,20 @@ class Database:
         self,
         db_path: str = "data/tg_search.db",
         session_encryption_secret: str | None = None,
+        *,
+        read_pool_size: int = 4,
     ):
         self._db_path = db_path
         self._session_encryption_secret = session_encryption_secret
         self._connection = DBConnection(db_path)
+        # Lone write connection (`_db`). All DML goes here under `_write_lock` so the
+        # "one writer" contract (#569) is preserved. Reads go through `_read_proxy`,
+        # backed by a pool of read connections, so a slow SELECT can't block the whole
+        # process (#760).
         self._db: aiosqlite.Connection | None = None
+        self._read_pool: ReadConnectionPool | None = None
+        self._read_proxy: ReadPoolProxy | None = None
+        self._read_pool_size = read_pool_size
         self._fts_available: bool = True
         # Connection-wide write lock (issue #569). All multi-statement
         # transactions and autocommit writes acquire this lock so that
@@ -106,18 +116,14 @@ class Database:
         self._repos: DatabaseRepositories | None = None
 
     async def _has_encrypted_sessions(self) -> bool:
-        assert self._db is not None
-        cur = await self._db.execute("""
+        cur = await self._read("""
             SELECT 1
             FROM accounts
             WHERE session_string LIKE 'enc:v1:%'
                OR session_string LIKE 'enc:v2:%'
             LIMIT 1
             """)
-        try:
-            return bool(await cur.fetchone())
-        finally:
-            await cur.close()
+        return bool(await cur.fetchone())
 
     async def initialize(self) -> None:
         self._db = await self._connection.connect()
@@ -127,36 +133,48 @@ class Database:
                 "FTS5 full-text search is unavailable; text queries will use LIKE fallback"
             )
 
+        # Read pool (#760). Repositories read through `read_db` (a proxy over the pool)
+        # so a slow SELECT only ties up one read connection, never the whole process.
+        # For :memory: each connect is a separate empty DB, so the pool degenerates to
+        # the single write connection (shared) — tests keep one consistent in-memory DB.
+        self._read_pool = ReadConnectionPool(self._db_path, size=self._read_pool_size)
+        if self._db_path == ":memory:":
+            await self._read_pool.open(shared_conn=self._db)
+        else:
+            await self._read_pool.open()
+        self._read_proxy = ReadPoolProxy(self._read_pool)
+        read_db = self._read_proxy
+
         session_cipher = None
         if self._session_encryption_secret:
             session_cipher = SessionCipher(self._session_encryption_secret)
 
         self._accounts = AccountsRepository(
-            self._db, session_cipher=session_cipher, database=self
+            read_db, session_cipher=session_cipher, database=self
         )
-        self._channels = ChannelsRepository(self._db, database=self)
+        self._channels = ChannelsRepository(read_db, database=self)
         self._messages = MessagesRepository(
-            self._db,
+            read_db,
             fts_available=self._fts_available,
             database=self,
         )
-        self._tasks = CollectionTasksRepository(self._db, database=self)
-        self._search_log = SearchLogRepository(self._db, database=self)
-        self._channel_stats = ChannelStatsRepository(self._db, database=self)
-        self._settings = SettingsRepository(self._db, database=self)
-        self._filters = FilterRepository(self._db, database=self)
-        self._notification_bots = NotificationBotsRepository(self._db, database=self)
-        self._notified_messages = NotifiedMessagesRepository(self._db, database=self)
-        self._search_queries = SearchQueriesRepository(self._db, database=self)
-        self._photo_loader = PhotoLoaderRepository(self._db, database=self)
-        self._dialog_cache = DialogCacheRepository(self._db, database=self)
-        self._content_pipelines = ContentPipelinesRepository(self._db, database=self)
-        self._telegram_commands = TelegramCommandsRepository(self._db, database=self)
-        self._runtime_snapshots = RuntimeSnapshotsRepository(self._db, database=self)
-        self._generation_runs = GenerationRunsRepository(self._db, database=self)
-        self._generated_images = GeneratedImagesRepository(self._db, database=self)
-        self._pipeline_templates = PipelineTemplatesRepository(self._db, database=self)
-        self._pipeline_action_log = PipelineActionLogRepository(self._db, database=self)
+        self._tasks = CollectionTasksRepository(read_db, database=self)
+        self._search_log = SearchLogRepository(read_db, database=self)
+        self._channel_stats = ChannelStatsRepository(read_db, database=self)
+        self._settings = SettingsRepository(read_db, database=self)
+        self._filters = FilterRepository(read_db, database=self)
+        self._notification_bots = NotificationBotsRepository(read_db, database=self)
+        self._notified_messages = NotifiedMessagesRepository(read_db, database=self)
+        self._search_queries = SearchQueriesRepository(read_db, database=self)
+        self._photo_loader = PhotoLoaderRepository(read_db, database=self)
+        self._dialog_cache = DialogCacheRepository(read_db, database=self)
+        self._content_pipelines = ContentPipelinesRepository(read_db, database=self)
+        self._telegram_commands = TelegramCommandsRepository(read_db, database=self)
+        self._runtime_snapshots = RuntimeSnapshotsRepository(read_db, database=self)
+        self._generation_runs = GenerationRunsRepository(read_db, database=self)
+        self._generated_images = GeneratedImagesRepository(read_db, database=self)
+        self._pipeline_templates = PipelineTemplatesRepository(read_db, database=self)
+        self._pipeline_action_log = PipelineActionLogRepository(read_db, database=self)
         self._repos = DatabaseRepositories(
             accounts=self._accounts,
             channels=self._channels,
@@ -190,13 +208,25 @@ class Database:
             logger.warning("Failed to seed built-in pipeline templates", exc_info=True)
 
     async def close(self) -> None:
+        if self._read_pool is not None:
+            await self._read_pool.close()
         await self._connection.close()
 
     async def execute(self, sql: str, params: tuple = ()) -> aiosqlite.Cursor:
+        # Generic escape hatch — stays on the write connection so callers that keep a
+        # live cursor or issue DDL behave exactly as before.
         return await self._connection.execute(sql, params)
 
     async def execute_fetchall(self, sql: str, params: tuple = ()) -> list:
+        # Read path → pool, so a SELECT never waits on the write connection (#760).
+        if self._read_proxy is not None:
+            return await self._read_proxy.execute_fetchall(sql, params)
         return await self._connection.execute_fetchall(sql, params)
+
+    async def _read(self, sql: str, params: tuple = ()) -> BufferedCursor:
+        """Run a facade-internal SELECT through the read pool (read twin of execute_write)."""
+        assert self._read_proxy is not None
+        return await self._read_proxy.execute(sql, params)
 
     async def _with_busy_retry(
         self,
@@ -470,8 +500,7 @@ class Database:
         this channel, returns its id without creating a duplicate.
         """
         self._require()
-        assert self._db is not None
-        cur = await self._db.execute(
+        cur = await self._read(
             "SELECT id FROM channel_rename_events WHERE channel_id = ? AND decision IS NULL LIMIT 1",
             (channel_id,),
         )
@@ -490,7 +519,7 @@ class Database:
             return cur.lastrowid or 0
         except sqlite3.IntegrityError:
             # Concurrent INSERT won the race; re-select the existing row
-            cur = await self._db.execute(
+            cur = await self._read(
                 "SELECT id FROM channel_rename_events WHERE channel_id = ? AND decision IS NULL LIMIT 1",
                 (channel_id,),
             )
@@ -500,8 +529,7 @@ class Database:
     async def list_pending_rename_events(self) -> list[dict]:
         """Return all undecided rename events, newest first."""
         self._require()
-        assert self._db is not None
-        cur = await self._db.execute(
+        cur = await self._read(
             """
             SELECT e.id, e.channel_id, e.old_title, e.new_title,
                    e.old_username, e.new_username, e.created_at,
@@ -518,8 +546,7 @@ class Database:
     async def count_pending_rename_events(self) -> int:
         """Return the number of pending (undecided) rename events."""
         self._require()
-        assert self._db is not None
-        cur = await self._db.execute(
+        cur = await self._read(
             "SELECT COUNT(*) FROM channel_rename_events WHERE decision IS NULL"
         )
         row = await cur.fetchone()
@@ -532,7 +559,6 @@ class Database:
         overwrite of a previous decision in race conditions.
         """
         self._require()
-        assert self._db is not None
         await self.execute_write(
             """
             UPDATE channel_rename_events
@@ -545,8 +571,7 @@ class Database:
     async def get_rename_event(self, event_id: int) -> dict | None:
         """Return a single rename event by id (including its decision), or None."""
         self._require()
-        assert self._db is not None
-        cur = await self._db.execute(
+        cur = await self._read(
             """
             SELECT id, channel_id, old_title, new_title,
                    old_username, new_username, created_at,
@@ -972,15 +997,13 @@ class Database:
 
     async def create_agent_thread(self, title: str = "Новый тред") -> int:
         self._require()
-        assert self._db is not None
         cur = await self.execute_write("INSERT INTO agent_threads (title) VALUES (?)", (title,))
         assert cur.lastrowid is not None
         return cur.lastrowid
 
     async def get_agent_threads(self) -> list[dict]:
         self._require()
-        assert self._db is not None
-        cur = await self._db.execute(
+        cur = await self._read(
             "SELECT id, title, created_at FROM agent_threads ORDER BY created_at DESC"
         )
         rows = await cur.fetchall()
@@ -988,8 +1011,7 @@ class Database:
 
     async def get_agent_thread(self, thread_id: int) -> dict | None:
         self._require()
-        assert self._db is not None
-        cur = await self._db.execute(
+        cur = await self._read(
             "SELECT id, title, created_at FROM agent_threads WHERE id = ?", (thread_id,)
         )
         row = await cur.fetchone()
@@ -997,20 +1019,17 @@ class Database:
 
     async def rename_agent_thread(self, thread_id: int, title: str) -> None:
         self._require()
-        assert self._db is not None
         await self.execute_write(
             "UPDATE agent_threads SET title = ? WHERE id = ?", (title, thread_id)
         )
 
     async def delete_agent_thread(self, thread_id: int) -> None:
         self._require()
-        assert self._db is not None
         await self.execute_write("DELETE FROM agent_threads WHERE id = ?", (thread_id,))
 
     async def get_agent_messages(self, thread_id: int) -> list[dict]:
         self._require()
-        assert self._db is not None
-        cur = await self._db.execute(
+        cur = await self._read(
             "SELECT id, thread_id, role, content, created_at"
             " FROM agent_messages WHERE thread_id = ? ORDER BY created_at ASC",
             (thread_id,),
@@ -1020,7 +1039,6 @@ class Database:
 
     async def save_agent_message(self, thread_id: int, role: str, content: str) -> None:
         self._require()
-        assert self._db is not None
         await self.execute_write(
             "INSERT INTO agent_messages (thread_id, role, content) VALUES (?, ?, ?)",
             (thread_id, role, content),
@@ -1029,9 +1047,8 @@ class Database:
     async def delete_last_agent_exchange(self, thread_id: int) -> None:
         """Delete the last user message and any assistant reply from a thread."""
         self._require()
-        assert self._db is not None
         # Find the last user message
-        cur = await self._db.execute(
+        cur = await self._read(
             "SELECT id FROM agent_messages"
             " WHERE thread_id = ? AND role = 'user'"
             " ORDER BY id DESC LIMIT 1",
