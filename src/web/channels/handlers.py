@@ -24,16 +24,13 @@ async def _enqueue_channel_command(request: Request, command_type: str, payload:
 
 
 async def channels_list(request: Request) -> ChannelsTemplate:
-    """Skeleton — no heavy queries; the channel table loads via the lazy fragment (#756)."""
+    """Skeleton — no heavy queries; the channel table loads via the lazy fragment (#756).
+
+    Flash msg/error render globally in base.html from the query string, so they are
+    not part of this context (the table template never referenced them).
+    """
     show_all = request.query_params.get("view") == "all"
-    return ChannelsTemplate(
-        "channels.html",
-        {
-            "error": request.query_params.get("error"),
-            "msg": request.query_params.get("msg"),
-            "show_all": show_all,
-        },
-    )
+    return ChannelsTemplate("channels.html", {"show_all": show_all})
 
 
 async def channels_list_fragment(request: Request) -> ChannelsTemplate:
