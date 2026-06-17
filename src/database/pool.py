@@ -58,6 +58,10 @@ class BufferedCursor:
         self._pos = len(self._rows)
         return rows
 
+    async def close(self) -> None:
+        # No-op: the underlying connection was already released back to the pool.
+        return
+
 
 class ReadConnectionPool:
     """A fixed-size pool of read connections handed out via an asyncio.Queue.
@@ -116,6 +120,25 @@ class ReadConnectionPool:
         self._all_conns = []
 
 
+_WRITE_KEYWORDS = ("insert", "update", "delete", "replace", "create", "drop", "alter")
+
+
+def _reject_writes(sql: str) -> None:
+    """Guard: the read pool is for SELECTs only.
+
+    A write routed here (e.g. a repo accidentally using ``self._db`` instead of the
+    write connection) would land on a read connection outside any open transaction —
+    silently failing with "database is locked". Fail loudly and early instead so the
+    mistake is obvious in tests rather than as a flaky lock error (#760).
+    """
+    first = sql.lstrip().split(None, 1)
+    if first and first[0].lower() in _WRITE_KEYWORDS:
+        raise ValueError(
+            f"Write statement routed through the read pool: {first[0].upper()} ... "
+            "— use Database.execute_write()/transaction() or the write connection."
+        )
+
+
 class ReadPoolProxy:
     """Drop-in replacement for the raw connection that repositories read through.
 
@@ -129,12 +152,14 @@ class ReadPoolProxy:
         self._pool = pool
 
     async def execute(self, sql: str, params: tuple = ()) -> BufferedCursor:
+        _reject_writes(sql)
         async with self._pool.acquire_read() as conn:
             cur = await conn.execute(sql, params)
             # fetchall() returns a fresh owned list, so BufferedCursor can take it directly.
             return BufferedCursor(await cur.fetchall())
 
     async def execute_fetchall(self, sql: str, params: tuple = ()) -> list[Any]:
+        _reject_writes(sql)
         async with self._pool.acquire_read() as conn:
             return await conn.execute_fetchall(sql, params)
 

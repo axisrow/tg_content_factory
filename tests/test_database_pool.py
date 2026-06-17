@@ -135,6 +135,25 @@ async def test_memory_shared_conn_not_double_closed():
         await write_conn.close()
 
 
+@pytest.mark.anyio
+async def test_read_proxy_rejects_writes(tmp_path):
+    """A write routed through the read pool fails loudly, not as a silent lock error."""
+    db_path = str(tmp_path / "pool.db")
+    await _seed(db_path)
+    pool = ReadConnectionPool(db_path, size=1)
+    await pool.open()
+    proxy = ReadPoolProxy(pool)
+    try:
+        for sql in ("UPDATE t SET v='x'", "  insert into t (v) values ('y')", "DELETE FROM t"):
+            with pytest.raises(ValueError, match="read pool"):
+                await proxy.execute(sql)
+        # SELECT still works.
+        cur = await proxy.execute("SELECT COUNT(*) AS n FROM t")
+        assert (await cur.fetchone())["n"] == 3
+    finally:
+        await pool.close()
+
+
 def test_buffered_cursor_semantics():
     """BufferedCursor matches the fetch* contract repositories rely on."""
 
