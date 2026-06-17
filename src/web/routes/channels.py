@@ -16,6 +16,11 @@ async def channels_list(request: Request):
     return channels_response(request, await handlers.channels_list(request))
 
 
+@router.get("/fragments/list", response_class=HTMLResponse)
+async def channels_list_fragment(request: Request):
+    return channels_response(request, await handlers.channels_list_fragment(request))
+
+
 @router.post("/add")
 async def add_channel(request: Request, identifier: str = Form("")):
     return channels_response(request, await handlers.add_channel(request, identifier))

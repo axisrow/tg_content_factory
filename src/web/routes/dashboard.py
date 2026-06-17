@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.models import AccountSessionStatus
 from src.telegram.flood_wait import is_blocking_flood_wait_until
@@ -30,6 +30,9 @@ def _time_ago(dt: datetime | None) -> str | None:
 
 @router.get("/")
 async def dashboard(request: Request):
+    # Onboarding redirects MUST stay synchronous — they decide whether to render the
+    # page at all (a skeleton 200 would swallow the redirect). The heavy stats
+    # (get_stats does COUNT(*) on millions of messages) load lazily in the fragment (#756).
     auth = deps.get_auth(request)
     if not auth.is_configured:
         return RedirectResponse(url="/settings", status_code=303)
@@ -39,6 +42,13 @@ async def dashboard(request: Request):
     if not accounts:
         return RedirectResponse(url="/settings?msg=no_accounts", status_code=303)
 
+    return deps.get_templates(request).TemplateResponse(request, "dashboard.html", {})
+
+
+@router.get("/fragments/overview", response_class=HTMLResponse)
+async def fragment_overview(request: Request):
+    db = deps.get_db(request)
+    accounts = await db.get_account_summaries(active_only=False)
     stats = await db.get_stats()
     scheduler = deps.get_scheduler(request)
 
@@ -77,7 +87,7 @@ async def dashboard(request: Request):
 
     return deps.get_templates(request).TemplateResponse(
         request,
-        "dashboard.html",
+        "dashboard/_overview.html",
         {
             "stats": stats,
             "scheduler_running": scheduler.is_running,
