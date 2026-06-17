@@ -1,0 +1,43 @@
+{% from "_macros_ui.html" import empty_state %}
+{% if pipeline_stats %}
+<div class="table-responsive">
+    <table class="tga-table tga-table-hover tga-table-lg">
+        <thead>
+            <tr>
+                <th>Pipeline</th>
+                <th>Generated</th>
+                <th>Published</th>
+                <th>Rejected</th>
+                <th>Pending</th>
+                <th>Success Rate</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for stat in pipeline_stats %}
+            <tr>
+                <td>
+                    <a href="/pipelines/{{ stat.pipeline_id }}/edit">{{ stat.pipeline_name }}</a>
+                </td>
+                <td>{{ stat.total_generations }}</td>
+                <td class="text-success">{{ stat.total_published }}</td>
+                <td class="text-danger">{{ stat.total_rejected }}</td>
+                <td class="text-warning">{{ stat.pending_moderation }}</td>
+                <td>
+                    <div class="progress" style="height: 20px;">
+                        <div class="progress-bar" role="progressbar"
+                             style="width: {{ stat.success_rate }}%;"
+                             aria-valuenow="{{ stat.success_rate }}"
+                             aria-valuemin="0"
+                             aria-valuemax="100">
+                            {{ "%.1f"|format(stat.success_rate) }}%
+                        </div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+{{ empty_state("No pipelines configured.") }}
+{% endif %}

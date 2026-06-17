@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros_ui.html" import empty_state %}
+{% from "_macros_ui.html" import loading %}
 {% block title %}Тренды — TG Agent{% endblock %}
 {% block content %}
 <h1 class="h3 mb-3">Тренды</h1>
@@ -19,75 +19,29 @@
     </div>
 </div>
 
+{# Skeleton paints instantly; the NLP-heavy trend aggregations load lazily via HTMX (#756). #}
 <div class="row g-4">
     <div class="col-12 col-lg-5">
         <div class="card h-100">
-            <div class="card-header fw-semibold">Топ тем ({{ topics|length }})</div>
-            <div class="card-body p-0">
-                {% if topics %}
-                <table class="tga-table-hover mb-0">
-                    <thead><tr><th>Слово</th><th class="text-end">Упоминания</th></tr></thead>
-                    <tbody>
-                    {% for t in topics %}
-                    <tr>
-                        <td>{{ t.keyword }}</td>
-                        <td class="text-end">{{ t.count }}</td>
-                    </tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
-                {% else %}
-                {{ empty_state("Нет данных за выбранный период.", class="p-3 mb-0") }}
-                {% endif %}
+            <div class="card-header fw-semibold">Топ тем</div>
+            <div class="card-body p-0" hx-get="/analytics/trends/fragments/topics?days={{ days }}" hx-trigger="load" hx-swap="innerHTML">
+                {{ loading(class="p-3") }}
             </div>
         </div>
     </div>
 
     <div class="col-12 col-lg-7">
         <div class="card mb-4">
-            <div class="card-header fw-semibold">Топ каналов по просмотрам ({{ channels|length }})</div>
-            <div class="card-body p-0">
-                {% if channels %}
-                <table class="tga-table-hover mb-0">
-                    <thead><tr><th>Канал</th><th class="text-end">Avg views</th><th class="text-end">Сообщений</th></tr></thead>
-                    <tbody>
-                    {% for ch in channels %}
-                    <tr>
-                        <td>
-                            {% if ch.username %}
-                            <a href="https://t.me/{{ ch.username }}" target="_blank" rel="noopener noreferrer">
-                                {{ ch.title or ch.username }}
-                            </a>
-                            {% else %}
-                            {{ ch.title or ch.channel_id }}
-                            {% endif %}
-                        </td>
-                        <td class="text-end">{{ "%.0f"|format(ch.avg_views) }}</td>
-                        <td class="text-end">{{ ch.message_count }}</td>
-                    </tr>
-                    {% endfor %}
-                    </tbody>
-                </table>
-                {% else %}
-                {{ empty_state("Нет данных за выбранный период.", class="p-3 mb-0") }}
-                {% endif %}
+            <div class="card-header fw-semibold">Топ каналов по просмотрам</div>
+            <div class="card-body p-0" hx-get="/analytics/trends/fragments/channels?days={{ days }}" hx-trigger="load" hx-swap="innerHTML">
+                {{ loading(class="p-3") }}
             </div>
         </div>
 
         <div class="card">
             <div class="card-header fw-semibold">Топ реакций</div>
-            <div class="card-body">
-                {% if emojis %}
-                <div class="d-flex flex-wrap gap-2">
-                    {% for e in emojis %}
-                    <span class="badge bg-secondary fs-6" title="{{ e.count }} реакций">
-                        {{ e.emoji }} <span class="fw-normal text-white-50">{{ e.count }}</span>
-                    </span>
-                    {% endfor %}
-                </div>
-                {% else %}
-                {{ empty_state("Нет данных за выбранный период.", class="mb-0") }}
-                {% endif %}
+            <div class="card-body" hx-get="/analytics/trends/fragments/emojis?days={{ days }}" hx-trigger="load" hx-swap="innerHTML">
+                {{ loading() }}
             </div>
         </div>
     </div>

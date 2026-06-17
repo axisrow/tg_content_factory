@@ -54,6 +54,9 @@ class NotificationsConfig(BaseModel):
 
 class DatabaseConfig(BaseModel):
     path: str = "data/tg_search.db"
+    # Number of read connections in the pool (#760). Reads run concurrently across
+    # these, so a slow SELECT never blocks navigation. Ignored for :memory:.
+    read_pool_size: int = 4
 
 
 class LLMConfig(BaseModel):

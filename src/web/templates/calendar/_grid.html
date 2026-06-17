@@ -1,0 +1,64 @@
+{% if days <= 7 %}
+{# 7-column weekly grid #}
+<div class="row g-2 mb-4">
+    {% for day in calendar_days %}
+    <div class="col">
+        <div class="card h-100">
+            <div class="card-header p-2 text-center">
+                <div class="fw-semibold small">{{ day.date[8:] }}.{{ day.date[5:7] }}</div>
+                {% if day.events %}
+                <span class="badge bg-secondary">{{ day.events|length }}</span>
+                {% endif %}
+            </div>
+            <div class="card-body p-2" style="min-height:120px;max-height:280px;overflow-y:auto;">
+                {% for event in day.events %}
+                <div class="mb-2 border-bottom pb-1">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <small class="text-muted text-truncate me-1" style="max-width:70%">{{ event.pipeline_name }}</small>
+                        <span class="badge badge-sm bg-{% if event.moderation_status == 'approved' %}success{% elif event.moderation_status == 'pending' %}warning{% elif event.moderation_status == 'published' %}primary{% else %}secondary{% endif %}" style="font-size:.65rem">
+                            {{ event.moderation_status }}
+                        </span>
+                    </div>
+                    {% if event.preview %}
+                    <div class="small text-truncate" title="{{ event.preview }}">{{ event.preview[:60] }}</div>
+                    {% endif %}
+                    <a href="/moderation/{{ event.run_id }}/view" class="btn btn-sm btn-outline-primary mt-1" style="font-size:.7rem;padding:.1rem .3rem">Открыть</a>
+                </div>
+                {% else %}
+                <p class="text-muted small mb-0 text-center mt-3">—</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+{# Multi-row grid for 14/30 days #}
+<div class="row g-2 mb-4">
+    {% for day in calendar_days %}
+    <div class="col-md-3 col-sm-4 col-6">
+        <div class="card h-100">
+            <div class="card-header p-2 d-flex justify-content-between align-items-center">
+                <span class="fw-semibold small">{{ day.date }}</span>
+                {% if day.events %}<span class="badge bg-secondary">{{ day.events|length }}</span>{% endif %}
+            </div>
+            <div class="card-body p-2" style="max-height:200px;overflow-y:auto;">
+                {% for event in day.events %}
+                <div class="mb-1 border-bottom pb-1">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <small class="text-muted text-truncate me-1" style="max-width:65%">{{ event.pipeline_name }}</small>
+                        <span class="badge bg-{% if event.moderation_status == 'approved' %}success{% elif event.moderation_status == 'pending' %}warning{% elif event.moderation_status == 'published' %}primary{% else %}secondary{% endif %}" style="font-size:.65rem">
+                            {{ event.moderation_status }}
+                        </span>
+                    </div>
+                    <a href="/moderation/{{ event.run_id }}/view" class="btn btn-sm btn-outline-primary mt-1" style="font-size:.7rem;padding:.1rem .3rem">Открыть</a>
+                </div>
+                {% else %}
+                <p class="text-muted small mb-0">—</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}

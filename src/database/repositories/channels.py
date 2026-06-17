@@ -216,12 +216,12 @@ class ChannelsRepository:
         if not updates:
             return 0
         # When commit=False, the caller already holds a Database.transaction()
-        # block on the shared connection and is responsible for the commit —
-        # we MUST keep using self._db here so our writes land in that open
-        # transaction. When commit=True (standalone use, e.g. from
-        # ensure_channel_filtered) we take Database._write_lock ourselves so
-        # the bulk write is atomic against concurrent transactions on the
-        # same connection (issue #569).
+        # block on the WRITE connection and owns the commit — we MUST write on
+        # that same write connection (self._database.db) so our rows land in the
+        # open transaction. self._db is the read pool (#760) and would route the
+        # write to a read connection, outside the transaction (→ database is locked).
+        # When commit=True (standalone, e.g. ensure_channel_filtered) we take
+        # Database._write_lock ourselves via execute_write/transaction (#569).
         if commit:
             assert self._database is not None, (
                 "ChannelsRepository.set_filtered_bulk requires a Database reference "
@@ -238,9 +238,10 @@ class ChannelsRepository:
                     if rowcount > 0:
                         updated_rows += rowcount
             return updated_rows
+        assert self._database is not None
         updated_rows = 0
         for channel_id, flags_csv in updates:
-            cur = await self._db.execute(
+            cur = await self._database.db.execute(
                 "UPDATE channels SET is_filtered = 1, filter_flags = ? WHERE channel_id = ?",
                 (flags_csv, channel_id),
             )
@@ -260,7 +261,9 @@ class ChannelsRepository:
             )
             rowcount = cur.rowcount if cur.rowcount is not None else 0
             return rowcount if rowcount > 0 else 0
-        cur = await self._db.execute("UPDATE channels SET is_filtered = 0, filter_flags = ''")
+        # commit=False: write on the caller's open write transaction (see set_filtered_bulk).
+        assert self._database is not None
+        cur = await self._database.db.execute("UPDATE channels SET is_filtered = 0, filter_flags = ''")
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         return rowcount if rowcount > 0 else 0
 
@@ -280,7 +283,9 @@ class ChannelsRepository:
             cur = await self._database.execute_write(sql, tuple(pks))
             rowcount = cur.rowcount if cur.rowcount is not None else 0
             return rowcount if rowcount > 0 else 0
-        cur = await self._db.execute(sql, tuple(pks))
+        # commit=False: write on the caller's open write transaction (see set_filtered_bulk).
+        assert self._database is not None
+        cur = await self._database.db.execute(sql, tuple(pks))
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         return rowcount if rowcount > 0 else 0
 

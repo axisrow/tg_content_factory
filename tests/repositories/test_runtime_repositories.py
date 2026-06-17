@@ -174,7 +174,9 @@ async def test_claim_next_command_rolls_back_on_error(tmp_path):
         )
 
         repo = db.repos.telegram_commands
-        original_execute = repo._db.execute
+        # claim_next_command writes inside db.transaction(), i.e. on the write
+        # connection (db._db) — not the repo's read proxy (#760). Patch the write conn.
+        original_execute = db._db.execute
         call_count = {"n": 0}
 
         async def boom(sql, *args, **kwargs):
@@ -184,7 +186,7 @@ async def test_claim_next_command_rolls_back_on_error(tmp_path):
                 raise RuntimeError("simulated fetch failure")
             return await original_execute(sql, *args, **kwargs)
 
-        with patch.object(repo._db, "execute", side_effect=boom):
+        with patch.object(db._db, "execute", side_effect=boom):
             with pytest.raises(RuntimeError, match="simulated"):
                 await repo.claim_next_command()
 

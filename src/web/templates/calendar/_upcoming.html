@@ -1,0 +1,33 @@
+{% from "_macros_ui.html" import empty_state %}
+{% if upcoming %}
+<div class="table-responsive">
+    <table class="tga-table-hover mb-0">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Пайплайн</th>
+                <th>Статус</th>
+                <th>Превью</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for event in upcoming %}
+            <tr>
+                <td class="text-muted small">{{ event.run_id }}</td>
+                <td class="small">{{ event.pipeline_name }}</td>
+                <td>
+                    <span class="badge bg-{% if event.moderation_status == 'approved' %}success{% elif event.moderation_status == 'pending' %}warning{% elif event.moderation_status == 'published' %}primary{% else %}secondary{% endif %}">
+                        {{ event.moderation_status }}
+                    </span>
+                </td>
+                <td class="small text-muted">{{ event.preview[:80] }}</td>
+                <td><a href="/moderation/{{ event.run_id }}/view" class="btn btn-sm btn-outline-primary">Открыть</a></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+{{ empty_state("Нет черновиков.", class="p-3 mb-0") }}
+{% endif %}
