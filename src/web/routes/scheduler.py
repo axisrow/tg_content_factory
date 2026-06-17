@@ -84,6 +84,35 @@ async def scheduler_page(
     return scheduler_response(request, result)
 
 
+@router.get("/fragments/health", response_class=HTMLResponse)
+async def scheduler_health_fragment(request: Request):
+    return scheduler_response(request, await handlers.render_scheduler_health_fragment(request))
+
+
+@router.get("/fragments/jobs", response_class=HTMLResponse)
+async def scheduler_jobs_fragment(
+    request: Request,
+    page: int = Query(1),
+    status: str = Query("all"),
+    limit: int = Query(50),
+):
+    return scheduler_response(
+        request, await handlers.render_scheduler_jobs_fragment(request, page, status, limit)
+    )
+
+
+@router.get("/fragments/tasks", response_class=HTMLResponse)
+async def scheduler_tasks_fragment(
+    request: Request,
+    page: int = Query(1),
+    status: str = Query("all"),
+    limit: int = Query(50),
+):
+    return scheduler_response(
+        request, await handlers.render_scheduler_tasks_fragment(request, page, status, limit)
+    )
+
+
 @router.post("/jobs/{job_id}/toggle")
 async def toggle_scheduler_job(request: Request, job_id: str):
     return scheduler_response(request, await handlers.toggle_scheduler_job(request, job_id))

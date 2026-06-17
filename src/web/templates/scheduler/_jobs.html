@@ -1,0 +1,116 @@
+{% from "_macros.html" import icon %}
+{% from "_macros_ui.html" import scheduler_filter_qs %}
+{% set filter_qs = scheduler_filter_qs(status_filter, page, limit) %}
+<!-- Scheduler Jobs -->
+{% if scheduler_jobs %}
+<div class="card mb-4">
+    <div class="card-header fw-semibold">
+        Джобы планировщика
+        <span class="badge text-bg-secondary ms-1">{{ scheduler_jobs|length }}</span>
+        {% if not is_running %}
+        <small class="text-muted ms-2">(будут зарегистрированы при запуске)</small>
+        {% endif %}
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+        <table class="tga-table-striped mb-0">
+            <thead>
+                <tr>
+                    <th>Вкл.</th>
+                    <th>Джоб</th>
+                    <th>Интервал</th>
+                    <th>Следующий запуск</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for j in scheduler_jobs %}
+                <tr>
+                    <td>
+                        <form method="post" action="/scheduler/jobs/{{ j.job_id }}/toggle{{ filter_qs }}" class="mb-0">
+                            <input type="checkbox" onchange="this.form.submit()"
+                                   {% if j.enabled %}checked{% endif %}
+                                   title="{{ 'Отключить' if j.enabled else 'Включить' }}">
+                        </form>
+                    </td>
+                    <td class="{% if not j.enabled %}text-muted{% endif %}">{{ j.label }}</td>
+                    <td>
+                        {% if j.interval_editable and j.interval_minutes is not none %}
+                            <form method="post" action="/scheduler/jobs/{{ j.job_id }}/set-interval{{ filter_qs }}"
+                                  class="d-flex gap-1 mb-0">
+                                <input type="number" name="interval_minutes" value="{{ j.interval_minutes }}"
+                                       min="1" max="1440" class="form-control form-control-sm" style="width:75px">
+                                <button type="submit" class="btn btn-sm btn-outline-secondary">{{ icon("save") }}</button>
+                            </form>
+                        {% elif j.interval_minutes %}
+                            {{ j.interval_minutes }} мин.
+                        {% else %}
+                            —
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if j.next_run %}
+                            {{ j.next_run|local_dt("time") }}
+                        {% elif is_running and j.enabled %}
+                            —
+                        {% elif not j.enabled %}
+                            <span class="text-muted">отключён</span>
+                        {% else %}
+                            <span class="text-muted">остановлен</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if search_log %}
+<div class="card mb-4">
+    <div class="card-header fw-semibold">
+        Лог поиска
+        <span class="hint" data-tooltip="Последние результаты поиска: какой запрос, сколько найдено, каким аккаунтом">?</span>
+    </div>
+    <div class="card-body p-0">
+        <!-- Desktop -->
+        <div class="table-responsive d-none d-lg-block">
+        <table class="tga-table-striped mb-0">
+            <thead>
+                <tr>
+                    <th>Запрос</th>
+                    <th>Аккаунт</th>
+                    <th>Результатов</th>
+                    <th>Дата</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in search_log %}
+                <tr>
+                    <td>{{ entry.query }}</td>
+                    <td>{{ entry.phone }}</td>
+                    <td>{{ entry.results_count }}</td>
+                    <td>{{ entry.created_at|local_dt }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        </div>
+        <!-- Mobile -->
+        <div class="d-lg-none mobile-cards p-2">
+            {% for entry in search_log %}
+            <div class="card mb-2">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <strong class="text-truncate">{{ entry.query }}</strong>
+                        <span class="badge text-bg-secondary">{{ entry.results_count }}</span>
+                    </div>
+                    <small class="text-muted">{{ entry.phone }} &middot; {{ entry.created_at|local_dt }}</small>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}

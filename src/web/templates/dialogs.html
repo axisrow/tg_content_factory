@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon %}
+{% from "_macros_ui.html" import loading %}
 {% block title %}Диалоги — TG Agent{% endblock %}
 {% block content %}
 <div class="d-flex align-items-center gap-3 mb-1">
@@ -10,7 +11,7 @@
 <div class="d-flex flex-column flex-md-row align-items-md-start gap-3 mb-4">
     {% if accounts %}
     <div class="d-flex flex-column gap-1">
-        <a class="btn btn-outline-primary btn-sm align-self-start" href="/dialogs/photos{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}">Открыть Photo Loader</a>
+        <a id="photo-loader-link" class="btn btn-outline-primary btn-sm align-self-start" href="/dialogs/photos{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}">Открыть Photo Loader</a>
         <small class="text-muted">Если аккаунт не выбран, откроется первый доступный профиль.</small>
     </div>
     {% else %}
@@ -23,11 +24,15 @@
     {% if accounts %}
     <div class="mb-0" style="max-width:400px">
         <label class="form-label">Аккаунт</label>
-        <select name="phone" class="form-select"
-                hx-get="/dialogs/"
+        {# No hx-push-url here: the address bar must keep the real /dialogs/ URL, not the
+           bare /dialogs/fragments/list partial (a reload/bookmark would render chrome-less).
+           The "Обновить диалоги" form lives INSIDE the swapped #dialogs-list fragment so its
+           hidden phone always matches the account currently shown (see dialogs/_list.html). #}
+        <select name="phone" id="account-select" class="form-select"
+                hx-get="/dialogs/fragments/list"
                 hx-include="this"
-                hx-target="body"
-                hx-push-url="true"
+                hx-target="#dialogs-list"
+                hx-swap="innerHTML"
                 hx-trigger="change"
                 hx-indicator="#dialogs-loading">
             <option value="" {% if not selected_phone %}selected{% endif %}>Выберите аккаунт</option>
@@ -36,15 +41,6 @@
             {% endfor %}
         </select>
         <span id="dialogs-loading" class="htmx-indicator d-inline-block mt-2">{{ icon("loading") }} Загрузка диалогов…</span>
-        <form method="post" action="/dialogs/refresh" class="mt-2" data-busy>
-            <input type="hidden" name="phone" value="{{ selected_phone or '' }}">
-            <button class="btn btn-outline-secondary btn-sm" type="submit" {% if not selected_phone %}disabled{% endif %}>Обновить диалоги</button>
-        </form>
-        {% if selected_phone %}
-        <small class="text-muted d-block mt-2">
-            Показан сохранённый список диалогов{% if dialogs_cached_at %} от {{ dialogs_cached_at|local_dt }}{% endif %}. Кнопка обновления заново загружает данные из Telegram.
-        </small>
-        {% endif %}
     </div>
     {% endif %}
 </div>
@@ -52,144 +48,30 @@
 {% if not accounts %}
 <p>Нет подключённых аккаунтов. Добавьте аккаунт в <a href="/settings">Настройках</a>.</p>
 {% else %}
-
-{% if left or failed %}
-<p class="mb-3">
-    Отписались: <strong>{{ left }}</strong>{% if failed %}, не удалось: <strong>{{ failed }}</strong>{% endif %}
-</p>
+{# The dialog list (a Telegram/cache fetch) loads lazily; changing the account
+   above swaps only this container, not the whole page (#756). #}
+<div id="dialogs-list"
+     hx-get="/dialogs/fragments/list{% if selected_phone %}?phone={{ selected_phone|urlencode }}{% endif %}"
+     hx-trigger="load" hx-swap="innerHTML">
+    {{ loading(class="my-4") }}
+</div>
 {% endif %}
 
-{% if dialogs %}
-{% set channels = dialogs | selectattr("channel_type", "in", ["channel", "monoforum", "scam", "fake", "restricted"]) | list %}
-{% set groups = dialogs | selectattr("channel_type", "in", ["supergroup", "group", "gigagroup", "forum"]) | list %}
-{% set dms = dialogs | selectattr("channel_type", "equalto", "dm") | list %}
-{% set bots = dialogs | selectattr("channel_type", "equalto", "bot") | list %}
-{% set own = dialogs | selectattr("is_own") | list %}
-
-<p class="text-muted">Всего диалогов: <strong>{{ dialogs|length }}</strong></p>
-
-<form method="post" action="/dialogs/leave" id="leave-form" data-busy
-      data-confirm="Отписаться от выбранных диалогов?">
-<input type="hidden" name="phone" value="{{ selected_phone }}">
-
-<div id="leave-bar" class="d-none gap-3 align-items-center mb-3">
-    <span id="leave-count">0 выбрано</span>
-    <button type="submit" class="btn btn-danger btn-sm">
-        Отписаться
-    </button>
-    <button type="button" class="btn btn-secondary btn-sm" onclick="clearSelection()">Сбросить</button>
-</div>
-
-<ul class="nav nav-tabs nav-fill mb-3" role="tablist">
-    <li class="nav-item" role="presentation">
-        <button class="nav-link active" id="tab-channels" data-bs-toggle="tab" data-bs-target="#pane-channels" type="button" role="tab">Каналы ({{ channels|length }})</button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-own" data-bs-toggle="tab" data-bs-target="#pane-own" type="button" role="tab">Созданные ({{ own|length }})</button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-dms" data-bs-toggle="tab" data-bs-target="#pane-dms" type="button" role="tab">ДМ ({{ dms|length }})</button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-groups" data-bs-toggle="tab" data-bs-target="#pane-groups" type="button" role="tab">Группы ({{ groups|length }})</button>
-    </li>
-    <li class="nav-item" role="presentation">
-        <button class="nav-link" id="tab-bots" data-bs-toggle="tab" data-bs-target="#pane-bots" type="button" role="tab">Боты ({{ bots|length }})</button>
-    </li>
-</ul>
-
-{% macro dialog_pane(items, pane_id, empty_text, with_type=True, active=False) %}
-<div class="tab-pane fade{% if active %} show active{% endif %}" id="pane-{{ pane_id }}" role="tabpanel">
-    {% if items %}
-    <!-- Desktop -->
-    <div class="table-responsive d-none d-md-block">
-    <table class="tga-table-striped">
-        <thead><tr>
-            <th><input type="checkbox" class="form-check-input" id="select-all-{{ pane_id }}"
-                       onchange="selectAll('{{ pane_id }}', this.checked)"></th>
-            {% if with_type %}<th>Тип</th>{% endif %}<th>Название</th><th>Username</th>{% if with_type %}<th>В базе</th>{% endif %}
-        </tr></thead>
-        <tbody>
-        {% for d in items %}
-        <tr>
-            <td><input type="checkbox" class="form-check-input cb-{{ pane_id }}" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}"
-                       onchange="updateLeaveBar()"></td>
-            {% if with_type %}<td><span class="badge-active">{{ d.channel_type }}</span></td>{% endif %}
-            <td>{{ d.title }}</td>
-            <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
-            {% if with_type %}<td>{% if d.already_added %}<span class="badge-active">{{ icon("success") }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>{% endif %}
-        </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-    </div>
-    <!-- Mobile -->
-    <div class="d-md-none mobile-cards">
-        {% for d in items %}
-        <div class="card mb-2">
-            <div class="card-body py-2 d-flex align-items-center gap-2">
-                <input type="checkbox" class="form-check-input cb-{{ pane_id }}" name="channel_ids" value="{{ d.channel_id }}:{{ d.channel_type }}" onchange="updateLeaveBar()">
-                <div class="flex-fill min-w-0">
-                    <div class="text-truncate"><strong>{{ d.title }}</strong></div>
-                    {% if with_type %}
-                    <small class="text-muted">{{ d.channel_type }}{% if d.username %} &middot; @{{ d.username }}{% endif %}{% if d.already_added %} &middot; {{ icon("success") }}{% endif %}</small>
-                    {% elif d.username %}
-                    <small class="text-muted">@{{ d.username }}</small>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
-        {% endfor %}
-    </div>
-    {% else %}<p>{{ empty_text }}</p>{% endif %}
-</div>
-{% endmacro %}
-
-<div class="tab-content">
-    {{ dialog_pane(own, 'own', 'Нет своих каналов/групп.') }}
-    {{ dialog_pane(channels, 'channels', 'Нет каналов.', active=True) }}
-    {{ dialog_pane(groups, 'groups', 'Нет групп.') }}
-    {{ dialog_pane(dms, 'dms', 'Нет личных диалогов.', with_type=False) }}
-    {{ dialog_pane(bots, 'bots', 'Нет ботов.', with_type=False) }}
-</div>
-
-</form>
-
+{% if accounts %}
 <script>
-function updateLeaveBar() {
-    var n = document.querySelectorAll('input[name="channel_ids"]:checked').length;
-    document.getElementById('leave-count').textContent = n + ' выбрано';
-    var bar = document.getElementById('leave-bar');
-    if (n > 0) {
-        bar.classList.remove('d-none');
-        bar.classList.add('d-flex');
-    } else {
-        bar.classList.add('d-none');
-        bar.classList.remove('d-flex');
-    }
-}
-function selectAll(pane, checked) {
-    document.querySelectorAll('.cb-' + pane).forEach(function(cb) {
-        cb.checked = checked;
+// The account selector swaps only #dialogs-list, so any account-scoped control
+// OUTSIDE that fragment must be kept in sync here. The Photo Loader link is such
+// a control; without this it would keep the phone from the initial page render
+// and send the user to the wrong account after a switch (#878 review).
+(function() {
+    var sel = document.getElementById('account-select');
+    var link = document.getElementById('photo-loader-link');
+    if (!sel || !link) { return; }
+    sel.addEventListener('change', function() {
+        var phone = sel.value;
+        link.href = '/dialogs/photos' + (phone ? '?phone=' + encodeURIComponent(phone) : '');
     });
-    updateLeaveBar();
-}
-function clearSelection() {
-    document.querySelectorAll('input[name="channel_ids"]').forEach(function(cb) {
-        cb.checked = false;
-    });
-    document.querySelectorAll('[id^="select-all-"]').forEach(function(cb) {
-        cb.checked = false;
-    });
-    updateLeaveBar();
-}
+})();
 </script>
-
-{% elif selected_phone %}
-<p>Нет диалогов.</p>
-{% else %}
-<p class="text-muted">Выберите аккаунт, чтобы загрузить список диалогов.</p>
-{% endif %}
-
 {% endif %}
 {% endblock %}

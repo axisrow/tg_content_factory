@@ -1,9 +1,13 @@
 """Cross-layer regression for pipeline result semantics (issue #463).
 
-Chains per scenario: real metadata → DB → task row → /scheduler renders
-a semantic cell. This guards against drift between layers — if any single
-layer starts interpreting the result differently, the test fails in that
-layer rather than silently passing.
+Chains per scenario: real metadata → DB → task row → the scheduler tasks
+fragment renders a semantic cell. This guards against drift between layers —
+if any single layer starts interpreting the result differently, the test fails
+in that layer rather than silently passing.
+
+The task table moved out of the /scheduler/ skeleton into the lazy
+/scheduler/fragments/tasks fragment (#756 lazyload), so these chains assert
+against the fragment endpoint, not the skeleton.
 """
 
 from __future__ import annotations
@@ -86,7 +90,7 @@ async def test_generation_run_end_to_end(base_app, route_client):
     assert stored_run.result_kind == "generated_items"
     assert stored_run.result_count == 4
 
-    resp = await route_client.get("/scheduler/?status=all")
+    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
     assert resp.status_code == 200
     soup = BeautifulSoup(resp.text, "html.parser")
     row = _first_pipeline_row(soup)
@@ -119,7 +123,7 @@ async def test_action_only_run_end_to_end_empty_text_no_zero(base_app, route_cli
     assert stored_run.result_kind == "processed_messages"
     assert stored_run.result_count == 9
 
-    resp = await route_client.get("/scheduler/?status=all")
+    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
     assert resp.status_code == 200
     soup = BeautifulSoup(resp.text, "html.parser")
     row = _first_pipeline_row(soup)
@@ -158,7 +162,7 @@ async def test_action_run_with_node_errors_shows_warning_badge_end_to_end(base_a
     assert stored is not None
     assert (stored.metadata or {}).get("node_errors")
 
-    resp = await route_client.get("/scheduler/?status=all")
+    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
     soup = BeautifulSoup(resp.text, "html.parser")
     row = _first_pipeline_row(soup)
     assert row is not None
@@ -187,7 +191,7 @@ async def test_mixed_run_end_to_end_shows_generation_count(base_app, route_clien
     assert stored_run is not None
     assert stored_run.metadata["action_counts"] == {"react": 7}
 
-    resp = await route_client.get("/scheduler/?status=all")
+    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
     soup = BeautifulSoup(resp.text, "html.parser")
     row = _first_pipeline_row(soup)
     assert row is not None

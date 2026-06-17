@@ -178,7 +178,7 @@ async def test_scheduler_page_shows_channel_collect_result_with_valid_total(clie
     )
     await db.update_collection_task(task_id, CollectionTaskStatus.RUNNING, messages_collected=1000)
 
-    resp = await client.get("/scheduler/")
+    resp = await client.get("/scheduler/fragments/tasks")
 
     assert resp.status_code == 200
     assert "1000/5000" in resp.text
@@ -216,16 +216,18 @@ async def test_scheduler_autoreload_is_capped(client):
     db = client._transport.app.state.db
     await db.create_collection_task(channel_id=-1001234567890, channel_title="Active")
 
-    resp = await client.get("/scheduler/")
+    resp = await client.get("/scheduler/fragments/tasks")
     assert resp.status_code == 200
     text = resp.text
-    # Active tasks => the reload script is present, but bounded by a counter.
-    assert "window.location.reload" in text
+    # Active tasks => auto-refresh the tasks fragment ONLY (not a full-page reload,
+    # which would re-fire the health/jobs fragments too and defeat lazyload — #878).
+    assert "window.location.reload" not in text
+    assert 'hx-target="#tasks-fragment"' in text
+    assert "tasksAutoReload" in text
+    # Still bounded by a counter so a stuck task can't refresh forever.
     assert "MAX_AUTO_RELOADS" in text
     assert "scheduler-autoreload-count" in text
-    assert "isNaN(raw) ? 0 : raw + 1" in text
-    assert "storageAvailable = false" in text
-    assert "!storageAvailable || count >= MAX_AUTO_RELOADS" in text
+    assert "count >= MAX_AUTO_RELOADS" in text
     assert 'id="autoreload-paused"' in text
 
 
@@ -258,7 +260,7 @@ async def test_scheduler_page_shows_processed_message_label_for_pipeline_runs(cl
         note=f"Pipeline run id={run_id}",
     )
 
-    resp = await client.get("/scheduler/")
+    resp = await client.get("/scheduler/fragments/tasks")
     assert resp.status_code == 200
     assert "Обработано" in resp.text
 
@@ -293,7 +295,7 @@ async def test_scheduler_shows_collector_health_card_when_all_accounts_flooded(c
     for acc in accounts:
         await db.update_account_flood(acc.phone, future)
 
-    resp = await client.get("/scheduler/")
+    resp = await client.get("/scheduler/fragments/health")
     assert resp.status_code == 200
     assert "Здоровье коллектора" in resp.text
     assert "Flood Wait" in resp.text
@@ -318,7 +320,7 @@ async def test_scheduler_overload_running_is_warning_not_flood_blocker(client):
         old_task_id = await db.create_collection_task(channel_id=200 + i, channel_title=f"Old {i}")
         await db.update_collection_task(old_task_id, CollectionTaskStatus.COMPLETED, note=old_note)
 
-    resp = await client.get("/scheduler/")
+    resp = await client.get("/scheduler/fragments/health")
 
     assert resp.status_code == 200
     assert "Риск перегрузки" in resp.text
@@ -344,7 +346,7 @@ async def test_scheduler_all_flooded_keeps_danger_current_reason(client):
     for acc in await db.get_accounts(active_only=False):
         await db.update_account_flood(acc.phone, future)
 
-    resp = await client.get("/scheduler/")
+    resp = await client.get("/scheduler/fragments/health")
 
     assert resp.status_code == 200
     assert "border-danger" in resp.text
@@ -561,7 +563,7 @@ async def test_scheduler_page_shows_clear_pending_collect_button(client):
         channel_id=-1001234567890, channel_title="Pending Channel",
     )
 
-    resp = await client.get("/scheduler/")
+    resp = await client.get("/scheduler/fragments/tasks")
 
     assert resp.status_code == 200
     assert 'action="/scheduler/tasks/clear-pending-collect"' in resp.text
@@ -661,7 +663,7 @@ async def test_scheduler_page_with_many_pending_tasks(client):
             channel_username=f"ch{i}",
         )
 
-    resp = await client.get("/scheduler/")
+    resp = await client.get("/scheduler/fragments/tasks")
     assert resp.status_code == 200
     assert "Channel 0" in resp.text
 
@@ -828,7 +830,7 @@ async def test_scheduler_renders_processed_label_for_action_only_run(base_app, r
         messages_collected=5,
     )
 
-    resp = await route_client.get("/scheduler/?status=all")
+    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
     assert resp.status_code == 200
 
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -858,7 +860,7 @@ async def test_scheduler_renders_generation_label_for_generation_run(base_app, r
         messages_collected=3,
     )
 
-    resp = await route_client.get("/scheduler/?status=all")
+    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
     assert resp.status_code == 200
 
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -894,7 +896,7 @@ async def test_scheduler_shows_warning_badge_when_run_has_node_errors(base_app, 
         messages_collected=0,
     )
 
-    resp = await route_client.get("/scheduler/?status=all")
+    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
     assert resp.status_code == 200
     soup = BeautifulSoup(resp.text, "html.parser")
     row = _pipeline_row(soup)
@@ -938,7 +940,7 @@ async def test_scheduler_mixed_page_non_pipeline_tasks_unaffected(base_app, rout
         messages_collected=42,
     )
 
-    resp = await route_client.get("/scheduler/?status=all")
+    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
     assert resp.status_code == 200
 
     soup = BeautifulSoup(resp.text, "html.parser")
@@ -981,7 +983,7 @@ async def test_scheduler_shows_flood_wait_countdown(client):
     for acc in accounts:
         await db.update_account_flood(acc.phone, future)
 
-    resp = await client.get("/scheduler/")
+    resp = await client.get("/scheduler/fragments/health")
     assert resp.status_code == 200
     # Check that countdown is displayed — "3 ч 0 мин" or similar
     assert " ч " in resp.text or " мин)" in resp.text
@@ -1056,3 +1058,32 @@ async def test_scheduler_page_shows_pause_button_when_running(client):
     assert resp.status_code == 200
     assert "Продолжить очередь" in resp.text
     assert "Очередь на паузе" in resp.text
+
+
+@pytest.mark.anyio
+async def test_scheduler_page_lazy_loads_fragments(client):
+    """#756: the scheduler page paints a skeleton wired to the 3 HTMX fragments."""
+    resp = await client.get("/scheduler/")
+    assert resp.status_code == 200
+    assert 'hx-get="/scheduler/fragments/health"' in resp.text
+    assert 'hx-get="/scheduler/fragments/jobs' in resp.text
+    assert 'hx-get="/scheduler/fragments/tasks' in resp.text
+    assert 'hx-trigger="load"' in resp.text
+    # Controls stay in the skeleton.
+    assert 'id="dry-run-btn"' in resp.text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/scheduler/fragments/health",
+        "/scheduler/fragments/jobs?status=all&page=1&limit=50",
+        "/scheduler/fragments/tasks?status=all&page=1&limit=50",
+    ],
+)
+async def test_scheduler_fragments_return_partial_html(client, path):
+    """Scheduler fragment endpoints return bare partials, not a full page."""
+    resp = await client.get(path)
+    assert resp.status_code == 200
+    assert "<html" not in resp.text.lower()
