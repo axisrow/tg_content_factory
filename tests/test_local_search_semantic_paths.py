@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.database.repositories.messages import MessageSearchPage
-from src.models import Message, SearchResult
+from src.models import Message, SearchParams, SearchResult
 from src.search.local_search import LocalSearch
 
 
@@ -38,7 +38,7 @@ def _make_message(msg_id=1, channel_id=100, text="hello", date="2026-01-01T00:00
 async def test_search_basic():
     bundle = _mock_search_bundle()
     ls = LocalSearch(bundle)
-    result = await ls.search("test")
+    result = await ls.search(SearchParams(query="test"))
     assert isinstance(result, SearchResult)
     assert result.total == 0
 
@@ -46,7 +46,7 @@ async def test_search_basic():
 async def test_search_with_channel_filter():
     bundle = _mock_search_bundle()
     ls = LocalSearch(bundle)
-    await ls.search("test", channel_id=100)
+    await ls.search(SearchParams(query="test", channel_id=100))
     bundle.search_messages.assert_called_once()
 
 
