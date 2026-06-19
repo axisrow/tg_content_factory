@@ -831,22 +831,37 @@ async def handle_delete_agent_provider(request: Request, provider_name: str) -> 
     return SettingsFlash(msg="agent_saved")
 
 
-async def handle_refresh_agent_provider_models(
-    request: Request,
-    provider_name: str,
-    form: ProviderConfigForm,
-) -> SettingsJson:
+async def _agent_provider_write_guard(
+    request: Request, provider_name: str
+) -> tuple[ProviderConfigService | None, SettingsJson | None]:
+    """Shared write-guard for per-provider agent endpoints.
+
+    Requires write access (SESSION_ENCRYPTION_KEY), agent dev-mode, and a known
+    provider. Returns ``(service, None)`` on success, or ``(None, error)`` where
+    ``error`` is the JSON response the caller should return as-is.
+    """
     service = _agent_provider_service(request)
     if not service.writes_enabled:
-        return SettingsJson(
+        return None, SettingsJson(
             {"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."},
             status_code=409,
         )
     dev_mode_required = await _require_agent_dev_mode(request, json_mode=True)
     if dev_mode_required is not None:
-        return dev_mode_required
+        return None, dev_mode_required
     if deepagents_provider_spec(provider_name) is None:
-        return SettingsJson({"ok": False, "error": "Unknown provider."}, status_code=404)
+        return None, SettingsJson({"ok": False, "error": "Unknown provider."}, status_code=404)
+    return service, None
+
+
+async def handle_refresh_agent_provider_models(
+    request: Request,
+    provider_name: str,
+    form: ProviderConfigForm,
+) -> SettingsJson:
+    service, guard_error = await _agent_provider_write_guard(request, provider_name)
+    if guard_error is not None:
+        return guard_error
     configs = await service.load_provider_configs()
     cfg = service.parse_single_provider_form(form.raw, configs, provider_name)
     entry = await service.refresh_models_for_provider(provider_name, cfg)
@@ -907,17 +922,9 @@ async def handle_probe_agent_provider_model(
     provider_name: str,
     form: ProviderConfigForm,
 ) -> SettingsJson:
-    service = _agent_provider_service(request)
-    if not service.writes_enabled:
-        return SettingsJson(
-            {"ok": False, "error": "SESSION_ENCRYPTION_KEY is required."},
-            status_code=409,
-        )
-    dev_mode_required = await _require_agent_dev_mode(request, json_mode=True)
-    if dev_mode_required is not None:
-        return dev_mode_required
-    if deepagents_provider_spec(provider_name) is None:
-        return SettingsJson({"ok": False, "error": "Unknown provider."}, status_code=404)
+    service, guard_error = await _agent_provider_write_guard(request, provider_name)
+    if guard_error is not None:
+        return guard_error
 
     existing = await service.load_provider_configs()
     cfg = service.parse_single_provider_form(form.raw, existing, provider_name)
