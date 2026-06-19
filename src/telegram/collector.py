@@ -60,6 +60,11 @@ RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
 MESSAGE_FLUSH_BATCH_SIZE = 500
 PERSISTED_ID_VERIFY_CHUNK_SIZE = 500
 STREAM_CLEANUP_TIMEOUT_SEC = 10.0
+
+# Sentinel returned by Collector._acquire_collection_client to tell the
+# collection loop to retry (transient flood wait or dialog-prefetch flood) —
+# the moral equivalent of the inline `continue` it replaced.
+_ACQUIRE_RETRY = object()
 # How far back the notification check re-scans persisted messages so a send that
 # failed on an earlier pass is retried (the dedup ledger prevents duplicates).
 NOTIFICATION_BACKLOG_LOOKBACK_HOURS = 24.0
@@ -733,6 +738,94 @@ class Collector:
                 logger.debug("Failed to disconnect dirty Telegram client for %s", phone, exc_info=True)
         await self._pool.release_client(phone)
 
+    async def _acquire_collection_client(self, channel: Channel, attempted_resolve_phones: set[str]):
+        """Pick a client for `channel`, adapt its session, decide cache-only resolve
+        mode, and warm the PeerChannel dialog cache once per phone.
+
+        Returns ``(session, phone, resolve_cache_only)`` on success, or
+        ``_ACQUIRE_RETRY`` to tell the collection loop to retry (transient flood
+        wait or a dialog-prefetch flood). Raises the collection-unavailability
+        error when no client can be used.
+        """
+        channel_id = channel.channel_id
+
+        # For private groups (no username):
+        #   1. preferred_phone from DB (persists across restarts)
+        #   2. in-memory map built by warm_all_dialogs()
+        #   3. if warming is still in progress — wait, then re-check map
+        #   4. fall back to any available phone (new channel, no info yet)
+        if not channel.username:
+            preferred = channel.preferred_phone or self._pool.get_phone_for_channel(
+                channel_id
+            )
+            if not preferred and self._pool.is_warming():
+                await self._pool.wait_for_warm(timeout=30.0)
+                preferred = self._pool.get_phone_for_channel(channel_id)
+            if preferred:
+                result = await self._pool.get_client_by_phone(preferred)
+            else:
+                result = await self._pool.get_available_client()
+        elif attempted_resolve_phones:
+            result = await self._pool.get_available_client(
+                exclude_phones=set(attempted_resolve_phones)
+            )
+        else:
+            result = await self._pool.get_available_client()
+
+        if result is None:
+            availability = await self.get_collection_availability()
+            if await self._wait_for_transient_collection_flood(availability):
+                return _ACQUIRE_RETRY
+            await self._raise_collection_unavailability(availability)
+
+        session, phone = result
+        self._reset_collection_unavailability_log()
+        session = adapt_transport_session(session, disconnect_on_close=False)
+
+        # Per-account resolve backoff (#552/#790): while this phone is in a
+        # flood backoff the channel runs in cache-only mode on it — a cached
+        # InputPeer still collects for free, a cache miss rotates to another
+        # account or defers the channel (handled at the resolve call site).
+        resolve_cache_only = False
+        if channel.username:
+            backoff_remaining_sec = self._get_resolve_username_backoff_remaining_sec(
+                phone
+            )
+            if backoff_remaining_sec > 0:
+                resolve_cache_only = True
+                logger.warning(
+                    "Channel %d (%s): %s backoff active on %s for %ss — "
+                    "cache-only resolve",
+                    channel_id,
+                    channel.username,
+                    RESOLVE_USERNAME_OPERATION,
+                    mask_phone(phone),
+                    backoff_remaining_sec,
+                )
+        # Populate entity cache when using PeerChannel
+        # (StringSession loses cache between restarts).
+        # Only needed once per process lifetime per phone —
+        # the in-memory cache persists.
+        if not channel.username and not self._pool.is_dialogs_fetched(phone):
+            try:
+                await run_with_flood_wait_retry(
+                    lambda: session.warm_dialog_cache(),
+                    operation="collect_channel_warm_dialog_cache",
+                    phone=phone,
+                    pool=self._pool,
+                    logger_=logger,
+                    timeout=30.0,
+                )
+                self._pool.mark_dialogs_fetched(phone)
+            except HandledFloodWaitError as exc:
+                logger.warning("Failed to prefetch dialogs for %s: %s", phone, exc.info.detail)
+                await self._pool.release_client(phone)
+                return _ACQUIRE_RETRY
+            except Exception as e:
+                logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
+
+        return session, phone, resolve_cache_only
+
     async def _collect_channel(
         self,
         channel: Channel,
@@ -756,80 +849,11 @@ class Collector:
             channel_id = channel.channel_id
             min_id = channel.last_collected_id
 
-            # For private groups (no username):
-            #   1. preferred_phone from DB (persists across restarts)
-            #   2. in-memory map built by warm_all_dialogs()
-            #   3. if warming is still in progress — wait, then re-check map
-            #   4. fall back to any available phone (new channel, no info yet)
-            if not channel.username:
-                preferred = channel.preferred_phone or self._pool.get_phone_for_channel(
-                    channel_id
-                )
-                if not preferred and self._pool.is_warming():
-                    await self._pool.wait_for_warm(timeout=30.0)
-                    preferred = self._pool.get_phone_for_channel(channel_id)
-                if preferred:
-                    result = await self._pool.get_client_by_phone(preferred)
-                else:
-                    result = await self._pool.get_available_client()
-            elif attempted_resolve_phones:
-                result = await self._pool.get_available_client(
-                    exclude_phones=set(attempted_resolve_phones)
-                )
-            else:
-                result = await self._pool.get_available_client()
+            acquired = await self._acquire_collection_client(channel, attempted_resolve_phones)
+            if acquired is _ACQUIRE_RETRY:
+                continue
+            session, phone, resolve_cache_only = acquired
 
-            if result is None:
-                availability = await self.get_collection_availability()
-                if await self._wait_for_transient_collection_flood(availability):
-                    continue
-                await self._raise_collection_unavailability(availability)
-
-            session, phone = result
-            self._reset_collection_unavailability_log()
-            session = adapt_transport_session(session, disconnect_on_close=False)
-
-            # Per-account resolve backoff (#552/#790): while this phone is in a
-            # flood backoff the channel runs in cache-only mode on it — a cached
-            # InputPeer still collects for free, a cache miss rotates to another
-            # account or defers the channel (handled at the resolve call site).
-            resolve_cache_only = False
-            if channel.username:
-                backoff_remaining_sec = self._get_resolve_username_backoff_remaining_sec(
-                    phone
-                )
-                if backoff_remaining_sec > 0:
-                    resolve_cache_only = True
-                    logger.warning(
-                        "Channel %d (%s): %s backoff active on %s for %ss — "
-                        "cache-only resolve",
-                        channel_id,
-                        channel.username,
-                        RESOLVE_USERNAME_OPERATION,
-                        mask_phone(phone),
-                        backoff_remaining_sec,
-                    )
-            # Populate entity cache when using PeerChannel
-            # (StringSession loses cache between restarts).
-            # Only needed once per process lifetime per phone —
-            # the in-memory cache persists.
-            if not channel.username and not self._pool.is_dialogs_fetched(phone):
-                try:
-                    await run_with_flood_wait_retry(
-                        lambda: session.warm_dialog_cache(),
-                        operation="collect_channel_warm_dialog_cache",
-                        phone=phone,
-                        pool=self._pool,
-                        logger_=logger,
-                        timeout=30.0,
-                    )
-                    self._pool.mark_dialogs_fetched(phone)
-                except HandledFloodWaitError as exc:
-                    logger.warning("Failed to prefetch dialogs for %s: %s", phone, exc.info.detail)
-                    await self._pool.release_client(phone)
-                    continue
-                except Exception as e:
-                    logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
             messages_batch: list[Message] = []
             # `all_messages` only retains message objects when notifications are
             # enabled (incremental runs, bounded by min_id). On first-run for huge
