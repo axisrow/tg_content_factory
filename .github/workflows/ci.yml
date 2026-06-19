@@ -47,6 +47,13 @@ jobs:
       - name: Import architecture contracts
         run: lint-imports --config .importlinter
 
+      # Non-blocking duplication guard (#807 dedup round 2). Current level is
+      # ~0.6%; threshold 1% leaves headroom while surfacing regressions. Kept
+      # advisory (continue-on-error) so it never reds CI on its own.
+      - name: Code duplication guard (advisory)
+        continue-on-error: true
+        run: npx -y jscpd --min-tokens 70 --format python --threshold 1 src
+
       - name: Enforce pytest warnings as errors
         run: |
           python - <<'PY'
