@@ -102,6 +102,17 @@ def _truncate(text: str, limit: int = 120) -> str:
     return text[:limit - 3] + "..." if len(text) > limit else text
 
 
+def _sse(payload: dict) -> str:
+    """Serialize a payload dict to an SSE `data:` frame (UTF-8 preserved)."""
+    return f"data: {safe_json_dumps(payload, ensure_ascii=False)}\n\n"
+
+
+async def _emit_error(queue: asyncio.Queue, message: str, details: str | None = None) -> None:
+    """Push an `{error, details}` SSE frame followed by the stream-end sentinel."""
+    await queue.put(_sse({"error": message, "details": details}))
+    await queue.put(None)
+
+
 def _diagnose_connection(cli_path: str | None, stderr_lines: list[str]) -> str:
     """Build a concrete diagnostic message by checking environment and stderr."""
     problems: list[str] = []
@@ -842,12 +853,7 @@ class ClaudeSdkBackend:
                     "Agent timeout after %.1fs (thread %d): %s", elapsed, thread_id, exc,
                 )
                 stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else None
-                err_payload = safe_json_dumps(
-                    {"error": str(exc), "details": stderr_summary},
-                    ensure_ascii=False,
-                )
-                await queue.put(f"data: {err_payload}\n\n")
-                await queue.put(None)
+                await _emit_error(queue, str(exc), stderr_summary)
                 return
 
             except CLINotFoundError as exc:
@@ -856,9 +862,7 @@ class ClaudeSdkBackend:
                     "Claude CLI не найден. "
                     "Установите: npm install -g @anthropic-ai/claude-code"
                 )
-                await queue.put(
-                    f"data: {safe_json_dumps({'error': err_msg}, ensure_ascii=False)}\n\n"
-                )
+                await queue.put(_sse({"error": err_msg}))
                 await queue.put(None)
                 return
 
@@ -873,12 +877,7 @@ class ClaudeSdkBackend:
                 # Truncate long stderr for UI
                 if len(details) > 500:
                     details = details[:500] + "..."
-                err_payload = safe_json_dumps(
-                    {"error": "Ошибка процесса Claude CLI", "details": details},
-                    ensure_ascii=False,
-                )
-                await queue.put(f"data: {err_payload}\n\n")
-                await queue.put(None)
+                await _emit_error(queue, "Ошибка процесса Claude CLI", details)
                 return
 
             except CLIConnectionError as exc:
@@ -896,12 +895,7 @@ class ClaudeSdkBackend:
                     if "overloaded" in str(exc).lower()
                     else "Не удалось подключиться к Claude CLI"
                 )
-                err_payload = safe_json_dumps(
-                    {"error": conn_msg, "details": stderr_summary},
-                    ensure_ascii=False,
-                )
-                await queue.put(f"data: {err_payload}\n\n")
-                await queue.put(None)
+                await _emit_error(queue, conn_msg, stderr_summary)
                 return
 
             except ClaudeSDKError as exc:
@@ -910,15 +904,7 @@ class ClaudeSdkBackend:
                     "Claude SDK error after %.1fs (thread %d): %s", elapsed, thread_id, exc,
                 )
                 stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else ""
-                err_payload = safe_json_dumps(
-                    {
-                        "error": f"Ошибка Claude SDK: {exc}",
-                        "details": stderr_summary or None,
-                    },
-                    ensure_ascii=False,
-                )
-                await queue.put(f"data: {err_payload}\n\n")
-                await queue.put(None)
+                await _emit_error(queue, f"Ошибка Claude SDK: {exc}", stderr_summary or None)
                 return
 
             except BaseExceptionGroup as eg:
@@ -988,15 +974,7 @@ class ClaudeSdkBackend:
                 )
             # Send error details to user via SSE
             stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else ""
-            err_payload = safe_json_dumps(
-                {
-                    "error": f"Ошибка агента: {last_err}",
-                    "details": stderr_summary or None,
-                },
-                ensure_ascii=False,
-            )
-            await queue.put(f"data: {err_payload}\n\n")
-            await queue.put(None)
+            await _emit_error(queue, f"Ошибка агента: {last_err}", stderr_summary or None)
 
 
 class DeepagentsBackend:
@@ -2106,10 +2084,7 @@ class AgentManager:
         status = await self.get_runtime_status()
         backend_name = status.selected_backend
         if status.error and (backend_name is None or status.using_override):
-            err_payload = safe_json_dumps(
-                {"error": f"Ошибка агента: {status.error}"}, ensure_ascii=False
-            )
-            yield f"data: {err_payload}\n\n"
+            yield _sse({"error": f"Ошибка агента: {status.error}"})
             return
         if backend_name == "claude":
             backend = self._claude_backend
@@ -2123,11 +2098,7 @@ class AgentManager:
             if model not in CODEX_MODEL_IDS:
                 model = None
         else:
-            err_payload = safe_json_dumps(
-                {"error": "Ошибка агента: не удалось выбрать backend."},
-                ensure_ascii=False,
-            )
-            yield f"data: {err_payload}\n\n"
+            yield _sse({"error": "Ошибка агента: не удалось выбрать backend."})
             return
 
         queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -2206,11 +2177,7 @@ class AgentManager:
                 ):
                     error_text = "Не удалось подключиться к Ollama. Проверьте, что сервис запущен."
 
-                err_payload = safe_json_dumps(
-                    {"error": failure_prefix(error_text)},
-                    ensure_ascii=False,
-                )
-                await queue.put(f"data: {err_payload}\n\n")
+                await queue.put(_sse({"error": failure_prefix(error_text)}))
             finally:
                 cancel_event.set()
                 self._permission_gate.clear_thread(session_id, thread_id)
@@ -2239,11 +2206,7 @@ class AgentManager:
         task.add_done_callback(_cleanup)
 
         # Immediate feedback before backend connects (can take 10-30s)
-        init_payload = safe_json_dumps(
-            {"type": "status", "text": f"Подключение к {backend_name}..."},
-            ensure_ascii=False,
-        )
-        yield f"data: {init_payload}\n\n"
+        yield _sse({"type": "status", "text": f"Подключение к {backend_name}..."})
 
         try:
             while True:
