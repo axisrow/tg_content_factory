@@ -27,6 +27,22 @@ from src.telegram.collector import (
 )
 
 
+async def _persist_new_channel(db, pool, info, existing_ids, stats_channel_ids, build):
+    """Shared import/add-bulk step: dedup against existing_ids; for a new channel
+    fetch meta, build it via `build(info, meta)`, persist, and track it for stats.
+    Returns the added Channel, or None if it already existed. Callers own the
+    resolution source and the per-row console output."""
+    if info["channel_id"] in existing_ids:
+        return None
+    meta = await fetch_channel_meta(pool, int(info["channel_id"]), info.get("channel_type"))
+    channel = build(info, meta)
+    await db.add_channel(channel)
+    existing_ids.add(info["channel_id"])
+    if channel.is_active:
+        stats_channel_ids.append(channel.channel_id)
+    return channel
+
+
 async def _handle_tag(args: argparse.Namespace, db) -> None:
     tag_action = getattr(args, "tag_action", None)
     if not tag_action:
@@ -248,20 +264,17 @@ def run(args: argparse.Namespace) -> None:
                         print(f"FAIL: {ident} — could not resolve")
                         failed += 1
                         continue
-                    if info["channel_id"] in existing_ids:
+
+                    channel = await _persist_new_channel(
+                        db, pool, info, existing_ids, stats_channel_ids,
+                        channel_from_resolved_info,
+                    )
+                    if channel is None:
                         print(f"SKIP: {ident} — already exists ({info.get('title', '')})")
                         skipped += 1
                         continue
 
                     deactivate = info.get("deactivate", False)
-                    meta = await fetch_channel_meta(
-                        pool, int(info["channel_id"]), info.get("channel_type")
-                    )
-                    channel = channel_from_resolved_info(info, meta)
-                    await db.add_channel(channel)
-                    existing_ids.add(info["channel_id"])
-                    if channel.is_active:
-                        stats_channel_ids.append(channel.channel_id)
                     status = f"WARN ({info['channel_type']})" if deactivate else "OK"
                     print(f"{status}: {ident} — {info.get('title', '')} ({info['channel_id']})")
                     added += 1
@@ -462,31 +475,30 @@ def run(args: argparse.Namespace) -> None:
                 existing_ids = {ch.channel_id for ch in existing}
                 added = skipped = failed = 0
                 stats_channel_ids: list[int] = []
+                def _build_dialog_channel(i, meta):
+                    channel = Channel(
+                        channel_id=int(i["channel_id"]),
+                        title=i["title"],
+                        username=i.get("username"),
+                        channel_type=i.get("channel_type"),
+                        is_active=True,
+                        created_at=i.get("created_at"),
+                    )
+                    return channel_with_meta(channel, meta)
+
                 for did in dialog_ids:
                     info = info_map.get(did)
                     if not info:
                         print(f"SKIP: {did} — not found in dialogs")
                         failed += 1
                         continue
-                    if info["channel_id"] in existing_ids:
+                    channel = await _persist_new_channel(
+                        db, pool, info, existing_ids, stats_channel_ids, _build_dialog_channel
+                    )
+                    if channel is None:
                         print(f"SKIP: {did} — already exists ({info.get('title', '')})")
                         skipped += 1
                         continue
-                    meta = await fetch_channel_meta(
-                        pool, int(info["channel_id"]), info.get("channel_type")
-                    )
-                    channel = Channel(
-                        channel_id=int(info["channel_id"]),
-                        title=info["title"],
-                        username=info.get("username"),
-                        channel_type=info.get("channel_type"),
-                        is_active=True,
-                        created_at=info.get("created_at"),
-                    )
-                    channel = channel_with_meta(channel, meta)
-                    await db.add_channel(channel)
-                    existing_ids.add(info["channel_id"])
-                    stats_channel_ids.append(channel.channel_id)
                     print(f"OK: {info.get('title', did)} ({info['channel_id']})")
                     added += 1
                 await enqueue_stats_for_new_channels(
