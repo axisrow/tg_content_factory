@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from src.database.bundles import SearchBundle
-from src.models import SearchResult
+from src.models import SearchParams, SearchResult
 from src.search.numpy_semantic import NumpySemanticIndex
 from src.services.embedding_service import EmbeddingService
 
@@ -20,33 +20,10 @@ class LocalSearch:
         self._numpy_index = None
         self._numpy_index_loaded = False
 
-    async def search(
-        self,
-        query: str,
-        channel_id: int | None = None,
-        date_from: str | None = None,
-        date_to: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-        is_fts: bool = False,
-        min_length: int | None = None,
-        max_length: int | None = None,
-        include_filtered: bool = False,
-    ) -> SearchResult:
-        page = await self._search.search_messages(
-            query=query,
-            channel_id=channel_id,
-            date_from=date_from,
-            date_to=date_to,
-            limit=limit,
-            offset=offset,
-            is_fts=is_fts,
-            min_length=min_length,
-            max_length=max_length,
-            include_filtered=include_filtered,
-        )
+    async def search(self, params: SearchParams) -> SearchResult:
+        page = await self._search.search_messages(params)
         return SearchResult(
-            messages=page.messages, total=page.total, has_more=page.has_more, query=query
+            messages=page.messages, total=page.total, has_more=page.has_more, query=params.query
         )
 
     async def _ensure_numpy_index(self) -> NumpySemanticIndex:

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, AsyncIterator
 
 import aiosqlite
 
-from src.models import Message, SearchQuery
+from src.models import Message, SearchParams, SearchQuery
 from src.telegram.reactions import parse_reactions_json
 from src.utils.datetime import parse_datetime, parse_required_datetime
 from src.utils.search_query_chat_filter import parse_chat_filter
@@ -621,28 +621,18 @@ class MessagesRepository:
         rows = await cur.fetchall()
         return [int(row["id"]) for row in rows]
 
-    async def search_messages(
-        self,
-        query: str = "",
-        channel_id: int | None = None,
-        date_from: str | None = None,
-        date_to: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-        is_fts: bool = False,
-        min_length: int | None = None,
-        max_length: int | None = None,
-        topic_id: int | None = None,
-        include_filtered: bool = False,
-    ) -> MessageSearchPage:
-        where, params = self._build_message_filters(
-            channel_id=channel_id,
-            date_from=date_from,
-            date_to=date_to,
-            min_length=min_length,
-            max_length=max_length,
-            topic_id=topic_id,
-            include_filtered=include_filtered,
+    async def search_messages(self, params: SearchParams) -> MessageSearchPage:
+        query = params.query
+        limit = params.limit
+        offset = params.offset
+        where, sql_params = self._build_message_filters(
+            channel_id=params.channel_id,
+            date_from=params.date_from,
+            date_to=params.date_to,
+            min_length=params.min_length,
+            max_length=params.max_length,
+            topic_id=params.topic_id,
+            include_filtered=params.include_filtered,
         )
         channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
 
@@ -652,7 +642,7 @@ class MessagesRepository:
 
         if query:
             if self._fts_available:
-                fts_query = self._build_fts_match(query, is_fts)
+                fts_query = self._build_fts_match(query, params.is_fts)
                 fts_join = (
                     " INNER JOIN (SELECT rowid FROM messages_fts"
                     " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
@@ -663,11 +653,11 @@ class MessagesRepository:
                         {where}
                         ORDER BY m.date DESC
                         LIMIT ? OFFSET ?""",
-                    (fts_query, *params, probe_limit, offset),
+                    (fts_query, *sql_params, probe_limit, offset),
                 )
             else:
                 logger.debug("FTS5 unavailable, falling back to LIKE search")
-                params.append(f"%{query}%")
+                sql_params.append(f"%{query}%")
                 like_where = (where + " AND m.text LIKE ?") if where else " WHERE m.text LIKE ?"
 
                 cur = await self._db.execute(
@@ -676,7 +666,7 @@ class MessagesRepository:
                         {like_where}
                         ORDER BY m.date DESC
                         LIMIT ? OFFSET ?""",
-                    (*params, probe_limit, offset),
+                    (*sql_params, probe_limit, offset),
                 )
         else:
             cur = await self._db.execute(
@@ -685,7 +675,7 @@ class MessagesRepository:
                     {where}
                     ORDER BY m.date DESC
                     LIMIT ? OFFSET ?""",
-                (*params, probe_limit, offset),
+                (*sql_params, probe_limit, offset),
             )
 
         rows = await cur.fetchall()

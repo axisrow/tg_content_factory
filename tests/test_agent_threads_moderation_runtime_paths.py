@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.database import Database
+from src.models import SearchParams
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -1220,7 +1221,7 @@ async def test_messages_upsert_embedding_json(db):
 
 @pytest.mark.anyio
 async def test_messages_search_no_query(db):
-    msgs, total = await db.repos.messages.search_messages()
+    msgs, total = await db.repos.messages.search_messages(SearchParams())
     assert isinstance(msgs, list)
     assert isinstance(total, int)
 

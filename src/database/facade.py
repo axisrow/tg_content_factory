@@ -44,6 +44,7 @@ from src.models import (
     CollectionTaskStatus,
     Message,
     NotificationBot,
+    SearchParams,
     SearchQuery,
     StatsAllTaskPayload,
 )
@@ -650,17 +651,19 @@ class Database:
     ) -> MessageSearchPage:
         self._require()
         return await self._messages.search_messages(
-            query=query,
-            channel_id=channel_id,
-            date_from=date_from,
-            date_to=date_to,
-            limit=limit,
-            offset=offset,
-            topic_id=topic_id,
-            is_fts=is_fts,
-            min_length=min_length,
-            max_length=max_length,
-            include_filtered=include_filtered,
+            SearchParams(
+                query=query,
+                channel_id=channel_id,
+                date_from=date_from,
+                date_to=date_to,
+                limit=limit,
+                offset=offset,
+                topic_id=topic_id,
+                is_fts=is_fts,
+                min_length=min_length,
+                max_length=max_length,
+                include_filtered=include_filtered,
+            )
         )
 
     async def search_semantic_messages(
