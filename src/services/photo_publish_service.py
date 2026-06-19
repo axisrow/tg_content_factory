@@ -3,6 +3,7 @@ from __future__ import annotations
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime
 
 from src.models import PhotoSendMode
@@ -17,6 +18,34 @@ class PhotoPublishService:
     def __init__(self, pool: ClientPool):
         self._pool = pool
 
+    @asynccontextmanager
+    async def _acquire_client_and_resolve(
+        self,
+        phone: str,
+        target_dialog_id: int,
+        target_type: str | None,
+    ):
+        """Acquire a flood-aware client for ``phone``, resolve the target entity,
+        and yield ``(session, acquired_phone, entity)``; always release on exit.
+
+        Raises ``RuntimeError("no_client")`` when no client is available, matching
+        the per-method contract before this prelude was extracted.
+        """
+        result = await self._pool.get_client_by_phone(phone, wait_for_flood=True)
+        if result is None:
+            raise RuntimeError("no_client")
+        session, acquired_phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
+        try:
+            entity = target_dialog_id
+            resolver = getattr(self._pool, "resolve_dialog_entity", None)
+            if callable(resolver):
+                resolved = resolver(session, acquired_phone, target_dialog_id, target_type)
+                entity = await resolved if inspect.isawaitable(resolved) else resolved
+            yield session, acquired_phone, entity
+        finally:
+            await self._pool.release_client(acquired_phone)
+
     async def send_now(
         self,
         *,
@@ -29,22 +58,9 @@ class PhotoPublishService:
         schedule_at: datetime | None = None,
         on_file_sent: Callable[[str, list[int]], Awaitable[None]] | None = None,
     ) -> list[int]:
-        result = await self._pool.get_client_by_phone(phone, wait_for_flood=True)
-        if result is None:
-            raise RuntimeError("no_client")
-        session, acquired_phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
-        try:
-            entity = target_dialog_id
-            resolver = getattr(self._pool, "resolve_dialog_entity", None)
-            if callable(resolver):
-                resolved = resolver(
-                    session,
-                    acquired_phone,
-                    target_dialog_id,
-                    target_type,
-                )
-                entity = await resolved if inspect.isawaitable(resolved) else resolved
+        async with self._acquire_client_and_resolve(
+            phone, target_dialog_id, target_type
+        ) as (session, acquired_phone, entity):
             if send_mode == PhotoSendMode.ALBUM and len(file_paths) > 1:
                 sent = await run_with_flood_wait(
                     session.publish_files(
@@ -86,8 +102,6 @@ class PhotoPublishService:
                 if on_file_sent is not None:
                     await on_file_sent(path, [msg_id])
             return message_ids
-        finally:
-            await self._pool.release_client(acquired_phone)
 
     async def unschedule(
         self,
@@ -100,17 +114,9 @@ class PhotoPublishService:
         """Cancel previously server-scheduled messages on Telegram (audit #835/3)."""
         if not message_ids:
             return
-        result = await self._pool.get_client_by_phone(phone, wait_for_flood=True)
-        if result is None:
-            raise RuntimeError("no_client")
-        session, acquired_phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
-        try:
-            entity = target_dialog_id
-            resolver = getattr(self._pool, "resolve_dialog_entity", None)
-            if callable(resolver):
-                resolved = resolver(session, acquired_phone, target_dialog_id, target_type)
-                entity = await resolved if inspect.isawaitable(resolved) else resolved
+        async with self._acquire_client_and_resolve(
+            phone, target_dialog_id, target_type
+        ) as (session, acquired_phone, entity):
             await run_with_flood_wait(
                 session.delete_scheduled_messages(entity, message_ids),
                 operation="photo_unschedule",
@@ -118,5 +124,3 @@ class PhotoPublishService:
                 pool=self._pool,
                 logger_=logger,
             )
-        finally:
-            await self._pool.release_client(acquired_phone)
