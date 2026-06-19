@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from inspect import isawaitable
 from typing import Annotated
 
 from claude_agent_sdk import tool
@@ -11,6 +10,7 @@ from mcp.types import ToolAnnotations
 from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._registry import (
+    _get_accounts,
     _text_response,
     account_session_status,
     available_live_read_phones,
@@ -94,19 +94,6 @@ def _diagnostic_lines(accounts: list[object], client_pool: object | None) -> lis
         f"Available phones: {_format_phone_list(available)}.",
         f"Flood-waited phones: {_format_phone_list(flood_waited)}.",
     ]
-
-
-async def _get_account_summaries(db: object) -> list[object]:
-    for getter_name in ("get_account_summaries", "get_accounts"):
-        getter = getattr(db, getter_name, None)
-        if not callable(getter):
-            continue
-        result = getter()
-        if isawaitable(result):
-            result = await result
-        if isinstance(result, (list, tuple)):
-            return list(result)
-    return []
 
 
 async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: object = "") -> str:
@@ -233,7 +220,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         if account_id is None:
             return _text_response("Ошибка: account_id обязателен.")
         try:
-            accounts = await _get_account_summaries(db)
+            accounts = await _get_accounts(db)
             acc = next((a for a in accounts if a.id == int(account_id)), None)
             if acc is None:
                 return _text_response(f"Аккаунт id={account_id} не найден.")
@@ -268,7 +255,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         if account_id is None:
             return _text_response("Ошибка: account_id обязателен.")
         try:
-            accounts = await _get_account_summaries(db)
+            accounts = await _get_accounts(db)
             acc = next((a for a in accounts if a.id == int(account_id)), None)
             name = acc.phone if acc else f"id={account_id}"
             gate = require_confirmation(f"удалит аккаунт '{name}' из системы", args)
@@ -440,7 +427,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            accounts = await _get_account_summaries(db)
+            accounts = await _get_accounts(db)
             acc = next((a for a in accounts if a.phone == phone), None)
             if acc is None:
                 return _text_response(f"Аккаунт {phone} не найден.")
