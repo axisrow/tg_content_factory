@@ -6,7 +6,7 @@ import logging
 from src.config import LLMConfig
 from src.database import Database
 from src.database.bundles import SearchBundle
-from src.models import SearchResult
+from src.models import SearchParams, SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -49,11 +49,11 @@ class AISearchEngine:
             try:
                 asyncio.get_running_loop()
                 with concurrent.futures.ThreadPoolExecutor() as executor:
-                    coro = search.search_messages(query, limit=20)
+                    coro = search.search_messages(SearchParams(query=query, limit=20))
                     future = executor.submit(asyncio.run, coro)
                     page = future.result()
             except RuntimeError:
-                page = asyncio.run(search.search_messages(query, limit=20))
+                page = asyncio.run(search.search_messages(SearchParams(query=query, limit=20)))
 
             messages = page.messages
             if not messages:
@@ -86,7 +86,7 @@ class AISearchEngine:
         """Run AI-powered search."""
         if not self._agent:
             # Fallback to basic local search
-            page = await self._search.search_messages(query, limit=20)
+            page = await self._search.search_messages(SearchParams(query=query, limit=20))
             return SearchResult(
                 messages=page.messages,
                 total=page.total,
@@ -100,7 +100,7 @@ class AISearchEngine:
             summary = str(response)
 
             # Also get raw messages for display
-            page = await self._search.search_messages(query, limit=20)
+            page = await self._search.search_messages(SearchParams(query=query, limit=20))
 
             return SearchResult(
                 messages=page.messages,
@@ -111,7 +111,7 @@ class AISearchEngine:
             )
         except Exception as e:
             logger.error("AI search error: %s", e)
-            page = await self._search.search_messages(query, limit=20)
+            page = await self._search.search_messages(SearchParams(query=query, limit=20))
             return SearchResult(
                 messages=page.messages,
                 total=page.total,

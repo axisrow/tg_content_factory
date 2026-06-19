@@ -29,7 +29,7 @@ from src.database.migrations import (
     run_migrations,
 )
 from src.database.repositories.messages import MessageSearchPage
-from src.models import Message
+from src.models import Message, SearchParams
 from src.search.local_search import LocalSearch
 from src.services.provider_service import RuntimeProviderRegistry, build_provider_service
 
@@ -1236,10 +1236,10 @@ async def test_search_semantic_vec_path():
 async def test_search_passes_offset_and_limit(mock_search_bundle_for_local):
     """Covers search with offset parameter."""
     local_search = LocalSearch(mock_search_bundle_for_local)
-    await local_search.search(query="test", offset=10, limit=5)
-    args, kwargs = mock_search_bundle_for_local.search_messages.call_args
-    assert kwargs["offset"] == 10
-    assert kwargs["limit"] == 5
+    await local_search.search(SearchParams(query="test", offset=10, limit=5))
+    params = mock_search_bundle_for_local.search_messages.call_args.args[0]
+    assert params.offset == 10
+    assert params.limit == 5
 
 
 @pytest.fixture

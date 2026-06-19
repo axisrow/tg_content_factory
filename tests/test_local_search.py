@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.database.repositories.messages import MessageSearchPage
-from src.models import Message, SearchResult
+from src.models import Message, SearchParams, SearchResult
 from src.search.local_search import LocalSearch
 
 
@@ -52,7 +52,7 @@ async def test_search_basic(mock_search_bundle):
     mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[msg], total=1)
 
     local_search = LocalSearch(mock_search_bundle)
-    result = await local_search.search(query="test")
+    result = await local_search.search(SearchParams(query="test"))
 
     assert isinstance(result, SearchResult)
     assert result.total == 1
@@ -66,10 +66,10 @@ async def test_search_with_channel_filter(mock_search_bundle):
     mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[], total=0)
 
     local_search = LocalSearch(mock_search_bundle)
-    await local_search.search(query="test", channel_id=123)
+    await local_search.search(SearchParams(query="test", channel_id=123))
 
-    args, kwargs = mock_search_bundle.search_messages.call_args
-    assert kwargs["channel_id"] == 123
+    params = mock_search_bundle.search_messages.call_args.args[0]
+    assert params.channel_id == 123
 
 
 @pytest.mark.anyio
@@ -78,11 +78,11 @@ async def test_search_with_date_range(mock_search_bundle):
     mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[], total=0)
 
     local_search = LocalSearch(mock_search_bundle)
-    await local_search.search(query="test", date_from="2024-01-01", date_to="2024-12-31")
+    await local_search.search(SearchParams(query="test", date_from="2024-01-01", date_to="2024-12-31"))
 
-    args, kwargs = mock_search_bundle.search_messages.call_args
-    assert kwargs["date_from"] == "2024-01-01"
-    assert kwargs["date_to"] == "2024-12-31"
+    params = mock_search_bundle.search_messages.call_args.args[0]
+    assert params.date_from == "2024-01-01"
+    assert params.date_to == "2024-12-31"
 
 
 @pytest.mark.anyio
@@ -91,11 +91,11 @@ async def test_search_with_length_filters(mock_search_bundle):
     mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[], total=0)
 
     local_search = LocalSearch(mock_search_bundle)
-    await local_search.search(query="test", min_length=100, max_length=500)
+    await local_search.search(SearchParams(query="test", min_length=100, max_length=500))
 
-    args, kwargs = mock_search_bundle.search_messages.call_args
-    assert kwargs["min_length"] == 100
-    assert kwargs["max_length"] == 500
+    params = mock_search_bundle.search_messages.call_args.args[0]
+    assert params.min_length == 100
+    assert params.max_length == 500
 
 
 @pytest.mark.anyio
@@ -104,10 +104,10 @@ async def test_search_with_fts_flag(mock_search_bundle):
     mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[], total=0)
 
     local_search = LocalSearch(mock_search_bundle)
-    await local_search.search(query="test", is_fts=True)
+    await local_search.search(SearchParams(query="test", is_fts=True))
 
-    args, kwargs = mock_search_bundle.search_messages.call_args
-    assert kwargs["is_fts"] is True
+    params = mock_search_bundle.search_messages.call_args.args[0]
+    assert params.is_fts is True
 
 
 @pytest.mark.anyio
@@ -116,11 +116,11 @@ async def test_search_with_pagination(mock_search_bundle):
     mock_search_bundle.search_messages.return_value = MessageSearchPage(messages=[], total=0)
 
     local_search = LocalSearch(mock_search_bundle)
-    await local_search.search(query="test", limit=10, offset=20)
+    await local_search.search(SearchParams(query="test", limit=10, offset=20))
 
-    args, kwargs = mock_search_bundle.search_messages.call_args
-    assert kwargs["limit"] == 10
-    assert kwargs["offset"] == 20
+    params = mock_search_bundle.search_messages.call_args.args[0]
+    assert params.limit == 10
+    assert params.offset == 20
 
 
 # === search_semantic tests ===

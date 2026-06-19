@@ -20,6 +20,7 @@ from src.models import (
     CollectionTaskStatus,
     Message,
     NotificationBot,
+    SearchParams,
     SearchQuery,
     StatsAllTaskPayload,
 )
@@ -485,7 +486,7 @@ class TestCollectionBundle:
         b = CollectionBundle.from_database(db)
         await b.channels.add_channel(_channel(channel_id=1012))
         await b.insert_message(_message(channel_id=1012, message_id=1, text="findme"))
-        results, total = await b.search_messages(query="findme")
+        results, total = await b.search_messages(SearchParams(query="findme"))
         assert total >= 1
 
     async def test_delete_messages_for_channel(self, db):
@@ -536,7 +537,7 @@ class TestCollectionBundle:
 class TestSearchBundle:
     async def test_search_messages(self, db):
         b = SearchBundle.from_database(db)
-        results, total = await b.search_messages(query="nope")
+        results, total = await b.search_messages(SearchParams(query="nope"))
         assert total == 0
 
     async def test_add_channel_and_insert(self, db):
@@ -550,7 +551,7 @@ class TestSearchBundle:
         b = SearchBundle.from_database(db)
         await b.add_channel(_channel(channel_id=2002))
         await b.insert_messages_batch([_message(channel_id=2002, message_id=1, text="searchterm")])
-        results, total = await b.search_messages(query="searchterm")
+        results, total = await b.search_messages(SearchParams(query="searchterm"))
         assert total >= 1
 
     async def test_log_and_get_searches(self, db):

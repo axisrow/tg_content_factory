@@ -8,7 +8,7 @@ import pytest
 
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.messages import MessagesRepository, _normalize_date_to
-from src.models import Message, SearchQuery
+from src.models import Message, SearchParams, SearchQuery
 
 
 @pytest.fixture
@@ -54,7 +54,7 @@ async def test_insert_message_duplicate_ignored(messages_repo):
     assert result is False
 
     # Verify only one message exists
-    messages, total = await messages_repo.search_messages()
+    messages, total = await messages_repo.search_messages(SearchParams())
     assert total == 1
     assert messages[0].text == "First"
 
@@ -74,7 +74,7 @@ async def test_insert_message_with_all_fields(messages_repo):
     result = await messages_repo.insert_message(msg)
     assert result is True
 
-    messages, _ = await messages_repo.search_messages()
+    messages, _ = await messages_repo.search_messages(SearchParams())
     assert messages[0].sender_id == 12345
     assert messages[0].sender_name == "John Doe"
     assert messages[0].media_type == "photo"
@@ -95,7 +95,7 @@ async def test_insert_message_sender_identity_round_trips(messages_repo):
     )
     assert await messages_repo.insert_message(msg) is True
 
-    messages, _ = await messages_repo.search_messages()
+    messages, _ = await messages_repo.search_messages(SearchParams())
     stored = messages[0]
     assert stored.sender_id == 12345
     assert stored.sender_name == "John Doe"
@@ -121,7 +121,7 @@ async def test_insert_message_with_structured_facets(messages_repo):
     result = await messages_repo.insert_message(msg)
     assert result is True
 
-    messages, _ = await messages_repo.search_messages()
+    messages, _ = await messages_repo.search_messages(SearchParams())
     stored = next(m for m in messages if m.message_id == 101)
     assert stored.message_kind == "service"
     assert stored.service_action_raw == "MessageActionChatJoinedByLink"
@@ -149,7 +149,7 @@ async def test_insert_messages_batch_multiple(messages_repo):
     count = await messages_repo.insert_messages_batch(messages)
     assert count == 3
 
-    _, total = await messages_repo.search_messages()
+    _, total = await messages_repo.search_messages(SearchParams())
     assert total == 3
 
 
@@ -165,7 +165,7 @@ async def test_insert_messages_batch_with_duplicates(messages_repo):
     ]
     await messages_repo.insert_messages_batch(messages)
 
-    messages_list, total = await messages_repo.search_messages()
+    messages_list, total = await messages_repo.search_messages(SearchParams())
     assert total == 2
     texts = {m.text for m in messages_list}
     assert "Original" in texts
@@ -210,7 +210,7 @@ async def test_insert_messages_batch_refreshes_duplicate_stats(messages_repo):
     )
 
     assert count == 0
-    messages, total = await messages_repo.search_messages()
+    messages, total = await messages_repo.search_messages(SearchParams())
     assert total == 1
     stored = messages[0]
     assert stored.text == "Original"
@@ -252,7 +252,7 @@ async def test_insert_messages_batch_sender_identity_round_trips(messages_repo):
     ]
     assert await messages_repo.insert_messages_batch(messages) == 2
 
-    stored, total = await messages_repo.search_messages()
+    stored, total = await messages_repo.search_messages(SearchParams())
     assert total == 2
     by_id = {message.message_id: message for message in stored}
     assert by_id[110].sender_first_name == "Alice"
@@ -315,7 +315,7 @@ def test_normalize_date_to_module_function():
 
 async def test_search_messages_empty(messages_repo):
     """Test searching when no messages exist."""
-    messages, total = await messages_repo.search_messages()
+    messages, total = await messages_repo.search_messages(SearchParams())
     assert messages == []
     assert total == 0
 
@@ -329,7 +329,7 @@ async def test_search_messages_all(messages_repo):
         ]
     )
 
-    messages, total = await messages_repo.search_messages()
+    messages, total = await messages_repo.search_messages(SearchParams())
     assert len(messages) == 2
     assert total == 2
 
@@ -344,7 +344,7 @@ async def test_search_messages_by_channel(messages_repo):
         ]
     )
 
-    messages, total = await messages_repo.search_messages(channel_id=1)
+    messages, total = await messages_repo.search_messages(SearchParams(channel_id=1))
     assert len(messages) == 2
     assert total == 2
     assert all(m.channel_id == 1 for m in messages)
@@ -360,7 +360,7 @@ async def test_search_messages_by_topic(messages_repo):
         ]
     )
 
-    messages, total = await messages_repo.search_messages(topic_id=5)
+    messages, total = await messages_repo.search_messages(SearchParams(topic_id=5))
     assert len(messages) == 1
     assert total == 1
     assert messages[0].topic_id == 5
@@ -375,7 +375,7 @@ async def test_search_messages_by_date_from(messages_repo):
         ]
     )
 
-    messages, total = await messages_repo.search_messages(date_from="2026-03-15")
+    messages, total = await messages_repo.search_messages(SearchParams(date_from="2026-03-15"))
     assert len(messages) == 1
     assert messages[0].text == "New"
 
@@ -390,7 +390,7 @@ async def test_search_messages_by_date_to(messages_repo):
     )
 
     # Should include messages up to 2026-03-10
-    messages, total = await messages_repo.search_messages(date_to="2026-03-10")
+    messages, total = await messages_repo.search_messages(SearchParams(date_to="2026-03-10"))
     assert len(messages) == 1
     assert messages[0].text == "Old"
 
@@ -405,7 +405,7 @@ async def test_search_messages_by_date_range(messages_repo):
         ]
     )
 
-    messages, total = await messages_repo.search_messages(date_from="2026-03-08", date_to="2026-03-15")
+    messages, total = await messages_repo.search_messages(SearchParams(date_from="2026-03-08", date_to="2026-03-15"))
     assert len(messages) == 1
     assert messages[0].text == "In range"
 
@@ -419,7 +419,7 @@ async def test_search_messages_by_min_length(messages_repo):
         ]
     )
 
-    messages, total = await messages_repo.search_messages(min_length=10)
+    messages, total = await messages_repo.search_messages(SearchParams(min_length=10))
     assert len(messages) == 1
     assert messages[0].text == "This is a longer message"
 
@@ -433,7 +433,7 @@ async def test_search_messages_by_max_length(messages_repo):
         ]
     )
 
-    messages, total = await messages_repo.search_messages(max_length=10)
+    messages, total = await messages_repo.search_messages(SearchParams(max_length=10))
     assert len(messages) == 1
     assert messages[0].text == "Short"
 
@@ -445,14 +445,14 @@ async def test_search_messages_pagination(messages_repo):
 
     # First page: total is a lower bound (offset + len) since #766, has_more
     # signals the next page instead of an exact COUNT.
-    page = await messages_repo.search_messages(limit=3, offset=0)
+    page = await messages_repo.search_messages(SearchParams(limit=3, offset=0))
     messages = page.messages
     assert len(messages) == 3
     assert page.total == 3
     assert page.has_more is True
 
     # Second page
-    messages2, _ = await messages_repo.search_messages(limit=3, offset=3)
+    messages2, _ = await messages_repo.search_messages(SearchParams(limit=3, offset=3))
     assert len(messages2) == 3
 
     # Verify different messages
@@ -480,7 +480,7 @@ async def test_search_messages_excludes_filtered_channels(messages_repo, channel
         ]
     )
 
-    messages, total = await messages_repo.search_messages()
+    messages, total = await messages_repo.search_messages(SearchParams())
     assert total == 1
     assert messages[0].channel_id == 1
 
@@ -495,7 +495,7 @@ async def test_search_messages_fts(messages_repo):
         ]
     )
 
-    messages, total = await messages_repo.search_messages(query="hello", is_fts=True)
+    messages, total = await messages_repo.search_messages(SearchParams(query="hello", is_fts=True))
     assert total == 2
     assert all("hello" in m.text.lower() for m in messages)
 
@@ -510,7 +510,7 @@ async def test_search_messages_plain_search(messages_repo):
     )
 
     # Plain search should still work via FTS with quoting
-    messages, total = await messages_repo.search_messages(query="Hello", is_fts=False)
+    messages, total = await messages_repo.search_messages(SearchParams(query="Hello", is_fts=False))
     assert total == 1
 
 
@@ -683,7 +683,7 @@ async def test_delete_messages_for_channel(messages_repo):
     count = await messages_repo.delete_messages_for_channel(1)
     assert count == 2
 
-    _, total = await messages_repo.search_messages()
+    _, total = await messages_repo.search_messages(SearchParams())
     assert total == 1
 
 
@@ -875,7 +875,7 @@ async def test_search_messages_has_more_true_when_results_exceed_limit(messages_
     for i in range(3):
         await messages_repo.insert_message(make_message(1, 100 + i, f"hello {i}"))
 
-    page = await messages_repo.search_messages(limit=2)
+    page = await messages_repo.search_messages(SearchParams(limit=2))
 
     assert len(page.messages) == 2
     assert page.has_more is True
@@ -887,7 +887,7 @@ async def test_search_messages_has_more_false_on_last_page(messages_repo):
     for i in range(3):
         await messages_repo.insert_message(make_message(1, 100 + i, f"hello {i}"))
 
-    page = await messages_repo.search_messages(limit=2, offset=2)
+    page = await messages_repo.search_messages(SearchParams(limit=2, offset=2))
 
     assert len(page.messages) == 1
     assert page.has_more is False
@@ -898,7 +898,7 @@ async def test_search_messages_tuple_unpacking_still_works(messages_repo):
     """Legacy `messages, total = ...` unpacking must keep working (#766)."""
     await messages_repo.insert_message(make_message(1, 100, "hello"))
 
-    messages, total = await messages_repo.search_messages()
+    messages, total = await messages_repo.search_messages(SearchParams())
 
     assert len(messages) == 1
     assert total == 1
@@ -920,10 +920,10 @@ async def test_search_messages_does_not_execute_count(messages_repo, monkeypatch
     monkeypatch.setattr(messages_repo._db, "execute", spy)
 
     if messages_repo._fts_available:
-        await messages_repo.search_messages(query="hello", limit=2)
+        await messages_repo.search_messages(SearchParams(query="hello", limit=2))
     monkeypatch.setattr(messages_repo, "_fts_available", False)
-    await messages_repo.search_messages(query="hello", limit=2)
-    await messages_repo.search_messages(limit=2)
+    await messages_repo.search_messages(SearchParams(query="hello", limit=2))
+    await messages_repo.search_messages(SearchParams(limit=2))
 
     counts = [sql for sql in executed if "count(" in sql.lower()]
     assert not counts, f"COUNT query still executed: {counts}"
