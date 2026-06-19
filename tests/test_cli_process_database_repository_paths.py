@@ -11,6 +11,7 @@ import aiosqlite
 import pytest
 
 from src.database.repositories.messages import MessageSearchPage
+from src.models import SearchParams
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -757,11 +758,11 @@ async def test_messages_search_with_query_and_date_from(db):
     msg = _make_msg(channel_id=10, message_id=1, text="important news")
     await db.repos.messages.insert_message(msg)
 
-    msgs, total = await db.repos.messages.search_messages(
+    msgs, total = await db.repos.messages.search_messages(SearchParams(
         query="important",
         date_from="2025-01-01",
         limit=10,
-    )
+    ))
     assert isinstance(msgs, list)
     assert isinstance(total, int)
 
@@ -772,11 +773,11 @@ async def test_messages_search_with_query_and_date_to(db):
     msg = _make_msg(channel_id=11, message_id=2, text="date filter test")
     await db.repos.messages.insert_message(msg)
 
-    msgs, total = await db.repos.messages.search_messages(
+    msgs, total = await db.repos.messages.search_messages(SearchParams(
         query="filter",
         date_to="2025-12-31",
         limit=10,
-    )
+    ))
     assert isinstance(msgs, list)
 
 
@@ -786,10 +787,10 @@ async def test_messages_search_with_channel_id_filter(db):
     msg = _make_msg(channel_id=42, message_id=3, text="channel specific")
     await db.repos.messages.insert_message(msg)
 
-    msgs, total = await db.repos.messages.search_messages(
+    msgs, total = await db.repos.messages.search_messages(SearchParams(
         channel_id=42,
         limit=10,
-    )
+    ))
     assert all(m.channel_id == 42 for m in msgs)
 
 
@@ -799,11 +800,11 @@ async def test_messages_search_with_min_max_length(db):
     msg = _make_msg(channel_id=50, message_id=4, text="A" * 100)
     await db.repos.messages.insert_message(msg)
 
-    msgs, total = await db.repos.messages.search_messages(
+    msgs, total = await db.repos.messages.search_messages(SearchParams(
         min_length=50,
         max_length=200,
         limit=10,
-    )
+    ))
     assert isinstance(msgs, list)
 
 
@@ -814,8 +815,8 @@ async def test_messages_search_with_offset(db):
         msg = _make_msg(channel_id=60, message_id=i + 1, text=f"offset test {i}")
         await db.repos.messages.insert_message(msg)
 
-    msgs_all, total_all = await db.repos.messages.search_messages(channel_id=60, limit=10)
-    msgs_offset, _ = await db.repos.messages.search_messages(channel_id=60, limit=10, offset=2)
+    msgs_all, total_all = await db.repos.messages.search_messages(SearchParams(channel_id=60, limit=10))
+    msgs_offset, _ = await db.repos.messages.search_messages(SearchParams(channel_id=60, limit=10, offset=2))
     assert len(msgs_all) - 2 == len(msgs_offset)
 
 
@@ -825,11 +826,11 @@ async def test_messages_search_fts_mode(db):
     msg = _make_msg(channel_id=70, message_id=1, text="fts mode test phrase")
     await db.repos.messages.insert_message(msg)
 
-    msgs, total = await db.repos.messages.search_messages(
+    msgs, total = await db.repos.messages.search_messages(SearchParams(
         query="fts mode test",
         is_fts=True,
         limit=10,
-    )
+    ))
     assert isinstance(msgs, list)
 
 
@@ -839,11 +840,11 @@ async def test_messages_search_date_to_date_only_normalization(db):
     msg = _make_msg(channel_id=80, message_id=1, text="date norm test")
     await db.repos.messages.insert_message(msg)
 
-    msgs, total = await db.repos.messages.search_messages(
+    msgs, total = await db.repos.messages.search_messages(SearchParams(
         date_from="2025-01-01",
         date_to="2025-01-15",  # date-only → normalized to 2025-01-16 <
         limit=10,
-    )
+    ))
     assert isinstance(msgs, list)
 
 
@@ -853,7 +854,7 @@ async def test_messages_get_by_id_existing(db):
     msg = _make_msg(channel_id=90, message_id=1, text="by id test")
     await db.repos.messages.insert_message(msg)
 
-    msgs, _ = await db.repos.messages.search_messages(channel_id=90, limit=1)
+    msgs, _ = await db.repos.messages.search_messages(SearchParams(channel_id=90, limit=1))
     assert len(msgs) >= 1
     fetched = await db.repos.messages.get_by_id(msgs[0].id)
     assert fetched is not None
@@ -1000,10 +1001,10 @@ async def test_messages_search_topic_id_filter(db):
     msg.topic_id = 42
     await db.repos.messages.insert_message(msg)
 
-    msgs, total = await db.repos.messages.search_messages(
+    msgs, total = await db.repos.messages.search_messages(SearchParams(
         topic_id=42,
         limit=10,
-    )
+    ))
     assert isinstance(msgs, list)
 
 
@@ -1017,7 +1018,7 @@ async def test_messages_like_fallback_search(db):
 
     # Use the underlying connection directly
     repo_no_fts = MessagesRepository(db._db, fts_available=False)
-    msgs, total = await repo_no_fts.search_messages(query="fallback", limit=10)
+    msgs, total = await repo_no_fts.search_messages(SearchParams(query="fallback", limit=10))
     assert isinstance(msgs, list)
 
 

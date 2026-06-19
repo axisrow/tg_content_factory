@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import Any
@@ -7,6 +8,27 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 from src.telegram.flood_wait import FloodWaitInfo
+
+
+@dataclass(slots=True)
+class SearchParams:
+    """Single carrier for the message-search filter signature shared across the
+    search stack (repo ↔ bundles ↔ local search). Public entry points
+    (`SearchEngine.*`, `Database.search_messages`) keep their keyword signatures
+    and assemble this object once, so a new search filter is added here + the
+    repo body rather than re-declared at every delegating layer (#810/#807 п.4)."""
+
+    query: str = ""
+    channel_id: int | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    limit: int = 50
+    offset: int = 0
+    is_fts: bool = False
+    min_length: int | None = None
+    max_length: int | None = None
+    topic_id: int | None = None
+    include_filtered: bool = False
 
 
 class Account(BaseModel):

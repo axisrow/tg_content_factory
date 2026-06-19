@@ -41,6 +41,7 @@ from src.models import (
     PhotoSendMode,
     PipelineSource,
     PipelineTarget,
+    SearchParams,
     SearchQuery,
     SearchQueryDailyStat,
     StatsAllTaskPayload,
@@ -436,31 +437,8 @@ class CollectionBundle:
     ) -> int:
         return await self.messages.insert_messages_batch(messages, premium_search_query)
 
-    async def search_messages(
-        self,
-        query: str = "",
-        channel_id: int | None = None,
-        date_from: str | None = None,
-        date_to: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-        is_fts: bool = False,
-        min_length: int | None = None,
-        max_length: int | None = None,
-        include_filtered: bool = False,
-    ) -> MessageSearchPage:
-        return await self.messages.search_messages(
-            query=query,
-            channel_id=channel_id,
-            date_from=date_from,
-            date_to=date_to,
-            limit=limit,
-            offset=offset,
-            is_fts=is_fts,
-            min_length=min_length,
-            max_length=max_length,
-            include_filtered=include_filtered,
-        )
+    async def search_messages(self, params: SearchParams) -> MessageSearchPage:
+        return await self.messages.search_messages(params)
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
         return await self.messages.delete_messages_for_channel(channel_id)
@@ -684,31 +662,8 @@ class SearchBundle:
             numpy_available=numpy_ok,
         )
 
-    async def search_messages(
-        self,
-        query: str = "",
-        channel_id: int | None = None,
-        date_from: str | None = None,
-        date_to: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-        is_fts: bool = False,
-        min_length: int | None = None,
-        max_length: int | None = None,
-        include_filtered: bool = False,
-    ) -> MessageSearchPage:
-        return await self.messages.search_messages(
-            query=query,
-            channel_id=channel_id,
-            date_from=date_from,
-            date_to=date_to,
-            limit=limit,
-            offset=offset,
-            is_fts=is_fts,
-            min_length=min_length,
-            max_length=max_length,
-            include_filtered=include_filtered,
-        )
+    async def search_messages(self, params: SearchParams) -> MessageSearchPage:
+        return await self.messages.search_messages(params)
 
     async def add_channel(self, channel: Channel) -> int:
         return await self.channels.add_channel(channel)
