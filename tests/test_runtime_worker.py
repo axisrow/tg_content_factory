@@ -321,3 +321,103 @@ async def test_embedded_worker_retries_after_hanging_snapshot_publish():
             await worker.stop(timeout=0.01)
 
     stop_container.assert_awaited_once_with(container)
+
+
+async def test_embedded_worker_happy_path_becomes_ready_then_stops_cleanly():
+    from src.config import AppConfig
+
+    container = MagicMock()
+    published = asyncio.Event()
+
+    async def publish_once(_container, *, stop_event=None):
+        published.set()
+
+    worker = EmbeddedWorker(AppConfig())
+    with (
+        patch("src.web.embedded_worker.build_worker_container", AsyncMock(return_value=container)),
+        patch("src.web.embedded_worker.start_container", AsyncMock()) as start_container,
+        patch("src.web.embedded_worker.stop_container", AsyncMock()) as stop_container,
+        patch("src.web.embedded_worker._publish_snapshots", new=publish_once),
+        patch("src.web.embedded_worker.HEARTBEAT_INTERVAL_SEC", 0.001),
+    ):
+        await worker.start()
+        assert await worker.wait_ready(timeout=1.0) is True
+        assert worker.agent_ready is True
+        assert worker.startup_failed is False
+        assert worker.container is container
+        await worker.stop(timeout=1.0)
+
+    start_container.assert_awaited_once_with(container)
+    stop_container.assert_awaited_once_with(container)
+    assert worker.container is None
+    assert worker.agent_ready is False
+    assert published.is_set()
+
+
+async def test_embedded_worker_startup_decrypt_error_publishes_worker_down():
+    from src.config import AppConfig
+
+    container = MagicMock()
+    exc = AccountSessionDecryptError(phone="+1234", status="key_mismatch")
+    worker = EmbeddedWorker(AppConfig())
+    with (
+        patch("src.web.embedded_worker.build_worker_container", AsyncMock(return_value=container)),
+        patch("src.web.embedded_worker.start_container", AsyncMock(side_effect=exc)),
+        patch("src.web.embedded_worker.stop_container", AsyncMock()) as stop_container,
+        patch(
+            "src.web.embedded_worker._publish_worker_down_snapshot", AsyncMock()
+        ) as publish_down,
+        patch("src.web.embedded_worker._publish_snapshots", AsyncMock()) as publish_snapshots,
+    ):
+        await worker.start()
+        await worker.stop(timeout=1.0)
+
+    assert worker.startup_failed is True
+    assert worker.startup_error == str(exc)
+    publish_down.assert_awaited_once_with(container, exc)
+    publish_snapshots.assert_not_awaited()  # never enters the heartbeat loop
+    stop_container.assert_awaited_once_with(container)
+    assert worker.container is None
+
+
+async def test_embedded_worker_startup_generic_error_sets_banner():
+    from src.config import AppConfig
+
+    container = MagicMock()
+    worker = EmbeddedWorker(AppConfig())
+    with (
+        patch("src.web.embedded_worker.build_worker_container", AsyncMock(return_value=container)),
+        patch("src.web.embedded_worker.start_container", AsyncMock(side_effect=RuntimeError("boom"))),
+        patch("src.web.embedded_worker.stop_container", AsyncMock()) as stop_container,
+        patch("src.web.embedded_worker._publish_snapshots", AsyncMock()) as publish_snapshots,
+    ):
+        await worker.start()
+        await worker.stop(timeout=1.0)
+
+    assert worker.startup_failed is True
+    assert "Embedded worker failed to start" in (worker.startup_error or "")
+    publish_snapshots.assert_not_awaited()
+    stop_container.assert_awaited_once_with(container)
+    assert worker.container is None
+
+
+async def test_embedded_worker_start_twice_raises_and_stop_without_start_is_noop():
+    from src.config import AppConfig
+
+    worker = EmbeddedWorker(AppConfig())
+    # stop() before start() is a no-op
+    await worker.stop(timeout=1.0)
+
+    with (
+        patch("src.web.embedded_worker.build_worker_container", AsyncMock(return_value=MagicMock())),
+        patch("src.web.embedded_worker.start_container", AsyncMock()),
+        patch("src.web.embedded_worker.stop_container", AsyncMock()),
+        patch("src.web.embedded_worker._publish_snapshots", AsyncMock()),
+        patch("src.web.embedded_worker.HEARTBEAT_INTERVAL_SEC", 0.001),
+    ):
+        await worker.start()
+        try:
+            with pytest.raises(RuntimeError, match="already started"):
+                await worker.start()
+        finally:
+            await worker.stop(timeout=1.0)
