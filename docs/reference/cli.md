@@ -179,7 +179,7 @@ python -m src.main dialogs mark-read CHAT_ID [--phone PHONE] [--max-id ID]
 python -m src.main dialogs create-channel --title TITLE [--about TEXT] [--username USERNAME] [--phone PHONE]
 ```
 
-Legacy alias `my-telegram` is still accepted for backward compatibility, but `dialogs` is the primary documented name.
+`dialogs` is the documented CLI command for Telegram dialogs management.
 
 ## notification
 

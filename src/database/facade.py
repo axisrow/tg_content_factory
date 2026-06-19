@@ -115,16 +115,6 @@ class Database:
         self._pipeline_action_log: PipelineActionLogRepository | None = None
         self._repos: DatabaseRepositories | None = None
 
-    async def _has_encrypted_sessions(self) -> bool:
-        cur = await self._read("""
-            SELECT 1
-            FROM accounts
-            WHERE session_string LIKE 'enc:v1:%'
-               OR session_string LIKE 'enc:v2:%'
-            LIMIT 1
-            """)
-        return bool(await cur.fetchone())
-
     async def initialize(self) -> None:
         self._db = await self._connection.connect()
         self._fts_available = await run_migrations(self._db)

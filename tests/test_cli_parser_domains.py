@@ -29,7 +29,6 @@ def test_cli_parser_registers_all_top_level_domains() -> None:
         "filter",
         "image",
         "messages",
-        "my-telegram",
         "notification",
         "photo-loader",
         "pipeline",

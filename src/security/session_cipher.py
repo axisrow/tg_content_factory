@@ -6,7 +6,6 @@ import logging
 
 from cryptography.fernet import Fernet, InvalidToken
 
-_ENCRYPTED_PREFIX_V1 = "enc:v1:"
 _ENCRYPTED_PREFIX_V2 = "enc:v2:"
 _PBKDF2_SALT = b"tg_session_key_v2"
 _PBKDF2_ITERATIONS = 200_000
@@ -50,11 +49,6 @@ def log_expected_decrypt_failure(
     )
 
 
-def _derive_fernet_key_v1(secret: str) -> bytes:
-    digest = hashlib.sha256(secret.encode("utf-8")).digest()
-    return base64.urlsafe_b64encode(digest)
-
-
 def _derive_fernet_key_v2(secret: str) -> bytes:
     digest = hashlib.pbkdf2_hmac(
         "sha256",
@@ -68,7 +62,6 @@ def _derive_fernet_key_v2(secret: str) -> bytes:
 
 class SessionCipher:
     def __init__(self, secret: str):
-        self._fernet_v1 = Fernet(_derive_fernet_key_v1(secret))
         self._fernet_v2 = Fernet(_derive_fernet_key_v2(secret))
 
     @staticmethod
@@ -77,8 +70,6 @@ class SessionCipher:
 
     @staticmethod
     def encryption_version(value: str) -> int | None:
-        if value.startswith(_ENCRYPTED_PREFIX_V1):
-            return 1
         if value.startswith(_ENCRYPTED_PREFIX_V2):
             return 2
         return None
@@ -93,11 +84,7 @@ class SessionCipher:
                 status="unsupported_version",
             )
 
-        plaintext = value
-        if version == 1:
-            plaintext = self.decrypt(value)
-
-        token = self._fernet_v2.encrypt(plaintext.encode("utf-8")).decode("ascii")
+        token = self._fernet_v2.encrypt(value.encode("utf-8")).decode("ascii")
         return f"{_ENCRYPTED_PREFIX_V2}{token}"
 
     def decrypt(self, value: str) -> str:
@@ -110,15 +97,9 @@ class SessionCipher:
                 )
             return value
 
-        if version == 1:
-            token = value[len(_ENCRYPTED_PREFIX_V1) :]
-            fernet = self._fernet_v1
-        else:
-            token = value[len(_ENCRYPTED_PREFIX_V2) :]
-            fernet = self._fernet_v2
-
+        token = value[len(_ENCRYPTED_PREFIX_V2) :]
         try:
-            decrypted = fernet.decrypt(token.encode("ascii"))
+            decrypted = self._fernet_v2.decrypt(token.encode("ascii"))
         except InvalidToken as exc:
             raise EncryptedPayloadError(
                 "invalid encrypted session payload",
