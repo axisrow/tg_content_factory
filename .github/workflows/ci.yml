@@ -49,10 +49,12 @@ jobs:
 
       # Non-blocking duplication guard (#807 dedup round 2). Current level is
       # ~0.6%; threshold 1% leaves headroom while surfacing regressions. Kept
-      # advisory (continue-on-error) so it never reds CI on its own.
+      # advisory (continue-on-error) so it never reds CI on its own. jscpd is
+      # version-pinned so CI never executes an unvetted future npm release
+      # (review #918: @claude/@codex supply-chain note).
       - name: Code duplication guard (advisory)
         continue-on-error: true
-        run: npx -y jscpd --min-tokens 70 --format python --threshold 1 src
+        run: npx -y jscpd@5.0.10 --min-tokens 70 --format python --threshold 1 src
 
       - name: Enforce pytest warnings as errors
         run: |
