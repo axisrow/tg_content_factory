@@ -17,7 +17,6 @@ import logging
 import time
 from collections import OrderedDict
 from collections.abc import Mapping
-from inspect import isawaitable
 from types import MappingProxyType
 
 from src.agent.tools._categories import (
@@ -26,6 +25,7 @@ from src.agent.tools._categories import (
     ToolCategory,
     ToolMeta,
 )
+from src.agent.tools._registry import _get_accounts
 
 __all__ = [  # noqa: F822 — TOOL_CATEGORIES & co. are served by module __getattr__
     "TOOL_CATEGORIES",
@@ -132,19 +132,6 @@ def __getattr__(name: str):
     if name == "PHONE_BINDED_TOOLS":
         return _phone_binded_tools()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
-
-async def _load_account_records(db) -> list[object]:
-    for getter_name in ("get_account_summaries", "get_accounts"):
-        getter = getattr(db, getter_name, None)
-        if not callable(getter):
-            continue
-        result = getter()
-        if isawaitable(result):
-            result = await result
-        if isinstance(result, (list, tuple)):
-            return list(result)
-    return []
 
 
 
@@ -346,7 +333,7 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
             phone_known = True
         else:
             if phone is None:
-                accounts = await _load_account_records(db)
+                accounts = await _get_accounts(db)
                 if accounts:
                     primary = next((a for a in accounts if a.is_primary), accounts[0])
                     phone_used = primary.phone
