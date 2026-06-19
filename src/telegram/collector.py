@@ -826,6 +826,139 @@ class Collector:
 
         return session, phone, resolve_cache_only
 
+    async def _handle_post_collection_flood(
+        self,
+        channel: Channel,
+        phone: str,
+        flood_wait_sec: int,
+        flood_wait_operation: str | None,
+        attempted_resolve_phones: set[str],
+        total_collected: int,
+        collected_count: int,
+    ) -> tuple[str, int, Channel]:
+        """Decide what to do after a collection pass ended on a FloodWait.
+
+        Returns ``(kind, total_collected, channel)`` where kind is:
+          * ``"continue"`` — retry the collection loop with the returned
+            (possibly advanced) total_collected and (possibly re-read) channel;
+          * ``"return"`` — stop; caller returns ``total_collected + collected_count``.
+        Raises ``UsernameResolveFloodWaitDeferredError`` when a long resolve flood
+        must defer the channel and no free account can take it.
+        """
+        channel_id = channel.channel_id
+        if flood_wait_operation == RESOLVE_USERNAME_OPERATION:
+            if is_transient_flood_wait_seconds(flood_wait_sec):
+                await sleep_for_flood_wait_seconds(
+                    flood_wait_sec,
+                    operation=RESOLVE_USERNAME_OPERATION,
+                    phone=phone,
+                    logger_=logger,
+                )
+                return ("continue", total_collected, channel)
+            # Only a *long* resolve flood freezes live resolves — and
+            # only for the flooded account (#552/#790). A medium resolve
+            # flood skips just this channel so one blip does not stall
+            # the whole pool.
+            if flood_wait_sec <= GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC:
+                logger.warning(
+                    "%s short FloodWait %ss on %s; skipping channel %d "
+                    "(no backoff)",
+                    RESOLVE_USERNAME_OPERATION,
+                    flood_wait_sec,
+                    phone,
+                    channel_id,
+                )
+                return ("return", total_collected, channel)
+            # The pool already recorded this long flood for the phone
+            # inside run_live_username_resolve (>300s threshold); read
+            # back the active deadline rather than re-setting a second
+            # window (#785).
+            next_available_at = self._pool.get_resolve_username_backoff_until(phone)
+            if next_available_at is None and flood_wait_sec > GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC:
+                next_available_at = self._pool.set_resolve_username_backoff(
+                    flood_wait_sec, phone=phone
+                )
+                persist_backoff = getattr(self._pool, "persist_resolve_username_backoff", None)
+                if callable(persist_backoff):
+                    maybe_awaitable = persist_backoff()
+                    if isawaitable(maybe_awaitable):
+                        await maybe_awaitable
+                logger.warning(
+                    "%s: defensive backoff set to %s on %s (was None, flood_wait_sec=%d)",
+                    RESOLVE_USERNAME_OPERATION,
+                    next_available_at.isoformat(),
+                    mask_phone(phone),
+                    flood_wait_sec,
+                )
+            if next_available_at is None:
+                next_available_at = datetime.now(timezone.utc) + timedelta(
+                    seconds=flood_wait_sec
+                )
+            # Rotate the channel to a free account within the same pass
+            # when one exists; defer only when every account is in
+            # backoff (#790).
+            attempted_resolve_phones.add(phone)
+            if await self._can_rotate_resolve(attempted_resolve_phones):
+                logger.warning(
+                    "%s got FloodWait %ss on %s; backoff on that account "
+                    "until %s — rotating channel %d to another account",
+                    RESOLVE_USERNAME_OPERATION,
+                    flood_wait_sec,
+                    mask_phone(phone),
+                    next_available_at.isoformat(),
+                    channel_id,
+                )
+                return ("continue", total_collected + collected_count, channel)
+            capable_at = await self._next_resolve_capable_at()
+            if capable_at is not None:
+                next_available_at = capable_at
+            logger.warning(
+                "%s got FloodWait %ss on %s; pausing username resolves on "
+                "that account until %s (no free account to rotate to)",
+                RESOLVE_USERNAME_OPERATION,
+                flood_wait_sec,
+                mask_phone(phone),
+                next_available_at.isoformat(),
+            )
+            if self._notifier:
+                await self._notifier.notify(
+                    f"FloodWait {flood_wait_sec}s on {phone}, "
+                    f"channel {channel_id} — pausing username resolves on "
+                    f"this account until {next_available_at.isoformat()}"
+                )
+            # wait_seconds must describe the same deadline as
+            # next_available_at (the aggregate min across accounts may
+            # be earlier than this phone's own flood) — callers and the
+            # stats path surface both, so they cannot diverge.
+            defer_wait_sec = max(
+                0,
+                int(
+                    (
+                        next_available_at - datetime.now(timezone.utc)
+                    ).total_seconds()
+                ),
+            )
+            raise UsernameResolveFloodWaitDeferredError(
+                wait_seconds=defer_wait_sec,
+                next_available_at=next_available_at,
+            )
+
+        if self._notifier and flood_wait_sec > self._config.max_flood_wait_sec:
+            await self._notifier.notify(
+                f"FloodWait {flood_wait_sec}s on {phone}, "
+                f"channel {channel_id} — rotating to another account"
+            )
+        # Re-read channel from DB to get updated last_collected_id.
+        # Use get_channel_by_pk (no filtering) — collection
+        # already started, so we must finish even if the
+        # channel was filtered in the meantime.
+        updated = None
+        if channel.id is not None:
+            updated = await self._db.get_channel_by_pk(channel.id)
+        if updated:
+            return ("continue", total_collected + collected_count, updated)
+        return ("return", total_collected, channel)
+
     async def _collect_channel(
         self,
         channel: Channel,
@@ -1473,119 +1606,16 @@ class Collector:
             # below with a process-local backoff instead.
             # Only skip the channel if the channel no longer exists in DB.
             if flood_wait_sec is not None:
-                if flood_wait_operation == RESOLVE_USERNAME_OPERATION:
-                    if is_transient_flood_wait_seconds(flood_wait_sec):
-                        await sleep_for_flood_wait_seconds(
-                            flood_wait_sec,
-                            operation=RESOLVE_USERNAME_OPERATION,
-                            phone=phone,
-                            logger_=logger,
-                        )
-                        continue
-                    # Only a *long* resolve flood freezes live resolves — and
-                    # only for the flooded account (#552/#790). A medium resolve
-                    # flood skips just this channel so one blip does not stall
-                    # the whole pool.
-                    if flood_wait_sec <= GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC:
-                        logger.warning(
-                            "%s short FloodWait %ss on %s; skipping channel %d "
-                            "(no backoff)",
-                            RESOLVE_USERNAME_OPERATION,
-                            flood_wait_sec,
-                            phone,
-                            channel_id,
-                        )
-                        return total_collected + collected_count
-                    # The pool already recorded this long flood for the phone
-                    # inside run_live_username_resolve (>300s threshold); read
-                    # back the active deadline rather than re-setting a second
-                    # window (#785).
-                    next_available_at = self._pool.get_resolve_username_backoff_until(phone)
-                    if next_available_at is None and flood_wait_sec > GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC:
-                        next_available_at = self._pool.set_resolve_username_backoff(
-                            flood_wait_sec, phone=phone
-                        )
-                        persist_backoff = getattr(self._pool, "persist_resolve_username_backoff", None)
-                        if callable(persist_backoff):
-                            maybe_awaitable = persist_backoff()
-                            if isawaitable(maybe_awaitable):
-                                await maybe_awaitable
-                        logger.warning(
-                            "%s: defensive backoff set to %s on %s (was None, flood_wait_sec=%d)",
-                            RESOLVE_USERNAME_OPERATION,
-                            next_available_at.isoformat(),
-                            mask_phone(phone),
-                            flood_wait_sec,
-                        )
-                    if next_available_at is None:
-                        next_available_at = datetime.now(timezone.utc) + timedelta(
-                            seconds=flood_wait_sec
-                        )
-                    # Rotate the channel to a free account within the same pass
-                    # when one exists; defer only when every account is in
-                    # backoff (#790).
-                    attempted_resolve_phones.add(phone)
-                    if await self._can_rotate_resolve(attempted_resolve_phones):
-                        logger.warning(
-                            "%s got FloodWait %ss on %s; backoff on that account "
-                            "until %s — rotating channel %d to another account",
-                            RESOLVE_USERNAME_OPERATION,
-                            flood_wait_sec,
-                            mask_phone(phone),
-                            next_available_at.isoformat(),
-                            channel_id,
-                        )
-                        total_collected += collected_count
-                        continue
-                    capable_at = await self._next_resolve_capable_at()
-                    if capable_at is not None:
-                        next_available_at = capable_at
-                    logger.warning(
-                        "%s got FloodWait %ss on %s; pausing username resolves on "
-                        "that account until %s (no free account to rotate to)",
-                        RESOLVE_USERNAME_OPERATION,
-                        flood_wait_sec,
-                        mask_phone(phone),
-                        next_available_at.isoformat(),
-                    )
-                    if self._notifier:
-                        await self._notifier.notify(
-                            f"FloodWait {flood_wait_sec}s on {phone}, "
-                            f"channel {channel_id} — pausing username resolves on "
-                            f"this account until {next_available_at.isoformat()}"
-                        )
-                    # wait_seconds must describe the same deadline as
-                    # next_available_at (the aggregate min across accounts may
-                    # be earlier than this phone's own flood) — callers and the
-                    # stats path surface both, so they cannot diverge.
-                    defer_wait_sec = max(
-                        0,
-                        int(
-                            (
-                                next_available_at - datetime.now(timezone.utc)
-                            ).total_seconds()
-                        ),
-                    )
-                    raise UsernameResolveFloodWaitDeferredError(
-                        wait_seconds=defer_wait_sec,
-                        next_available_at=next_available_at,
-                    )
-
-                if self._notifier and flood_wait_sec > self._config.max_flood_wait_sec:
-                    await self._notifier.notify(
-                        f"FloodWait {flood_wait_sec}s on {phone}, "
-                        f"channel {channel_id} — rotating to another account"
-                    )
-                # Re-read channel from DB to get updated last_collected_id.
-                # Use get_channel_by_pk (no filtering) — collection
-                # already started, so we must finish even if the
-                # channel was filtered in the meantime.
-                updated = None
-                if channel.id is not None:
-                    updated = await self._db.get_channel_by_pk(channel.id)
-                if updated:
-                    total_collected += collected_count
-                    channel = updated
+                kind, total_collected, channel = await self._handle_post_collection_flood(
+                    channel,
+                    phone,
+                    flood_wait_sec,
+                    flood_wait_operation,
+                    attempted_resolve_phones,
+                    total_collected,
+                    collected_count,
+                )
+                if kind == "continue":
                     continue
                 return total_collected + collected_count
 
