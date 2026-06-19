@@ -682,7 +682,10 @@ async def test_search_page_shows_plus_when_has_more(route_client, monkeypatch):
     resp = await route_client.get("/search?q=test")
 
     assert resp.status_code == 200
-    assert "50+" in resp.text
+    # #766: the result counter renders «N+» and the next-page link appears.
+    # Assert the full rendered counter phrase rather than a bare "50+" substring
+    # so an incidental match elsewhere in the page can't flake it (#883, #920).
+    assert "<strong>50+</strong> сообщений" in resp.text
     assert "Далее" in resp.text
 
 
@@ -708,7 +711,11 @@ async def test_search_page_no_next_when_no_more(route_client, monkeypatch):
     resp = await route_client.get("/search?q=test")
 
     assert resp.status_code == 200
-    assert "1+" not in resp.text
+    # #766: the result counter renders the exact total with no lower-bound «+»,
+    # and there is no next-page link. Assert the full rendered counter phrase
+    # (`</strong> сообщений`) so neither an incidental "1+" elsewhere (#883) nor
+    # a stray "+" adjacent to the counter (Codex review #920) can pass unnoticed.
+    assert "<strong>1</strong> сообщений" in resp.text
     assert "Далее" not in resp.text
 
 
