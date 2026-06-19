@@ -37,17 +37,6 @@ async def test_photo_loader_page_with_phone(route_client):
 
 
 @pytest.mark.anyio
-async def test_legacy_photo_loader_route_redirects_to_dialogs(route_client):
-    legacy_prefix = "/my" + "-telegram"
-    resp = await route_client.get(
-        f"{legacy_prefix}/photos?phone=%2B1234567890",
-        follow_redirects=False,
-    )
-    assert resp.status_code == 308
-    assert resp.headers["location"] == "/dialogs/photos?phone=%2B1234567890"
-
-
-@pytest.mark.anyio
 async def test_photo_loader_page_shows_no_jobs(route_client, db):
     """Test photo loader page shows no auto jobs."""
     resp = await route_client.get("/dialogs/photos?phone=%2B1234567890")

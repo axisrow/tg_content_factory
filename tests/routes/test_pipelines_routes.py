@@ -151,7 +151,7 @@ async def test_pipeline_pages_render_with_encrypted_account_missing_key(client):
     await app.state.db.add_account(
         Account(
             phone="+19999999999",
-            session_string="enc:v1:not-a-valid-token",
+            session_string="enc:v2:not-a-valid-token",
             is_active=True,
         )
     )

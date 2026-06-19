@@ -574,61 +574,7 @@ async def test_migrate_sessions_already_encrypted_v2(repo_with_cipher, cipher):
     assert row["session_string"] == encrypted
 
 
-async def test_migrate_sessions_v1_to_v2(repo_with_cipher, cipher):
-    """Test migrating v1 encrypted sessions to v2."""
-    # Create v1 encrypted value manually
-
-    from cryptography.fernet import Fernet
-
-    from src.security.session_cipher import _derive_fernet_key_v1
-
-    fernet_v1 = Fernet(_derive_fernet_key_v1("test-secret-key-12345"))
-    v1_token = fernet_v1.encrypt(b"session_data").decode("ascii")
-    v1_encrypted = f"enc:v1:{v1_token}"
-
-    await repo_with_cipher._db.execute(
-        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
-        ("+1234567890", v1_encrypted),
-    )
-    await repo_with_cipher._db.commit()
-
-    count = await repo_with_cipher.migrate_sessions()
-    assert count == 1
-
-    # Verify it's now v2
-    cur = await repo_with_cipher._db.execute(
-        "SELECT session_string FROM accounts WHERE phone = ?", ("+1234567890",)
-    )
-    row = await cur.fetchone()
-    assert row["session_string"].startswith("enc:v2:")
-
-
 async def test_migrate_sessions_empty_table(repo_with_cipher):
     """Test migrate_sessions returns 0 when no accounts exist."""
     count = await repo_with_cipher.migrate_sessions()
     assert count == 0
-
-
-async def test_get_accounts_decrypts_v1_session(db):
-    """Test that v1 encrypted sessions can be decrypted."""
-    secret = "test-secret-key-12345"
-    cipher = SessionCipher(secret)
-
-    from cryptography.fernet import Fernet
-
-    from src.security.session_cipher import _derive_fernet_key_v1
-
-    fernet_v1 = Fernet(_derive_fernet_key_v1(secret))
-    v1_token = fernet_v1.encrypt(b"original_session").decode("ascii")
-    v1_encrypted = f"enc:v1:{v1_token}"
-
-    await db.db.execute(
-        "INSERT INTO accounts (phone, session_string, is_primary, is_active) VALUES (?, ?, 0, 1)",
-        ("+1234567890", v1_encrypted),
-    )
-    await db.db.commit()
-
-    repo = AccountsRepository(db.db, session_cipher=cipher)
-    accounts = await repo.get_accounts()
-    assert len(accounts) == 1
-    assert accounts[0].session_string == "original_session"

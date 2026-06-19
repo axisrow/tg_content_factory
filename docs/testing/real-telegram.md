@@ -228,7 +228,7 @@ The mutation-safe inventory discovers targets from the live DB/cache, like the r
 - pin/unpin require an own cached dialog with a collected message, otherwise those tests skip;
 - scratch send/edit tests use `CLI_REAL_TG_MUTATION_CHAT` when set, otherwise an own cached dialog; they do not delete
   the sent marker and leave it as a final `codex live cli edit test completed ...` message;
-- react tests set the requested emoji and then clear it with `dialogs react --clear` / `my-telegram react --clear`;
+- react tests set the requested emoji and then clear it with `dialogs react --clear`;
 - pin tests unpin in cleanup, and unpin tests first pin then unpin so the final state is unpinned;
 - archive tests unarchive in cleanup, and unarchive tests first archive then unarchive so the final state is unarchived.
 

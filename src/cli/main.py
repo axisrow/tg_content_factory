@@ -79,7 +79,6 @@ def main() -> None:
         "provider": provider.run,
         "export": export.run,
         "debug": debug_cmd.run,
-        "my-telegram": dialogs_cmd.run,  # backward-compat alias
     }
 
     handler = commands.get(args.command)
@@ -95,7 +94,6 @@ def main() -> None:
             "notification": "notification_action",
             "photo-loader": "photo_loader_action",
             "dialogs": "dialogs_action",
-            "my-telegram": "dialogs_action",
             "test": "test_action",
             "agent": "agent_action",
             "analytics": "analytics_action",

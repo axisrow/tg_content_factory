@@ -45,21 +45,16 @@ def test_issue_303_command_signatures_parse():
         assert parsed.command == argv[0], label
 
 
-def test_dialogs_and_legacy_alias_parse():
+def test_dialogs_parse():
     from src.cli.parser import build_parser
 
     parser = build_parser()
 
     dialogs_args = parser.parse_args(["dialogs", "topics", "--channel-id", "123"])
-    alias_args = parser.parse_args(["my-telegram", "topics", "--channel-id", "456"])
 
     assert dialogs_args.command == "dialogs"
     assert dialogs_args.dialogs_action == "topics"
     assert dialogs_args.channel_id == 123
-
-    assert alias_args.command == "my-telegram"
-    assert alias_args.dialogs_action == "topics"
-    assert alias_args.channel_id == 456
 
 
 def test_dialogs_help_lists_subcommands(capsys):
@@ -75,20 +70,6 @@ def test_dialogs_help_lists_subcommands(capsys):
     assert "dialogs" in out
     assert "broadcast-stats" in out
     assert "cache-status" in out
-
-
-def test_dialogs_help_still_uses_dialogs_usage(capsys):
-    from src.cli.parser import build_parser
-
-    parser = build_parser()
-
-    with pytest.raises(SystemExit):
-        parser.parse_args(["my-telegram", "--help"])
-
-    out = capsys.readouterr().out
-    assert "usage:" in out
-    assert "dialogs" in out
-    assert "mark-read" in out
 
 
 def test_dialogs_run_is_primary_entrypoint(cli_db, cli_init_patch, capsys):
@@ -125,36 +106,3 @@ def test_dialogs_run_is_primary_entrypoint(cli_db, cli_init_patch, capsys):
     out = capsys.readouterr().out
     assert "Primary Dialogs Entry" in out
     assert "@primary_dialogs" in out
-
-
-def test_dialogs_legacy_alias_remains_compatible(cli_db, cli_init_patch, capsys):
-    pool = MagicMock()
-    pool.clients = {"+79001234567": AsyncMock()}
-    pool.disconnect_all = AsyncMock()
-
-    async def fake_init_pool(config, db):
-        return MagicMock(), pool
-
-    with (
-        cli_init_patch(cli_db, "src.cli.commands.dialogs.runtime.init_db"),
-        patch("src.cli.commands.dialogs.runtime.init_pool", side_effect=fake_init_pool),
-        patch(
-            "src.cli.commands.dialogs.ChannelService.get_my_dialogs",
-            new_callable=AsyncMock,
-            return_value=[
-                {
-                    "channel_id": -100222,
-                    "title": "Legacy Alias Dialog",
-                    "username": None,
-                    "channel_type": "supergroup",
-                    "already_added": False,
-                }
-            ],
-        ),
-    ):
-        from src.cli.commands.dialogs import run
-
-        run(cli_ns(dialogs_action="list", phone="+79001234567"))
-
-    out = capsys.readouterr().out
-    assert "Legacy Alias Dialog" in out
