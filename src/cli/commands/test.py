@@ -811,6 +811,37 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
     tmp_path: str | None = None
     pool = None
 
+    async def _abort_skip(name: str, exc: BaseException) -> None:
+        results.append(CheckResult(name, Status.SKIP, str(exc)))
+        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+
+    async def _op_step(name, op, on_success) -> bool:
+        """Run a flood-policy op; append on_success(value) or FAIL. Returns
+        False (→ caller must `return results`) only when a step SKIP aborts the
+        run (cleanup already performed); True to continue."""
+        try:
+            value = await _run_operation_with_flood_policy(op, pool=pool, check_name=name)
+            results.append(on_success(value))
+            return True
+        except TelegramLiveStepSkipError as exc:
+            await _abort_skip(name, exc)
+            return False
+        except Exception as exc:
+            results.append(CheckResult(name, Status.FAIL, _format_exception(exc)))
+            return True
+
+    async def _search_step(name, run) -> bool:
+        """Like _op_step but `run()` directly yields a CheckResult (search ops)."""
+        try:
+            results.append(await run())
+            return True
+        except TelegramLiveStepSkipError as exc:
+            await _abort_skip(name, exc)
+            return False
+        except Exception as exc:
+            results.append(CheckResult(name, Status.FAIL, _format_exception(exc)))
+            return True
+
     # 1. tg_db_copy
     try:
         copy_db, tmp_path, config = await _init_db_copy(config_path)
@@ -849,37 +880,20 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
     engine = SearchEngine(copy_db, pool)
 
     # 3. tg_users_info
-    try:
-        users = await _run_operation_with_flood_policy(
-            lambda: pool.get_users_info(),
-            pool=pool,
-            check_name="tg_users_info",
-        )
-        names = ", ".join(u.phone for u in users)
-        results.append(CheckResult("tg_users_info", Status.PASS, names))
-    except TelegramLiveStepSkipError as exc:
-        results.append(CheckResult("tg_users_info", Status.SKIP, str(exc)))
-        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+    if not await _op_step(
+        "tg_users_info",
+        lambda: pool.get_users_info(),
+        lambda users: CheckResult("tg_users_info", Status.PASS, ", ".join(u.phone for u in users)),
+    ):
         return results
-    except Exception as exc:
-        results.append(CheckResult("tg_users_info", Status.FAIL, _format_exception(exc)))
 
     # 4. tg_get_dialogs
-    try:
-        dialogs = await _run_operation_with_flood_policy(
-            lambda: pool.get_dialogs(),
-            pool=pool,
-            check_name="tg_get_dialogs",
-        )
-        results.append(
-            CheckResult("tg_get_dialogs", Status.PASS, f"{len(dialogs)} dialogs"),
-        )
-    except TelegramLiveStepSkipError as exc:
-        results.append(CheckResult("tg_get_dialogs", Status.SKIP, str(exc)))
-        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+    if not await _op_step(
+        "tg_get_dialogs",
+        lambda: pool.get_dialogs(),
+        lambda dialogs: CheckResult("tg_get_dialogs", Status.PASS, f"{len(dialogs)} dialogs"),
+    ):
         return results
-    except Exception as exc:
-        results.append(CheckResult("tg_get_dialogs", Status.FAIL, _format_exception(exc)))
 
     # 5. tg_resolve_channel
     channels = await copy_db.get_channels(active_only=True)
@@ -1008,53 +1022,36 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
             CheckResult("tg_channel_stats", Status.SKIP, "No active channels"),
         )
     else:
-        try:
-            ch = active_channels[0]
-            collector = Collector(pool, copy_db, config.scheduler)
-            stats = await _run_operation_with_flood_policy(
-                lambda: collector.collect_channel_stats(ch),
-                pool=pool,
-                check_name="tg_channel_stats",
-            )
+        ch = active_channels[0]
+        collector = Collector(pool, copy_db, config.scheduler)
+
+        def _stats_result(stats) -> CheckResult:
             if stats:
-                results.append(
-                    CheckResult(
-                        "tg_channel_stats",
-                        Status.PASS,
-                        f"ch={ch.channel_id} subs={stats.subscriber_count}",
-                    )
+                return CheckResult(
+                    "tg_channel_stats", Status.PASS, f"ch={ch.channel_id} subs={stats.subscriber_count}"
                 )
-            else:
-                results.append(
-                    CheckResult(
-                        "tg_channel_stats",
-                        Status.PASS,
-                        f"ch={ch.channel_id} stats=None (no data)",
-                    )
-                )
-        except TelegramLiveStepSkipError as exc:
-            results.append(CheckResult("tg_channel_stats", Status.SKIP, str(exc)))
-            await _cleanup_telegram(pool, copy_db, tmp_path, results)
+            return CheckResult(
+                "tg_channel_stats", Status.PASS, f"ch={ch.channel_id} stats=None (no data)"
+            )
+
+        if not await _op_step(
+            "tg_channel_stats",
+            lambda: collector.collect_channel_stats(ch),
+            _stats_result,
+        ):
             return results
-        except Exception as exc:
-            results.append(CheckResult("tg_channel_stats", Status.FAIL, _format_exception(exc)))
 
     # 8. tg_search_my_chats
-    try:
-        results.append(
-            await _run_search_operation(
-                lambda: engine.search_my_chats("test", limit=5),
-                pool=pool,
-                check_name="tg_search_my_chats",
-                success_detail_factory=lambda result: f"{result.total} results",
-            )
-        )
-    except TelegramLiveStepSkipError as exc:
-        results.append(CheckResult("tg_search_my_chats", Status.SKIP, str(exc)))
-        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+    if not await _search_step(
+        "tg_search_my_chats",
+        lambda: _run_search_operation(
+            lambda: engine.search_my_chats("test", limit=5),
+            pool=pool,
+            check_name="tg_search_my_chats",
+            success_detail_factory=lambda result: f"{result.total} results",
+        ),
+    ):
         return results
-    except Exception as exc:
-        results.append(CheckResult("tg_search_my_chats", Status.FAIL, _format_exception(exc)))
 
     # 9. tg_search_in_channel
     if not channels:
@@ -1062,40 +1059,30 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
             CheckResult("tg_search_in_channel", Status.SKIP, "No channels"),
         )
     else:
-        try:
-            ch = channels[0]
-            results.append(
-                await _run_search_operation(
-                    lambda: engine.search_in_channel(ch.channel_id, "test", limit=5),
-                    pool=pool,
-                    check_name="tg_search_in_channel",
-                    success_detail_factory=lambda result: f"ch={ch.channel_id}: {result.total} results",
-                )
-            )
-        except TelegramLiveStepSkipError as exc:
-            results.append(CheckResult("tg_search_in_channel", Status.SKIP, str(exc)))
-            await _cleanup_telegram(pool, copy_db, tmp_path, results)
+        ch = channels[0]
+        if not await _search_step(
+            "tg_search_in_channel",
+            lambda: _run_search_operation(
+                lambda: engine.search_in_channel(ch.channel_id, "test", limit=5),
+                pool=pool,
+                check_name="tg_search_in_channel",
+                success_detail_factory=lambda result: f"ch={ch.channel_id}: {result.total} results",
+            ),
+        ):
             return results
-        except Exception as exc:
-            results.append(CheckResult("tg_search_in_channel", Status.FAIL, _format_exception(exc)))
 
     # 10. tg_search_premium
-    try:
-        results.append(
-            await _run_search_operation(
-                lambda: engine.search_telegram("test", limit=5),
-                pool=pool,
-                check_name="tg_search_premium",
-                success_detail_factory=lambda result: f"{result.total} results",
-                premium_error_is_skip=True,
-            )
-        )
-    except TelegramLiveStepSkipError as exc:
-        results.append(CheckResult("tg_search_premium", Status.SKIP, str(exc)))
-        await _cleanup_telegram(pool, copy_db, tmp_path, results)
+    if not await _search_step(
+        "tg_search_premium",
+        lambda: _run_search_operation(
+            lambda: engine.search_telegram("test", limit=5),
+            pool=pool,
+            check_name="tg_search_premium",
+            success_detail_factory=lambda result: f"{result.total} results",
+            premium_error_is_skip=True,
+        ),
+    ):
         return results
-    except Exception as exc:
-        results.append(CheckResult("tg_search_premium", Status.FAIL, _format_exception(exc)))
 
     # 11. tg_search_quota
     try:
