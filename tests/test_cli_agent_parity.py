@@ -100,8 +100,12 @@ def _paths_match(actual_path: str, documented_path: str) -> bool:
     documented_parts = documented_path.strip("/").split("/") if documented_path.strip("/") else []
     if len(actual_parts) != len(documented_parts):
         return False
+    # A segment matches only when it is literally equal, or BOTH sides are path
+    # params. Treating a single param segment as a wildcard (e.g. documented
+    # {id} vs actual static "notifications") would let an unrelated static
+    # sibling satisfy a removed dynamic route, false-greening the guard.
     return all(
-        actual == documented or _is_path_param(actual) or _is_path_param(documented)
+        actual == documented or (_is_path_param(actual) and _is_path_param(documented))
         for actual, documented in zip(actual_parts, documented_parts, strict=True)
     )
 
@@ -132,6 +136,22 @@ def test_documented_web_endpoints_exist_in_app_routes():
         if not _route_exists(actual_routes, method, path)
     ]
     assert missing_routes == []
+
+
+def test_path_param_does_not_match_unrelated_static_sibling():
+    """A documented dynamic route must NOT be satisfied by an unrelated static
+    sibling of the same shape. If POST /settings/{account_id}/delete regresses,
+    the guard must fail rather than false-green against POST
+    /settings/notifications/delete (param-vs-static segment is not a match)."""
+    documented_dynamic = "/settings/{id}/delete"
+    static_sibling_only = {("POST", "/settings/notifications/delete")}
+
+    # The real dynamic endpoint is gone -> the guard must report it missing.
+    assert not _route_exists(static_sibling_only, "POST", documented_dynamic)
+
+    # A genuine param-to-param route still matches (different param name is fine).
+    real_dynamic = {("POST", "/settings/{account_id}/delete")}
+    assert _route_exists(real_dynamic, "POST", documented_dynamic)
 
 
 def test_configure_app_tolerates_unnamed_included_routers():
