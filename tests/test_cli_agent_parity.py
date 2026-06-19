@@ -46,15 +46,16 @@ def _parity_rows() -> list[tuple[str, str, list[str]]]:
 
 
 def _actual_web_routes() -> set[tuple[str, str]]:
+    # Introspect via OpenAPI instead of app.routes: newer Starlette nests
+    # feature routes inside an unnamed _IncludedRouter per include_router(), so a
+    # flat walk of app.routes misses them. app.openapi()["paths"] expands every
+    # included router, exposing the documented (in-schema) endpoints with methods.
     from src.web.app import create_app
 
     routes: set[tuple[str, str]] = set()
-    for route in create_app().routes:
-        path = getattr(route, "path", "")
-        methods = getattr(route, "methods", set()) or set()
-        for method in methods:
-            if method not in {"HEAD", "OPTIONS"}:
-                routes.add((method, path))
+    for path, operations in create_app().openapi().get("paths", {}).items():
+        for method in operations:
+            routes.add((method.upper(), path))
     return routes
 
 
