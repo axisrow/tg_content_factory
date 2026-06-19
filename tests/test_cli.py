@@ -1549,18 +1549,18 @@ class TestCLIDialogsTopics:
         assert "No forum topics" in out
 
     def test_parser_topics_subcommand(self):
-        """Parser correctly handles the legacy alias for dialogs topics."""
+        """Parser correctly handles the dialogs topics subcommand."""
         from src.cli.parser import build_parser
 
         parser = build_parser()
 
-        args = parser.parse_args(["my-telegram", "topics", "--channel-id", "123"])
+        args = parser.parse_args(["dialogs", "topics", "--channel-id", "123"])
         assert args.dialogs_action == "topics"
         assert args.channel_id == 123
         assert args.phone is None
 
         args = parser.parse_args(
-            ["my-telegram", "topics", "--channel-id", "456", "--phone", "+10001112233"]
+            ["dialogs", "topics", "--channel-id", "456", "--phone", "+10001112233"]
         )
         assert args.channel_id == 456
         assert args.phone == "+10001112233"

@@ -78,7 +78,11 @@ class AccountsRepository:
         return cur.lastrowid or 0
 
     async def migrate_sessions(self) -> int:
-        """Migrate plaintext and legacy encrypted sessions to the current format."""
+        """Re-encrypt plaintext sessions to the current (enc:v2) format.
+
+        Unsupported encrypted strings (e.g. removed enc:v1, or enc:v* without a key)
+        are skipped and logged via the expected-decrypt-failure path, not migrated.
+        """
         if not self._session_cipher:
             return 0
 

@@ -140,12 +140,6 @@ _CLI_CLEANUP_COMMAND_PRODUCERS = {
     ("dialogs", "react"): {("dialogs", "react")},
     ("dialogs", "unarchive"): {("dialogs", "archive")},
     ("dialogs", "unpin-message"): {("dialogs", "pin-message")},
-    ("my-telegram", "archive"): {("my-telegram", "unarchive")},
-    ("my-telegram", "edit-message"): {("my-telegram", "edit-message")},
-    ("my-telegram", "pin-message"): {("my-telegram", "unpin-message")},
-    ("my-telegram", "react"): {("my-telegram", "react")},
-    ("my-telegram", "unarchive"): {("my-telegram", "archive")},
-    ("my-telegram", "unpin-message"): {("my-telegram", "pin-message")},
     ("photo-loader", "batch-cancel"): {("photo-loader", "schedule-send")},
     ("scheduler", "clear-pending"): {("collect",), ("scheduler", "trigger")},
     ("search",): {("search",)},
@@ -1255,10 +1249,10 @@ def test_cli_real_tg_mutation_safe_commands_are_bounded():
             command_case = _normalize_cli_command_case(prefix, leafs)
             if command_case is None:
                 continue
-            if command_case in {("dialogs", "mark-read"), ("my-telegram", "mark-read")}:
+            if command_case == ("dialogs", "mark-read"):
                 if "--max-id" not in strings:
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: mark-read must set --max-id")
-            if command_case in {("dialogs", "react"), ("my-telegram", "react")}:
+            if command_case == ("dialogs", "react"):
                 if "--yes" not in strings:
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: react must be noninteractive")
             if command_case in {
@@ -1266,19 +1260,17 @@ def test_cli_real_tg_mutation_safe_commands_are_bounded():
                 ("dialogs", "edit-message"),
                 ("dialogs", "forward"),
                 ("dialogs", "send"),
-                ("my-telegram", "edit-message"),
-                ("my-telegram", "send"),
             }:
                 if "--yes" not in strings:
                     violations.append(
                         f"{path.relative_to(_REPO_ROOT)}:{lineno}: scratch-message command must be noninteractive"
                     )
-            if command_case in {("dialogs", "pin-message"), ("my-telegram", "pin-message")}:
+            if command_case == ("dialogs", "pin-message"):
                 if "--notify" in strings:
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: mutation-safe pin must not notify")
                 if "--yes" not in strings:
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: pin-message must be noninteractive")
-            if command_case in {("dialogs", "unpin-message"), ("my-telegram", "unpin-message")}:
+            if command_case == ("dialogs", "unpin-message"):
                 if "--message-id" not in strings:
                     violations.append(f"{path.relative_to(_REPO_ROOT)}:{lineno}: unpin-message must set --message-id")
                 if "--yes" not in strings:
@@ -1295,14 +1287,6 @@ def test_cli_real_tg_mutation_safe_commands_are_bounded():
                 ("dialogs", "send"),
                 ("dialogs", "unarchive"),
                 ("dialogs", "unpin-message"),
-                ("my-telegram", "archive"),
-                ("my-telegram", "edit-message"),
-                ("my-telegram", "mark-read"),
-                ("my-telegram", "pin-message"),
-                ("my-telegram", "react"),
-                ("my-telegram", "send"),
-                ("my-telegram", "unarchive"),
-                ("my-telegram", "unpin-message"),
                 ("photo-loader", "schedule-send"),
                 ("photo-loader", "send"),
             } and "--phone" not in strings:

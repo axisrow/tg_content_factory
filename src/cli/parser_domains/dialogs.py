@@ -5,7 +5,7 @@ import argparse
 
 def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser | None:
     dialogs_parser = subparsers.add_parser(
-        "dialogs", aliases=["my-telegram"], help="Telegram dialogs management",
+        "dialogs", help="Telegram dialogs management",
     )
     dialogs_sub = dialogs_parser.add_subparsers(dest="dialogs_action")
     dialogs_list = dialogs_sub.add_parser("list", help="List all dialogs for an account")

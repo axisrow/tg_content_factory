@@ -279,31 +279,6 @@ class TestParser:
         assert args.command == "dialogs"
         assert args.dialogs_action == "list"
 
-    def test_parser_my_telegram_alias(self):
-        """my-telegram is an alias for dialogs."""
-        parser = build_parser()
-        args = parser.parse_args(["my-telegram", "list"])
-        assert args.command == "my-telegram"
-        assert args.dialogs_action == "list"
-
-    @pytest.mark.parametrize(
-        "argv",
-        [
-            ["list"],
-            ["topics", "--channel-id", "123"],
-            ["send", "@user", "hello", "--phone", "+10001112233"],
-        ],
-    )
-    def test_my_telegram_alias_parses_identically_to_dialogs(self, argv):
-        """my-telegram must parse to the same args as dialogs (output identity, #567)."""
-        parser = build_parser()
-        dialogs_args = vars(parser.parse_args(["dialogs", *argv]))
-        alias_args = vars(parser.parse_args(["my-telegram", *argv]))
-        # Only the top-level command label differs; everything else is identical.
-        dialogs_args.pop("command")
-        alias_args.pop("command")
-        assert alias_args == dialogs_args
-
     def test_parser_filter_analyze(self):
         """filter analyze subcommand."""
         parser = build_parser()
@@ -438,24 +413,6 @@ class TestMainDispatch:
         mock_build.return_value = parser
 
         with patch("src.cli.main.collect") as mock_mod:
-            mock_mod.run = MagicMock()
-            main()
-            mock_mod.run.assert_called_once_with(args)
-
-    @patch("src.cli.main.load_cli_dotenv")
-    @patch("src.cli.main.setup_logging")
-    @patch("src.cli.main.ensure_data_dirs")
-    @patch("src.cli.main.build_parser")
-    def test_main_my_telegram_alias_dispatch(self, mock_build, mock_dirs, mock_log, mock_dotenv):
-        """main() dispatches 'my-telegram' to the dialogs handler."""
-        parser = MagicMock()
-        args = MagicMock()
-        args.command = "my-telegram"
-        args.dialogs_action = "list"
-        parser.parse_args.return_value = args
-        mock_build.return_value = parser
-
-        with patch("src.cli.main.dialogs_cmd") as mock_mod:
             mock_mod.run = MagicMock()
             main()
             mock_mod.run.assert_called_once_with(args)

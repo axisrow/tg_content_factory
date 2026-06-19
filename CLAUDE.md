@@ -68,7 +68,7 @@ python -m src.main image generate|models|providers|generated
 python -m src.main mcp-server [--no-pool]   # expose agent tool registry as stdio MCP server (for external agents like Codex)
 ```
 
-Primary CLI name for Telegram dialogs is `dialogs`; legacy alias `my-telegram` is still accepted for backward compatibility.
+CLI command for Telegram dialogs management is `dialogs`.
 
 ## Architecture
 
@@ -164,7 +164,7 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 - Web auth: HTTP Basic Auth (password only via `WEB_PASS`, username hardcoded as "admin")
 - ruff for linting: line-length=120, target py311, rules E/F/I/N/W
 - Tests: pytest-asyncio with `asyncio_mode="auto"`
-- Session strings stored as `enc:v2:*` when `SESSION_ENCRYPTION_KEY` is set; legacy `enc:v1:*` auto-migrated; startup fails fast if encrypted rows exist without key
+- Session strings stored as `enc:v2:*` when `SESSION_ENCRYPTION_KEY` is set; startup fails fast if encrypted rows exist without key
 
 ## CI
 
