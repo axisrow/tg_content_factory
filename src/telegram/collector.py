@@ -739,7 +739,6 @@ class Collector:
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
         force: bool = False,
         min_subs: int = 0,
-        progress_offset: int = 0,
         cancel_event: asyncio.Event | None = None,
     ) -> int:
         """Collect new messages from a single channel. Returns count."""
@@ -1513,7 +1512,6 @@ class Collector:
                             channel_id,
                         )
                         total_collected += collected_count
-                        progress_offset += collected_count
                         continue
                     capable_at = await self._next_resolve_capable_at()
                     if capable_at is not None:
@@ -1563,7 +1561,6 @@ class Collector:
                     updated = await self._db.get_channel_by_pk(channel.id)
                 if updated:
                     total_collected += collected_count
-                    progress_offset += collected_count
                     channel = updated
                     continue
                 return total_collected + collected_count

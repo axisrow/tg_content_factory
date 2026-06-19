@@ -1664,6 +1664,39 @@ async def test_collect_channel_does_not_advance_last_id_when_flush_fails(db):
 
 
 @pytest.mark.anyio
+async def test_collect_channel_db_busy_during_flush_keeps_cursor(db):
+    """Characterization (#884, safety net for #885): a transient DatabaseBusyError
+    raised by insert_messages_batch during flush is swallowed by _flush_batch
+    (returns False) — the cycle stops cleanly, no messages are counted and
+    last_collected_id is left untouched so the batch is re-collected next run."""
+    from src.database import DatabaseBusyError
+
+    ch = Channel(channel_id=-100127, title="Busy", username="busy", last_collected_id=5)
+    await db.add_channel(ch)
+    await db.update_channel_last_id(-100127, 5)
+    stored = next(c for c in await db.get_channels() if c.channel_id == -100127)
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(
+        return_value=_AsyncIterMessages([_make_mock_message(10, text="msg 10")])
+    )
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+
+    db.insert_messages_batch = AsyncMock(  # type: ignore[method-assign]
+        side_effect=DatabaseBusyError("database is locked")
+    )
+
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+    count = await collector._collect_channel(stored)
+
+    updated = next(c for c in await db.get_channels() if c.channel_id == -100127)
+    assert count == 0
+    assert updated.last_collected_id == 5
+
+
+@pytest.mark.anyio
 async def test_full_backfill_does_not_rewind_existing_cursor(db):
     """A full old-history scan must not lower the durable incremental cursor."""
     ch = Channel(channel_id=-100132, title="Backfill", username="backfill", last_collected_id=500)
