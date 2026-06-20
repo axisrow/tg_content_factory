@@ -192,3 +192,12 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 - `real_provider_smoke` — opt-in live LLM/image provider API smoke
 - `codex_image_live` / `codex_cli_live` — opt-in live Codex SDK/CLI tests; gates: `RUN_CODEX_IMAGE_LIVE=1` / `RUN_CODEX_CLI_LIVE=1`
 - `e2e` — end-to-end browser test using Playwright
+
+### Test levels (unit / integration / smoke / e2e)
+A second classification axis layered on top of the markers above, **auto-applied** at collection time by `_infer_test_level` in root `conftest.py` — no manual annotation needed. Run a level with `pytest -m <level>`. An explicit hand-written level marker on a test/module always wins over the heuristic.
+- `unit` — pure logic, **no DB at all**, no HTTP/file-IO/subprocess; fast. Default when nothing else matches.
+- `integration` — exercises a real in-process subsystem: **any `Database` including `:memory:`** (fixtures `db`/`cli_db`, or file-backed DB built inline), the FastAPI app over ASGI (`build_web_app`/`build_web_container`/`ASGITransport`, fixtures `client`/`base_app`/…), repositories (`tests/repositories/`), routes (`tests/routes/`), or a real subprocess/session-file path.
+- `smoke` — curated fast **offline** preflight over real critical paths (`tests/test_smoke_preflight.py` + `@pytest.mark.smoke` spots); orthogonal to level (a smoke test is usually also `integration`). Live API smoke (`real_provider_smoke`/`codex_*`) also carries `smoke` but stays opt-in (skipped without its gate). CI runs `pytest -m smoke` first as a sub-second sanity gate.
+- `e2e` — long/full real-surface flows: `tests/e2e/` (Playwright) plus all `real_tg_*` live CLI suites.
+- **Classification is per-test, not per-file**: a file may hold both `unit` (mock-only) and `integration` (DB-touching) tests — each gets its level from its own fixtures/body. Detection order (first match wins): e2e path/marker → live-smoke marker → `tests/routes`|`tests/repositories` path → integration fixture → file-DB (`aiosqlite_serial`) signal → per-test AST source scan (`_INTEGRATION_SOURCE_TOKENS`) → else `unit`. Adding a new way to stand up a subsystem inline may need a token added to `_INTEGRATION_SOURCE_TOKENS`.
+- Invariant (enforced by `tests/test_test_levels.py`): every collected test carries exactly one level; `unit ∩ integration = ∅`; nothing is left unlevelled.

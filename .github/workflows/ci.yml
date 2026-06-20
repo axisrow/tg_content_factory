@@ -79,7 +79,16 @@ jobs:
               sys.exit(1)
           PY
 
+      # Fast offline preflight: a sub-second sanity gate over real critical
+      # paths (package import, CLI parser, DB schema, web /health). Runs first
+      # so a fundamentally broken build fails before the full suite starts.
+      # Live smoke (real_provider_smoke / codex_*) stays opt-in and is skipped
+      # here — no gate env vars are set.
+      - name: Pytest (smoke preflight)
+        run: pytest tests -q -m smoke
+
       - name: Pytest (parallel-safe)
+        if: ${{ !cancelled() }}
         run: pytest tests -q -m "not aiosqlite_serial" -n auto
 
       - name: Pytest (aiosqlite serial)

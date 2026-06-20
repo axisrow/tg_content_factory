@@ -117,6 +117,9 @@ timeout = 120
 addopts = "--dist=loadfile"
 filterwarnings = ["error"]
 markers = [
+    "unit: test level — pure logic, no DB/HTTP/real-IO (fast); auto-applied by conftest heuristic",
+    "integration: test level — exercises in-process subsystems (SQLite, FastAPI client, dispatchers); auto-applied by conftest heuristic",
+    "smoke: fast offline preflight over real project functions (critical paths); curated subset, applied alongside a level marker",
     "native_backend_allowed: test intentionally exercises explicit native Telethon allowlist flows",
     "real_tg_safe: opt-in real Telegram API test with no Telegram-visible mutations",
     "real_tg_mutation_safe: opt-in real Telegram API test for bounded operator-approved Telegram-visible mutations",
