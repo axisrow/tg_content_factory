@@ -260,6 +260,22 @@ async def test_dispatch_dots_to_underscores():
     d._handle_dialogs_send.assert_awaited_once()
 
 
+async def test_notifications_invalidate_cache_calls_worker_notifier():
+    # #832: the queued command must clear the worker's shared Notifier me-cache.
+    notifier = MagicMock()
+    d = _dispatcher(notifier=notifier)
+    result = await d._dispatch("notifications.invalidate_cache", {})
+    assert result == {"invalidated": True}
+    notifier.invalidate_me_cache.assert_called_once_with()
+
+
+async def test_notifications_invalidate_cache_noop_without_notifier():
+    # No worker Notifier (e.g. web-only container) → no crash, still acknowledges.
+    d = _dispatcher()
+    result = await d._dispatch("notifications.invalidate_cache", {})
+    assert result == {"invalidated": True}
+
+
 async def test_get_client_unavailable():
     d = _dispatcher()
     with pytest.raises(RuntimeError, match="client unavailable"):
