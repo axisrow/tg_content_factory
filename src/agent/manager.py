@@ -572,6 +572,21 @@ async def _auto_approve_tool(
     return PermissionResultDeny(message=message)
 
 
+# Stable stage keywords from the claude-cli bootstrap sequence, checked
+# case-insensitively (first match wins). None of these extend timeouts —
+# _last_activity is updated only on real SDK events. The dynamic [api:request]
+# label (with its counter) is handled separately in _handle_stderr_line.
+_STDERR_STAGE_MAP: list[tuple[str, str]] = [
+    ("creating client", "Создание клиента"),
+    ("installplugins", "Установка плагинов"),
+    ("refreshed marketplace", "Обновление плагинов"),
+    ("hooks:", "Загрузка хуков"),
+    ("lsp server", "LSP"),
+    ("settings changed", "Применение настроек"),
+    ("rate limit event", "Rate limit"),
+]
+
+
 class ClaudeSdkBackend:
     def __init__(self, db: Database, config: AppConfig, client_pool=None, scheduler_manager=None) -> None:
         self._db = db
@@ -612,6 +627,256 @@ class ClaudeSdkBackend:
             os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")
         )
 
+    def _handle_stderr_line(
+        self,
+        line: str,
+        *,
+        queue: asyncio.Queue,
+        prompt_short: str,
+        stderr_lines: list[str],
+        debug_lines: list[str],
+        api_request_count: list[int],
+        api_request_ts: list[float],
+        last_emitted: list[str],
+    ) -> None:
+        """Parse one claude-cli stderr line and emit progress/warning frames to
+        the SSE queue. Extracted from ``chat_stream``'s nested ``_on_stderr``
+        closure (#923); behavior identical, with the shared mutable state passed
+        explicitly via the list-of-one holders."""
+        # claude-cli stderr format: "2026-03-30T01:28:36.888Z [DEBUG] ..."
+        # Level tag is NOT at the start — check anywhere in the line.
+        _lower = line.lower()
+        is_error = False
+        if "[debug]" in _lower or "[trace]" in _lower:
+            debug_lines.append(line)
+            logger.debug("claude-cli debug: %s", line)
+        elif "[warn" in _lower:
+            debug_lines.append(line)
+            logger.warning("claude-cli warn: %s", line)
+            is_error = True
+        elif "[error]" in _lower or _lower.startswith("error"):
+            stderr_lines.append(line)
+            logger.error("claude-cli error: %s", line)
+            is_error = True
+        else:
+            stderr_lines.append(line)
+            logger.warning("claude-cli stderr: %s", line)
+            # Treat untagged stderr as potential errors (e.g. "Error: Invalid URL")
+            if "error" in _lower:
+                is_error = True
+
+        # Emit connection progress to TUI/web queue.
+        # _on_stderr is called from an anyio task in the same event loop,
+        # so put_nowait on asyncio.Queue is safe here.
+        # [api:request] is handled separately — each occurrence is unique
+        # (counter incremented) so it must not be deduped.
+        if "[api:request]" in _lower:
+            api_request_count[0] += 1
+            api_request_ts[0] = time.monotonic()
+            label = f"Жду ответ Claude API #{api_request_count[0]}: «{prompt_short}»"
+            payload = safe_json_dumps({"type": "status", "text": label}, ensure_ascii=False)
+            try:
+                queue.put_nowait(f"data: {payload}\n\n")
+            except Exception:
+                pass
+            return  # skip stage_map + error checks for api:request
+
+        label: str | None = None
+        for keyword, stage in _STDERR_STAGE_MAP:
+            if keyword in _lower:
+                label = stage
+                break
+        if label and label != last_emitted[0]:
+            last_emitted[0] = label
+            payload = safe_json_dumps({"type": "status", "text": label}, ensure_ascii=False)
+            try:
+                queue.put_nowait(f"data: {payload}\n\n")
+            except Exception:
+                pass
+
+        # Surface errors/warnings to user — don't swallow them silently.
+        if is_error and not label:
+            # Strip timestamp prefix (ISO format) for cleaner display
+            display = line.strip()
+            if len(display) > 25 and display[10] == "T" and display[23] == "Z":
+                display = display[25:].strip()
+            # Remove level tags for cleaner output
+            for tag in ("[WARN]", "[warn]", "[ERROR]", "[error]"):
+                display = display.replace(tag, "").strip()
+            if display:
+                warn_payload = safe_json_dumps(
+                    {"type": "warning", "text": display},
+                    ensure_ascii=False,
+                )
+                try:
+                    queue.put_nowait(f"data: {warn_payload}\n\n")
+                except Exception:
+                    pass
+
+    async def _build_claude_options(
+        self,
+        *,
+        system_prompt: str,
+        cli_path: str | None,
+        on_stderr,
+        extra: dict,
+    ) -> ClaudeAgentOptions:
+        """Resolve the visible tool set (access policy + permission gate) and
+        assemble the ``ClaudeAgentOptions`` for the query. Split out of
+        ``chat_stream`` (#923)."""
+        from src.agent.tools.permissions import (
+            BUILTIN_TOOLS,
+            MCP_PREFIX,
+            get_all_allowed_tools,
+            load_tool_access_policy,
+            visible_tools_for_llm,
+        )
+
+        all_tools = get_all_allowed_tools()
+        access_policy = await load_tool_access_policy(self._db, use_cache=True)
+        # With PermissionGate active, requestable tools stay visible so the
+        # runtime gate can ask; explicit denies remain hidden.
+        from src.agent.permission_gate import get_gate, get_request_context
+
+        gate_active = get_gate() is not None and get_request_context() is not None
+        allowed = visible_tools_for_llm(all_tools, access_policy, gate_active=gate_active)
+        if len(allowed) < len(all_tools):
+            denied = [t.removeprefix(MCP_PREFIX) for t in all_tools if t not in allowed]
+            logger.debug(
+                "Agent tools: %d/%d visible (gate_active=%s), hidden: %s",
+                len(allowed), len(all_tools), gate_active, denied[:20],
+            )
+        else:
+            logger.debug("Agent tools: all %d tools visible (gate_active=%s)", len(allowed), gate_active)
+
+        enabled_builtins = [t for t in BUILTIN_TOOLS if t in allowed]
+
+        return ClaudeAgentOptions(
+            system_prompt=system_prompt,
+            mcp_servers={"telegram_db": self._server},
+            tools=enabled_builtins or None,
+            allowed_tools=allowed,
+            cli_path=cli_path or None,
+            stderr=on_stderr,
+            include_partial_messages=True,
+            can_use_tool=_auto_approve_tool,
+            extra_args={"debug-to-stderr": None},
+            **extra,
+        )
+
+    async def _handle_stream_attempt_error(
+        self,
+        exc: BaseException,
+        *,
+        attempt: int,
+        t0: float,
+        thread_id: int,
+        stderr_lines: list[str],
+        tracker: "_ToolTracker",
+        queue: asyncio.Queue,
+    ) -> tuple[BaseException | None, str]:
+        """Handle a failure from one ``chat_stream`` attempt. Returns
+        ``(last_err, action)`` where ``action`` is ``"return"`` (error already
+        emitted — stop), ``"retry"`` (continue the attempt loop) or ``"break"``
+        (stop the loop, report ``last_err`` in the final block). The isinstance
+        chain mirrors the original except-clause order exactly. Split out of
+        ``chat_stream`` (#923)."""
+        if isinstance(exc, TimeoutError):
+            elapsed = time.monotonic() - t0
+            logger.error(
+                "Agent timeout after %.1fs (thread %d): %s", elapsed, thread_id, exc,
+            )
+            stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else None
+            await _emit_error(queue, str(exc), stderr_summary)
+            return None, "return"
+
+        if isinstance(exc, CLINotFoundError):
+            logger.error("Claude CLI not found (thread %d): %s", thread_id, exc)
+            err_msg = (
+                "Claude CLI не найден. "
+                "Установите: npm install -g @anthropic-ai/claude-code"
+            )
+            await queue.put(_sse({"error": err_msg}))
+            await queue.put(None)
+            return None, "return"
+
+        if isinstance(exc, ProcessError):
+            logger.error(
+                "Claude CLI process error (thread %d): exit_code=%s, stderr=%s",
+                thread_id, exc.exit_code, exc.stderr,
+            )
+            # exc.stderr is often generic; captured stderr_lines have the real output
+            captured = "\n".join(stderr_lines[-20:]) if stderr_lines else None
+            details = captured or exc.stderr or str(exc)
+            # Truncate long stderr for UI
+            if len(details) > 500:
+                details = details[:500] + "..."
+            await _emit_error(queue, "Ошибка процесса Claude CLI", details)
+            return None, "return"
+
+        if isinstance(exc, CLIConnectionError):
+            elapsed = time.monotonic() - t0
+            logger.error(
+                "Claude CLI connection error after %.1fs (thread %d): %s",
+                elapsed, thread_id, exc,
+            )
+            if attempt == 0:
+                return exc, "retry"
+            stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else str(exc)
+            conn_msg = (
+                "Сервер Anthropic перегружен, попробуйте позже."
+                if "overloaded" in str(exc).lower()
+                else "Не удалось подключиться к Claude CLI"
+            )
+            await _emit_error(queue, conn_msg, stderr_summary)
+            return None, "return"
+
+        if isinstance(exc, ClaudeSDKError):
+            elapsed = time.monotonic() - t0
+            logger.error(
+                "Claude SDK error after %.1fs (thread %d): %s", elapsed, thread_id, exc,
+            )
+            stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else ""
+            await _emit_error(queue, f"Ошибка Claude SDK: {exc}", stderr_summary or None)
+            return None, "return"
+
+        if isinstance(exc, BaseExceptionGroup):
+            # anyio TaskGroup wraps sub-exceptions in ExceptionGroup;
+            # unwrap for a readable error message and retry on transient failures.
+            flat = [str(e) for e in exc.exceptions]
+            summary = "; ".join(flat)
+            elapsed = time.monotonic() - t0
+            # Never retry if the group contains a timeout — it's our deadline, not transient.
+            has_timeout = any(isinstance(e, (TimeoutError, asyncio.TimeoutError)) for e in exc.exceptions)
+            retryable = not has_timeout and any(
+                kw in summary.lower()
+                for kw in ("stream closed", "control request timeout", "connection")
+            )
+            logger.error(
+                "ExceptionGroup after %.1fs (thread %d, attempt %d, retryable=%s): %s",
+                elapsed, thread_id, attempt + 1, retryable, summary,
+            )
+            if attempt == 0 and retryable:
+                return exc, "retry"
+            return Exception(summary), "break"
+
+        elapsed = time.monotonic() - t0
+        if attempt == 0 and "Control request timeout" in str(exc):
+            logger.warning(
+                "Agent init timeout after %.1fs, retrying (thread %d)",
+                elapsed, thread_id,
+            )
+            if tracker._current_tool is not None:
+                await tracker._put({
+                    "type": "tool_end",
+                    "tool": tracker._current_tool,
+                    "duration": 0,
+                    "is_error": True,
+                    "summary": "timeout",
+                })
+            return exc, "retry"
+        return exc, "break"
+
     async def chat_stream(
         self,
         *,
@@ -645,141 +910,37 @@ class ClaudeSdkBackend:
         # Last rate limit status — included in timeout error message for diagnostics.
         _last_rate_limit: list[str] = [""]
 
-        # Stable stage keywords from claude-cli bootstrap sequence.
-        # Checked case-insensitively; first match wins.
         _prompt_short = original_prompt[:100].replace("\n", " ")
         if len(original_prompt) > 100:
             _prompt_short += "…"
-        # stderr stage labels — none extend timeouts (_last_activity is updated
-        # only when real SDK events arrive: text deltas, tool results, etc.)
-        # NOTE: [api:request] label is dynamic (includes counter), handled separately.
-        _stage_map: list[tuple[str, str]] = [
-            ("creating client", "Создание клиента"),
-            ("installplugins", "Установка плагинов"),
-            ("refreshed marketplace", "Обновление плагинов"),
-            ("hooks:", "Загрузка хуков"),
-            ("lsp server", "LSP"),
-            ("settings changed", "Применение настроек"),
-            ("rate limit event", "Rate limit"),
-        ]
         _last_emitted: list[str] = [""]
 
         def _on_stderr(line: str) -> None:
-            # claude-cli stderr format: "2026-03-30T01:28:36.888Z [DEBUG] ..."
-            # Level tag is NOT at the start — check anywhere in the line.
-            _lower = line.lower()
-            is_error = False
-            if "[debug]" in _lower or "[trace]" in _lower:
-                debug_lines.append(line)
-                logger.debug("claude-cli debug: %s", line)
-            elif "[warn" in _lower:
-                debug_lines.append(line)
-                logger.warning("claude-cli warn: %s", line)
-                is_error = True
-            elif "[error]" in _lower or _lower.startswith("error"):
-                stderr_lines.append(line)
-                logger.error("claude-cli error: %s", line)
-                is_error = True
-            else:
-                stderr_lines.append(line)
-                logger.warning("claude-cli stderr: %s", line)
-                # Treat untagged stderr as potential errors (e.g. "Error: Invalid URL")
-                if "error" in _lower:
-                    is_error = True
-
-            # Emit connection progress to TUI/web queue.
-            # _on_stderr is called from an anyio task in the same event loop,
-            # so put_nowait on asyncio.Queue is safe here.
-            # [api:request] is handled separately — each occurrence is unique
-            # (counter incremented) so it must not be deduped.
-            if "[api:request]" in _lower:
-                _api_request_count[0] += 1
-                _api_request_ts[0] = time.monotonic()
-                label = f"Жду ответ Claude API #{_api_request_count[0]}: «{_prompt_short}»"
-                payload = safe_json_dumps({"type": "status", "text": label}, ensure_ascii=False)
-                try:
-                    queue.put_nowait(f"data: {payload}\n\n")
-                except Exception:
-                    pass
-                return  # skip stage_map + error checks for api:request
-
-            label: str | None = None
-            for keyword, stage in _stage_map:
-                if keyword in _lower:
-                    label = stage
-                    break
-            if label and label != _last_emitted[0]:
-                _last_emitted[0] = label
-                payload = safe_json_dumps({"type": "status", "text": label}, ensure_ascii=False)
-                try:
-                    queue.put_nowait(f"data: {payload}\n\n")
-                except Exception:
-                    pass
-
-            # Surface errors/warnings to user — don't swallow them silently.
-            if is_error and not label:
-                # Strip timestamp prefix (ISO format) for cleaner display
-                display = line.strip()
-                if len(display) > 25 and display[10] == "T" and display[23] == "Z":
-                    display = display[25:].strip()
-                # Remove level tags for cleaner output
-                for tag in ("[WARN]", "[warn]", "[ERROR]", "[error]"):
-                    display = display.replace(tag, "").strip()
-                if display:
-                    warn_payload = safe_json_dumps(
-                        {"type": "warning", "text": display},
-                        ensure_ascii=False,
-                    )
-                    try:
-                        queue.put_nowait(f"data: {warn_payload}\n\n")
-                    except Exception:
-                        pass
+            self._handle_stderr_line(
+                line,
+                queue=queue,
+                prompt_short=_prompt_short,
+                stderr_lines=stderr_lines,
+                debug_lines=debug_lines,
+                api_request_count=_api_request_count,
+                api_request_ts=_api_request_ts,
+                last_emitted=_last_emitted,
+            )
 
         cli_path = shutil.which("claude")
         logger.info("claude-cli path: %s", cli_path)
 
-        from src.agent.tools.permissions import (
-            BUILTIN_TOOLS,
-            MCP_PREFIX,
-            get_all_allowed_tools,
-            load_tool_access_policy,
-            visible_tools_for_llm,
-        )
-
-        all_tools = get_all_allowed_tools()
-        access_policy = await load_tool_access_policy(self._db, use_cache=True)
-        # With PermissionGate active, requestable tools stay visible so the
-        # runtime gate can ask; explicit denies remain hidden.
-        from src.agent.permission_gate import get_gate, get_request_context
-
-        gate_active = get_gate() is not None and get_request_context() is not None
-        allowed = visible_tools_for_llm(all_tools, access_policy, gate_active=gate_active)
-        if len(allowed) < len(all_tools):
-            denied = [t.removeprefix(MCP_PREFIX) for t in all_tools if t not in allowed]
-            logger.debug(
-                "Agent tools: %d/%d visible (gate_active=%s), hidden: %s",
-                len(allowed), len(all_tools), gate_active, denied[:20],
-            )
-        else:
-            logger.debug("Agent tools: all %d tools visible (gate_active=%s)", len(allowed), gate_active)
-
-        enabled_builtins = [t for t in BUILTIN_TOOLS if t in allowed]
-
-        options = ClaudeAgentOptions(
+        options = await self._build_claude_options(
             system_prompt=system_prompt,
-            mcp_servers={"telegram_db": self._server},
-            tools=enabled_builtins or None,
-            allowed_tools=allowed,
-            cli_path=cli_path or None,
-            stderr=_on_stderr,
-            include_partial_messages=True,
-            can_use_tool=_auto_approve_tool,
-            extra_args={"debug-to-stderr": None},
-            **extra,
+            cli_path=cli_path,
+            on_stderr=_on_stderr,
+            extra=extra,
         )
 
         cfg = self._config.agent
-        last_err: Exception | None = None
+        # BaseException (not Exception): the retry path can stash a
+        # BaseExceptionGroup / CLIConnectionError here via _handle_stream_attempt_error.
+        last_err: BaseException | None = None
         for attempt in range(2):
             if attempt > 0:
                 tracker_retry = _ToolTracker(queue=queue)
@@ -872,106 +1033,28 @@ class ClaudeSdkBackend:
                         await aiter.aclose()
                 return
 
-            except TimeoutError as exc:
-                elapsed = time.monotonic() - t0
-                logger.error(
-                    "Agent timeout after %.1fs (thread %d): %s", elapsed, thread_id, exc,
+            except (
+                TimeoutError,
+                CLINotFoundError,
+                ProcessError,
+                CLIConnectionError,
+                ClaudeSDKError,
+                BaseExceptionGroup,
+                Exception,
+            ) as exc:
+                last_err, action = await self._handle_stream_attempt_error(
+                    exc,
+                    attempt=attempt,
+                    t0=t0,
+                    thread_id=thread_id,
+                    stderr_lines=stderr_lines,
+                    tracker=tracker,
+                    queue=queue,
                 )
-                stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else None
-                await _emit_error(queue, str(exc), stderr_summary)
-                return
-
-            except CLINotFoundError as exc:
-                logger.error("Claude CLI not found (thread %d): %s", thread_id, exc)
-                err_msg = (
-                    "Claude CLI не найден. "
-                    "Установите: npm install -g @anthropic-ai/claude-code"
-                )
-                await queue.put(_sse({"error": err_msg}))
-                await queue.put(None)
-                return
-
-            except ProcessError as exc:
-                logger.error(
-                    "Claude CLI process error (thread %d): exit_code=%s, stderr=%s",
-                    thread_id, exc.exit_code, exc.stderr,
-                )
-                # exc.stderr is often generic; captured stderr_lines have the real output
-                captured = "\n".join(stderr_lines[-20:]) if stderr_lines else None
-                details = captured or exc.stderr or str(exc)
-                # Truncate long stderr for UI
-                if len(details) > 500:
-                    details = details[:500] + "..."
-                await _emit_error(queue, "Ошибка процесса Claude CLI", details)
-                return
-
-            except CLIConnectionError as exc:
-                elapsed = time.monotonic() - t0
-                logger.error(
-                    "Claude CLI connection error after %.1fs (thread %d): %s",
-                    elapsed, thread_id, exc,
-                )
-                if attempt == 0:
-                    last_err = exc
+                if action == "return":
+                    return
+                if action == "retry":
                     continue
-                stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else str(exc)
-                conn_msg = (
-                    "Сервер Anthropic перегружен, попробуйте позже."
-                    if "overloaded" in str(exc).lower()
-                    else "Не удалось подключиться к Claude CLI"
-                )
-                await _emit_error(queue, conn_msg, stderr_summary)
-                return
-
-            except ClaudeSDKError as exc:
-                elapsed = time.monotonic() - t0
-                logger.error(
-                    "Claude SDK error after %.1fs (thread %d): %s", elapsed, thread_id, exc,
-                )
-                stderr_summary = "\n".join(stderr_lines[-10:]) if stderr_lines else ""
-                await _emit_error(queue, f"Ошибка Claude SDK: {exc}", stderr_summary or None)
-                return
-
-            except BaseExceptionGroup as eg:
-                # anyio TaskGroup wraps sub-exceptions in ExceptionGroup;
-                # unwrap for a readable error message and retry on transient failures.
-                flat = [str(e) for e in eg.exceptions]
-                summary = "; ".join(flat)
-                elapsed = time.monotonic() - t0
-                # Never retry if the group contains a timeout — it's our deadline, not transient.
-                has_timeout = any(isinstance(e, (TimeoutError, asyncio.TimeoutError)) for e in eg.exceptions)
-                retryable = not has_timeout and any(
-                    kw in summary.lower()
-                    for kw in ("stream closed", "control request timeout", "connection")
-                )
-                logger.error(
-                    "ExceptionGroup after %.1fs (thread %d, attempt %d, retryable=%s): %s",
-                    elapsed, thread_id, attempt + 1, retryable, summary,
-                )
-                if attempt == 0 and retryable:
-                    last_err = eg
-                    continue
-                last_err = Exception(summary)
-                break
-
-            except Exception as exc:
-                elapsed = time.monotonic() - t0
-                if attempt == 0 and "Control request timeout" in str(exc):
-                    logger.warning(
-                        "Agent init timeout after %.1fs, retrying (thread %d)",
-                        elapsed, thread_id,
-                    )
-                    if tracker._current_tool is not None:
-                        await tracker._put({
-                            "type": "tool_end",
-                            "tool": tracker._current_tool,
-                            "duration": 0,
-                            "is_error": True,
-                            "summary": "timeout",
-                        })
-                    last_err = exc
-                    continue
-                last_err = exc
                 break
 
         if debug_lines:
