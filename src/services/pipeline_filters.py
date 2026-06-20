@@ -98,6 +98,8 @@ class _MessageAttrs(NamedTuple):
     sender_kind: str | int | bool | None
     sender_id: str | int | bool | None
     sender_name: str | int | bool | None
+    media_type: str | int | bool | None
+    forward_from_channel_id: str | int | bool | None
 
 
 def _extract_message_attributes(message) -> _MessageAttrs:
@@ -110,10 +112,12 @@ def _extract_message_attributes(message) -> _MessageAttrs:
         sender_kind=_safe_scalar(getattr(message, "sender_kind", None)),
         sender_id=_safe_scalar(getattr(message, "sender_id", None)),
         sender_name=_safe_scalar(getattr(message, "sender_name", None)),
+        media_type=_safe_scalar(getattr(message, "media_type", None)),
+        forward_from_channel_id=_safe_scalar(getattr(message, "forward_from_channel_id", None)),
     )
 
 
-def _check_message_kinds(message, attrs: _MessageAttrs, config: dict) -> bool:
+def _check_message_kinds(attrs: _MessageAttrs, config: dict) -> bool:
     if config["message_kinds"] and attrs.message_kind not in config["message_kinds"]:
         if not (
             config["message_kinds"] == ["service"]
@@ -127,7 +131,7 @@ def _check_message_kinds(message, attrs: _MessageAttrs, config: dict) -> bool:
     return True
 
 
-def _check_service_actions(message, attrs: _MessageAttrs, config: dict) -> bool:
+def _check_service_actions(attrs: _MessageAttrs, config: dict) -> bool:
     if config["service_actions"] and attrs.service_action not in config["service_actions"]:
         legacy_aliases = {
             "join": ("joined", "join"),
@@ -150,13 +154,13 @@ def _check_service_actions(message, attrs: _MessageAttrs, config: dict) -> bool:
     return True
 
 
-def _check_media_types(message, attrs: _MessageAttrs, config: dict) -> bool:
-    if config["media_types"] and getattr(message, "media_type", None) not in config["media_types"]:
+def _check_media_types(attrs: _MessageAttrs, config: dict) -> bool:
+    if config["media_types"] and attrs.media_type not in config["media_types"]:
         return False
     return True
 
 
-def _check_sender_kinds(message, attrs: _MessageAttrs, config: dict) -> bool:
+def _check_sender_kinds(attrs: _MessageAttrs, config: dict) -> bool:
     if config["sender_kinds"] and attrs.sender_kind not in config["sender_kinds"]:
         if not (
             attrs.sender_kind is None
@@ -168,16 +172,16 @@ def _check_sender_kinds(message, attrs: _MessageAttrs, config: dict) -> bool:
     return True
 
 
-def _check_forwarded(message, attrs: _MessageAttrs, config: dict) -> bool:
+def _check_forwarded(attrs: _MessageAttrs, config: dict) -> bool:
     expected_forwarded = config.get("forwarded")
     if expected_forwarded is not None:
-        is_forwarded = getattr(message, "forward_from_channel_id", None) is not None
+        is_forwarded = attrs.forward_from_channel_id is not None
         if is_forwarded is not bool(expected_forwarded):
             return False
     return True
 
 
-def _check_has_text(message, attrs: _MessageAttrs, config: dict) -> bool:
+def _check_has_text(attrs: _MessageAttrs, config: dict) -> bool:
     expected_has_text = config.get("has_text")
     if expected_has_text is not None:
         has_text = bool(attrs.text.strip())
@@ -186,7 +190,7 @@ def _check_has_text(message, attrs: _MessageAttrs, config: dict) -> bool:
     return True
 
 
-def _check_keywords(message, attrs: _MessageAttrs, config: dict) -> bool:
+def _check_keywords(attrs: _MessageAttrs, config: dict) -> bool:
     keywords = [item.lower() for item in config["keywords"] if item]
     has_keyword_filter = bool(keywords)
     has_link_filter = config["match_links"]
@@ -197,13 +201,13 @@ def _check_keywords(message, attrs: _MessageAttrs, config: dict) -> bool:
     return True
 
 
-def _check_match_links(message, attrs: _MessageAttrs, config: dict) -> bool:
+def _check_match_links(attrs: _MessageAttrs, config: dict) -> bool:
     if config["match_links"] and not re.search(r"https?://\S+|t\.me/\S+", attrs.text):
         return False
     return True
 
 
-def _check_regex(message, attrs: _MessageAttrs, config: dict) -> bool:
+def _check_regex(attrs: _MessageAttrs, config: dict) -> bool:
     pattern = config["regex"]
     if config.get("_filter_type") == "regex" and not pattern:
         return False
@@ -236,7 +240,7 @@ def match_message_filter(message, raw_config: dict | None) -> bool:
     if config.get("type") != "message_filter":
         return True
     attrs = _extract_message_attributes(message)
-    return all(check(message, attrs, config) for check in _MESSAGE_FILTER_CHECKS)
+    return all(check(attrs, config) for check in _MESSAGE_FILTER_CHECKS)
 
 
 def _safe_scalar(value):
