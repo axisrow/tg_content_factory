@@ -25,6 +25,10 @@ def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         _, db = await runtime.init_db(args.config)
         try:
+            if args.export_action == "telegram":
+                await _run_telegram(db, args)
+                return
+
             channel_id = getattr(args, "channel_id", None)
             limit = max(1, min(args.limit, 10000))
 
@@ -59,6 +63,43 @@ def run(args: argparse.Namespace) -> None:
             await db.close()
 
     asyncio.run(_run())
+
+
+async def _run_telegram(db, args: argparse.Namespace) -> None:
+    from src.services.export_service import resolve_max_file_size_mb, run_offline_export
+
+    channel_id = getattr(args, "channel_id", None)
+    if not channel_id:
+        print("Error: --channel-id is required for telegram export.", file=sys.stderr)
+        return
+
+    if args.with_media:
+        # Media download needs the live worker (PR-3); the offline CLI path
+        # still produces a faithful tree with "not included" placeholders.
+        max_mb = await resolve_max_file_size_mb(db, args.max_file_size)
+        print(
+            "Note: --with-media requires a running worker to fetch files; "
+            f"this offline export marks media as not included (skip threshold {max_mb} MB).",
+            file=sys.stderr,
+        )
+
+    summary = await run_offline_export(
+        db,
+        int(channel_id),
+        fmt=args.export_format,
+        date_from=args.date_from,
+        date_to=args.date_to,
+        limit=int(args.limit),
+        out_dir=args.output,
+    )
+    if summary is None:
+        print(f"No messages found for channel {channel_id}.", file=sys.stderr)
+        return
+    print(
+        f"Exported {summary.message_count} messages to {summary.out_dir} "
+        f"(files: {', '.join(summary.files)}; media skipped: {summary.media_skipped})",
+        file=sys.stderr,
+    )
 
 
 def _export_json(messages) -> str:

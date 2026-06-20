@@ -56,6 +56,7 @@ TOOL_MODULE_ORDER: tuple[str, ...] = (
     "dialogs",
     "messaging",
     "images",
+    "export",
     "settings",
     "agent_threads",
 )

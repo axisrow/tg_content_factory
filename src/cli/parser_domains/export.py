@@ -13,3 +13,19 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
                          help="Filter by channel ID")
         exp.add_argument("--limit", type=int, default=200, help="Max messages (default: 200)")
         exp.add_argument("--output", "-o", default=None, help="Output file (default: stdout)")
+
+    # ── export telegram (Telegram-Desktop-compatible JSON/HTML tree) ──
+    tg = export_sub.add_parser("telegram", help="Export as Telegram-Desktop JSON/HTML")
+    tg.add_argument("--channel-id", type=int, default=None, dest="channel_id",
+                    help="Telegram channel ID to export (required)")
+    tg.add_argument("--format", choices=["json", "html", "both"], default="json",
+                    dest="export_format", help="Output format (default: json)")
+    tg.add_argument("--with-media", action="store_true", default=False, dest="with_media",
+                    help="Download media artifacts (requires running worker)")
+    tg.add_argument("--max-file-size", type=int, default=None, dest="max_file_size",
+                    help="Skip files larger than N MB (default: from settings or 3)")
+    tg.add_argument("--date-from", default=None, dest="date_from", help="Start date YYYY-MM-DD")
+    tg.add_argument("--date-to", default=None, dest="date_to", help="End date YYYY-MM-DD")
+    tg.add_argument("--limit", type=int, default=5000, help="Max messages (default: 5000)")
+    tg.add_argument("--output", "-o", default=None,
+                    help="Output directory (default: data/exports/ChatExport_<date>_<channel>)")
