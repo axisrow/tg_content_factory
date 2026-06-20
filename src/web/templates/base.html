@@ -13,6 +13,7 @@
     {% block head_scripts %}{% endblock %}
 </head>
 <body class="app-body d-flex flex-column min-vh-100">
+    <div id="app-progress" class="app-progress" role="presentation" aria-hidden="true"></div>
     {% block nav %}
     {% set nav_items = [
         ("/agent", "Агент", "robot"),
@@ -89,6 +90,7 @@
     </footer>
     {% endblock %}
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+<script src="/static/js/nav-progress.js?v={{ app_version }}-layout"></script>
 <script src="/static/_busy_button.js"></script>
 <script src="/static/js/searchable-picker.js"></script>
 <script>
