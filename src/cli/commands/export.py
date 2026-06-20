@@ -150,6 +150,9 @@ async def _poll_export_task(db, task_id: int, *, timeout: float = 600.0, interva
         f"Export task #{task_id} still pending after {int(timeout)}s — is the worker running?",
         file=sys.stderr,
     )
+    # Distinct exit code so scripts can tell a timeout apart from a task failure
+    # (exit 1) and from success (exit 0) — #939 review.
+    sys.exit(2)
 
 
 def _export_json(messages) -> str:

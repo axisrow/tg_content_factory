@@ -215,6 +215,18 @@ async def test_poll_export_task_exits_nonzero_on_failure(db):
     assert exc.value.code == 1
 
 
+async def test_poll_export_task_times_out_with_exit_2(db):
+    from src.cli.commands.export import _poll_export_task
+
+    # Task stays PENDING (no worker) → --wait should time out with a distinct code.
+    task_id = await db.repos.tasks.create_generic_task(
+        CollectionTaskType.EXPORT, title="x", payload=ExportTaskPayload(channel_id=1)
+    )
+    with pytest.raises(SystemExit) as exc:
+        await _poll_export_task(db, task_id, timeout=0.05, interval=0.01)
+    assert exc.value.code == 2
+
+
 async def test_handle_with_media_skips_oversized_and_records(db, tmp_path, monkeypatch):
     await _seed(db, 903, with_media_msg=True)
 
