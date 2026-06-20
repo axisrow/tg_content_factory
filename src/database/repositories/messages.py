@@ -687,6 +687,47 @@ class MessagesRepository:
             has_more=has_more,
         )
 
+    async def get_channel_messages_for_export(
+        self,
+        channel_id: int,
+        *,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        limit: int = 5000,
+        offset: int = 0,
+    ) -> MessageSearchPage:
+        """Oldest-first page of a channel's messages for Telegram-Desktop export (#834).
+
+        Telegram Desktop exports from the start of the channel, so this orders by
+        ``message_id ASC`` (monotonic per channel) — unlike ``search_messages``
+        which is newest-first. ``has_more`` (limit+1 probe) lets the caller flag a
+        truncated export instead of silently dropping the newest messages.
+        """
+        where, sql_params = self._build_message_filters(
+            channel_id=channel_id,
+            date_from=date_from,
+            date_to=date_to,
+            include_filtered=True,
+        )
+        channel_join = " LEFT JOIN channels c ON m.channel_id = c.channel_id"
+        probe_limit = limit + 1
+        cur = await self._db.execute(
+            f"""SELECT m.*, c.title as channel_title, c.username as channel_username
+                FROM messages m{channel_join}
+                {where}
+                ORDER BY m.message_id ASC
+                LIMIT ? OFFSET ?""",
+            (*sql_params, probe_limit, offset),
+        )
+        rows = await cur.fetchall()
+        has_more = len(rows) > limit
+        messages = self._rows_to_messages(rows[:limit])
+        return MessageSearchPage(
+            messages=messages,
+            total=offset + len(messages),
+            has_more=has_more,
+        )
+
     async def _search_semantic_candidates(
         self,
         query_embedding: list[float],

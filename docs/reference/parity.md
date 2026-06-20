@@ -64,6 +64,7 @@
 | Чтение сообщений | `messages read` | `GET /messages/{identifier}` | `read_messages` |
 | Перевод одного сообщения | `translate message` | `POST /search/translate/{message_db_id}` | `translate_message` |
 | Экспорт сообщений | `export json|csv|rss` | *исключение: файловый экспорт вне web* | *исключение: файловый экспорт вне tool-контракта* |
+| Экспорт в формат Telegram | `export telegram` | `POST /channels/{id}/export` | `export_messages` |
 
 ## Поисковые запросы
 
