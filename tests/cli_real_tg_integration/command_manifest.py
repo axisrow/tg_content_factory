@@ -142,6 +142,10 @@ CLI_REAL_TG_CLEANUP_COMMAND_CASES: set[tuple[str, ...]] = {
 
 CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("mcp-server",): "stdio MCP daemon serving the tool registry; not a Telegram leaf operation",
+    ("export", "telegram"): (
+        "offline DB→file export (writes a data/exports tree, needs --channel-id); "
+        "no live Telegram, covered by unit/integration tests"
+    ),
     ("account", "add"): "manual account onboarding/session import",
     ("account", "delete"): "dangerous live account deletion; intentionally blocked from live testing",
     ("account", "flood-clear"): "local flood state mutation",

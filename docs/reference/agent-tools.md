@@ -241,6 +241,12 @@
 | `generate_image` | WRITE | Генерация изображения |
 | `list_generated_images` | READ | История сгенерированных изображений |
 
+## Экспорт
+
+| Tool | Категория | Описание |
+|------|-----------|----------|
+| `export_messages` | READ | Экспорт канала в формат Telegram Desktop (result.json / messages*.html) |
+
 ## Настройки
 
 | Tool | Категория | Описание |
