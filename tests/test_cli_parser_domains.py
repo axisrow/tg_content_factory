@@ -141,6 +141,7 @@ def test_cli_parser_domain_regression(argv: list[str], expected: dict[str, objec
         assert args[key] == value
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("argv", "expected_text"),
     [

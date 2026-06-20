@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import math
 import os
 import re
@@ -17,6 +18,75 @@ _AIOSQLITE_SERIAL_FIXTURES = {"cli_db"}
 _AIOSQLITE_SERIAL_TOKENS = ("import aiosqlite",)
 _DEFAULT_XDIST_AUTO_WORKERS = 4
 _XDIST_WORKER_CAP_ENV = "TGCF_PYTEST_XDIST_WORKERS"
+
+# --- Test-level taxonomy (unit / integration / smoke / e2e) ----------------
+# A second classification axis layered on top of the existing real_tg_* /
+# aiosqlite_serial markers. The level is inferred automatically at collection
+# time so ~5000 tests need no manual annotation; an explicit level marker on a
+# test/module always wins over the heuristic (see _has_explicit_level below).
+_LEVEL_MARKERS = frozenset({"unit", "integration", "smoke", "e2e"})
+
+# Markers that classify a test as e2e (long, full, real-surface): the real
+# Telegram policy markers all drive live end-to-end CLI/API flows.
+_E2E_MARKERS = frozenset(
+    {"real_tg_safe", "real_tg_mutation_safe", "real_tg_manual", "real_tg_never"}
+)
+# Live API smoke markers — opt-in, gated, exercise a real provider/Codex path.
+_SMOKE_MARKERS = frozenset({"real_provider_smoke", "codex_cli_live", "codex_image_live"})
+
+# Explicit allow-list of integration-indicating fixtures. Kept strict on
+# purpose: autouse plumbing (telethon_cli_spy, native_auth_spy, _enforce_cli_
+# transport, vcr, block_network, tmp_path, …) shows up in every test's
+# fixturenames and must NOT be treated as an integration signal. Only fixtures
+# that stand up a real in-process subsystem belong here. Repository fixtures
+# transitively depend on `db`, so listing `db` covers all of tests/repositories.
+_INTEGRATION_FIXTURES = frozenset(
+    {
+        "db",
+        "cli_db",
+        "cli_env",
+        "client",
+        "web_client",
+        "route_client",
+        "web_mode_client",
+        "base_app",
+        "web_mode_app",
+        "real_pool_harness_factory",
+        "real_telegram_sandbox",
+        "cli_real_cli_env",
+        "pipeline_client",
+    }
+)
+# Directory segments whose tests are integration by location regardless of the
+# fixtures they happen to request (e.g. web-container tests that touch no db).
+_INTEGRATION_PATH_SEGMENTS = ("/tests/routes/", "/tests/repositories/")
+_E2E_PATH_SEGMENTS = ("/tests/e2e/",)
+# Source tokens that unambiguously stand up a real in-process subsystem inside
+# the test body (not via an allow-listed fixture). Kept narrow on purpose: every
+# token names a concrete real-IO constructor/entrypoint that never appears in a
+# pure-mock test (mocks patch these by string, they don't call them literally).
+# A bare ``Database(`` is deliberately excluded — it matches in-memory
+# (``:memory:``) unit tests; only the file-backed constructions are listed.
+_INTEGRATION_SOURCE_TOKENS = (
+    # FastAPI app / web container driven over ASGI
+    "ASGITransport",
+    "build_web_app",
+    "build_web_container",
+    # file-backed SQLite built inline (no cli_db / aiosqlite import to trip the
+    # aiosqlite_serial signal)
+    "Database(str(tmp_path",
+    "Database(db_path",
+    "Database(config.database",
+    "DatabaseConfig(path=str(tmp_path",
+    "sqlite3.connect",
+    "aiosqlite.connect",
+    "open_connection(",
+    # real subprocess / session-file subsystems
+    "StdioServerParameters",
+    "SessionMaterializer(",
+    # real project-config load from a written YAML file
+    "load_config(",
+)
 
 
 def _should_force_single_worker(args: list[str]) -> bool:
@@ -54,23 +124,133 @@ def pytest_xdist_auto_num_workers(config) -> int:
 
 
 @lru_cache(maxsize=None)
-def _file_requires_aiosqlite_serial(path_str: str) -> bool:
-    path = Path(path_str)
+def _read_test_source(path_str: str) -> str:
+    """Cached read of a test file's source (shared by the collection scans).
+
+    Returns "" if the file can't be read, so callers treat it as a no-signal
+    file. Cached per path so each file is read at most once per session even
+    though the collection hook runs per test item.
+    """
     try:
-        text = path.read_text(encoding="utf-8")
+        return Path(path_str).read_text(encoding="utf-8")
     except OSError:
-        return False
+        return ""
+
+
+def _file_requires_aiosqlite_serial(path_str: str) -> bool:
+    text = _read_test_source(path_str)
     return any(
         bool(re.search(r"^" + re.escape(token), text, re.MULTILINE))
         for token in _AIOSQLITE_SERIAL_TOKENS
     )
 
 
+def _own_markers(item) -> set[str]:
+    """Marker names declared on the item or its module (pre-heuristic)."""
+    return {marker.name for marker in item.iter_markers()}
+
+
+def _has_explicit_level(markers: set[str]) -> bool:
+    """True if a hand-written level marker is present among ``markers``.
+
+    Such a marker (e.g. an explicit @pytest.mark.unit) was authored on the test
+    and must win over the heuristic. Takes the pre-walked marker-name set so the
+    caller walks iter_markers() once for both this guard and inference.
+    """
+    return bool(markers & _LEVEL_MARKERS)
+
+
+def _segment_is_integration(segment: str, db_helpers: frozenset[str]) -> bool:
+    """True if a source segment builds a real subsystem directly or via helper."""
+    if any(token in segment for token in _INTEGRATION_SOURCE_TOKENS):
+        return True
+    return any(f"{helper}(" in segment for helper in db_helpers)
+
+
+@lru_cache(maxsize=None)
+def _integration_tests_in_file(path_str: str) -> frozenset[str]:
+    """Names of test functions that stand up a real subsystem in their own body.
+
+    Per-test (not per-file): a heuristic for integration tests that construct an
+    app/DB/subprocess directly in the test body — so no allow-listed fixture
+    appears in fixturenames. A test counts when an integration token appears in
+    its own source span, or it calls a module-level helper whose body builds one
+    (the common ``_open_db(tmp_path)`` / ``_make_db(path)`` pattern). Pure-mock
+    tests in the same file stay unit. File-backed SQLite via cli_db / raw
+    aiosqlite is already handled by the aiosqlite_serial signal.
+    """
+    source = _read_test_source(path_str)
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return frozenset()
+    lines = source.splitlines()
+
+    def span(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+        return "\n".join(lines[node.lineno - 1 : node.end_lineno or node.lineno])
+
+    funcs: list[ast.FunctionDef | ast.AsyncFunctionDef] = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    db_helpers = frozenset(
+        node.name
+        for node in funcs
+        if not node.name.startswith("test")
+        and any(token in span(node) for token in _INTEGRATION_SOURCE_TOKENS)
+    )
+    return frozenset(
+        node.name
+        for node in funcs
+        if node.name.startswith("test") and _segment_is_integration(span(node), db_helpers)
+    )
+
+
+def _infer_test_level(item, *, markers: set[str], file_db: bool) -> str:
+    """Classify an item as e2e / smoke / integration / unit.
+
+    First match wins, in risk order: live end-to-end flows, then live API
+    smoke, then in-process subsystem integration, else pure unit. ``markers``
+    is the item's own marker-name set (computed once by the caller) and
+    ``file_db`` is the already-computed aiosqlite_serial signal — both threaded
+    in to avoid re-walking markers / re-reading the file.
+    """
+    path = item.path.as_posix()
+
+    if any(seg in path for seg in _E2E_PATH_SEGMENTS) or markers & _E2E_MARKERS:
+        return "e2e"
+    if markers & _SMOKE_MARKERS:
+        return "smoke"
+    if any(seg in path for seg in _INTEGRATION_PATH_SEGMENTS):
+        return "integration"
+    if _INTEGRATION_FIXTURES.intersection(item.fixturenames):
+        return "integration"
+    if file_db:
+        return "integration"
+    # Per-test source heuristic: this test builds a real subsystem in its own
+    # body (no fixture, no file DB import). originalname is the function name
+    # without the parametrize suffix; fall back to name for safety.
+    test_name = getattr(item, "originalname", None) or item.name
+    if test_name in _integration_tests_in_file(str(item.path)):
+        return "integration"
+    return "unit"
+
+
 def pytest_collection_modifyitems(items) -> None:
     for item in items:
-        needs_serial = _AIOSQLITE_SERIAL_FIXTURES.intersection(
-            item.fixturenames
-        ) or _file_requires_aiosqlite_serial(str(item.path))
+        needs_serial = bool(
+            _AIOSQLITE_SERIAL_FIXTURES.intersection(item.fixturenames)
+            or _file_requires_aiosqlite_serial(str(item.path))
+        )
         if needs_serial:
             item.add_marker(pytest.mark.aiosqlite_serial)
             item.add_marker(pytest.mark.xdist_group(name="aiosqlite_serial"))
+
+        # Layer the test-level taxonomy on top, but never override an explicit
+        # hand-written level marker (the curated smoke set + Phase-3 overrides).
+        # markers is walked once here and reused for both the guard and inference.
+        own_markers = _own_markers(item)
+        if not _has_explicit_level(own_markers):
+            level = _infer_test_level(item, markers=own_markers, file_db=needs_serial)
+            item.add_marker(getattr(pytest.mark, level))
