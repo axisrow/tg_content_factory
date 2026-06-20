@@ -54,7 +54,7 @@ pytest-of-*/
 
 # Generated reports
 reports/
-coverage.json
+coverage*.json
 .coverage
 .coverage.*
 htmlcov/
@@ -73,3 +73,6 @@ docs/superpowers/
 # Playwright CLI artifacts
 .playwright-cli/
 .codegraph/
+
+# Serena tool workspace (per-developer cache/memories — not versioned)
+.serena/
