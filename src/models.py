@@ -143,6 +143,7 @@ class CollectionTaskType(StrEnum):
     CONTENT_GENERATE = "content_generate"
     CONTENT_PUBLISH = "content_publish"
     TRANSLATE_BATCH = "translate_batch"
+    EXPORT = "export"
 
 
 class TelegramCommandStatus(StrEnum):
@@ -213,6 +214,19 @@ class TranslateBatchTaskPayload(BaseModel):
     last_processed_id: int = 0
 
 
+class ExportTaskPayload(BaseModel):
+    task_kind: str = CollectionTaskType.EXPORT.value
+    channel_id: int
+    fmt: str = "json"  # json | html | both
+    with_media: bool = False
+    max_file_size_mb: int | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    limit: int = 5000
+    out_dir: str | None = None
+    requested_by: str | None = None
+
+
 class CollectionTask(BaseModel):
     id: int | None = None
     channel_id: int | None = None
@@ -233,6 +247,7 @@ class CollectionTask(BaseModel):
         | ContentGenerateTaskPayload
         | ContentPublishTaskPayload
         | TranslateBatchTaskPayload
+        | ExportTaskPayload
         | None
     ) = None
     parent_task_id: int | None = None

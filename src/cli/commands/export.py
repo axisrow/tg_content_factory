@@ -66,7 +66,7 @@ def run(args: argparse.Namespace) -> None:
 
 
 async def _run_telegram(db, args: argparse.Namespace) -> None:
-    from src.services.export_service import resolve_max_file_size_mb, run_offline_export
+    from src.services.export_service import run_offline_export
 
     channel_id = getattr(args, "channel_id", None)
     if not channel_id:
@@ -74,14 +74,10 @@ async def _run_telegram(db, args: argparse.Namespace) -> None:
         return
 
     if args.with_media:
-        # Media download needs the live worker (PR-3); the offline CLI path
-        # still produces a faithful tree with "not included" placeholders.
-        max_mb = await resolve_max_file_size_mb(db, args.max_file_size)
-        print(
-            "Note: --with-media requires a running worker to fetch files; "
-            f"this offline export marks media as not included (skip threshold {max_mb} MB).",
-            file=sys.stderr,
-        )
+        # Media download needs the live worker (owns the ClientPool); enqueue an
+        # EXPORT task and optionally wait for it.
+        await _enqueue_media_export(db, args, int(channel_id))
+        return
 
     summary = await run_offline_export(
         db,
@@ -106,6 +102,53 @@ async def _run_telegram(db, args: argparse.Namespace) -> None:
             f"{summary.message_count} (raise --limit to include more).",
             file=sys.stderr,
         )
+
+
+async def _enqueue_media_export(db, args: argparse.Namespace, channel_id: int) -> None:
+    from src.models import CollectionTaskType, ExportTaskPayload
+
+    payload = ExportTaskPayload(
+        channel_id=channel_id,
+        fmt=args.export_format,
+        with_media=True,
+        max_file_size_mb=args.max_file_size,
+        date_from=args.date_from,
+        date_to=args.date_to,
+        limit=int(args.limit),
+        out_dir=args.output,
+        requested_by="cli",
+    )
+    task_id = await db.repos.tasks.create_generic_task(
+        CollectionTaskType.EXPORT, title=f"export channel {channel_id} (media)", payload=payload
+    )
+    print(
+        f"Enqueued media export task #{task_id}; the worker will download media and build the tree.",
+        file=sys.stderr,
+    )
+    if args.wait:
+        await _poll_export_task(db, task_id)
+
+
+async def _poll_export_task(db, task_id: int, *, timeout: float = 600.0, interval: float = 2.0) -> None:
+    from src.models import CollectionTaskStatus
+
+    terminal = {CollectionTaskStatus.COMPLETED, CollectionTaskStatus.FAILED, CollectionTaskStatus.CANCELLED}
+    waited = 0.0
+    while waited < timeout:
+        task = await db.repos.tasks.get_collection_task(task_id)
+        if task and task.status in terminal:
+            if task.status == CollectionTaskStatus.COMPLETED:
+                print(f"Export task #{task_id} completed: {task.note or ''}", file=sys.stderr)
+            else:
+                detail = task.error or task.note or ""
+                print(f"Export task #{task_id} {task.status.value}: {detail}", file=sys.stderr)
+            return
+        await asyncio.sleep(interval)
+        waited += interval
+    print(
+        f"Export task #{task_id} still pending after {int(timeout)}s — is the worker running?",
+        file=sys.stderr,
+    )
 
 
 def _export_json(messages) -> str:

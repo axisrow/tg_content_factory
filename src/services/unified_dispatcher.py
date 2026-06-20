@@ -12,6 +12,7 @@ from src.live_runtime_pause import LiveRuntimePauseGate
 from src.models import CollectionTask, CollectionTaskStatus, CollectionTaskType
 from src.services.task_handlers import (
     ContentTaskHandler,
+    ExportTaskHandler,
     FilterAnalyzeTaskHandler,
     PhotoTaskHandler,
     PipelineTaskHandler,
@@ -41,6 +42,7 @@ _HANDLER_CLASSES = (
     PipelineTaskHandler,
     ContentTaskHandler,
     TranslationTaskHandler,
+    ExportTaskHandler,
 )
 
 HANDLED_TYPES = [
@@ -265,6 +267,7 @@ class UnifiedDispatcher:
                 CollectionTaskType.CONTENT_GENERATE: self._handle_content_generate,
                 CollectionTaskType.CONTENT_PUBLISH: self._handle_content_publish,
                 CollectionTaskType.TRANSLATE_BATCH: self._handle_translate_batch,
+                CollectionTaskType.EXPORT: self._handle_export,
             }
             return self.__handler_map
 
@@ -305,3 +308,6 @@ class UnifiedDispatcher:
 
     async def _handle_translate_batch(self, task: CollectionTask) -> None:
         await self._handler(TranslationTaskHandler).handle_translate_batch(task)
+
+    async def _handle_export(self, task: CollectionTask) -> None:
+        await self._handler(ExportTaskHandler).handle(task)

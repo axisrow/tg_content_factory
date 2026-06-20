@@ -48,11 +48,17 @@ async def test_export_channel_no_messages_returns_404(route_client, base_app, tm
 
 
 @pytest.mark.anyio
-async def test_export_channel_with_media_note(route_client, base_app, tmp_path, monkeypatch):
+async def test_export_channel_with_media_enqueues_task(route_client, base_app, tmp_path, monkeypatch):
     _, db, _ = base_app
     monkeypatch.setattr("src.services.export_service.EXPORT_ROOT", tmp_path)
     await _seed_messages(db)
 
+    # with_media needs the worker's live clients → the route enqueues a task.
     resp = await route_client.post("/channels/100/export", data={"format": "json", "with_media": "true"})
     assert resp.status_code == 200
-    assert resp.json()["note"] is not None
+    body = resp.json()
+    assert body["status"] == "enqueued"
+    assert body["with_media"] is True
+    assert isinstance(body["task_id"], int)
+    task = await db.repos.tasks.get_collection_task(body["task_id"])
+    assert task is not None and task.payload.with_media is True
