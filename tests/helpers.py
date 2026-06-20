@@ -773,3 +773,30 @@ async def _maybe_await(value):
     if hasattr(value, "__await__"):
         return await value
     return value
+
+
+def make_pipeline_node_message(
+    text: str | None = "test message",
+    channel_title: str | None = "Test Channel",
+    channel_username: str | None = "testchan",
+    message_id: int | None = 123,
+    channel_id: int | None = -100123,
+    sender_id: int | None = 456,
+    sender_name: str | None = "User",
+    date=None,
+):
+    """A MagicMock message for pipeline node handler tests.
+
+    Shared helper deduped from test_pipeline_nodes_handlers.py and
+    test_pipeline_nodes_handler_edge_cases.py (identical ``_msg`` bodies).
+    """
+    m = MagicMock()
+    m.text = text
+    m.channel_title = channel_title
+    m.channel_username = channel_username
+    m.message_id = message_id
+    m.channel_id = channel_id
+    m.sender_id = sender_id
+    m.sender_name = sender_name
+    m.date = date or datetime(2024, 1, 1, tzinfo=timezone.utc)
+    return m

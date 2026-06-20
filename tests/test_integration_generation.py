@@ -2,55 +2,7 @@ import re
 
 import pytest
 
-from src.models import Account, Channel
-from tests.helpers import build_web_app, make_auth_client, make_test_config
-
-
-@pytest.fixture
-async def pipeline_client(tmp_path, real_pool_harness_factory):
-    config = make_test_config(tmp_path)
-    harness = real_pool_harness_factory()
-    app, built_db = await build_web_app(config, harness)
-    await built_db.add_account(Account(phone="+100", session_string="sess"))
-    await built_db.add_channel(Channel(channel_id=1001, title="Source A"))
-    await built_db.repos.dialog_cache.replace_dialogs(
-        "+100",
-        [
-            {
-                "channel_id": 77,
-                "title": "Target A",
-                "username": "targeta",
-                "channel_type": "channel",
-            }
-        ],
-    )
-
-    async def _get_dialogs_for_phone(
-        self,
-        phone,
-        include_dm=False,
-        mode="full",
-        refresh=False,
-    ):
-        return [
-            {
-                "channel_id": 77,
-                "title": "Target A",
-                "username": "targeta",
-                "channel_type": "channel",
-            }
-        ]
-
-    # Patch pool method used by the pipelines page to fetch dialogs
-    from types import MethodType
-
-    app.state.pool.get_dialogs_for_phone = MethodType(_get_dialogs_for_phone, app.state.pool)
-
-    async with make_auth_client(app) as client:
-        yield client
-
-    await app.state.collection_queue.shutdown()
-    await built_db.close()
+# pipeline_client fixture is shared from tests/conftest.py (deduped).
 
 
 @pytest.mark.anyio

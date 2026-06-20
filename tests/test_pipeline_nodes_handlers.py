@@ -24,28 +24,10 @@ from src.services.pipeline_nodes.handlers import (
     SearchQueryTriggerHandler,
     SourceHandler,
 )
+from tests.helpers import make_pipeline_node_message
 
-
-def _msg(
-    text="test message",
-    channel_title="Test Channel",
-    channel_username="testchan",
-    message_id=123,
-    channel_id=-100123,
-    sender_id=456,
-    sender_name="User",
-    date=None,
-):
-    m = MagicMock()
-    m.text = text
-    m.channel_title = channel_title
-    m.channel_username = channel_username
-    m.message_id = message_id
-    m.channel_id = channel_id
-    m.sender_id = sender_id
-    m.sender_name = sender_name
-    m.date = date or datetime(2024, 1, 1, tzinfo=timezone.utc)
-    return m
+# Shared message factory (deduped into tests/helpers.py).
+_msg = make_pipeline_node_message
 
 
 def _search_engine(messages=None, semantic_available=True, has_index=None):
