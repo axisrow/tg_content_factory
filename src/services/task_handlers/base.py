@@ -66,7 +66,14 @@ async def build_image_service(context: TaskHandlerContext) -> "ImageGenerationSe
         except Exception:
             logger.warning("Failed to load image provider configs from DB", exc_info=True)
             adapters = {}
-    return ImageGenerationService(adapters=adapters)
+    # Opt-in production rate-limit / daily cost cap (#814); None unless the
+    # operator enabled production_limits, so default behavior is unchanged.
+    limits = None
+    if context.db and context.config:
+        from src.services.production_limits_service import ProductionLimitsService
+
+        limits = ProductionLimitsService.from_config(context.db, context.config)
+    return ImageGenerationService(adapters=adapters, limits=limits)
 
 
 async def resolve_llm_provider_service(context: TaskHandlerContext) -> object:

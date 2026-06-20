@@ -223,6 +223,74 @@ class CostTracker:
         except Exception:
             logger.warning("CostTracker: failed to persist daily cost", exc_info=True)
 
+    @staticmethod
+    def _parse_state(state: dict | None, now: float) -> tuple[float, float]:
+        """(day_start, daily_cost) from persisted state, or a fresh day on garbage."""
+        if state:
+            try:
+                return float(state["day_start"]), float(state["daily_cost"])
+            except (KeyError, TypeError, ValueError):
+                logger.warning("CostTracker: malformed persisted daily cost: %r", state)
+        return now, 0.0
+
+    async def _read_persisted_cost(self, now: float) -> float:
+        """Read the authoritative daily cost from the DB, applying day-rollover.
+
+        Updates ``self._day_start`` so a subsequent write keeps the same window.
+        On read failure, falls back to the in-memory value (fail-open read; the
+        cap check below still guards with whatever total we have).
+        """
+        try:
+            raw = await self._db.get_setting(_COST_STATE_KEY)
+        except Exception:
+            logger.warning("CostTracker: failed to read persisted daily cost", exc_info=True)
+            return self._daily_cost
+        day_start, daily_cost = self._parse_state(safe_json_loads_dict(raw), now)
+        if now - day_start >= _DAY_SECONDS:
+            self._day_start = now
+            return 0.0
+        self._day_start = day_start
+        return daily_cost
+
+    async def _atomic_increment(self, delta: float) -> float:
+        """Read-increment-write the persisted daily cost atomically. Caller holds
+        self._lock.
+
+        Uses the connection-wide write transaction (BEGIN IMMEDIATE) so two
+        instances sharing the SQLite file accumulate into the same total instead
+        of clobbering each other (the multi-instance bug from #814). On any DB
+        error, falls back to an in-memory increment so a transient failure never
+        crashes the caller (matching the previous best-effort persist).
+        """
+        now = time.time()
+        try:
+            async with self._db.transaction() as conn:
+                cur = await conn.execute(
+                    "SELECT value FROM settings WHERE key = ?", (_COST_STATE_KEY,)
+                )
+                row = await cur.fetchone()
+                day_start, daily_cost = self._parse_state(
+                    safe_json_loads_dict(row[0] if row else None), now
+                )
+                if now - day_start >= _DAY_SECONDS:
+                    day_start, daily_cost = now, 0.0
+                daily_cost += delta
+                self._day_start = day_start
+                await conn.execute(
+                    "INSERT INTO settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (
+                        _COST_STATE_KEY,
+                        safe_json_dumps({"daily_cost": daily_cost, "day_start": day_start}),
+                    ),
+                )
+            return daily_cost
+        except Exception:
+            logger.warning("CostTracker: atomic cost increment failed; counting in-memory", exc_info=True)
+            self._maybe_reset_day(now)
+            self._daily_cost += delta
+            return self._daily_cost
+
     async def estimate_cost(
         self,
         tokens: int = 0,
@@ -256,9 +324,16 @@ class CostTracker:
             Tuple of (allowed, estimated_cost)
         """
         async with self._lock:
-            await self._ensure_loaded()
-            if self._maybe_reset_day(time.time()):
-                await self._persist()
+            now = time.time()
+            if self._db is not None:
+                # Re-read the authoritative total so a sibling instance's spend is
+                # seen before we approve another call against the shared cap (#814).
+                self._daily_cost = await self._read_persisted_cost(now)
+                self._loaded = True
+            else:
+                await self._ensure_loaded()
+                if self._maybe_reset_day(now):
+                    await self._persist()
 
             estimated = await self.estimate_cost(tokens, is_image)
 
@@ -270,12 +345,14 @@ class CostTracker:
     async def record_cost(self, tokens: int = 0, is_image: bool = False) -> float:
         """Record cost for a request after it actually executes."""
         async with self._lock:
-            await self._ensure_loaded()
-            self._maybe_reset_day(time.time())
-
             estimated = await self.estimate_cost(tokens, is_image)
-            self._daily_cost += estimated
-            await self._persist()
+            if self._db is None:
+                self._maybe_reset_day(time.time())
+                self._daily_cost += estimated
+                return estimated
+            # DB-authoritative atomic accumulation across instances (#814).
+            self._daily_cost = await self._atomic_increment(estimated)
+            self._loaded = True
             return estimated
 
     def get_daily_cost(self) -> float:
@@ -305,6 +382,26 @@ class ProductionLimitsService:
         self._db = db
         self._rate_limiter = RateLimiter(rate_config)
         self._cost_tracker = CostTracker(cost_config, db=db)
+
+    @classmethod
+    def from_config(cls, db: Database, config) -> "ProductionLimitsService | None":
+        """Build from ``AppConfig.production_limits``; ``None`` when disabled (#814)."""
+        pl = getattr(config, "production_limits", None)
+        if pl is None or not pl.enabled:
+            return None
+        return cls(
+            db,
+            RateLimitConfig(
+                requests_per_minute=pl.requests_per_minute,
+                tokens_per_minute=pl.tokens_per_minute,
+                tokens_per_day=pl.tokens_per_day,
+            ),
+            CostConfig(
+                cost_per_1k_tokens=pl.cost_per_1k_tokens,
+                cost_per_image=pl.cost_per_image,
+                daily_cost_cap=pl.daily_cost_cap,
+            ),
+        )
 
     async def acquire(
         self,
@@ -337,6 +434,15 @@ class ProductionLimitsService:
             return False, "Rate limit timeout"
 
         return True, None
+
+    async def record_cost(self, tokens: int = 0, is_image: bool = False) -> float:
+        """Record the actual cost of a completed call against the daily cap.
+
+        Pair with ``acquire`` for call sites that don't use ``execute_with_retry``
+        (e.g. image generation): ``acquire`` reserves the rate slot and checks the
+        cap, ``record_cost`` books the spend once the paid call has succeeded.
+        """
+        return await self._cost_tracker.record_cost(tokens, is_image)
 
     async def execute_with_retry(
         self,

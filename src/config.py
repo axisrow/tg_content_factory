@@ -87,6 +87,22 @@ class TelegramRuntimeConfig(BaseModel):
     session_cache_dir: str = "data/telegram_sessions"
 
 
+class ProductionLimitsConfig(BaseModel):
+    """Opt-in rate-limit + daily cost cap for paid LLM/image generation (#814).
+
+    ``enabled`` defaults to False so existing deployments keep their current
+    (unlimited) behavior; the limits only apply when an operator turns them on.
+    """
+
+    enabled: bool = False
+    requests_per_minute: int = 60
+    tokens_per_minute: int = 100000
+    tokens_per_day: int = 1000000
+    cost_per_1k_tokens: float = 0.002
+    cost_per_image: float = 0.02
+    daily_cost_cap: float = 10.0
+
+
 class AppConfig(BaseModel):
     telegram: TelegramConfig = TelegramConfig()
     telegram_runtime: TelegramRuntimeConfig = TelegramRuntimeConfig()
@@ -97,6 +113,7 @@ class AppConfig(BaseModel):
     llm: LLMConfig = LLMConfig()
     agent: AgentConfig = AgentConfig()
     security: SecurityConfig = SecurityConfig()
+    production_limits: ProductionLimitsConfig = ProductionLimitsConfig()
 
 
 _ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
