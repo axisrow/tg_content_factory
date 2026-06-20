@@ -48,6 +48,8 @@ def test_classify_media_kind():
     assert classify_media_kind(_photo_message()) == "photo"
     assert classify_media_kind(SimpleNamespace(voice=True, file=None)) == "voice"
     assert classify_media_kind(SimpleNamespace(video=True, file=None)) == "video"
+    # Round video notes are a distinct kind (TG Desktop video_messages/).
+    assert classify_media_kind(SimpleNamespace(video=True, video_note=True, file=None)) == "video_note"
     assert classify_media_kind(SimpleNamespace(file=SimpleNamespace(mime_type="video/mp4"))) == "video"
     assert classify_media_kind(SimpleNamespace(file=SimpleNamespace(mime_type="application/pdf"))) == "file"
 
@@ -55,6 +57,7 @@ def test_classify_media_kind():
 def test_media_subdir_mapping():
     assert media_subdir("photo") == "photos"
     assert media_subdir("video") == "video_files"
+    assert media_subdir("video_note") == "video_messages"
     assert media_subdir("voice") == "voice_messages"
     assert media_subdir("file") == "files"
     assert media_subdir("unknown") == "files"
@@ -100,6 +103,34 @@ async def test_skips_over_threshold_without_downloading(tmp_path):
     assert outcome.size_bytes == 9_000_000
     assert outcome.path is None
     client.download_media.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_unknown_size_skipped_when_limit_set(tmp_path):
+    # Telegram omits size for some media → must not bypass the limit (#938).
+    msg = SimpleNamespace(id=7, media=object(), photo=True, file=SimpleNamespace(size=None, mime_type="image/jpeg"))
+    client = _client_for(msg, download_path=str(tmp_path / "photos" / "x.jpg"))
+    svc = TelegramActionService(_pool_with_client(client))
+
+    outcome = await svc.download_media_sized(
+        phone="+1", chat_id="@c", message_id=7, output_dir=tmp_path, max_size_bytes=3 * 1024 * 1024
+    )
+    assert outcome.skipped is True
+    assert outcome.reason == "size_unknown"
+    client.download_media.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_unknown_size_downloads_when_no_limit(tmp_path):
+    msg = SimpleNamespace(id=7, media=object(), photo=True, file=SimpleNamespace(size=None, mime_type="image/jpeg"))
+    client = _client_for(msg, download_path=str(tmp_path / "photos" / "x.jpg"))
+    svc = TelegramActionService(_pool_with_client(client))
+
+    outcome = await svc.download_media_sized(
+        phone="+1", chat_id="@c", message_id=7, output_dir=tmp_path, max_size_bytes=None
+    )
+    assert outcome.skipped is False
+    client.download_media.assert_awaited_once()
 
 
 @pytest.mark.anyio

@@ -128,10 +128,12 @@ class MediaDownloadOutcome:
     reason: str | None = None
 
 
-# media kind → Telegram Desktop subdirectory name.
+# media kind → Telegram Desktop subdirectory name. Round-video "video notes" go
+# to video_messages/ (distinct from regular video_files/) to match TG Desktop.
 _MEDIA_SUBDIRS = {
     "photo": "photos",
     "video": "video_files",
+    "video_note": "video_messages",
     "voice": "voice_messages",
     "file": "files",
 }
@@ -143,7 +145,10 @@ def classify_media_kind(message: Any) -> str:
         return "photo"
     if getattr(message, "voice", None):
         return "voice"
-    if getattr(message, "video", None) or getattr(message, "video_note", None):
+    # Check video_note before video — TG Desktop files round videos separately.
+    if getattr(message, "video_note", None):
+        return "video_note"
+    if getattr(message, "video", None):
         return "video"
     mime = getattr(getattr(message, "file", None), "mime_type", None) or ""
     if mime.startswith("image/"):
@@ -676,6 +681,18 @@ class TelegramActionService:
             subdir = media_subdir(kind)
             size_bytes = getattr(getattr(message, "file", None), "size", None)
 
+            # When a limit is set, skip files we can't size-check (Telegram omits
+            # size for some documents/older media) rather than downloading them
+            # unconditionally and risking disk exhaustion (Claude review on #938).
+            if max_size_bytes is not None and size_bytes is None:
+                return MediaDownloadOutcome(
+                    phone=acquired_phone,
+                    kind=kind,
+                    subdir=subdir,
+                    size_bytes=None,
+                    skipped=True,
+                    reason="size_unknown",
+                )
             if max_size_bytes is not None and size_bytes is not None and size_bytes > max_size_bytes:
                 return MediaDownloadOutcome(
                     phone=acquired_phone,
