@@ -856,3 +856,71 @@ async def test_local_path_uploaded_via_upload_file():
     result = await svc.generate("hf:m", "x")
     assert result == "https://s3.example.com/presigned"
     s3.upload_file.assert_awaited_once()
+
+
+# ── production limits enforcement (#814) ──
+
+
+@pytest.mark.anyio
+async def test_generate_blocked_when_cost_cap_exceeded():
+    """With production limits enabled and the cap already exceeded, generate is
+    blocked BEFORE the (paid) adapter runs (#814)."""
+    from src.services.production_limits_service import (
+        CostConfig,
+        ProductionLimitsService,
+        RateLimitConfig,
+    )
+
+    db = MagicMock()
+    db.get_setting = AsyncMock(return_value=None)
+    # cost_per_image (10) already exceeds the cap (5) on the very first image.
+    limits = ProductionLimitsService(
+        db, RateLimitConfig(), CostConfig(cost_per_image=10.0, daily_cost_cap=5.0)
+    )
+    called = False
+
+    async def fake(text, model_id):
+        nonlocal called
+        called = True
+        return "http://img"
+
+    svc = ImageGenerationService.__new__(ImageGenerationService)
+    svc._adapters = {"together": fake}
+    svc._s3 = None
+    svc._last_failure = None
+    svc._limits = limits
+
+    result = await svc.generate("together:flux", "a cat")
+    assert result is None
+    assert called is False  # the paid adapter never ran
+    assert svc._last_failure is not None
+    assert svc._last_failure.kind == "rate_limited"
+
+
+@pytest.mark.anyio
+async def test_generate_records_cost_when_allowed():
+    """When within limits, generate proceeds and records the image cost (#814)."""
+    from src.services.production_limits_service import (
+        CostConfig,
+        ProductionLimitsService,
+        RateLimitConfig,
+    )
+
+    db = MagicMock()
+    db.get_setting = AsyncMock(return_value=None)
+    limits = ProductionLimitsService(
+        db, RateLimitConfig(), CostConfig(cost_per_image=1.0, daily_cost_cap=100.0)
+    )
+
+    async def fake(text, model_id):
+        return "http://img/result.png"
+
+    svc = ImageGenerationService.__new__(ImageGenerationService)
+    svc._adapters = {"together": fake}
+    svc._s3 = None
+    svc._last_failure = None
+    svc._limits = limits
+
+    result = await svc.generate("together:flux", "a cat")
+    assert result == "http://img/result.png"
+    assert limits._cost_tracker.get_daily_cost() == pytest.approx(1.0)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -492,3 +492,57 @@ async def test_execute_with_retry_rate_limit_raises():
     service.acquire = AsyncMock(return_value=(False, "Rate limit timeout"))
     with pytest.raises(RuntimeError, match="Rate limit"):
         await service.execute_with_retry(func=AsyncMock(return_value="x"), tokens=10)
+
+
+# === #814: atomic cost accumulation + config gating ===
+
+
+@pytest.mark.anyio
+async def test_cost_tracker_atomic_across_instances(db):
+    """Two trackers sharing one DB accumulate into the same persisted total
+    instead of clobbering each other's write (multi-instance bug, #814)."""
+    import json
+
+    cfg = CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=100.0)
+    a = CostTracker(cfg, db=db)
+    b = CostTracker(cfg, db=db)
+
+    await a.record_cost(tokens=1000)  # +1.0
+    await b.record_cost(tokens=2000)  # +2.0 — must see a's spend, not overwrite it
+
+    assert b.get_daily_cost() == pytest.approx(3.0)
+    # The persisted authoritative total is the accumulation, not the last writer.
+    raw = await db.get_setting("production_limits_daily_cost")
+    assert json.loads(raw)["daily_cost"] == pytest.approx(3.0)
+    # A fresh instance sees the shared total when checking the cap.
+    fresh = CostTracker(cfg, db=db)
+    await fresh.check_cost_cap(tokens=0)
+    assert fresh.get_daily_cost() == pytest.approx(3.0)
+
+
+@pytest.mark.anyio
+async def test_cost_cap_blocks_using_other_instances_spend(db):
+    """The cap is enforced against the shared persisted total: one instance can be
+    blocked by spend another instance recorded (#814)."""
+    cfg = CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=2.5)
+    a = CostTracker(cfg, db=db)
+    b = CostTracker(cfg, db=db)
+    await a.record_cost(tokens=2000)  # 2.0 of the 2.5 cap
+    allowed, _ = await b.check_cost_cap(tokens=1000)  # would push to 3.0 > 2.5
+    assert allowed is False
+
+
+def test_from_config_disabled_returns_none():
+    from src.config import AppConfig
+
+    cfg = AppConfig()  # production_limits.enabled defaults to False
+    assert ProductionLimitsService.from_config(MagicMock(), cfg) is None
+
+
+def test_from_config_enabled_builds_service():
+    from src.config import AppConfig, ProductionLimitsConfig
+
+    cfg = AppConfig(production_limits=ProductionLimitsConfig(enabled=True, daily_cost_cap=5.0))
+    svc = ProductionLimitsService.from_config(MagicMock(), cfg)
+    assert svc is not None
+    assert svc._cost_tracker._config.daily_cost_cap == 5.0

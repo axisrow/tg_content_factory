@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
+    from src.services.production_limits_service import ProductionLimitsService
     from src.services.provider_adapters import ImageAdapter
     from src.services.s3_store import S3Store
 
@@ -67,10 +68,18 @@ class ImageGenerationService:
     first available adapter is used as fallback.
     """
 
-    def __init__(self, adapters: dict[str, "ImageAdapter"] | None = None) -> None:
+    def __init__(
+        self,
+        adapters: dict[str, "ImageAdapter"] | None = None,
+        limits: "ProductionLimitsService | None" = None,
+    ) -> None:
         self._adapters: dict[str, ImageAdapter] = {}
         self._s3: S3Store | None = None
         self._last_failure: ImageGenerationFailure | None = None
+        # Optional opt-in rate-limit / daily cost cap (#814). None = unlimited
+        # (the default), so generation behaves exactly as before unless an
+        # operator enables production_limits in config.
+        self._limits = limits
         if adapters is not None:
             self._adapters = dict(adapters)
         else:
@@ -96,6 +105,19 @@ class ImageGenerationService:
                 retryable=False,
             )
             return None
+        limits = getattr(self, "_limits", None)
+        if limits is not None:
+            allowed, error = await limits.acquire(is_image=True)
+            if not allowed:
+                logger.warning("Image generation blocked by production limits (model=%s): %s", model, error)
+                self._last_failure = ImageGenerationFailure(
+                    kind="rate_limited",
+                    provider=provider_name,
+                    model=model,
+                    message=error or "production limit exceeded",
+                    retryable=True,
+                )
+                return None
         try:
             result = await adapter(text, model_id)
         except TimeoutError as exc:
@@ -115,6 +137,9 @@ class ImageGenerationService:
                 kind="error", provider=provider_name, model=model, message=str(exc),
             )
             return None
+        # The paid generation succeeded → record its cost against the daily cap.
+        if limits is not None and result:
+            await limits.record_cost(is_image=True)
         s3 = getattr(self, "_s3", None)
         if result and s3 is not None:
             if result.startswith("http"):
