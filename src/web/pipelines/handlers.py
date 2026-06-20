@@ -909,7 +909,11 @@ async def show_pipeline_run(request: Request, pipeline_id: int, run_id: int):
         return PipelineJson({"error": "run_not_found"}, status_code=404)
     data = _run_to_dict(run)
     data["generated_text"] = run.generated_text
-    data["image_url"] = run.image_url
+    # Re-sign so a run detail fetched past the 7-day presigned TTL returns a live
+    # image link (#869/#873/#874); non-S3 URLs pass through.
+    from src.services.s3_store import refresh_s3_url
+
+    data["image_url"] = await refresh_s3_url(run.image_url)
     data["quality_score"] = run.quality_score
     return PipelineJson(data)
 

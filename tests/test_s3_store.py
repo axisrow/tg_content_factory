@@ -219,3 +219,77 @@ async def test_upload_url_rejects_non_http_scheme():
     store = S3Store("https://s3.test", "bucket", "ak", "sk")
     assert await store.upload_url("file:///etc/passwd") is None
     assert await store.upload_url("") is None
+
+
+# ── presign-at-read durability (#869/#873/#874) ────────────────────────
+
+
+def test_object_key_from_url_extracts_key_ignoring_expired_signature():
+    # The key lives in the PATH; the (expired) SigV4 params are in the query.
+    store = S3Store("https://s3.example.com", "bucket", "ak", "sk")
+    url = "https://s3.example.com/bucket/images/abc123.png?X-Amz-Expires=604800&X-Amz-Signature=dead"
+    assert store.object_key_from_url(url) == "images/abc123.png"
+    # Not ours → None (foreign host, foreign bucket, empty).
+    assert store.object_key_from_url("https://provider.test/output.png") is None
+    assert store.object_key_from_url("https://s3.example.com/other-bucket/k.png") is None
+    assert store.object_key_from_url("") is None
+
+
+@pytest.mark.anyio
+async def test_refresh_presigned_url_resigns_owned_url():
+    store = S3Store("https://s3.example.com", "bucket", "ak", "sk")
+    old = "https://s3.example.com/bucket/images/abc.png?X-Amz-Signature=expired"
+    with patch.object(S3Store, "_client", return_value=MagicMock()), patch.object(
+        S3Store,
+        "_presigned_get",
+        return_value="https://s3.example.com/bucket/images/abc.png?X-Amz-Signature=fresh",
+    ) as mock_sign:
+        fresh = await store.refresh_presigned_url(old)
+    assert "Signature=fresh" in fresh
+    # Re-signed using the key derived from the stored URL's path.
+    assert mock_sign.call_args.args[1] == "images/abc.png"
+
+
+@pytest.mark.anyio
+async def test_refresh_presigned_url_passthrough_for_foreign_url():
+    store = S3Store("https://s3.example.com", "bucket", "ak", "sk")
+    url = "https://provider.test/output.png"
+    assert await store.refresh_presigned_url(url) == url
+
+
+@pytest.mark.anyio
+async def test_refresh_presigned_url_falls_back_on_error():
+    store = S3Store("https://s3.example.com", "bucket", "ak", "sk")
+    old = "https://s3.example.com/bucket/images/abc.png?X-Amz-Signature=expired"
+    with patch.object(S3Store, "_client", side_effect=RuntimeError("boto down")):
+        result = await store.refresh_presigned_url(old)
+    assert result == old  # graceful fallback to the stored (possibly expired) URL
+
+
+@pytest.mark.anyio
+async def test_refresh_s3_url_noop_when_not_configured(monkeypatch):
+    from src.services.s3_store import refresh_s3_url
+
+    for var in ("S3_ENDPOINT", "S3_BUCKET", "S3_ACCESS_KEY", "S3_SECRET_KEY"):
+        monkeypatch.setenv(var, "")
+    url = "https://s3.example.com/bucket/images/abc.png?X-Amz-Signature=expired"
+    assert await refresh_s3_url(url) == url
+    assert await refresh_s3_url(None) is None
+
+
+@pytest.mark.anyio
+async def test_refresh_s3_url_resigns_when_configured(monkeypatch):
+    from src.services.s3_store import refresh_s3_url
+
+    monkeypatch.setenv("S3_ENDPOINT", "https://s3.example.com")
+    monkeypatch.setenv("S3_BUCKET", "bucket")
+    monkeypatch.setenv("S3_ACCESS_KEY", "ak")
+    monkeypatch.setenv("S3_SECRET_KEY", "sk")
+    old = "https://s3.example.com/bucket/images/abc.png?X-Amz-Signature=expired"
+    with patch.object(S3Store, "_client", return_value=MagicMock()), patch.object(
+        S3Store,
+        "_presigned_get",
+        return_value="https://s3.example.com/bucket/images/abc.png?X-Amz-Signature=fresh",
+    ):
+        fresh = await refresh_s3_url(old)
+    assert "Signature=fresh" in fresh

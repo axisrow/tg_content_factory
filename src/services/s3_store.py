@@ -72,6 +72,39 @@ class S3Store:
             return False
         return parts.path.startswith(f"/{self._bucket}/")
 
+    def object_key_from_url(self, url: str) -> str | None:
+        """Extract this store's object key from one of our path-style URLs.
+
+        The key lives in the URL *path* (``/{bucket}/{key}``); only the SigV4
+        query signature carries the 7-day expiry. So even an *expired* stored URL
+        still yields its key here, which ``refresh_presigned_url`` can re-sign.
+        Returns None for URLs that aren't ours (local paths, foreign hosts/buckets).
+        """
+        if not self.owns_url(url):
+            return None
+        prefix = f"/{self._bucket}/"
+        key = urlsplit(url).path[len(prefix):]
+        return key or None
+
+    async def refresh_presigned_url(self, url: str) -> str:
+        """Return a freshly-signed GET URL for one of our stored object URLs.
+
+        Moderation or scheduled publish can happen more than 7 days after an image
+        was generated, by which point the stored presigned URL has expired and
+        renders/sends as a broken/403 link. Re-deriving the key from the stored URL
+        and re-signing keeps the link live. URLs that aren't ours pass through; any
+        signing error falls back to the original URL (#869/#873/#874).
+        """
+        key = self.object_key_from_url(url)
+        if key is None:
+            return url
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, lambda: self._presigned_get(self._client(), key))
+        except Exception as exc:
+            logger.warning("S3 re-sign failed for %s: %s", url, exc)
+            return url
+
     def _client(self):
         import boto3
         from botocore.config import Config
@@ -173,3 +206,18 @@ class S3Store:
         if endpoint and bucket and access_key and secret_key:
             return cls(endpoint, bucket, access_key, secret_key)
         return None
+
+
+async def refresh_s3_url(url: str | None) -> str | None:
+    """Re-sign a stored S3 image URL at read/publish time when S3 is configured.
+
+    Keeps moderated / scheduled-publish images live past the 7-day presigned TTL.
+    Returns the URL unchanged when S3 is not configured or the URL isn't ours, so
+    it is safe to call unconditionally on any stored ``image_url`` (#869/#873/#874).
+    """
+    if not url:
+        return url
+    store = S3Store.from_env()
+    if store is None:
+        return url
+    return await store.refresh_presigned_url(url)
