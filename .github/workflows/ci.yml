@@ -47,6 +47,13 @@ jobs:
       - name: Import architecture contracts
         run: lint-imports --config .importlinter
 
+      # Blocking cyclomatic-complexity gate (#923). After #922/#923 reduced the
+      # last rank-F functions, main is at F:0 — this keeps it there: any function
+      # that grows back to radon rank F (CC ≥ 41) reds CI. radon/vulture ship in
+      # the [dev] extra so `pip install -e ".[dev]"` above already provides them.
+      - name: Cyclomatic-complexity gate (no rank-F functions)
+        run: python scripts/code_health.py --fail-on F
+
       # Non-blocking duplication guard (#807 dedup round 2). Current level is
       # ~0.6%; threshold 1% leaves headroom while surfacing regressions. Kept
       # advisory (continue-on-error) so it never reds CI on its own. jscpd is
