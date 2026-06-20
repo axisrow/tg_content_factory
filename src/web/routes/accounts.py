@@ -45,6 +45,13 @@ async def delete_account(request: Request, account_id: int):
         notifier = deps.get_notifier(request)
         if notifier:
             notifier.invalidate_me_cache()
+        # Web notifier is None — invalidate the worker's me-cache over the queue
+        # so it stops sending from the deleted account's me.id (#832).
+        await deps.telegram_command_service(request).enqueue(
+            "notifications.invalidate_cache",
+            payload={},
+            requested_by="web:accounts.delete-notify-reassign",
+        )
 
     command_id = await deps.telegram_command_service(request).enqueue(
         "accounts.delete",

@@ -320,6 +320,7 @@ async def build_container_with_templates(
             search_engine=search_engine,
             collection_queue=collection_queue,
             live_runtime_pause_gate=live_runtime_pause_gate,
+            notifier=notifier,
         )
         agent_manager = AgentManager(
             db,
