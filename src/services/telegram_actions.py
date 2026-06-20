@@ -110,6 +110,59 @@ class DownloadMediaResult:
 
 
 @dataclass(frozen=True)
+class MediaDownloadOutcome:
+    """Result of a size-aware media download (issue #834).
+
+    ``skipped=True`` means the file was left undownloaded (over the size
+    threshold); ``path`` is then None and ``reason``/``size_bytes`` explain it.
+    ``rel_path`` is relative to the export root so JSON/HTML can link it.
+    """
+
+    phone: str
+    kind: str
+    subdir: str
+    path: str | None = None
+    rel_path: str | None = None
+    size_bytes: int | None = None
+    skipped: bool = False
+    reason: str | None = None
+
+
+# media kind → Telegram Desktop subdirectory name. Round-video "video notes" go
+# to video_messages/ (distinct from regular video_files/) to match TG Desktop.
+_MEDIA_SUBDIRS = {
+    "photo": "photos",
+    "video": "video_files",
+    "video_note": "video_messages",
+    "voice": "voice_messages",
+    "file": "files",
+}
+
+
+def classify_media_kind(message: Any) -> str:
+    """Best-effort Telegram-Desktop media class for a message."""
+    if getattr(message, "photo", None):
+        return "photo"
+    if getattr(message, "voice", None):
+        return "voice"
+    # Check video_note before video — TG Desktop files round videos separately.
+    if getattr(message, "video_note", None):
+        return "video_note"
+    if getattr(message, "video", None):
+        return "video"
+    mime = getattr(getattr(message, "file", None), "mime_type", None) or ""
+    if mime.startswith("image/"):
+        return "photo"
+    if mime.startswith("video/"):
+        return "video"
+    return "file"
+
+
+def media_subdir(kind: str) -> str:
+    return _MEDIA_SUBDIRS.get(kind, "files")
+
+
+@dataclass(frozen=True)
 class LeaveDialogsResult:
     phone: str
     results: dict[Any, bool]
@@ -583,6 +636,94 @@ class TelegramActionService:
             if resolved != output_resolved and output_resolved not in resolved.parents:
                 raise TelegramActionPathEscapeError("path_escape")
             return DownloadMediaResult(phone=acquired_phone, path=str(resolved))
+
+    async def download_media_sized(
+        self,
+        *,
+        phone: str,
+        chat_id: Any,
+        message_id: int,
+        output_dir: str | Path,
+        max_size_bytes: int | None = None,
+        operation_prefix: str = "telegram_action_download_media_sized",
+    ) -> MediaDownloadOutcome:
+        """Download a message's media into a typed subdir, skipping oversized files.
+
+        Files larger than ``max_size_bytes`` (when set) are NOT downloaded; the
+        returned outcome records the reason and original size so the export can
+        show a Telegram-style "(File exceeds maximum size…)" placeholder (#834).
+        """
+        export_root = Path(output_dir)
+        export_root.mkdir(parents=True, exist_ok=True)
+        root_resolved = export_root.resolve()
+        async with self._client(phone=phone, native=True) as (client, acquired_phone):
+            entity = await self._resolve_entity(client, phone=acquired_phone, identifier=chat_id)
+            message = None
+
+            async def _lookup_message() -> None:
+                nonlocal message
+                async for current_message in client.iter_messages(entity, ids=int(message_id)):
+                    message = current_message
+                    break
+
+            await run_with_flood_wait(
+                _lookup_message(),
+                operation=f"{operation_prefix}_lookup",
+                phone=acquired_phone,
+                pool=self._pool,
+            )
+            if message is None:
+                raise TelegramActionMessageNotFoundError("message_not_found")
+            if getattr(message, "media", None) is None:
+                raise TelegramActionNoMediaError("no_media")
+
+            kind = classify_media_kind(message)
+            subdir = media_subdir(kind)
+            size_bytes = getattr(getattr(message, "file", None), "size", None)
+
+            # When a limit is set, skip files we can't size-check (Telegram omits
+            # size for some documents/older media) rather than downloading them
+            # unconditionally and risking disk exhaustion (Claude review on #938).
+            if max_size_bytes is not None and size_bytes is None:
+                return MediaDownloadOutcome(
+                    phone=acquired_phone,
+                    kind=kind,
+                    subdir=subdir,
+                    size_bytes=None,
+                    skipped=True,
+                    reason="size_unknown",
+                )
+            if max_size_bytes is not None and size_bytes is not None and size_bytes > max_size_bytes:
+                return MediaDownloadOutcome(
+                    phone=acquired_phone,
+                    kind=kind,
+                    subdir=subdir,
+                    size_bytes=size_bytes,
+                    skipped=True,
+                    reason="exceeds_max_size",
+                )
+
+            dest = root_resolved / subdir
+            dest.mkdir(parents=True, exist_ok=True)
+            path = await run_with_flood_wait(
+                client.download_media(message, file=str(dest)),
+                operation=operation_prefix,
+                phone=acquired_phone,
+                pool=self._pool,
+            )
+            if not path:
+                raise TelegramActionNoMediaError("no_media")
+            resolved = Path(path).resolve()
+            if resolved != root_resolved and root_resolved not in resolved.parents:
+                raise TelegramActionPathEscapeError("path_escape")
+            return MediaDownloadOutcome(
+                phone=acquired_phone,
+                kind=kind,
+                subdir=subdir,
+                path=str(resolved),
+                rel_path=str(resolved.relative_to(root_resolved)),
+                size_bytes=size_bytes,
+            )
 
     async def leave_dialogs(
         self,
