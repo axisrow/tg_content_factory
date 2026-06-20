@@ -768,7 +768,9 @@ async def test_save_filters_with_auto_delete_on_collect(route_client, db):
 
 @pytest.mark.anyio
 async def test_save_notification_account_with_notifier(route_client, db):
-    """Test save notification account invalidates notifier cache (line 1058)."""
+    """Save notification account invalidates the (web) notifier cache AND enqueues
+    a worker-side cache-invalidation command, since the live notifier lives in the
+    worker process, not the web container (#832)."""
     mock_notifier = MagicMock()
     mock_notifier.invalidate_me_cache = MagicMock()
 
@@ -776,9 +778,13 @@ async def test_save_notification_account_with_notifier(route_client, db):
         "src.web.settings.handlers.deps.get_notification_target_service"
     ) as mock_svc, patch(
         "src.web.settings.handlers.deps.get_notifier"
-    ) as mock_get_notifier:
+    ) as mock_get_notifier, patch(
+        "src.web.settings.handlers.deps.telegram_command_service"
+    ) as mock_cmd_svc:
         mock_svc.return_value.set_configured_phone = AsyncMock()
         mock_get_notifier.return_value = mock_notifier
+        svc = mock_cmd_svc.return_value
+        svc.enqueue = AsyncMock(return_value=1)
 
         resp = await route_client.post(
             "/settings/save-notification-account",
@@ -788,6 +794,8 @@ async def test_save_notification_account_with_notifier(route_client, db):
         assert resp.status_code == 303
         assert "msg=notification_account_saved" in resp.headers["location"]
         mock_notifier.invalidate_me_cache.assert_called_once()
+        svc.enqueue.assert_awaited_once()
+        assert svc.enqueue.call_args.args[0] == "notifications.invalidate_cache"
 
 
 @pytest.mark.anyio

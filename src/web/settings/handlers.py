@@ -1110,6 +1110,14 @@ async def handle_save_notification_account(
     notifier = deps.get_notifier(request)
     if notifier:
         notifier.invalidate_me_cache()
+    # The web notifier is None (it lives in the worker), so carry the
+    # invalidation over the command queue or the worker keeps its stale me-cache
+    # and sends from the old account until restart (#832).
+    await deps.telegram_command_service(request).enqueue(
+        "notifications.invalidate_cache",
+        payload={},
+        requested_by="web:save-notification-account",
+    )
     return SettingsFlash(msg="notification_account_saved")
 
 

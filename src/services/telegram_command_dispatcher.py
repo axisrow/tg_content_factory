@@ -88,6 +88,7 @@ class TelegramCommandDispatcher:
         search_engine: "SearchEngine | None" = None,
         collection_queue: "CollectionQueue | None" = None,
         live_runtime_pause_gate: LiveRuntimePauseGate | None = None,
+        notifier: "Notifier | None" = None,
     ):
         self._db = db
         self._pool = pool
@@ -98,6 +99,10 @@ class TelegramCommandDispatcher:
         self._search_engine = search_engine
         self._collection_queue = collection_queue
         self._live_runtime_pause_gate = live_runtime_pause_gate
+        # The shared worker Notifier (same instance the collector / unified
+        # dispatcher hold) so notifications.invalidate_cache can clear its
+        # me-cache when the notification account changes (#832).
+        self._notifier = notifier
         self._task: asyncio.Task | None = None
         self._stop_event = asyncio.Event()
         self._last_reaction_at_monotonic: dict[str, float] = {}
@@ -1083,6 +1088,16 @@ class TelegramCommandDispatcher:
     async def _handle_notifications_delete_bot(self, payload: dict[str, Any]) -> dict[str, Any]:
         await self._notification_service().teardown_bot()
         return {"deleted": True}
+
+    async def _handle_notifications_invalidate_cache(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # The web process calls notifier.invalidate_me_cache(), but its container's
+        # notifier is None — the live Notifier lives only in the worker. So a
+        # notification-account change must reach the worker over the command queue
+        # and invalidate the SHARED worker Notifier here, or it keeps sending from
+        # the old account's me.id until the worker restarts (#832).
+        if self._notifier is not None:
+            self._notifier.invalidate_me_cache()
+        return {"invalidated": True}
 
     async def _handle_notifications_test(self, payload: dict[str, Any]) -> dict[str, Any]:
         from src.database.bundles import NotificationBundle
