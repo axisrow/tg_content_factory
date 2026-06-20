@@ -1,9 +1,9 @@
 """Telegram-Desktop export route (issue #834).
 
 Per the operator's choice the export tree is written under ``data/exports/`` on
-the server and the response returns the path + summary (no file download). The
-heavy media-download path runs in the worker (PR-3); this route does the offline
-text/metadata export inline.
+the server and the response returns the path + summary (no file download). A
+text-only export runs inline; a ``with_media`` export is enqueued as a worker
+EXPORT task (the worker owns the live Telegram clients needed to fetch media).
 """
 
 from __future__ import annotations
@@ -13,7 +13,8 @@ import logging
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import JSONResponse
 
-from src.services.export_service import resolve_max_file_size_mb, run_offline_export
+from src.models import CollectionTaskType, ExportTaskPayload
+from src.services.export_service import run_offline_export
 from src.web import deps
 
 logger = logging.getLogger(__name__)
@@ -33,18 +34,26 @@ async def export_channel(
 ) -> JSONResponse:
     fmt = format if format in ("json", "html", "both") else "json"
     # Cap the inline export so a single web request can't pull a 100k-message
-    # channel into the event loop (Claude review on #937). Larger exports should
-    # go through the worker EXPORT task (PR-3).
+    # channel into the event loop (Claude review on #937).
     limit = max(1, min(limit, 10_000))
     db = deps.get_db(request)
 
-    note = None
     if with_media:
-        max_mb = await resolve_max_file_size_mb(db, max_file_size)
-        note = (
-            "Скачивание медиа выполняется worker'ом; офлайн-экспорт помечает медиа как "
-            f"«не включено» (порог пропуска {max_mb} МБ)."
+        # Media download needs the worker's live ClientPool — enqueue a task.
+        payload = ExportTaskPayload(
+            channel_id=channel_id,
+            fmt=fmt,
+            with_media=True,
+            max_file_size_mb=max_file_size,
+            date_from=date_from or None,
+            date_to=date_to or None,
+            limit=limit,
+            requested_by="web",
         )
+        task_id = await db.repos.tasks.create_generic_task(
+            CollectionTaskType.EXPORT, title=f"export channel {channel_id} (media)", payload=payload
+        )
+        return JSONResponse({"task_id": task_id, "status": "enqueued", "with_media": True})
 
     try:
         summary = await run_offline_export(
@@ -71,6 +80,5 @@ async def export_channel(
             "media_included": summary.media_included,
             "media_skipped": summary.media_skipped,
             "skipped_files": summary.skipped,
-            "note": note,
         }
     )

@@ -7,6 +7,7 @@ import pytest
 from src.models import CollectionTask, CollectionTaskStatus, CollectionTaskType
 from src.services.task_handlers import (
     ContentTaskHandler,
+    ExportTaskHandler,
     FilterAnalyzeTaskHandler,
     PhotoTaskHandler,
     PipelineTaskHandler,
@@ -42,6 +43,7 @@ def test_handled_types_are_derived_from_task_handlers():
             PipelineTaskHandler,
             ContentTaskHandler,
             TranslationTaskHandler,
+            ExportTaskHandler,
         )
         for task_type in handler_cls.task_types
     ]
@@ -70,6 +72,7 @@ async def test_dispatcher_routes_each_handled_type_to_compatibility_shim():
         (CollectionTaskType.CONTENT_GENERATE, "_handle_content_generate"),
         (CollectionTaskType.CONTENT_PUBLISH, "_handle_content_publish"),
         (CollectionTaskType.TRANSLATE_BATCH, "_handle_translate_batch"),
+        (CollectionTaskType.EXPORT, "_handle_export"),
     ):
         async def shim(task, task_type=task_type):
             called.append(task_type)
@@ -95,6 +98,7 @@ def test_task_handler_metadata_covers_only_supported_task_types():
         PipelineTaskHandler(context),
         ContentTaskHandler(context),
         TranslationTaskHandler(context),
+        ExportTaskHandler(context),
     ]
 
     handled = [task_type for handler in handlers for task_type in handler.task_types]

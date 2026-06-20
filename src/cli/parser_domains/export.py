@@ -21,7 +21,9 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     tg.add_argument("--format", choices=["json", "html", "both"], default="json",
                     dest="export_format", help="Output format (default: json)")
     tg.add_argument("--with-media", action="store_true", default=False, dest="with_media",
-                    help="Download media artifacts (requires running worker)")
+                    help="Download media artifacts (enqueues a worker task)")
+    tg.add_argument("--wait", action="store_true", default=False,
+                    help="With --with-media: poll the enqueued task until it finishes")
     tg.add_argument("--max-file-size", type=int, default=None, dest="max_file_size",
                     help="Skip files larger than N MB (default: from settings or 3)")
     tg.add_argument("--date-from", default=None, dest="date_from", help="Start date YYYY-MM-DD")
