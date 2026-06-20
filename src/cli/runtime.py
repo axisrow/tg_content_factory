@@ -100,6 +100,8 @@ async def init_db(config_path: str):
     db = Database(
         config.database.path,
         session_encryption_secret=resolve_session_encryption_secret(config),
+        cache_size_kb=config.database.cache_size_kb,
+        mmap_size_mb=config.database.mmap_size_mb,
     )
     await db.initialize()
     return config, db

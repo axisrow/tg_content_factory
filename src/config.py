@@ -57,6 +57,12 @@ class DatabaseConfig(BaseModel):
     # Number of read connections in the pool (#760). Reads run concurrently across
     # these, so a slow SELECT never blocks navigation. Ignored for :memory:.
     read_pool_size: int = 4
+    # SQLite page cache per connection in KB (#760). Total committed RAM is roughly
+    # cache_size_kb * (read_pool_size + 1); raise for large (multi-GB) databases.
+    cache_size_kb: int = 64000
+    # Memory-mapped I/O window in MB (#760). Virtual address space backed by the OS
+    # page cache, not per-connection committed RAM — safe to keep large on big DBs.
+    mmap_size_mb: int = 256
 
 
 class LLMConfig(BaseModel):
