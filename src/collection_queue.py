@@ -291,6 +291,11 @@ class CollectionQueue:
             except asyncio.CancelledError:
                 break
 
+            # task_done() bookkeeping has two call sites by design: the skip
+            # paths inside _validate_task_pre_dispatch already call it before
+            # returning None (and we `continue`, skipping the try/finally below),
+            # while the dispatch path below calls it once in the finally block.
+            # Exactly one task_done() per dequeued item, never two.
             validated = await self._validate_task_pre_dispatch(task_id, channel, force, full)
             if validated is None:
                 continue
