@@ -18,9 +18,20 @@ logger = logging.getLogger(__name__)
 @router.get("/generated", response_class=JSONResponse)
 async def list_generated_images(request: Request, limit: int = 50):
     """List recently generated images as JSON (parity with CLI `image generated`)."""
+    from src.services.s3_store import S3Store
+
     db = deps.get_db(request)
     images = await db.repos.generated_images.list_recent(limit=limit)
-    return JSONResponse([img.model_dump(mode="json") for img in images])
+    # Re-sign so gallery thumbnails older than the 7-day presigned TTL stay live
+    # (#874); built once and a no-op when S3 isn't configured or the URL isn't ours.
+    store = S3Store.from_env()
+    payload = []
+    for img in images:
+        data = img.model_dump(mode="json")
+        if store is not None and data.get("url"):
+            data["url"] = await store.refresh_presigned_url(data["url"])
+        payload.append(data)
+    return JSONResponse(payload)
 
 
 @router.get("/", response_class=HTMLResponse)

@@ -134,10 +134,16 @@ class PublishService:
                 reply_to = run.metadata.get("reply_to_message_id")
 
             if run.image_url:
+                # Re-sign at publish time: a run that sat in moderation/schedule
+                # longer than the 7-day presigned TTL would otherwise send a dead
+                # S3 link (#869/#873/#874). Non-S3 URLs pass through unchanged.
+                from src.services.s3_store import refresh_s3_url
+
+                image_url = await refresh_s3_url(run.image_url)
                 msg = await asyncio.wait_for(
                     session.publish_files(
                         entity,
-                        run.image_url,
+                        image_url,
                         caption=run.generated_text,
                     ),
                     timeout=60.0,

@@ -61,10 +61,15 @@ async def view_run(request: Request, run_id: int):
     if run is None:
         return _moderation_redirect("run_not_found", error=True)
 
+    # Re-sign the S3 image URL so a run viewed >7 days after generation doesn't
+    # render a dead/403 presigned link (#869/#873/#874). Passes through non-S3 URLs.
+    from src.services.s3_store import refresh_s3_url
+
+    image_url = await refresh_s3_url(run.image_url)
     return deps.get_templates(request).TemplateResponse(
         request,
         "moderation/view.html",
-        {"run": run},
+        {"run": run, "image_url": image_url},
     )
 
 

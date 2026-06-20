@@ -33,7 +33,7 @@
                     {% if run.image_url %}
                     <div class="mb-4">
                         <h5>Изображение</h5>
-                        <img src="{{ run.image_url }}" class="img-fluid rounded" alt="Generated image">
+                        <img src="{{ image_url or run.image_url }}" class="img-fluid rounded" alt="Generated image">
                     </div>
                     {% endif %}
 
