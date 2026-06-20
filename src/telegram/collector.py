@@ -101,8 +101,11 @@ class _ResolveOutcome:
 
     FloodWaits are encoded here rather than re-raised so the operation label is
     preserved without relying on the outer ``except HandledFloodWaitError``.
-    ``UsernameResolveRateLimitedError`` / ``UsernameNotOccupiedError`` /
-    ``UsernameInvalidError`` still propagate as exceptions, unchanged.
+    ``UsernameResolveRateLimitedError`` propagates out of ``_resolve_channel_entity``
+    as an exception. The username-not-found errors (``UsernameNotOccupiedError`` /
+    ``UsernameInvalidError``) are handled inside the resolve path (numeric
+    fallback) and only ever reach ``_collect_channel``'s outer handler from
+    streaming — exactly as in the pre-extraction code.
     """
 
     __slots__ = ("entity", "action", "channel", "flood_wait_sec", "flood_wait_operation")
@@ -121,6 +124,8 @@ class _ResolveOutcome:
         self.channel = channel
         self.flood_wait_sec = flood_wait_sec
         self.flood_wait_operation = flood_wait_operation
+
+
 # How far back the notification check re-scans persisted messages so a send that
 # failed on an earlier pass is retried (the dedup ledger prevents duplicates).
 NOTIFICATION_BACKLOG_LOOKBACK_HOURS = 24.0
