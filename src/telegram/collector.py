@@ -83,6 +83,44 @@ class _StreamOutcome:
     def __init__(self) -> None:
         self.retire_client = False
         self.stop_due_to_persistence_error = False
+
+
+class _ResolveOutcome:
+    """Result of ``Collector._resolve_channel_entity`` — exactly one outcome the
+    collection loop acts on, replacing the inline resolve block's mix of
+    ``continue`` / ``return`` / ``raise`` (#923).
+
+    - ``entity`` set → proceed (run pre-filters + stream);
+    - ``action == "retry"`` → ``continue`` the loop (account rotation / preferred-
+      phone rediscovery), adopting ``channel`` when it was updated;
+    - ``action == "stop"`` → ``return total_collected`` (resolve timeout / deactivation);
+    - ``flood_wait_sec`` set → record the flood wait and fall through to the
+      ``finally`` + post-collection flood handler. The operation label is
+      preserved exactly: ``RESOLVE_USERNAME_OPERATION`` for the username resolve,
+      otherwise ``exc.info.operation``.
+
+    FloodWaits are encoded here rather than re-raised so the operation label is
+    preserved without relying on the outer ``except HandledFloodWaitError``.
+    ``UsernameResolveRateLimitedError`` / ``UsernameNotOccupiedError`` /
+    ``UsernameInvalidError`` still propagate as exceptions, unchanged.
+    """
+
+    __slots__ = ("entity", "action", "channel", "flood_wait_sec", "flood_wait_operation")
+
+    def __init__(
+        self,
+        *,
+        entity=None,
+        action: str = "proceed",
+        channel: "Channel | None" = None,
+        flood_wait_sec: int | None = None,
+        flood_wait_operation: str | None = None,
+    ) -> None:
+        self.entity = entity
+        self.action = action
+        self.channel = channel
+        self.flood_wait_sec = flood_wait_sec
+        self.flood_wait_operation = flood_wait_operation
 # How far back the notification check re-scans persisted messages so a send that
 # failed on an earlier pass is retried (the dedup ledger prevents duplicates).
 NOTIFICATION_BACKLOG_LOOKBACK_HOURS = 24.0
@@ -1303,280 +1341,58 @@ class Collector:
                 return True
 
             try:
-                if channel.username:
-                    try:
-                        entity = await self._resolve_channel_input_entity(
-                            session,
-                            channel_id=channel_id,
-                            username=channel.username,
-                            phone=phone,
-                            cache_only=resolve_cache_only,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "get_input_entity timed out for channel %d, skipping",
-                            channel_id,
-                        )
-                        return total_collected
-                    except HandledFloodWaitError as exc:
-                        flood_wait_sec = exc.info.wait_seconds
-                        flood_wait_operation = RESOLVE_USERNAME_OPERATION
-                        raise
-                    except UsernameResolveRateLimitedError:
-                        # This phone cannot resolve live right now (backoff or
-                        # limiter). Rotate to a free account when one exists;
-                        # defer the channel only when every account is blocked
-                        # (#790). The outer finally releases the client.
-                        attempted_resolve_phones.add(phone)
-                        if await self._can_rotate_resolve(attempted_resolve_phones):
-                            logger.warning(
-                                "Channel %d (%s): live resolve unavailable on %s; "
-                                "rotating to another account",
-                                channel_id,
-                                channel.username,
-                                mask_phone(phone),
-                            )
-                            continue
-                        # No account can live-resolve right now — defer the
-                        # channel for the moment the *first* account becomes
-                        # capable again, combining per-phone resolve backoff
-                        # with generic flood waits; this phone's own (possibly
-                        # hours-long) window must not dictate the retry when
-                        # another account frees up sooner (#790 review P2).
-                        capable_at = await self._next_resolve_capable_at()
-                        if capable_at is not None:
-                            now = datetime.now(timezone.utc)
-                            raise UsernameResolveRateLimitedError(
-                                phone,
-                                (capable_at - now).total_seconds(),
-                                now=now,
-                            )
-                        raise
-                    except (ValueError, UsernameNotOccupiedError, UsernameInvalidError):
-                        logger.warning(
-                            "Channel %d (%s): username not found, " "trying numeric ID fallback",
-                            channel_id,
-                            channel.username,
-                        )
-                        try:
-                            fallback_entity = await self._pool.resolve_entity_with_warm(
-                                session,
-                                phone,
-                                PeerChannel(channel_id),
-                                operation="collect_channel_resolve_channel_id",
-                            )
-                        except HandledFloodWaitError as exc:
-                            flood_wait_sec = exc.info.wait_seconds
-                            flood_wait_operation = exc.info.operation
-                            raise
-                        except Exception:
-                            logger.warning(
-                                "Channel %d: all entity lookups failed, " "deactivating",
-                                channel_id,
-                            )
-                            if channel.id:
-                                await self._db.set_channel_active(channel.id, False)
-                            return total_collected
-                        new_username = getattr(fallback_entity, "username", None)
-                        new_title = (
-                            getattr(fallback_entity, "title", None)
-                            or channel.title
-                            or channel.username
-                            or str(channel_id)
-                        )
-                        await self._handle_meta_change_review(
-                            channel,
-                            new_username,
-                            new_title,
-                            log_prefix="Channel",
-                        )
-                        return total_collected
-                else:
-                    try:
-                        entity = await self._pool.resolve_entity_with_warm(
-                            session,
-                            phone,
-                            PeerChannel(channel_id),
-                            operation="collect_channel_resolve_numeric",
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "get_entity timed out for channel %d, skipping",
-                            channel_id,
-                        )
-                        return total_collected
-                    except HandledFloodWaitError as exc:
-                        flood_wait_sec = exc.info.wait_seconds
-                        flood_wait_operation = exc.info.operation
-                        raise
-                    except ValueError:
-                        # preferred_phone turned out to be wrong (account was kicked,
-                        # or channel added before warming finished). Invalidate and rediscover.
-                        if channel.preferred_phone or self._pool.get_phone_for_channel(
-                            channel_id
-                        ):
-                            channel = channel.model_copy(update={"preferred_phone": None})
-                            self._pool.clear_channel_phone(channel_id)
-                            try:
-                                await self._db.repos.channels.update_channel_preferred_phone(
-                                    channel_id, None
-                                )
-                            except Exception:
-                                # Pool is already cleared; a stale DB value just causes the
-                                # same rediscovery next restart. Log so the loop is visible.
-                                logger.warning(
-                                    "Channel %d: failed to clear stale preferred_phone in DB",
-                                    channel_id,
-                                    exc_info=True,
-                                )
-                        found = await self._discover_phone_for_channel(
-                            channel_id, exclude=phone
-                        )
-                        if found is not None:
-                            self._pool.register_channel_phone(channel_id, found)
-                            try:
-                                await self._db.repos.channels.update_channel_preferred_phone(
-                                    channel_id, found
-                                )
-                            except Exception:
-                                # Pool already knows the right phone; a failed DB write only
-                                # means the rediscovery repeats next restart. Log it.
-                                logger.warning(
-                                    "Channel %d: failed to persist rediscovered preferred_phone=%s",
-                                    channel_id,
-                                    found,
-                                    exc_info=True,
-                                )
-                            logger.info(
-                                "Channel %d: rediscovered on %s, retrying",
-                                channel_id,
-                                found,
-                            )
-                            # finally releases current phone; next iter picks up found
-                            continue
-                        logger.warning(
-                            "Channel %d (%s): no connected account can resolve entity; "
-                            "deactivating and skipping collection",
-                            channel_id,
-                            channel.title or channel.username or "no title",
-                        )
-                        if channel.id:
-                            await self._db.set_channel_active(channel.id, False)
-                        return total_collected
-
-                # Превентивная фильтрация по subscriber_ratio до загрузки
-                # сообщений.
-                # Пропускается при force=True (ручной запуск не должен менять
-                # фильтр-статус)
-                if not force:
-                    stats_list = await self._db.get_channel_stats(channel_id, limit=1)
-                    subscriber_count = stats_list[0].subscriber_count if stats_list else None
-                    if subscriber_count is not None:
-                        if min_subs > 0 and subscriber_count < min_subs:
-                            await self._db.set_channels_filtered_bulk(
-                                [(channel_id, "low_subscriber_manual")]
-                            )
-                            logger.info(
-                                "Pre-filter: channel %d subscribers %d < %d," " skipping",
-                                channel_id,
-                                subscriber_count,
-                                min_subs,
-                            )
-                            await self._maybe_auto_delete(channel_id)
-                            return total_collected
-                        cur = await self._db.execute(
-                            "SELECT COUNT(*) FROM messages" " WHERE channel_id = ?",
-                            (channel_id,),
-                        )
-                        row = await cur.fetchone()
-                        message_count = row[0] if row else 0
-                        if message_count > 0:
-                            is_broadcast = channel.channel_type in (
-                                "channel",
-                                "monoforum",
-                            )
-                            threshold = (
-                                LOW_SUBSCRIBER_RATIO_THRESHOLD
-                                if is_broadcast
-                                else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
-                            )
-                            ratio = subscriber_count / message_count
-                            if ratio < threshold:
-                                await self._db.set_channels_filtered_bulk(
-                                    [(channel_id, "low_subscriber_ratio")]
-                                )
-                                logger.info(
-                                    "Pre-filter: channel %d ratio %.4f" " < %.2f, skipping",
-                                    channel_id,
-                                    ratio,
-                                    threshold,
-                                )
-                                await self._maybe_auto_delete(channel_id)
-                                return total_collected
-
-                # Pre-check: sample 10 posts to detect cross-channel duplicates
-                if is_first_run and not force:
-                    try:
-                        sample_prefixes = await run_with_flood_wait(
-                            self._precheck_sample(
-                                session,
-                                entity,
-                                PRECHECK_CROSS_DUPE_SAMPLE,
-                                cancel_event=cancel_event,
-                            ),
-                            operation="collect_channel_precheck_sample",
-                            phone=phone,
-                            pool=self._pool,
-                            logger_=logger,
-                            timeout=60.0,
-                        )
-                    except asyncio.TimeoutError:
-                        logger.warning(
-                            "Precheck timed out for channel %d, " "skipping precheck",
-                            channel_id,
-                        )
-                        sample_prefixes = []
-                    except HandledFloodWaitError as exc:
-                        flood_wait_sec = exc.info.wait_seconds
-                        flood_wait_operation = exc.info.operation
-                        raise
-                    unique_prefixes = list(dict.fromkeys(sample_prefixes))
-                    if len(unique_prefixes) >= PRECHECK_CROSS_DUPE_MIN_SAMPLE:
-                        repo = self._db.filter_repo
-                        matches = await repo.count_matching_prefixes_in_other_channels(
-                            channel_id, unique_prefixes
-                        )
-                        if matches / len(unique_prefixes) >= PRECHECK_CROSS_DUPE_RATIO:
-                            await self._db.set_channels_filtered_bulk(
-                                [(channel_id, "cross_channel_spam")]
-                            )
-                            logger.info(
-                                "Pre-filter: channel %d has %d/%d " "cross-dupe messages, skipping",
-                                channel_id,
-                                matches,
-                                len(unique_prefixes),
-                            )
-                            await self._maybe_auto_delete(channel_id)
-                            return total_collected
-
-                await run_with_flood_wait(
-                    self._stream_channel_messages(
-                        session=session,
-                        entity=entity,
-                        min_id=min_id,
-                        limit=limit,
-                        channel=channel,
-                        channel_id=channel_id,
-                        cancel_event=cancel_event,
-                        messages_batch=messages_batch,
-                        flush_batch=_flush_batch,
-                        outcome=stream_outcome,
-                    ),
-                    operation="collect_channel_stream_messages",
-                    phone=phone,
-                    pool=self._pool,
-                    logger_=logger,
+                outcome = await self._resolve_channel_entity(
+                    channel,
+                    session,
+                    phone,
+                    channel_id,
+                    resolve_cache_only,
+                    attempted_resolve_phones,
                 )
+                if outcome.channel is not None:
+                    channel = outcome.channel
+                if outcome.action == "retry":
+                    continue
+                if outcome.action == "stop":
+                    return total_collected
+                if outcome.flood_wait_sec is not None:
+                    # FloodWait during resolve: record it and fall through to the
+                    # finally + post-collection flood handler (skip pre-filters/stream).
+                    flood_wait_sec = outcome.flood_wait_sec
+                    flood_wait_operation = outcome.flood_wait_operation
+                else:
+                    entity = outcome.entity
+                    if not await self._apply_pre_collection_filters(
+                        channel,
+                        channel_id,
+                        session,
+                        entity,
+                        is_first_run=is_first_run,
+                        force=force,
+                        min_subs=min_subs,
+                        cancel_event=cancel_event,
+                        phone=phone,
+                    ):
+                        return total_collected
+
+                    await run_with_flood_wait(
+                        self._stream_channel_messages(
+                            session=session,
+                            entity=entity,
+                            min_id=min_id,
+                            limit=limit,
+                            channel=channel,
+                            channel_id=channel_id,
+                            cancel_event=cancel_event,
+                            messages_batch=messages_batch,
+                            flush_batch=_flush_batch,
+                            outcome=stream_outcome,
+                        ),
+                        operation="collect_channel_stream_messages",
+                        phone=phone,
+                        pool=self._pool,
+                        logger_=logger,
+                    )
 
             except (UsernameNotOccupiedError, UsernameInvalidError):
                 logger.warning(
@@ -1669,44 +1485,357 @@ class Collector:
 
             await _check_collected_notification_queries()
 
-            # Update forum topics in DB if messages with topic_id
-            # were collected
-            if saw_topic_message:
-                cached = await self._db.get_forum_topics(channel_id)
-                if not cached:
-                    try:
-                        topics = await self._pool.get_forum_topics(channel_id)
-                        if topics:
-                            await self._db.upsert_forum_topics(channel_id, topics)
-                    except Exception as e:
-                        logger.warning(
-                            "Failed to update forum topics for %d: %s",
-                            channel_id,
-                            e,
-                        )
+            await self._post_collection_actions(
+                channel_id,
+                is_first_run=is_first_run,
+                force=force,
+                collected_count=collected_count,
+                saw_topic_message=saw_topic_message,
+            )
 
-            if is_first_run and not force and collected_count >= 50:
+            return total_collected + collected_count
+
+    async def _post_collection_actions(
+        self,
+        channel_id: int,
+        *,
+        is_first_run: bool,
+        force: bool,
+        collected_count: int,
+        saw_topic_message: bool,
+    ) -> None:
+        """Post-collection side effects: refresh forum topics when topic messages
+        were seen, and apply the first-run low-uniqueness filter. Split out of
+        ``_collect_channel`` (#923); no control flow, pure side effects."""
+        # Update forum topics in DB if messages with topic_id were collected
+        if saw_topic_message:
+            cached = await self._db.get_forum_topics(channel_id)
+            if not cached:
+                try:
+                    topics = await self._pool.get_forum_topics(channel_id)
+                    if topics:
+                        await self._db.upsert_forum_topics(channel_id, topics)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to update forum topics for %d: %s",
+                        channel_id,
+                        e,
+                    )
+
+        if is_first_run and not force and collected_count >= 50:
+            cur = await self._db.execute(
+                "SELECT COUNT(*) as total,"
+                " COUNT(DISTINCT substr(text,1,100)) as uniq"
+                " FROM messages WHERE channel_id = ?"
+                " AND text IS NOT NULL AND length(text) > 10",
+                (channel_id,),
+            )
+            row = await cur.fetchone()
+            if row and row["total"] >= 50:
+                ratio = row["uniq"] / row["total"] * 100
+                if ratio < LOW_UNIQUENESS_THRESHOLD:
+                    await self._db.set_channels_filtered_bulk([(channel_id, "low_uniqueness")])
+                    logger.warning(
+                        "Post-collection: channel %d low_uniqueness" " %.1f%%, marked filtered",
+                        channel_id,
+                        ratio,
+                    )
+                    # Not auto-deleting here: messages were just collected,
+                    # channel will be deleted on the next collection run.
+
+    async def _resolve_channel_entity(
+        self,
+        channel: Channel,
+        session,
+        phone: str,
+        channel_id: int,
+        resolve_cache_only: bool,
+        attempted_resolve_phones: set[str],
+    ) -> _ResolveOutcome:
+        """Resolve a channel's Telegram entity for collection, handling the
+        username→numeric fallback, resolve rate-limit account rotation,
+        preferred-phone invalidation/rediscovery, and flood waits. Returns a
+        :class:`_ResolveOutcome` the caller acts on (see its docstring). Split out
+        of ``_collect_channel`` (#923); behavior preserved exactly, including the
+        ``RESOLVE_USERNAME_OPERATION`` flood label for username resolves."""
+        if channel.username:
+            try:
+                entity = await self._resolve_channel_input_entity(
+                    session,
+                    channel_id=channel_id,
+                    username=channel.username,
+                    phone=phone,
+                    cache_only=resolve_cache_only,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "get_input_entity timed out for channel %d, skipping",
+                    channel_id,
+                )
+                return _ResolveOutcome(action="stop")
+            except HandledFloodWaitError as exc:
+                return _ResolveOutcome(
+                    flood_wait_sec=exc.info.wait_seconds,
+                    flood_wait_operation=RESOLVE_USERNAME_OPERATION,
+                )
+            except UsernameResolveRateLimitedError:
+                # This phone cannot resolve live right now (backoff or
+                # limiter). Rotate to a free account when one exists;
+                # defer the channel only when every account is blocked
+                # (#790). The outer finally releases the client.
+                attempted_resolve_phones.add(phone)
+                if await self._can_rotate_resolve(attempted_resolve_phones):
+                    logger.warning(
+                        "Channel %d (%s): live resolve unavailable on %s; "
+                        "rotating to another account",
+                        channel_id,
+                        channel.username,
+                        mask_phone(phone),
+                    )
+                    return _ResolveOutcome(action="retry")
+                # No account can live-resolve right now — defer the
+                # channel for the moment the *first* account becomes
+                # capable again, combining per-phone resolve backoff
+                # with generic flood waits; this phone's own (possibly
+                # hours-long) window must not dictate the retry when
+                # another account frees up sooner (#790 review P2).
+                capable_at = await self._next_resolve_capable_at()
+                if capable_at is not None:
+                    now = datetime.now(timezone.utc)
+                    raise UsernameResolveRateLimitedError(
+                        phone,
+                        (capable_at - now).total_seconds(),
+                        now=now,
+                    )
+                raise
+            except (ValueError, UsernameNotOccupiedError, UsernameInvalidError):
+                logger.warning(
+                    "Channel %d (%s): username not found, " "trying numeric ID fallback",
+                    channel_id,
+                    channel.username,
+                )
+                try:
+                    fallback_entity = await self._pool.resolve_entity_with_warm(
+                        session,
+                        phone,
+                        PeerChannel(channel_id),
+                        operation="collect_channel_resolve_channel_id",
+                    )
+                except HandledFloodWaitError as exc:
+                    return _ResolveOutcome(
+                        flood_wait_sec=exc.info.wait_seconds,
+                        flood_wait_operation=exc.info.operation,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Channel %d: all entity lookups failed, " "deactivating",
+                        channel_id,
+                    )
+                    if channel.id:
+                        await self._db.set_channel_active(channel.id, False)
+                    return _ResolveOutcome(action="stop")
+                new_username = getattr(fallback_entity, "username", None)
+                new_title = (
+                    getattr(fallback_entity, "title", None)
+                    or channel.title
+                    or channel.username
+                    or str(channel_id)
+                )
+                await self._handle_meta_change_review(
+                    channel,
+                    new_username,
+                    new_title,
+                    log_prefix="Channel",
+                )
+                return _ResolveOutcome(action="stop")
+            return _ResolveOutcome(entity=entity)
+
+        try:
+            entity = await self._pool.resolve_entity_with_warm(
+                session,
+                phone,
+                PeerChannel(channel_id),
+                operation="collect_channel_resolve_numeric",
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "get_entity timed out for channel %d, skipping",
+                channel_id,
+            )
+            return _ResolveOutcome(action="stop")
+        except HandledFloodWaitError as exc:
+            return _ResolveOutcome(
+                flood_wait_sec=exc.info.wait_seconds,
+                flood_wait_operation=exc.info.operation,
+            )
+        except ValueError:
+            # preferred_phone turned out to be wrong (account was kicked,
+            # or channel added before warming finished). Invalidate and rediscover.
+            if channel.preferred_phone or self._pool.get_phone_for_channel(
+                channel_id
+            ):
+                channel = channel.model_copy(update={"preferred_phone": None})
+                self._pool.clear_channel_phone(channel_id)
+                try:
+                    await self._db.repos.channels.update_channel_preferred_phone(
+                        channel_id, None
+                    )
+                except Exception:
+                    # Pool is already cleared; a stale DB value just causes the
+                    # same rediscovery next restart. Log so the loop is visible.
+                    logger.warning(
+                        "Channel %d: failed to clear stale preferred_phone in DB",
+                        channel_id,
+                        exc_info=True,
+                    )
+            found = await self._discover_phone_for_channel(
+                channel_id, exclude=phone
+            )
+            if found is not None:
+                self._pool.register_channel_phone(channel_id, found)
+                try:
+                    await self._db.repos.channels.update_channel_preferred_phone(
+                        channel_id, found
+                    )
+                except Exception:
+                    # Pool already knows the right phone; a failed DB write only
+                    # means the rediscovery repeats next restart. Log it.
+                    logger.warning(
+                        "Channel %d: failed to persist rediscovered preferred_phone=%s",
+                        channel_id,
+                        found,
+                        exc_info=True,
+                    )
+                logger.info(
+                    "Channel %d: rediscovered on %s, retrying",
+                    channel_id,
+                    found,
+                )
+                # finally releases current phone; next iter picks up found
+                return _ResolveOutcome(action="retry", channel=channel)
+            logger.warning(
+                "Channel %d (%s): no connected account can resolve entity; "
+                "deactivating and skipping collection",
+                channel_id,
+                channel.title or channel.username or "no title",
+            )
+            if channel.id:
+                await self._db.set_channel_active(channel.id, False)
+            return _ResolveOutcome(action="stop", channel=channel)
+        return _ResolveOutcome(entity=entity)
+
+    async def _apply_pre_collection_filters(
+        self,
+        channel: Channel,
+        channel_id: int,
+        session,
+        entity,
+        *,
+        is_first_run: bool,
+        force: bool,
+        min_subs: int,
+        cancel_event: asyncio.Event | None,
+        phone: str,
+    ) -> bool:
+        """Pre-collection filtering before any messages are streamed: manual
+        min-subscriber, subscriber/message ratio, and first-run cross-channel
+        duplicate precheck. Returns True to proceed, False when the channel was
+        filtered (caller returns). A precheck ``HandledFloodWaitError`` propagates
+        to ``_collect_channel``'s outer handler unchanged. Split out of
+        ``_collect_channel`` (#923)."""
+        # Превентивная фильтрация по subscriber_ratio до загрузки сообщений.
+        # Пропускается при force=True (ручной запуск не должен менять фильтр-статус).
+        if not force:
+            stats_list = await self._db.get_channel_stats(channel_id, limit=1)
+            subscriber_count = stats_list[0].subscriber_count if stats_list else None
+            if subscriber_count is not None:
+                if min_subs > 0 and subscriber_count < min_subs:
+                    await self._db.set_channels_filtered_bulk(
+                        [(channel_id, "low_subscriber_manual")]
+                    )
+                    logger.info(
+                        "Pre-filter: channel %d subscribers %d < %d, skipping",
+                        channel_id,
+                        subscriber_count,
+                        min_subs,
+                    )
+                    await self._maybe_auto_delete(channel_id)
+                    return False
                 cur = await self._db.execute(
-                    "SELECT COUNT(*) as total,"
-                    " COUNT(DISTINCT substr(text,1,100)) as uniq"
-                    " FROM messages WHERE channel_id = ?"
-                    " AND text IS NOT NULL AND length(text) > 10",
+                    "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
                     (channel_id,),
                 )
                 row = await cur.fetchone()
-                if row and row["total"] >= 50:
-                    ratio = row["uniq"] / row["total"] * 100
-                    if ratio < LOW_UNIQUENESS_THRESHOLD:
-                        await self._db.set_channels_filtered_bulk([(channel_id, "low_uniqueness")])
-                        logger.warning(
-                            "Post-collection: channel %d low_uniqueness" " %.1f%%, marked filtered",
+                message_count = row[0] if row else 0
+                if message_count > 0:
+                    is_broadcast = channel.channel_type in (
+                        "channel",
+                        "monoforum",
+                    )
+                    threshold = (
+                        LOW_SUBSCRIBER_RATIO_THRESHOLD
+                        if is_broadcast
+                        else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
+                    )
+                    ratio = subscriber_count / message_count
+                    if ratio < threshold:
+                        await self._db.set_channels_filtered_bulk(
+                            [(channel_id, "low_subscriber_ratio")]
+                        )
+                        logger.info(
+                            "Pre-filter: channel %d ratio %.4f < %.2f, skipping",
                             channel_id,
                             ratio,
+                            threshold,
                         )
-                        # Not auto-deleting here: messages were just collected,
-                        # channel will be deleted on the next collection run.
+                        await self._maybe_auto_delete(channel_id)
+                        return False
 
-            return total_collected + collected_count
+        # Pre-check: sample 10 posts to detect cross-channel duplicates.
+        if is_first_run and not force:
+            try:
+                sample_prefixes = await run_with_flood_wait(
+                    self._precheck_sample(
+                        session,
+                        entity,
+                        PRECHECK_CROSS_DUPE_SAMPLE,
+                        cancel_event=cancel_event,
+                    ),
+                    operation="collect_channel_precheck_sample",
+                    phone=phone,
+                    pool=self._pool,
+                    logger_=logger,
+                    timeout=60.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Precheck timed out for channel %d, skipping precheck",
+                    channel_id,
+                )
+                sample_prefixes = []
+            # HandledFloodWaitError is intentionally NOT caught here: it propagates
+            # to _collect_channel's outer `except HandledFloodWaitError`, which sets
+            # flood_wait_sec/operation. operation resolves to exc.info.operation,
+            # identical to the old inline assignment this block used to do.
+            unique_prefixes = list(dict.fromkeys(sample_prefixes))
+            if len(unique_prefixes) >= PRECHECK_CROSS_DUPE_MIN_SAMPLE:
+                repo = self._db.filter_repo
+                matches = await repo.count_matching_prefixes_in_other_channels(
+                    channel_id, unique_prefixes
+                )
+                if matches / len(unique_prefixes) >= PRECHECK_CROSS_DUPE_RATIO:
+                    await self._db.set_channels_filtered_bulk(
+                        [(channel_id, "cross_channel_spam")]
+                    )
+                    logger.info(
+                        "Pre-filter: channel %d has %d/%d cross-dupe messages, skipping",
+                        channel_id,
+                        matches,
+                        len(unique_prefixes),
+                    )
+                    await self._maybe_auto_delete(channel_id)
+                    return False
+        return True
 
     async def _discover_phone_for_channel(
         self, channel_id: int, exclude: str
