@@ -291,61 +291,10 @@ class CollectionQueue:
             except asyncio.CancelledError:
                 break
 
-            task = await self._channels.get_collection_task(task_id)
-            if task is None:
-                logger.info("Task %d skipped: task was deleted before collection", task_id)
-                self._queue.task_done()
+            validated = await self._validate_task_pre_dispatch(task_id, channel, force, full)
+            if validated is None:
                 continue
-            if task and task.status == CollectionTaskStatus.CANCELLED:
-                self._queue.task_done()
-                continue
-            if task.run_after is not None:
-                remaining = task.run_after.timestamp() - time.time()
-                if remaining > 0:
-                    self._schedule_requeue_after_delay(
-                        task_id=task_id,
-                        channel=channel,
-                        force=force,
-                        full=full,
-                        run_after=task.run_after,
-                    )
-                    self._queue.task_done()
-                    continue
-
-            fresh_channel = None
-            if channel.id is not None:
-                fresh_channel = await self._channels.get_by_pk(channel.id)
-                if fresh_channel is None:
-                    await self._channels.cancel_collection_task(
-                        task_id,
-                        note="Канал удалён до начала сбора.",
-                    )
-                    logger.info(
-                        "Task %d skipped: channel %d was deleted before collection",
-                        task_id,
-                        channel.channel_id,
-                    )
-                    self._queue.task_done()
-                    continue
-            if fresh_channel is not None:
-                channel = fresh_channel
-            if channel.is_filtered and not force:
-                await self._channels.cancel_collection_task(
-                    task_id,
-                    note="Канал отфильтрован до начала сбора.",
-                )
-                logger.info(
-                    "Task %d skipped: channel %d is filtered",
-                    task_id,
-                    channel.channel_id,
-                )
-                self._queue.task_done()
-                continue
-
-            if self._shutdown_requested:
-                self._known_task_ids.discard(task_id)
-                self._queue.task_done()
-                continue
+            channel = validated
 
             cancel_event = asyncio.Event()
             self._active_task_ids[task_id] = cancel_event
@@ -353,187 +302,18 @@ class CollectionQueue:
             keep_known_task_id = False
             try:
                 await self._channels.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
-
-                async def _progress(count: int) -> None:
-                    await self._channels.update_collection_task_progress(task_id, count)
-
-                collect_kwargs = {
-                    "full": full,
-                    "progress_callback": _progress,
-                    "force": force,
-                }
-                try:
-                    signature = inspect.signature(self._collector.collect_single_channel)
-                    accepts_cancel_event = (
-                        "cancel_event" in signature.parameters
-                        or any(
-                            parameter.kind == inspect.Parameter.VAR_KEYWORD
-                            for parameter in signature.parameters.values()
-                        )
-                    )
-                except (TypeError, ValueError):
-                    accepts_cancel_event = True
-                if accepts_cancel_event:
-                    collect_kwargs["cancel_event"] = cancel_event
+                collect_kwargs = self._build_collect_kwargs(
+                    task_id, full=full, force=force, cancel_event=cancel_event
+                )
                 count = await self._collector.collect_single_channel(channel, **collect_kwargs)
-                persisted = await self._channels.get_collection_task(task_id)
-                persisted_cancelled = (
-                    persisted is not None
-                    and persisted.status == CollectionTaskStatus.CANCELLED
-                )
-                collector_cancelled = bool(getattr(self._collector, "is_cancelled", False))
-                cancelled = cancel_event.is_set() or persisted_cancelled or collector_cancelled
-                if cancelled:
-                    if self._shutdown_requested and not persisted_cancelled:
-                        try:
-                            await self._reset_task_to_pending_after_shutdown(task_id)
-                            logger.info("Task %d requeued after service shutdown interrupted collection", task_id)
-                        except (ValueError, RuntimeError):
-                            logger.debug("Could not reset task %d during shutdown", task_id)
-                    else:
-                        await self._channels.cancel_collection_task(
-                            task_id,
-                            note="Задача отменена во время сбора.",
-                        )
-                        logger.info("Task %d cancelled during collection", task_id)
-                else:
-                    note = None
-                    if count == 0 and not force and channel.id is not None:
-                        after_ch = await self._channels.get_by_pk(channel.id)
-                        if after_ch and after_ch.is_filtered and not channel.is_filtered:
-                            before_flags = set((channel.filter_flags or "").split(",")) - {""}
-                            after_flags = set((after_ch.filter_flags or "").split(",")) - {""}
-                            new_flags = after_flags - before_flags
-                            reason = next(iter(new_flags), "low_subscriber_ratio")
-                            note = f"Пропущен: {reason}"
-                    await self._channels.update_collection_task(
-                        task_id,
-                        CollectionTaskStatus.COMPLETED,
-                        messages_collected=count,
-                        note=note,
-                    )
-                    logger.info("Collected %d messages from channel %d", count, channel.channel_id)
-            except AllCollectionClientsFloodedError as exc:
-                run_after = exc.next_available_at + timedelta(seconds=5)
-                note = (
-                    "Отложено: все аккаунты во Flood Wait "
-                    f"до {exc.next_available_at.astimezone(timezone.utc).isoformat()}"
+                await self._handle_collection_completion(
+                    task_id, channel, count, cancel_event=cancel_event, force=force
                 )
                 self._retried_tasks.discard(task_id)
-                await self._channels.reschedule_collection_task(
-                    task_id,
-                    run_after=run_after,
-                    note=note,
-                )
-                self._schedule_requeue_after_delay(
-                    task_id=task_id,
-                    channel=channel,
-                    force=force,
-                    full=full,
-                    run_after=run_after,
-                )
-                keep_known_task_id = True
-                logger.warning(
-                    "Rescheduled collection task %d for channel %d until %s: all clients flooded",
-                    task_id,
-                    channel.channel_id,
-                    run_after.isoformat(),
-                )
-            except UsernameResolveFloodWaitDeferredError as exc:
-                run_after = exc.next_available_at + timedelta(
-                    seconds=RESOLVE_USERNAME_BACKOFF_BUFFER_SEC
-                )
-                note = (
-                    "Отложено: Flood Wait на resolve_username до "
-                    f"{run_after.astimezone(timezone.utc).isoformat()}"
-                )
-                self._retried_tasks.discard(task_id)
-                await self._channels.reschedule_collection_task(
-                    task_id,
-                    run_after=run_after,
-                    note=note,
-                )
-                self._schedule_requeue_after_delay(
-                    task_id=task_id,
-                    channel=channel,
-                    force=force,
-                    full=full,
-                    run_after=run_after,
-                )
-                keep_known_task_id = True
-                logger.warning(
-                    "Rescheduled collection task %d for channel %d until %s: username resolve flood wait",
-                    task_id,
-                    channel.channel_id,
-                    run_after.isoformat(),
-                )
-            except UsernameResolveRateLimitedError as exc:
-                run_after = exc.run_after_with_buffer()
-                note = (
-                    "Отложено: resolve_username rate-limited до "
-                    f"{run_after.astimezone(timezone.utc).isoformat()}"
-                )
-                self._retried_tasks.discard(task_id)
-                await self._channels.reschedule_collection_task(
-                    task_id,
-                    run_after=run_after,
-                    note=note,
-                )
-                self._schedule_requeue_after_delay(
-                    task_id=task_id,
-                    channel=channel,
-                    force=force,
-                    full=full,
-                    run_after=run_after,
-                )
-                keep_known_task_id = True
-                logger.warning(
-                    "Rescheduled collection task %d for channel %d until %s: "
-                    "username resolve rate-limited on %s",
-                    task_id,
-                    channel.channel_id,
-                    run_after.isoformat(),
-                    exc.phone,
-                )
-            except NoActiveCollectionClientsError:
-                run_after = datetime.now(timezone.utc) + timedelta(
-                    seconds=self.NO_CLIENTS_RETRY_DELAY_SEC
-                )
-                self._retried_tasks.discard(task_id)
-                await self._channels.reschedule_collection_task(
-                    task_id,
-                    run_after=run_after,
-                    note=self.NO_CLIENTS_REQUEUE_NOTE,
-                )
-                drained_task_ids = self._drain_memory_queue()
-                for drained_task_id in drained_task_ids:
-                    self._known_task_ids.discard(drained_task_id)
-                stop_after_no_clients = True
-                logger.warning(
-                    "Deferred collection task %d for channel %d until %s: no active connected clients; "
-                    "left %d queued task(s) pending in DB",
-                    task_id,
-                    channel.channel_id,
-                    run_after.isoformat(),
-                    len(drained_task_ids),
-                )
-            except ConnectionError as exc:
-                requeued = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
-                keep_known_task_id = requeued
-                if not requeued:
-                    self._retried_tasks.discard(task_id)
-                    await self._update_task_status_shutdown_safe(
-                        task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
-                    )
-                    logger.exception("Collection failed for channel %d (reconnect failed)", channel.channel_id)
             except Exception as exc:
-                self._retried_tasks.discard(task_id)
-                await self._update_task_status_shutdown_safe(
-                    task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+                keep_known_task_id, stop_after_no_clients = await self._handle_collection_exception(
+                    exc, task_id=task_id, channel=channel, force=force, full=full
                 )
-                logger.exception("Collection failed for channel %d", channel.channel_id)
-            else:
-                self._retried_tasks.discard(task_id)
             finally:
                 self._active_task_ids.pop(task_id, None)
                 if not keep_known_task_id:
@@ -542,6 +322,255 @@ class CollectionQueue:
                 if stop_after_no_clients:
                     self._stop_workers = True
                     break
+
+    def _build_collect_kwargs(
+        self, task_id: int, *, full: bool, force: bool, cancel_event: asyncio.Event
+    ) -> dict:
+        """Build the kwargs for ``collect_single_channel``, including a progress
+        callback bound to ``task_id`` and a ``cancel_event`` only when the
+        collector's signature accepts one. Split out of ``_run_single_worker`` (#922).
+        """
+        async def _progress(count: int) -> None:
+            await self._channels.update_collection_task_progress(task_id, count)
+
+        collect_kwargs = {
+            "full": full,
+            "progress_callback": _progress,
+            "force": force,
+        }
+        try:
+            signature = inspect.signature(self._collector.collect_single_channel)
+            accepts_cancel_event = (
+                "cancel_event" in signature.parameters
+                or any(
+                    parameter.kind == inspect.Parameter.VAR_KEYWORD
+                    for parameter in signature.parameters.values()
+                )
+            )
+        except (TypeError, ValueError):
+            accepts_cancel_event = True
+        if accepts_cancel_event:
+            collect_kwargs["cancel_event"] = cancel_event
+        return collect_kwargs
+
+    async def _validate_task_pre_dispatch(
+        self, task_id: int, channel: Channel, force: bool, full: bool
+    ) -> Channel | None:
+        """Run every pre-dispatch guard for a dequeued task.
+
+        Returns the channel to collect (refreshed from DB when applicable), or
+        ``None`` when the task must be skipped — in which case this method has
+        already marked the queue item done and cancelled/requeued as needed.
+        Split out of ``_run_single_worker`` (#922).
+        """
+        task = await self._channels.get_collection_task(task_id)
+        if task is None:
+            logger.info("Task %d skipped: task was deleted before collection", task_id)
+            self._queue.task_done()
+            return None
+        if task and task.status == CollectionTaskStatus.CANCELLED:
+            self._queue.task_done()
+            return None
+        if task.run_after is not None:
+            remaining = task.run_after.timestamp() - time.time()
+            if remaining > 0:
+                self._schedule_requeue_after_delay(
+                    task_id=task_id,
+                    channel=channel,
+                    force=force,
+                    full=full,
+                    run_after=task.run_after,
+                )
+                self._queue.task_done()
+                return None
+
+        fresh_channel = None
+        if channel.id is not None:
+            fresh_channel = await self._channels.get_by_pk(channel.id)
+            if fresh_channel is None:
+                await self._channels.cancel_collection_task(
+                    task_id,
+                    note="Канал удалён до начала сбора.",
+                )
+                logger.info(
+                    "Task %d skipped: channel %d was deleted before collection",
+                    task_id,
+                    channel.channel_id,
+                )
+                self._queue.task_done()
+                return None
+        if fresh_channel is not None:
+            channel = fresh_channel
+        if channel.is_filtered and not force:
+            await self._channels.cancel_collection_task(
+                task_id,
+                note="Канал отфильтрован до начала сбора.",
+            )
+            logger.info(
+                "Task %d skipped: channel %d is filtered",
+                task_id,
+                channel.channel_id,
+            )
+            self._queue.task_done()
+            return None
+
+        if self._shutdown_requested:
+            self._known_task_ids.discard(task_id)
+            self._queue.task_done()
+            return None
+        return channel
+
+    async def _handle_collection_completion(
+        self, task_id: int, channel: Channel, count: int, *, cancel_event: asyncio.Event, force: bool
+    ) -> None:
+        """Persist the terminal status of a finished collection.
+
+        Requeues (on shutdown) or cancels when the run was cancelled, else marks
+        it COMPLETED with an optional "skipped" note when the channel became
+        filtered mid-run. Split out of ``_run_single_worker`` (#922).
+        """
+        persisted = await self._channels.get_collection_task(task_id)
+        persisted_cancelled = (
+            persisted is not None
+            and persisted.status == CollectionTaskStatus.CANCELLED
+        )
+        collector_cancelled = bool(getattr(self._collector, "is_cancelled", False))
+        cancelled = cancel_event.is_set() or persisted_cancelled or collector_cancelled
+        if cancelled:
+            if self._shutdown_requested and not persisted_cancelled:
+                try:
+                    await self._reset_task_to_pending_after_shutdown(task_id)
+                    logger.info("Task %d requeued after service shutdown interrupted collection", task_id)
+                except (ValueError, RuntimeError):
+                    logger.debug("Could not reset task %d during shutdown", task_id)
+            else:
+                await self._channels.cancel_collection_task(
+                    task_id,
+                    note="Задача отменена во время сбора.",
+                )
+                logger.info("Task %d cancelled during collection", task_id)
+            return
+        note = None
+        if count == 0 and not force and channel.id is not None:
+            after_ch = await self._channels.get_by_pk(channel.id)
+            if after_ch and after_ch.is_filtered and not channel.is_filtered:
+                before_flags = set((channel.filter_flags or "").split(",")) - {""}
+                after_flags = set((after_ch.filter_flags or "").split(",")) - {""}
+                new_flags = after_flags - before_flags
+                reason = next(iter(new_flags), "low_subscriber_ratio")
+                note = f"Пропущен: {reason}"
+        await self._channels.update_collection_task(
+            task_id,
+            CollectionTaskStatus.COMPLETED,
+            messages_collected=count,
+            note=note,
+        )
+        logger.info("Collected %d messages from channel %d", count, channel.channel_id)
+
+    async def _handle_collection_exception(
+        self, exc: Exception, *, task_id: int, channel: Channel, force: bool, full: bool
+    ) -> tuple[bool, bool]:
+        """Handle a failure raised while collecting a single channel.
+
+        Returns ``(keep_known_task_id, stop_after_no_clients)`` for the worker
+        loop's finally block. The ``isinstance`` chain mirrors the original
+        except-clause precedence exactly. Split out of ``_run_single_worker`` (#922).
+        """
+        if isinstance(exc, AllCollectionClientsFloodedError):
+            run_after = exc.next_available_at + timedelta(seconds=5)
+            note = (
+                "Отложено: все аккаунты во Flood Wait "
+                f"до {exc.next_available_at.astimezone(timezone.utc).isoformat()}"
+            )
+            self._retried_tasks.discard(task_id)
+            await self._channels.reschedule_collection_task(task_id, run_after=run_after, note=note)
+            self._schedule_requeue_after_delay(
+                task_id=task_id, channel=channel, force=force, full=full, run_after=run_after
+            )
+            logger.warning(
+                "Rescheduled collection task %d for channel %d until %s: all clients flooded",
+                task_id,
+                channel.channel_id,
+                run_after.isoformat(),
+            )
+            return True, False
+        if isinstance(exc, UsernameResolveFloodWaitDeferredError):
+            run_after = exc.next_available_at + timedelta(
+                seconds=RESOLVE_USERNAME_BACKOFF_BUFFER_SEC
+            )
+            note = (
+                "Отложено: Flood Wait на resolve_username до "
+                f"{run_after.astimezone(timezone.utc).isoformat()}"
+            )
+            self._retried_tasks.discard(task_id)
+            await self._channels.reschedule_collection_task(task_id, run_after=run_after, note=note)
+            self._schedule_requeue_after_delay(
+                task_id=task_id, channel=channel, force=force, full=full, run_after=run_after
+            )
+            logger.warning(
+                "Rescheduled collection task %d for channel %d until %s: username resolve flood wait",
+                task_id,
+                channel.channel_id,
+                run_after.isoformat(),
+            )
+            return True, False
+        if isinstance(exc, UsernameResolveRateLimitedError):
+            run_after = exc.run_after_with_buffer()
+            note = (
+                "Отложено: resolve_username rate-limited до "
+                f"{run_after.astimezone(timezone.utc).isoformat()}"
+            )
+            self._retried_tasks.discard(task_id)
+            await self._channels.reschedule_collection_task(task_id, run_after=run_after, note=note)
+            self._schedule_requeue_after_delay(
+                task_id=task_id, channel=channel, force=force, full=full, run_after=run_after
+            )
+            logger.warning(
+                "Rescheduled collection task %d for channel %d until %s: "
+                "username resolve rate-limited on %s",
+                task_id,
+                channel.channel_id,
+                run_after.isoformat(),
+                exc.phone,
+            )
+            return True, False
+        if isinstance(exc, NoActiveCollectionClientsError):
+            run_after = datetime.now(timezone.utc) + timedelta(
+                seconds=self.NO_CLIENTS_RETRY_DELAY_SEC
+            )
+            self._retried_tasks.discard(task_id)
+            await self._channels.reschedule_collection_task(
+                task_id,
+                run_after=run_after,
+                note=self.NO_CLIENTS_REQUEUE_NOTE,
+            )
+            drained_task_ids = self._drain_memory_queue()
+            for drained_task_id in drained_task_ids:
+                self._known_task_ids.discard(drained_task_id)
+            logger.warning(
+                "Deferred collection task %d for channel %d until %s: no active connected clients; "
+                "left %d queued task(s) pending in DB",
+                task_id,
+                channel.channel_id,
+                run_after.isoformat(),
+                len(drained_task_ids),
+            )
+            return False, True
+        if isinstance(exc, ConnectionError):
+            requeued = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
+            if not requeued:
+                self._retried_tasks.discard(task_id)
+                await self._update_task_status_shutdown_safe(
+                    task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+                )
+                logger.exception("Collection failed for channel %d (reconnect failed)", channel.channel_id)
+            return requeued, False
+        self._retried_tasks.discard(task_id)
+        await self._update_task_status_shutdown_safe(
+            task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+        )
+        logger.exception("Collection failed for channel %d", channel.channel_id)
+        return False, False
 
     async def _run_worker(self) -> None:
         await self._run_single_worker()
