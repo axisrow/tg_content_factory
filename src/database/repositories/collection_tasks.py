@@ -12,6 +12,7 @@ from src.models import (
     CollectionTaskType,
     ContentGenerateTaskPayload,
     ContentPublishTaskPayload,
+    ExportTaskPayload,
     FilterAnalyzeTaskPayload,
     PipelineRunTaskPayload,
     SqStatsTaskPayload,
@@ -76,6 +77,8 @@ class CollectionTasksRepository:
             return ContentPublishTaskPayload.model_validate(parsed)
         if task_kind == CollectionTaskType.TRANSLATE_BATCH.value:
             return TranslateBatchTaskPayload.model_validate(parsed)
+        if task_kind == CollectionTaskType.EXPORT.value:
+            return ExportTaskPayload.model_validate(parsed)
         return parsed
 
     @staticmethod
@@ -104,6 +107,7 @@ class CollectionTasksRepository:
                 ContentGenerateTaskPayload,
                 ContentPublishTaskPayload,
                 TranslateBatchTaskPayload,
+                ExportTaskPayload,
             ),
         ):
             return payload.model_dump_json()
@@ -614,6 +618,7 @@ class CollectionTasksRepository:
             | ContentGenerateTaskPayload
             | ContentPublishTaskPayload
             | TranslateBatchTaskPayload
+            | ExportTaskPayload
             | None
         ) = None,
         run_after: datetime | None = None,
