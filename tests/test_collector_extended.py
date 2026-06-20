@@ -370,3 +370,114 @@ async def test_handle_meta_change_review_preserves_existing_flags(collector, moc
     mock_db.set_channels_filtered_bulk.assert_called_once_with(
         [(777, "cross_channel_spam,suspicious_username,title_changed,username_changed")]
     )
+
+
+# --- Tests for Collector._resolve_channel_entity (#923 extraction) ---
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_entity_username_flood_keeps_resolve_username_operation(collector):
+    """A FloodWait during the username resolve must surface as
+    RESOLVE_USERNAME_OPERATION, NOT exc.info.operation — the subtle label the
+    inline block preserved before the #923 extraction."""
+    from src.telegram.collector import RESOLVE_USERNAME_OPERATION
+    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
+
+    channel = Channel(channel_id=123, title="Ch", username="somech")
+    info = FloodWaitInfo(
+        operation="some_other_op",
+        phone="+7999",
+        wait_seconds=42,
+        next_available_at_utc=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        detail="flood",
+    )
+    collector._resolve_channel_input_entity = AsyncMock(side_effect=HandledFloodWaitError(info))
+
+    outcome = await collector._resolve_channel_entity(
+        channel, MagicMock(), "+7999", 123, False, set()
+    )
+    assert outcome.entity is None
+    assert outcome.flood_wait_sec == 42
+    assert outcome.flood_wait_operation == RESOLVE_USERNAME_OPERATION
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_entity_numeric_flood_uses_exc_operation(collector, mock_pool):
+    """For the numeric (no-username) resolve, the flood operation comes from the
+    exception, unlike the username path."""
+    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
+
+    channel = Channel(channel_id=123, title="Ch")  # no username
+    info = FloodWaitInfo(
+        operation="numeric_op",
+        phone="+7999",
+        wait_seconds=7,
+        next_available_at_utc=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        detail="flood",
+    )
+    mock_pool.resolve_entity_with_warm = AsyncMock(side_effect=HandledFloodWaitError(info))
+
+    outcome = await collector._resolve_channel_entity(
+        channel, MagicMock(), "+7999", 123, False, set()
+    )
+    assert outcome.flood_wait_sec == 7
+    assert outcome.flood_wait_operation == "numeric_op"
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_entity_rate_limit_rotates(collector):
+    """A resolve rate-limit with a free account to rotate to yields a 'retry'
+    outcome and records the attempted phone."""
+    from src.telegram.collector import UsernameResolveRateLimitedError
+
+    channel = Channel(channel_id=123, title="Ch", username="somech")
+    collector._resolve_channel_input_entity = AsyncMock(
+        side_effect=UsernameResolveRateLimitedError("+7999", 10)
+    )
+    collector._can_rotate_resolve = AsyncMock(return_value=True)
+    attempted: set[str] = set()
+
+    outcome = await collector._resolve_channel_entity(
+        channel, MagicMock(), "+7999", 123, False, attempted
+    )
+    assert outcome.action == "retry"
+    assert "+7999" in attempted
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_entity_numeric_rediscover_retry(collector, mock_pool, mock_db):
+    """Numeric resolve ValueError → preferred_phone cleared, rediscovered on
+    another account → 'retry' with the updated channel."""
+    channel = Channel(id=1, channel_id=123, title="Ch", preferred_phone="+7999")
+    mock_pool.resolve_entity_with_warm = AsyncMock(side_effect=ValueError("bad peer"))
+    mock_pool.get_phone_for_channel = MagicMock(return_value=None)
+    mock_pool.clear_channel_phone = MagicMock()
+    mock_pool.register_channel_phone = MagicMock()
+    mock_db.repos.channels.update_channel_preferred_phone = AsyncMock()
+    collector._discover_phone_for_channel = AsyncMock(return_value="+7888")
+
+    outcome = await collector._resolve_channel_entity(
+        channel, MagicMock(), "+7999", 123, False, set()
+    )
+    assert outcome.action == "retry"
+    assert outcome.channel is not None
+    assert outcome.channel.preferred_phone is None
+    mock_pool.register_channel_phone.assert_called_once_with(123, "+7888")
+
+
+@pytest.mark.anyio
+async def test_resolve_channel_entity_numeric_no_rediscovery_deactivates(collector, mock_pool, mock_db):
+    """Numeric resolve ValueError with no other account able to resolve →
+    'stop' outcome and the channel is deactivated."""
+    channel = Channel(id=5, channel_id=123, title="Ch", preferred_phone="+7999")
+    mock_pool.resolve_entity_with_warm = AsyncMock(side_effect=ValueError("bad peer"))
+    mock_pool.get_phone_for_channel = MagicMock(return_value=None)
+    mock_pool.clear_channel_phone = MagicMock()
+    mock_db.repos.channels.update_channel_preferred_phone = AsyncMock()
+    collector._discover_phone_for_channel = AsyncMock(return_value=None)
+
+    outcome = await collector._resolve_channel_entity(
+        channel, MagicMock(), "+7999", 123, False, set()
+    )
+    assert outcome.action == "stop"
+    mock_db.set_channel_active.assert_called_once_with(5, False)
