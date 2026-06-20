@@ -12,6 +12,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 from fastapi import Request
 
@@ -276,6 +277,150 @@ async def _is_worker_alive(db) -> bool:
     return alive
 
 
+class _CollectorAvailability(NamedTuple):
+    """Typed view of ``collector.get_collection_availability()`` for the health
+    context. Split out of ``_build_collector_health_context`` (#922)."""
+
+    state: str
+    retry_after_sec: int | None
+    next_available_at: datetime | None
+    all_flooded_blocking: bool
+
+
+class _RecentTasksSummary(NamedTuple):
+    """Running/zero-collect figures derived from recent collection-task rows.
+    Split out of ``_build_collector_health_context`` (#922)."""
+
+    running_task: object | None
+    running_count: int
+    recent_zero_collect_count: int
+    running_task_stale: bool
+
+
+def _analyze_flooded_accounts(
+    connected_active_accounts: list, now: datetime
+) -> tuple[list[dict], datetime | None]:
+    """Filter connected+active accounts down to those under a *blocking* flood
+    wait and return them plus the earliest unblock time. Pure logic split out of
+    ``_build_collector_health_context`` (#922)."""
+    flooded_accounts: list[dict] = []
+    next_available_at: datetime | None = None
+    for acc in connected_active_accounts:
+        flood_until = acc.flood_wait_until
+        if flood_until is None:
+            continue
+        if flood_until.tzinfo is None:
+            flood_until = flood_until.replace(tzinfo=timezone.utc)
+        if flood_until <= now or not is_blocking_flood_wait_until(flood_until, now=now):
+            continue
+        flooded_accounts.append({"phone": acc.phone, "until": flood_until})
+        if next_available_at is None or flood_until < next_available_at:
+            next_available_at = flood_until
+    return flooded_accounts, next_available_at
+
+
+async def _probe_collector_availability(collector) -> _CollectorAvailability:
+    """Probe ``collector.get_collection_availability()`` with a 1s timeout and
+    coerce the result into typed fields. Split out of
+    ``_build_collector_health_context`` (#922)."""
+    try:
+        availability = await asyncio.wait_for(collector.get_collection_availability(), timeout=1.0)
+    except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
+        logger.warning("get_collection_availability timed out or failed: %s", exc)
+        availability = None
+    state = getattr(availability, "state", "no_connected_active")
+    retry_after = getattr(availability, "retry_after_sec", None)
+    next_at = getattr(availability, "next_available_at_utc", None)
+    if not isinstance(next_at, datetime):
+        next_at = None
+    if not isinstance(retry_after, int):
+        retry_after = None
+    all_flooded_blocking = state == "all_flooded" and not is_transient_flood_wait_seconds(retry_after)
+    return _CollectorAvailability(state, retry_after, next_at, all_flooded_blocking)
+
+
+def _summarize_recent_tasks(recent_tasks: list, idle_timeout_sec) -> _RecentTasksSummary:
+    """Reduce recent collection-task rows to the running/zero-collect figures the
+    scheduler page needs. Pure logic split out of
+    ``_build_collector_health_context`` (#922)."""
+    recent_zero_collect_count = sum(
+        1
+        for task in recent_tasks
+        if task.task_type.value == "channel_collect"
+        and task.status == "completed"
+        and task.messages_collected == 0
+    )
+    running_tasks = [
+        task
+        for task in recent_tasks
+        if task.task_type.value == "channel_collect" and task.status.value == "running"
+    ]
+    running_task = running_tasks[0] if running_tasks else None
+    # Derive the "stuck" threshold from the configured per-channel idle timeout
+    # so the two stay in lock-step (a large idle timeout must not trip a false
+    # "stuck"). running_task_stale_after() coerces None/garbage to the floor.
+    running_task_stale = any(
+        _is_running_task_stale(task, idle_timeout_sec=idle_timeout_sec)
+        for task in running_tasks
+    )
+    return _RecentTasksSummary(
+        running_task=running_task,
+        running_count=len(running_tasks),
+        recent_zero_collect_count=recent_zero_collect_count,
+        running_task_stale=running_task_stale,
+    )
+
+
+def _classify_health_state(
+    *,
+    worker_alive: bool,
+    running_task_stale: bool,
+    has_degraded_session_accounts: bool,
+    has_active_accounts: bool,
+    has_connected_active_accounts: bool,
+    availability_all_flooded_blocking: bool,
+    available_accounts_now: int,
+    has_flooded_accounts: bool,
+) -> str:
+    """Deterministic collector-health state cascade. Pure logic split out of
+    ``_build_collector_health_context`` (#922)."""
+    if not worker_alive:
+        # Worker-process absent dominates: without it `no_clients` /
+        # `all_flooded` are symptoms, not the root cause.
+        return "worker_down"
+    if running_task_stale:
+        # Genuinely stuck: a live worker has a RUNNING task whose progress
+        # hasn't advanced for a long time.
+        return "collector_stuck"
+    if has_degraded_session_accounts and not has_active_accounts:
+        return "session_degraded"
+    if not has_connected_active_accounts:
+        return "no_clients"
+    if availability_all_flooded_blocking or available_accounts_now == 0:
+        return "all_flooded"
+    if has_flooded_accounts:
+        return "degraded"
+    return "healthy"
+
+
+def _compute_retry_after_sec(
+    availability_retry_after: int | None,
+    next_available_at: datetime | None,
+    availability_next: datetime | None,
+    now: datetime,
+) -> int | None:
+    """Resolve the retry-after hint: prefer the collector's own value, else
+    derive it from the earliest unblock time. Split out of
+    ``_build_collector_health_context`` (#922)."""
+    if availability_retry_after is not None:
+        return availability_retry_after
+    effective_next = next_available_at or availability_next
+    if effective_next is None:
+        return None
+    delta = effective_next - now
+    return max(0, int(delta.total_seconds()))
+
+
 async def _build_collector_health_context(request: Request) -> dict[str, object]:
     db = deps.get_db(request)
     pool = deps.get_pool(request)
@@ -292,86 +437,32 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
     now = datetime.now(timezone.utc)
     worker_alive, worker_reason = await _worker_status(db)
 
-    flooded_accounts = []
-    next_available_at = None
-    for acc in connected_active_accounts:
-        flood_until = acc.flood_wait_until
-        if flood_until is None:
-            continue
-        if flood_until.tzinfo is None:
-            flood_until = flood_until.replace(tzinfo=timezone.utc)
-        if flood_until <= now or not is_blocking_flood_wait_until(flood_until, now=now):
-            continue
-        flooded_accounts.append({"phone": acc.phone, "until": flood_until})
-        if next_available_at is None or flood_until < next_available_at:
-            next_available_at = flood_until
-
-    try:
-        availability = await asyncio.wait_for(collector.get_collection_availability(), timeout=1.0)
-    except (asyncio.TimeoutError, Exception) as exc:  # noqa: BLE001
-        logger.warning("get_collection_availability timed out or failed: %s", exc)
-        availability = None
-    availability_state = getattr(availability, "state", "no_connected_active")
-    availability_retry_after = getattr(availability, "retry_after_sec", None)
-    availability_next = getattr(availability, "next_available_at_utc", None)
-    if not isinstance(availability_next, datetime):
-        availability_next = None
-    if not isinstance(availability_retry_after, int):
-        availability_retry_after = None
-    availability_all_flooded_blocking = availability_state == "all_flooded" and not (
-        is_transient_flood_wait_seconds(availability_retry_after)
-    )
+    flooded_accounts, next_available_at = _analyze_flooded_accounts(connected_active_accounts, now)
+    availability = await _probe_collector_availability(collector)
     available_accounts_now = max(0, len(connected_active_accounts) - len(flooded_accounts))
     active_unfiltered_channels = len(await db.repos.channels.get_channels(active_only=True, include_filtered=False))
     recent_tasks = await db.get_collection_tasks(limit=200)
-    recent_zero_collect_count = sum(
-        1
-        for task in recent_tasks
-        if task.task_type.value == "channel_collect"
-        and task.status == "completed"
-        and task.messages_collected == 0
-    )
     recent_unavailability_events = _dedupe_recent_unavailability_events(recent_tasks)
     pending_channel_tasks = await db.get_pending_channel_tasks()
-    running_tasks = [
-        task
-        for task in recent_tasks
-        if task.task_type.value == "channel_collect" and task.status.value == "running"
-    ]
-    running_task = running_tasks[0] if running_tasks else None
-    running_count = len(running_tasks)
-
-    # Derive the "stuck" threshold from the configured per-channel idle timeout
-    # so the two stay in lock-step (a large idle timeout must not trip a false
-    # "stuck"). running_task_stale_after() coerces None/garbage to the floor.
     idle_timeout_sec = deps.get_container(request).config.scheduler.collection_stream_timeout_sec
-    running_task_stale = any(
-        _is_running_task_stale(task, idle_timeout_sec=idle_timeout_sec)
-        for task in running_tasks
-    )
+    tasks = _summarize_recent_tasks(recent_tasks, idle_timeout_sec)
+
     # A task that is RUNNING and actually making progress (recent
     # last_progress_at). Used instead of "any RUNNING row exists" so the UI
     # never claims a collection is in flight when the row is an orphan left by
     # a crashed worker.
-    task_is_progressing = worker_alive and running_task is not None and not running_task_stale
+    task_is_progressing = worker_alive and tasks.running_task is not None and not tasks.running_task_stale
     collector_is_running = worker_alive and (collector.is_running or task_is_progressing)
-    state = "healthy"
-    if not worker_alive:
-        # Worker-process absent dominates: without it `no_clients` /
-        # `all_flooded` are symptoms, not the root cause.
-        state = "worker_down"
-    elif running_task_stale:
-        # Genuinely stuck: a live worker has a RUNNING task whose progress
-        # hasn't advanced for a long time.
-        state = "collector_stuck"
-    elif degraded_session_accounts and not active_accounts:
-        state = "session_degraded"
-    elif not connected_active_accounts:
-        state = "no_clients"
-    elif availability_all_flooded_blocking or available_accounts_now == 0:
-        state = "all_flooded"
-    elif flooded_accounts:
-        state = "degraded"
+    state = _classify_health_state(
+        worker_alive=worker_alive,
+        running_task_stale=tasks.running_task_stale,
+        has_degraded_session_accounts=bool(degraded_session_accounts),
+        has_active_accounts=bool(active_accounts),
+        has_connected_active_accounts=bool(connected_active_accounts),
+        availability_all_flooded_blocking=availability.all_flooded_blocking,
+        available_accounts_now=available_accounts_now,
+        has_flooded_accounts=bool(flooded_accounts),
+    )
 
     interval_minutes = max(1, getattr(deps.get_scheduler(request), "interval_minutes", 60))
     load_level = _compute_load_level(
@@ -394,12 +485,10 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         f"Около {channels_per_account} каналов на доступный аккаунт; "
         f"в очереди {len(pending_channel_tasks)} задач."
     )
-    # Compute retry_after_sec from next_available_at if available
-    computed_retry_after_sec = availability_retry_after
-    if computed_retry_after_sec is None and (next_available_at or availability_next):
-        effective_next = next_available_at or availability_next
-        delta = effective_next - now
-        computed_retry_after_sec = max(0, int(delta.total_seconds()))
+    effective_next_available_at = next_available_at or availability.next_available_at
+    computed_retry_after_sec = _compute_retry_after_sec(
+        availability.retry_after_sec, next_available_at, availability.next_available_at, now
+    )
     return {
         "state": state,
         "connected_accounts": len(connected_phones),
@@ -409,7 +498,7 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         "available_accounts_now": available_accounts_now,
         "flooded_accounts": flooded_accounts,
         "flooded_accounts_count": len(flooded_accounts),
-        "next_available_at": next_available_at or availability_next,
+        "next_available_at": effective_next_available_at,
         "retry_after_sec": computed_retry_after_sec,
         "active_unfiltered_channels": active_unfiltered_channels,
         "collect_interval_minutes": interval_minutes,
@@ -432,13 +521,13 @@ async def _build_collector_health_context(request: Request) -> dict[str, object]
         "capacity_label": capacity_label,
         "capacity_detail": capacity_detail,
         "queue_pending_count": len(pending_channel_tasks),
-        "running_task_title": running_task.channel_title if running_task else "",
-        "running_task_messages_collected": running_task.messages_collected if running_task else 0,
-        "running_count": running_count,
-        "recent_zero_collect_count": recent_zero_collect_count,
+        "running_task_title": tasks.running_task.channel_title if tasks.running_task else "",
+        "running_task_messages_collected": tasks.running_task.messages_collected if tasks.running_task else 0,
+        "running_count": tasks.running_count,
+        "recent_zero_collect_count": tasks.recent_zero_collect_count,
         "recent_unavailability_events": recent_unavailability_events,
         "is_running": collector_is_running,
-        "next_available_label": _format_retry_hint(next_available_at or availability_next),
+        "next_available_label": _format_retry_hint(effective_next_available_at),
     }
 
 
