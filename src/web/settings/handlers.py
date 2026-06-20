@@ -434,10 +434,11 @@ async def _run_bulk_test_job(
         status["current_model"] = ""
 
 
-async def handle_settings_page(request: Request) -> SettingsTemplate:
-    auth = deps.get_auth(request)
+async def _gather_telegram_settings(request: Request) -> dict[str, object]:
+    """Telegram credentials, collection filters, scheduler interval and agent
+    dev-mode settings for the settings page. Split out of handle_settings_page (#922)."""
     db = deps.get_db(request)
-    pool = deps.get_pool(request)
+    config = request.app.state.config
     api_id_raw = await db.repos.settings.get_setting("tg_api_id") or ""
     api_hash_raw = await db.repos.settings.get_setting("tg_api_hash") or ""
     min_subscribers_filter = parse_int_setting(
@@ -456,8 +457,6 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
     )
     if agent_backend_override not in VALID_AGENT_BACKENDS:
         agent_backend_override = "auto"
-    config = request.app.state.config
-    provider_service = _agent_provider_service(request)
     telegram_credentials_from_env = bool(
         os.environ.get("TG_API_ID", "").strip().isdigit()
         and os.environ.get("TG_API_HASH", "").strip()
@@ -484,11 +483,33 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
         if reaction_min_interval_value == int(reaction_min_interval_value)
         else reaction_min_interval_value
     )
-    accounts = await db.get_account_summaries()
+    return {
+        "telegram_credentials_from_env": telegram_credentials_from_env,
+        "api_id": CREDENTIALS_MASK if api_id_raw else "",
+        "api_hash": CREDENTIALS_MASK if api_hash_raw else "",
+        "min_subscribers_filter": min_subscribers_filter,
+        "auto_delete_filtered": auto_delete_filtered,
+        "auto_delete_on_collect": auto_delete_on_collect,
+        "collect_interval_minutes": collect_interval_minutes,
+        "reaction_min_interval_sec": reaction_min_interval_sec,
+        "agent_dev_mode_enabled": agent_dev_mode_enabled,
+        "agent_backend_override": agent_backend_override,
+        "agent_prompt_template": agent_prompt_template,
+        "agent_fallback_model": config.agent.fallback_model or os.environ.get("AGENT_FALLBACK_MODEL", "").strip(),
+        "agent_prompt_template_variables": sorted(ALLOWED_TEMPLATE_VARIABLES),
+    }
+
+
+async def _gather_account_status(request: Request, accounts: list) -> dict[str, object]:
+    """Per-account availability, expired-flood clearing and connection status.
+    Mutates ``accounts`` to clear expired flood waits (matching the original
+    inline behavior). Split out of handle_settings_page (#922)."""
+    db = deps.get_db(request)
+    pool = deps.get_pool(request)
+    now = datetime.now(UTC)
     telegram_session_warning = any(
         account.session_status != AccountSessionStatus.OK for account in accounts
     )
-    now = datetime.now(UTC)
     for account in accounts:
         if account.flood_wait_until is not None:
             flood_until = account.flood_wait_until
@@ -524,9 +545,21 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
         ]
     )
     next_available_at = min(flooded_connected) if flooded_connected else None
-    notification_target = await deps.get_notification_target_service(request).describe_target()
-    notification_bot = await _notification_snapshot_bot(request)
-    notification_bot_error = ""
+    return {
+        "telegram_session_warning": telegram_session_warning,
+        "account_status": account_status,
+        "connected_phones": connected_phones,
+        "resolve_backoffs": resolve_backoffs,
+        "all_accounts_flooded": all_accounts_flooded,
+        "next_available_at": next_available_at,
+    }
+
+
+async def _gather_provider_settings(request: Request) -> dict[str, object]:
+    """Agent + image provider configs/views/options and semantic-search settings.
+    Split out of handle_settings_page (#922)."""
+    db = deps.get_db(request)
+    provider_service = _agent_provider_service(request)
     provider_configs = await provider_service.load_provider_configs()
     provider_cache = await provider_service.load_model_cache()
     provider_views = provider_service.build_provider_views(provider_configs, provider_cache)
@@ -544,52 +577,7 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
         IMAGE_PROVIDER_SPECS[name] for name in IMAGE_PROVIDER_ORDER if name not in configured_img_names
     ]
     semantic_context = await _semantic_settings_context(request)
-
-    translation_provider = await db.repos.settings.get_setting("translation_provider") or ""
-    translation_model = await db.repos.settings.get_setting("translation_model") or ""
-    translation_target_lang = await db.repos.settings.get_setting("translation_target_lang") or ""
-    translation_source_filter = await db.repos.settings.get_setting("translation_source_filter") or ""
-    translation_auto_on_collect = await db.repos.settings.get_setting("translation_auto_on_collect") or "0"
-    language_stats = await db.repos.messages.get_language_stats()
-
-    from src.agent.tools.permissions import (
-        build_template_context,
-        load_tool_permissions_all_phones,
-    )
-
-    phone_permissions = await load_tool_permissions_all_phones(db, accounts)
-    phone_perm_contexts = {
-        phone: build_template_context(perms)
-        for phone, perms in phone_permissions.items()
-    }
-
-    context = {
-        "is_configured": auth.is_configured,
-        "telegram_credentials_from_env": telegram_credentials_from_env,
-        "api_id": CREDENTIALS_MASK if api_id_raw else "",
-        "api_hash": CREDENTIALS_MASK if api_hash_raw else "",
-        "min_subscribers_filter": min_subscribers_filter,
-        "auto_delete_filtered": auto_delete_filtered,
-        "auto_delete_on_collect": auto_delete_on_collect,
-        "accounts": accounts,
-        "telegram_session_warning": telegram_session_warning,
-        "account_status": account_status,
-        "account_phones": [acc.phone for acc in accounts],
-        "connected_phones": connected_phones,
-        "resolve_backoffs": resolve_backoffs,
-        "all_accounts_flooded": all_accounts_flooded,
-        "next_available_at": next_available_at,
-        "notification_target": notification_target,
-        "notification_selected_phone": notification_target.configured_phone or "",
-        "notification_bot": notification_bot,
-        "notification_bot_error": notification_bot_error,
-        "collect_interval_minutes": collect_interval_minutes,
-        "reaction_min_interval_sec": reaction_min_interval_sec,
-        "agent_dev_mode_enabled": agent_dev_mode_enabled,
-        "agent_backend_override": agent_backend_override,
-        "agent_prompt_template": agent_prompt_template,
-        "agent_fallback_model": config.agent.fallback_model or os.environ.get("AGENT_FALLBACK_MODEL", "").strip(),
-        "agent_prompt_template_variables": sorted(ALLOWED_TEMPLATE_VARIABLES),
+    return {
         "agent_provider_writes_enabled": provider_service.writes_enabled,
         "agent_provider_views": provider_views,
         "agent_provider_options": available_provider_options,
@@ -598,13 +586,60 @@ async def handle_settings_page(request: Request) -> SettingsTemplate:
         "img_provider_options": available_img_options,
         "default_image_model": await db.repos.settings.get_setting("default_image_model") or "",
         **semantic_context,
-        "phone_perm_contexts": phone_perm_contexts,
-        "translation_provider": translation_provider,
-        "translation_model": translation_model,
-        "translation_target_lang": translation_target_lang,
-        "translation_source_filter": translation_source_filter,
-        "translation_auto_on_collect": translation_auto_on_collect,
-        "language_stats": language_stats,
+    }
+
+
+async def _gather_translation_settings(request: Request) -> dict[str, object]:
+    """Translation provider settings and language stats. Split out of
+    handle_settings_page (#922)."""
+    db = deps.get_db(request)
+    return {
+        "translation_provider": await db.repos.settings.get_setting("translation_provider") or "",
+        "translation_model": await db.repos.settings.get_setting("translation_model") or "",
+        "translation_target_lang": await db.repos.settings.get_setting("translation_target_lang") or "",
+        "translation_source_filter": await db.repos.settings.get_setting("translation_source_filter") or "",
+        "translation_auto_on_collect": await db.repos.settings.get_setting("translation_auto_on_collect") or "0",
+        "language_stats": await db.repos.messages.get_language_stats(),
+    }
+
+
+async def _gather_permission_contexts(request: Request, accounts: list) -> dict[str, object]:
+    """Per-phone agent-tool permission template contexts. Split out of
+    handle_settings_page (#922)."""
+    db = deps.get_db(request)
+    from src.agent.tools.permissions import (
+        build_template_context,
+        load_tool_permissions_all_phones,
+    )
+
+    phone_permissions = await load_tool_permissions_all_phones(db, accounts)
+    return {
+        "phone_perm_contexts": {
+            phone: build_template_context(perms)
+            for phone, perms in phone_permissions.items()
+        }
+    }
+
+
+async def handle_settings_page(request: Request) -> SettingsTemplate:
+    auth = deps.get_auth(request)
+    db = deps.get_db(request)
+    accounts = await db.get_account_summaries()
+    notification_target = await deps.get_notification_target_service(request).describe_target()
+
+    context = {
+        "is_configured": auth.is_configured,
+        "accounts": accounts,
+        "account_phones": [acc.phone for acc in accounts],
+        "notification_target": notification_target,
+        "notification_selected_phone": notification_target.configured_phone or "",
+        "notification_bot": await _notification_snapshot_bot(request),
+        "notification_bot_error": "",
+        **(await _gather_telegram_settings(request)),
+        **(await _gather_account_status(request, accounts)),
+        **(await _gather_provider_settings(request)),
+        **(await _gather_translation_settings(request)),
+        **(await _gather_permission_contexts(request, accounts)),
     }
     return SettingsTemplate("settings.html", context)
 
