@@ -264,21 +264,23 @@ async def test_embedded_worker_stop_suppresses_cancelled_snapshot_publish():
 
     container = MagicMock()
     worker = EmbeddedWorker(AppConfig())
+    publish_started = asyncio.Event()
+
+    async def cancelled_publish(_container, *, stop_event=None):
+        # Signal that the publish step actually ran before it raises, so the test
+        # can await a deterministic event instead of polling with a fixed yield
+        # budget that flakes under coverage/xdist (#883).
+        publish_started.set()
+        raise asyncio.CancelledError
 
     with (
         patch("src.web.embedded_worker.build_worker_container", AsyncMock(return_value=container)),
         patch("src.web.embedded_worker.start_container", AsyncMock()),
         patch("src.web.embedded_worker.stop_container", AsyncMock()) as stop_container,
-        patch(
-            "src.web.embedded_worker._publish_snapshots",
-            AsyncMock(side_effect=asyncio.CancelledError),
-        ) as publish_snapshots,
+        patch("src.web.embedded_worker._publish_snapshots", new=cancelled_publish),
     ):
         await worker.start()
-        for _ in range(10):
-            if publish_snapshots.await_count:
-                break
-            await asyncio.sleep(0)
+        await asyncio.wait_for(publish_started.wait(), timeout=2.0)
 
         stop_container.assert_not_awaited()
         await worker.stop(timeout=1.0)
@@ -296,13 +298,18 @@ async def test_embedded_worker_retries_after_hanging_snapshot_publish():
     config = AppConfig()
     config.scheduler.snapshot_publish_timeout_sec = 0.01
     worker = EmbeddedWorker(config)
-    publish_started = asyncio.Event()
     publish_calls = 0
+    second_publish = asyncio.Event()
 
     async def hanging_publish(_container, *, stop_event=None):
         nonlocal publish_calls
         publish_calls += 1
-        publish_started.set()
+        # The first publish hangs and is killed by the per-publish timeout; the
+        # loop must retry. Fire on the second invocation so the test can await
+        # the retry deterministically instead of sleeping a fixed window and
+        # hoping two cycles elapsed (#883).
+        if publish_calls >= 2:
+            second_publish.set()
         await asyncio.Event().wait()
 
     with (
@@ -314,11 +321,10 @@ async def test_embedded_worker_retries_after_hanging_snapshot_publish():
     ):
         await worker.start()
         try:
-            await asyncio.wait_for(publish_started.wait(), timeout=0.05)
-            await asyncio.sleep(0.05)
+            await asyncio.wait_for(second_publish.wait(), timeout=2.0)
             assert publish_calls >= 2
         finally:
-            await worker.stop(timeout=0.01)
+            await worker.stop(timeout=1.0)
 
     stop_container.assert_awaited_once_with(container)
 
