@@ -8,6 +8,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pytest
+from pydantic import ValidationError
+
 from src.models import (
     Channel,
     CollectionTaskStatus,
@@ -19,9 +22,9 @@ from src.services.task_handlers.base import TaskHandlerContext
 from src.services.task_handlers.export import ExportTaskHandler
 
 
-async def _seed(db, channel_id=900, *, with_media_msg=False, **channel_kw):
+async def _seed(db, channel_id=900, *, with_media_msg=False, username="chan", **channel_kw):
     await db.repos.channels.add_channel(
-        Channel(channel_id=channel_id, title="Chan", username="chan", channel_type="channel", **channel_kw)
+        Channel(channel_id=channel_id, title="Chan", username=username, channel_type="channel", **channel_kw)
     )
     for mid in (1, 2):
         await db.repos.messages.insert_message(
@@ -140,6 +143,76 @@ async def test_handle_with_media_downloads_via_action_service(db, tmp_path, monk
     data = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
     media_msg = next(m for m in data["messages"] if m["id"] == 3)
     assert media_msg["photo"] == "photos/3.jpg"  # downloaded, linked relative path
+
+
+def test_export_payload_rejects_invalid_fmt():
+    with pytest.raises(ValidationError):
+        ExportTaskPayload(channel_id=1, fmt="pdf")
+
+
+async def test_handle_with_media_uses_username_for_resolve(db, tmp_path, monkeypatch):
+    await _seed(db, 905, with_media_msg=True, username="publicchan")
+
+    from src.services.telegram_actions import MediaDownloadOutcome
+
+    captured = {}
+
+    class FakeActionService:
+        def __init__(self, pool):
+            pass
+
+        async def download_media_sized(self, *, phone, chat_id, message_id, output_dir, max_size_bytes):
+            captured["chat_id"] = chat_id
+            return MediaDownloadOutcome(
+                phone=phone, kind="photo", subdir="photos",
+                rel_path=f"photos/{message_id}.jpg", size_bytes=100,
+            )
+
+    monkeypatch.setattr("src.services.telegram_actions.TelegramActionService", FakeActionService)
+    pool = MagicMock()
+    pool.clients = {"+1": object()}
+    task = await _make_task(db, ExportTaskPayload(channel_id=905, with_media=True, out_dir=str(tmp_path)))
+    await ExportTaskHandler(_context(db, client_pool=pool)).handle(task)
+    # Public channel → resolve by @username, not the bare numeric id.
+    assert captured["chat_id"] == "publicchan"
+
+
+async def test_handle_with_media_stops_on_stop_event(db, tmp_path, monkeypatch):
+    await _seed(db, 906, with_media_msg=True)
+
+    called = {"n": 0}
+
+    class FakeActionService:
+        def __init__(self, pool):
+            pass
+
+        async def download_media_sized(self, **kw):
+            called["n"] += 1
+            raise AssertionError("should not download after stop_event")
+
+    monkeypatch.setattr("src.services.telegram_actions.TelegramActionService", FakeActionService)
+    pool = MagicMock()
+    pool.clients = {"+1": object()}
+    ctx = _context(db, client_pool=pool)
+    ctx.stop_event.set()  # request shutdown before downloads start
+
+    task = await _make_task(db, ExportTaskPayload(channel_id=906, with_media=True, out_dir=str(tmp_path)))
+    await ExportTaskHandler(ctx).handle(task)
+    refreshed = await db.repos.tasks.get_collection_task(task.id)
+    assert refreshed.status == CollectionTaskStatus.COMPLETED
+    assert called["n"] == 0  # no downloads attempted
+
+
+async def test_poll_export_task_exits_nonzero_on_failure(db):
+    from src.cli.commands.export import _poll_export_task
+
+    task_id = await db.repos.tasks.create_generic_task(
+        CollectionTaskType.EXPORT, title="x", payload=ExportTaskPayload(channel_id=1)
+    )
+    await db.repos.tasks.update_collection_task(task_id, CollectionTaskStatus.FAILED, error="boom")
+    with pytest.raises(SystemExit) as exc:
+        await _poll_export_task(db, task_id, timeout=1.0, interval=0.01)
+    assert exc.value.code == 1
 
 
 async def test_handle_with_media_skips_oversized_and_records(db, tmp_path, monkeypatch):

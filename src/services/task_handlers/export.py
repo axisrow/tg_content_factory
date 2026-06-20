@@ -114,14 +114,23 @@ class ExportTaskHandler:
 
         svc = TelegramActionService(ctx.client_pool)
         max_size_bytes = await resolve_max_file_size_mb(ctx.db, payload.max_file_size_mb) * 1024 * 1024
+        # Prefer the @username for public channels: the numeric PeerChannel path
+        # cannot resolve without a cached access hash on the chosen account, while
+        # the username always resolves (Codex review on #939).
+        chat_identity = channel.username or channel.channel_id
+        logger.info("EXPORT media download for channel %s via %s", channel.channel_id, phone)
         artifacts: dict[int, MediaArtifact] = {}
         for message in messages:
+            if ctx.stop_event.is_set():
+                # Honour graceful shutdown — build the export from what we have.
+                logger.info("EXPORT media download interrupted by stop_event")
+                break
             if not message.media_type:
                 continue
             try:
                 outcome = await svc.download_media_sized(
                     phone=phone,
-                    chat_id=channel.channel_id,
+                    chat_id=chat_identity,
                     message_id=message.message_id,
                     output_dir=target,
                     max_size_bytes=max_size_bytes,

@@ -139,10 +139,11 @@ async def _poll_export_task(db, task_id: int, *, timeout: float = 600.0, interva
         if task and task.status in terminal:
             if task.status == CollectionTaskStatus.COMPLETED:
                 print(f"Export task #{task_id} completed: {task.note or ''}", file=sys.stderr)
-            else:
-                detail = task.error or task.note or ""
-                print(f"Export task #{task_id} {task.status.value}: {detail}", file=sys.stderr)
-            return
+                return
+            detail = task.error or task.note or ""
+            print(f"Export task #{task_id} {task.status.value}: {detail}", file=sys.stderr)
+            # Non-zero exit so scripts using --wait can detect failure (#939 review).
+            sys.exit(1)
         await asyncio.sleep(interval)
         waited += interval
     print(

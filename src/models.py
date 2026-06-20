@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -217,7 +217,7 @@ class TranslateBatchTaskPayload(BaseModel):
 class ExportTaskPayload(BaseModel):
     task_kind: str = CollectionTaskType.EXPORT.value
     channel_id: int
-    fmt: str = "json"  # json | html | both
+    fmt: Literal["json", "html", "both"] = "json"
     with_media: bool = False
     max_file_size_mb: int | None = None
     date_from: str | None = None
