@@ -938,7 +938,9 @@ class ClaudeSdkBackend:
         )
 
         cfg = self._config.agent
-        last_err: Exception | None = None
+        # BaseException (not Exception): the retry path can stash a
+        # BaseExceptionGroup / CLIConnectionError here via _handle_stream_attempt_error.
+        last_err: BaseException | None = None
         for attempt in range(2):
             if attempt > 0:
                 tracker_retry = _ToolTracker(queue=queue)
