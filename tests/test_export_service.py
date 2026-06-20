@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -57,16 +58,29 @@ async def test_run_offline_export_channel_without_messages(db, tmp_path):
     assert await run_offline_export(db, 777, out_dir=tmp_path) is None
 
 
-async def test_gather_messages_sorted_by_message_id(db):
+async def test_gather_messages_sorted_oldest_first(db):
     await _seed(db, channel_id=42, message_ids=(5, 1, 3, 2, 4))
-    msgs = await gather_channel_messages(db, 42, limit=10)
+    msgs, truncated = await gather_channel_messages(db, 42, limit=10)
     assert [m.message_id for m in msgs] == [1, 2, 3, 4, 5]
+    assert truncated is False
 
 
-async def test_gather_messages_respects_limit(db):
+async def test_gather_messages_truncates_to_oldest(db):
     await _seed(db, channel_id=43, message_ids=tuple(range(1, 20)))
-    msgs = await gather_channel_messages(db, 43, limit=5)
-    assert len(msgs) == 5
+    msgs, truncated = await gather_channel_messages(db, 43, limit=5)
+    # Telegram-Desktop order: the OLDEST 5, not the newest 5.
+    assert [m.message_id for m in msgs] == [1, 2, 3, 4, 5]
+    assert truncated is True
+
+
+async def test_run_offline_export_flags_truncation(db, tmp_path):
+    await _seed(db, channel_id=44, message_ids=tuple(range(1, 11)))
+    summary = await run_offline_export(db, 44, fmt="json", limit=3, out_dir=tmp_path)
+    assert summary is not None
+    assert summary.message_count == 3
+    assert summary.truncated is True
+    manifest = json.loads((tmp_path / "export_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["truncated"] is True
 
 
 async def test_resolve_max_file_size_mb_override_and_setting(db):
@@ -86,7 +100,8 @@ async def test_resolve_html_page_size_setting(db):
 
 @pytest.mark.parametrize("channel_id", [100, -1001234567890])
 def test_default_export_dir_naming(channel_id):
-    now = datetime(2026, 6, 12, tzinfo=timezone.utc)
+    now = datetime(2026, 6, 12, 9, 8, 7, tzinfo=timezone.utc)
     path = default_export_dir(channel_id, now=now)
-    assert path.name == f"ChatExport_2026-06-12_{channel_id}"
+    # Per-run timestamp (incl. HH-MM-SS) so same-day exports don't collide.
+    assert path.name == f"ChatExport_2026-06-12_09-08-07_{channel_id}"
     assert path.parent.name == "exports"

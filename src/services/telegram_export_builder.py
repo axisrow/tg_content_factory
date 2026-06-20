@@ -13,6 +13,7 @@ testable without a live client.
 
 from __future__ import annotations
 
+import asyncio
 import html
 import json
 from collections.abc import Callable, Sequence
@@ -84,6 +85,7 @@ class ExportSummary:
     media_included: int = 0
     media_skipped: int = 0
     skipped: list[dict] = field(default_factory=list)
+    truncated: bool = False
 
 
 def offline_media_resolver(message: Message) -> MediaArtifact | None:
@@ -208,6 +210,26 @@ class TelegramExportBuilder:
         if artifact.size_bytes is not None:
             obj["file_size"] = artifact.size_bytes
 
+    def iter_html_pages(
+        self,
+        channel: Channel,
+        messages: Sequence[Message],
+        artifacts: dict[int, MediaArtifact | None],
+        page_size: int = DEFAULT_HTML_PAGE_SIZE,
+    ):
+        """Yield (filename, html) one page at a time.
+
+        Generating lazily keeps only one rendered page in memory at a time — a
+        100k-message export would otherwise buffer hundreds of MB of HTML strings
+        before the first write (Claude review on #937).
+        """
+        page_size = max(1, int(page_size))
+        total_pages = max(1, (len(messages) + page_size - 1) // page_size)
+        for index in range(total_pages):
+            chunk = messages[index * page_size : (index + 1) * page_size]
+            blocks = "\n".join(self._message_html(channel, m, artifacts.get(m.message_id)) for m in chunk)
+            yield html_page_name(index), self._html_document(channel, blocks, index, total_pages)
+
     def build_html_pages(
         self,
         channel: Channel,
@@ -215,13 +237,7 @@ class TelegramExportBuilder:
         artifacts: dict[int, MediaArtifact | None],
         page_size: int = DEFAULT_HTML_PAGE_SIZE,
     ) -> list[tuple[str, str]]:
-        page_size = max(1, int(page_size))
-        chunks = [messages[i : i + page_size] for i in range(0, len(messages), page_size)] or [[]]
-        pages: list[tuple[str, str]] = []
-        for index, chunk in enumerate(chunks):
-            blocks = "\n".join(self._message_html(channel, m, artifacts.get(m.message_id)) for m in chunk)
-            pages.append((html_page_name(index), self._html_document(channel, blocks, index, len(chunks))))
-        return pages
+        return list(self.iter_html_pages(channel, messages, artifacts, page_size))
 
     def _html_document(self, channel: Channel, blocks: str, index: int, total_pages: int) -> str:
         name = html.escape(channel.title or (channel.username or str(channel.channel_id)))
@@ -288,7 +304,7 @@ class TelegramExportBuilder:
         rel = artifact.rel_path or ""
         return f'<div class="media"><a href="{html.escape(rel)}">{html.escape(artifact.kind)}</a></div>'
 
-    def write_export(
+    async def write_export(
         self,
         out_dir: str | Path,
         channel: Channel,
@@ -297,11 +313,12 @@ class TelegramExportBuilder:
         fmt: str = "json",
         media_resolver: MediaResolver = offline_media_resolver,
         page_size: int = DEFAULT_HTML_PAGE_SIZE,
+        truncated: bool = False,
     ) -> ExportSummary:
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
         artifacts: dict[int, MediaArtifact | None] = {m.message_id: media_resolver(m) for m in messages}
-        summary = ExportSummary(out_dir=str(out), message_count=len(messages))
+        summary = ExportSummary(out_dir=str(out), message_count=len(messages), truncated=truncated)
         for message in messages:
             artifact = artifacts.get(message.message_id)
             if artifact is None:
@@ -321,11 +338,12 @@ class TelegramExportBuilder:
 
         if fmt in ("json", "both"):
             result = self.build_result_json(channel, messages, artifacts)
-            self._write_text(out / RESULT_JSON_NAME, json.dumps(result, ensure_ascii=False, indent=2))
+            await self._write_text(out / RESULT_JSON_NAME, json.dumps(result, ensure_ascii=False, indent=2))
             summary.files.append(RESULT_JSON_NAME)
         if fmt in ("html", "both"):
-            for filename, content in self.build_html_pages(channel, messages, artifacts, page_size):
-                self._write_text(out / filename, content)
+            # Stream pages so only one rendered page is resident at a time.
+            for filename, content in self.iter_html_pages(channel, messages, artifacts, page_size):
+                await self._write_text(out / filename, content)
                 summary.files.append(filename)
 
         manifest = {
@@ -333,14 +351,17 @@ class TelegramExportBuilder:
             "name": channel.title or (channel.username or str(channel.channel_id)),
             "format": fmt,
             "message_count": summary.message_count,
+            "truncated": truncated,
             "media_included": summary.media_included,
             "media_skipped": summary.media_skipped,
             "skipped_files": summary.skipped,
         }
-        self._write_text(out / MANIFEST_JSON_NAME, json.dumps(manifest, ensure_ascii=False, indent=2))
+        await self._write_text(out / MANIFEST_JSON_NAME, json.dumps(manifest, ensure_ascii=False, indent=2))
         summary.files.append(MANIFEST_JSON_NAME)
         return summary
 
     @staticmethod
-    def _write_text(path: Path, content: str) -> None:
-        path.write_text(content, encoding="utf-8")
+    async def _write_text(path: Path, content: str) -> None:
+        # Offload the blocking write so the async web request / worker loop isn't
+        # stalled per file (Claude review on #937).
+        await asyncio.to_thread(path.write_text, content, encoding="utf-8")

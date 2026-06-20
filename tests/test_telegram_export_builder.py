@@ -180,9 +180,9 @@ def test_html_escapes_text():
 # ── write_export end-to-end ────────────────────────────────────────────────
 
 
-def test_write_export_default_json_only(tmp_path):
+async def test_write_export_default_json_only(tmp_path):
     ch = _channel()
-    summary = TelegramExportBuilder().write_export(tmp_path, ch, [_msg(1)], fmt="json")
+    summary = await TelegramExportBuilder().write_export(tmp_path, ch, [_msg(1)], fmt="json")
     files = {p.name for p in tmp_path.iterdir()}
     assert files == {RESULT_JSON_NAME, MANIFEST_JSON_NAME}
     assert summary.message_count == 1
@@ -191,16 +191,16 @@ def test_write_export_default_json_only(tmp_path):
     assert data["messages"][0]["id"] == 1
 
 
-def test_write_export_both_writes_html(tmp_path):
+async def test_write_export_both_writes_html(tmp_path):
     ch = _channel()
-    TelegramExportBuilder().write_export(tmp_path, ch, [_msg(1), _msg(2)], fmt="both", page_size=1)
+    await TelegramExportBuilder().write_export(tmp_path, ch, [_msg(1), _msg(2)], fmt="both", page_size=1)
     names = {p.name for p in tmp_path.iterdir()}
     assert RESULT_JSON_NAME in names
     assert "messages.html" in names and "messages2.html" in names
     assert MANIFEST_JSON_NAME in names
 
 
-def test_write_export_manifest_records_skipped(tmp_path):
+async def test_write_export_manifest_records_skipped(tmp_path):
     ch = _channel()
     msgs = [_msg(1, media_type="document"), _msg(2, text="plain")]
 
@@ -209,7 +209,7 @@ def test_write_export_manifest_records_skipped(tmp_path):
             return MediaArtifact(kind="file", skipped=True, reason=REASON_EXCEEDS_MAX_SIZE, size_bytes=5_000_000)
         return None
 
-    summary = TelegramExportBuilder().write_export(tmp_path, ch, msgs, fmt="json", media_resolver=resolver)
+    summary = await TelegramExportBuilder().write_export(tmp_path, ch, msgs, fmt="json", media_resolver=resolver)
     manifest = json.loads((tmp_path / MANIFEST_JSON_NAME).read_text(encoding="utf-8"))
     assert manifest["media_skipped"] == 1
     assert summary.media_skipped == 1
@@ -220,10 +220,18 @@ def test_write_export_manifest_records_skipped(tmp_path):
     assert entry["media_type"] == "document"
 
 
-def test_write_export_offline_does_not_break_on_media(tmp_path):
+async def test_write_export_records_truncation_in_manifest(tmp_path):
+    ch = _channel()
+    summary = await TelegramExportBuilder().write_export(tmp_path, ch, [_msg(1)], fmt="json", truncated=True)
+    assert summary.truncated is True
+    manifest = json.loads((tmp_path / MANIFEST_JSON_NAME).read_text(encoding="utf-8"))
+    assert manifest["truncated"] is True
+
+
+async def test_write_export_offline_does_not_break_on_media(tmp_path):
     ch = _channel()
     msgs = [_msg(1, media_type="photo")]
-    TelegramExportBuilder().write_export(tmp_path, ch, msgs, fmt="both")
+    await TelegramExportBuilder().write_export(tmp_path, ch, msgs, fmt="both")
     data = json.loads((tmp_path / RESULT_JSON_NAME).read_text(encoding="utf-8"))
     assert data["messages"][0]["photo"] == MEDIA_NOT_INCLUDED
     # HTML still renders the placeholder, no broken link
@@ -232,9 +240,9 @@ def test_write_export_offline_does_not_break_on_media(tmp_path):
 
 
 @pytest.mark.parametrize("fmt", ["json", "html", "both"])
-def test_write_export_format_selection(tmp_path, fmt):
+async def test_write_export_format_selection(tmp_path, fmt):
     ch = _channel()
-    TelegramExportBuilder().write_export(tmp_path, ch, [_msg(1)], fmt=fmt)
+    await TelegramExportBuilder().write_export(tmp_path, ch, [_msg(1)], fmt=fmt)
     names = {p.name for p in tmp_path.iterdir()}
     assert (RESULT_JSON_NAME in names) == (fmt in ("json", "both"))
     assert ("messages.html" in names) == (fmt in ("html", "both"))

@@ -25,37 +25,44 @@ _MAX_LIMIT = 100_000
 
 
 def default_export_dir(channel_id: int, *, now: datetime | None = None) -> Path:
-    stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d")
+    # Include a per-run HH-MM-SS suffix so two exports of the same channel on the
+    # same day don't reuse one directory and leave stale files behind (Codex #937).
+    stamp = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d_%H-%M-%S")
     return EXPORT_ROOT / f"ChatExport_{stamp}_{channel_id}"
 
 
-async def gather_channel_messages(db, channel_id: int, *, date_from=None, date_to=None, limit=5000) -> list:
-    """Page through stored messages, sorted chronologically by message_id.
+async def gather_channel_messages(
+    db, channel_id: int, *, date_from=None, date_to=None, limit=5000
+) -> tuple[list, bool]:
+    """Page a channel's messages oldest-first (Telegram-Desktop order).
 
-    Telegram message_id is monotonic per channel, so ascending message_id is a
-    robust chronological order (and avoids comparing naive vs aware datetimes).
+    Returns ``(messages, truncated)`` — ``truncated`` is True when the channel has
+    more messages than ``limit``, so the caller can record it in the manifest
+    instead of silently dropping the newest history.
     """
     limit = max(1, min(int(limit), _MAX_LIMIT))
     collected: list = []
     offset = 0
+    truncated = False
     while len(collected) < limit:
-        page = await db.search_messages(
-            channel_id=channel_id,
+        page = await db.repos.messages.get_channel_messages_for_export(
+            channel_id,
             date_from=date_from,
             date_to=date_to,
             limit=min(_PAGE_FETCH, limit - len(collected)),
             offset=offset,
-            include_filtered=True,
         )
         batch = list(page.messages)
         if not batch:
             break
         collected.extend(batch)
         offset += len(batch)
+        if len(collected) >= limit:
+            truncated = page.has_more
+            break
         if not page.has_more:
             break
-    collected.sort(key=lambda m: (m.message_id or 0))
-    return collected[:limit]
+    return collected, truncated
 
 
 async def resolve_max_file_size_mb(db, override=None) -> int:
@@ -94,18 +101,19 @@ async def run_offline_export(
     channel = await db.get_channel_by_channel_id(int(channel_id))
     if channel is None:
         return None
-    messages = await gather_channel_messages(
+    messages, truncated = await gather_channel_messages(
         db, int(channel_id), date_from=date_from, date_to=date_to, limit=limit
     )
     if not messages:
         return None
     target = Path(out_dir) if out_dir else default_export_dir(int(channel_id))
     page_size = await resolve_html_page_size(db)
-    return TelegramExportBuilder().write_export(
+    return await TelegramExportBuilder().write_export(
         target,
         channel,
         messages,
         fmt=fmt,
         media_resolver=offline_media_resolver,
         page_size=page_size,
+        truncated=truncated,
     )

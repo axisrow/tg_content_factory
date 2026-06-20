@@ -32,6 +32,10 @@ async def export_channel(
     limit: int = Form(5000),
 ) -> JSONResponse:
     fmt = format if format in ("json", "html", "both") else "json"
+    # Cap the inline export so a single web request can't pull a 100k-message
+    # channel into the event loop (Claude review on #937). Larger exports should
+    # go through the worker EXPORT task (PR-3).
+    limit = max(1, min(limit, 10_000))
     db = deps.get_db(request)
 
     note = None
@@ -63,6 +67,7 @@ async def export_channel(
             "out_dir": summary.out_dir,
             "files": summary.files,
             "message_count": summary.message_count,
+            "truncated": summary.truncated,
             "media_included": summary.media_included,
             "media_skipped": summary.media_skipped,
             "skipped_files": summary.skipped,

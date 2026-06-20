@@ -100,6 +100,12 @@ async def _run_telegram(db, args: argparse.Namespace) -> None:
         f"(files: {', '.join(summary.files)}; media skipped: {summary.media_skipped})",
         file=sys.stderr,
     )
+    if summary.truncated:
+        print(
+            f"Warning: channel has more than {args.limit} messages; exported the oldest "
+            f"{summary.message_count} (raise --limit to include more).",
+            file=sys.stderr,
+        )
 
 
 def _export_json(messages) -> str:
