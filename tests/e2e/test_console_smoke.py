@@ -50,8 +50,14 @@ def smoke_results() -> list[console_smoke.PageResult]:
 
     Skips ONLY when the ``playwright-cli`` binary is missing (an intentional
     "not installed" case). Once the gate is open, any live-run failure
-    (``PlaywrightCliError``, a redirect-to-login, or a subprocess timeout) is
-    re-raised so the test fails loudly instead of masquerading as a skip/pass.
+    (``PlaywrightCliError``, a redirect-to-login) is re-raised so the test fails
+    loudly instead of masquerading as a skip/pass.
+
+    ``_run_cli`` converts a ``subprocess.TimeoutExpired`` into a redacted
+    ``PlaywrightCliError``; we still catch the raw ``TimeoutExpired`` here as a
+    belt-and-braces guard but deliberately do NOT interpolate the exception (its
+    ``str()`` embeds the raw argv, i.e. the cleartext password) — so a hung run
+    can never leak ``WEB_PASS`` into the failure message.
     """
     if shutil.which(console_smoke.PLAYWRIGHT_CLI) is None:
         pytest.skip(f"{console_smoke.PLAYWRIGHT_CLI} binary not found on PATH")
@@ -60,12 +66,11 @@ def smoke_results() -> list[console_smoke.PageResult]:
     settle = float(os.environ.get("E2E_SETTLE", "0") or "0")
     try:
         return console_smoke.run_smoke(base_url, password, settle=settle)
-    except (
-        console_smoke.PlaywrightCliError,
-        console_smoke.RedirectedToLoginError,
-        subprocess.TimeoutExpired,
-    ) as exc:
+    except (console_smoke.PlaywrightCliError, console_smoke.RedirectedToLoginError) as exc:
         raise AssertionError(f"console smoke run failed against {base_url}: {exc}") from exc
+    except subprocess.TimeoutExpired:
+        # Never interpolate the exception — its str() leaks the password argv.
+        raise AssertionError(f"console smoke run timed out against {base_url}") from None
 
 
 def test_no_console_errors_on_any_page(smoke_results: list[console_smoke.PageResult]) -> None:

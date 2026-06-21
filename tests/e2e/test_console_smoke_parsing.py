@@ -123,6 +123,29 @@ def test_run_cli_console_output_not_mistaken_for_error(monkeypatch: pytest.Monke
     assert console_smoke.parse_error_count(out) == 1
 
 
+def test_run_cli_redacts_secret_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CRITICAL: subprocess.TimeoutExpired's str() embeds the raw argv (the
+    # cleartext password). _run_cli must convert it to a redacted PlaywrightCliError
+    # so a hung `fill` can't leak WEB_PASS via any caller that interpolates it.
+    def _raise_timeout(*a: object, **k: object):
+        raise console_smoke.subprocess.TimeoutExpired(
+            cmd=["playwright-cli", "fill", "#password", "hunter2", "--submit"], timeout=120
+        )
+
+    monkeypatch.setattr(console_smoke.subprocess, "run", _raise_timeout)
+    with pytest.raises(console_smoke.PlaywrightCliError) as excinfo:
+        console_smoke._run_cli("fill", "#password", "hunter2", "--submit", secrets=("hunter2",))
+    assert "hunter2" not in str(excinfo.value)
+    assert "***" in str(excinfo.value)
+    # The original TimeoutExpired (whose str() leaks the password argv) must be
+    # suppressed from the chained traceback via `raise ... from None`, so it cannot
+    # resurface through a "During handling…" context line. (We assert the chaining
+    # flags rather than scanning the formatted traceback, which here would show the
+    # test's own source line containing the literal "hunter2".)
+    assert excinfo.value.__cause__ is None
+    assert excinfo.value.__suppress_context__ is True
+
+
 # --- login-path detection / current_path ------------------------------------
 
 

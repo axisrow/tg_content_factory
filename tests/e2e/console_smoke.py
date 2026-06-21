@@ -119,19 +119,28 @@ def _run_cli(*args: str, session: str | None = None, secrets: tuple[str, ...] = 
     CLI reports operational errors that way — see ``_CLI_ERROR_MARKER``).
 
     ``secrets`` are redacted from EVERYTHING this function returns or raises (the
-    echoed command, captured stdout/stderr, and the success-path return value), so
-    a password passed to ``fill`` — which the CLI echoes back verbatim on success
-    (``…fill('<pw>')``) — never leaks into the returned text, logs, or exceptions.
+    echoed command, captured stdout/stderr, the success-path return value, and a
+    timeout diagnostic), so a password passed to ``fill`` — which the CLI echoes
+    back verbatim on success (``…fill('<pw>')``) — never leaks into the returned
+    text, logs, or exceptions. NOTE: ``subprocess.TimeoutExpired`` is converted to
+    ``PlaywrightCliError`` here because its own ``str()`` embeds the raw argv
+    (cleartext password); letting it propagate would leak the secret via any caller
+    that interpolates the exception (e.g. the gated pytest fixture).
     """
     cmd = [PLAYWRIGHT_CLI]
     if session:
         cmd.append(f"-s={session}")
     cmd.extend(args)
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    cmd_shown = _redact(" ".join(cmd), secrets)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired as exc:
+        out = _redact(exc.stdout or "", secrets) if isinstance(exc.stdout, str) else ""
+        err = _redact(exc.stderr or "", secrets) if isinstance(exc.stderr, str) else ""
+        raise PlaywrightCliError(f"`{cmd_shown}` timed out after {exc.timeout}s:\n{out}\n{err}") from None
     stdout = _redact(proc.stdout, secrets)
     if proc.returncode != 0 or _CLI_ERROR_MARKER in proc.stdout:
         stderr = _redact(proc.stderr, secrets)
-        cmd_shown = _redact(" ".join(cmd), secrets)
         raise PlaywrightCliError(f"`{cmd_shown}` failed (exit {proc.returncode}):\n{stdout}\n{stderr}")
     return stdout
 
