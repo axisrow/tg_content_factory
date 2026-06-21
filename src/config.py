@@ -6,7 +6,7 @@ import re
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +59,14 @@ class DatabaseConfig(BaseModel):
     read_pool_size: int = 4
     # SQLite page cache per connection in KB (#760). Total committed RAM is roughly
     # cache_size_kb * (read_pool_size + 1); raise for large (multi-GB) databases.
-    cache_size_kb: int = 64000
+    # gt=0: a 0/negative value would make PRAGMA cache_size=-0 silently revert to
+    # the tiny ~8 MB default (review #940).
+    cache_size_kb: int = Field(64000, gt=0)
     # Memory-mapped I/O window in MB (#760). Virtual address space backed by the OS
     # page cache, not per-connection committed RAM — safe to keep large on big DBs.
-    mmap_size_mb: int = 256
+    # ge=0: 0 disables mmap (valid); a negative value would mean "map the whole
+    # file" to SQLite and could exhaust the address space (review #940).
+    mmap_size_mb: int = Field(256, ge=0)
 
 
 class LLMConfig(BaseModel):

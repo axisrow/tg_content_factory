@@ -26,6 +26,7 @@ class ConnectionTuning:
 
     cache_size_kb: int = 64000  # 64 MB page cache per connection
     mmap_size_mb: int = 256  # 256 MB mmap window (was 30 MB) — issue #760
+    analysis_limit: int = 400  # rows/index PRAGMA optimize samples (SQLite default)
 
 
 DEFAULT_TUNING = ConnectionTuning()
@@ -108,8 +109,8 @@ async def apply_pragmas(
     await conn.execute(f"PRAGMA mmap_size={tuning.mmap_size_mb * 1024 * 1024}")
     # Bound ANALYZE work so `PRAGMA optimize` (run on close) stays fast on
     # million-row tables yet still refreshes stale planner stats (#760, SQLite
-    # recommended value).
-    await conn.execute("PRAGMA analysis_limit=400")
+    # recommended default 400).
+    await conn.execute(f"PRAGMA analysis_limit={tuning.analysis_limit}")
     if role == "write":
         await conn.execute("PRAGMA journal_mode=WAL")
         # WAL hygiene (#766): make the autocheckpoint threshold explicit and
@@ -160,7 +161,10 @@ class DBConnection:
             try:
                 await db.execute("PRAGMA optimize")
             except Exception:
-                logger.debug("PRAGMA optimize on close failed", exc_info=True)
+                # Best-effort (not data-loss — the close below still runs), but
+                # surface it: silently-degrading planner stats are worth an alert
+                # (review #940).
+                logger.warning("PRAGMA optimize on close failed (best-effort)", exc_info=True)
             await db.close()
             self.db = None
 

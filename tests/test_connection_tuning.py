@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import aiosqlite
+import pytest
+from pydantic import ValidationError
 
 from src.config import DatabaseConfig
 from src.database.connection import ConnectionTuning, DBConnection, apply_pragmas
@@ -80,3 +82,21 @@ def test_database_config_tuning_defaults():
     cfg = DatabaseConfig()
     assert cfg.cache_size_kb == 64000
     assert cfg.mmap_size_mb == 256
+
+
+def test_database_config_rejects_invalid_tuning():
+    # cache_size_kb=0 → PRAGMA cache_size=-0 silently reverts to default; reject.
+    for bad in ({"cache_size_kb": 0}, {"cache_size_kb": -5}, {"mmap_size_mb": -1}):
+        with pytest.raises(ValidationError):
+            DatabaseConfig(**bad)
+    # mmap_size_mb=0 disables mmap and is valid.
+    assert DatabaseConfig(mmap_size_mb=0).mmap_size_mb == 0
+
+
+async def test_apply_pragmas_uses_configured_analysis_limit(tmp_path):
+    conn = await aiosqlite.connect(str(tmp_path / "t.db"), isolation_level=None)
+    try:
+        await apply_pragmas(conn, role="read", tuning=ConnectionTuning(analysis_limit=1000))
+        assert await _pragma(conn, "analysis_limit") == 1000
+    finally:
+        await conn.close()
