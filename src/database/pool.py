@@ -24,7 +24,7 @@ from typing import Any, AsyncIterator
 
 import aiosqlite
 
-from src.database.connection import open_connection
+from src.database.connection import DEFAULT_TUNING, ConnectionTuning, open_connection
 
 
 class BufferedCursor:
@@ -75,9 +75,10 @@ class ReadConnectionPool:
     write connection.
     """
 
-    def __init__(self, db_path: str, *, size: int):
+    def __init__(self, db_path: str, *, size: int, tuning: ConnectionTuning = DEFAULT_TUNING):
         self._db_path = db_path
         self._size = max(1, size)
+        self._tuning = tuning
         self._queue: asyncio.Queue[aiosqlite.Connection] = asyncio.Queue()
         self._all_conns: list[aiosqlite.Connection] = []
         self.owns_conns = True
@@ -91,7 +92,7 @@ class ReadConnectionPool:
             self._queue.put_nowait(shared_conn)
             return
         for _ in range(self._size):
-            conn = await open_connection(self._db_path, role="read")
+            conn = await open_connection(self._db_path, role="read", tuning=self._tuning)
             self._all_conns.append(conn)
             self._queue.put_nowait(conn)
 
