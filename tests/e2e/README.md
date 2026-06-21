@@ -27,6 +27,18 @@ python -m tests.e2e.console_smoke --base-url http://localhost:8080 --web-pass se
 It prints a per-page summary (✓ clean / ✗ N errors) and exits non-zero if any
 page logged an error. Drop `--web-pass` if the panel runs without a password.
 
+Add `--settle N` (or `E2E_SETTLE=N`) to wait N seconds after each page load
+before reading the console — useful when a page logs errors asynchronously a
+moment after load (the default reads the console immediately).
+
+**Auth note:** when a password is set, the script logs in through the real
+`/login` form (which sets a session cookie) rather than embedding credentials in
+the URL — `BasicAuthMiddleware` answers browser navigations with a `303` to
+`/login` instead of a `401` challenge, so a creds-in-URL navigation would
+silently land on the login page and report a false "all clean". After each
+navigation the script also asserts the page did **not** bounce to `/login`, so a
+wrong password or broken auth fails loudly instead of passing green.
+
 ### Run it via pytest
 
 ```bash

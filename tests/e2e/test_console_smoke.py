@@ -9,12 +9,19 @@ neither of which exists in the standard CI run. Enable it with::
 
 The actual browser-walking logic lives in ``tests/e2e/console_smoke.py`` so it
 can also be run by hand: ``python -m tests.e2e.console_smoke --base-url ... --web-pass ...``.
+
+Once the gate is open, an infrastructure failure (dead server, wrong password,
+broken ``playwright-cli`` invocation, hung navigation) must FAIL the test, not
+skip it — the user explicitly asked for the check, so silence cannot read as
+"all clean". We therefore only skip for the two intentional cases: the gate is
+closed (handled by ``pytestmark``) or the binary is simply not installed.
 """
 
 from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 
 import pytest
 
@@ -39,15 +46,26 @@ pytestmark = [
 
 @pytest.fixture(scope="module")
 def smoke_results() -> list[console_smoke.PageResult]:
-    """Walk every panel page once and share the results across the test(s)."""
+    """Walk every panel page once and share the results across the test(s).
+
+    Skips ONLY when the ``playwright-cli`` binary is missing (an intentional
+    "not installed" case). Once the gate is open, any live-run failure
+    (``PlaywrightCliError``, a redirect-to-login, or a subprocess timeout) is
+    re-raised so the test fails loudly instead of masquerading as a skip/pass.
+    """
     if shutil.which(console_smoke.PLAYWRIGHT_CLI) is None:
         pytest.skip(f"{console_smoke.PLAYWRIGHT_CLI} binary not found on PATH")
     base_url = os.environ.get("E2E_BASE_URL", "http://localhost:8080")
     password = os.environ.get("WEB_PASS") or None
+    settle = float(os.environ.get("E2E_SETTLE", "0") or "0")
     try:
-        return console_smoke.run_smoke(base_url, password)
-    except console_smoke.PlaywrightCliError as exc:  # pragma: no cover - depends on live env
-        pytest.skip(f"could not reach the panel via playwright-cli: {exc}")
+        return console_smoke.run_smoke(base_url, password, settle=settle)
+    except (
+        console_smoke.PlaywrightCliError,
+        console_smoke.RedirectedToLoginError,
+        subprocess.TimeoutExpired,
+    ) as exc:
+        raise AssertionError(f"console smoke run failed against {base_url}: {exc}") from exc
 
 
 def test_no_console_errors_on_any_page(smoke_results: list[console_smoke.PageResult]) -> None:

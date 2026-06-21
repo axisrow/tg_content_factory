@@ -11,13 +11,22 @@ Design notes:
 - We shell out to the already-installed ``playwright-cli`` binary rather than
   pulling in ``pytest-playwright`` + uvicorn-in-a-thread fixtures. The CLI keeps
   a persistent browser session between invocations, so the flow is just
-  ``open`` → ``goto`` (per page) → ``console error`` → ``close``.
+  ``open`` → (login once) → ``goto`` (per page) → ``console error`` → ``close``.
 - ``playwright-cli`` clears its console buffer on navigation, so after a
   ``goto`` the buffer holds only that page's messages — exactly what we want.
-- Auth: ``BasicAuthMiddleware`` accepts ``Authorization: Basic`` on any request
-  and sets a session cookie, so embedding ``admin:<pass>`` straight into the URL
-  (``http://admin:PASS@host/``) authenticates every navigation with no separate
-  login step. With no password configured the panel is open and we navigate as-is.
+- Auth: ``BasicAuthMiddleware`` only sends a ``401`` Basic challenge for
+  non-HTML requests; a browser navigation (``Accept: text/html``) instead gets a
+  ``303`` redirect to ``/login``, and Chromium never replays URL-embedded
+  credentials on a ``303``. So creds-in-URL would silently land every page on the
+  public ``/login`` form and report "all clean" without testing anything. We
+  therefore log in through the real form once (POST ``/login`` → session cookie),
+  which authenticates every later navigation, and after each ``goto`` we assert
+  the page did NOT bounce back to ``/login`` so a broken auth fails loudly rather
+  than passing green. With no password configured the panel is open and we skip
+  the login step. The password is typed into the form field (never embedded in a
+  navigation URL); ``playwright-cli`` diagnostics are redacted so it never leaks
+  into log/exception text (it can still be visible in local process args while
+  the ``fill`` runs — an inherent limit of any CLI that takes the value as argv).
 """
 
 from __future__ import annotations
@@ -28,7 +37,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 # The main panel pages to walk, mirroring the list in issue #792. Paths are
 # relative to the base URL; the leading "/" page is the dashboard.
@@ -55,10 +64,22 @@ _ERROR_COUNT_RE = re.compile(r"Errors:\s*(\d+)", re.IGNORECASE)
 
 PLAYWRIGHT_CLI = "playwright-cli"
 PANEL_USERNAME = "admin"
+LOGIN_PATH = "/login"
+# CSS selector for the panel's login form field (src/web/templates/web_login.html).
+_PASSWORD_FIELD = "#password"
+_REDACTED = "***"
 
 
 class PlaywrightCliError(RuntimeError):
     """Raised when a ``playwright-cli`` invocation fails outright (non-zero exit)."""
+
+
+class RedirectedToLoginError(RuntimeError):
+    """Raised when a page bounced to ``/login`` — i.e. the session is not authenticated.
+
+    This turns a silent false-negative (walking the public login form 12× and
+    reporting "all clean") into a loud failure.
+    """
 
 
 @dataclass(frozen=True)
@@ -74,32 +95,60 @@ class PageResult:
         return self.error_count == 0
 
 
-def _run_cli(*args: str, session: str | None = None) -> str:
-    """Run ``playwright-cli`` and return stdout; raise on non-zero exit."""
+def _redact(text: str, secrets: tuple[str, ...]) -> str:
+    """Replace each non-empty secret in ``text`` with ``***``."""
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, _REDACTED)
+    return text
+
+
+def _run_cli(*args: str, session: str | None = None, secrets: tuple[str, ...] = ()) -> str:
+    """Run ``playwright-cli`` and return stdout; raise on non-zero exit.
+
+    ``secrets`` are redacted from any diagnostic this function emits (the echoed
+    command and the captured stdout/stderr), so a password passed to ``fill``
+    never leaks into the exception text / logs.
+    """
     cmd = [PLAYWRIGHT_CLI]
     if session:
         cmd.append(f"-s={session}")
     cmd.extend(args)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if proc.returncode != 0:
-        raise PlaywrightCliError(f"`{' '.join(cmd)}` exited {proc.returncode}:\n{proc.stdout}\n{proc.stderr}")
+        shown = _redact(f"`{' '.join(cmd)}` exited {proc.returncode}:\n{proc.stdout}\n{proc.stderr}", secrets)
+        raise PlaywrightCliError(shown)
     return proc.stdout
 
 
-def authed_base_url(base_url: str, password: str | None) -> str:
-    """Embed ``admin:<password>`` into ``base_url`` for Basic auth.
+def current_path(*, session: str | None = None) -> str:
+    """Return the browser's current ``location.pathname`` (no query/host)."""
+    output = _run_cli("eval", "() => location.pathname", session=session)
+    # ``eval`` prints the JSON result on its own line, e.g. `"/settings/"`.
+    match = re.search(r'"([^"]*)"', output)
+    if match is None:
+        raise PlaywrightCliError(f"could not read location.pathname from:\n{output}")
+    return match.group(1)
 
-    Returns ``base_url`` unchanged when no password is given (open panel). The
-    password is percent-encoded so special characters survive the URL userinfo.
+
+def _is_login_path(path: str) -> bool:
+    """True if ``path`` is the login page (with or without a trailing slash)."""
+    return path.rstrip("/") == LOGIN_PATH
+
+
+def login(base_url: str, password: str, *, session: str | None = None) -> None:
+    """Authenticate the browser session via the real ``/login`` form.
+
+    Navigates to ``/login``, fills the password field and submits; the panel
+    responds with a session cookie that authenticates every later navigation.
+    Raises if the form did not authenticate (still on ``/login`` afterwards).
     """
-    if not password:
-        return base_url.rstrip("/")
-    parts = urlsplit(base_url)
-    userinfo = f"{quote(PANEL_USERNAME, safe='')}:{quote(password, safe='')}"
-    netloc = f"{userinfo}@{parts.hostname}"
-    if parts.port is not None:
-        netloc = f"{netloc}:{parts.port}"
-    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment)).rstrip("/")
+    base = base_url.rstrip("/")
+    secrets = (password,)
+    _run_cli("goto", f"{base}{LOGIN_PATH}", session=session, secrets=secrets)
+    _run_cli("fill", _PASSWORD_FIELD, password, "--submit", session=session, secrets=secrets)
+    if _is_login_path(current_path(session=session)):
+        raise RedirectedToLoginError("login failed: still on /login after submitting the password (wrong WEB_PASS?)")
 
 
 def parse_error_count(console_output: str) -> int:
@@ -115,10 +164,22 @@ def _error_lines(console_output: str) -> list[str]:
     return [line.strip() for line in console_output.splitlines() if line.lstrip().startswith("[ERROR]")]
 
 
-def check_page(base_with_auth: str, path: str, *, session: str | None = None) -> PageResult:
-    """Navigate to one page and read back its console errors."""
-    url = f"{base_with_auth}{path}"
-    _run_cli("goto", url, session=session)
+def check_page(base_url: str, path: str, *, session: str | None = None, settle: float = 0.0) -> PageResult:
+    """Navigate to one page and read back its console errors.
+
+    Raises :class:`RedirectedToLoginError` if the navigation bounced to ``/login``
+    (an unauthenticated session) — otherwise a broken auth would silently report
+    the clean login form as a clean panel page. ``settle`` optionally sleeps after
+    navigation so console errors emitted shortly after load (async/deferred) are
+    still captured before the one-shot console read.
+    """
+    base = base_url.rstrip("/")
+    _run_cli("goto", f"{base}{path}", session=session)
+    landed = current_path(session=session)
+    if _is_login_path(landed) and not _is_login_path(path):
+        raise RedirectedToLoginError(f"navigation to {path!r} bounced to {landed!r}: session is not authenticated")
+    if settle > 0:
+        _run_cli("eval", f"() => new Promise(r => setTimeout(r, {int(settle * 1000)}))", session=session)
     output = _run_cli("console", "error", session=session)
     return PageResult(path=path, error_count=parse_error_count(output), errors=_error_lines(output))
 
@@ -129,17 +190,19 @@ def run_smoke(
     paths: tuple[str, ...] = PANEL_PATHS,
     *,
     session: str | None = None,
+    settle: float = 0.0,
 ) -> list[PageResult]:
-    """Open a browser, walk every panel page, and return per-page results.
+    """Open a browser, (log in if needed,) walk every panel page, return results.
 
     The browser session is always closed, even on error, so a failed run does
     not leave a zombie ``playwright-cli`` process behind.
     """
-    base_with_auth = authed_base_url(base_url, password)
-    # Open against the auth'd root so the first navigation is already authenticated.
-    _run_cli("open", base_with_auth or base_url, session=session)
+    base = base_url.rstrip("/")
+    _run_cli("open", base, session=session)
     try:
-        return [check_page(base_with_auth, path, session=session) for path in paths]
+        if password:
+            login(base, password, session=session)
+        return [check_page(base, path, session=session, settle=settle) for path in paths]
     finally:
         try:
             _run_cli("close", session=session)
@@ -186,9 +249,19 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("WEB_PASS"),
         help="Panel password (defaults to the WEB_PASS env var; omit if the panel is open).",
     )
+    parser.add_argument(
+        "--settle",
+        type=float,
+        default=float(os.environ.get("E2E_SETTLE", "0") or "0"),
+        help="Seconds to wait after each page load before reading the console "
+        "(catches async errors fired shortly after load; default: %(default)s).",
+    )
     args = parser.parse_args(argv)
+    # Basic sanity on the base URL so a typo fails clearly rather than mid-walk.
+    if not urlsplit(args.base_url).scheme:
+        parser.error(f"--base-url must include a scheme, got {args.base_url!r}")
 
-    results = run_smoke(args.base_url, args.web_pass)
+    results = run_smoke(args.base_url, args.web_pass, settle=args.settle)
     print(format_summary(results))
     return 0 if all(r.clean for r in results) else 1
 
