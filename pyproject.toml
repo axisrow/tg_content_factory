@@ -75,6 +75,9 @@ docs = ["mkdocs-material>=9.7.6"]
 # Codex SDK image provider + agent backend. Optional: all imports are lazy, so
 # without this group the codex provider/backend simply don't register.
 codex = ["openai-codex>=0.1.0b2"]
+# Google ADK agent backend (Gemini models). Optional: all imports are lazy, so
+# without this group the adk backend simply reports itself unavailable.
+adk = ["google-adk>=1.16.0"]
 
 [project.urls]
 Homepage = "https://github.com/axisrow/tg_content_factory"

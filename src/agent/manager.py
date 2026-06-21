@@ -33,8 +33,14 @@ from claude_agent_sdk import (
     query,
 )
 
+from src.agent.adk_backend import AdkSdkBackend
 from src.agent.codex_backend import CodexSdkBackend
-from src.agent.models import CLAUDE_MODEL_IDS, CODEX_MODEL_IDS, VALID_AGENT_BACKENDS
+from src.agent.models import (
+    ADK_MODEL_IDS,
+    CLAUDE_MODEL_IDS,
+    CODEX_MODEL_IDS,
+    VALID_AGENT_BACKENDS,
+)
 from src.agent.prompt_template import (
     AGENT_PROMPT_TEMPLATE_SETTING,
     DEFAULT_AGENT_PROMPT_TEMPLATE,
@@ -370,6 +376,7 @@ class AgentRuntimeStatus:
     using_override: bool
     error: str | None = None
     codex_available: bool = False
+    adk_available: bool = False
 
 
 async def _await_with_countdown(
@@ -1955,6 +1962,9 @@ class AgentManager:
         self._codex_backend = CodexSdkBackend(
             db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
         )
+        self._adk_backend = AdkSdkBackend(
+            db, self._config, client_pool=client_pool, scheduler_manager=scheduler_manager,
+        )
         self._active_tasks: dict[int, asyncio.Task] = {}
         self._active_task_sessions: dict[int, str] = {}
         self._active_task_cancel_events: dict[int, threading.Event] = {}
@@ -2011,6 +2021,7 @@ class AgentManager:
             self._claude_backend.available
             or self._deepagents_backend.available
             or self._codex_backend.available
+            or self._adk_backend.available
         )
 
     def _build_prompt_stats_only(self, history: list[dict], message: str) -> dict:
@@ -2090,6 +2101,7 @@ class AgentManager:
         claude_available = self._claude_backend.available
         deepagents_available = self._deepagents_backend.available
         codex_available = self._codex_backend.available
+        adk_available = self._adk_backend.available
         deepagents_error = self._deepagents_backend.init_error
 
         selected_backend: str | None
@@ -2103,6 +2115,8 @@ class AgentManager:
                 error = deepagents_error or "deepagents fallback не сконфигурирован."
             elif selected_backend == "codex" and not codex_available:
                 error = "Codex SDK не установлен или Codex CLI не авторизован."
+            elif selected_backend == "adk" and not adk_available:
+                error = "Google ADK не установлен или не задан GOOGLE_API_KEY / GEMINI_API_KEY."
         else:
             # Codex is intentionally NOT in the auto-fallback chain: each turn
             # runs a blocking `codex` CLI subprocess and spawns an mcp-server
@@ -2125,6 +2139,7 @@ class AgentManager:
             claude_available=claude_available,
             deepagents_available=deepagents_available,
             codex_available=codex_available,
+            adk_available=adk_available,
             dev_mode_enabled=dev_mode_enabled,
             backend_override=backend_override,
             selected_backend=selected_backend,
@@ -2205,6 +2220,10 @@ class AgentManager:
             backend = self._codex_backend
             if model not in CODEX_MODEL_IDS:
                 model = None
+        elif backend_name == "adk":
+            backend = self._adk_backend
+            if model not in ADK_MODEL_IDS:
+                model = None
         else:
             yield _sse({"error": "Ошибка агента: не удалось выбрать backend."})
             return
@@ -2240,7 +2259,7 @@ class AgentManager:
             )
 
         async def _run_backend(
-            selected_backend: ClaudeSdkBackend | DeepagentsBackend | CodexSdkBackend,
+            selected_backend: ClaudeSdkBackend | DeepagentsBackend | CodexSdkBackend | AdkSdkBackend,
             failure_prefix: Callable[[str], str],
         ) -> None:
             # Set ContextVar here so token is created and reset in the same task context.

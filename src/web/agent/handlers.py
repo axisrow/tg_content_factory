@@ -91,6 +91,8 @@ async def agent_page(request: Request, thread_id: int | None = None):
         agent_status = {
             "claude_available": runtime_status.claude_available,
             "deepagents_available": runtime_status.deepagents_available,
+            "codex_available": runtime_status.codex_available,
+            "adk_available": runtime_status.adk_available,
             "dev_mode_enabled": runtime_status.dev_mode_enabled,
             "backend_override": runtime_status.backend_override,
             "selected_backend": runtime_status.selected_backend,

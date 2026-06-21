@@ -8,6 +8,10 @@
 |---------|------------------|
 | `claude-agent-sdk` | `ANTHROPIC_API_KEY` или `CLAUDE_CODE_OAUTH_TOKEN` в окружении |
 | `deepagents` | Fallback, если Claude недоступен |
+| `codex` | Codex SDK (`pip install -e ".[codex]"`) + авторизованный Codex CLI; только через Developer Override |
+| `adk` | Google ADK (`pip install -e ".[adk]"`) + `GOOGLE_API_KEY` / `GEMINI_API_KEY` (модели Gemini); только через Developer Override |
+
+Автовыбор использует только `claude-agent-sdk` и `deepagents`. Бэкенды `codex` и `adk` запускают тяжёлый out-of-process `mcp-server` subprocess, поэтому в авто-цепочку не входят и включаются только вручную через Developer Override.
 
 Переключение: Web UI → Settings → Agent → Developer Override.
 

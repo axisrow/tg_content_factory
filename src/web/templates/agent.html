@@ -655,6 +655,12 @@
                     deepagents
                     <strong>{{ "on" if agent_status.selected_backend == "deepagents" else "off" }}</strong>
                 </span>
+                {% if agent_status.selected_backend == "adk" %}
+                <span class="runtime-chip runtime-chip-on">
+                    google-adk
+                    <strong>on</strong>
+                </span>
+                {% endif %}
                 {% if agent_status.selected_backend == "deepagents" and agent_status.fallback_model %}
                 <span class="runtime-chip runtime-chip-accent">
                     provider
