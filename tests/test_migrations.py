@@ -6,6 +6,7 @@ import aiosqlite
 import pytest
 
 from src.database.migrations import (
+    _backfill_messages_fts_if_empty,
     _migrate_tool_permission_key,
     _migrate_vec_to_portable,
     _migrate_zai_empty_base_url_to_coding,
@@ -299,5 +300,81 @@ async def test_legacy_data_migration_helpers_preserve_upgrade_contracts(tmp_path
         cur = await conn.execute("SELECT value FROM settings WHERE key = 'agent_tool_permissions'")
         permissions = json.loads((await cur.fetchone())["value"])
         assert permissions == {"search_dialogs": False}
+    finally:
+        await conn.close()
+
+
+async def _fts_match_ids(conn: aiosqlite.Connection, query: str) -> list[int]:
+    cur = await conn.execute(
+        "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? ORDER BY rowid",
+        (query,),
+    )
+    return [row["rowid"] for row in await cur.fetchall()]
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_backfill_rebuilds_empty_fts_for_existing_messages(tmp_path):
+    """An empty FTS index over a non-empty messages table is repopulated (#760)."""
+    conn = await _connect(str(tmp_path / "stale_fts.db"))
+    try:
+        await run_migrations(conn)
+
+        # Insert messages, then wipe the FTS index to simulate a database whose
+        # rows predate messages_fts (or a dump/restore that never indexed them).
+        await conn.execute(
+            "INSERT INTO messages (channel_id, message_id, date, text) VALUES (?, ?, ?, ?)",
+            (111, 1, "2026-01-01T00:00:00", "привет мир"),
+        )
+        await conn.execute(
+            "INSERT INTO messages (channel_id, message_id, date, text) VALUES (?, ?, ?, ?)",
+            (111, 2, "2026-01-02T00:00:00", "погода сегодня хорошая"),
+        )
+        await conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('delete-all')")
+        await conn.commit()
+        assert await _fts_match_ids(conn, "привет") == []  # index is now empty
+
+        await _backfill_messages_fts_if_empty(conn)
+        await conn.commit()
+
+        assert await _fts_match_ids(conn, "привет") == [1]
+        assert await _fts_match_ids(conn, "погода") == [2]
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_backfill_is_idempotent_and_skips_populated_index(tmp_path):
+    """Re-running the backfill must not duplicate rows or error on a full index."""
+    conn = await _connect(str(tmp_path / "populated_fts.db"))
+    try:
+        await run_migrations(conn)
+        await conn.execute(
+            "INSERT INTO messages (channel_id, message_id, date, text) VALUES (?, ?, ?, ?)",
+            (222, 1, "2026-01-01T00:00:00", "уникальное слово"),
+        )
+        await conn.commit()
+
+        # Trigger already indexed the row; backfill should detect a populated
+        # index and skip the rebuild entirely.
+        await _backfill_messages_fts_if_empty(conn)
+        await _backfill_messages_fts_if_empty(conn)
+        await conn.commit()
+
+        assert await _fts_match_ids(conn, "уникальное") == [1]
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_backfill_noop_on_empty_messages(tmp_path):
+    """No messages → nothing to index, and no error."""
+    conn = await _connect(str(tmp_path / "empty.db"))
+    try:
+        await run_migrations(conn)
+        await _backfill_messages_fts_if_empty(conn)
+        assert await _fts_match_ids(conn, "что угодно") == []
     finally:
         await conn.close()

@@ -390,6 +390,49 @@ async def _drop_legacy_pipelines_table_if_empty(db: aiosqlite.Connection) -> Non
         await db.execute("DROP TABLE pipelines")
 
 
+async def _backfill_messages_fts_if_empty(db: aiosqlite.Connection) -> None:
+    """Populate the ``messages_fts`` full-text index from existing messages.
+
+    The FTS index is kept in sync by AFTER INSERT/DELETE triggers, so it only
+    ever sees messages written *after* the virtual table was created. A database
+    that already held messages before ``messages_fts`` existed — or one rebuilt
+    from a dump / restored backup — starts with an empty index. Search code then
+    silently falls through to the slow ``LIKE '%..%'`` path (``fts_available``
+    stays True but ``MATCH`` finds nothing), scanning millions of rows per query.
+
+    This rebuilds the index from the ``content=messages`` table whenever the
+    index is empty but ``messages`` is not. It is gated on the *actual* state of
+    the index rather than a one-shot settings flag, so it stays correct if it
+    first runs on an empty database and messages are imported later. ``rebuild``
+    on an already-populated index is skipped, keeping the migration idempotent
+    and cheap on every boot after the first.
+
+    ``messages.text`` is never updated in place (only metadata columns are), so
+    the missing AFTER UPDATE trigger cannot desync the index — a wholesale empty
+    index is the only drift this code needs to repair.
+    """
+    if not await table_exists(db, "messages_fts"):
+        return
+
+    # Fast path for every normal boot: the index is external-content, so its row
+    # data lives in the ``messages_fts_docsize`` shadow table. A single row there
+    # means the index is populated and there is nothing to do — bail before the
+    # (cheap, but pointless) ``messages`` probe. No COUNT(*) over millions of rows.
+    cur = await db.execute("SELECT 1 FROM messages_fts_docsize LIMIT 1")
+    if await cur.fetchone() is not None:
+        return
+
+    if not await table_exists(db, "messages"):
+        return
+    cur = await db.execute("SELECT 1 FROM messages LIMIT 1")
+    if await cur.fetchone() is None:
+        return
+
+    logger.info("messages_fts is empty but messages exist; rebuilding full-text index")
+    await db.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+    logger.info("messages_fts rebuild complete")
+
+
 async def run_migrations(db: aiosqlite.Connection) -> bool:
     """Repair the SQLite schema without rewriting existing user data.
 
@@ -419,6 +462,8 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
 
     await ensure_indexes(db, SCHEMA_REPAIR_INDEXES)
     fts_available = await _ensure_fts5_available(db)
+    if fts_available:
+        await _backfill_messages_fts_if_empty(db)
 
     cur = await db.execute(
         "SELECT value FROM settings WHERE key = '_migration_channel_cursor_repair_v1' LIMIT 1"
