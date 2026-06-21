@@ -17,6 +17,8 @@ this module loads without the SDK installed (the optional ``[adk]`` extra).
 from __future__ import annotations
 
 import asyncio
+import functools
+import importlib.util
 import logging
 import os
 import sys
@@ -42,10 +44,15 @@ ADK_API_KEY_ENV_VARS: tuple[str, ...] = (
 )
 
 
+@functools.lru_cache(maxsize=1)
 def _adk_sdk_installed() -> bool:
-    """True when the ``google.adk`` SDK is importable in this environment."""
-    import importlib.util
+    """True when the ``google.adk`` SDK is importable in this environment.
 
+    Cached: install state is static for the process lifetime, and ``available``
+    is read on every agent page load and chat request, so the find_spec stat walk
+    should not run each time (mirrors ``provider_adapters.codex_available``). The
+    API-key check stays live since the environment can change.
+    """
     return importlib.util.find_spec("google.adk") is not None
 
 
@@ -216,15 +223,21 @@ class AdkSdkBackend:
         # and in full_text (which the web layer persists to the DB). But a short
         # response — or a version/provider path that skips the deltas — may deliver
         # the answer ONLY as a non-partial event, and dropping that would silently
-        # lose the reply. So: stream partial deltas always; accept a non-partial
-        # text only when no text has streamed yet (it is then the sole answer, not
-        # a duplicate aggregate). Tool calls/responses are never partial and are
-        # always processed.
+        # lose the reply. So dedup PER EVENT, not per part: stream partial deltas
+        # always; accept a non-partial event's text only when no text has streamed
+        # yet (it is then the sole answer, not a duplicate aggregate). The accept
+        # decision is computed once, before iterating parts, so a multi-part answer
+        # is never truncated; saw_text is set after the event, not inside the loop.
+        # Tool calls/responses are never partial and are always processed.
         is_partial = getattr(event, "partial", False)
+        accept_text = is_partial or not stream_state["saw_text"]
+        streamed_text = False
         for part in parts:
             text = getattr(part, "text", None)
-            if text and (is_partial or not stream_state["saw_text"]):
-                stream_state["saw_text"] = True
+            # Skip thinking-model "thought" parts — they are the model's reasoning
+            # summary, not the answer; ADK itself excludes them (`if not p.thought`).
+            if text and accept_text and not getattr(part, "thought", False):
+                streamed_text = True
                 full_text_parts.append(text)
                 chunk = safe_json_dumps({"text": text}, ensure_ascii=False)
                 await queue.put(f"data: {chunk}\n\n")
@@ -237,11 +250,31 @@ class AdkSdkBackend:
                 end = {
                     "type": "tool_end",
                     "tool": str(function_response.name),
+                    # ADK function_response parts carry no duration; the project's
+                    # SSE shape keeps the field for parity but it is not available.
                     "duration": 0,
-                    "is_error": False,
+                    "is_error": _function_response_is_error(function_response),
                     "summary": PROJECT_MCP_SERVER_NAME,
                 }
                 await queue.put(f"data: {safe_json_dumps(end, ensure_ascii=False)}\n\n")
+        # Mark text seen only after the whole event, so a later non-partial
+        # aggregate is suppressed but parts within THIS event are never dropped.
+        if streamed_text:
+            stream_state["saw_text"] = True
+
+
+def _function_response_is_error(function_response) -> bool:
+    """Best-effort: did this ADK ``function_response`` carry a tool error?
+
+    ADK wraps an MCP tool result in ``function_response.response`` (a dict). MCP
+    surfaces failures as ``{"isError": True, ...}`` (CallToolResult), and some
+    paths use an explicit ``error`` key. Default to False when the shape is
+    unknown — a missing signal must not be reported as a failed tool call.
+    """
+    response = getattr(function_response, "response", None)
+    if isinstance(response, dict):
+        return bool(response.get("isError") or response.get("error"))
+    return False
 
 
 def _usage_from_event(event) -> dict | None:

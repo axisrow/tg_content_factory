@@ -134,6 +134,12 @@ def _make_backend(client_pool=None):
     return AdkSdkBackend(Database(":memory:"), AppConfig(), client_pool=client_pool)
 
 
+def _text_part(text, *, thought=False):
+    return SimpleNamespace(
+        text=text, function_call=None, function_response=None, thought=thought
+    )
+
+
 def _text_event(text, *, partial=True):
     """A streamed text event.
 
@@ -142,9 +148,30 @@ def _text_event(text, *, partial=True):
     repeats the full text. The backend must stream only the partial chunks, or the
     reply is duplicated in the live stream and in the persisted DB message.
     """
-    part = SimpleNamespace(text=text, function_call=None, function_response=None)
     return SimpleNamespace(
-        content=SimpleNamespace(parts=[part]), usage_metadata=None, partial=partial
+        content=SimpleNamespace(parts=[_text_part(text)]),
+        usage_metadata=None,
+        partial=partial,
+    )
+
+
+def _multi_text_event(texts, *, partial=False):
+    """An event whose content carries several text parts (ADK can split a turn)."""
+    return SimpleNamespace(
+        content=SimpleNamespace(parts=[_text_part(t) for t in texts]),
+        usage_metadata=None,
+        partial=partial,
+    )
+
+
+def _thought_then_text_event(thought, answer, *, partial=False):
+    """An event mixing a thought-summary part (thought=True) with the real answer."""
+    return SimpleNamespace(
+        content=SimpleNamespace(
+            parts=[_text_part(thought, thought=True), _text_part(answer)]
+        ),
+        usage_metadata=None,
+        partial=partial,
     )
 
 
@@ -157,9 +184,11 @@ def _tool_call_event(name):
     )
 
 
-def _tool_response_event(name):
+def _tool_response_event(name, *, response=None):
     part = SimpleNamespace(
-        text=None, function_call=None, function_response=SimpleNamespace(name=name)
+        text=None,
+        function_call=None,
+        function_response=SimpleNamespace(name=name, response=response),
     )
     return SimpleNamespace(
         content=SimpleNamespace(parts=[part]), usage_metadata=None, partial=False
@@ -301,6 +330,57 @@ async def test_chat_stream_tool_then_final_only_text(monkeypatch):
     assert done["full_text"] == "3 channels"
 
 
+async def test_chat_stream_keeps_all_parts_of_final_only_event(monkeypatch):
+    """A final-only event with several text parts must keep ALL of them.
+
+    Dedup is per-event (the aggregate repeat is dropped), never per-part — a
+    non-partial event can legitimately carry multiple text parts, and dropping
+    everything after the first would silently truncate the persisted answer.
+    """
+    _install_fake_adk(
+        monkeypatch,
+        events=[_multi_text_event(["Part one. ", "Part two."], partial=False)],
+    )
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="hi", system_prompt="", stats={}, model=None, queue=queue
+    )
+
+    events = await _drain(queue)
+    texts = [e["text"] for e in events if "text" in e]
+    assert texts == ["Part one. ", "Part two."]  # both parts kept
+    done = next(e for e in events if e.get("done"))
+    assert done["full_text"] == "Part one. Part two."
+
+
+async def test_chat_stream_ignores_thought_parts(monkeypatch):
+    """Thinking-model thought parts (thought=True) are not the answer — drop them.
+
+    Gemini thinking models (the ADK default model is gemini-2.5-flash) emit
+    thought-summary text parts. Streaming/persisting them as the reply leaks the
+    model's reasoning into the saved conversation and would let a thought shadow
+    the real answer under the per-event dedup.
+    """
+    _install_fake_adk(
+        monkeypatch,
+        events=[_thought_then_text_event("(thinking...) let me check", "The answer is 42.")],
+    )
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="hi", system_prompt="", stats={}, model=None, queue=queue
+    )
+
+    events = await _drain(queue)
+    texts = [e["text"] for e in events if "text" in e]
+    assert texts == ["The answer is 42."]  # thought dropped, answer kept
+    done = next(e for e in events if e.get("done"))
+    assert done["full_text"] == "The answer is 42."
+
+
 async def test_chat_stream_threads_system_prompt_as_instruction(monkeypatch):
     captured = _install_fake_adk(monkeypatch, events=[_text_event("ok")])
     backend = _make_backend()
@@ -381,6 +461,28 @@ async def test_chat_stream_emits_tool_events(monkeypatch):
     assert [e["tool"] for e in starts] == ["list_channels"]
     assert [e["tool"] for e in ends] == ["list_channels"]
     assert ends[0]["is_error"] is False
+
+
+async def test_chat_stream_tool_error_sets_is_error(monkeypatch):
+    """A failed MCP tool result (response carries isError) maps to is_error True."""
+    _install_fake_adk(
+        monkeypatch,
+        events=[
+            _tool_call_event("delete_channel"),
+            _tool_response_event("delete_channel", response={"isError": True}),
+            _text_event("failed", partial=False),
+        ],
+    )
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="delete it", system_prompt="", stats={}, model=None, queue=queue
+    )
+
+    events = await _drain(queue)
+    ends = [e for e in events if e.get("type") == "tool_end"]
+    assert ends and ends[0]["is_error"] is True
 
 
 async def test_chat_stream_times_out(monkeypatch):
