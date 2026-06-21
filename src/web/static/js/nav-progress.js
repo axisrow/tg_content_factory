@@ -7,6 +7,7 @@
   if (!bar) return;
 
   var timer = null;
+  var safety = null;
   var visible = false;
 
   function set(pct) {
@@ -26,12 +27,20 @@
       if (pct > 90) pct = 90;
       set(pct);
     }, 200);
+    // Safety net: if navigation is aborted (Esc, blocked, cancelled submit) and
+    // no done() fires, auto-clear so the bar can't freeze and lock out future
+    // triggers via the `if (visible) return` guard (review #941).
+    safety = window.setTimeout(done, 20000);
   }
 
   function done() {
     if (timer) {
       window.clearInterval(timer);
       timer = null;
+    }
+    if (safety) {
+      window.clearTimeout(safety);
+      safety = null;
     }
     if (!visible) return;
     set(100);
@@ -60,17 +69,28 @@
   });
 
   document.addEventListener("submit", function (e) {
+    // Skip submissions cancelled by another handler (AJAX/confirm flows) and
+    // new-tab forms — neither navigates the current page (review #941).
+    if (e.defaultPrevented) return;
     var form = e.target;
-    if (form && form.tagName === "FORM" && !form.hasAttribute("hx-post") && !form.hasAttribute("hx-get")) {
+    if (
+      form &&
+      form.tagName === "FORM" &&
+      form.target !== "_blank" &&
+      !form.hasAttribute("hx-post") &&
+      !form.hasAttribute("hx-get")
+    ) {
       start();
     }
   });
 
-  // The new document finishes loading → complete the bar; bfcache restore resets it.
+  // The new document finishes loading → complete the bar; bfcache restore resets
+  // it; pagehide covers aborted/cancelled navigations.
   window.addEventListener("load", done);
   window.addEventListener("pageshow", function (e) {
     if (e.persisted) done();
   });
+  window.addEventListener("pagehide", done);
   window.addEventListener("beforeunload", start);
 
   // --- HTMX requests (partial swaps) ---
