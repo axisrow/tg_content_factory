@@ -572,3 +572,21 @@ label:first-child .hint::before { left: 0.5em; transform: none; }
 .wizard-type-card input[type="radio"] {
     display: none;
 }
+
+/* Navigation progress bar (#756) — immediate feedback during slow page loads. */
+.app-progress {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 3px;
+    background: var(--bs-primary, #0d6efd);
+    box-shadow: 0 0 8px rgba(13, 110, 253, 0.5);
+    opacity: 0;
+    z-index: 2000;
+    transition: width 0.2s ease, opacity 0.25s ease;
+    pointer-events: none;
+}
+.app-progress.is-active {
+    opacity: 1;
+}
