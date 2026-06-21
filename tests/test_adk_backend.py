@@ -134,23 +134,36 @@ def _make_backend(client_pool=None):
     return AdkSdkBackend(Database(":memory:"), AppConfig(), client_pool=client_pool)
 
 
-def _text_event(text):
+def _text_event(text, *, partial=True):
+    """A streamed text event.
+
+    Mirrors ADK's SSE shape: incremental chunks carry ``partial=True``; the final
+    aggregated event the runner emits at end-of-turn carries ``partial=False`` and
+    repeats the full text. The backend must stream only the partial chunks, or the
+    reply is duplicated in the live stream and in the persisted DB message.
+    """
     part = SimpleNamespace(text=text, function_call=None, function_response=None)
-    return SimpleNamespace(content=SimpleNamespace(parts=[part]), usage_metadata=None)
+    return SimpleNamespace(
+        content=SimpleNamespace(parts=[part]), usage_metadata=None, partial=partial
+    )
 
 
 def _tool_call_event(name):
     part = SimpleNamespace(
         text=None, function_call=SimpleNamespace(name=name), function_response=None
     )
-    return SimpleNamespace(content=SimpleNamespace(parts=[part]), usage_metadata=None)
+    return SimpleNamespace(
+        content=SimpleNamespace(parts=[part]), usage_metadata=None, partial=False
+    )
 
 
 def _tool_response_event(name):
     part = SimpleNamespace(
         text=None, function_call=None, function_response=SimpleNamespace(name=name)
     )
-    return SimpleNamespace(content=SimpleNamespace(parts=[part]), usage_metadata=None)
+    return SimpleNamespace(
+        content=SimpleNamespace(parts=[part]), usage_metadata=None, partial=False
+    )
 
 
 def _usage_event(prompt, candidates, total):
@@ -159,7 +172,7 @@ def _usage_event(prompt, candidates, total):
         candidates_token_count=candidates,
         total_token_count=total,
     )
-    return SimpleNamespace(content=None, usage_metadata=usage)
+    return SimpleNamespace(content=None, usage_metadata=usage, partial=False)
 
 
 async def _drain(queue: asyncio.Queue) -> list[dict]:
@@ -179,6 +192,9 @@ async def test_chat_stream_emits_text_then_done(monkeypatch):
         events=[
             _text_event("Hello "),
             _text_event("world"),
+            # Final aggregated event (partial=False) repeats the full turn text —
+            # the backend must NOT re-stream it, or "Hello world" is duplicated.
+            _text_event("Hello world", partial=False),
             _usage_event(10, 5, 15),
         ],
     )
@@ -202,6 +218,36 @@ async def test_chat_stream_emits_text_then_done(monkeypatch):
     assert done["backend"] == "adk"
     assert done["model"] == "gemini-2.5-flash"
     assert done["usage"] == {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15}
+
+
+async def test_chat_stream_skips_final_aggregated_text(monkeypatch):
+    """The final aggregated (partial=False) event must not re-stream the full text.
+
+    ADK in SSE mode emits partial deltas and then a final non-partial event that
+    repeats the whole turn. Counting both would duplicate the reply in the live
+    stream AND in full_text (which handlers persist to the DB). Guards the data
+    corruption that motivated this fix.
+    """
+    _install_fake_adk(
+        monkeypatch,
+        events=[
+            _text_event("Привет"),
+            _text_event("!"),
+            _text_event("Привет!", partial=False),  # final aggregated — must be ignored
+        ],
+    )
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="hi", system_prompt="", stats={}, model=None, queue=queue
+    )
+
+    events = await _drain(queue)
+    texts = [e["text"] for e in events if "text" in e]
+    assert texts == ["Привет", "!"]  # the aggregated repeat is dropped
+    done = next(e for e in events if e.get("done"))
+    assert done["full_text"] == "Привет!"  # not "Привет!Привет!"
 
 
 async def test_chat_stream_threads_system_prompt_as_instruction(monkeypatch):

@@ -206,9 +206,16 @@ class AdkSdkBackend:
         parts = getattr(content, "parts", None) if content is not None else None
         if not parts:
             return
+        # In SSE streaming mode ADK emits incremental text deltas (partial=True)
+        # and then a FINAL aggregated event (partial=False) that repeats the whole
+        # turn's text. Streaming both would duplicate the reply in the live stream
+        # and in full_text (which the web layer persists to the DB), so only the
+        # partial deltas are accumulated. Tool calls/responses are not partial and
+        # are always processed.
+        is_partial = getattr(event, "partial", False)
         for part in parts:
             text = getattr(part, "text", None)
-            if text:
+            if text and is_partial:
                 full_text_parts.append(text)
                 chunk = safe_json_dumps({"text": text}, ensure_ascii=False)
                 await queue.put(f"data: {chunk}\n\n")
