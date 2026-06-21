@@ -11,7 +11,7 @@ from typing import Any
 import aiosqlite
 
 from src.database.bundles import DatabaseRepositories
-from src.database.connection import DBConnection
+from src.database.connection import ConnectionTuning, DBConnection
 from src.database.migrations import run_migrations
 from src.database.pool import BufferedCursor, ReadConnectionPool, ReadPoolProxy
 from src.database.repositories._transactions import begin_immediate
@@ -76,10 +76,13 @@ class Database:
         session_encryption_secret: str | None = None,
         *,
         read_pool_size: int = 4,
+        cache_size_kb: int = 64000,
+        mmap_size_mb: int = 256,
     ):
         self._db_path = db_path
         self._session_encryption_secret = session_encryption_secret
-        self._connection = DBConnection(db_path)
+        self._tuning = ConnectionTuning(cache_size_kb=cache_size_kb, mmap_size_mb=mmap_size_mb)
+        self._connection = DBConnection(db_path, tuning=self._tuning)
         # Lone write connection (`_db`). All DML goes here under `_write_lock` so the
         # "one writer" contract (#569) is preserved. Reads go through `_read_proxy`,
         # backed by a pool of read connections, so a slow SELECT can't block the whole
@@ -128,7 +131,9 @@ class Database:
         # so a slow SELECT only ties up one read connection, never the whole process.
         # For :memory: each connect is a separate empty DB, so the pool degenerates to
         # the single write connection (shared) — tests keep one consistent in-memory DB.
-        self._read_pool = ReadConnectionPool(self._db_path, size=self._read_pool_size)
+        self._read_pool = ReadConnectionPool(
+            self._db_path, size=self._read_pool_size, tuning=self._tuning
+        )
         if self._db_path == ":memory:":
             await self._read_pool.open(shared_conn=self._db)
         else:

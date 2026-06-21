@@ -184,6 +184,8 @@ async def build_container_with_templates(
         config.database.path,
         session_encryption_secret=resolve_session_encryption_secret(config),
         read_pool_size=config.database.read_pool_size,
+        cache_size_kb=config.database.cache_size_kb,
+        mmap_size_mb=config.database.mmap_size_mb,
     )
     if _is_dev:
         t1 = time.monotonic()
