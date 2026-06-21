@@ -30,6 +30,10 @@ from src.utils.json import safe_json_dumps
 logger = logging.getLogger(__name__)
 
 ADK_DEFAULT_MODEL = "gemini-2.5-flash"
+# Upper bound on runner.close() so a wedged MCP subprocess cannot hang turn
+# cleanup (and the SSE stream) indefinitely — mirrors the codex image path's
+# bounded subprocess close.
+ADK_CLOSE_TIMEOUT_SECONDS = 10.0
 # Name the project MCP server is registered under inside ADK's toolset.
 PROJECT_MCP_SERVER_NAME = "telegram_db"
 # App/user identifiers for ADK's in-memory session — single-tenant, so constant.
@@ -173,8 +177,17 @@ class AdkSdkBackend:
                         usage = event_usage
             finally:
                 # InMemoryRunner spawns the MCP subprocess via McpToolset; close it
-                # so a finished/cancelled turn does not leak the child process.
-                await runner.close()
+                # so a finished/cancelled turn does not leak the child process. Bound
+                # the close: if the subprocess is wedged (the exact failure the turn
+                # timeout / user cancellation must recover from), an unbounded close
+                # in finally would block wait_for's cleanup and hang the SSE stream.
+                # close() is best-effort cleanup, so swallow its timeout/errors —
+                # including CancelledError so a cancelled turn still gets a chance to
+                # reap the child instead of skipping cleanup entirely.
+                try:
+                    await asyncio.wait_for(runner.close(), timeout=ADK_CLOSE_TIMEOUT_SECONDS)
+                except (Exception, asyncio.CancelledError):
+                    logger.warning("ADK: failed to close runner cleanly", exc_info=True)
             return usage
 
         # Hard total-turn deadline, mirroring the other backends' total_timeout.

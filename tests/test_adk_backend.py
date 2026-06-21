@@ -19,7 +19,7 @@ import pytest
 pytestmark = pytest.mark.anyio
 
 
-def _install_fake_adk(monkeypatch, *, events, hang=False):
+def _install_fake_adk(monkeypatch, *, events, hang=False, close_hangs=False):
     """Install a fake ``google.adk`` whose ``run_async`` yields *events*.
 
     Each event mirrors the real ADK ``Event`` shape we consume:
@@ -55,6 +55,11 @@ def _install_fake_adk(monkeypatch, *, events, hang=False):
                 yield event
 
         async def close(self):
+            captured["close_started"] = True
+            if close_hangs:
+                # Simulate a wedged MCP subprocess: close never returns. The
+                # backend must bound this so the turn still surfaces an error.
+                await asyncio.Event().wait()
             captured["closed"] = True
 
     class FakeAgent:
@@ -513,6 +518,39 @@ async def test_chat_stream_closes_runner(monkeypatch):
     )
 
     assert captured.get("closed") is True
+
+
+@pytest.mark.timeout(10)
+async def test_chat_stream_does_not_hang_on_stuck_close(monkeypatch):
+    """A wedged runner.close() must not hang the turn — cleanup is bounded.
+
+    If the MCP subprocess is stuck, runner.close() never returns. Awaiting it
+    unbounded in finally would block the whole chat_stream (and the SSE stream).
+    The backend bounds the close, so the turn still completes and emits its done
+    frame. The pytest timeout fails loudly if cleanup is ever unbounded again.
+    """
+    import src.agent.adk_backend as ab
+
+    # Short close bound so the test is fast; well under total_timeout so we
+    # exercise the close-bound path, not the outer turn deadline.
+    monkeypatch.setattr(ab, "ADK_CLOSE_TIMEOUT_SECONDS", 0.05)
+    captured = _install_fake_adk(
+        monkeypatch, events=[_text_event("hi", partial=False)], close_hangs=True
+    )
+    backend = _make_backend()
+    backend._config.agent.total_timeout = 5  # plenty; the turn itself is instant
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="x", system_prompt="", stats={}, model=None, queue=queue
+    )
+
+    # close() was attempted but never finished — yet the turn still completed.
+    assert captured.get("close_started") is True
+    assert captured.get("closed") is not True
+    events = await _drain(queue)
+    done = next((e for e in events if e.get("done")), None)
+    assert done is not None and done["full_text"] == "hi"
 
 
 async def test_chat_stream_prepends_history(monkeypatch):
