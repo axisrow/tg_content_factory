@@ -250,6 +250,57 @@ async def test_chat_stream_skips_final_aggregated_text(monkeypatch):
     assert done["full_text"] == "Привет!"  # not "Привет!Привет!"
 
 
+async def test_chat_stream_keeps_final_only_text(monkeypatch):
+    """A turn whose text arrives ONLY as a non-partial event must not be lost.
+
+    If no partial deltas precede it (short response, version skew, or a provider
+    path that emits only the completed event), the first non-partial text IS the
+    answer — dropping it would persist an empty assistant message and lose the
+    user's reply silently. The dedup must suppress the aggregate only when partial
+    text already streamed, never the sole answer.
+    """
+    _install_fake_adk(
+        monkeypatch,
+        events=[_text_event("ok", partial=False)],
+    )
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="hi", system_prompt="", stats={}, model=None, queue=queue
+    )
+
+    events = await _drain(queue)
+    texts = [e["text"] for e in events if "text" in e]
+    assert texts == ["ok"]  # streamed, not dropped
+    done = next(e for e in events if e.get("done"))
+    assert done["full_text"] == "ok"  # not ""
+
+
+async def test_chat_stream_tool_then_final_only_text(monkeypatch):
+    """Tool call + a final-only (non-partial) text answer: text still kept once."""
+    _install_fake_adk(
+        monkeypatch,
+        events=[
+            _tool_call_event("list_channels"),
+            _tool_response_event("list_channels"),
+            _text_event("3 channels", partial=False),  # answer arrives only here
+        ],
+    )
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="how many channels", system_prompt="", stats={}, model=None, queue=queue
+    )
+
+    events = await _drain(queue)
+    texts = [e["text"] for e in events if "text" in e]
+    assert texts == ["3 channels"]
+    done = next(e for e in events if e.get("done"))
+    assert done["full_text"] == "3 channels"
+
+
 async def test_chat_stream_threads_system_prompt_as_instruction(monkeypatch):
     captured = _install_fake_adk(monkeypatch, events=[_text_event("ok")])
     backend = _make_backend()

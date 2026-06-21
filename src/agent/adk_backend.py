@@ -139,6 +139,9 @@ class AdkSdkBackend:
         full_prompt = _embed_history_in_prompt(history_msgs or [], prompt)
 
         full_text_parts: list[str] = []
+        # Tracks whether any text has streamed this turn, so the final aggregated
+        # event is deduped without dropping a final-only reply (see _handle_event).
+        stream_state = {"saw_text": False}
         usage: dict | None = None
 
         async def _drain() -> dict | None:
@@ -157,7 +160,7 @@ class AdkSdkBackend:
                     new_message=message,
                     run_config=run_config,
                 ):
-                    await self._handle_event(event, queue, full_text_parts)
+                    await self._handle_event(event, queue, full_text_parts, stream_state)
                     event_usage = _usage_from_event(event)
                     if event_usage:
                         usage = event_usage
@@ -200,6 +203,7 @@ class AdkSdkBackend:
         event,
         queue: asyncio.Queue[str | None],
         full_text_parts: list[str],
+        stream_state: dict,
     ) -> None:
         """Map one ADK event to the project's SSE frames (text deltas + tool events)."""
         content = getattr(event, "content", None)
@@ -209,13 +213,18 @@ class AdkSdkBackend:
         # In SSE streaming mode ADK emits incremental text deltas (partial=True)
         # and then a FINAL aggregated event (partial=False) that repeats the whole
         # turn's text. Streaming both would duplicate the reply in the live stream
-        # and in full_text (which the web layer persists to the DB), so only the
-        # partial deltas are accumulated. Tool calls/responses are not partial and
-        # are always processed.
+        # and in full_text (which the web layer persists to the DB). But a short
+        # response — or a version/provider path that skips the deltas — may deliver
+        # the answer ONLY as a non-partial event, and dropping that would silently
+        # lose the reply. So: stream partial deltas always; accept a non-partial
+        # text only when no text has streamed yet (it is then the sole answer, not
+        # a duplicate aggregate). Tool calls/responses are never partial and are
+        # always processed.
         is_partial = getattr(event, "partial", False)
         for part in parts:
             text = getattr(part, "text", None)
-            if text and is_partial:
+            if text and (is_partial or not stream_state["saw_text"]):
+                stream_state["saw_text"] = True
                 full_text_parts.append(text)
                 chunk = safe_json_dumps({"text": text}, ensure_ascii=False)
                 await queue.put(f"data: {chunk}\n\n")
