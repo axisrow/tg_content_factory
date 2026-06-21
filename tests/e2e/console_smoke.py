@@ -63,15 +63,24 @@ PANEL_PATHS: tuple[str, ...] = (
 _ERROR_COUNT_RE = re.compile(r"Errors:\s*(\d+)", re.IGNORECASE)
 
 PLAYWRIGHT_CLI = "playwright-cli"
-PANEL_USERNAME = "admin"
 LOGIN_PATH = "/login"
 # CSS selector for the panel's login form field (src/web/templates/web_login.html).
 _PASSWORD_FIELD = "#password"
 _REDACTED = "***"
+# ``playwright-cli`` reports operational failures (connection refused, element not
+# found, failed eval, …) by printing a ``### Error`` block to stdout while still
+# exiting 0 — so a non-zero exit code alone misses them. We treat this marker as a
+# failure too, otherwise a dead/misconfigured server would walk every page and
+# report "0 errors" (a silent false-negative the gated test must never produce).
+_CLI_ERROR_MARKER = "### Error"
 
 
 class PlaywrightCliError(RuntimeError):
-    """Raised when a ``playwright-cli`` invocation fails outright (non-zero exit)."""
+    """Raised when a ``playwright-cli`` invocation fails.
+
+    Covers both a non-zero exit and the exit-0 ``### Error`` stdout block the CLI
+    emits for operational failures (connection refused, missing element, …).
+    """
 
 
 class RedirectedToLoginError(RuntimeError):
@@ -104,21 +113,27 @@ def _redact(text: str, secrets: tuple[str, ...]) -> str:
 
 
 def _run_cli(*args: str, session: str | None = None, secrets: tuple[str, ...] = ()) -> str:
-    """Run ``playwright-cli`` and return stdout; raise on non-zero exit.
+    """Run ``playwright-cli`` and return its stdout; raise on failure.
 
-    ``secrets`` are redacted from any diagnostic this function emits (the echoed
-    command and the captured stdout/stderr), so a password passed to ``fill``
-    never leaks into the exception text / logs.
+    Failure is either a non-zero exit OR an exit-0 ``### Error`` stdout block (the
+    CLI reports operational errors that way — see ``_CLI_ERROR_MARKER``).
+
+    ``secrets`` are redacted from EVERYTHING this function returns or raises (the
+    echoed command, captured stdout/stderr, and the success-path return value), so
+    a password passed to ``fill`` — which the CLI echoes back verbatim on success
+    (``…fill('<pw>')``) — never leaks into the returned text, logs, or exceptions.
     """
     cmd = [PLAYWRIGHT_CLI]
     if session:
         cmd.append(f"-s={session}")
     cmd.extend(args)
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    if proc.returncode != 0:
-        shown = _redact(f"`{' '.join(cmd)}` exited {proc.returncode}:\n{proc.stdout}\n{proc.stderr}", secrets)
-        raise PlaywrightCliError(shown)
-    return proc.stdout
+    stdout = _redact(proc.stdout, secrets)
+    if proc.returncode != 0 or _CLI_ERROR_MARKER in proc.stdout:
+        stderr = _redact(proc.stderr, secrets)
+        cmd_shown = _redact(" ".join(cmd), secrets)
+        raise PlaywrightCliError(f"`{cmd_shown}` failed (exit {proc.returncode}):\n{stdout}\n{stderr}")
+    return stdout
 
 
 def current_path(*, session: str | None = None) -> str:

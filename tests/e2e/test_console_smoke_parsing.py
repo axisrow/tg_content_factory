@@ -63,18 +63,64 @@ def test_redact_handles_multiple_secrets() -> None:
     assert console_smoke._redact("a=p1 b=p2", ("p1", "p2")) == "a=*** b=***"
 
 
+def _fake_proc(returncode: int, stdout: str, stderr: str = ""):
+    class _Proc:
+        pass
+
+    p = _Proc()
+    p.returncode = returncode  # type: ignore[attr-defined]
+    p.stdout = stdout  # type: ignore[attr-defined]
+    p.stderr = stderr  # type: ignore[attr-defined]
+    return p
+
+
 def test_run_cli_redacts_secret_on_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     # A failing playwright-cli call must not echo the password into the exception.
-    class _Proc:
-        returncode = 1
-        stdout = "boom with hunter2 in output"
-        stderr = "stderr hunter2"
-
-    monkeypatch.setattr(console_smoke.subprocess, "run", lambda *a, **k: _Proc())
+    monkeypatch.setattr(
+        console_smoke.subprocess, "run", lambda *a, **k: _fake_proc(1, "boom with hunter2 in output", "stderr hunter2")
+    )
     with pytest.raises(console_smoke.PlaywrightCliError) as excinfo:
         console_smoke._run_cli("fill", "#password", "hunter2", secrets=("hunter2",))
     assert "hunter2" not in str(excinfo.value)
     assert "***" in str(excinfo.value)
+
+
+def test_run_cli_redacts_secret_on_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CRITICAL: `fill --submit` echoes the cleartext password in its SUCCESS stdout
+    # (`...fill('hunter2')`), exit 0. _run_cli must redact the returned value too.
+    monkeypatch.setattr(
+        console_smoke.subprocess,
+        "run",
+        lambda *a, **k: _fake_proc(0, "### Ran Playwright code\nawait page.locator('#password').fill('hunter2');\n"),
+    )
+    out = console_smoke._run_cli("fill", "#password", "hunter2", "--submit", secrets=("hunter2",))
+    assert "hunter2" not in out
+    assert "***" in out
+
+
+def test_run_cli_raises_on_error_marker_despite_exit_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    # CRITICAL: playwright-cli prints `### Error` and exits 0 for a dead server /
+    # missing element / failed eval. _run_cli must treat that as a failure, else
+    # the gated smoke test passes green against a dead server.
+    monkeypatch.setattr(
+        console_smoke.subprocess,
+        "run",
+        lambda *a, **k: _fake_proc(0, "### Error\nError: net::ERR_CONNECTION_REFUSED at http://x/\n"),
+    )
+    with pytest.raises(console_smoke.PlaywrightCliError):
+        console_smoke._run_cli("goto", "http://x/")
+
+
+def test_run_cli_console_output_not_mistaken_for_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A normal `console error` result contains `[ERROR]` lines but NOT the literal
+    # `### Error` marker, so it must NOT be treated as a CLI failure.
+    monkeypatch.setattr(
+        console_smoke.subprocess,
+        "run",
+        lambda *a, **k: _fake_proc(0, "### Result\nTotal messages: 1 (Errors: 1, Warnings: 0)\n\n[ERROR] boom @ :0\n"),
+    )
+    out = console_smoke._run_cli("console", "error")
+    assert console_smoke.parse_error_count(out) == 1
 
 
 # --- login-path detection / current_path ------------------------------------
