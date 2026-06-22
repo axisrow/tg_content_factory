@@ -19,7 +19,14 @@ def _moderation_redirect(code: str, *, error: bool = False) -> RedirectResponse:
 
 
 @router.get("/", response_class=HTMLResponse)
-async def moderation_queue_page(
+async def moderation_queue_page(request: Request):
+    # Lazyload skeleton (#948): the heavy queue (pending-moderation table +
+    # pipeline relations) loads via the /moderation/fragments/table fragment.
+    return deps.get_templates(request).TemplateResponse(request, "moderation.html", {})
+
+
+@router.get("/fragments/table", response_class=HTMLResponse)
+async def moderation_table_fragment(
     request: Request,
     pipeline_id: str | None = None,
     limit: str | None = None,
@@ -43,7 +50,7 @@ async def moderation_queue_page(
 
     return deps.get_templates(request).TemplateResponse(
         request,
-        "moderation.html",
+        "moderation_content.html",
         {
             "pending_runs": pending_runs,
             "pipelines": pipelines,

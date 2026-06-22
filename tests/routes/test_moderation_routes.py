@@ -62,10 +62,19 @@ async def _create_pipeline(db: Database, *, publish_mode: PipelinePublishMode) -
 
 @pytest.mark.anyio
 async def test_moderation_page_renders_empty_queue(client):
-    resp = await client.get("/moderation/")
+    resp = await client.get("/moderation/fragments/table")
     assert resp.status_code == 200
     assert "Нет черновиков на модерации." in resp.text
     assert "request.query_params.get" not in resp.text
+
+
+@pytest.mark.anyio
+async def test_moderation_page_is_skeleton(client):
+    """Lazyload (#948): the page shell defers the queue table to the fragment."""
+    resp = await client.get("/moderation/")
+    assert resp.status_code == 200
+    assert "/moderation/fragments/table" in resp.text
+    assert 'hx-trigger="load"' in resp.text
 
 
 @pytest.mark.anyio
@@ -235,14 +244,14 @@ async def test_bulk_approve_empty(client):
 @pytest.mark.anyio
 async def test_moderation_page_with_pipeline_filter(client):
     """Test moderation page with pipeline filter."""
-    resp = await client.get("/moderation/?pipeline_id=1")
+    resp = await client.get("/moderation/fragments/table?pipeline_id=1")
     assert resp.status_code == 200
 
 
 @pytest.mark.anyio
 async def test_moderation_page_empty_filter_params_return_200(client):
     """The filter form submits ?pipeline_id= (empty option value) — must not 422 (#779)."""
-    resp = await client.get("/moderation/?pipeline_id=&limit=&offset=")
+    resp = await client.get("/moderation/fragments/table?pipeline_id=&limit=&offset=")
     assert resp.status_code == 200
     assert "Очередь модерации" in resp.text
 
@@ -250,7 +259,7 @@ async def test_moderation_page_empty_filter_params_return_200(client):
 @pytest.mark.anyio
 async def test_moderation_page_pipeline_id_none_string_returns_200(client):
     """Pagination links render pipeline_id=None when no pipeline selected — must not 422 (#779)."""
-    resp = await client.get("/moderation/?pipeline_id=None&limit=50&offset=50")
+    resp = await client.get("/moderation/fragments/table?pipeline_id=None&limit=50&offset=50")
     assert resp.status_code == 200
 
 
@@ -260,7 +269,7 @@ async def test_moderation_page_empty_pipeline_id_shows_all_runs(client):
     db = client._transport_app.state.db
     _, run_id = await _create_pipeline_and_run(db)
 
-    resp = await client.get("/moderation/?pipeline_id=")
+    resp = await client.get("/moderation/fragments/table?pipeline_id=")
     assert resp.status_code == 200
     assert "Generated content" in resp.text
     assert f"/moderation/{run_id}/view" in resp.text
@@ -269,5 +278,5 @@ async def test_moderation_page_empty_pipeline_id_shows_all_runs(client):
 @pytest.mark.anyio
 async def test_moderation_page_clamps_out_of_range_limit_and_offset(client):
     """limit is clamped to [1, 200] and offset to >= 0 instead of erroring (#779)."""
-    resp = await client.get("/moderation/?limit=100000&offset=-5")
+    resp = await client.get("/moderation/fragments/table?limit=100000&offset=-5")
     assert resp.status_code == 200
