@@ -122,8 +122,25 @@ jobs:
       - name: Pytest (parallel-safe, shard ${{ matrix.shard }}/3)
         run: pytest tests -q -m "not aiosqlite_serial" -n auto --splits 3 --group ${{ matrix.shard }} --durations=25
 
-      # The aiosqlite-serial suite (~40 tests) is small and must run without xdist;
-      # run it once, on shard 1 only, rather than duplicating it across shards.
+  # The aiosqlite-serial suite (~40 tests) must run without xdist. It lives in its
+  # own job so it runs in parallel with the shards instead of weighing down one of
+  # them (#944 phase 2).
+  serial-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
       - name: Pytest (aiosqlite serial)
-        if: ${{ matrix.shard == 1 && !cancelled() }}
         run: pytest tests -q -m aiosqlite_serial
