@@ -55,6 +55,7 @@ dependencies = [
     "tenacity>=9.1.4",
     "httpx>=0.28.1",
     "beautifulsoup4>=4.14.3",
+    "itsdangerous>=2.2.0",
 ]
 
 [project.optional-dependencies]
