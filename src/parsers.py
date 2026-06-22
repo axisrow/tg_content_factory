@@ -8,7 +8,7 @@ from io import BytesIO
 # NOTE: no `\+?` here — an invite link (t.me/+hash) is NOT a public username and
 # is handled separately by _TME_INVITE_RE below (audit #835/17).
 _TME_LINK_RE = re.compile(
-    r"^(?:https?://)?t\.me/([a-zA-Z][a-zA-Z0-9_]{3,31})(?:/\d+)?$"
+    r"^(?:https?://)?t\.me/([a-zA-Z][a-zA-Z0-9_]{3,31})(?:/\d+)?/?$"
 )
 
 # Private invite links: t.me/+<hash> and t.me/joinchat/<hash>.
@@ -68,8 +68,8 @@ def normalize_identifier(raw: str) -> tuple[str, str]:
 # Compiled pattern for extracting Telegram identifiers from arbitrary text.
 # Order matters: full URLs first, then bare t.me/, then @username, then negative IDs.
 _IDENTIFIER_RE = re.compile(
-    r"https?://t\.me/[^\s\"'<>,;)]+"  # full t.me link
-    r"|(?<![a-zA-Z0-9/])t\.me/[^\s\"'<>,;)]+"  # bare t.me/ (negative lookbehind)
+    r"https?://t\.me/[^\s\"'<>,;).!?]+"  # full t.me link
+    r"|(?<![a-zA-Z0-9/])t\.me/[^\s\"'<>,;).!?]+"  # bare t.me/ (negative lookbehind)
     r"|@[a-zA-Z][a-zA-Z0-9_]{3,31}"  # @username (4-32 chars total)
     r"|-1\d{9,}",  # negative Telegram ID (-100...)
 )

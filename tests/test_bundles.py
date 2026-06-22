@@ -489,6 +489,29 @@ class TestCollectionBundle:
         results, total = await b.search_messages(SearchParams(query="findme"))
         assert total >= 1
 
+    async def test_search_total_is_exact_when_offset_past_end(self, db):
+        # Regression #971: an empty overflow page (offset beyond the result set)
+        # must report the exact total, per the "exact when has_more is False" contract.
+        b = CollectionBundle.from_database(db)
+        await b.channels.add_channel(_channel(channel_id=10121))
+        for i in range(1, 4):
+            await b.insert_message(_message(channel_id=10121, message_id=i, text="needle"))
+        page = await b.search_messages(SearchParams(query="needle", limit=5, offset=10))
+        assert page.has_more is False
+        assert page.messages == []
+        assert page.total == 3
+
+    async def test_search_total_exact_when_offset_inside_last_partial_page(self, db):
+        # The non-overflow case must stay correct (offset + len(messages)).
+        b = CollectionBundle.from_database(db)
+        await b.channels.add_channel(_channel(channel_id=10122))
+        for i in range(1, 4):
+            await b.insert_message(_message(channel_id=10122, message_id=i, text="needle"))
+        page = await b.search_messages(SearchParams(query="needle", limit=5, offset=2))
+        assert page.has_more is False
+        assert len(page.messages) == 1
+        assert page.total == 3
+
     async def test_delete_messages_for_channel(self, db):
         b = CollectionBundle.from_database(db)
         await b.channels.add_channel(_channel(channel_id=1013))

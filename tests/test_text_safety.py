@@ -24,6 +24,18 @@ def test_escape_xml_text_yields_well_formed_xml():
     assert element.text == "dangerous & <tag>"
 
 
+@pytest.mark.parametrize("nonchar", ["￾", "￿"])
+def test_strip_xml_illegal_removes_xml_noncharacters(nonchar):
+    # Regression #971: U+FFFE / U+FFFF are forbidden in XML 1.0 and break feeds.
+    assert strip_xml_illegal(f"a{nonchar}b") == "ab"
+
+
+@pytest.mark.parametrize("nonchar", ["￾", "￿"])
+def test_escape_xml_text_output_is_well_formed_xml(nonchar):
+    element = ET.fromstring(f"<r>{escape_xml_text(f'x{nonchar}y')}</r>")
+    assert element.text == "xy"
+
+
 @pytest.mark.parametrize("dangerous", ["=cmd", "+1", "-1", "@x", "\tx", "\rx"])
 def test_csv_safe_cell_neutralizes_formula(dangerous):
     safe = csv_safe_cell(dangerous)

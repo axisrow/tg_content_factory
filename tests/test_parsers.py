@@ -135,6 +135,19 @@ class TestExtractIdentifiers:
         result = extract_identifiers(text)
         assert "https://t.me/+AbCdEf123" in result
 
+    def test_extract_identifier_strips_trailing_sentence_period(self):
+        # Regression #971: the sentence period must not be captured into the link,
+        # otherwise normalize_identifier yields 'unknown' and the channel is lost.
+        text = "Subscribe to https://t.me/durov. It is great."
+        result = extract_identifiers(text)
+        assert "https://t.me/durov" in result
+        assert "https://t.me/durov." not in result
+
+    def test_normalize_identifier_handles_trailing_slash(self):
+        # Regression #971: a trailing slash is a valid t.me link, not 'unknown'.
+        assert normalize_identifier("t.me/durov/") == ("durov", "username")
+        assert normalize_identifier("https://t.me/durov/") == ("durov", "username")
+
     def test_empty_text(self):
         assert extract_identifiers("") == []
 

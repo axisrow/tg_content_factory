@@ -18,6 +18,11 @@ from src.settings_utils import parse_int_setting
 
 logger = logging.getLogger(__name__)
 
+# Channel-type groupings shared across the analyzer's broadcast/chat branches so a
+# new Telegram type is added in one place (e.g. gigagroup, #971).
+BROADCAST_CHANNEL_TYPES = ("channel", "monoforum")
+CHAT_CHANNEL_TYPES = ("group", "supergroup", "gigagroup", "forum")
+
 
 async def _timed_fetch(label: str, coro):
     """Await coro, log elapsed time and row count, return result."""
@@ -97,7 +102,7 @@ class ChannelAnalyzer:
             if subscriber_count is not None and message_count > 0:
                 raw_ratio = subscriber_count / message_count
                 subscriber_ratio = round(raw_ratio, 2)
-                is_broadcast = channel["channel_type"] in ("channel", "monoforum")
+                is_broadcast = channel["channel_type"] in BROADCAST_CHANNEL_TYPES
                 threshold = (
                     LOW_SUBSCRIBER_RATIO_THRESHOLD
                     if is_broadcast
@@ -136,7 +141,7 @@ class ChannelAnalyzer:
 
             short_msg_pct: float | None = None
             noisy_chat = False
-            is_chat = channel["channel_type"] in ("group", "supergroup", "forum")
+            is_chat = channel["channel_type"] in CHAT_CHANNEL_TYPES
             if is_chat and channel_id_value in short_map:
                 short_total, short_count = short_map[channel_id_value]
                 if short_total > 0:
@@ -246,7 +251,7 @@ class ChannelAnalyzer:
             subscriber_count = stats.subscriber_count if stats else None
             if not subscriber_count or not channel.message_count:
                 continue
-            is_broadcast = channel.channel_type in ("channel", "monoforum")
+            is_broadcast = channel.channel_type in BROADCAST_CHANNEL_TYPES
             threshold = (
                 LOW_SUBSCRIBER_RATIO_THRESHOLD
                 if is_broadcast

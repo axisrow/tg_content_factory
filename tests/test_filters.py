@@ -245,6 +245,17 @@ class TestAnalyzerChatNoise:
         assert result.short_msg_pct is not None
         assert "chat_noise" in result.flags
 
+    async def test_noisy_gigagroup_flagged(self, db, raw_db):
+        # Regression #971: gigagroup is a real chat type and noisy gigagroups
+        # must be flagged just like groups/supergroups.
+        await _insert_channel(raw_db, 5011, channel_type="gigagroup")
+        texts = ["hi", "ok", "+", "lol", "da", "net", "yes"] + ["long enough message here"]
+        await _insert_messages(raw_db, 5011, texts)
+        analyzer = ChannelAnalyzer(db)
+        result = await analyzer.analyze_channel(5011)
+        assert result.short_msg_pct is not None
+        assert "chat_noise" in result.flags
+
     async def test_clean_group(self, db, raw_db):
         await _insert_channel(raw_db, 502, channel_type="group")
         await _insert_messages(

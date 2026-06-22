@@ -38,12 +38,20 @@ def verify_session_token(token: str, secret: str) -> str | None:
     if len(parts) != 2:
         return None
     payload_b64, sig_b64 = parts
+    # hmac.compare_digest raises TypeError on a non-ASCII str, so a tampered
+    # cookie with non-ASCII bytes in the signature segment must be rejected first.
+    if not sig_b64.isascii():
+        return None
     expected_sig = _sign(payload_b64, secret)
     if not hmac.compare_digest(sig_b64, expected_sig):
         return None
     try:
         payload = json.loads(_b64url_decode(payload_b64))
     except (json.JSONDecodeError, Exception):
+        return None
+    # A validly-signed but non-object JSON payload (null/int/list/str) has no
+    # .get(); guard before treating it as a dict.
+    if not isinstance(payload, dict):
         return None
     if payload.get("exp", 0) < time.time():
         return None

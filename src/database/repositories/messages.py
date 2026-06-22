@@ -658,43 +658,41 @@ class MessagesRepository:
                     " INNER JOIN (SELECT rowid FROM messages_fts"
                     " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
                 )
-                cur = await self._db.execute(
-                    f"""SELECT m.*, c.title as channel_title, c.username as channel_username
-                        FROM messages m{fts_join}{channel_join}
-                        {where}
-                        ORDER BY m.date DESC
-                        LIMIT ? OFFSET ?""",
-                    (fts_query, *sql_params, probe_limit, offset),
-                )
+                from_where = f"FROM messages m{fts_join}{channel_join} {where}"
+                row_params: tuple = (fts_query, *sql_params)
             else:
                 logger.debug("FTS5 unavailable, falling back to LIKE search")
                 sql_params.append(f"%{query}%")
                 like_where = (where + " AND m.text LIKE ?") if where else " WHERE m.text LIKE ?"
-
-                cur = await self._db.execute(
-                    f"""SELECT m.*, c.title as channel_title, c.username as channel_username
-                        FROM messages m{channel_join}
-                        {like_where}
-                        ORDER BY m.date DESC
-                        LIMIT ? OFFSET ?""",
-                    (*sql_params, probe_limit, offset),
-                )
+                from_where = f"FROM messages m{channel_join} {like_where}"
+                row_params = (*sql_params,)
         else:
-            cur = await self._db.execute(
-                f"""SELECT m.*, c.title as channel_title, c.username as channel_username
-                    FROM messages m{channel_join}
-                    {where}
-                    ORDER BY m.date DESC
-                    LIMIT ? OFFSET ?""",
-                (*sql_params, probe_limit, offset),
-            )
+            from_where = f"FROM messages m{channel_join} {where}"
+            row_params = (*sql_params,)
+
+        cur = await self._db.execute(
+            f"""SELECT m.*, c.title as channel_title, c.username as channel_username
+                {from_where}
+                ORDER BY m.date DESC
+                LIMIT ? OFFSET ?""",
+            (*row_params, probe_limit, offset),
+        )
 
         rows = await cur.fetchall()
         has_more = len(rows) > limit
         messages = self._rows_to_messages(rows[:limit])
+        total = offset + len(messages)
+        # `offset + len(messages)` is exact for any non-empty page and for has_more
+        # pages, but undershoots/overshoots when offset is past the end (empty page):
+        # the contract promises an exact total when has_more is False, so fall back
+        # to a real COUNT(*) for that rare overflow case only (#971).
+        if not has_more and not messages and offset > 0:
+            count_cur = await self._db.execute(f"SELECT COUNT(*) AS cnt {from_where}", row_params)
+            count_row = await count_cur.fetchone()
+            total = count_row["cnt"] if count_row else 0
         return MessageSearchPage(
             messages=messages,
-            total=offset + len(messages),
+            total=total,
             has_more=has_more,
         )
 

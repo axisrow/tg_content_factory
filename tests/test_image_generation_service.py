@@ -91,6 +91,78 @@ async def test_search_models_huggingface_exception_returns_empty():
         assert result == []
 
 
+@pytest.mark.anyio
+async def test_search_models_huggingface_null_description_does_not_drop_results(monkeypatch):
+    """Regression #971: a single model with cardData description=None must not
+    nuke the whole result list via None[:200] TypeError."""
+    monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+    monkeypatch.delenv("HUGGINGFACE_TOKEN", raising=False)
+    svc = _make_clean_service()
+
+    class MockModel:
+        def __init__(self, model_id, downloads, card_data):
+            self.id = model_id
+            self.downloads = downloads
+            self.cardData = card_data
+
+    mock_models = [
+        MockModel("stabilityai/sdxl", 1000, {"description": None}),
+        MockModel("black-forest-labs/flux", 500, {"description": "FLUX model"}),
+    ]
+    mock_hf_api = MagicMock()
+    mock_hf_api.return_value.list_models.return_value = mock_models
+    mock_hf_module = MagicMock()
+    mock_hf_module.HfApi = mock_hf_api
+
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_module}):
+        result = await svc.search_models("huggingface", query="flux", api_key="hf_token")
+    assert len(result) == 2
+    assert result[0]["id"] == "stabilityai/sdxl"
+    assert result[0]["description"] == ""
+
+
+@pytest.mark.anyio
+async def test_search_models_replicate_null_run_count_does_not_drop_results(monkeypatch):
+    """Regression #971: a single Replicate model with run_count=null must not
+    break the sort (None < int TypeError) and drop every result."""
+    svc = _make_clean_service()
+
+    payload = {
+        "results": [
+            {"owner": "a", "name": "m1", "description": "d1", "run_count": None},
+            {"owner": "b", "name": "m2", "description": "d2", "run_count": 5},
+        ]
+    }
+
+    class _Resp:
+        status = 200
+
+        async def json(self):
+            return payload
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Session:
+        def get(self, *a, **k):
+            return _Resp()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    import aiohttp
+
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda *a, **k: _Session())
+    result = await svc.search_models("replicate", query="m", api_key="r_token")
+    assert {m["id"] for m in result} == {"a/m1", "b/m2"}
+
+
 # ── generate() ──
 
 
