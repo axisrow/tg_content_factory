@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
 import json
 import time
+from functools import lru_cache
+
+from itsdangerous import BadSignature, Signer
 
 COOKIE_NAME = "session"
 COOKIE_MAX_AGE = 30 * 24 * 3600  # 30 days
@@ -21,33 +23,32 @@ def _b64url_decode(s: str) -> bytes:
     return base64.urlsafe_b64decode(s)
 
 
-def _sign(payload_b64: str, secret: str) -> str:
-    sig = hmac.new(secret.encode(), payload_b64.encode(), hashlib.sha256).digest()
-    return _b64url_encode(sig)
+@lru_cache(maxsize=4)
+def _signer(secret: str) -> Signer:
+    # SHA256 HMAC keeps parity with the previous hand-rolled signer; the "."
+    # separator preserves the historical ``payload.sig`` token shape.
+    # Cached per secret: ``Signer`` runs key derivation on construction, and
+    # ``verify_session_token`` is on the authenticated-request hot path.
+    #
+    # ``exp`` is kept in the payload (rather than itsdangerous' TimestampSigner)
+    # so the per-token ``ttl`` contract and the ``payload.sig`` shape survive.
+    return Signer(secret, sep=".", digest_method=hashlib.sha256)
 
 
 def create_session_token(username: str, secret: str, ttl: int = COOKIE_MAX_AGE) -> str:
     payload = json.dumps({"user": username, "exp": int(time.time()) + ttl})
     payload_b64 = _b64url_encode(payload.encode())
-    sig_b64 = _sign(payload_b64, secret)
-    return f"{payload_b64}.{sig_b64}"
+    return _signer(secret).sign(payload_b64).decode()
 
 
 def verify_session_token(token: str, secret: str) -> str | None:
-    parts = token.split(".")
-    if len(parts) != 2:
-        return None
-    payload_b64, sig_b64 = parts
-    # hmac.compare_digest raises TypeError on a non-ASCII str, so a tampered
-    # cookie with non-ASCII bytes in the signature segment must be rejected first.
-    if not sig_b64.isascii():
-        return None
-    expected_sig = _sign(payload_b64, secret)
-    if not hmac.compare_digest(sig_b64, expected_sig):
+    try:
+        payload_b64 = _signer(secret).unsign(token).decode()
+    except (BadSignature, UnicodeDecodeError):
         return None
     try:
         payload = json.loads(_b64url_decode(payload_b64))
-    except (json.JSONDecodeError, Exception):
+    except Exception:
         return None
     # A validly-signed but non-object JSON payload (null/int/list/str) has no
     # .get(); guard before treating it as a dict.

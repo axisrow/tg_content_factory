@@ -6768,22 +6768,20 @@ class TestWebSessionCoverage:
         # Create a token with TTL=0 (immediately expired)
         import json
 
-        from src.web.session import _b64url_encode, _sign, verify_session_token
+        from src.web.session import _b64url_encode, _signer, verify_session_token
 
         payload = json.dumps({"user": "admin", "exp": 0})
         payload_b64 = _b64url_encode(payload.encode())
-        sig_b64 = _sign(payload_b64, "secret")
-        token = f"{payload_b64}.{sig_b64}"
+        token = _signer("secret").sign(payload_b64).decode()
         result = verify_session_token(token, "secret")
         assert result is None
 
     def test_verify_token_invalid_json(self):
         """Lines 46-47: invalid JSON payload."""
-        from src.web.session import _b64url_encode, _sign, verify_session_token
+        from src.web.session import _b64url_encode, _signer, verify_session_token
 
         payload_b64 = _b64url_encode(b"not_json{{{")
-        sig_b64 = _sign(payload_b64, "secret")
-        token = f"{payload_b64}.{sig_b64}"
+        token = _signer("secret").sign(payload_b64).decode()
         result = verify_session_token(token, "secret")
         assert result is None
 
