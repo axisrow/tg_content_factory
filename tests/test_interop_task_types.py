@@ -52,3 +52,17 @@ def test_payload_models_default_to_v1(model, kwargs, kind):
     payload = model(**kwargs)
     assert payload.v == 1
     assert payload.task_kind == kind
+
+
+def test_interop_payloads_reject_empty_peer_and_text():
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        DmReplyTaskPayload(peer="", text="hi")
+    with pytest.raises(ValidationError):
+        DmReplyTaskPayload(peer="@bob", text="")
+    with pytest.raises(ValidationError):
+        ChatAnswerTaskPayload(chat_id=1, text="")
+    with pytest.raises(ValidationError):
+        FetchHistoryTaskPayload(peer="")

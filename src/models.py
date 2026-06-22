@@ -252,11 +252,16 @@ class ExportTaskPayload(BaseModel):
 # tg_messenger worker. ``v`` is the payload schema version so the worker can
 # evolve independently; ``task_kind`` mirrors the enum value for self-describing
 # rows.
+#
+# By design these are NOT added to CollectionTasksRepository._deserialize_payload
+# / create_generic_task's typed union: the factory only produces them (the REST
+# API stores the request body as an opaque JSON dict) and never executes them, so
+# it never needs typed read access — the external worker owns validation/execution.
 class DmReplyTaskPayload(BaseModel):
     v: int = 1
     task_kind: str = CollectionTaskType.DM_REPLY.value
-    peer: str  # @username or numeric user id of the DM peer
-    text: str
+    peer: str = Field(min_length=1)  # @username or numeric user id of the DM peer
+    text: str = Field(min_length=1)
     reply_to_message_id: int | None = None
 
 
@@ -264,7 +269,7 @@ class ChatAnswerTaskPayload(BaseModel):
     v: int = 1
     task_kind: str = CollectionTaskType.CHAT_ANSWER.value
     chat_id: int
-    text: str
+    text: str = Field(min_length=1)
     reply_to_message_id: int | None = None
 
 
@@ -278,7 +283,7 @@ class FetchDialogsTaskPayload(BaseModel):
 class FetchHistoryTaskPayload(BaseModel):
     v: int = 1
     task_kind: str = CollectionTaskType.FETCH_HISTORY.value
-    peer: str  # @username or numeric chat/channel id
+    peer: str = Field(min_length=1)  # @username or numeric chat/channel id
     limit: int = 100
     offset_id: int = 0
 
