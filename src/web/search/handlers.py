@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass, field
 
 from fastapi import Request
 from pydantic import ValidationError
@@ -167,33 +168,47 @@ async def root_page(request: Request) -> SearchRedirect:
     return SearchRedirect(url="/search")
 
 
-async def render_search_page(
-    request: Request,
-    q: str = "",
-    channel_id: str = "",
-    date_from: str = "",
-    date_to: str = "",
-    mode: str = "local",
-    is_fts: bool = False,
-    include_filtered: bool = False,
-    page: int = 1,
-) -> SearchTemplate | SearchRedirect:
+@dataclass
+class _SearchContext:
+    """Shared search setup — everything needed to render the form *and* run the
+    search, minus the search itself. Built once and used by both the page
+    skeleton (#946 lazyload) and the results fragment."""
+
+    redirect: SearchRedirect | None = None
+    db: object = None
+    service: object = None
+    channels: list = field(default_factory=list)
+    channel_id_int: int | None = None
+    channel_id_error: str | None = None
+    mode: str = "local"
+    fts_query: str = ""
+    min_length: int | None = None
+    max_length: int | None = None
+    available_modes: set = field(default_factory=set)
+    runtime_mode: str = "web"
+    limit: int = 50
+    offset: int = 0
+
+
+async def _build_search_context(
+    request: Request, *, q: str, channel_id: str, mode: str, page: int
+) -> _SearchContext:
+    limit = 50
+    offset = (page - 1) * limit
     # Onboarding: redirect if no accounts configured
     auth = deps.get_auth(request)
     if not auth.is_configured:
-        return SearchRedirect(url="/settings")
+        return _SearchContext(redirect=SearchRedirect(url="/settings"))
     db = deps.get_db(request)
     if not await db.get_account_summaries(active_only=False):
-        return SearchRedirect(url="/settings?msg=no_accounts")
+        return _SearchContext(redirect=SearchRedirect(url="/settings?msg=no_accounts"))
 
-    result = None
-    limit = 50
-    offset = (page - 1) * limit
     channel_id_int, channel_id_error = parse_channel_id(channel_id)
-
-    fts_query, _length_lo, _length_hi = extract_length(q)
-
+    fts_query, length_lo, length_hi = extract_length(q)
     service = deps.search_service(request)
+    # Loaded eagerly for the page's channel <select>; the results fragment reuses
+    # it only for the browse-mode selected_channel lookup. It's a light bounded
+    # query (channel list, not messages), so loading it on both calls is cheap.
     channels = await db.repos.channels.get_channels()
     runtime_mode = getattr(request.app.state, "runtime_mode", "web")
 
@@ -224,7 +239,92 @@ async def render_search_page(
 
     # Length filters (e.g. "foo:50") only apply to local-DB modes; resolve them
     # against the *normalised* mode so a fallback to local keeps/drops them correctly.
-    min_length, max_length = (_length_lo, _length_hi) if mode in _DB_SEARCH_MODES else (None, None)
+    min_length, max_length = (length_lo, length_hi) if mode in _DB_SEARCH_MODES else (None, None)
+
+    return _SearchContext(
+        db=db,
+        service=service,
+        channels=channels,
+        channel_id_int=channel_id_int,
+        channel_id_error=channel_id_error,
+        mode=mode,
+        fts_query=fts_query,
+        min_length=min_length,
+        max_length=max_length,
+        available_modes=available_modes,
+        runtime_mode=runtime_mode,
+        limit=limit,
+        offset=offset,
+    )
+
+
+async def render_search_page(
+    request: Request,
+    q: str = "",
+    channel_id: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    mode: str = "local",
+    is_fts: bool = False,
+    include_filtered: bool = False,
+    page: int = 1,
+) -> SearchTemplate | SearchRedirect:
+    """Lazyload skeleton (#946): render the form only; the heavy search runs in
+    the ``/search/fragments/results`` fragment, triggered by HTMX on load."""
+    ctx = await _build_search_context(request, q=q, channel_id=channel_id, mode=mode, page=page)
+    if ctx.redirect is not None:
+        return ctx.redirect
+
+    try:
+        search_quota = await ctx.service.check_quota()
+    except Exception:
+        logger.exception("Failed to load search quota")
+        search_quota = None
+
+    browse_mode = bool(not q and ctx.channel_id_int and ctx.mode in _DB_SEARCH_MODES)
+    return SearchTemplate(
+        "search.html",
+        {
+            "channels": ctx.channels,
+            "q": q,
+            "channel_id": ctx.channel_id_int,
+            "date_from": date_from,
+            "date_to": date_to,
+            "mode": ctx.mode,
+            "is_fts": is_fts,
+            "include_filtered": include_filtered,
+            "page": page,
+            "available_modes": ctx.available_modes,
+            "search_quota": search_quota,
+            # Only fetch results when there's actually something to search/browse.
+            "trigger_search": bool(q) or browse_mode,
+        },
+    )
+
+
+async def render_search_results(
+    request: Request,
+    q: str = "",
+    channel_id: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    mode: str = "local",
+    is_fts: bool = False,
+    include_filtered: bool = False,
+    page: int = 1,
+) -> SearchTemplate | SearchRedirect:
+    """Heavy search, rendered as an HTMX fragment (#946)."""
+    ctx = await _build_search_context(request, q=q, channel_id=channel_id, mode=mode, page=page)
+    if ctx.redirect is not None:
+        # Onboarding race (accounts removed between page load and fragment): the
+        # full-page handler already redirects, so the fragment just shows nothing.
+        return SearchTemplate("search_results.html", {"result": None})
+
+    service = ctx.service
+    channel_id_int = ctx.channel_id_int
+    mode = ctx.mode
+    limit, offset = ctx.limit, ctx.offset
+    result = None
 
     # Browse mode: channel_id without query shows latest messages from that channel
     if not q and channel_id_int and mode in _DB_SEARCH_MODES:
@@ -243,19 +343,16 @@ async def render_search_page(
         except Exception as exc:
             logger.exception("Browse mode failed: channel_id=%s", channel_id_int)
             result = SearchResult(
-                messages=[],
-                total=0,
-                query="",
-                error=f"Ошибка загрузки сообщений: {exc}",
+                messages=[], total=0, query="", error=f"Ошибка загрузки сообщений: {exc}"
             )
     elif q:
-        if channel_id_error and mode in _DB_SEARCH_MODES | {"channel"}:
-            result = SearchResult(messages=[], total=0, query=q, error=channel_id_error)
-        elif mode in _TELEGRAM_SEARCH_MODES and runtime_mode == "web":
+        if ctx.channel_id_error and mode in _DB_SEARCH_MODES | {"channel"}:
+            result = SearchResult(messages=[], total=0, query=q, error=ctx.channel_id_error)
+        elif mode in _TELEGRAM_SEARCH_MODES and ctx.runtime_mode == "web":
             # Web container has no live ClientPool — run it on the worker (#643).
             try:
                 result = await _telegram_search_via_worker(
-                    request, mode=mode, query=fts_query, limit=limit, channel_id=channel_id_int
+                    request, mode=mode, query=ctx.fts_query, limit=limit, channel_id=channel_id_int
                 )
             except Exception as exc:
                 logger.exception(
@@ -268,15 +365,15 @@ async def render_search_page(
             try:
                 result = await service.search(
                     mode=mode,
-                    query=fts_query,
+                    query=ctx.fts_query,
                     limit=limit,
                     channel_id=channel_id_int,
                     date_from=date_from or None,
                     date_to=date_to or None,
                     offset=offset,
                     is_fts=is_fts,
-                    min_length=min_length,
-                    max_length=max_length,
+                    min_length=ctx.min_length,
+                    max_length=ctx.max_length,
                     include_filtered=include_filtered,
                 )
             except Exception as exc:
@@ -285,18 +382,7 @@ async def render_search_page(
                     mode,
                     query_log_fields(q)["query_hash"],
                 )
-                result = SearchResult(
-                    messages=[],
-                    total=0,
-                    query=q,
-                    error=f"Ошибка поиска: {exc}",
-                )
-
-    try:
-        search_quota = await service.check_quota()
-    except Exception:
-        logger.exception("Failed to load search quota")
-        search_quota = None
+                result = SearchResult(messages=[], total=0, query=q, error=f"Ошибка поиска: {exc}")
 
     # Page-based navigation without an exact total (#766): «Далее» is shown when
     # the LIMIT N+1 probe saw another page. Semantic/hybrid/telegram modes still
@@ -304,17 +390,17 @@ async def render_search_page(
     # there so their deeper pages stay reachable (review on #824).
     has_more = bool(result and (result.has_more or result.total > page * limit))
 
-    # Browse mode: viewing channel messages without search query
     browse_mode = bool(not q and channel_id_int and mode in _DB_SEARCH_MODES)
     selected_channel = None
     if browse_mode and channel_id_int:
-        selected_channel = next((ch for ch in channels if ch.channel_id == channel_id_int), None)
+        selected_channel = next(
+            (ch for ch in ctx.channels if ch.channel_id == channel_id_int), None
+        )
 
     return SearchTemplate(
-        "search.html",
+        "search_results.html",
         {
             "result": result,
-            "channels": channels,
             "q": q,
             "channel_id": channel_id_int,
             "date_from": date_from,
@@ -324,8 +410,6 @@ async def render_search_page(
             "include_filtered": include_filtered,
             "page": page,
             "has_more": has_more,
-            "available_modes": available_modes,
-            "search_quota": search_quota,
             "browse_mode": browse_mode,
             "selected_channel": selected_channel,
         },
