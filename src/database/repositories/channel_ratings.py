@@ -48,7 +48,11 @@ class ChannelRatingsRepository:
             "ON CONFLICT(channel_id) DO UPDATE SET "
             "  title=excluded.title, username=excluded.username, useful=excluded.useful, "
             "  genre=excluded.genre, confidence=excluded.confidence, reason=excluded.reason, "
-            "  emoji_trash_score=excluded.emoji_trash_score, flag_count=excluded.flag_count, "
+            "  emoji_trash_score=excluded.emoji_trash_score, "
+            # flag_count is a human-audit signal — never let a machine
+            # re-classification (which builds the row with flag_count=0) reset it
+            # (review on #966). A future manual-flag op uses a dedicated method.
+            "  flag_count=channel_ratings.flag_count, "
             "  n_total=excluded.n_total, updated_at=excluded.updated_at",
             (
                 rating.channel_id,

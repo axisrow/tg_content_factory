@@ -117,12 +117,14 @@ class ChannelAnalysisService:
         # When the model didn't return clean JSON, fall through with an empty
         # dict and let the per-field text-scan fallbacks below recover the enums.
         parsed = safe_json_loads_dict(raw) or {}
+        # Word-boundary match so short tokens don't match inside other words
+        # (e.g. "ad" inside "broadcast"/"read") — review on #966.
         useful = parsed.get("useful")
         if useful not in USEFULNESS_VALUES:
-            useful = next((v for v in USEFULNESS_VALUES if v in raw), "useless")
+            useful = next((v for v in USEFULNESS_VALUES if re.search(rf"\b{v}\b", raw)), "useless")
         genre = parsed.get("genre")
         if genre not in GENRE_VALUES:
-            genre = next((g for g in GENRE_VALUES if g in raw), "original")
+            genre = next((g for g in GENRE_VALUES if re.search(rf"\b{g}\b", raw)), "original")
         try:
             confidence = float(parsed.get("confidence", 0.0))
         except (TypeError, ValueError):
@@ -162,8 +164,11 @@ class ChannelAnalysisService:
 
     async def _sample_posts(self, channel_id: int, sample_size: int) -> list[str]:
         rows = await self._db.execute_fetchall(
+            # message_kind IS NULL covers legacy posts collected before the column
+            # was added (the migration leaves old rows NULL) — review on #966.
             "SELECT text FROM messages "
-            "WHERE channel_id = ? AND message_kind = 'regular' AND text IS NOT NULL "
+            "WHERE channel_id = ? AND (message_kind = 'regular' OR message_kind IS NULL) "
+            "AND text IS NOT NULL "
             "ORDER BY message_id DESC LIMIT ?",
             (channel_id, sample_size),
         )

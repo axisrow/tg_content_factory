@@ -80,3 +80,22 @@ async def test_classify_channel_with_fake_provider(db):
 
     stored = await svc.get_rating(999002)
     assert stored is not None and stored.genre == "aggregator"
+
+
+async def test_upsert_preserves_flag_count_on_reclassify(db):
+    repo = db.repos.channel_ratings
+    await repo.upsert(ChannelRating(channel_id=900100, useful="useful", genre="original", flag_count=3))
+    # Re-classification builds the row with flag_count=0 (default) — must NOT reset.
+    await repo.upsert(ChannelRating(channel_id=900100, useful="useless", genre="ad", flag_count=0))
+    got = await repo.get(900100)
+    assert got.flag_count == 3
+    assert got.genre == "ad"  # other fields still update
+
+
+def test_genre_fallback_word_boundary():
+    # "ad" must not match inside "broadcast"; no genre token → default original.
+    v = ChannelAnalysisService._parse_verdict("broadcast news digest, no json here")
+    assert v["genre"] == "original"
+    # whole-word genre token is matched
+    v2 = ChannelAnalysisService._parse_verdict("это явная реклама, жанр ad точно")
+    assert v2["genre"] == "ad"
