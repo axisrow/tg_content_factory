@@ -83,8 +83,23 @@ jobs:
               sys.exit(1)
           PY
 
+      # Fast offline preflight moved here (#944 phase 2) so it runs once as a
+      # cheap fail-fast alongside the static gates, instead of once per test
+      # shard. ~sub-second tests; the time is whole-tree collection overhead.
+      # Live smoke (real_provider_smoke / codex_*) stays opt-in and is skipped.
+      - name: Pytest (smoke preflight)
+        run: pytest tests -q -m smoke
+
   lint-and-test:
     runs-on: ubuntu-latest
+
+    # Shard the parallel-safe suite across N runners (pytest-split); each shard
+    # still fans out over all runner cores via `-n auto` (#944 phase 2). Wall-clock
+    # of the heavy phase drops ~linearly with the shard count.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
 
     steps:
       - name: Checkout repository
@@ -100,23 +115,15 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      # Fast offline preflight: a sub-second-ish sanity gate over real critical
-      # paths (package import, CLI parser, DB schema, web /health). Runs first
-      # so a fundamentally broken build fails before the full suite starts.
-      # Kept (not dropped) as a cheap fail-fast — the ~30s is mostly whole-tree
-      # collection overhead, not the handful of smoke tests (#944 decision).
-      # Live smoke (real_provider_smoke / codex_*) stays opt-in and is skipped
-      # here — no gate env vars are set.
-      - name: Pytest (smoke preflight)
-        run: pytest tests -q -m smoke
+      # One shard of the parallel-safe suite. conftest uses every runner core on
+      # CI, so each shard also fans out via `-n auto`. --splits/--group (pytest-split)
+      # partition the tests; without a durations file the split is by count, which
+      # is balanced enough now that the 37s collection-invariants test is fixed.
+      - name: Pytest (parallel-safe, shard ${{ matrix.shard }}/3)
+        run: pytest tests -q -m "not aiosqlite_serial" -n auto --splits 3 --group ${{ matrix.shard }} --durations=25
 
-      # On CI conftest.py uses every runner core (the load throttle is dev-only),
-      # so `-n auto` fans out across all vCPUs. --durations surfaces the slowest
-      # tests each run for ongoing tuning (#944).
-      - name: Pytest (parallel-safe)
-        if: ${{ !cancelled() }}
-        run: pytest tests -q -m "not aiosqlite_serial" -n auto --durations=25
-
+      # The aiosqlite-serial suite (~40 tests) is small and must run without xdist;
+      # run it once, on shard 1 only, rather than duplicating it across shards.
       - name: Pytest (aiosqlite serial)
-        if: ${{ !cancelled() }}
+        if: ${{ matrix.shard == 1 && !cancelled() }}
         run: pytest tests -q -m aiosqlite_serial
