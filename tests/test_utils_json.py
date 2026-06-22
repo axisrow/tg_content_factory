@@ -69,6 +69,18 @@ def test_kwargs_forwarded():
     assert result == '{"a":2,"b":1}'
 
 
+def test_custom_default_does_not_receive_datetime():
+    # With a custom default, datetime must be serialized natively by orjson, NOT
+    # routed to the caller's default (which may not handle it) — review on #956.
+    def only_bytes(o):
+        if isinstance(o, bytes):
+            return o.hex()
+        raise TypeError("custom default should not be called for datetime")
+
+    out = safe_json_dumps({"ts": datetime(2026, 1, 1)}, default=only_bytes)
+    assert "2026-01-01" in out
+
+
 def test_indent_pretty_prints():
     result = safe_json_dumps({"a": 1}, indent=2)
     assert result == '{\n  "a": 1\n}'

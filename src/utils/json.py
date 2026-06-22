@@ -43,7 +43,13 @@ def safe_json_dumps(
     - Any truthy ``indent`` pretty-prints with 2 spaces (orjson's sole indent mode).
     - Returns ``str`` (orjson emits ``bytes``; decoded here so callers are unchanged).
     """
-    option = orjson.OPT_PASSTHROUGH_DATETIME  # keep .isoformat() parity via _default
+    option = 0
+    if default is None:
+        # The built-in _default renders datetime/date via .isoformat(); route them
+        # to it for exact parity. With a *custom* default we must NOT force
+        # passthrough — the caller's default may not handle datetime, so let orjson
+        # serialize it natively (RFC 3339) instead (review on #956).
+        option |= orjson.OPT_PASSTHROUGH_DATETIME
     if sort_keys:
         option |= orjson.OPT_SORT_KEYS
     if indent:
