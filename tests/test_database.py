@@ -403,6 +403,43 @@ async def test_search_messages(db):
 
 
 @pytest.mark.anyio
+async def test_reactions_store_message_date_on_insert(db):
+    """Reactions carry their parent message's date so analytics filter by recency
+    without joining messages (#760) — both the single and batch insert paths."""
+    msg_date = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    # Single-insert path (_upsert_reactions).
+    await db.insert_message(
+        Message(
+            channel_id=-100500,
+            message_id=1,
+            text="single",
+            date=msg_date,
+            reactions_json='[{"emoji": "\U0001f44d", "count": 7}]',
+        )
+    )
+    # Batch-insert path (insert_messages_batch).
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100500,
+                message_id=2,
+                text="batch",
+                date=msg_date,
+                reactions_json='[{"emoji": "❤️", "count": 3}]',
+            )
+        ]
+    )
+
+    rows = await db.execute_fetchall(
+        "SELECT emoji, date FROM message_reactions ORDER BY message_id"
+    )
+    by_emoji = {r["emoji"]: r["date"] for r in rows}
+    assert by_emoji["\U0001f44d"] == msg_date.isoformat()
+    assert by_emoji["❤️"] == msg_date.isoformat()
+
+
+@pytest.mark.anyio
 async def test_search_messages_date_to_includes_entire_day(db):
     await db.insert_messages_batch(
         [

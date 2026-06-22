@@ -433,3 +433,64 @@ async def test_run_migrations_idx_messages_text_drop_is_idempotent(tmp_path):
         assert "idx_messages_text" not in await _index_names(conn, "messages")
     finally:
         await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_run_migrations_backfills_message_reactions_date(tmp_path):
+    """Legacy reaction rows get their date filled from the parent message (#760),
+    and the date-emoji index is created."""
+    conn = await _connect(str(tmp_path / "legacy_reactions.db"))
+    try:
+        # Legacy schema: message_reactions WITHOUT a date column.
+        await conn.executescript("""
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                text TEXT,
+                date TEXT NOT NULL,
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE message_reactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                emoji TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(channel_id, message_id, emoji)
+            );
+        """)
+        await conn.execute(
+            "INSERT INTO messages (channel_id, message_id, date, text) VALUES (?, ?, ?, ?)",
+            (100, 1, "2026-06-01T12:00:00", "hi"),
+        )
+        await conn.execute(
+            "INSERT INTO message_reactions (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)",
+            (100, 1, "👍", 5),
+        )
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        # Column added, index created, legacy row backfilled from the message.
+        assert "date" in await _columns(conn, "message_reactions")
+        cur = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+            ("idx_message_reactions_date_emoji",),
+        )
+        assert await cur.fetchone() is not None
+        cur = await conn.execute(
+            "SELECT date FROM message_reactions WHERE channel_id = 100 AND message_id = 1"
+        )
+        assert (await cur.fetchone())["date"] == "2026-06-01T12:00:00"
+
+        # Backfill is gated: a second run is a no-op (flag set) and does not error.
+        await run_migrations(conn)
+        cur = await conn.execute(
+            "SELECT value FROM settings WHERE key = '_migration_reactions_date_backfill_v1'"
+        )
+        assert (await cur.fetchone())["value"] == "1"
+    finally:
+        await conn.close()

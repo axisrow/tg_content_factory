@@ -379,6 +379,12 @@ CREATE TABLE IF NOT EXISTS message_reactions (
     message_id INTEGER NOT NULL,
     emoji TEXT NOT NULL,
     count INTEGER NOT NULL DEFAULT 0,
+    -- Denormalized copy of the parent message's `date`. Reaction analytics filter
+    -- by recency; without a date here the period filter lives on `messages` and
+    -- forces a full JOIN of all reactions against messages (trending-emojis took
+    -- ~3m43s on a 6.8M-row table). With it the query filters reactions directly via
+    -- idx_message_reactions_date_emoji and drops the JOIN. See issue #760.
+    date TEXT,
     FOREIGN KEY (channel_id, message_id)
         REFERENCES messages(channel_id, message_id) ON DELETE CASCADE,
     UNIQUE(channel_id, message_id, emoji)
@@ -388,6 +394,8 @@ CREATE INDEX IF NOT EXISTS idx_message_reactions_channel_msg
     ON message_reactions(channel_id, message_id);
 CREATE INDEX IF NOT EXISTS idx_message_reactions_emoji
     ON message_reactions(emoji);
+CREATE INDEX IF NOT EXISTS idx_message_reactions_date_emoji
+    ON message_reactions(date, emoji);
 CREATE INDEX IF NOT EXISTS idx_messages_collected_at ON messages(collected_at);
 -- Covering index for analytics GROUP BY media_type with the is_filtered
 -- channel join: without it the count query full-scans the messages table (#826).

@@ -66,6 +66,11 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
     "telegram_commands": {
         "run_after": "run_after TEXT",
     },
+    # Nullable on purpose: ADD COLUMN ... NOT NULL is rejected on the existing
+    # 6.8M-row table. Existing rows are filled by _backfill_message_reactions_date.
+    "message_reactions": {
+        "date": "date TEXT",
+    },
     "search_queries": {
         "is_regex": "is_regex INTEGER DEFAULT 0",
         "is_fts": "is_fts INTEGER DEFAULT 0",
@@ -147,6 +152,7 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
 
 SCHEMA_REPAIR_INDEXES: Sequence[str] = (
     "CREATE INDEX IF NOT EXISTS idx_messages_detected_lang ON messages(detected_lang)",
+    "CREATE INDEX IF NOT EXISTS idx_message_reactions_date_emoji ON message_reactions(date, emoji)",
     """
     CREATE INDEX IF NOT EXISTS idx_messages_fwd_from_channel
     ON messages(forward_from_channel_id) WHERE forward_from_channel_id IS NOT NULL
@@ -450,6 +456,50 @@ async def _drop_obsolete_indexes(db: aiosqlite.Connection) -> None:
     await db.execute("DROP INDEX IF EXISTS idx_messages_text")
 
 
+async def _backfill_message_reactions_date(db: aiosqlite.Connection) -> None:
+    """Fill ``message_reactions.date`` from the parent message for legacy rows.
+
+    The column is added nullable (ADD COLUMN cannot be NOT NULL on a populated
+    table), and new reactions are written with their message's date going forward.
+    Rows that predate the column stay NULL until this one-off backfill copies the
+    date down from ``messages``. Reaction analytics filter on ``mr.date``; until a
+    row is backfilled it falls out of the recency window, so this is what makes the
+    historical data complete.
+
+    Gated on a settings flag so the (potentially minutes-long) UPDATE over millions
+    of rows runs once. The UPDATE itself is also idempotent via ``WHERE date IS
+    NULL``, so a partial run simply resumes. See issue #760.
+    """
+    if not await table_exists(db, "message_reactions") or not await table_exists(db, "messages"):
+        return
+    if "date" not in await table_columns(db, "message_reactions"):
+        return
+
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_reactions_date_backfill_v1' LIMIT 1"
+    )
+    if await cur.fetchone():
+        return
+
+    logger.info("Backfilling message_reactions.date from messages (one-off, may take a while)")
+    await db.execute(
+        """
+        UPDATE message_reactions
+           SET date = (
+               SELECT m.date FROM messages m
+               WHERE m.channel_id = message_reactions.channel_id
+                 AND m.message_id = message_reactions.message_id
+           )
+         WHERE date IS NULL
+        """
+    )
+    await db.execute(
+        "INSERT OR IGNORE INTO settings (key, value) "
+        "VALUES ('_migration_reactions_date_backfill_v1', '1')"
+    )
+    logger.info("message_reactions.date backfill complete")
+
+
 async def run_migrations(db: aiosqlite.Connection) -> bool:
     """Repair the SQLite schema without rewriting existing user data.
 
@@ -481,6 +531,11 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         await ensure_columns(db, table, columns)
 
     await ensure_indexes(db, SCHEMA_REPAIR_INDEXES)
+
+    # One-off: fill message_reactions.date for rows that predate the column so
+    # reaction analytics can filter by date without joining messages (#760).
+    await _backfill_message_reactions_date(db)
+
     fts_available = await _ensure_fts5_available(db)
     if fts_available:
         await _backfill_messages_fts_if_empty(db)

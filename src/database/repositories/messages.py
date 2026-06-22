@@ -201,7 +201,9 @@ class MessagesRepository:
             if not inserted:
                 await self._refresh_existing_messages([msg], clear_premium_search_query=True)
             if msg.reactions_json:
-                await self._upsert_reactions(msg.channel_id, msg.message_id, msg.reactions_json)
+                await self._upsert_reactions(
+                    msg.channel_id, msg.message_id, msg.reactions_json, msg.date.isoformat()
+                )
             return inserted
         except DatabaseBusyError:
             # Transient lock — propagate instead of masking it as a persistence
@@ -216,16 +218,19 @@ class MessagesRepository:
             return False
 
     async def _upsert_reactions(
-        self, channel_id: int, message_id: int, reactions_json: str
+        self, channel_id: int, message_id: int, reactions_json: str, message_date: str
     ) -> None:
         """Replace message_reactions rows for the message with reactions_json contents.
 
         Delete-then-insert (not bare INSERT OR REPLACE) so emoji that vanished
         from the refreshed JSON don't linger and inflate the analytics
         aggregates built on this table (#826/#827 review).
+
+        ``message_date`` is the parent message's ISO date, stored on each reaction
+        row so analytics can filter by recency without joining messages (#760).
         """
         items = _parse_reactions_json(reactions_json)
-        data = [(channel_id, message_id, r["emoji"], r.get("count", 0)) for r in items]
+        data = [(channel_id, message_id, r["emoji"], r.get("count", 0), message_date) for r in items]
         try:
             async with self._database.transaction() as conn:
                 await conn.execute(
@@ -235,7 +240,7 @@ class MessagesRepository:
                 if data:
                     await conn.executemany(
                         """INSERT OR REPLACE INTO message_reactions
-                           (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)""",
+                           (channel_id, message_id, emoji, count, date) VALUES (?, ?, ?, ?, ?)""",
                         data,
                     )
         except Exception:
@@ -328,8 +333,10 @@ class MessagesRepository:
         # vanished from a refreshed reactions_json don't linger and inflate the
         # analytics aggregates built on this table (#826/#827 review).
         reaction_keys = list({(m.channel_id, m.message_id) for m in messages if m.reactions_json})
+        # Carry each message's date onto its reaction rows so reaction analytics
+        # filter by recency without joining messages (#760).
         reactions_data = [
-            (m.channel_id, m.message_id, r["emoji"], r.get("count", 0))
+            (m.channel_id, m.message_id, r["emoji"], r.get("count", 0), m.date.isoformat())
             for m in messages
             if m.reactions_json
             for r in _parse_reactions_json(m.reactions_json)
@@ -344,7 +351,7 @@ class MessagesRepository:
                     if reactions_data:
                         await conn.executemany(
                             """INSERT OR REPLACE INTO message_reactions
-                               (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)""",
+                               (channel_id, message_id, emoji, count, date) VALUES (?, ?, ?, ?, ?)""",
                             reactions_data,
                         )
             except Exception as exc:
