@@ -15,7 +15,11 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     settings_sub.add_parser("server-time", help="Show current server time (UTC)")
 
     settings_agent = settings_sub.add_parser("agent", help="Configure agent backend and defaults")
-    settings_agent.add_argument("--backend", default=None, help="Agent backend (claude-agent-sdk, deepagents)")
+    settings_agent.add_argument(
+        "--backend",
+        default=None,
+        help="Agent backend override (auto, claude, deepagents, codex, adk)",
+    )
     settings_agent.add_argument("--prompt-template", default=None, dest="prompt_template",
                                 help="Default prompt template")
 

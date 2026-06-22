@@ -3410,6 +3410,8 @@ class TestWebAgent:
             return_value=SimpleNamespace(
                 claude_available=True,
                 deepagents_available=False,
+                codex_available=False,
+                adk_available=False,
                 dev_mode_enabled=False,
                 backend_override="auto",
                 selected_backend="claude",
@@ -3433,6 +3435,8 @@ class TestWebAgent:
             return_value=SimpleNamespace(
                 claude_available=False,
                 deepagents_available=True,
+                codex_available=False,
+                adk_available=False,
                 dev_mode_enabled=True,
                 backend_override="deepagents",
                 selected_backend="deepagents",
@@ -3458,6 +3462,8 @@ class TestWebAgent:
             return_value=SimpleNamespace(
                 claude_available=False,
                 deepagents_available=True,
+                codex_available=False,
+                adk_available=False,
                 dev_mode_enabled=True,
                 backend_override="deepagents",
                 selected_backend="deepagents",
@@ -3553,6 +3559,8 @@ class TestWebAgent:
             return_value=SimpleNamespace(
                 claude_available=True,
                 deepagents_available=False,
+                codex_available=False,
+                adk_available=False,
                 dev_mode_enabled=False,
                 backend_override="auto",
                 selected_backend="claude",
@@ -3590,6 +3598,8 @@ class TestWebAgent:
             return_value=SimpleNamespace(
                 claude_available=True,
                 deepagents_available=False,
+                codex_available=False,
+                adk_available=False,
                 dev_mode_enabled=False,
                 backend_override="auto",
                 selected_backend="claude",

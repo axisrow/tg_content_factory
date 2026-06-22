@@ -13,6 +13,10 @@ CLAUDE_MODEL_IDS: frozenset[str] = frozenset(m[0] for m in CLAUDE_MODELS)
 # CLAUDE_MODELS, codex has no UI model picker, so no display-name table.
 CODEX_MODEL_IDS: frozenset[str] = frozenset({"gpt-5.4"})
 
+# Gemini model IDs the ADK backend accepts; like codex, no UI model picker, so
+# no display-name table. Used for model-validation in manager dispatch.
+ADK_MODEL_IDS: frozenset[str] = frozenset({"gemini-2.5-flash", "gemini-2.5-pro"})
+
 # Valid values for the ``agent_backend_override`` setting. "auto" lets
 # get_runtime_status pick; the rest force a specific backend (dev-mode only).
-VALID_AGENT_BACKENDS: frozenset[str] = frozenset({"auto", "claude", "deepagents", "codex"})
+VALID_AGENT_BACKENDS: frozenset[str] = frozenset({"auto", "claude", "deepagents", "codex", "adk"})
