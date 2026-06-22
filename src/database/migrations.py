@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
 import aiosqlite
 
@@ -633,11 +634,69 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_zai_base_url_v2', '1')"
         )
 
+    # Seed the 447 pre-computed channel ratings once (#966), idempotent by marker.
+    await _seed_channel_ratings(db)
+
     # Seed planner statistics last, after every table and index is in place (#760).
     await _ensure_initial_analyze(db)
 
     await db.commit()
     return fts_available
+
+
+_CHANNEL_RATINGS_SEED = Path(__file__).resolve().parent / "seeds" / "channel_ratings.csv"
+
+
+async def _seed_channel_ratings(db: aiosqlite.Connection) -> None:
+    """Idempotently import the pre-computed channel ratings CSV (#966).
+
+    Gated on a settings marker so it runs once; rows are inserted with
+    ``INSERT OR IGNORE`` so a manually-rated channel is never overwritten by the
+    seed. A no-op when the seed file is absent (e.g. a trimmed deployment).
+    """
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_seed_channel_ratings_v1' LIMIT 1"
+    )
+    if await cur.fetchone():
+        return
+    if not _CHANNEL_RATINGS_SEED.exists():
+        return
+
+    import csv
+
+    rows: list[tuple] = []
+    with _CHANNEL_RATINGS_SEED.open(encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            try:
+                channel_id = int(r["channel_id"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            rows.append(
+                (
+                    channel_id,
+                    r.get("title") or None,
+                    r.get("username") or None,
+                    r.get("useful") or "useless",
+                    r.get("genre") or "original",
+                    float(r["confidence"]) if r.get("confidence") else 0.0,
+                    r.get("reason") or None,
+                    float(r["emoji_trash_score"]) if r.get("emoji_trash_score") else None,
+                    int(r["flag_count"]) if r.get("flag_count") else 0,
+                    int(r["n_total"]) if r.get("n_total") else 0,
+                )
+            )
+    if rows:
+        await db.executemany(
+            "INSERT OR IGNORE INTO channel_ratings "
+            "(channel_id, title, username, useful, genre, confidence, reason, "
+            " emoji_trash_score, flag_count, n_total) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        logger.info("Seeded %d channel ratings from CSV (#966)", len(rows))
+    await db.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('_seed_channel_ratings_v1', '1')"
+    )
 
 
 async def _migrate_vec_to_portable(db: aiosqlite.Connection) -> None:

@@ -175,6 +175,26 @@ class RuntimeSnapshot(BaseModel):
     updated_at: datetime | None = None
 
 
+# Channel rating (#966): two-axis verdict (usefulness × genre) for a channel,
+# produced by ChannelAnalysisService or imported from the ai_detect_tool seed.
+ChannelUsefulness = Literal["useful", "useless"]
+ChannelGenre = Literal["ad", "infobiz", "aggregator", "copy", "original"]
+
+
+class ChannelRating(BaseModel):
+    channel_id: int
+    title: str | None = None
+    username: str | None = None
+    useful: ChannelUsefulness
+    genre: ChannelGenre
+    confidence: float = 0.0
+    reason: str | None = None
+    emoji_trash_score: float | None = None
+    flag_count: int = 0
+    n_total: int = 0
+    updated_at: datetime | None = None
+
+
 class ContentGenerateTaskPayload(BaseModel):
     task_kind: str = "content_generate"
     pipeline_id: int
