@@ -23,6 +23,9 @@ def _config(args: list[str]) -> SimpleNamespace:
 
 
 def _set_cpu_state(monkeypatch, *, cpu_count: int, load_average: float) -> None:
+    # These cases exercise the dev-laptop load-aware path; ensure CI is unset so
+    # the CI "use all cores" short-circuit (#944) does not mask the load logic.
+    monkeypatch.delenv("CI", raising=False)
     monkeypatch.setattr(root_conftest.os, "cpu_count", lambda: cpu_count)
     monkeypatch.setattr(
         root_conftest.os,
@@ -93,3 +96,32 @@ def test_xdist_auto_workers_force_single_worker_for_real_tg_gate(monkeypatch) ->
     _set_cpu_state(monkeypatch, cpu_count=16, load_average=0.0)
 
     assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 1
+
+
+def test_xdist_ci_ignores_load_and_uses_all_cores(monkeypatch) -> None:
+    # On CI the host is dedicated, so the load throttle is skipped and every core
+    # is available — even under a high reported load (#944).
+    _set_cpu_state(monkeypatch, cpu_count=4, load_average=8.0)
+    monkeypatch.setenv("CI", "true")
+
+    assert root_conftest._xdist_available_workers_for_load(4) == 4
+
+
+def test_xdist_ci_reaches_full_cap(monkeypatch) -> None:
+    # `-n auto` on a 4-vCPU runner reaches the default cap of 4 (vs ~2 with the
+    # dev load throttle) — the headline CI speedup.
+    monkeypatch.delenv("TGCF_PYTEST_XDIST_WORKERS", raising=False)
+    _set_cpu_state(monkeypatch, cpu_count=4, load_average=8.0)
+    monkeypatch.setenv("CI", "true")
+
+    assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 4
+
+
+def test_xdist_ci_still_respects_env_cap(monkeypatch) -> None:
+    # The CI path uses all cores for "available" but the explicit worker cap still
+    # applies (min of the two).
+    _set_cpu_state(monkeypatch, cpu_count=16, load_average=0.0)
+    monkeypatch.setenv("CI", "true")
+    monkeypatch.setenv("TGCF_PYTEST_XDIST_WORKERS", "3")
+
+    assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 3
