@@ -781,7 +781,7 @@ async def test_settings_save_agent_providers_preserves_priority_order(client, mo
     assert resp.status_code == 303
     raw = await db.get_setting("agent_deepagents_providers_v1")
     assert raw is not None
-    assert raw.index('"provider": "anthropic"') < raw.index('"provider": "openai"')
+    assert raw.index('"provider":"anthropic"') < raw.index('"provider":"openai"')
 
 
 @pytest.mark.anyio
