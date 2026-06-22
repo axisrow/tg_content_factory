@@ -311,6 +311,38 @@ async def test_chat_stream_skips_final_aggregated_text(monkeypatch):
     assert done["full_text"] == "Привет!"  # not "Привет!Привет!"
 
 
+async def test_chat_stream_aggregate_is_repeat_not_new_suffix(monkeypatch):
+    """The final aggregate repeats the deltas in full; suppressing it loses nothing.
+
+    Per ADK's StreamingResponseAggregator, each partial yields only its delta
+    (``part0.text``) while the closing event carries the full accumulated text —
+    so ``join(deltas) == aggregate``. This pins that contract: deltas "Hello " +
+    "world", aggregate "Hello world" → the suffix "world" is NOT lost when the
+    aggregate is dropped. (Guards the inverse-of-a-reported edge: the aggregate is
+    never a unique trailing fragment, it is always the full repeat.)
+    """
+    _install_fake_adk(
+        monkeypatch,
+        events=[
+            _text_event("Hello "),
+            _text_event("world"),
+            _text_event("Hello world", partial=False),  # full repeat — dropped
+        ],
+    )
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="hi", system_prompt="", stats={}, model=None, queue=queue
+    )
+
+    events = await _drain(queue)
+    texts = [e["text"] for e in events if "text" in e]
+    assert texts == ["Hello ", "world"]  # "world" present, aggregate not re-streamed
+    done = next(e for e in events if e.get("done"))
+    assert done["full_text"] == "Hello world"  # complete, not truncated to "Hello "
+
+
 async def test_chat_stream_keeps_final_only_text(monkeypatch):
     """A turn whose text arrives ONLY as a non-partial event must not be lost.
 
