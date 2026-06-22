@@ -267,7 +267,12 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
             _, _, pwd = decoded.partition(":")
             if secrets.compare_digest(pwd.encode(), self.password.encode()):
                 response = await call_next(request)
-                set_session_cookie(response, request)
+                # Don't hand a panel session cookie to Basic-auth API clients
+                # (/api/*): a cookie-jar client (httpx.Client/requests.Session)
+                # would then send the cookie without Origin/Referer and get
+                # rejected by OriginCSRFMiddleware on its next POST (#961 review).
+                if not request.url.path.startswith("/api/"):
+                    set_session_cookie(response, request)
                 return response
 
         target = login_redirect_url(redirect_target_from_request(request))

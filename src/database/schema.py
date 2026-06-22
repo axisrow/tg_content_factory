@@ -86,7 +86,8 @@ CREATE TABLE IF NOT EXISTS collection_tasks (
     created_at TEXT DEFAULT (datetime('now')),
     started_at TEXT,
     completed_at TEXT,
-    last_progress_at TEXT
+    last_progress_at TEXT,
+    result_payload TEXT
 );
 
 CREATE TABLE IF NOT EXISTS telegram_commands (
