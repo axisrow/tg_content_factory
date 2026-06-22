@@ -52,7 +52,7 @@ def safe_json_dumps(
         option |= orjson.OPT_PASSTHROUGH_DATETIME
     if sort_keys:
         option |= orjson.OPT_SORT_KEYS
-    if indent:
+    if indent is not None and indent > 0:  # orjson's only indent mode is 2-space
         option |= orjson.OPT_INDENT_2
     return orjson.dumps(obj, default=default or _default, option=option).decode()
 
