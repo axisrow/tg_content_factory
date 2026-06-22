@@ -541,6 +541,34 @@ async def test_reactions_date_index_recreated_when_flag_set_but_index_missing(tm
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
+async def test_fts_backfill_no_crash_when_docsize_shadow_missing(tmp_path):
+    """Regression (CI): _backfill_messages_fts_if_empty must not raise on a schema
+    where messages_fts exists but its messages_fts_docsize shadow table does not
+    (partial/legacy schema, or a SQLite without the expected FTS5 layout). Probing
+    the shadow table directly would raise 'no such table'."""
+    conn = await _connect(str(tmp_path / "fts_no_docsize.db"))
+    try:
+        # A plain (non-virtual) messages_fts with no docsize shadow table.
+        await conn.executescript("""
+            CREATE TABLE messages_fts (text TEXT);
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                text TEXT
+            );
+        """)
+        await conn.commit()
+
+        # Must return cleanly instead of raising OperationalError.
+        await _backfill_messages_fts_if_empty(conn)
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
 async def test_initial_analyze_seeds_planner_statistics(tmp_path):
     """The one-off ANALYZE populates sqlite_stat1 on a DB with data so the planner
     is no longer blind (#760), and the settings gate makes it idempotent."""

@@ -419,7 +419,13 @@ async def _backfill_messages_fts_if_empty(db: aiosqlite.Connection) -> None:
     the missing AFTER UPDATE trigger cannot desync the index — a wholesale empty
     index is the only drift this code needs to repair.
     """
-    if not await table_exists(db, "messages_fts"):
+    # Both the FTS virtual table and its ``messages_fts_docsize`` shadow table must
+    # exist before probing. They are created together by SCHEMA_SQL, but a partially
+    # built / legacy schema (or a SQLite without the expected FTS5 layout) may have
+    # neither — querying the shadow table directly would raise "no such table".
+    if not await table_exists(db, "messages_fts") or not await table_exists(
+        db, "messages_fts_docsize"
+    ):
         return
 
     # Fast path for every normal boot: the index is external-content, so its row
