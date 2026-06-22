@@ -781,7 +781,7 @@ async def test_settings_save_agent_providers_preserves_priority_order(client, mo
     assert resp.status_code == 303
     raw = await db.get_setting("agent_deepagents_providers_v1")
     assert raw is not None
-    assert raw.index('"provider": "anthropic"') < raw.index('"provider": "openai"')
+    assert raw.index('"provider":"anthropic"') < raw.index('"provider":"openai"')
 
 
 @pytest.mark.anyio
@@ -1487,14 +1487,14 @@ async def test_scheduler_limit_preserved_in_links(client):
 
 @pytest.mark.anyio
 async def test_search_with_query(client):
-    resp = await client.get("/search?q=test&mode=local")
+    resp = await client.get("/search/fragments/results?q=test&mode=local")
     assert resp.status_code == 200
     assert "test" in resp.text
 
 
 @pytest.mark.anyio
 async def test_search_with_invalid_channel_id_returns_error(client):
-    resp = await client.get("/search?q=test&mode=channel&channel_id=abc")
+    resp = await client.get("/search/fragments/results?q=test&mode=channel&channel_id=abc")
     assert resp.status_code == 200
     assert "Некорректный ID канала: abc" in resp.text
 
@@ -1538,7 +1538,7 @@ async def test_search_semantic_unavailable_falls_back_to_local(client):
         vec_available=False, numpy_available=False
     )
 
-    resp = await client.get("/search?q=paris&mode=semantic")
+    resp = await client.get("/search/fragments/results?q=paris&mode=semantic")
     assert resp.status_code == 200
     # No semantic-unavailable banner — the mode was normalised away before searching.
     assert "Семантический поиск недоступен" not in resp.text
@@ -1579,11 +1579,12 @@ async def test_search_with_semantic_mode(client, monkeypatch):
         AsyncMock(return_value=[1.0, 0.0]),
     )
 
-    resp = await client.get("/search?q=bitcoin&mode=semantic")
+    resp = await client.get("/search/fragments/results?q=bitcoin&mode=semantic")
 
     assert resp.status_code == 200
     assert "Bitcoin rebounds strongly" in resp.text
-    assert "Семантический" in resp.text
+    # The "Семантический" radio is a form element on the page skeleton, not the
+    # results fragment; its availability is covered by the search-route tests.
 
 
 @pytest.mark.anyio
@@ -1601,7 +1602,7 @@ async def test_search_runtime_error_is_rendered(client, monkeypatch):
 
     # mode=local goes through service.search directly (telegram modes are now
     # proxied to the worker in web runtime, see #643).
-    resp = await client.get("/search?q=test&mode=local")
+    resp = await client.get("/search/fragments/results?q=test&mode=local")
 
     assert resp.status_code == 200
     assert "Ошибка поиска: boom" in resp.text
@@ -1613,7 +1614,7 @@ async def test_search_telegram_proxy_when_worker_down(client, monkeypatch):
     monkeypatch.setattr("src.web.routes.scheduler._is_worker_alive", AsyncMock(return_value=False))
     _connect_pool(client)
 
-    resp = await client.get("/search?q=test&mode=telegram")
+    resp = await client.get("/search/fragments/results?q=test&mode=telegram")
 
     assert resp.status_code == 200
     assert "Telegram-worker не запущен" in resp.text
@@ -1628,7 +1629,7 @@ async def test_search_telegram_proxied_in_web_even_with_empty_snapshot_pool(clie
     app.state.pool = SimpleNamespace(clients={})  # empty snapshot — no clients visible
     monkeypatch.setattr("src.web.routes.scheduler._is_worker_alive", AsyncMock(return_value=False))
 
-    resp = await client.get("/search?q=test&mode=telegram")
+    resp = await client.get("/search/fragments/results?q=test&mode=telegram")
 
     assert resp.status_code == 200
     # Reached the worker-proxy branch (which reports the worker is down), NOT a local search.
@@ -1661,7 +1662,7 @@ async def test_search_telegram_proxy_renders_worker_result(client, monkeypatch):
     )
     monkeypatch.setattr(deps, "telegram_command_service", lambda request: fake_cmd_service)
 
-    resp = await client.get("/search?q=test&mode=telegram")
+    resp = await client.get("/search/fragments/results?q=test&mode=telegram")
 
     assert resp.status_code == 200
     assert "proxied premium hit" in resp.text
@@ -1701,7 +1702,7 @@ async def test_search_telegram_proxy_timeout_logs_command_context(client, monkey
     )
     monkeypatch.setattr(deps, "telegram_command_service", lambda request: fake_cmd_service)
 
-    resp = await client.get("/search?q=test&mode=telegram")
+    resp = await client.get("/search/fragments/results?q=test&mode=telegram")
 
     assert resp.status_code == 200
     assert "command_id=123" in resp.text
@@ -2841,7 +2842,7 @@ async def test_search_results_have_tg_links(client):
     )
     await db.insert_message(msg)
 
-    resp = await client.get("/search?q=Hello&mode=local")
+    resp = await client.get("/search/fragments/results?q=Hello&mode=local")
     assert resp.status_code == 200
     assert "t.me/testchan/42" in resp.text
     assert "bi-link-45deg" in resp.text
@@ -2865,7 +2866,7 @@ async def test_search_results_private_channel_link(client):
     )
     await db.insert_message(msg)
 
-    resp = await client.get("/search?q=Secret&mode=local")
+    resp = await client.get("/search/fragments/results?q=Secret&mode=local")
     assert resp.status_code == 200
     assert "t.me/c/-100999/7" in resp.text
 

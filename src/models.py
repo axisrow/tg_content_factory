@@ -144,6 +144,27 @@ class CollectionTaskType(StrEnum):
     CONTENT_PUBLISH = "content_publish"
     TRANSLATE_BATCH = "translate_batch"
     EXPORT = "export"
+    # Interop types (#960): produced by tg_content_factory, executed by an
+    # external tg_messenger worker via the /api/tasks REST claim API (#961).
+    # The factory's own workers (UnifiedDispatcher, CollectionQueue) never claim
+    # these — they are absent from HANDLED_TYPES and from the CHANNEL_COLLECT
+    # pull — so they sit PENDING until the external worker claims them.
+    DM_REPLY = "dm_reply"
+    CHAT_ANSWER = "chat_answer"
+    FETCH_DIALOGS = "fetch_dialogs"
+    FETCH_HISTORY = "fetch_history"
+
+
+# Task types executed by an external interop worker (tg_messenger), never by the
+# factory's internal dispatchers. See #829 / #960.
+EXTERNAL_INTEROP_TASK_TYPES: frozenset[CollectionTaskType] = frozenset(
+    {
+        CollectionTaskType.DM_REPLY,
+        CollectionTaskType.CHAT_ANSWER,
+        CollectionTaskType.FETCH_DIALOGS,
+        CollectionTaskType.FETCH_HISTORY,
+    }
+)
 
 
 class TelegramCommandStatus(StrEnum):
@@ -271,6 +292,46 @@ class ExportTaskPayload(BaseModel):
     requested_by: str | None = None
 
 
+# Interop payloads (#960). Produced by the factory, consumed by an external
+# tg_messenger worker. ``v`` is the payload schema version so the worker can
+# evolve independently; ``task_kind`` mirrors the enum value for self-describing
+# rows.
+#
+# By design these are NOT added to CollectionTasksRepository._deserialize_payload
+# / create_generic_task's typed union: the factory only produces them (the REST
+# API stores the request body as an opaque JSON dict) and never executes them, so
+# it never needs typed read access — the external worker owns validation/execution.
+class DmReplyTaskPayload(BaseModel):
+    v: int = 1
+    task_kind: str = CollectionTaskType.DM_REPLY.value
+    peer: str = Field(min_length=1)  # @username or numeric user id of the DM peer
+    text: str = Field(min_length=1)
+    reply_to_message_id: int | None = None
+
+
+class ChatAnswerTaskPayload(BaseModel):
+    v: int = 1
+    task_kind: str = CollectionTaskType.CHAT_ANSWER.value
+    chat_id: int
+    text: str = Field(min_length=1)
+    reply_to_message_id: int | None = None
+
+
+class FetchDialogsTaskPayload(BaseModel):
+    v: int = 1
+    task_kind: str = CollectionTaskType.FETCH_DIALOGS.value
+    limit: int = 100
+    archived: bool = False
+
+
+class FetchHistoryTaskPayload(BaseModel):
+    v: int = 1
+    task_kind: str = CollectionTaskType.FETCH_HISTORY.value
+    peer: str = Field(min_length=1)  # @username or numeric chat/channel id
+    limit: int = 100
+    offset_id: int = 0
+
+
 class CollectionTask(BaseModel):
     id: int | None = None
     channel_id: int | None = None
@@ -301,6 +362,8 @@ class CollectionTask(BaseModel):
     # When progress (messages_collected) last advanced — used by the scheduler
     # health page to tell a genuinely stuck collection apart from a downed worker.
     last_progress_at: datetime | None = None
+    # Result written back by an external interop worker on completion (#961).
+    result_payload: dict[str, Any] | None = None
 
 
 class ChannelStats(BaseModel):
