@@ -117,6 +117,20 @@ CREATE TABLE IF NOT EXISTS runtime_snapshots (
     PRIMARY KEY (snapshot_type, scope)
 );
 
+CREATE TABLE IF NOT EXISTS channel_ratings (
+    channel_id INTEGER PRIMARY KEY,
+    title TEXT,
+    username TEXT,
+    useful TEXT NOT NULL,
+    genre TEXT NOT NULL,
+    confidence REAL DEFAULT 0,
+    reason TEXT,
+    emoji_trash_score REAL,
+    flag_count INTEGER DEFAULT 0,
+    n_total INTEGER DEFAULT 0,
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS search_log (
     id INTEGER PRIMARY KEY,
     phone TEXT NOT NULL,

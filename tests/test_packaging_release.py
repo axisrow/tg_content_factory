@@ -18,4 +18,5 @@ def test_packaging_config_keeps_src_namespace_for_console_script() -> None:
         "web/static/*.js",
         "web/static/js/*.js",
         "cli/commands/*.tcss",
+        "database/seeds/*.csv",
     ]

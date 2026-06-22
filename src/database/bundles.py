@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from src.database.repositories.accounts import AccountsRepository
+from src.database.repositories.channel_ratings import ChannelRatingsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
@@ -71,6 +72,7 @@ class DatabaseRepositories:
     pipeline_templates: PipelineTemplatesRepository
     telegram_commands: TelegramCommandsRepository
     runtime_snapshots: RuntimeSnapshotsRepository
+    channel_ratings: ChannelRatingsRepository
     pipeline_action_log: PipelineActionLogRepository
     notified_messages: NotifiedMessagesRepository
 
