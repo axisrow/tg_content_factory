@@ -506,6 +506,41 @@ async def test_run_migrations_backfills_message_reactions_date(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
+async def test_reactions_date_index_recreated_when_flag_set_but_index_missing(tmp_path):
+    """Regression (PR #945 cycle-2 review): the date-emoji index creation must NOT
+    be gated by the backfill flag. A DB carrying the flag but missing the index
+    (version skew / partial repair) must still get the index recreated, since the
+    backfill function is now the only creation path."""
+    conn = await _connect(str(tmp_path / "flag_no_index.db"))
+    try:
+        await run_migrations(conn)
+        # Simulate version skew: flag is set, but the index was dropped.
+        await conn.execute("DROP INDEX IF EXISTS idx_message_reactions_date_emoji")
+        await conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) "
+            "VALUES ('_migration_reactions_date_backfill_v1', '1')"
+        )
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+            ("idx_message_reactions_date_emoji",),
+        )
+        assert await cur.fetchone() is None  # index gone, flag still set
+
+        await run_migrations(conn)
+
+        # Index is recreated despite the flag being set (UPDATE stays skipped).
+        cur = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+            ("idx_message_reactions_date_emoji",),
+        )
+        assert await cur.fetchone() is not None
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
 async def test_initial_analyze_seeds_planner_statistics(tmp_path):
     """The one-off ANALYZE populates sqlite_stat1 on a DB with data so the planner
     is no longer blind (#760), and the settings gate makes it idempotent."""

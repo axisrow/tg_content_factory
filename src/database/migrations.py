@@ -474,46 +474,49 @@ async def _backfill_message_reactions_date(db: aiosqlite.Connection) -> None:
     amplification). Creating it after means the UPDATE touches a bare table and the
     index is built once over the final data.
 
-    Gated on a settings flag so the (potentially minutes-long) UPDATE over millions
-    of rows runs once. The UPDATE itself is also idempotent via ``WHERE date IS
-    NULL``, so a partial run simply resumes. See issue #760.
+    The expensive UPDATE is gated on a settings flag so it runs once; the index
+    creation is NOT gated — it runs every boot (cheap ``IF NOT EXISTS`` no-op once
+    present) so the index can never be permanently missing on a DB that has the flag
+    but somehow lacks the index (version skew / partial repair). The UPDATE itself is
+    also idempotent via ``WHERE date IS NULL``, so a partial run simply resumes.
+    See issue #760.
     """
-    # Check the flag first — it's the cheapest probe and the common case is "already
-    # done", so a normal boot exits here after a single query instead of running the
-    # table/column guards below.
-    cur = await db.execute(
-        "SELECT value FROM settings WHERE key = '_migration_reactions_date_backfill_v1' LIMIT 1"
-    )
-    if await cur.fetchone():
-        return
-
     if not await table_exists(db, "message_reactions") or not await table_exists(db, "messages"):
         return
     if "date" not in await table_columns(db, "message_reactions"):
         return
 
-    logger.info("Backfilling message_reactions.date from messages (one-off, may take a while)")
-    await db.execute(
-        """
-        UPDATE message_reactions
-           SET date = (
-               SELECT m.date FROM messages m
-               WHERE m.channel_id = message_reactions.channel_id
-                 AND m.message_id = message_reactions.message_id
-           )
-         WHERE date IS NULL
-        """
+    # The one-off backfill UPDATE is the expensive part — gate it on the flag.
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_reactions_date_backfill_v1' LIMIT 1"
     )
-    # Build the index now that the column is fully populated (see docstring).
+    if not await cur.fetchone():
+        logger.info("Backfilling message_reactions.date from messages (one-off, may take a while)")
+        await db.execute(
+            """
+            UPDATE message_reactions
+               SET date = (
+                   SELECT m.date FROM messages m
+                   WHERE m.channel_id = message_reactions.channel_id
+                     AND m.message_id = message_reactions.message_id
+               )
+             WHERE date IS NULL
+            """
+        )
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) "
+            "VALUES ('_migration_reactions_date_backfill_v1', '1')"
+        )
+        logger.info("message_reactions.date backfill complete")
+
+    # Always ensure the index exists, regardless of the backfill flag — it is the
+    # only creation path (removed from SCHEMA_SQL / SCHEMA_REPAIR_INDEXES to avoid
+    # write amplification during the UPDATE above). IF NOT EXISTS makes this a no-op
+    # once present. This runs after the UPDATE so the bulk write hits a bare table.
     await db.execute(
         "CREATE INDEX IF NOT EXISTS idx_message_reactions_date_emoji "
         "ON message_reactions(date, emoji)"
     )
-    await db.execute(
-        "INSERT OR IGNORE INTO settings (key, value) "
-        "VALUES ('_migration_reactions_date_backfill_v1', '1')"
-    )
-    logger.info("message_reactions.date backfill complete")
 
 
 async def _ensure_initial_analyze(db: aiosqlite.Connection) -> None:
