@@ -49,6 +49,8 @@ async def test_claim_distributes_distinct_tasks(route_client):
     responses = await asyncio.gather(
         *[route_client.post("/api/tasks/claim", json={"types": ["fetch_dialogs"]}) for _ in range(6)]
     )
+    unexpected = [r for r in responses if r.status_code not in (200, 204)]
+    assert not unexpected, f"unexpected statuses: {[r.status_code for r in unexpected]}"
     won_ids = [r.json()["id"] for r in responses if r.status_code == 200]
     assert sorted(won_ids) == sorted(ids)  # each task claimed exactly once
     assert len(won_ids) == len(set(won_ids))
