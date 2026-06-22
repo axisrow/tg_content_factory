@@ -187,7 +187,13 @@ async def _page_context(request: Request) -> dict:
 
 
 async def pipelines_page(request: Request):
-    return PipelineTemplate("pipelines.html", await _page_context(request))
+    # Lazyload skeleton (#947): the heavy _page_context (per-account dialog cache
+    # + pipelines-with-relations) runs in the fragment below, not on page render.
+    return PipelineTemplate("pipelines.html", {})
+
+
+async def pipelines_list_fragment(request: Request):
+    return PipelineTemplate("pipelines_content.html", await _page_context(request))
 
 
 async def create_wizard_page(request: Request):

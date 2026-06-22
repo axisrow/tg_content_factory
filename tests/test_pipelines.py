@@ -17,7 +17,7 @@ _LLM_ENV_VARS = [
 async def test_pipelines_page_renders(pipeline_client, monkeypatch):
     for var in _LLM_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
-    resp = await pipeline_client.get("/pipelines/")
+    resp = await pipeline_client.get("/pipelines/fragments/list")
     assert resp.status_code == 200
     assert "Пайплайны контента" in resp.text
     # When no LLM provider is configured, a warning banner is shown and the
@@ -44,5 +44,5 @@ async def test_add_pipeline_route(pipeline_client):
     assert resp.status_code == 303
     assert "msg=pipeline_added" in resp.headers["location"]
 
-    follow = await pipeline_client.get("/pipelines/")
+    follow = await pipeline_client.get("/pipelines/fragments/list")
     assert "Digest" in follow.text

@@ -1434,7 +1434,7 @@ async def test_pipelines_page_with_dialog_refresh(route_client, base_app):
     app, db, pool_mock = base_app
     app.state.llm_provider_service = _make_provider_svc(has=True)
 
-    resp = await route_client.get("/pipelines/?refresh=1")
+    resp = await route_client.get("/pipelines/fragments/list?refresh=1")
     assert resp.status_code == 200
 
 

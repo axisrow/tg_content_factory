@@ -44,6 +44,11 @@ async def pipelines_page(request: Request):
     return pipeline_response(request, await handlers.pipelines_page(request))
 
 
+@router.get("/fragments/list", response_class=HTMLResponse)
+async def pipelines_list_fragment(request: Request):
+    return pipeline_response(request, await handlers.pipelines_list_fragment(request))
+
+
 @router.get("/create", response_class=HTMLResponse)
 async def create_wizard_page(request: Request):
     return pipeline_response(request, await handlers.create_wizard_page(request))

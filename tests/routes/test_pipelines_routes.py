@@ -51,6 +51,9 @@ async def test_pipelines_page_renders(client):
     resp = await client.get("/pipelines/")
     assert resp.status_code == 200
     assert "Пайплайны" in resp.text
+    # Lazyload (#947): the skeleton defers the heavy list to the fragment.
+    assert "/pipelines/fragments/list" in resp.text
+    assert 'hx-trigger="load"' in resp.text
 
 
 @pytest.mark.anyio
@@ -89,7 +92,7 @@ async def test_pipelines_page_lists_pipeline(client):
         "/pipelines/add",
         data={**_ADD_DATA, "name": "Listed Pipeline"},
     )
-    resp = await client.get("/pipelines/")
+    resp = await client.get("/pipelines/fragments/list")
     assert resp.status_code == 200
     assert "Listed Pipeline" in resp.text
 
@@ -100,7 +103,7 @@ async def test_pipelines_page_shows_pipeline_id(client):
         "/pipelines/add",
         data={**_ADD_DATA, "name": "Pipeline With Id"},
     )
-    resp = await client.get("/pipelines/")
+    resp = await client.get("/pipelines/fragments/list")
     assert resp.status_code == 200
     assert "ID: 1" in resp.text
 

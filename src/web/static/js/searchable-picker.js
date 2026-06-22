@@ -11,6 +11,10 @@
     "use strict";
 
     function initPicker(container) {
+        // Idempotent: a container may be visited by both DOMContentLoaded and the
+        // htmx:load handler below (lazyloaded fragments). Init each picker once.
+        if (container.dataset.pickerInit === "1") return;
+        container.dataset.pickerInit = "1";
         var name = container.dataset.pickerName;
         var isMulti = container.dataset.pickerMulti !== "false";
         var ajaxUrl = container.dataset.pickerUrl || "";
@@ -252,7 +256,20 @@
         }
     }
 
+    function initPickersIn(root) {
+        if (!root || !root.querySelectorAll) return;
+        if (root.matches && root.matches("[data-picker-name]")) initPicker(root);
+        root.querySelectorAll("[data-picker-name]").forEach(initPicker);
+    }
+
     document.addEventListener("DOMContentLoaded", function () {
-        document.querySelectorAll("[data-picker-name]").forEach(initPicker);
+        initPickersIn(document);
+    });
+
+    // Pickers inside htmx-swapped content (lazyloaded fragments, e.g. the
+    // Pipelines page #947) are inserted after DOMContentLoaded, so init them when
+    // htmx loads new content. The per-container guard keeps this idempotent.
+    document.addEventListener("htmx:load", function (event) {
+        initPickersIn(event.target);
     });
 })();
