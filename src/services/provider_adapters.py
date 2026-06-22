@@ -85,6 +85,17 @@ async def finalize_image_result(
 _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=120)
 
 
+def _coerce_str(v: Any) -> str:
+    """Coerce a parsed JSON value to ``str``, mapping JSON null to ``""``.
+
+    Provider payloads can carry null/objects where text is expected; this keeps
+    ``_parse_json_for_text``'s ``-> str`` contract at every extraction point.
+    """
+    if isinstance(v, str):
+        return v
+    return "" if v is None else str(v)
+
+
 async def _parse_json_for_text(data: Any) -> str:
     # Try common response shapes
     if data is None:
@@ -118,7 +129,8 @@ async def _parse_json_for_text(data: Any) -> str:
             try:
                 out = data["outputs"][0]
                 if isinstance(out, dict):
-                    return out.get("content", out.get("text", ""))
+                    # values can be JSON null; coerce to "" to keep the -> str contract
+                    return out.get("content") or out.get("text") or ""
                 return str(out)
             except Exception:
                 pass
@@ -129,7 +141,7 @@ async def _parse_json_for_text(data: Any) -> str:
             if isinstance(r, dict):
                 for k in ("text", "content", "generated_text"):
                     if k in r:
-                        return r[k]
+                        return _coerce_str(r[k])
                 return str(r)
         # Ollama / local shapes
         if "results" in data:

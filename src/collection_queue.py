@@ -296,7 +296,16 @@ class CollectionQueue:
             # returning None (and we `continue`, skipping the try/finally below),
             # while the dispatch path below calls it once in the finally block.
             # Exactly one task_done() per dequeued item, never two.
-            validated = await self._validate_task_pre_dispatch(task_id, channel, force, full)
+            try:
+                validated = await self._validate_task_pre_dispatch(task_id, channel, force, full)
+            except Exception:
+                # A transient read error (e.g. "database is locked") here must not
+                # strand the PENDING row: drop it from _known_task_ids so a later
+                # _ingest_pending_tasks can re-pick it, and release the queue slot.
+                logger.warning("Pre-dispatch validation failed for task %d; will requeue", task_id, exc_info=True)
+                self._known_task_ids.discard(task_id)
+                self._queue.task_done()
+                continue
             if validated is None:
                 continue
             channel = validated

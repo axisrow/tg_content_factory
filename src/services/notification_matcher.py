@@ -190,14 +190,66 @@ def _make_message_link(msg: Message) -> str:
     return f"https://t.me/c/{bare_channel_id(msg.channel_id)}/{msg.message_id}"
 
 
+# FTS5's default tokenizer splits text on non-alphanumeric runs; approximate it
+# with a Unicode word-token regex so matching respects token boundaries instead
+# of raw substrings (a bare `cat` must not match inside `concatenate`).
+_FTS_TOKEN_RE = re.compile(r"\w+", re.UNICODE)
+
+
+def _contains_consecutive(tokens: list[str], phrase: list[str]) -> bool:
+    """True if ``phrase`` appears as a run of consecutive entries in ``tokens``."""
+    n, m = len(tokens), len(phrase)
+    if m == 0 or m > n:
+        return False
+    return any(tokens[i : i + m] == phrase for i in range(n - m + 1))
+
+
+def _fts_alt_matches(alt: str, tokens: list[str], token_set: frozenset[str]) -> bool:
+    """Match a single OR-alternative against the message's token list.
+
+    Mirrors FTS5 token semantics rather than substring containment:
+    - a quoted phrase ("apple banana") matches a run of consecutive tokens;
+    - bare terms are implicit-AND — each must equal a whole token (any position);
+    - a trailing ``*`` makes a term a token prefix (``app*`` matches ``apple``).
+    """
+    alt = alt.strip()
+    if not alt:
+        return False
+    if alt.startswith('"') and alt.endswith('"'):
+        phrase = _FTS_TOKEN_RE.findall(alt.strip('"').lower())
+        return bool(phrase) and _contains_consecutive(tokens, phrase)
+    saw_term = False
+    for raw in alt.split():
+        is_prefix = raw.endswith("*")
+        words = _FTS_TOKEN_RE.findall(raw.lower())
+        if not words:
+            continue
+        saw_term = True
+        term = words[0]
+        if is_prefix:
+            if not any(t.startswith(term) for t in token_set):
+                return False
+        elif term not in token_set:
+            return False
+    return saw_term
+
+
 def _fts_query_matches(fts_query: str, text: str) -> bool:
-    """Approximate FTS5 boolean query matching against plain text."""
-    text_lower = text.lower()
+    """Approximate FTS5 boolean query matching against plain text.
+
+    Best-effort only — it models AND / OR / quoted-phrase / prefix-``*`` semantics
+    but NOT the rarer query operators: ``+`` (phrase adjacency, treated here as
+    unordered AND), ``NOT``/``NEAR``, and column filters are not approximated. A
+    saved notification query using them may diverge from the real search (a ``+``
+    query can over-notify, a ``NOT`` query can under-notify). Fully replicating the
+    FTS5 query grammar is out of scope for the live matcher.
+    """
+    tokens = _FTS_TOKEN_RE.findall(text.lower())
+    token_set = frozenset(tokens)
     parts = re.split(r"\bAND\b", fts_query, flags=re.IGNORECASE)
     for part in parts:
         part = part.strip().strip("()")
         alternatives = re.split(r"\bOR\b", part, flags=re.IGNORECASE)
-        terms = [alt.strip().strip('"').rstrip("*").lower() for alt in alternatives]
-        if not any(t and t in text_lower for t in terms):
+        if not any(_fts_alt_matches(alt, tokens, token_set) for alt in alternatives):
             return False
     return True

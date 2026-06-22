@@ -112,9 +112,28 @@ async def test_parse_json_outputs_string():
 
 
 @pytest.mark.anyio
+async def test_outputs_null_content_keeps_str_contract():
+    # Regression #971: JSON null in outputs[0] must coerce to "" (-> str contract).
+    data = {"outputs": [{"content": None, "text": None}]}
+    result = await _parse_json_for_text(data)
+    assert isinstance(result, str)
+    assert result == ""
+
+
+@pytest.mark.anyio
 async def test_parse_json_result_string():
     data = {"result": "Result string"}
     assert await _parse_json_for_text(data) == "Result string"
+
+
+@pytest.mark.anyio
+async def test_result_dict_value_is_coerced_to_str():
+    # Regression #971: a nested dict / null under result[k] must not leak out as
+    # a non-str value, violating the -> str annotation.
+    nested = await _parse_json_for_text({"result": {"text": {"nested": 1}}})
+    assert isinstance(nested, str)
+    null_val = await _parse_json_for_text({"result": {"text": None}})
+    assert null_val == ""
 
 
 @pytest.mark.anyio

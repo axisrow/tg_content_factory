@@ -372,6 +372,40 @@ def test_fts_query_matches_case_insensitive():
     assert _fts_query_matches("HELLO", "hello world") is True
 
 
+def test_fts_implicit_and_two_bare_terms():
+    """Regression #971: bare space is FTS5 implicit-AND, not a phrase.
+
+    Both words must be present (any position) — matching how the saved search
+    actually executes via SQLite FTS5 — instead of being treated as one
+    contiguous substring.
+    """
+    assert _fts_query_matches("apple banana", "apple here and banana there") is True
+    assert _fts_query_matches("apple banana", "only apple here") is False
+
+
+def test_fts_quoted_phrase_stays_contiguous():
+    """A quoted phrase must still match contiguously, not as implicit-AND."""
+    assert _fts_query_matches('"apple banana"', "an apple banana split") is True
+    assert _fts_query_matches('"apple banana"', "apple here and banana there") is False
+
+
+def test_fts_bare_term_respects_token_boundaries():
+    """Regression: a bare term matches whole tokens, not substrings (Codex P2).
+
+    SQLite FTS5 `MATCH 'cat dog'` does NOT match `concatenate dog` — `cat` is a
+    substring of `concatenate` but not a token. The approximation must agree, or
+    notifications fire for messages the saved search would never return.
+    """
+    assert _fts_query_matches("cat dog", "concatenate dog") is False
+    assert _fts_query_matches("cat dog", "a cat and a dog") is True
+
+
+def test_fts_prefix_star_matches_token_prefix():
+    """A trailing `*` keeps FTS prefix semantics (`app*` matches `apple`)."""
+    assert _fts_query_matches("app*", "an apple a day") is True
+    assert _fts_query_matches("cat", "category list") is False
+
+
 # === audit #838/1 dedup + retry, #836/12 display name ===
 
 

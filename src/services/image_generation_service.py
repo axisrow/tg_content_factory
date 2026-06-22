@@ -269,12 +269,12 @@ class ImageGenerationService:
                                 "id": f"{r.get('owner', '')}/{r.get('name', '')}",
                                 "model_string": f"replicate:{r.get('owner', '')}/{r.get('name', '')}",
                                 "description": (r.get("description") or "")[:200],
-                                "run_count": r.get("run_count", 0),
+                                "run_count": r.get("run_count") or 0,
                                 "rank": r.get("rank"),
                             }
                             for r in results
                         ]
-                        models.sort(key=lambda m: m.get("run_count", 0), reverse=True)
+                        models.sort(key=lambda m: m.get("run_count") or 0, reverse=True)
                         return models[:20]
             except Exception:
                 logger.warning("Failed to search Replicate models", exc_info=True)
@@ -303,11 +303,11 @@ class ImageGenerationService:
                         {
                             "id": model_id,
                             "model_string": f"huggingface:{model_id}",
-                            "description": (m.cardData or {}).get("description", "")[:200] if m.cardData else "",
+                            "description": ((m.cardData or {}).get("description") or "")[:200],
                             "run_count": m.downloads or 0,
                         }
                     )
-                models.sort(key=lambda x: x.get("run_count", 0), reverse=True)
+                models.sort(key=lambda x: x.get("run_count") or 0, reverse=True)
                 return models[:20]
             except Exception:
                 logger.warning("Failed to search HuggingFace models", exc_info=True)
