@@ -398,8 +398,11 @@ CREATE INDEX IF NOT EXISTS idx_message_reactions_channel_msg
     ON message_reactions(channel_id, message_id);
 CREATE INDEX IF NOT EXISTS idx_message_reactions_emoji
     ON message_reactions(emoji);
-CREATE INDEX IF NOT EXISTS idx_message_reactions_date_emoji
-    ON message_reactions(date, emoji);
+-- NOTE: idx_message_reactions_date_emoji is created by _backfill_message_reactions_date
+-- in migrations.py, AFTER the one-off date backfill — not here. Building it up front
+-- would force the 6.8M-row backfill UPDATE to maintain the index per row (write
+-- amplification). On a fresh DB the migration also creates it (over an empty/just-filled
+-- table, so it's cheap). See issue #760 / PR #945 review.
 CREATE INDEX IF NOT EXISTS idx_messages_collected_at ON messages(collected_at);
 -- Covering index for analytics GROUP BY media_type with the is_filtered
 -- channel join: without it the count query full-scans the messages table (#826).

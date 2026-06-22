@@ -152,7 +152,9 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
 
 SCHEMA_REPAIR_INDEXES: Sequence[str] = (
     "CREATE INDEX IF NOT EXISTS idx_messages_detected_lang ON messages(detected_lang)",
-    "CREATE INDEX IF NOT EXISTS idx_message_reactions_date_emoji ON message_reactions(date, emoji)",
+    # NOTE: idx_message_reactions_date_emoji is intentionally NOT here — it is created
+    # by _backfill_message_reactions_date AFTER the one-off date backfill, so the
+    # 6.8M-row UPDATE doesn't pay index-maintenance cost on every row (#760, PR #945 review).
     """
     CREATE INDEX IF NOT EXISTS idx_messages_fwd_from_channel
     ON messages(forward_from_channel_id) WHERE forward_from_channel_id IS NOT NULL
@@ -466,6 +468,12 @@ async def _backfill_message_reactions_date(db: aiosqlite.Connection) -> None:
     row is backfilled it falls out of the recency window, so this is what makes the
     historical data complete.
 
+    The ``(date, emoji)`` index is created here, AFTER the backfill UPDATE, rather
+    than alongside the other repair indexes: building it first would force SQLite to
+    maintain it for each of the 6.8M rows the UPDATE rewrites (index write
+    amplification). Creating it after means the UPDATE touches a bare table and the
+    index is built once over the final data.
+
     Gated on a settings flag so the (potentially minutes-long) UPDATE over millions
     of rows runs once. The UPDATE itself is also idempotent via ``WHERE date IS
     NULL``, so a partial run simply resumes. See issue #760.
@@ -495,6 +503,11 @@ async def _backfill_message_reactions_date(db: aiosqlite.Connection) -> None:
            )
          WHERE date IS NULL
         """
+    )
+    # Build the index now that the column is fully populated (see docstring).
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_message_reactions_date_emoji "
+        "ON message_reactions(date, emoji)"
     )
     await db.execute(
         "INSERT OR IGNORE INTO settings (key, value) "

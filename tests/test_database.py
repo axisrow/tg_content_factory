@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import aiosqlite
 import pytest
@@ -437,6 +437,41 @@ async def test_reactions_store_message_date_on_insert(db):
     by_emoji = {r["emoji"]: r["date"] for r in rows}
     assert by_emoji["\U0001f44d"] == msg_date.isoformat()
     assert by_emoji["❤️"] == msg_date.isoformat()
+
+
+@pytest.mark.anyio
+async def test_trending_emojis_end_to_end_via_reaction_date(db):
+    """End-to-end check that the new mr.date-filtered get_trending_emojis SQL runs
+    against a real DB (#760) — not just the mocked TrendService unit test. Recent
+    reactions are aggregated; rows outside the window are excluded."""
+    from src.services.trend_service import TrendService
+
+    recent = datetime.now(timezone.utc)
+    old = recent - timedelta(days=400)
+
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100777,
+                message_id=1,
+                text="recent",
+                date=recent,
+                reactions_json='[{"emoji": "\U0001f525", "count": 9}]',
+            ),
+            Message(
+                channel_id=-100777,
+                message_id=2,
+                text="old",
+                date=old,
+                reactions_json='[{"emoji": "\U0001f422", "count": 50}]',
+            ),
+        ]
+    )
+
+    result = await TrendService(db).get_trending_emojis(days=7, limit=15)
+    emojis = {e.emoji: e.count for e in result}
+    assert emojis.get("\U0001f525") == 9  # recent reaction is counted
+    assert "\U0001f422" not in emojis  # the 400-day-old reaction is outside the window
 
 
 @pytest.mark.anyio

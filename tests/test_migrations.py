@@ -6,6 +6,7 @@ import aiosqlite
 import pytest
 
 from src.database.migrations import (
+    SCHEMA_REPAIR_INDEXES,
     _backfill_messages_fts_if_empty,
     _ensure_initial_analyze,
     _migrate_tool_permission_key,
@@ -493,6 +494,12 @@ async def test_run_migrations_backfills_message_reactions_date(tmp_path):
             "SELECT value FROM settings WHERE key = '_migration_reactions_date_backfill_v1'"
         )
         assert (await cur.fetchone())["value"] == "1"
+
+        # Regression (PR #945 review): the date-emoji index must NOT be built up
+        # front with the other repair indexes — that would force the 6.8M-row
+        # backfill UPDATE to maintain it per row. It is created by the backfill
+        # function itself, after the UPDATE.
+        assert not any("idx_message_reactions_date_emoji" in s for s in SCHEMA_REPAIR_INDEXES)
     finally:
         await conn.close()
 
