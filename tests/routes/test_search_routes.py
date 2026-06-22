@@ -72,6 +72,22 @@ async def test_search_page_with_message(route_client):
 
 
 @pytest.mark.anyio
+async def test_search_page_is_skeleton_and_defers_search(route_client, monkeypatch):
+    """Lazyload (#946): GET /search with a query returns the skeleton with an
+    hx-get trigger to the results fragment, and does NOT run the search itself."""
+    mock_svc = MagicMock()
+    mock_svc.search = AsyncMock(return_value=SearchResult(messages=[], total=0, query="test"))
+    mock_svc.check_quota = AsyncMock(return_value=None)
+    monkeypatch.setattr("src.web.search.handlers.deps.search_service", lambda r: mock_svc)
+
+    resp = await route_client.get("/search?q=test")
+    assert resp.status_code == 200
+    assert "/search/fragments/results?q=test" in resp.text
+    assert 'hx-trigger="load"' in resp.text
+    mock_svc.search.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_search_with_query(route_client, monkeypatch):
     """Test search with query executes search."""
     mock_result = SearchResult(messages=[], total=0, query="test")
@@ -83,7 +99,7 @@ async def test_search_with_query(route_client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test")
+    resp = await route_client.get("/search/fragments/results?q=test")
     assert resp.status_code == 200
     mock_svc.search.assert_called_once()
 
@@ -113,7 +129,7 @@ async def test_search_result_does_not_render_translate_button_without_db_id(rout
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=привет")
+    resp = await route_client.get("/search/fragments/results?q=привет")
 
     assert resp.status_code == 200
     assert 'data-msg-id="None"' not in resp.text
@@ -144,7 +160,7 @@ async def test_search_result_renders_translate_button_with_db_id(route_client, m
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=привет")
+    resp = await route_client.get("/search/fragments/results?q=привет")
 
     assert resp.status_code == 200
     assert 'data-msg-id="123"' in resp.text
@@ -164,7 +180,7 @@ async def test_search_invalid_channel_id(route_client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test&channel_id=bad")
+    resp = await route_client.get("/search/fragments/results?q=test&channel_id=bad")
     assert resp.status_code == 200
     assert "Некорректный ID" in resp.text or "invalid" in resp.text.lower()
 
@@ -181,7 +197,7 @@ async def test_search_pagination(route_client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test&page=2")
+    resp = await route_client.get("/search/fragments/results?q=test&page=2")
     assert resp.status_code == 200
 
 
@@ -197,7 +213,7 @@ async def test_search_fts_mode(route_client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test&is_fts=true")
+    resp = await route_client.get("/search/fragments/results?q=test&is_fts=true")
     assert resp.status_code == 200
 
 
@@ -213,7 +229,7 @@ async def test_search_hybrid_mode(route_client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test&mode=hybrid")
+    resp = await route_client.get("/search/fragments/results?q=test&mode=hybrid")
     assert resp.status_code == 200
 
 
@@ -228,7 +244,7 @@ async def test_search_error_rendered(route_client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test")
+    resp = await route_client.get("/search/fragments/results?q=test")
     assert resp.status_code == 200
     assert "ошибка" in resp.text.lower() or "error" in resp.text.lower()
 
@@ -246,7 +262,7 @@ async def test_search_date_filters(route_client, monkeypatch):
     )
 
     resp = await route_client.get(
-        "/search?q=test&date_from=2024-01-01&date_to=2024-12-31"
+        "/search/fragments/results?q=test&date_from=2024-01-01&date_to=2024-12-31"
     )
     assert resp.status_code == 200
 
@@ -263,7 +279,7 @@ async def test_search_length_filter(route_client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test%20len%3C500&mode=local")
+    resp = await route_client.get("/search/fragments/results?q=test%20len%3C500&mode=local")
     assert resp.status_code == 200
 
 
@@ -288,7 +304,7 @@ async def test_browse_mode_with_channel_id(route_client, monkeypatch, base_app):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?channel_id=200&mode=local")
+    resp = await route_client.get("/search/fragments/results?channel_id=200&mode=local")
     assert resp.status_code == 200
     # Should call search with mode="local" (browse forces local mode)
     mock_svc.search.assert_called_once()
@@ -326,7 +342,7 @@ async def test_browse_mode_with_query(route_client, monkeypatch, base_app):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test&channel_id=200&mode=local")
+    resp = await route_client.get("/search/fragments/results?q=test&channel_id=200&mode=local")
     assert resp.status_code == 200
     # Should call search normally (not browse mode)
     mock_svc.search.assert_called_once()
@@ -447,7 +463,7 @@ async def test_search_quota_failure(route_client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test")
+    resp = await route_client.get("/search/fragments/results?q=test")
     assert resp.status_code == 200
 
 
@@ -679,7 +695,7 @@ async def test_search_page_shows_plus_when_has_more(route_client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test")
+    resp = await route_client.get("/search/fragments/results?q=test")
 
     assert resp.status_code == 200
     # #766: the result counter renders «N+» and the next-page link appears.
@@ -708,7 +724,7 @@ async def test_search_page_no_next_when_no_more(route_client, monkeypatch):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test")
+    resp = await route_client.get("/search/fragments/results?q=test")
 
     assert resp.status_code == 200
     # #766: the result counter renders the exact total with no lower-bound «+»,
@@ -762,7 +778,7 @@ async def test_search_page_next_link_for_exact_total_modes(route_client, monkeyp
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?q=test&mode=semantic")
+    resp = await route_client.get("/search/fragments/results?q=test&mode=semantic")
 
     assert resp.status_code == 200
     assert "Далее" in resp.text
