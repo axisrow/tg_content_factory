@@ -190,6 +190,24 @@ def _make_message_link(msg: Message) -> str:
     return f"https://t.me/c/{bare_channel_id(msg.channel_id)}/{msg.message_id}"
 
 
+def _fts_alt_matches(alt: str, text_lower: str) -> bool:
+    """Match a single OR-alternative against ``text_lower``.
+
+    A quoted phrase ("apple banana") matches contiguously; a bare token with
+    interior whitespace is treated as FTS5 implicit-AND — every sub-word must
+    be present (in any position), mirroring how the saved search itself runs.
+    """
+    alt = alt.strip()
+    if not alt:
+        return False
+    if alt.startswith('"') and alt.endswith('"'):
+        phrase = alt.strip('"').rstrip("*").lower().strip()
+        return bool(phrase) and phrase in text_lower
+    words = [w.rstrip("*").lower() for w in alt.split()]
+    words = [w for w in words if w]
+    return bool(words) and all(w in text_lower for w in words)
+
+
 def _fts_query_matches(fts_query: str, text: str) -> bool:
     """Approximate FTS5 boolean query matching against plain text."""
     text_lower = text.lower()
@@ -197,7 +215,6 @@ def _fts_query_matches(fts_query: str, text: str) -> bool:
     for part in parts:
         part = part.strip().strip("()")
         alternatives = re.split(r"\bOR\b", part, flags=re.IGNORECASE)
-        terms = [alt.strip().strip('"').rstrip("*").lower() for alt in alternatives]
-        if not any(t and t in text_lower for t in terms):
+        if not any(_fts_alt_matches(alt, text_lower) for alt in alternatives):
             return False
     return True

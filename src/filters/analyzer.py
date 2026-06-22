@@ -136,7 +136,7 @@ class ChannelAnalyzer:
 
             short_msg_pct: float | None = None
             noisy_chat = False
-            is_chat = channel["channel_type"] in ("group", "supergroup", "forum")
+            is_chat = channel["channel_type"] in ("group", "supergroup", "gigagroup", "forum")
             if is_chat and channel_id_value in short_map:
                 short_total, short_count = short_map[channel_id_value]
                 if short_total > 0:

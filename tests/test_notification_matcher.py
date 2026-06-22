@@ -372,6 +372,23 @@ def test_fts_query_matches_case_insensitive():
     assert _fts_query_matches("HELLO", "hello world") is True
 
 
+def test_fts_implicit_and_two_bare_terms():
+    """Regression #971: bare space is FTS5 implicit-AND, not a phrase.
+
+    Both words must be present (any position) — matching how the saved search
+    actually executes via SQLite FTS5 — instead of being treated as one
+    contiguous substring.
+    """
+    assert _fts_query_matches("apple banana", "apple here and banana there") is True
+    assert _fts_query_matches("apple banana", "only apple here") is False
+
+
+def test_fts_quoted_phrase_stays_contiguous():
+    """A quoted phrase must still match contiguously, not as implicit-AND."""
+    assert _fts_query_matches('"apple banana"', "an apple banana split") is True
+    assert _fts_query_matches('"apple banana"', "apple here and banana there") is False
+
+
 # === audit #838/1 dedup + retry, #836/12 display name ===
 
 

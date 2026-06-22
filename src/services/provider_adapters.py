@@ -118,7 +118,8 @@ async def _parse_json_for_text(data: Any) -> str:
             try:
                 out = data["outputs"][0]
                 if isinstance(out, dict):
-                    return out.get("content", out.get("text", ""))
+                    # values can be JSON null; coerce to "" to keep the -> str contract
+                    return out.get("content") or out.get("text") or ""
                 return str(out)
             except Exception:
                 pass
@@ -129,7 +130,10 @@ async def _parse_json_for_text(data: Any) -> str:
             if isinstance(r, dict):
                 for k in ("text", "content", "generated_text"):
                     if k in r:
-                        return r[k]
+                        v = r[k]
+                        # the matched value may be JSON null or a nested object;
+                        # keep the -> str contract
+                        return v if isinstance(v, str) else ("" if v is None else str(v))
                 return str(r)
         # Ollama / local shapes
         if "results" in data:
