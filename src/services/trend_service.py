@@ -349,13 +349,16 @@ class TrendService:
 
     async def get_trending_emojis(self, days: int = 7, limit: int = 15) -> list[TrendingEmoji]:
         """Return most-used reaction emojis from the last N days."""
+        # Filter on the reaction's own date (denormalized from the parent message,
+        # #760) so the period predicate is index-served by idx_message_reactions_date_emoji
+        # instead of joining every reaction against messages — that JOIN took ~3m43s
+        # on a 6.8M-row table; this resolves in milliseconds.
         rows = await self._db.execute_fetchall(
             """
-            SELECT mr.emoji, SUM(mr.count) AS total
-            FROM message_reactions mr
-            JOIN messages m ON mr.channel_id = m.channel_id AND mr.message_id = m.message_id
-            WHERE m.date >= date('now', ?)
-            GROUP BY mr.emoji
+            SELECT emoji, SUM(count) AS total
+            FROM message_reactions
+            WHERE date >= date('now', ?)
+            GROUP BY emoji
             ORDER BY total DESC
             LIMIT ?
             """,

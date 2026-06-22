@@ -76,3 +76,6 @@ docs/superpowers/
 
 # Serena tool workspace (per-developer cache/memories — not versioned)
 .serena/
+
+# Beads issue tracker — local Dolt DB + backups (text export not versioned in code PRs)
+.beads/

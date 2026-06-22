@@ -6,6 +6,9 @@ import aiosqlite
 import pytest
 
 from src.database.migrations import (
+    SCHEMA_REPAIR_INDEXES,
+    _backfill_messages_fts_if_empty,
+    _ensure_initial_analyze,
     _migrate_tool_permission_key,
     _migrate_vec_to_portable,
     _migrate_zai_empty_base_url_to_coding,
@@ -299,5 +302,304 @@ async def test_legacy_data_migration_helpers_preserve_upgrade_contracts(tmp_path
         cur = await conn.execute("SELECT value FROM settings WHERE key = 'agent_tool_permissions'")
         permissions = json.loads((await cur.fetchone())["value"])
         assert permissions == {"search_dialogs": False}
+    finally:
+        await conn.close()
+
+
+async def _fts_match_ids(conn: aiosqlite.Connection, query: str) -> list[int]:
+    cur = await conn.execute(
+        "SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? ORDER BY rowid",
+        (query,),
+    )
+    return [row["rowid"] for row in await cur.fetchall()]
+
+
+async def _index_names(conn: aiosqlite.Connection, table: str) -> set[str]:
+    cur = await conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name = ?",
+        (table,),
+    )
+    return {row["name"] for row in await cur.fetchall()}
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_backfill_rebuilds_empty_fts_for_existing_messages(tmp_path):
+    """An empty FTS index over a non-empty messages table is repopulated (#760)."""
+    conn = await _connect(str(tmp_path / "stale_fts.db"))
+    try:
+        await run_migrations(conn)
+
+        # Insert messages, then wipe the FTS index to simulate a database whose
+        # rows predate messages_fts (or a dump/restore that never indexed them).
+        await conn.execute(
+            "INSERT INTO messages (channel_id, message_id, date, text) VALUES (?, ?, ?, ?)",
+            (111, 1, "2026-01-01T00:00:00", "привет мир"),
+        )
+        await conn.execute(
+            "INSERT INTO messages (channel_id, message_id, date, text) VALUES (?, ?, ?, ?)",
+            (111, 2, "2026-01-02T00:00:00", "погода сегодня хорошая"),
+        )
+        await conn.execute("INSERT INTO messages_fts(messages_fts) VALUES('delete-all')")
+        await conn.commit()
+        assert await _fts_match_ids(conn, "привет") == []  # index is now empty
+
+        await _backfill_messages_fts_if_empty(conn)
+        await conn.commit()
+
+        assert await _fts_match_ids(conn, "привет") == [1]
+        assert await _fts_match_ids(conn, "погода") == [2]
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_run_migrations_drops_obsolete_idx_messages_text(tmp_path):
+    """idx_messages_text is a ~21 GB dead weight (#760): dropped on existing DBs,
+    never recreated, and the other messages indexes are left intact."""
+    conn = await _connect(str(tmp_path / "with_text_index.db"))
+    try:
+        # Stand up a legacy DB that still carries the obsolete index.
+        await conn.executescript("""
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                text TEXT,
+                date TEXT NOT NULL,
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE INDEX idx_messages_text ON messages(text);
+        """)
+        await conn.commit()
+        assert "idx_messages_text" in await _index_names(conn, "messages")
+
+        await run_migrations(conn)
+
+        indexes = await _index_names(conn, "messages")
+        # The obsolete index is gone and the schema does not recreate it.
+        assert "idx_messages_text" not in indexes
+        # The still-useful indexes the schema does declare are untouched.
+        assert {"idx_messages_channel_date", "idx_messages_date"} <= indexes
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_backfill_is_idempotent_and_skips_populated_index(tmp_path):
+    """Re-running the backfill must not duplicate rows or error on a full index."""
+    conn = await _connect(str(tmp_path / "populated_fts.db"))
+    try:
+        await run_migrations(conn)
+        await conn.execute(
+            "INSERT INTO messages (channel_id, message_id, date, text) VALUES (?, ?, ?, ?)",
+            (222, 1, "2026-01-01T00:00:00", "уникальное слово"),
+        )
+        await conn.commit()
+
+        # Trigger already indexed the row; backfill should detect a populated
+        # index and skip the rebuild entirely.
+        await _backfill_messages_fts_if_empty(conn)
+        await _backfill_messages_fts_if_empty(conn)
+        await conn.commit()
+
+        assert await _fts_match_ids(conn, "уникальное") == [1]
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_backfill_noop_on_empty_messages(tmp_path):
+    """No messages → nothing to index, and no error."""
+    conn = await _connect(str(tmp_path / "empty.db"))
+    try:
+        await run_migrations(conn)
+        await _backfill_messages_fts_if_empty(conn)
+        assert await _fts_match_ids(conn, "что угодно") == []
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_run_migrations_idx_messages_text_drop_is_idempotent(tmp_path):
+    """A fresh DB never has the index; running migrations twice must not error."""
+    conn = await _connect(str(tmp_path / "fresh_no_index.db"))
+    try:
+        await run_migrations(conn)
+        await run_migrations(conn)
+        assert "idx_messages_text" not in await _index_names(conn, "messages")
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_run_migrations_backfills_message_reactions_date(tmp_path):
+    """Legacy reaction rows get their date filled from the parent message (#760),
+    and the date-emoji index is created."""
+    conn = await _connect(str(tmp_path / "legacy_reactions.db"))
+    try:
+        # Legacy schema: message_reactions WITHOUT a date column.
+        await conn.executescript("""
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                text TEXT,
+                date TEXT NOT NULL,
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE TABLE message_reactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                emoji TEXT NOT NULL,
+                count INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(channel_id, message_id, emoji)
+            );
+        """)
+        await conn.execute(
+            "INSERT INTO messages (channel_id, message_id, date, text) VALUES (?, ?, ?, ?)",
+            (100, 1, "2026-06-01T12:00:00", "hi"),
+        )
+        await conn.execute(
+            "INSERT INTO message_reactions (channel_id, message_id, emoji, count) VALUES (?, ?, ?, ?)",
+            (100, 1, "👍", 5),
+        )
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        # Column added, index created, legacy row backfilled from the message.
+        assert "date" in await _columns(conn, "message_reactions")
+        cur = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+            ("idx_message_reactions_date_emoji",),
+        )
+        assert await cur.fetchone() is not None
+        cur = await conn.execute(
+            "SELECT date FROM message_reactions WHERE channel_id = 100 AND message_id = 1"
+        )
+        assert (await cur.fetchone())["date"] == "2026-06-01T12:00:00"
+
+        # Backfill is gated: a second run is a no-op (flag set) and does not error.
+        await run_migrations(conn)
+        cur = await conn.execute(
+            "SELECT value FROM settings WHERE key = '_migration_reactions_date_backfill_v1'"
+        )
+        assert (await cur.fetchone())["value"] == "1"
+
+        # Regression (PR #945 review): the date-emoji index must NOT be built up
+        # front with the other repair indexes — that would force the 6.8M-row
+        # backfill UPDATE to maintain it per row. It is created by the backfill
+        # function itself, after the UPDATE.
+        assert not any("idx_message_reactions_date_emoji" in s for s in SCHEMA_REPAIR_INDEXES)
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_reactions_date_index_recreated_when_flag_set_but_index_missing(tmp_path):
+    """Regression (PR #945 cycle-2 review): the date-emoji index creation must NOT
+    be gated by the backfill flag. A DB carrying the flag but missing the index
+    (version skew / partial repair) must still get the index recreated, since the
+    backfill function is now the only creation path."""
+    conn = await _connect(str(tmp_path / "flag_no_index.db"))
+    try:
+        await run_migrations(conn)
+        # Simulate version skew: flag is set, but the index was dropped.
+        await conn.execute("DROP INDEX IF EXISTS idx_message_reactions_date_emoji")
+        await conn.execute(
+            "INSERT OR REPLACE INTO settings (key, value) "
+            "VALUES ('_migration_reactions_date_backfill_v1', '1')"
+        )
+        await conn.commit()
+        cur = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+            ("idx_message_reactions_date_emoji",),
+        )
+        assert await cur.fetchone() is None  # index gone, flag still set
+
+        await run_migrations(conn)
+
+        # Index is recreated despite the flag being set (UPDATE stays skipped).
+        cur = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name = ?",
+            ("idx_message_reactions_date_emoji",),
+        )
+        assert await cur.fetchone() is not None
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_fts_backfill_no_crash_when_docsize_shadow_missing(tmp_path):
+    """Regression (CI): _backfill_messages_fts_if_empty must not raise on a schema
+    where messages_fts exists but its messages_fts_docsize shadow table does not
+    (partial/legacy schema, or a SQLite without the expected FTS5 layout). Probing
+    the shadow table directly would raise 'no such table'."""
+    conn = await _connect(str(tmp_path / "fts_no_docsize.db"))
+    try:
+        # A plain (non-virtual) messages_fts with no docsize shadow table.
+        await conn.executescript("""
+            CREATE TABLE messages_fts (text TEXT);
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                date TEXT NOT NULL,
+                text TEXT
+            );
+        """)
+        await conn.commit()
+
+        # Must return cleanly instead of raising OperationalError.
+        await _backfill_messages_fts_if_empty(conn)
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_initial_analyze_seeds_planner_statistics(tmp_path):
+    """The one-off ANALYZE populates sqlite_stat1 on a DB with data so the planner
+    is no longer blind (#760), and the settings gate makes it idempotent."""
+    conn = await _connect(str(tmp_path / "no_stats.db"))
+    try:
+        await run_migrations(conn)
+        # Give the indexed table enough rows that ANALYZE records statistics.
+        await conn.executemany(
+            "INSERT INTO messages (channel_id, message_id, date, text) VALUES (?, ?, ?, ?)",
+            [(777, i, "2026-01-01T00:00:00", f"row {i}") for i in range(50)],
+        )
+        await conn.commit()
+
+        # run_migrations already set the gate (and ran ANALYZE on the then-empty
+        # table). Clear the gate and re-run so ANALYZE records real statistics for
+        # the now-populated table.
+        await conn.execute("DELETE FROM settings WHERE key = '_migration_analyze_v1'")
+        await conn.commit()
+
+        await _ensure_initial_analyze(conn)
+        await conn.commit()
+
+        # sqlite_stat1 now holds actual row-count statistics for messages.
+        cur = await conn.execute(
+            "SELECT count(*) AS n FROM sqlite_stat1 WHERE tbl = 'messages'"
+        )
+        assert (await cur.fetchone())["n"] > 0
+        cur = await conn.execute("SELECT value FROM settings WHERE key = '_migration_analyze_v1'")
+        assert (await cur.fetchone())["value"] == "1"  # gate set
+
+        # Second call short-circuits on the gate and must not error.
+        await _ensure_initial_analyze(conn)
     finally:
         await conn.close()
