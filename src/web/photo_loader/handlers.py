@@ -156,6 +156,12 @@ def build_feedback(
 
 
 async def handle_photo_loader_page(request: Request, phone: str | None = None) -> PhotoLoaderTemplate:
+    # Lazyload skeleton (#950): the dialog list (1000+ chats from Telegram cache)
+    # loads via the /dialogs/photos/fragments/dialogs fragment.
+    return PhotoLoaderTemplate("photo_loader.html", {})
+
+
+async def handle_photo_loader_dialogs(request: Request, phone: str | None = None) -> PhotoLoaderTemplate:
     pool = deps.get_pool(request)
     accounts = sorted(pool.clients.keys())
     selected_phone = phone if phone in pool.clients else (accounts[0] if accounts else None)
@@ -186,7 +192,7 @@ async def handle_photo_loader_page(request: Request, phone: str | None = None) -
         "auto_jobs": auto_jobs,
         "photo_feedback": photo_feedback,
     }
-    return PhotoLoaderTemplate("photo_loader.html", context)
+    return PhotoLoaderTemplate("photo_loader_content.html", context)
 
 
 async def _validate_target(
