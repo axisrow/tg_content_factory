@@ -94,19 +94,13 @@ async def claim_task(request: Request, body: ClaimRequest):
     return JSONResponse(_task_json(task))
 
 
-@router.post("/requeue-running")
-async def requeue_running(request: Request):
-    """Recover orphaned interop tasks stuck in RUNNING — e.g. the external worker
-    crashed mid-task. The factory's own dispatcher never owns these types, so it
-    won't requeue them on its startup; the external worker calls this on boot to
-    reset its interop tasks RUNNING→PENDING so they can be re-claimed (#961 review)."""
-    tasks = deps.get_db(request).repos.tasks
-    count = await tasks.requeue_running_generic_tasks_on_startup(
-        datetime.now(timezone.utc), list(_ALLOWED_VALUES)
-    )
-    return JSONResponse({"requeued": count})
-
-
+# NOTE (orphan recovery, follow-up): an external interop task can get stuck in
+# RUNNING if the worker that claimed it dies mid-task. We deliberately do NOT add
+# a blanket "requeue all RUNNING" endpoint — with multiple worker instances (or a
+# rolling restart) it would reset peers' in-flight tasks to PENDING and cause
+# duplicate execution (Codex review on #961). Safe recovery needs per-claim
+# ownership + a lease/TTL (claimed_by / claimed_at, reclaim only after expiry);
+# tracked as a follow-up. Until then the interop API assumes a single worker.
 async def _load_external_task(tasks, task_id: int):
     """Fetch a task and gate it to the external interop allow-list.
 
