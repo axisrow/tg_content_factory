@@ -216,6 +216,50 @@ class ChannelRating(BaseModel):
     updated_at: datetime | None = None
 
 
+# ---------------------------------------------------------------------------
+# Unified jobs read-model (#963): one "job" view over the four heterogeneous
+# background-work sources (collection_tasks, telegram_commands, photo_* tables,
+# APScheduler jobs from runtime_snapshots) so the panel can show everything in
+# one table. Read-only — no source rows are written through this model.
+# ---------------------------------------------------------------------------
+class JobSource(StrEnum):
+    COLLECTION_TASK = "collection_task"
+    TELEGRAM_COMMAND = "telegram_command"
+    PHOTO_BATCH_ITEM = "photo_batch_item"
+    PHOTO_AUTO_JOB = "photo_auto_job"
+    SCHEDULER_JOB = "scheduler_job"
+
+
+class JobRuntimeState(StrEnum):
+    """Normalized cross-source lifecycle/runtime state."""
+
+    RUNNING = "running"
+    PENDING = "pending"
+    SCHEDULED = "scheduled"  # waiting on a future run_after / interval
+    PAUSE_GATE = "pause_gate"  # held by LiveRuntimePauseGate (#770)
+    FLOOD_WAIT = "flood_wait"  # deferred by a Telegram FLOOD_WAIT
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    INACTIVE = "inactive"  # recurring job toggled off
+
+
+class JobView(BaseModel):
+    source: JobSource
+    id: str  # source-prefixed, e.g. "collection_task:42" (stable across sources)
+    raw_id: int | None = None
+    job_type: str  # task_type / command_type / job_id / "photo_*"
+    status: str | None = None  # raw per-source status string
+    runtime_state: JobRuntimeState
+    summary: str = ""  # short human-readable payload summary
+    run_after: datetime | None = None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+    error: str | None = None
+    note: str | None = None
+
+
 class ContentGenerateTaskPayload(BaseModel):
     task_kind: str = "content_generate"
     pipeline_id: int
