@@ -63,6 +63,10 @@ def _future(dt: datetime | None, now: datetime) -> bool:
     return dt is not None and dt > now
 
 
+# Per-source fetch bound used when a runtime_state filter is active (see list_jobs).
+_FILTER_FETCH_CAP = 500
+
+
 class JobsReadModel:
     def __init__(self, db: "Database") -> None:
         self._db = db
@@ -82,14 +86,20 @@ class JobsReadModel:
         paused, active_ids = await self._queue_runtime()
         jobs: list[JobView] = []
 
+        # runtime_state is derived (not a DB column), so per-source state filtering
+        # can't be pushed into SQL. When filtering, fetch a larger per-source batch
+        # so matching rows aren't truncated away by the per-source limit before the
+        # state filter runs (review on #963); the final slice still caps at `limit`.
+        fetch_limit = limit if wanted_states is None else max(limit, _FILTER_FETCH_CAP)
+
         if self._want(JobSource.COLLECTION_TASK, wanted_sources):
-            for task in await self._db.repos.tasks.get_collection_tasks(limit=limit):
+            for task in await self._db.repos.tasks.get_collection_tasks(limit=fetch_limit):
                 jobs.append(self._from_collection_task(task, now, paused, active_ids))
         if self._want(JobSource.TELEGRAM_COMMAND, wanted_sources):
-            for cmd in await self._db.repos.telegram_commands.list_commands(limit=limit):
+            for cmd in await self._db.repos.telegram_commands.list_commands(limit=fetch_limit):
                 jobs.append(self._from_telegram_command(cmd, now))
         if self._want(JobSource.PHOTO_BATCH_ITEM, wanted_sources):
-            for item in await self._db.repos.photo_loader.list_items(limit=limit):
+            for item in await self._db.repos.photo_loader.list_items(limit=fetch_limit):
                 jobs.append(self._from_photo_item(item))
         if self._want(JobSource.PHOTO_AUTO_JOB, wanted_sources):
             for auto in await self._db.repos.photo_loader.list_auto_jobs():
@@ -122,16 +132,25 @@ class JobsReadModel:
         snap = await self._db.repos.runtime_snapshots.get_snapshot("scheduler_jobs")
         if snap is None:
             return []
+        # A scheduler job can be toggled off via the scheduler_job_disabled:<id>
+        # setting; such jobs are still listed by get_potential_jobs but must show as
+        # INACTIVE, not SCHEDULED (review on #963). One batched prefix read.
+        disabled_map = await self._db.repos.settings.get_settings_by_prefix(
+            "scheduler_job_disabled:"
+        )
         out: list[JobView] = []
         for entry in (snap.payload or {}).get("jobs", []):
             job_id = str(entry.get("job_id", "?"))
             interval = entry.get("interval_minutes")
+            disabled = disabled_map.get(f"scheduler_job_disabled:{job_id}") == "1"
             out.append(
                 JobView(
                     source=JobSource.SCHEDULER_JOB,
                     id=f"scheduler_job:{job_id}",
                     job_type=job_id,
-                    runtime_state=JobRuntimeState.SCHEDULED,
+                    runtime_state=(
+                        JobRuntimeState.INACTIVE if disabled else JobRuntimeState.SCHEDULED
+                    ),
                     summary=f"every {interval}m" if interval is not None else "scheduled",
                     created_at=snap.updated_at,
                 )
@@ -143,10 +162,16 @@ class JobsReadModel:
         task: CollectionTask, now: datetime, paused: bool, active_ids: set[int]
     ) -> JobView:
         status = task.status
-        if status == CollectionTaskStatus.RUNNING or (task.id in active_ids):
+        if status == CollectionTaskStatus.RUNNING:
             state = JobRuntimeState.RUNNING
         elif status == CollectionTaskStatus.PENDING:
-            if paused:
+            # active_ids (live queue snapshot) only *upgrades* a PENDING row to
+            # RUNNING — the row's status hasn't flipped yet. It must NOT override a
+            # terminal status: a COMPLETED/FAILED task whose id lingers in a stale
+            # snapshot would otherwise show as RUNNING (review on #963).
+            if task.id in active_ids:
+                state = JobRuntimeState.RUNNING
+            elif paused:
                 state = JobRuntimeState.PAUSE_GATE
             elif _future(task.run_after, now):
                 state = JobRuntimeState.SCHEDULED

@@ -162,3 +162,35 @@ async def test_pause_gate_reflected_from_queue_snapshot(db):
     )
     jobs = await JobsReadModel(db).list_jobs(sources=[JobSource.COLLECTION_TASK], now=NOW)
     assert jobs[0].runtime_state == JobRuntimeState.PAUSE_GATE
+
+
+def test_active_ids_do_not_override_terminal_status():
+    # A COMPLETED task whose id lingers in the live active_ids snapshot must stay
+    # COMPLETED, not flip to RUNNING (#963 review).
+    v = JobsReadModel._from_collection_task(
+        _ct(CollectionTaskStatus.COMPLETED, task_id=7), NOW, False, {7}
+    )
+    assert v.runtime_state == JobRuntimeState.COMPLETED
+    # A PENDING task in active_ids still upgrades to RUNNING (legit in-flight case).
+    p = JobsReadModel._from_collection_task(
+        _ct(CollectionTaskStatus.PENDING, task_id=8), NOW, False, {8}
+    )
+    assert p.runtime_state == JobRuntimeState.RUNNING
+
+
+async def test_disabled_scheduler_job_is_inactive(db):
+    await db.repos.runtime_snapshots.upsert_snapshot(
+        RuntimeSnapshot(
+            snapshot_type="scheduler_jobs",
+            payload={"jobs": [
+                {"job_id": "collect_all", "interval_minutes": 60},
+                {"job_id": "photo_due", "interval_minutes": 30},
+            ]},
+        )
+    )
+    await db.repos.settings.set_setting("scheduler_job_disabled:collect_all", "1")
+
+    jobs = await JobsReadModel(db).list_jobs(sources=[JobSource.SCHEDULER_JOB], now=NOW)
+    by_type = {j.job_type: j.runtime_state for j in jobs}
+    assert by_type["collect_all"] == JobRuntimeState.INACTIVE
+    assert by_type["photo_due"] == JobRuntimeState.SCHEDULED
