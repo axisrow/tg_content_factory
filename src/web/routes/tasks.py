@@ -17,19 +17,31 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.models import EXTERNAL_INTEROP_TASK_TYPES, CollectionTaskStatus, CollectionTaskType
+from src.utils.json import safe_json_dumps
 from src.web import deps
 
 router = APIRouter()
 
 _ALLOWED_VALUES = {t.value for t in EXTERNAL_INTEROP_TASK_TYPES}
+# Cap JSON bodies so an authenticated client can't bloat the SQLite TEXT column
+# (or stress JSON (de)serialization) with a multi-MB payload (#961 review).
+_MAX_PAYLOAD_BYTES = 64 * 1024
+
+
+def _check_payload_size(value: dict) -> dict:
+    if len(safe_json_dumps(value).encode("utf-8")) > _MAX_PAYLOAD_BYTES:
+        raise ValueError(f"payload exceeds {_MAX_PAYLOAD_BYTES} bytes")
+    return value
 
 
 class CreateTaskRequest(BaseModel):
     type: str
     payload: dict = Field(default_factory=dict)
+
+    _size = field_validator("payload")(_check_payload_size)
 
 
 class ClaimRequest(BaseModel):
@@ -38,6 +50,8 @@ class ClaimRequest(BaseModel):
 
 class CompleteRequest(BaseModel):
     result_payload: dict = Field(default_factory=dict)
+
+    _size = field_validator("result_payload")(_check_payload_size)
 
 
 class FailRequest(BaseModel):
@@ -78,6 +92,19 @@ async def claim_task(request: Request, body: ClaimRequest):
     if task is None:
         return Response(status_code=204)
     return JSONResponse(_task_json(task))
+
+
+@router.post("/requeue-running")
+async def requeue_running(request: Request):
+    """Recover orphaned interop tasks stuck in RUNNING — e.g. the external worker
+    crashed mid-task. The factory's own dispatcher never owns these types, so it
+    won't requeue them on its startup; the external worker calls this on boot to
+    reset its interop tasks RUNNING→PENDING so they can be re-claimed (#961 review)."""
+    tasks = deps.get_db(request).repos.tasks
+    count = await tasks.requeue_running_generic_tasks_on_startup(
+        datetime.now(timezone.utc), list(_ALLOWED_VALUES)
+    )
+    return JSONResponse({"requeued": count})
 
 
 async def _load_external_task(tasks, task_id: int):

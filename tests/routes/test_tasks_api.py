@@ -109,3 +109,25 @@ async def test_internal_task_not_accessible_via_interop_api(route_client):
     assert (
         await route_client.post(f"/api/tasks/{internal_id}/fail", json={"error": "x"})
     ).status_code == 403
+
+
+async def test_create_rejects_oversized_payload(route_client):
+    big = {"text": "x" * (70 * 1024)}
+    resp = await route_client.post("/api/tasks", json={"type": "dm_reply", "payload": big})
+    assert resp.status_code == 422
+
+
+async def test_requeue_running_resets_external_tasks(route_client):
+    created = await route_client.post(
+        "/api/tasks", json={"type": "fetch_dialogs", "payload": {}}
+    )
+    task_id = created.json()["id"]
+    claimed = await route_client.post("/api/tasks/claim", json={"types": ["fetch_dialogs"]})
+    assert claimed.json()["status"] == "running"
+
+    resp = await route_client.post("/api/tasks/requeue-running")
+    assert resp.status_code == 200
+    assert resp.json()["requeued"] >= 1
+
+    got = await route_client.get(f"/api/tasks/{task_id}")
+    assert got.json()["status"] == "pending"
