@@ -141,6 +141,7 @@
 | `get_hourly_activity` | READ | Почасовая активность |
 | `get_trending_emojis` | READ | Трендовые эмодзи за период |
 | `get_channel_analytics` | READ | Обзорная аналитика одного канала |
+| `get_channel_ratings` | READ | Рейтинг каналов (полезность × жанр) |
 
 ## Планировщик
 
