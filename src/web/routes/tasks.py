@@ -1,0 +1,115 @@
+"""Interop task REST API (#961, part of #829).
+
+Lets an external tg_messenger worker create, poll, atomically claim, and report
+back on interop tasks (dm_reply / chat_answer / fetch_dialogs / fetch_history).
+
+Auth: mounted behind the existing web auth middleware (HTTP Basic with WEB_PASS
+for non-browser clients), so no separate gate here.
+
+Gating: only EXTERNAL_INTEROP_TASK_TYPES may be created or claimed through this
+API. The factory's own task types stay internal — an external worker can neither
+inject them nor steal them.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel, Field
+
+from src.models import EXTERNAL_INTEROP_TASK_TYPES, CollectionTaskStatus, CollectionTaskType
+from src.web import deps
+
+router = APIRouter()
+
+_ALLOWED_VALUES = {t.value for t in EXTERNAL_INTEROP_TASK_TYPES}
+
+
+class CreateTaskRequest(BaseModel):
+    type: str
+    payload: dict = Field(default_factory=dict)
+
+
+class ClaimRequest(BaseModel):
+    types: list[str] = Field(default_factory=list)
+
+
+class CompleteRequest(BaseModel):
+    result_payload: dict = Field(default_factory=dict)
+
+
+class FailRequest(BaseModel):
+    error: str
+
+
+def _require_external(type_value: str) -> CollectionTaskType:
+    if type_value not in _ALLOWED_VALUES:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Task type '{type_value}' is not claimable via the interop API",
+        )
+    return CollectionTaskType(type_value)
+
+
+def _task_json(task) -> dict:
+    return task.model_dump(mode="json")
+
+
+@router.post("")
+async def create_task(request: Request, body: CreateTaskRequest):
+    task_type = _require_external(body.type)
+    tasks = deps.get_db(request).repos.tasks
+    task_id = await tasks.create_generic_task(task_type, payload=body.payload)
+    return JSONResponse({"id": task_id}, status_code=201)
+
+
+@router.post("/claim")
+async def claim_task(request: Request, body: ClaimRequest):
+    requested = body.types or list(_ALLOWED_VALUES)
+    for type_value in requested:
+        _require_external(type_value)
+    tasks = deps.get_db(request).repos.tasks
+    # Types are already gated to the external allow-list above; the dispatcher's
+    # HANDLED_TYPES never includes them, so this claim only ever races other
+    # external workers, not the factory's own dispatcher.
+    task = await tasks.claim_next_due_generic_task(datetime.now(timezone.utc), requested)
+    if task is None:
+        return Response(status_code=204)
+    return JSONResponse(_task_json(task))
+
+
+@router.get("/{task_id}")
+async def get_task(request: Request, task_id: int):
+    tasks = deps.get_db(request).repos.tasks
+    task = await tasks.get_collection_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return JSONResponse(_task_json(task))
+
+
+@router.post("/{task_id}/complete")
+async def complete_task(request: Request, task_id: int, body: CompleteRequest):
+    tasks = deps.get_db(request).repos.tasks
+    updated = await tasks.update_collection_task(
+        task_id,
+        CollectionTaskStatus.COMPLETED,
+        result_payload=body.result_payload,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Task not found or not updatable")
+    return JSONResponse({"ok": True})
+
+
+@router.post("/{task_id}/fail")
+async def fail_task(request: Request, task_id: int, body: FailRequest):
+    tasks = deps.get_db(request).repos.tasks
+    updated = await tasks.update_collection_task(
+        task_id,
+        CollectionTaskStatus.FAILED,
+        error=body.error,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Task not found or not updatable")
+    return JSONResponse({"ok": True})

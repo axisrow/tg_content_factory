@@ -313,6 +313,8 @@ class CollectionTask(BaseModel):
     # When progress (messages_collected) last advanced — used by the scheduler
     # health page to tell a genuinely stuck collection apart from a downed worker.
     last_progress_at: datetime | None = None
+    # Result written back by an external interop worker on completion (#961).
+    result_payload: dict[str, Any] | None = None
 
 
 class ChannelStats(BaseModel):
