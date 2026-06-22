@@ -52,6 +52,10 @@ class ProviderModelCompatibilityMixin:
         *,
         model: str | None = None,
     ) -> str:
+        # NB: this hashes the safe_json_dumps output, so it depends on that
+        # serializer's exact byte format. The orjson migration (#956) made the
+        # output compact, which invalidates fingerprints cached by the old spaced
+        # format once — each provider is simply re-probed on first run, no data loss.
         selected_model = (model or cfg.selected_model).strip()
         spec = provider_spec(cfg.provider)
         if spec is None:

@@ -497,7 +497,7 @@ async def test_agent_manager_prefers_db_provider_configs_over_legacy_env(db, mon
     ):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
 
-    assert any('"provider": "openai"' in chunk for chunk in chunks)
+    assert any('"provider":"openai"' in chunk for chunk in chunks)
 
 
 @pytest.mark.anyio
@@ -571,7 +571,7 @@ async def test_agent_manager_falls_back_to_legacy_env_when_db_provider_is_unsupp
     assert status.fallback_provider == "anthropic"
     assert "openai" not in seen_providers
     assert "anthropic" in seen_providers
-    assert any('"provider": "anthropic"' in chunk for chunk in chunks)
+    assert any('"provider":"anthropic"' in chunk for chunk in chunks)
 
 
 @pytest.mark.anyio
@@ -620,7 +620,7 @@ async def test_agent_manager_fails_over_to_next_provider_on_init_error(db, monke
     ):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
 
-    assert any('"provider": "anthropic"' in chunk for chunk in chunks)
+    assert any('"provider":"anthropic"' in chunk for chunk in chunks)
 
 
 @pytest.mark.anyio
@@ -669,7 +669,7 @@ async def test_agent_manager_fails_over_to_next_provider_on_run_error(db, monkey
     ):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
 
-    assert any('"provider": "groq"' in chunk for chunk in chunks)
+    assert any('"provider":"groq"' in chunk for chunk in chunks)
 
 
 @pytest.mark.anyio
@@ -712,7 +712,7 @@ async def test_ollama_cloud_provider_uses_bearer_headers(db, monkeypatch):
     ):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
 
-    assert any('"provider": "ollama"' in chunk for chunk in chunks)
+    assert any('"provider":"ollama"' in chunk for chunk in chunks)
 
 
 @pytest.mark.anyio
@@ -756,7 +756,7 @@ async def test_ollama_provider_normalizes_api_suffix_for_runtime(db, monkeypatch
     ):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "hello")]
 
-    assert any('"provider": "ollama"' in chunk for chunk in chunks)
+    assert any('"provider":"ollama"' in chunk for chunk in chunks)
 
 
 @pytest.mark.anyio
@@ -860,7 +860,7 @@ async def test_agent_manager_skips_cached_unsupported_provider_and_fails_over(db
 
     assert "openai" not in seen_providers
     assert seen_providers
-    assert any('"provider": "anthropic"' in chunk for chunk in chunks)
+    assert any('"provider":"anthropic"' in chunk for chunk in chunks)
 
 
 # === _fetch_live_models HTTP error handling tests ===

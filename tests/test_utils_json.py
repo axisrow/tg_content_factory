@@ -13,7 +13,8 @@ class _SampleModel(BaseModel):
 
 
 def test_plain_types():
-    assert safe_json_dumps({"a": 1, "b": "hello"}) == '{"a": 1, "b": "hello"}'
+    # orjson emits compact JSON (no spaces after ':'/',').
+    assert safe_json_dumps({"a": 1, "b": "hello"}) == '{"a":1,"b":"hello"}'
 
 
 def test_datetime_serialization():
@@ -37,8 +38,8 @@ def test_bytes_serialization():
 def test_pydantic_model_serialization():
     m = _SampleModel(name="test", value=42)
     result = safe_json_dumps(m)
-    assert '"name": "test"' in result
-    assert '"value": 42' in result
+    assert '"name":"test"' in result
+    assert '"value":42' in result
 
 
 def test_unknown_type_raises_type_error():
@@ -59,13 +60,30 @@ def test_mixed_types():
     result = safe_json_dumps(payload)
     assert "2026-01-01" in result
     assert "ff" in result
-    assert '"name": "x"' in result
-    assert '"plain": "text"' in result
+    assert '"name":"x"' in result
+    assert '"plain":"text"' in result
 
 
 def test_kwargs_forwarded():
     result = safe_json_dumps({"b": 1, "a": 2}, sort_keys=True)
-    assert result == '{"a": 2, "b": 1}'
+    assert result == '{"a":2,"b":1}'
+
+
+def test_custom_default_does_not_receive_datetime():
+    # With a custom default, datetime must be serialized natively by orjson, NOT
+    # routed to the caller's default (which may not handle it) — review on #956.
+    def only_bytes(o):
+        if isinstance(o, bytes):
+            return o.hex()
+        raise TypeError("custom default should not be called for datetime")
+
+    out = safe_json_dumps({"ts": datetime(2026, 1, 1)}, default=only_bytes)
+    assert "2026-01-01" in out
+
+
+def test_indent_pretty_prints():
+    result = safe_json_dumps({"a": 1}, indent=2)
+    assert result == '{\n  "a": 1\n}'
 
 
 def test_list_of_datetime():

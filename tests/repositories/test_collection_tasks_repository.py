@@ -67,7 +67,7 @@ def test_serialize_payload_none():
 def test_serialize_payload_dict():
     """Test serializing dict payload."""
     result = CollectionTasksRepository._serialize_payload({"key": "value"})
-    assert result == '{"key": "value"}'
+    assert result == '{"key":"value"}'  # orjson compact output
 
 
 def test_serialize_payload_stats_all():

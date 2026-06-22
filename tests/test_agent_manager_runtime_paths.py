@@ -2185,7 +2185,7 @@ class TestAgentManagerPermissionGate:
 
         assert captured_tools
         assert captured_tools[-1] == ["send_reaction", "list_channels"]
-        assert any('"done": true' in chunk for chunk in chunks)
+        assert any('"done":true' in chunk for chunk in chunks)
 
     @pytest.mark.anyio
     async def test_noninteractive_permissions_hide_requestable_deepagents_tool(self, db):
@@ -2260,7 +2260,7 @@ class TestAgentManagerPermissionGate:
 
         assert captured_tools
         assert captured_tools[-1] == ["list_channels"]
-        assert any('"done": true' in chunk for chunk in chunks)
+        assert any('"done":true' in chunk for chunk in chunks)
 
 
 class TestAgentManagerCloseAll:

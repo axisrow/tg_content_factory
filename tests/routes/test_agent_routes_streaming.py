@@ -207,7 +207,7 @@ async def test_chat_streaming_keepalive_does_not_cancel_active_stream(client, db
     )
 
     assert resp.status_code == 200
-    assert '"type": "status"' in resp.text
+    assert '"type":"status"' in resp.text
     assert "finished" in resp.text
     assert "Agent response timed out" not in resp.text
     mock_mgr.cancel_stream.assert_not_awaited()
@@ -251,7 +251,7 @@ async def test_chat_streaming_second_message_survives_keepalive_after_first_turn
     assert first_resp.status_code == 200
     assert second_resp.status_code == 200
     assert "first answer" in first_resp.text
-    assert '"type": "status"' in second_resp.text
+    assert '"type":"status"' in second_resp.text
     assert "second answer" in second_resp.text
     assert "Agent response timed out" not in second_resp.text
     assert prompts == ["first prompt", "second prompt"]
@@ -299,7 +299,7 @@ async def test_chat_streaming_client_disconnect_closes_pending_stream(client, db
     ) as resp:
         assert resp.status_code == 200
         async for line in resp.aiter_lines():
-            if '"type": "status"' in line:
+            if '"type":"status"' in line:
                 break
 
     await asyncio.wait_for(closed.wait(), timeout=0.2)
