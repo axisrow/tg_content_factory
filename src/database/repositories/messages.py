@@ -647,16 +647,16 @@ class MessagesRepository:
                     " INNER JOIN (SELECT rowid FROM messages_fts"
                     " WHERE messages_fts MATCH ?) AS fts ON m.id = fts.rowid"
                 )
-                from_where = f"FROM messages m{fts_join}{channel_join}\n                        {where}"
+                from_where = f"FROM messages m{fts_join}{channel_join} {where}"
                 row_params: tuple = (fts_query, *sql_params)
             else:
                 logger.debug("FTS5 unavailable, falling back to LIKE search")
                 sql_params.append(f"%{query}%")
                 like_where = (where + " AND m.text LIKE ?") if where else " WHERE m.text LIKE ?"
-                from_where = f"FROM messages m{channel_join}\n                        {like_where}"
+                from_where = f"FROM messages m{channel_join} {like_where}"
                 row_params = (*sql_params,)
         else:
-            from_where = f"FROM messages m{channel_join}\n                    {where}"
+            from_where = f"FROM messages m{channel_join} {where}"
             row_params = (*sql_params,)
 
         cur = await self._db.execute(

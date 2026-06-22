@@ -201,10 +201,9 @@ def _fts_alt_matches(alt: str, text_lower: str) -> bool:
     if not alt:
         return False
     if alt.startswith('"') and alt.endswith('"'):
-        phrase = alt.strip('"').rstrip("*").lower().strip()
+        phrase = alt.strip('"').rstrip("*").lower()
         return bool(phrase) and phrase in text_lower
-    words = [w.rstrip("*").lower() for w in alt.split()]
-    words = [w for w in words if w]
+    words = [stripped for w in alt.split() if (stripped := w.rstrip("*").lower())]
     return bool(words) and all(w in text_lower for w in words)
 
 

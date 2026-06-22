@@ -13,8 +13,10 @@ import re
 from typing import Any
 
 # Characters illegal in XML 1.0: C0 control chars (excluding the legal Tab \x09,
-# LF \x0a, CR \x0d) plus the noncharacters U+FFFE / U+FFFF, which are forbidden in
-# well-formed XML and otherwise break a whole RSS/Atom document.
+# LF \x0a, CR \x0d) plus the BMP noncharacters U+FFFE / U+FFFF, which are forbidden
+# in well-formed XML and otherwise break a whole RSS/Atom document. Higher-plane
+# noncharacters (U+FDD0–U+FDEF, U+1FFFE…U+10FFFF) are omitted on purpose: Telegram
+# message text stays in the BMP, so these two are the only ones we observe.
 _XML_ILLEGAL_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f￾￿]")
 
 # Leading characters that trigger formula evaluation in spreadsheet apps.
