@@ -67,3 +67,17 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     analytics_channel = analytics_sub.add_parser("channel", help="Per-channel statistics overview")
     analytics_channel.add_argument("channel_id", type=int, help="Telegram channel_id (negative int)")
     analytics_channel.add_argument("--days", type=int, default=30, help="Time window in days (default: 30)")
+
+    analytics_rating = analytics_sub.add_parser(
+        "channel-rating", help="Channel ratings (usefulness × genre)"
+    )
+    analytics_rating.add_argument(
+        "--useful", choices=["useful", "useless"], default=None, help="Filter by usefulness axis"
+    )
+    analytics_rating.add_argument(
+        "--genre",
+        choices=["ad", "infobiz", "aggregator", "copy", "original"],
+        default=None,
+        help="Filter by genre axis",
+    )
+    analytics_rating.add_argument("--limit", type=int, default=50, help="Max rows (default: 50)")

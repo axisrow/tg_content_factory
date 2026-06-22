@@ -287,6 +287,25 @@ def run(args: argparse.Namespace) -> None:
                         print(f"  {wd_labels[idx]:>3}  " + " ".join(cells))
                 else:
                     print(f"\nNo heatmap data for last {days}d.")
+
+            elif action == "channel-rating":
+                from src.services.channel_analysis_service import ChannelAnalysisService
+
+                svc = ChannelAnalysisService(db)
+                limit = max(1, min(getattr(args, "limit", 50), 1000))
+                ratings = await svc.list_ratings(
+                    useful=getattr(args, "useful", None),
+                    genre=getattr(args, "genre", None),
+                    limit=limit,
+                )
+                if not ratings:
+                    print("No channel ratings found.")
+                    return
+                print(f"{'channel_id':<14} {'useful':<8} {'genre':<11} {'conf':<5} {'title'}")
+                print("-" * 80)
+                for r in ratings:
+                    title = (r.title or r.username or str(r.channel_id))[:30]
+                    print(f"{r.channel_id:<14} {r.useful:<8} {r.genre:<11} {r.confidence:<5.2f} {title}")
         finally:
             await db.close()
 
