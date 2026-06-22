@@ -180,23 +180,50 @@ def _thought_then_text_event(thought, answer, *, partial=False):
     )
 
 
-def _tool_call_event(name):
-    part = SimpleNamespace(
-        text=None, function_call=SimpleNamespace(name=name), function_response=None
-    )
+def _tool_call_part(name):
     return SimpleNamespace(
-        content=SimpleNamespace(parts=[part]), usage_metadata=None, partial=False
+        text=None, function_call=SimpleNamespace(name=name), function_response=None, thought=False
     )
 
 
-def _tool_response_event(name, *, response=None):
-    part = SimpleNamespace(
+def _tool_response_part(name, *, response=None):
+    return SimpleNamespace(
         text=None,
         function_call=None,
         function_response=SimpleNamespace(name=name, response=response),
+        thought=False,
+    )
+
+
+def _tool_call_event(name, *, partial=True):
+    return SimpleNamespace(
+        content=SimpleNamespace(parts=[_tool_call_part(name)]),
+        usage_metadata=None,
+        partial=partial,
+    )
+
+
+def _tool_response_event(name, *, response=None, partial=True):
+    return SimpleNamespace(
+        content=SimpleNamespace(parts=[_tool_response_part(name, response=response)]),
+        usage_metadata=None,
+        partial=partial,
+    )
+
+
+def _aggregate_event(*, texts=(), tool_calls=(), tool_responses=()):
+    """A final aggregated (partial=False) event repeating earlier streamed content.
+
+    Per ADK's SSE contract the closing event repeats the full text AND the
+    function-call parts already streamed as partials, so the backend must dedup it.
+    """
+    parts = (
+        [_text_part(t) for t in texts]
+        + [_tool_call_part(n) for n in tool_calls]
+        + [_tool_response_part(n) for n in tool_responses]
     )
     return SimpleNamespace(
-        content=SimpleNamespace(parts=[part]), usage_metadata=None, partial=False
+        content=SimpleNamespace(parts=parts), usage_metadata=None, partial=False
     )
 
 
@@ -490,6 +517,69 @@ async def test_chat_stream_tool_error_sets_is_error(monkeypatch):
     assert ends and ends[0]["is_error"] is True
 
 
+async def test_chat_stream_dedups_tool_events_repeated_in_final_aggregate(monkeypatch):
+    """The final aggregate repeats streamed function-call parts — emit tools once.
+
+    ADK's closing partial=False event includes the function_call/response parts
+    already streamed as partials. Without per-kind dedup the UI would show every
+    tool_start/tool_end twice. The answer text, which arrives only in the final
+    event, must still come through exactly once.
+    """
+    _install_fake_adk(
+        monkeypatch,
+        events=[
+            _tool_call_event("list_channels", partial=True),
+            _tool_response_event("list_channels", partial=True),
+            # Final aggregate: repeats the tool parts AND carries the answer text.
+            _aggregate_event(
+                texts=["3 channels"],
+                tool_calls=["list_channels"],
+                tool_responses=["list_channels"],
+            ),
+        ],
+    )
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="list channels", system_prompt="", stats={}, model=None, queue=queue
+    )
+
+    events = await _drain(queue)
+    starts = [e for e in events if e.get("type") == "tool_start"]
+    ends = [e for e in events if e.get("type") == "tool_end"]
+    texts = [e["text"] for e in events if "text" in e]
+    assert [e["tool"] for e in starts] == ["list_channels"]  # once, not twice
+    assert [e["tool"] for e in ends] == ["list_channels"]
+    assert texts == ["3 channels"]  # answer from the aggregate, kept once
+    done = next(e for e in events if e.get("done"))
+    assert done["full_text"] == "3 channels"
+
+
+async def test_chat_stream_tool_only_aggregate_still_emits(monkeypatch):
+    """A tool-only turn delivered solely as a non-partial aggregate still emits.
+
+    If no partial tool content streamed, the closing event is the only source of
+    the tool events, so it must NOT be suppressed.
+    """
+    _install_fake_adk(
+        monkeypatch,
+        events=[
+            _aggregate_event(tool_calls=["refresh_meta"], tool_responses=["refresh_meta"]),
+        ],
+    )
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="refresh", system_prompt="", stats={}, model=None, queue=queue
+    )
+
+    events = await _drain(queue)
+    assert [e["tool"] for e in events if e.get("type") == "tool_start"] == ["refresh_meta"]
+    assert [e["tool"] for e in events if e.get("type") == "tool_end"] == ["refresh_meta"]
+
+
 async def test_chat_stream_times_out(monkeypatch):
     """A stalled ADK turn surfaces an error frame instead of hanging forever."""
     _install_fake_adk(monkeypatch, events=[], hang=True)
@@ -596,3 +686,68 @@ def test_available_requires_sdk_and_api_key(monkeypatch):
     # SDK installed + a key → available.
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     assert backend.available is True
+
+
+# --- Contract tests against the REAL SDK -----------------------------------
+# The fake-SDK tests above can only confirm the backend matches OUR model of the
+# ADK event shape; they would stay green even if that model were wrong (this is
+# what let several streaming bugs through). These tests assert the backend's
+# assumptions against the REAL SDK types, mirroring
+# test_codex_backend.test_notification_methods_match_sdk_registry. The
+# google.genai half runs whenever google-genai is installed (it is, as an ADK
+# dependency); the google.adk half is importorskip'd until the [adk] extra is.
+
+
+def test_genai_part_contract_matches_backend_assumptions():
+    """Every google.genai field the backend reads off a Part/Content/usage exists.
+
+    Guards against the backend hand-rolling getattr() paths that drift from the
+    real SDK (e.g. a renamed field would silently return None and drop content).
+    """
+    types = pytest.importorskip("google.genai.types")
+
+    part_fields = set(types.Part.model_fields)
+    # _handle_event reads these off each Part.
+    for field in ("text", "thought", "function_call", "function_response"):
+        assert field in part_fields, f"google.genai Part lost field: {field}"
+
+    # chat_stream builds types.Content(role=..., parts=[...]) and reads .parts.
+    assert "parts" in types.Content.model_fields
+    assert "role" in types.Content.model_fields
+
+    # _handle_event reads .name off a function_call and .name/.response off a
+    # function_response.
+    assert "name" in types.FunctionCall.model_fields
+    assert {"name", "response"} <= set(types.FunctionResponse.model_fields)
+
+    # _usage_from_event reads these token counts off usage_metadata.
+    usage_fields = set(types.GenerateContentResponseUsageMetadata.model_fields)
+    for field in ("prompt_token_count", "candidates_token_count", "total_token_count"):
+        assert field in usage_fields, f"google.genai usage lost field: {field}"
+
+
+def test_adk_event_contract_matches_backend_assumptions():
+    """Real ADK Event/Runner/McpToolset expose what the backend depends on.
+
+    Skipped until the optional ``[adk]`` extra is installed (mirrors the codex
+    contract test). When present, this fails loudly if the SDK renames the
+    ``partial`` field, drops ``is_final_response``, or moves the MCP toolset.
+    """
+    pytest.importorskip("google.adk")
+
+    from google.adk.agents import Agent  # noqa: F401
+    from google.adk.agents.run_config import RunConfig, StreamingMode
+    from google.adk.events import Event
+    from google.adk.runners import InMemoryRunner  # noqa: F401
+    from google.adk.tools.mcp_tool import McpToolset  # noqa: F401
+    from google.adk.tools.mcp_tool.mcp_session_manager import (  # noqa: F401
+        StdioConnectionParams,
+    )
+
+    # The backend's dedup hinges on event.partial; the answer-detection semantics
+    # it implements must match ADK's own is_final_response().
+    assert "partial" in Event.model_fields
+    assert hasattr(Event, "is_final_response")
+    # chat_stream uses StreamingMode.SSE and passes it via RunConfig(streaming_mode=).
+    assert hasattr(StreamingMode, "SSE")
+    assert "streaming_mode" in RunConfig.model_fields

@@ -150,9 +150,10 @@ class AdkSdkBackend:
         full_prompt = _embed_history_in_prompt(history_msgs or [], prompt)
 
         full_text_parts: list[str] = []
-        # Tracks whether any text has streamed this turn, so the final aggregated
-        # event is deduped without dropping a final-only reply (see _handle_event).
-        stream_state = {"saw_text": False}
+        # Tracks, per content kind, whether a partial event already delivered it this
+        # turn, so the final aggregated event (which repeats it) is deduped without
+        # dropping content that arrives only in the closing event (see _handle_event).
+        stream_state = {"saw_partial_text": False, "saw_partial_tool": False}
         usage: dict | None = None
 
         async def _drain() -> dict | None:
@@ -225,41 +226,56 @@ class AdkSdkBackend:
         full_text_parts: list[str],
         stream_state: dict,
     ) -> None:
-        """Map one ADK event to the project's SSE frames (text deltas + tool events)."""
+        """Map one ADK event to the project's SSE frames (text deltas + tool events).
+
+        Dedup is driven by ADK's documented SSE contract, not guesswork: the
+        consumer of ``run_async`` sees the incremental ``partial=True`` deltas AND
+        a final aggregated ``partial=False`` event, and that final event REPEATS
+        both the full text and the function-call parts already streamed as deltas
+        (see google-adk ``base_llm_flow`` / ``StreamingResponseAggregator``).
+
+        Text and tool content are deduped INDEPENDENTLY, because the final
+        aggregate can legitimately introduce text that no partial delta carried
+        (e.g. tool calls stream as partials, then the answer text arrives only in
+        the closing event) while still repeating the tool parts:
+
+        * Text: stream a partial event's text always; accept a non-partial event's
+          text only if no partial text has streamed yet (then it is the sole answer,
+          not a repeat). Multi-part text in one event is never truncated.
+        * Tool calls/responses: emit from partial events always; from the final
+          aggregate only if no partial tool content streamed (covers a tool-only
+          turn that ADK delivers without partials), else suppress the repeat.
+        * Thinking-model ``thought`` parts are reasoning summaries, not the answer,
+          and are skipped (ADK itself does ``if not p.thought``).
+        """
         content = getattr(event, "content", None)
         parts = getattr(content, "parts", None) if content is not None else None
         if not parts:
             return
-        # In SSE streaming mode ADK emits incremental text deltas (partial=True)
-        # and then a FINAL aggregated event (partial=False) that repeats the whole
-        # turn's text. Streaming both would duplicate the reply in the live stream
-        # and in full_text (which the web layer persists to the DB). But a short
-        # response — or a version/provider path that skips the deltas — may deliver
-        # the answer ONLY as a non-partial event, and dropping that would silently
-        # lose the reply. So dedup PER EVENT, not per part: stream partial deltas
-        # always; accept a non-partial event's text only when no text has streamed
-        # yet (it is then the sole answer, not a duplicate aggregate). The accept
-        # decision is computed once, before iterating parts, so a multi-part answer
-        # is never truncated; saw_text is set after the event, not inside the loop.
-        # Tool calls/responses are never partial and are always processed.
-        is_partial = getattr(event, "partial", False)
-        accept_text = is_partial or not stream_state["saw_text"]
+        is_partial = bool(getattr(event, "partial", False))
+        accept_text = is_partial or not stream_state["saw_partial_text"]
+        accept_tools = is_partial or not stream_state["saw_partial_tool"]
         streamed_text = False
+        streamed_tool = False
         for part in parts:
             text = getattr(part, "text", None)
-            # Skip thinking-model "thought" parts — they are the model's reasoning
-            # summary, not the answer; ADK itself excludes them (`if not p.thought`).
             if text and accept_text and not getattr(part, "thought", False):
                 streamed_text = True
                 full_text_parts.append(text)
                 chunk = safe_json_dumps({"text": text}, ensure_ascii=False)
                 await queue.put(f"data: {chunk}\n\n")
             function_call = getattr(part, "function_call", None)
-            if function_call is not None and getattr(function_call, "name", None):
+            if accept_tools and function_call is not None and getattr(function_call, "name", None):
+                streamed_tool = True
                 start = {"type": "tool_start", "tool": str(function_call.name)}
                 await queue.put(f"data: {safe_json_dumps(start, ensure_ascii=False)}\n\n")
             function_response = getattr(part, "function_response", None)
-            if function_response is not None and getattr(function_response, "name", None):
+            if (
+                accept_tools
+                and function_response is not None
+                and getattr(function_response, "name", None)
+            ):
+                streamed_tool = True
                 end = {
                     "type": "tool_end",
                     "tool": str(function_response.name),
@@ -270,10 +286,13 @@ class AdkSdkBackend:
                     "summary": PROJECT_MCP_SERVER_NAME,
                 }
                 await queue.put(f"data: {safe_json_dumps(end, ensure_ascii=False)}\n\n")
-        # Mark text seen only after the whole event, so a later non-partial
-        # aggregate is suppressed but parts within THIS event are never dropped.
-        if streamed_text:
-            stream_state["saw_text"] = True
+        # Record that a partial event carried each kind of content, so the later
+        # non-partial aggregate (which repeats it) is suppressed. Set after the
+        # whole event so parts within THIS event are never dropped.
+        if is_partial and streamed_text:
+            stream_state["saw_partial_text"] = True
+        if is_partial and streamed_tool:
+            stream_state["saw_partial_tool"] = True
 
 
 def _function_response_is_error(function_response) -> bool:
