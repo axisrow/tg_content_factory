@@ -172,17 +172,35 @@ def test_collection_invariants_hold_over_real_suite() -> None:
 
     repo = Path(__file__).resolve().parents[1]
 
-    def _count(marker_expr: str) -> int:
-        proc = subprocess.run(
-            [sys.executable, "-m", "pytest", "--co", "-q", "-p", "no:cacheprovider", "-m", marker_expr],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-        )
-        return sum(1 for line in proc.stdout.splitlines() if "::" in line)
-
-    unlevelled = _count("not (unit or integration or smoke or e2e)")
-    assert unlevelled == 0, f"{unlevelled} collected tests carry no level marker"
-
-    both = _count("unit and integration")
-    assert both == 0, f"{both} collected tests are both unit and integration"
+    # A single subprocess collection (forking pytest twice with `-m` filters
+    # doubled the ~23s collection cost — #944). An inline trylast plugin reads the
+    # level markers the root conftest has already attached and computes BOTH
+    # invariants from the one collected item set.
+    inline = (
+        "import pytest\n"
+        "_LEVELS = {'unit', 'integration', 'smoke', 'e2e'}\n"
+        "class _LevelAudit:\n"
+        "    @pytest.hookimpl(trylast=True)\n"
+        "    def pytest_collection_modifyitems(self, items):\n"
+        "        unlevelled = both = 0\n"
+        "        for it in items:\n"
+        "            names = {m.name for m in it.iter_markers()}\n"
+        "            if not (names & _LEVELS):\n"
+        "                unlevelled += 1\n"
+        "            if {'unit', 'integration'} <= names:\n"
+        "                both += 1\n"
+        "        print(f'LEVEL_AUDIT {unlevelled} {both}')\n"
+        "        pytest.exit('level audit done', returncode=0)\n"
+        "raise SystemExit(pytest.main(['--co', '-q', '-p', 'no:cacheprovider'], plugins=[_LevelAudit()]))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", inline],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    marker = next((ln for ln in proc.stdout.splitlines() if ln.startswith("LEVEL_AUDIT ")), None)
+    assert marker is not None, f"level audit produced no result.\nstdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+    _, unlevelled_s, both_s = marker.split()
+    assert int(unlevelled_s) == 0, f"{unlevelled_s} collected tests carry no level marker"
+    assert int(both_s) == 0, f"{both_s} collected tests are both unit and integration"
