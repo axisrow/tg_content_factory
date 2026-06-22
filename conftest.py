@@ -107,6 +107,14 @@ def _xdist_auto_worker_cap() -> int:
 
 
 def _xdist_available_workers_for_load(cpu_count: int) -> int:
+    # On a dedicated CI runner (GitHub Actions always sets ``CI``) the host is ours
+    # alone, so the load-aware throttle below — which reserves a core and subtracts
+    # the rolling load average — only wastes parallelism (it caps a 4-vCPU runner to
+    # ~2 workers). Use every core there; xdist workers here are asyncio/sqlite and
+    # IO/await-bound, so oversubscription is cheap. Local dev stays load-aware so a
+    # busy laptop isn't hogged (#944).
+    if os.environ.get("CI"):
+        return max(1, cpu_count)
     try:
         current_load = os.getloadavg()[0]
     except (AttributeError, OSError):

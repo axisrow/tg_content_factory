@@ -26,7 +26,9 @@ jobs:
             });
             core.setFailed('Branch name contains "+", which is not allowed.');
 
-  lint-and-test:
+  # Static gates run as their own job so they fail fast and in parallel with the
+  # long test job instead of serializing ~20s in front of pytest (#944).
+  static-checks:
     runs-on: ubuntu-latest
 
     steps:
@@ -37,6 +39,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
@@ -79,17 +83,39 @@ jobs:
               sys.exit(1)
           PY
 
-      # Fast offline preflight: a sub-second sanity gate over real critical
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      # Fast offline preflight: a sub-second-ish sanity gate over real critical
       # paths (package import, CLI parser, DB schema, web /health). Runs first
       # so a fundamentally broken build fails before the full suite starts.
+      # Kept (not dropped) as a cheap fail-fast — the ~30s is mostly whole-tree
+      # collection overhead, not the handful of smoke tests (#944 decision).
       # Live smoke (real_provider_smoke / codex_*) stays opt-in and is skipped
       # here — no gate env vars are set.
       - name: Pytest (smoke preflight)
         run: pytest tests -q -m smoke
 
+      # On CI conftest.py uses every runner core (the load throttle is dev-only),
+      # so `-n auto` fans out across all vCPUs. --durations surfaces the slowest
+      # tests each run for ongoing tuning (#944).
       - name: Pytest (parallel-safe)
         if: ${{ !cancelled() }}
-        run: pytest tests -q -m "not aiosqlite_serial" -n auto
+        run: pytest tests -q -m "not aiosqlite_serial" -n auto --durations=25
 
       - name: Pytest (aiosqlite serial)
         if: ${{ !cancelled() }}
