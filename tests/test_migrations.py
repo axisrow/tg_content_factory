@@ -7,6 +7,7 @@ import pytest
 
 from src.database.migrations import (
     _backfill_messages_fts_if_empty,
+    _ensure_initial_analyze,
     _migrate_tool_permission_key,
     _migrate_vec_to_portable,
     _migrate_zai_empty_base_url_to_coding,
@@ -492,5 +493,43 @@ async def test_run_migrations_backfills_message_reactions_date(tmp_path):
             "SELECT value FROM settings WHERE key = '_migration_reactions_date_backfill_v1'"
         )
         assert (await cur.fetchone())["value"] == "1"
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_initial_analyze_seeds_planner_statistics(tmp_path):
+    """The one-off ANALYZE populates sqlite_stat1 on a DB with data so the planner
+    is no longer blind (#760), and the settings gate makes it idempotent."""
+    conn = await _connect(str(tmp_path / "no_stats.db"))
+    try:
+        await run_migrations(conn)
+        # Give the indexed table enough rows that ANALYZE records statistics.
+        await conn.executemany(
+            "INSERT INTO messages (channel_id, message_id, date, text) VALUES (?, ?, ?, ?)",
+            [(777, i, "2026-01-01T00:00:00", f"row {i}") for i in range(50)],
+        )
+        await conn.commit()
+
+        # run_migrations already set the gate (and ran ANALYZE on the then-empty
+        # table). Clear the gate and re-run so ANALYZE records real statistics for
+        # the now-populated table.
+        await conn.execute("DELETE FROM settings WHERE key = '_migration_analyze_v1'")
+        await conn.commit()
+
+        await _ensure_initial_analyze(conn)
+        await conn.commit()
+
+        # sqlite_stat1 now holds actual row-count statistics for messages.
+        cur = await conn.execute(
+            "SELECT count(*) AS n FROM sqlite_stat1 WHERE tbl = 'messages'"
+        )
+        assert (await cur.fetchone())["n"] > 0
+        cur = await conn.execute("SELECT value FROM settings WHERE key = '_migration_analyze_v1'")
+        assert (await cur.fetchone())["value"] == "1"  # gate set
+
+        # Second call short-circuits on the gate and must not error.
+        await _ensure_initial_analyze(conn)
     finally:
         await conn.close()

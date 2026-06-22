@@ -500,6 +500,40 @@ async def _backfill_message_reactions_date(db: aiosqlite.Connection) -> None:
     logger.info("message_reactions.date backfill complete")
 
 
+async def _ensure_initial_analyze(db: aiosqlite.Connection) -> None:
+    """Run a one-off ANALYZE so the planner has table statistics from day one.
+
+    ``PRAGMA optimize`` (run on connection close, #940) only re-analyzes tables
+    that changed *measurably since the last ANALYZE* — on a database where ANALYZE
+    has never run there is no baseline to compare against, so ``sqlite_stat1`` can
+    stay empty and the planner picks blind plans on multi-million-row tables.
+    Confirmed in practice: a live DB had no ``sqlite_stat1`` despite optimize-on-close
+    already shipping.
+
+    Gated on a settings flag so the (minutes-long on a big DB) ANALYZE runs once.
+    Bounded by ``PRAGMA analysis_limit`` so it samples rather than scanning every
+    index in full. Best-effort: a failure must not abort the migration. See #760.
+    """
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_analyze_v1' LIMIT 1"
+    )
+    if await cur.fetchone():
+        return
+
+    try:
+        logger.info("Running one-off ANALYZE to seed planner statistics (sampled)")
+        await db.execute("PRAGMA analysis_limit=400")
+        await db.execute("ANALYZE")
+        logger.info("Initial ANALYZE complete")
+    except Exception:
+        logger.warning("Initial ANALYZE failed (best-effort)", exc_info=True)
+        return
+
+    await db.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_analyze_v1', '1')"
+    )
+
+
 async def run_migrations(db: aiosqlite.Connection) -> bool:
     """Repair the SQLite schema without rewriting existing user data.
 
@@ -571,6 +605,9 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         await db.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_zai_base_url_v2', '1')"
         )
+
+    # Seed planner statistics last, after every table and index is in place (#760).
+    await _ensure_initial_analyze(db)
 
     await db.commit()
     return fts_available
