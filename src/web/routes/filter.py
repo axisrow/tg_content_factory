@@ -16,6 +16,11 @@ async def filter_manage(request: Request):
     return filter_response(request, await handlers.filter_manage(request))
 
 
+@router.get("/filter/manage/fragments/table", response_class=HTMLResponse)
+async def filter_manage_table(request: Request):
+    return filter_response(request, await handlers.filter_manage_table(request))
+
+
 @router.post("/filter/purge-selected")
 async def purge_selected_filtered(request: Request):
     return filter_response(request, await handlers.purge_selected_filtered(request))

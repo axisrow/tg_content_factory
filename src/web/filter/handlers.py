@@ -31,6 +31,11 @@ async def _dev_mode_enabled(request: Request) -> bool:
 
 
 async def filter_manage(request: Request) -> FilterTemplate:
+    # Lazyload skeleton (#952): the filtered-channels table loads via the fragment.
+    return FilterTemplate("filter_manage.html", {})
+
+
+async def filter_manage_table(request: Request) -> FilterTemplate:
     db = deps.get_db(request)
     channels = await db.get_channels_with_counts(active_only=False, include_filtered=True)
     filtered = [ch for ch in channels if ch.is_filtered]
@@ -38,7 +43,7 @@ async def filter_manage(request: Request) -> FilterTemplate:
     dev_mode = await _dev_mode_enabled(request)
     pending_rename_count = await db.count_pending_rename_events()
     return FilterTemplate(
-        "filter_manage.html",
+        "filter_manage_content.html",
         {
             "channels": filtered,
             "total": len(filtered),
