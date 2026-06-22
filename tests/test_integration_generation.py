@@ -33,8 +33,8 @@ async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
     )
     assert resp.status_code == 303
 
-    # Find the pipeline id from the pipelines page
-    page = await pipeline_client.get("/pipelines/")
+    # Find the pipeline id from the pipelines list fragment (#947 lazyload)
+    page = await pipeline_client.get("/pipelines/fragments/list")
     assert page.status_code == 200
     m = re.search(r'href="/pipelines/(\d+)/generate"', page.text)
     assert m, page.text
