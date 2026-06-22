@@ -324,10 +324,13 @@ class CollectionTasksRepository:
         note: str | None = None,
         run_after: datetime | None = None,
         result_payload: dict[str, Any] | None = None,
+        required_status: CollectionTaskStatus | None = None,
     ) -> int:
         """Update a task's status (and optional fields). Returns affected rowcount,
-        so callers can tell a real update apart from a no-op (missing id, or a
-        CANCELLED row protected by the guard below)."""
+        so callers can tell a real update apart from a no-op (missing id, a
+        CANCELLED row protected by the guard below, or a ``required_status``
+        mismatch). ``required_status`` adds ``AND status = ?`` so e.g. the interop
+        complete/fail API only mutates a task that is actually RUNNING (#961)."""
         status_value = status.value if isinstance(status, CollectionTaskStatus) else status
         now = datetime.now(tz=timezone.utc).isoformat()
         sets = ["status = ?"]
@@ -366,6 +369,9 @@ class CollectionTasksRepository:
         if status_value != CollectionTaskStatus.CANCELLED.value:
             where += " AND status != ?"
             params.append(CollectionTaskStatus.CANCELLED.value)
+        if required_status is not None:
+            where += " AND status = ?"
+            params.append(required_status.value)
         cur = await self._database.execute_write(
             f"UPDATE collection_tasks SET {', '.join(sets)} {where}",
             tuple(params),

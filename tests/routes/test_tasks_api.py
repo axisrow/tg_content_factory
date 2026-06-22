@@ -71,6 +71,8 @@ async def test_full_lifecycle_fail(route_client):
     )
     task_id = created.json()["id"]
 
+    # Must be claimed (→ RUNNING) before it can be failed (#961 review).
+    await route_client.post("/api/tasks/claim", json={"types": ["chat_answer"]})
     failed = await route_client.post(f"/api/tasks/{task_id}/fail", json={"error": "boom"})
     assert failed.status_code == 200
 
@@ -82,3 +84,28 @@ async def test_full_lifecycle_fail(route_client):
 async def test_complete_missing_returns_404(route_client):
     resp = await route_client.post("/api/tasks/999999/complete", json={"result_payload": {}})
     assert resp.status_code == 404
+
+
+async def test_complete_requires_running_status(route_client):
+    # A freshly-created (PENDING, unclaimed) task cannot be completed — guards
+    # against skipping the atomic claim / replay-completing (#961 review).
+    created = await route_client.post(
+        "/api/tasks", json={"type": "fetch_dialogs", "payload": {}}
+    )
+    task_id = created.json()["id"]
+    resp = await route_client.post(f"/api/tasks/{task_id}/complete", json={"result_payload": {}})
+    assert resp.status_code == 409
+
+
+async def test_internal_task_not_accessible_via_interop_api(route_client):
+    # An internal task (created directly) must be invisible to the external API:
+    # get/complete/fail all 403, so a worker with WEB_PASS can't read or poison it.
+    db = route_client._transport_app.state.db
+    internal_id = await db.repos.tasks.create_collection_task(12345, "Internal")
+    assert (await route_client.get(f"/api/tasks/{internal_id}")).status_code == 403
+    assert (
+        await route_client.post(f"/api/tasks/{internal_id}/complete", json={"result_payload": {}})
+    ).status_code == 403
+    assert (
+        await route_client.post(f"/api/tasks/{internal_id}/fail", json={"error": "x"})
+    ).status_code == 403

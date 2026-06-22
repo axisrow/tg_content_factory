@@ -80,36 +80,54 @@ async def claim_task(request: Request, body: ClaimRequest):
     return JSONResponse(_task_json(task))
 
 
-@router.get("/{task_id}")
-async def get_task(request: Request, task_id: int):
-    tasks = deps.get_db(request).repos.tasks
+async def _load_external_task(tasks, task_id: int):
+    """Fetch a task and gate it to the external interop allow-list.
+
+    Without this, an authenticated external worker could read or complete the
+    factory's *internal* tasks (channel_collect, pipeline_run, …) by id — info
+    disclosure + lifecycle poisoning (review on #961).
+    """
     task = await tasks.get_collection_task(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
+    _require_external(task.task_type.value)
+    return task
+
+
+@router.get("/{task_id}")
+async def get_task(request: Request, task_id: int):
+    tasks = deps.get_db(request).repos.tasks
+    task = await _load_external_task(tasks, task_id)
     return JSONResponse(_task_json(task))
 
 
 @router.post("/{task_id}/complete")
 async def complete_task(request: Request, task_id: int, body: CompleteRequest):
     tasks = deps.get_db(request).repos.tasks
+    await _load_external_task(tasks, task_id)
+    # required_status=RUNNING: only a claimed (RUNNING) task may be completed, so an
+    # external worker can't skip the atomic claim or replay-complete a finished task.
     updated = await tasks.update_collection_task(
         task_id,
         CollectionTaskStatus.COMPLETED,
         result_payload=body.result_payload,
+        required_status=CollectionTaskStatus.RUNNING,
     )
     if not updated:
-        raise HTTPException(status_code=404, detail="Task not found or not updatable")
+        raise HTTPException(status_code=409, detail="Task is not in RUNNING state")
     return JSONResponse({"ok": True})
 
 
 @router.post("/{task_id}/fail")
 async def fail_task(request: Request, task_id: int, body: FailRequest):
     tasks = deps.get_db(request).repos.tasks
+    await _load_external_task(tasks, task_id)
     updated = await tasks.update_collection_task(
         task_id,
         CollectionTaskStatus.FAILED,
         error=body.error,
+        required_status=CollectionTaskStatus.RUNNING,
     )
     if not updated:
-        raise HTTPException(status_code=404, detail="Task not found or not updatable")
+        raise HTTPException(status_code=409, detail="Task is not in RUNNING state")
     return JSONResponse({"ok": True})
