@@ -112,8 +112,10 @@ def _xdist_available_workers_for_load(cpu_count: int) -> int:
     # the rolling load average — only wastes parallelism (it caps a 4-vCPU runner to
     # ~2 workers). Use every core there; xdist workers here are asyncio/sqlite and
     # IO/await-bound, so oversubscription is cheap. Local dev stays load-aware so a
-    # busy laptop isn't hogged (#944).
-    if os.environ.get("CI"):
+    # busy laptop isn't hogged (#944). Match a real CI flag, not just any non-empty
+    # value, so a stray ``CI=false``/``CI=0`` in a dev shell doesn't disable the
+    # throttle (review note, #974).
+    if os.environ.get("CI", "").strip().lower() in ("1", "true", "yes"):
         return max(1, cpu_count)
     try:
         current_load = os.getloadavg()[0]
