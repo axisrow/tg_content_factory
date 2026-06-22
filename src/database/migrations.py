@@ -433,6 +433,23 @@ async def _backfill_messages_fts_if_empty(db: aiosqlite.Connection) -> None:
     logger.info("messages_fts rebuild complete")
 
 
+async def _drop_obsolete_indexes(db: aiosqlite.Connection) -> None:
+    """Drop indexes that the schema no longer creates and no query relies on.
+
+    ``idx_messages_text`` (a plain B-tree on ``messages(text)``) cannot serve
+    ``LIKE '%..%'`` — a leading wildcard forces a full scan whether or not the
+    index exists — and full-text search runs through ``messages_fts``, never this
+    column. On a 48 GB production database it weighed ~21 GB (roughly half the
+    file) and slowed every message insert, while a measured A/B showed it saving
+    only ~1.5% on the rarely-used LIKE fallback. Removing it from SCHEMA_SQL only
+    stops new databases from creating it; this drops it from existing ones.
+
+    The freed pages are not returned to the OS until a manual ``VACUUM`` (a long,
+    blocking operation on a large DB) — intentionally left to the operator. See #760.
+    """
+    await db.execute("DROP INDEX IF EXISTS idx_messages_text")
+
+
 async def run_migrations(db: aiosqlite.Connection) -> bool:
     """Repair the SQLite schema without rewriting existing user data.
 
@@ -456,6 +473,9 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
 
     # Drop the obsolete v1 ``pipelines`` table left behind in older databases.
     await _drop_legacy_pipelines_table_if_empty(db)
+
+    # Drop indexes the schema no longer creates (e.g. the ~21 GB idx_messages_text).
+    await _drop_obsolete_indexes(db)
 
     for table, columns in SCHEMA_REPAIR_COLUMNS.items():
         await ensure_columns(db, table, columns)

@@ -141,7 +141,12 @@ CREATE INDEX IF NOT EXISTS idx_channel_stats_channel_date
     ON channel_stats(channel_id, collected_at);
 CREATE INDEX IF NOT EXISTS idx_channel_stats_lookup
     ON channel_stats(channel_id, collected_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text);
+-- NOTE: there is intentionally no index on messages(text). A B-tree index on the
+-- full message text cannot serve LIKE '%..%' (leading wildcard => full scan
+-- regardless), and full-text search goes through messages_fts, not this column.
+-- The old idx_messages_text cost ~21 GB on a 48 GB production DB and slowed every
+-- insert while saving ~1.5% on the rarely-used LIKE fallback; it is dropped by a
+-- migration (see _drop_obsolete_indexes in migrations.py). See issue #760.
 CREATE INDEX IF NOT EXISTS idx_messages_channel_date ON messages(channel_id, date);
 CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date);
 CREATE INDEX IF NOT EXISTS idx_messages_premium_search_query

@@ -312,6 +312,14 @@ async def _fts_match_ids(conn: aiosqlite.Connection, query: str) -> list[int]:
     return [row["rowid"] for row in await cur.fetchall()]
 
 
+async def _index_names(conn: aiosqlite.Connection, table: str) -> set[str]:
+    cur = await conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name = ?",
+        (table,),
+    )
+    return {row["name"] for row in await cur.fetchall()}
+
+
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
 async def test_backfill_rebuilds_empty_fts_for_existing_messages(tmp_path):
@@ -339,6 +347,40 @@ async def test_backfill_rebuilds_empty_fts_for_existing_messages(tmp_path):
 
         assert await _fts_match_ids(conn, "привет") == [1]
         assert await _fts_match_ids(conn, "погода") == [2]
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_run_migrations_drops_obsolete_idx_messages_text(tmp_path):
+    """idx_messages_text is a ~21 GB dead weight (#760): dropped on existing DBs,
+    never recreated, and the other messages indexes are left intact."""
+    conn = await _connect(str(tmp_path / "with_text_index.db"))
+    try:
+        # Stand up a legacy DB that still carries the obsolete index.
+        await conn.executescript("""
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                text TEXT,
+                date TEXT NOT NULL,
+                UNIQUE(channel_id, message_id)
+            );
+            CREATE INDEX idx_messages_text ON messages(text);
+        """)
+        await conn.commit()
+        assert "idx_messages_text" in await _index_names(conn, "messages")
+
+        await run_migrations(conn)
+
+        indexes = await _index_names(conn, "messages")
+        # The obsolete index is gone and the schema does not recreate it.
+        assert "idx_messages_text" not in indexes
+        # The still-useful indexes the schema does declare are untouched.
+        assert {"idx_messages_channel_date", "idx_messages_date"} <= indexes
     finally:
         await conn.close()
 
@@ -376,5 +418,18 @@ async def test_backfill_noop_on_empty_messages(tmp_path):
         await run_migrations(conn)
         await _backfill_messages_fts_if_empty(conn)
         assert await _fts_match_ids(conn, "что угодно") == []
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_run_migrations_idx_messages_text_drop_is_idempotent(tmp_path):
+    """A fresh DB never has the index; running migrations twice must not error."""
+    conn = await _connect(str(tmp_path / "fresh_no_index.db"))
+    try:
+        await run_migrations(conn)
+        await run_migrations(conn)
+        assert "idx_messages_text" not in await _index_names(conn, "messages")
     finally:
         await conn.close()
