@@ -235,7 +235,15 @@ def _fts_alt_matches(alt: str, tokens: list[str], token_set: frozenset[str]) -> 
 
 
 def _fts_query_matches(fts_query: str, text: str) -> bool:
-    """Approximate FTS5 boolean query matching against plain text."""
+    """Approximate FTS5 boolean query matching against plain text.
+
+    Best-effort only — it models AND / OR / quoted-phrase / prefix-``*`` semantics
+    but NOT the rarer query operators: ``+`` (phrase adjacency, treated here as
+    unordered AND), ``NOT``/``NEAR``, and column filters are not approximated. A
+    saved notification query using them may diverge from the real search (a ``+``
+    query can over-notify, a ``NOT`` query can under-notify). Fully replicating the
+    FTS5 query grammar is out of scope for the live matcher.
+    """
     tokens = _FTS_TOKEN_RE.findall(text.lower())
     token_set = frozenset(tokens)
     parts = re.split(r"\bAND\b", fts_query, flags=re.IGNORECASE)
