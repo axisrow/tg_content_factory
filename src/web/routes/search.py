@@ -77,6 +77,34 @@ async def search_page(
     )
 
 
+@router.get("/search/fragments/results", response_class=HTMLResponse)
+async def search_results_fragment(
+    request: Request,
+    q: str = Query(""),
+    channel_id: str = Query(""),
+    date_from: str = Query(""),
+    date_to: str = Query(""),
+    mode: str = Query("local"),
+    is_fts: bool = Query(False),
+    include_filtered: bool = Query(False),
+    page: int = Query(1),
+):
+    return search_response(
+        request,
+        await handlers.render_search_results(
+            request=request,
+            q=q,
+            channel_id=channel_id,
+            date_from=date_from,
+            date_to=date_to,
+            mode=mode,
+            is_fts=is_fts,
+            include_filtered=include_filtered,
+            page=page,
+        ),
+    )
+
+
 @router.post("/search/purge-cache")
 async def purge_premium_search_cache_endpoint(request: Request):
     return search_response(request, await handlers.purge_premium_search_cache(request))

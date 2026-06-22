@@ -20,7 +20,7 @@ from src.models import (
     TranslateBatchTaskPayload,
 )
 from src.utils.datetime import parse_datetime
-from src.utils.json import safe_json_dumps
+from src.utils.json import safe_json_dumps, safe_json_loads_dict
 
 _ALLOWED_PAYLOAD_FILTER_KEYS = frozenset({"sq_id", "pipeline_id"})
 
@@ -134,6 +134,11 @@ class CollectionTasksRepository:
             last_progress_at=(
                 parse_datetime(row["last_progress_at"])
                 if "last_progress_at" in row.keys()
+                else None
+            ),
+            result_payload=(
+                safe_json_loads_dict(row["result_payload"])
+                if "result_payload" in row.keys()
                 else None
             ),
         )
@@ -318,7 +323,14 @@ class CollectionTasksRepository:
         error: str | None = None,
         note: str | None = None,
         run_after: datetime | None = None,
-    ) -> None:
+        result_payload: dict[str, Any] | None = None,
+        required_status: CollectionTaskStatus | None = None,
+    ) -> int:
+        """Update a task's status (and optional fields). Returns affected rowcount,
+        so callers can tell a real update apart from a no-op (missing id, a
+        CANCELLED row protected by the guard below, or a ``required_status``
+        mismatch). ``required_status`` adds ``AND status = ?`` so e.g. the interop
+        complete/fail API only mutates a task that is actually RUNNING (#961)."""
         status_value = status.value if isinstance(status, CollectionTaskStatus) else status
         now = datetime.now(tz=timezone.utc).isoformat()
         sets = ["status = ?"]
@@ -346,6 +358,9 @@ class CollectionTasksRepository:
         if run_after is not None:
             sets.append("run_after = ?")
             params.append(run_after.astimezone(timezone.utc).isoformat())
+        if result_payload is not None:
+            sets.append("result_payload = ?")
+            params.append(safe_json_dumps(result_payload))
         params.append(task_id)
         # Defense in depth (#633 bug #30): a user-issued CANCELLED is terminal and
         # must not be silently overwritten by a late RUNNING/COMPLETED/FAILED from a
@@ -354,10 +369,14 @@ class CollectionTasksRepository:
         if status_value != CollectionTaskStatus.CANCELLED.value:
             where += " AND status != ?"
             params.append(CollectionTaskStatus.CANCELLED.value)
-        await self._database.execute_write(
+        if required_status is not None:
+            where += " AND status = ?"
+            params.append(required_status.value)
+        cur = await self._database.execute_write(
             f"UPDATE collection_tasks SET {', '.join(sets)} {where}",
             tuple(params),
         )
+        return cur.rowcount or 0
 
     async def reschedule_collection_task(
         self,
