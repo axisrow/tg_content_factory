@@ -28,6 +28,8 @@ async def test_concurrent_claims_yield_the_task_to_exactly_one(route_client):
         *[route_client.post("/api/tasks/claim", json={"types": ["dm_reply"]}) for _ in range(8)]
     )
 
+    unexpected = [r for r in responses if r.status_code not in (200, 204)]
+    assert not unexpected, f"unexpected statuses: {[r.status_code for r in unexpected]}"
     won = [r for r in responses if r.status_code == 200]
     empty = [r for r in responses if r.status_code == 204]
     assert len(won) == 1, f"expected exactly one winner, got {len(won)}"
@@ -53,18 +55,26 @@ async def test_claim_distributes_distinct_tasks(route_client):
 
 
 async def test_internal_dispatcher_never_claims_external_task(route_client):
-    # An external task created via the API must stay PENDING when the factory's
-    # own dispatcher runs its claim over HANDLED_TYPES.
+    # The invariant: interop types are absent from the dispatcher's HANDLED_TYPES,
+    # so the factory's own claim never picks them up.
+    assert "chat_answer" not in HANDLED_TYPES
+
+    db = route_client._transport_app.state.db
+    # An internal task IS claimable over HANDLED_TYPES — proves the assertion below
+    # is non-vacuous (the claim path works, it just excludes interop types).
+    internal_id = await db.repos.tasks.create_generic_task(
+        "stats_all", payload={"task_kind": "stats_all", "channel_ids": [1]}
+    )
     created = await route_client.post(
         "/api/tasks", json={"type": "chat_answer", "payload": {"chat_id": 1, "text": "x"}}
     )
-    task_id = created.json()["id"]
+    external_id = created.json()["id"]
 
-    db = route_client._transport_app.state.db
-    claimed = await db.repos.tasks.claim_next_due_generic_task(
-        datetime.now(timezone.utc), HANDLED_TYPES
-    )
-    assert claimed is None
+    now = datetime.now(timezone.utc)
+    claimed_internal = await db.repos.tasks.claim_next_due_generic_task(now, HANDLED_TYPES)
+    assert claimed_internal is not None and claimed_internal.id == internal_id
+    # No external task is ever returned, even after the internal one is claimed.
+    assert await db.repos.tasks.claim_next_due_generic_task(now, HANDLED_TYPES) is None
 
-    still = await route_client.get(f"/api/tasks/{task_id}")
+    still = await route_client.get(f"/api/tasks/{external_id}")
     assert still.json()["status"] == "pending"
