@@ -19,9 +19,18 @@ async def db(base_app):
 
 
 @pytest.mark.anyio
-async def test_filter_manage_renders_empty(route_client):
-    """Test filter manage page renders empty."""
+async def test_filter_manage_page_is_skeleton(route_client):
+    """Lazyload (#952): the page shell defers the filtered-channels table."""
     resp = await route_client.get("/channels/filter/manage")
+    assert resp.status_code == 200
+    assert "/channels/filter/manage/fragments/table" in resp.text
+    assert 'hx-trigger="load"' in resp.text
+
+
+@pytest.mark.anyio
+async def test_filter_manage_renders_empty(route_client):
+    """Test filter manage fragment renders empty."""
+    resp = await route_client.get("/channels/filter/manage/fragments/table")
     assert resp.status_code == 200
     assert 'onclick="refreshFilters(this)"' in resp.text
     assert "async function refreshFilters(button)" in resp.text
@@ -30,10 +39,10 @@ async def test_filter_manage_renders_empty(route_client):
 
 @pytest.mark.anyio
 async def test_filter_manage_shows_filtered(route_client, db):
-    """Test filter manage shows filtered channels."""
+    """Test filter manage fragment shows filtered channels."""
     await _add_filtered_channel(db, channel_id=300, title="Filtered Channel")
 
-    resp = await route_client.get("/channels/filter/manage")
+    resp = await route_client.get("/channels/filter/manage/fragments/table")
     assert resp.status_code == 200
     assert "Filtered Channel" in resp.text
 
