@@ -470,15 +470,18 @@ async def _backfill_message_reactions_date(db: aiosqlite.Connection) -> None:
     of rows runs once. The UPDATE itself is also idempotent via ``WHERE date IS
     NULL``, so a partial run simply resumes. See issue #760.
     """
-    if not await table_exists(db, "message_reactions") or not await table_exists(db, "messages"):
-        return
-    if "date" not in await table_columns(db, "message_reactions"):
-        return
-
+    # Check the flag first — it's the cheapest probe and the common case is "already
+    # done", so a normal boot exits here after a single query instead of running the
+    # table/column guards below.
     cur = await db.execute(
         "SELECT value FROM settings WHERE key = '_migration_reactions_date_backfill_v1' LIMIT 1"
     )
     if await cur.fetchone():
+        return
+
+    if not await table_exists(db, "message_reactions") or not await table_exists(db, "messages"):
+        return
+    if "date" not in await table_columns(db, "message_reactions"):
         return
 
     logger.info("Backfilling message_reactions.date from messages (one-off, may take a while)")
@@ -522,6 +525,8 @@ async def _ensure_initial_analyze(db: aiosqlite.Connection) -> None:
 
     try:
         logger.info("Running one-off ANALYZE to seed planner statistics (sampled)")
+        # 400 mirrors ConnectionTuning.analysis_limit (src/database/connection.py) —
+        # the same sampling bound used by PRAGMA optimize on connection close.
         await db.execute("PRAGMA analysis_limit=400")
         await db.execute("ANALYZE")
         logger.info("Initial ANALYZE complete")

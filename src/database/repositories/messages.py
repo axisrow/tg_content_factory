@@ -334,13 +334,17 @@ class MessagesRepository:
         # analytics aggregates built on this table (#826/#827 review).
         reaction_keys = list({(m.channel_id, m.message_id) for m in messages if m.reactions_json})
         # Carry each message's date onto its reaction rows so reaction analytics
-        # filter by recency without joining messages (#760).
-        reactions_data = [
-            (m.channel_id, m.message_id, r["emoji"], r.get("count", 0), m.date.isoformat())
-            for m in messages
-            if m.reactions_json
-            for r in _parse_reactions_json(m.reactions_json)
-        ]
+        # filter by recency without joining messages (#760). isoformat() is computed
+        # once per message, not once per reaction.
+        reactions_data = []
+        for m in messages:
+            if not m.reactions_json:
+                continue
+            message_date = m.date.isoformat()
+            for r in _parse_reactions_json(m.reactions_json):
+                reactions_data.append(
+                    (m.channel_id, m.message_id, r["emoji"], r.get("count", 0), message_date)
+                )
         if reaction_keys:
             try:
                 async with self._database.transaction() as conn:

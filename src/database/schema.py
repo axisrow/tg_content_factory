@@ -384,6 +384,10 @@ CREATE TABLE IF NOT EXISTS message_reactions (
     -- forces a full JOIN of all reactions against messages (trending-emojis took
     -- ~3m43s on a 6.8M-row table). With it the query filters reactions directly via
     -- idx_message_reactions_date_emoji and drops the JOIN. See issue #760.
+    -- Safe to denormalize: messages.date is immutable (never UPDATEd). So far only
+    -- get_trending_emojis uses it; other reaction queries (get_top_messages,
+    -- engagement) still JOIN messages but measured fast, so were left unchanged —
+    -- they can switch to mr.date if they ever become a bottleneck.
     date TEXT,
     FOREIGN KEY (channel_id, message_id)
         REFERENCES messages(channel_id, message_id) ON DELETE CASCADE,
