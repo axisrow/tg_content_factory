@@ -22,6 +22,19 @@ def test_round_trip_valid_token():
     assert verify_session_token(tok, "secret") == "admin"
 
 
+def test_legacy_bare_hmac_token_still_verifies():
+    # Cookies issued by the pre-#953 hand-rolled signer
+    # (base64url(HMAC-SHA256(secret, payload))) must keep working across the
+    # deploy — the itsdangerous Signer uses key_derivation="none" to match.
+    import hashlib
+    import hmac
+
+    payload_b64 = _b64url_encode(json.dumps({"user": "admin", "exp": 9999999999}).encode())
+    sig = hmac.new(b"secret", payload_b64.encode(), hashlib.sha256).digest()
+    legacy_token = f"{payload_b64}.{base64.urlsafe_b64encode(sig).rstrip(b'=').decode()}"
+    assert verify_session_token(legacy_token, "secret") == "admin"
+
+
 def test_wrong_secret_rejected():
     tok = create_session_token("admin", "secret")
     assert verify_session_token(tok, "other-secret") is None

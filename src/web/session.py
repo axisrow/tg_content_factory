@@ -25,14 +25,17 @@ def _b64url_decode(s: str) -> bytes:
 
 @lru_cache(maxsize=4)
 def _signer(secret: str) -> Signer:
-    # SHA256 HMAC keeps parity with the previous hand-rolled signer; the "."
-    # separator preserves the historical ``payload.sig`` token shape.
-    # Cached per secret: ``Signer`` runs key derivation on construction, and
-    # ``verify_session_token`` is on the authenticated-request hot path.
+    # ``key_derivation="none"`` makes the HMAC key the raw secret (no salt/derived
+    # key), so the signature is byte-for-byte the old hand-rolled
+    # ``base64url(HMAC-SHA256(secret, payload))``. This keeps existing 30-day
+    # ``session`` cookies valid across the deploy instead of logging everyone out
+    # (review on #953). The "." separator preserves the ``payload.sig`` token shape.
+    # Cached per secret: ``verify_session_token`` is on the authenticated-request
+    # hot path.
     #
     # ``exp`` is kept in the payload (rather than itsdangerous' TimestampSigner)
     # so the per-token ``ttl`` contract and the ``payload.sig`` shape survive.
-    return Signer(secret, sep=".", digest_method=hashlib.sha256)
+    return Signer(secret, sep=".", key_derivation="none", digest_method=hashlib.sha256)
 
 
 def create_session_token(username: str, secret: str, ttl: int = COOKIE_MAX_AGE) -> str:
