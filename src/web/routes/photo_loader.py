@@ -18,6 +18,7 @@ from src.web.photo_loader.handlers import (
     handle_photo_batch,
     handle_photo_cancel_item,
     handle_photo_delete_auto,
+    handle_photo_loader_dialogs,
     handle_photo_loader_page,
     handle_photo_loader_refresh,
     handle_photo_run_due,
@@ -34,6 +35,11 @@ router = APIRouter()
 @router.get("", response_class=HTMLResponse)
 async def photo_loader_page(request: Request, phone: str | None = None):
     return photo_loader_response(request, await handle_photo_loader_page(request, phone))
+
+
+@router.get("/fragments/dialogs", response_class=HTMLResponse)
+async def photo_loader_dialogs_fragment(request: Request, phone: str | None = None):
+    return photo_loader_response(request, await handle_photo_loader_dialogs(request, phone))
 
 
 @router.post("/refresh")
