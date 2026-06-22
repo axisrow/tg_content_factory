@@ -378,12 +378,14 @@ async def test_queue_ignores_stale_collector_cancel_for_idle_channel_task(tmp_pa
 
 @pytest.mark.anyio
 async def test_supervisor_logs_worker_crash(caplog):
-    channels = MagicMock()
-    channels.get_collection_task = AsyncMock(side_effect=RuntimeError("db boom"))
     collector = _ParallelCollector(target_workers=1)
-    queue = CollectionQueue(collector, channels)
-    queue._queue.put_nowait((1, Channel(channel_id=-7001, title="test"), False, False))
-    queue._known_task_ids.add(1)
+    queue = CollectionQueue(collector, MagicMock())
+    # A malformed queue item crashes the worker on tuple-unpack — an unexpected
+    # error the worker does not handle — so the supervisor must log the crash.
+    # (A transient pre-dispatch validation error is now *recovered*, not crashed —
+    # see test_collection_queue_strand.py — so a different, genuinely-uncaught
+    # fault is needed to exercise the supervisor's crash-logging path.)
+    queue._queue.put_nowait(("malformed-item",))
 
     caplog.set_level(logging.ERROR)
     queue._ensure_supervisor()
