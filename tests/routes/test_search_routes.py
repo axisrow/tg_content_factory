@@ -88,6 +88,20 @@ async def test_search_page_is_skeleton_and_defers_search(route_client, monkeypat
 
 
 @pytest.mark.anyio
+async def test_skeleton_forwards_raw_channel_id_to_fragment(route_client, monkeypatch):
+    """Lazyload (#946) review: the skeleton must forward the raw query string so a
+    hand-crafted ?channel_id=bad reaches the fragment and gets validated there,
+    instead of being parsed to None and silently searching all channels."""
+    mock_svc = MagicMock()
+    mock_svc.check_quota = AsyncMock(return_value=None)
+    monkeypatch.setattr("src.web.search.handlers.deps.search_service", lambda r: mock_svc)
+
+    resp = await route_client.get("/search?q=test&channel_id=bad")
+    assert resp.status_code == 200
+    assert "channel_id=bad" in resp.text  # forwarded verbatim to the fragment hx-get
+
+
+@pytest.mark.anyio
 async def test_search_with_query(route_client, monkeypatch):
     """Test search with query executes search."""
     mock_result = SearchResult(messages=[], total=0, query="test")
@@ -364,9 +378,10 @@ async def test_browse_mode_error_handling(route_client, monkeypatch, base_app):
         lambda r: mock_svc,
     )
 
-    resp = await route_client.get("/search?channel_id=300&mode=local")
+    # The browse search runs in the fragment (lazyload #946); the skeleton page
+    # never calls service.search, so hit the fragment to exercise the error path.
+    resp = await route_client.get("/search/fragments/results?channel_id=300&mode=local")
     assert resp.status_code == 200
-    # Error should be rendered on page
     assert "error" in resp.text.lower() or "ошибка" in resp.text.lower()
 
 
