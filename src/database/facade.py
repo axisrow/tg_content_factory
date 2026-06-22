@@ -16,6 +16,7 @@ from src.database.migrations import run_migrations
 from src.database.pool import BufferedCursor, ReadConnectionPool, ReadPoolProxy
 from src.database.repositories._transactions import begin_immediate
 from src.database.repositories.accounts import AccountsRepository
+from src.database.repositories.channel_ratings import ChannelRatingsRepository
 from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
@@ -167,6 +168,7 @@ class Database:
         self._content_pipelines = ContentPipelinesRepository(read_db, database=self)
         self._telegram_commands = TelegramCommandsRepository(read_db, database=self)
         self._runtime_snapshots = RuntimeSnapshotsRepository(read_db, database=self)
+        self._channel_ratings = ChannelRatingsRepository(read_db, database=self)
         self._generation_runs = GenerationRunsRepository(read_db, database=self)
         self._generated_images = GeneratedImagesRepository(read_db, database=self)
         self._pipeline_templates = PipelineTemplatesRepository(read_db, database=self)
@@ -191,6 +193,7 @@ class Database:
             pipeline_templates=self._pipeline_templates,
             telegram_commands=self._telegram_commands,
             runtime_snapshots=self._runtime_snapshots,
+            channel_ratings=self._channel_ratings,
             pipeline_action_log=self._pipeline_action_log,
         )
 
