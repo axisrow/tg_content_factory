@@ -24,9 +24,11 @@ async def pool_mock(base_app):
 
 @pytest.mark.anyio
 async def test_photo_loader_page_no_phone(route_client):
-    """Test photo loader page without phone param."""
+    """Test photo loader page without phone param — lazyload skeleton (#950)."""
     resp = await route_client.get("/dialogs/photos")
     assert resp.status_code == 200
+    assert "/dialogs/photos/fragments/dialogs" in resp.text
+    assert 'hx-trigger="load"' in resp.text
 
 
 @pytest.mark.anyio

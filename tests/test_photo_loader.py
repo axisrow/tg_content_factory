@@ -362,7 +362,7 @@ async def test_photo_loader_page_renders(tmp_path, telethon_cli_spy, native_auth
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
-        resp = await client.get("/dialogs/photos?phone=%2B7000")
+        resp = await client.get("/dialogs/photos/fragments/dialogs?phone=%2B7000")
         assert resp.status_code == 200
         assert "Photo Loader" in resp.text
         assert "Автозагрузка из папки" in resp.text
@@ -517,7 +517,7 @@ async def test_photo_loader_page_feedback_panel_and_highlight_hooks(
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
-        resp = await client.get(f"/dialogs/photos?phone=%2B7000&{query}")
+        resp = await client.get(f"/dialogs/photos/fragments/dialogs?phone=%2B7000&{query}")
 
     assert resp.status_code == 200
     assert expected_title in resp.text
@@ -584,7 +584,7 @@ async def test_photo_loader_page_without_phone_selects_first_account(
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
-        resp = await client.get("/dialogs/photos")
+        resp = await client.get("/dialogs/photos/fragments/dialogs")
         assert resp.status_code == 200
         assert "Photo Loader" in resp.text
         assert 'option value="+7000" selected' in resp.text
@@ -647,7 +647,7 @@ async def test_photo_loader_page_without_selectable_targets_disables_forms(
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
-        resp = await client.get("/dialogs/photos?phone=%2B7000")
+        resp = await client.get("/dialogs/photos/fragments/dialogs?phone=%2B7000")
         assert resp.status_code == 200
         assert "нет доступных целей отправки" in resp.text.lower()
         assert 'id="photo-target-picker"' not in resp.text
@@ -695,7 +695,7 @@ async def test_photo_loader_page_without_accounts_renders_empty_state(
         follow_redirects=True,
         headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
     ) as client:
-        resp = await client.get("/dialogs/photos")
+        resp = await client.get("/dialogs/photos/fragments/dialogs")
         assert resp.status_code == 200
         assert "Нет подключённых аккаунтов." in resp.text
         assert "Добавьте аккаунт" in resp.text
@@ -754,7 +754,10 @@ async def test_photo_loader_refresh_warms_dialog_cache(
         resp = await client.post("/dialogs/photos/refresh", data={"phone": "+7000"})
         assert resp.status_code == 200
         assert "Photo Loader" in resp.text
-        assert "Target Channel" in resp.text
+        # The refresh redirects to the lazyload skeleton; the warmed dialog list
+        # now renders in the fragment (#950).
+        frag = await client.get("/dialogs/photos/fragments/dialogs?phone=%2B7000")
+        assert "Target Channel" in frag.text
 
     cached = await db.repos.dialog_cache.list_dialogs("+7000")
     assert cached == [
