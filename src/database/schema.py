@@ -141,7 +141,12 @@ CREATE INDEX IF NOT EXISTS idx_channel_stats_channel_date
     ON channel_stats(channel_id, collected_at);
 CREATE INDEX IF NOT EXISTS idx_channel_stats_lookup
     ON channel_stats(channel_id, collected_at DESC, id DESC);
-CREATE INDEX IF NOT EXISTS idx_messages_text ON messages(text);
+-- NOTE: there is intentionally no index on messages(text). A B-tree index on the
+-- full message text cannot serve LIKE '%..%' (leading wildcard => full scan
+-- regardless), and full-text search goes through messages_fts, not this column.
+-- The old idx_messages_text cost ~21 GB on a 48 GB production DB and slowed every
+-- insert while saving ~1.5% on the rarely-used LIKE fallback; it is dropped by a
+-- migration (see _drop_obsolete_indexes in migrations.py). See issue #760.
 CREATE INDEX IF NOT EXISTS idx_messages_channel_date ON messages(channel_id, date);
 CREATE INDEX IF NOT EXISTS idx_messages_date ON messages(date);
 CREATE INDEX IF NOT EXISTS idx_messages_premium_search_query
@@ -374,6 +379,16 @@ CREATE TABLE IF NOT EXISTS message_reactions (
     message_id INTEGER NOT NULL,
     emoji TEXT NOT NULL,
     count INTEGER NOT NULL DEFAULT 0,
+    -- Denormalized copy of the parent message's `date`. Reaction analytics filter
+    -- by recency; without a date here the period filter lives on `messages` and
+    -- forces a full JOIN of all reactions against messages (trending-emojis took
+    -- ~3m43s on a 6.8M-row table). With it the query filters reactions directly via
+    -- idx_message_reactions_date_emoji and drops the JOIN. See issue #760.
+    -- Safe to denormalize: messages.date is immutable (never UPDATEd). So far only
+    -- get_trending_emojis uses it; other reaction queries (get_top_messages,
+    -- engagement) still JOIN messages but measured fast, so were left unchanged —
+    -- they can switch to mr.date if they ever become a bottleneck.
+    date TEXT,
     FOREIGN KEY (channel_id, message_id)
         REFERENCES messages(channel_id, message_id) ON DELETE CASCADE,
     UNIQUE(channel_id, message_id, emoji)
@@ -383,6 +398,11 @@ CREATE INDEX IF NOT EXISTS idx_message_reactions_channel_msg
     ON message_reactions(channel_id, message_id);
 CREATE INDEX IF NOT EXISTS idx_message_reactions_emoji
     ON message_reactions(emoji);
+-- NOTE: idx_message_reactions_date_emoji is created by _backfill_message_reactions_date
+-- in migrations.py, AFTER the one-off date backfill — not here. Building it up front
+-- would force the 6.8M-row backfill UPDATE to maintain the index per row (write
+-- amplification). On a fresh DB the migration also creates it (over an empty/just-filled
+-- table, so it's cheap). See issue #760 / PR #945 review.
 CREATE INDEX IF NOT EXISTS idx_messages_collected_at ON messages(collected_at);
 -- Covering index for analytics GROUP BY media_type with the is_filtered
 -- channel join: without it the count query full-scans the messages table (#826).

@@ -66,6 +66,11 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
     "telegram_commands": {
         "run_after": "run_after TEXT",
     },
+    # Nullable on purpose: ADD COLUMN ... NOT NULL is rejected on the existing
+    # 6.8M-row table. Existing rows are filled by _backfill_message_reactions_date.
+    "message_reactions": {
+        "date": "date TEXT",
+    },
     "search_queries": {
         "is_regex": "is_regex INTEGER DEFAULT 0",
         "is_fts": "is_fts INTEGER DEFAULT 0",
@@ -147,6 +152,9 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
 
 SCHEMA_REPAIR_INDEXES: Sequence[str] = (
     "CREATE INDEX IF NOT EXISTS idx_messages_detected_lang ON messages(detected_lang)",
+    # NOTE: idx_message_reactions_date_emoji is intentionally NOT here — it is created
+    # by _backfill_message_reactions_date AFTER the one-off date backfill, so the
+    # 6.8M-row UPDATE doesn't pay index-maintenance cost on every row (#760, PR #945 review).
     """
     CREATE INDEX IF NOT EXISTS idx_messages_fwd_from_channel
     ON messages(forward_from_channel_id) WHERE forward_from_channel_id IS NOT NULL
@@ -390,6 +398,169 @@ async def _drop_legacy_pipelines_table_if_empty(db: aiosqlite.Connection) -> Non
         await db.execute("DROP TABLE pipelines")
 
 
+async def _backfill_messages_fts_if_empty(db: aiosqlite.Connection) -> None:
+    """Populate the ``messages_fts`` full-text index from existing messages.
+
+    The FTS index is kept in sync by AFTER INSERT/DELETE triggers, so it only
+    ever sees messages written *after* the virtual table was created. A database
+    that already held messages before ``messages_fts`` existed — or one rebuilt
+    from a dump / restored backup — starts with an empty index. Search code then
+    silently falls through to the slow ``LIKE '%..%'`` path (``fts_available``
+    stays True but ``MATCH`` finds nothing), scanning millions of rows per query.
+
+    This rebuilds the index from the ``content=messages`` table whenever the
+    index is empty but ``messages`` is not. It is gated on the *actual* state of
+    the index rather than a one-shot settings flag, so it stays correct if it
+    first runs on an empty database and messages are imported later. ``rebuild``
+    on an already-populated index is skipped, keeping the migration idempotent
+    and cheap on every boot after the first.
+
+    ``messages.text`` is never updated in place (only metadata columns are), so
+    the missing AFTER UPDATE trigger cannot desync the index — a wholesale empty
+    index is the only drift this code needs to repair.
+    """
+    # Both the FTS virtual table and its ``messages_fts_docsize`` shadow table must
+    # exist before probing. They are created together by SCHEMA_SQL, but a partially
+    # built / legacy schema (or a SQLite without the expected FTS5 layout) may have
+    # neither — querying the shadow table directly would raise "no such table".
+    if not await table_exists(db, "messages_fts") or not await table_exists(
+        db, "messages_fts_docsize"
+    ):
+        return
+
+    # Fast path for every normal boot: the index is external-content, so its row
+    # data lives in the ``messages_fts_docsize`` shadow table. A single row there
+    # means the index is populated and there is nothing to do — bail before the
+    # (cheap, but pointless) ``messages`` probe. No COUNT(*) over millions of rows.
+    cur = await db.execute("SELECT 1 FROM messages_fts_docsize LIMIT 1")
+    if await cur.fetchone() is not None:
+        return
+
+    if not await table_exists(db, "messages"):
+        return
+    cur = await db.execute("SELECT 1 FROM messages LIMIT 1")
+    if await cur.fetchone() is None:
+        return
+
+    logger.info("messages_fts is empty but messages exist; rebuilding full-text index")
+    await db.execute("INSERT INTO messages_fts(messages_fts) VALUES('rebuild')")
+    logger.info("messages_fts rebuild complete")
+
+
+async def _drop_obsolete_indexes(db: aiosqlite.Connection) -> None:
+    """Drop indexes that the schema no longer creates and no query relies on.
+
+    ``idx_messages_text`` (a plain B-tree on ``messages(text)``) cannot serve
+    ``LIKE '%..%'`` — a leading wildcard forces a full scan whether or not the
+    index exists — and full-text search runs through ``messages_fts``, never this
+    column. On a 48 GB production database it weighed ~21 GB (roughly half the
+    file) and slowed every message insert, while a measured A/B showed it saving
+    only ~1.5% on the rarely-used LIKE fallback. Removing it from SCHEMA_SQL only
+    stops new databases from creating it; this drops it from existing ones.
+
+    The freed pages are not returned to the OS until a manual ``VACUUM`` (a long,
+    blocking operation on a large DB) — intentionally left to the operator. See #760.
+    """
+    await db.execute("DROP INDEX IF EXISTS idx_messages_text")
+
+
+async def _backfill_message_reactions_date(db: aiosqlite.Connection) -> None:
+    """Fill ``message_reactions.date`` from the parent message for legacy rows.
+
+    The column is added nullable (ADD COLUMN cannot be NOT NULL on a populated
+    table), and new reactions are written with their message's date going forward.
+    Rows that predate the column stay NULL until this one-off backfill copies the
+    date down from ``messages``. Reaction analytics filter on ``mr.date``; until a
+    row is backfilled it falls out of the recency window, so this is what makes the
+    historical data complete.
+
+    The ``(date, emoji)`` index is created here, AFTER the backfill UPDATE, rather
+    than alongside the other repair indexes: building it first would force SQLite to
+    maintain it for each of the 6.8M rows the UPDATE rewrites (index write
+    amplification). Creating it after means the UPDATE touches a bare table and the
+    index is built once over the final data.
+
+    The expensive UPDATE is gated on a settings flag so it runs once; the index
+    creation is NOT gated — it runs every boot (cheap ``IF NOT EXISTS`` no-op once
+    present) so the index can never be permanently missing on a DB that has the flag
+    but somehow lacks the index (version skew / partial repair). The UPDATE itself is
+    also idempotent via ``WHERE date IS NULL``, so a partial run simply resumes.
+    See issue #760.
+    """
+    if not await table_exists(db, "message_reactions") or not await table_exists(db, "messages"):
+        return
+    if "date" not in await table_columns(db, "message_reactions"):
+        return
+
+    # The one-off backfill UPDATE is the expensive part — gate it on the flag.
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_reactions_date_backfill_v1' LIMIT 1"
+    )
+    if not await cur.fetchone():
+        logger.info("Backfilling message_reactions.date from messages (one-off, may take a while)")
+        await db.execute(
+            """
+            UPDATE message_reactions
+               SET date = (
+                   SELECT m.date FROM messages m
+                   WHERE m.channel_id = message_reactions.channel_id
+                     AND m.message_id = message_reactions.message_id
+               )
+             WHERE date IS NULL
+            """
+        )
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) "
+            "VALUES ('_migration_reactions_date_backfill_v1', '1')"
+        )
+        logger.info("message_reactions.date backfill complete")
+
+    # Always ensure the index exists, regardless of the backfill flag — it is the
+    # only creation path (removed from SCHEMA_SQL / SCHEMA_REPAIR_INDEXES to avoid
+    # write amplification during the UPDATE above). IF NOT EXISTS makes this a no-op
+    # once present. This runs after the UPDATE so the bulk write hits a bare table.
+    await db.execute(
+        "CREATE INDEX IF NOT EXISTS idx_message_reactions_date_emoji "
+        "ON message_reactions(date, emoji)"
+    )
+
+
+async def _ensure_initial_analyze(db: aiosqlite.Connection) -> None:
+    """Run a one-off ANALYZE so the planner has table statistics from day one.
+
+    ``PRAGMA optimize`` (run on connection close, #940) only re-analyzes tables
+    that changed *measurably since the last ANALYZE* — on a database where ANALYZE
+    has never run there is no baseline to compare against, so ``sqlite_stat1`` can
+    stay empty and the planner picks blind plans on multi-million-row tables.
+    Confirmed in practice: a live DB had no ``sqlite_stat1`` despite optimize-on-close
+    already shipping.
+
+    Gated on a settings flag so the (minutes-long on a big DB) ANALYZE runs once.
+    Bounded by ``PRAGMA analysis_limit`` so it samples rather than scanning every
+    index in full. Best-effort: a failure must not abort the migration. See #760.
+    """
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = '_migration_analyze_v1' LIMIT 1"
+    )
+    if await cur.fetchone():
+        return
+
+    try:
+        logger.info("Running one-off ANALYZE to seed planner statistics (sampled)")
+        # 400 mirrors ConnectionTuning.analysis_limit (src/database/connection.py) —
+        # the same sampling bound used by PRAGMA optimize on connection close.
+        await db.execute("PRAGMA analysis_limit=400")
+        await db.execute("ANALYZE")
+        logger.info("Initial ANALYZE complete")
+    except Exception:
+        logger.warning("Initial ANALYZE failed (best-effort)", exc_info=True)
+        return
+
+    await db.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_analyze_v1', '1')"
+    )
+
+
 async def run_migrations(db: aiosqlite.Connection) -> bool:
     """Repair the SQLite schema without rewriting existing user data.
 
@@ -414,11 +585,21 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     # Drop the obsolete v1 ``pipelines`` table left behind in older databases.
     await _drop_legacy_pipelines_table_if_empty(db)
 
+    # Drop indexes the schema no longer creates (e.g. the ~21 GB idx_messages_text).
+    await _drop_obsolete_indexes(db)
+
     for table, columns in SCHEMA_REPAIR_COLUMNS.items():
         await ensure_columns(db, table, columns)
 
     await ensure_indexes(db, SCHEMA_REPAIR_INDEXES)
+
+    # One-off: fill message_reactions.date for rows that predate the column so
+    # reaction analytics can filter by date without joining messages (#760).
+    await _backfill_message_reactions_date(db)
+
     fts_available = await _ensure_fts5_available(db)
+    if fts_available:
+        await _backfill_messages_fts_if_empty(db)
 
     cur = await db.execute(
         "SELECT value FROM settings WHERE key = '_migration_channel_cursor_repair_v1' LIMIT 1"
@@ -451,6 +632,9 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         await db.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('_migration_zai_base_url_v2', '1')"
         )
+
+    # Seed planner statistics last, after every table and index is in place (#760).
+    await _ensure_initial_analyze(db)
 
     await db.commit()
     return fts_available
