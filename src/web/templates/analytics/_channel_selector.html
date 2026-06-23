@@ -1,0 +1,8 @@
+<select id="channel-select" class="form-select">
+  <option value="">— выберите канал —</option>
+  {% for ch in channels %}
+  <option value="{{ ch.channel_id }}" {% if ch.channel_id == selected_channel_id %}selected{% endif %}>
+    {{ ch.title or ch.username or ch.channel_id }}
+  </option>
+  {% endfor %}
+</select>
