@@ -39,8 +39,14 @@ from src.telegram.collector_message_parse import (
     get_service_action_raw,
     get_service_action_semantic,
 )
+
+# Re-exported (explicit `as` alias) from ``collector_resolve`` (#1045) — the
+# resolve logic moved there, but ``collection_queue`` / CLI / tests still import
+# this label from here.
 from src.telegram.collector_resolve import (
-    RESOLVE_USERNAME_OPERATION,
+    RESOLVE_USERNAME_OPERATION as RESOLVE_USERNAME_OPERATION,
+)
+from src.telegram.collector_resolve import (
     ResolveOutcome,
     resolve_channel_entity,
 )
@@ -67,9 +73,6 @@ from src.utils.safe_logging import mask_phone
 
 logger = logging.getLogger(__name__)
 
-# Re-exported from ``collector_resolve`` (#1045) — the resolve logic moved there,
-# but ``collection_queue`` / CLI / tests still import this label from here.
-RESOLVE_USERNAME_OPERATION = RESOLVE_USERNAME_OPERATION
 # Global cross-account resolve backoff. Only a *long* resolve flood freezes
 # live resolves for every account; short floods are left to normal rotation.
 MESSAGE_FLUSH_BATCH_SIZE = 500
