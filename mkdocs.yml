@@ -71,3 +71,4 @@ nav:
     - RSS / Atom Feeds: reference/rss-feeds.md
   - Architecture: architecture.md
   - Service Map: feature-map.md
+  - Parity Matrix: parity-matrix.md
