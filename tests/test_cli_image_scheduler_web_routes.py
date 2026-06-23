@@ -443,10 +443,21 @@ class TestCLISchedulerCommand:
 
 
 @pytest.fixture
-async def base_app(tmp_path):
-    """Minimal app with one account and channel for web route tests."""
+async def base_app():
+    """Minimal app with one account and channel for web route tests.
+
+    Uses an in-memory database (``:memory:``) rather than a file under
+    ``tmp_path``. These tests drive the FastAPI app entirely in-process over
+    ASGITransport — there is no CLI subprocess that would need to share the DB
+    on disk — so the file-backed DB bought nothing but I/O. Under ``-n auto``
+    with many xdist workers the file-backed WAL connection (write + 4 read-pool
+    connections per fixture instance) hit busy-contention on disk and raised
+    ``DatabaseBusyError``; ``:memory:`` removes the disk entirely, killing the
+    flake at its root (#1049, closes #1017). For ``:memory:`` the read pool
+    shares the single write connection, so the app sees one consistent DB.
+    """
     config = AppConfig()
-    config.database.path = str(tmp_path / "test.db")
+    config.database.path = ":memory:"
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = "testpass"
@@ -757,3 +768,38 @@ class TestWebCalendarRoutes:
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data, list)
+
+
+# ---------------------------------------------------------------------------
+# Regression: web-route fixture isolation (#1049, closes #1017)
+# ---------------------------------------------------------------------------
+
+
+class TestBaseAppDbIsolation:
+    """Guards the fix for the ``DatabaseBusyError`` flake under ``-n auto`` (#1049).
+
+    The ``base_app`` fixture used to back the app with a file-backed SQLite DB
+    under ``tmp_path``. Each fixture instance opens a WAL write connection plus a
+    read pool; under many xdist workers the on-disk WAL hit busy-contention and
+    raised ``DatabaseBusyError`` (root cause diagnosed in #1017). These web-route
+    tests run the FastAPI app purely in-process over ASGITransport — no CLI
+    subprocess needs the DB on disk — so an in-memory DB removes the disk I/O that
+    caused the contention while behaving identically (for ``:memory:`` the read
+    pool shares the single write connection). This test pins that invariant so a
+    future edit can't silently reintroduce the file-backed DB and the flake.
+    """
+
+    @pytest.mark.anyio
+    async def test_base_app_uses_in_memory_db(self, base_app, tmp_path):
+        """``base_app`` must back the app with ``:memory:``, never a disk file."""
+        app, db, _pool = base_app
+
+        # The DB the app actually serves is in-memory — no disk contention path.
+        assert db._db_path == ":memory:"
+        assert app.state.db is db
+
+        # And nothing wrote a SQLite file into tmp_path (no stray on-disk DB).
+        assert not list(tmp_path.glob("*.db")), (
+            "base_app must not create a file-backed SQLite DB (would reintroduce "
+            "the -n auto DatabaseBusyError flake; #1049/#1017)"
+        )
