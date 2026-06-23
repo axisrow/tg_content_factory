@@ -704,6 +704,14 @@
         var modelSelect = document.getElementById('model-select');
         if (modelSelect) modelSelect.value = localStorage.getItem('agent_model') || '';
     }
+    // localStorage is the source of truth for the chosen model — read it (not the
+    // possibly-not-yet-loaded <select>) at send time so a message sent before the
+    // lazy composer fragment lands still carries the user's saved model (#949).
+    function selectedModel() {
+        var modelSelect = document.getElementById('model-select');
+        if (modelSelect) return modelSelect.value || '';
+        return localStorage.getItem('agent_model') || '';
+    }
     restoreModelSelect();
     document.addEventListener('change', function(e) {
         if (e.target && e.target.id === 'model-select') {
@@ -1091,7 +1099,7 @@
             var resp = await fetch('/agent/threads/' + threadId + '/chat', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({message: text, model: (document.getElementById('model-select') || {}).value || ''}),
+                body: JSON.stringify({message: text, model: selectedModel()}),
                 signal: abortController.signal
             });
 

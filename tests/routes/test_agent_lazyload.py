@@ -71,6 +71,27 @@ async def test_skeleton_defers_runtime_chips(client, db):
 
 
 @pytest.mark.anyio
+async def test_skeleton_send_reads_saved_model_before_fragment_loads(client, db):
+    """A message sent before the lazy composer fragment lands keeps the saved model.
+
+    Regression guard (#949): the composer's <select> now loads lazily, so the
+    send-time read MUST fall back to localStorage (via selectedModel()) instead of
+    reading the not-yet-present #model-select directly — otherwise the user's saved
+    model choice is silently dropped (sent as ''/Авто) during the load window.
+    """
+    thread_id = await db.create_agent_thread("Race Thread")
+
+    resp = await client.get(f"/agent?thread_id={thread_id}")
+
+    assert resp.status_code == 200
+    # The chat POST body uses the localStorage-backed helper, never the raw element.
+    assert "model: selectedModel()" in resp.text
+    assert "localStorage.getItem('agent_model')" in resp.text
+    # The old direct-read pattern (drops the saved model pre-fragment) must be gone.
+    assert "(document.getElementById('model-select') || {}).value" not in resp.text
+
+
+@pytest.mark.anyio
 async def test_fragment_probes_runtime_and_renders_threads(
     client, db, agent_manager_mock
 ):
