@@ -462,6 +462,26 @@ class RuntimeProviderRegistry:
         logger.warning("Provider %r not registered, falling back to stub default", name)
         return self._registry["default"]
 
+    def resolve_provider_callable(self, name: Optional[str] = None) -> Callable[..., Awaitable[str]]:
+        """Like :meth:`get_provider_callable`, but never silently returns the stub.
+
+        ``get_provider_callable`` degrades to the ``"default"`` stub (which echoes
+        a ``"DRAFT (default provider): ..."`` string) when an explicit ``name`` is
+        given but does not resolve to a real provider. For one-shot operator
+        commands that *persist* the LLM's output (e.g. the channel-rating judge,
+        #994) that silent fallback would write a meaningless verdict that looks
+        successful. Callers that cannot tolerate a stub result should use this
+        method, which raises ``ValueError`` instead of falling back.
+        """
+        callable_ = self.get_provider_callable(name)
+        if name and callable_ is self._registry["default"]:
+            available = sorted(n for n in self._registry if n != "default")
+            raise ValueError(
+                f"Model/provider {name!r} is not registered. "
+                f"Available providers: {', '.join(available) or '(none)'}."
+            )
+        return callable_
+
     def _make_openai_provider(self, api_key: str) -> Callable[..., Awaitable[str]]:
         return self._make_openai_compat_provider(
             os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1"),
