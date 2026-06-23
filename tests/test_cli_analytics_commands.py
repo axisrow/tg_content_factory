@@ -347,3 +347,128 @@ def test_channel_found(capsys):
     out = capsys.readouterr().out
     assert "TestCh" in out
     assert "1000" in out
+
+
+# ---------------------------------------------------------------------------
+# channel-rating (read-only list of stored verdicts)
+# ---------------------------------------------------------------------------
+
+
+def test_channel_rating_empty(capsys):
+    db = make_cli_db()
+    mock_svc = MagicMock()
+    mock_svc.list_ratings = AsyncMock(return_value=[])
+    with _init_patches(db)[0], _init_patches(db)[1], \
+         patch("src.services.channel_analysis_service.ChannelAnalysisService", return_value=mock_svc):
+        run(_args(analytics_action="channel-rating", useful=None, genre=None, limit=50))
+    assert "No channel ratings" in capsys.readouterr().out
+
+
+def test_channel_rating_with_data(capsys):
+    from src.models import ChannelRating
+
+    db = make_cli_db()
+    rating = ChannelRating(
+        channel_id=100, title="NewsCh", username="newsch",
+        useful="useful", genre="original", confidence=0.91,
+    )
+    mock_svc = MagicMock()
+    mock_svc.list_ratings = AsyncMock(return_value=[rating])
+    with _init_patches(db)[0], _init_patches(db)[1], \
+         patch("src.services.channel_analysis_service.ChannelAnalysisService", return_value=mock_svc):
+        run(_args(analytics_action="channel-rating", useful="useful", genre=None, limit=50))
+    out = capsys.readouterr().out
+    assert "NewsCh" in out
+    assert "useful" in out
+    assert "original" in out
+    mock_svc.list_ratings.assert_awaited_once_with(useful="useful", genre=None, limit=50)
+
+
+# ---------------------------------------------------------------------------
+# channel-rate (#994: write path — run the LLM judge, upsert the verdict)
+# ---------------------------------------------------------------------------
+
+
+def _rate_args(**overrides):
+    defaults = {
+        "analytics_action": "channel-rate",
+        "channel_id": 100,
+        "model": None,
+        "sample_size": 40,
+    }
+    defaults.update(overrides)
+    return _args(**defaults)
+
+
+def test_channel_rate_no_provider(capsys):
+    """Without a configured provider the judge must not run (no spend, no write)."""
+    db = make_cli_db()
+    provider_svc = MagicMock()
+    provider_svc.load_db_providers = AsyncMock(return_value=0)
+    provider_svc.has_providers = MagicMock(return_value=False)
+    analysis_svc = MagicMock()
+    analysis_svc.classify_channel = AsyncMock()
+    with _init_patches(db)[0], _init_patches(db)[1], \
+         patch("src.services.provider_service.RuntimeProviderRegistry", return_value=provider_svc), \
+         patch("src.services.channel_analysis_service.ChannelAnalysisService", return_value=analysis_svc):
+        run(_rate_args())
+    out = capsys.readouterr().out
+    assert "LLM provider is not configured" in out
+    analysis_svc.classify_channel.assert_not_awaited()
+
+
+def test_channel_rate_runs_judge(capsys):
+    from src.models import ChannelRating
+
+    db = make_cli_db()
+    provider_callable = AsyncMock(return_value="{}")
+    provider_svc = MagicMock()
+    provider_svc.load_db_providers = AsyncMock(return_value=1)
+    provider_svc.has_providers = MagicMock(return_value=True)
+    provider_svc.get_provider_callable = MagicMock(return_value=provider_callable)
+
+    rating = ChannelRating(
+        channel_id=100, title="JudgedCh", username="judged",
+        useful="useless", genre="ad", confidence=0.77,
+        reason="реклама без сути", n_total=12,
+    )
+    analysis_svc = MagicMock()
+    analysis_svc.classify_channel = AsyncMock(return_value=rating)
+
+    with _init_patches(db)[0], _init_patches(db)[1], \
+         patch("src.services.provider_service.RuntimeProviderRegistry", return_value=provider_svc), \
+         patch("src.services.channel_analysis_service.ChannelAnalysisService", return_value=analysis_svc):
+        run(_rate_args(model="gpt-4o-mini", sample_size=12))
+
+    out = capsys.readouterr().out
+    assert "JudgedCh" in out
+    assert "useless" in out
+    assert "ad" in out
+    assert "0.77" in out
+    assert "реклама без сути" in out
+    provider_svc.get_provider_callable.assert_called_once_with("gpt-4o-mini")
+    analysis_svc.classify_channel.assert_awaited_once_with(
+        100, provider_callable=provider_callable, sample_size=12
+    )
+
+
+def test_channel_rate_sample_size_floor():
+    """A non-positive --sample-size is clamped to at least 1."""
+    from src.models import ChannelRating
+
+    db = make_cli_db()
+    provider_svc = MagicMock()
+    provider_svc.load_db_providers = AsyncMock(return_value=1)
+    provider_svc.has_providers = MagicMock(return_value=True)
+    provider_svc.get_provider_callable = MagicMock(return_value=AsyncMock())
+    rating = ChannelRating(channel_id=100, useful="useful", genre="original")
+    analysis_svc = MagicMock()
+    analysis_svc.classify_channel = AsyncMock(return_value=rating)
+
+    with _init_patches(db)[0], _init_patches(db)[1], \
+         patch("src.services.provider_service.RuntimeProviderRegistry", return_value=provider_svc), \
+         patch("src.services.channel_analysis_service.ChannelAnalysisService", return_value=analysis_svc):
+        run(_rate_args(sample_size=0))
+
+    _, kwargs = analysis_svc.classify_channel.await_args
+    assert kwargs["sample_size"] == 1

@@ -81,3 +81,23 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         help="Filter by genre axis",
     )
     analytics_rating.add_argument("--limit", type=int, default=50, help="Max rows (default: 50)")
+
+    analytics_rate = analytics_sub.add_parser(
+        "channel-rate",
+        help="Run the LLM judge on a channel and upsert its rating (usefulness × genre)",
+    )
+    analytics_rate.add_argument(
+        "channel_id", type=int, help="Telegram channel_id (bare positive int)"
+    )
+    analytics_rate.add_argument(
+        "--model",
+        default=None,
+        help="LLM model/provider name (default: first registered provider)",
+    )
+    analytics_rate.add_argument(
+        "--sample-size",
+        dest="sample_size",
+        type=int,
+        default=40,
+        help="Number of recent posts to sample for the judge (default: 40)",
+    )
