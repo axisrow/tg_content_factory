@@ -239,16 +239,16 @@ async def api_trending_emojis(request: Request, days: int = 7, limit: int = 15):
 
 @router.get("/channels", response_class=HTMLResponse)
 async def channel_analytics_page(request: Request, channel_id: int = 0, days: int = 30):
-    """Render per-channel analytics dashboard."""
+    """Render the per-channel analytics skeleton.
+
+    The channel selector (``get_active_channels()``) is loaded lazily via an
+    HTMX fragment so the page paints instantly on large databases (#951).
+    """
     days = days if days in (7, 14, 30, 90) else 30
-    db = deps.get_db(request)
-    svc = ChannelAnalyticsService(db)
-    channels = await svc.get_active_channels()
     return deps.get_templates(request).TemplateResponse(
         request,
         "analytics/channels.html",
         {
-            "channels": [dataclasses.asdict(c) for c in channels],
             "selected_channel_id": channel_id,
             "days": days,
         },
@@ -257,6 +257,20 @@ async def channel_analytics_page(request: Request, channel_id: int = 0, days: in
 
 def _svc(request: Request) -> ChannelAnalyticsService:
     return ChannelAnalyticsService(deps.get_db(request))
+
+
+@router.get("/channels/fragments/selector", response_class=HTMLResponse)
+async def fragment_channel_selector(request: Request, channel_id: int = 0):
+    """Channel selector dropdown loaded lazily by the channels page (#951)."""
+    channels = await _svc(request).get_active_channels()
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics/_channel_selector.html",
+        {
+            "channels": [dataclasses.asdict(c) for c in channels],
+            "selected_channel_id": channel_id,
+        },
+    )
 
 
 @router.get("/channels/api/overview")

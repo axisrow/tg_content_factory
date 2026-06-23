@@ -140,6 +140,46 @@ async def test_channel_analytics_page_invalid_days(route_client):
     assert resp.status_code == 200
 
 
+@pytest.mark.anyio
+async def test_channel_page_lazy_loads_selector(route_client):
+    """#951: the channels page paints a skeleton wired to the selector fragment."""
+    resp = await route_client.get("/analytics/channels?channel_id=100")
+    assert resp.status_code == 200
+    assert 'hx-get="/analytics/channels/fragments/selector?channel_id=100"' in resp.text
+    assert 'hx-trigger="load"' in resp.text
+    # The dropdown itself is no longer rendered in the main route.
+    assert 'id="channel-select"' not in resp.text
+
+
+@pytest.mark.anyio
+async def test_channel_selector_fragment_returns_partial(route_client):
+    """#951: selector fragment returns a bare <select>, not a full page."""
+    resp = await route_client.get("/analytics/channels/fragments/selector")
+    assert resp.status_code == 200
+    assert "<html" not in resp.text.lower()
+    assert 'id="channel-select"' in resp.text
+
+
+@pytest.mark.anyio
+async def test_channel_selector_fragment_lists_channels(route_client):
+    """#951: selector fragment renders an <option> per active channel and marks the selected one."""
+    from src.services.channel_analytics_service import ChannelListItem
+
+    channels = [
+        ChannelListItem(channel_id=100, title="Alpha", username="alpha"),
+        ChannelListItem(channel_id=200, title="Beta", username="beta"),
+    ]
+    with patch("src.web.routes.analytics.ChannelAnalyticsService") as mock_svc:
+        instance = mock_svc.return_value
+        instance.get_active_channels = AsyncMock(return_value=channels)
+        resp = await route_client.get("/analytics/channels/fragments/selector?channel_id=100")
+        assert resp.status_code == 200
+        assert "Alpha" in resp.text
+        assert "Beta" in resp.text
+        # The requested channel_id is pre-selected.
+        assert 'value="100" selected' in resp.text
+
+
 # ── Channel API endpoints ──────────────────────────────────────────
 
 
