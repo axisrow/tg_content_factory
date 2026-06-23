@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros_ui.html" import loading %}
 
 {% block title %}Очередь модерации{% endblock %}
 
@@ -9,9 +10,6 @@
      hx-get="/moderation/fragments/table?{{ request.url.query }}"
      hx-trigger="load"
      hx-swap="innerHTML">
-    <div class="text-center text-muted py-5">
-        <span class="spinner-border" role="status"></span>
-        <div class="mt-2">Загрузка очереди модерации…</div>
-    </div>
+    {{ loading('Загрузка очереди модерации…', class="my-4") }}
 </div>
 {% endblock %}
