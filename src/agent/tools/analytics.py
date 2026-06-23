@@ -7,7 +7,7 @@ from typing import Annotated
 from claude_agent_sdk import tool
 
 from src.agent.tools._categories import ToolCategory, ToolMeta
-from src.agent.tools._registry import _text_response
+from src.agent.tools._registry import _text_response, require_confirmation
 
 _MAX_TREND_DAYS = 365
 _MAX_TREND_LIMIT = 100
@@ -51,10 +51,14 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
         "get_trending_emojis": ToolMeta(ToolCategory.READ),
         "get_channel_analytics": ToolMeta(ToolCategory.READ),
         "get_channel_ratings": ToolMeta(ToolCategory.READ),
+        # WRITE: runs the LLM judge (provider spend) and upserts into
+        # channel_ratings (#999). Gated by require_confirmation in the handler.
+        "rate_channel": ToolMeta(ToolCategory.WRITE),
     }),
 ]
 
 def register(db, client_pool, embedding_service, **kwargs):
+    config = kwargs.get("config")
     tools = []
 
     @tool("get_analytics_summary", "Get overall content analytics: generations, published, pending, rejected", {})
@@ -480,5 +484,73 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка рейтинга каналов: {e}")
 
     tools.append(get_channel_ratings)
+
+    @tool(
+        "rate_channel",
+        "Run the AI rater (LLM judge) for one channel and store its verdict "
+        "(usefulness × genre). This SPENDS a provider call and WRITES to the DB, "
+        "so it requires confirm=true. channel_id = Telegram numeric ID. "
+        "Optional: model (provider/model name), sample_size (1-200, default 40).",
+        {
+            "channel_id": Annotated[int, "Числовой Telegram ID канала"],
+            "model": Annotated[str, "Провайдер/модель (опционально)"],
+            "sample_size": Annotated[int, "Сколько последних постов оценивать (1-200)"],
+            "confirm": Annotated[bool, "Подтверждение запуска (provider spend + запись в БД)"],
+        },
+    )
+    async def rate_channel(args):
+        channel_id = args.get("channel_id")
+        if not channel_id:
+            return _text_response("Ошибка: channel_id обязателен.")
+        # Provider spend + DB write — gate behind explicit confirmation (#999).
+        gate = require_confirmation(
+            f"запустит LLM-судью для канала {channel_id} (трата провайдера + запись в БД)", args
+        )
+        if gate:
+            return gate
+        try:
+            from src.services.channel_analysis_service import ChannelAnalysisService
+            from src.services.provider_service import build_provider_service
+
+            provider_service = await build_provider_service(db, config)
+            if not provider_service.has_providers():
+                return _text_response(
+                    "LLM-провайдер не настроен. Добавьте его командой `provider add`, "
+                    "на странице /settings или ключом окружения (например OPENAI_API_KEY)."
+                )
+
+            # A mistyped model must NOT silently fall back to the stub provider
+            # and persist a meaningless verdict — fail loudly (mirrors #994).
+            try:
+                provider_callable = provider_service.resolve_provider_callable(args.get("model") or None)
+            except ValueError as exc:
+                return _text_response(str(exc))
+
+            svc = ChannelAnalysisService(db)
+            sample_size = _clamp_positive(int(args.get("sample_size", 40) or 40), 200)
+            # Empty-channel guard: skip the spend; an empty sample would persist a
+            # defaulted "useless/original" verdict (n_total=0) with zero signal.
+            posts = await svc.sample_posts(int(channel_id), sample_size)
+            if not posts:
+                return _text_response(
+                    f"У канала {channel_id} нет текстовых постов для оценки; пропуск."
+                )
+
+            rating = await svc.classify_channel(
+                int(channel_id), provider_callable=provider_callable, sample_size=sample_size
+            )
+            name = rating.title or (f"@{rating.username}" if rating.username else str(rating.channel_id))
+            return _text_response(
+                f"Канал {name} (id={rating.channel_id}) оценён:\n"
+                f"- полезность: {rating.useful}\n"
+                f"- жанр: {rating.genre}\n"
+                f"- уверенность: {rating.confidence:.2f}\n"
+                f"- причина: {rating.reason or '—'}\n"
+                f"- постов оценено: {rating.n_total}"
+            )
+        except Exception as e:
+            return _text_response(f"Ошибка запуска судьи: {e}")
+
+    tools.append(rate_channel)
 
     return tools

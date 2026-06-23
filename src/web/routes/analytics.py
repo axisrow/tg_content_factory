@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.services.channel_analysis_service import ChannelAnalysisService
@@ -16,6 +16,9 @@ router = APIRouter()
 _MAX_TREND_DAYS = 365
 _MAX_TREND_LIMIT = 100
 _MAX_RATING_LIMIT = 1000
+# Mirror the CLI judge bounds (#994): keep the prompt from tripping token limits.
+_MAX_RATING_SAMPLE = 200
+_DEFAULT_RATING_SAMPLE = 40
 
 
 def _clamp_positive(value: int, upper: int) -> int:
@@ -317,6 +320,70 @@ async def channel_ratings_page(
             "limit": limit,
         },
     )
+
+
+def _verdict_fragment(request: Request, *, rating=None, error: str | None = None) -> HTMLResponse:
+    """Render the LLM-judge verdict as an HTMX swap fragment (#999)."""
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics/_rating_verdict.html",
+        {"rating": rating, "error": error},
+    )
+
+
+@router.post("/channels/rate", response_class=HTMLResponse)
+async def rate_channel(
+    request: Request,
+    channel_id: int = Form(...),
+    model: str = Form(""),
+    sample_size: int = Form(_DEFAULT_RATING_SAMPLE),
+):
+    """Run the LLM judge for one channel and upsert its verdict (#999).
+
+    Web parity for the CLI ``analytics channel-rate`` write path (#994): this is
+    the *only* web entry point that invokes ``classify_channel`` — a provider
+    spend + ``channel_ratings`` write. Returns an HTMX fragment with the fresh
+    verdict (server-driven swap, per the project's HTMX-over-fetch policy);
+    every guard branch renders the same fragment so the UI always swaps.
+    """
+    provider_service = deps.get_llm_provider_service(request)
+    if not provider_service.has_providers():
+        return _verdict_fragment(
+            request,
+            error=(
+                "LLM-провайдер не настроен. Добавьте его на странице /settings "
+                "или задайте ключ (например OPENAI_API_KEY)."
+            ),
+        )
+
+    # A mistyped model must NOT silently fall back to the stub provider and
+    # persist a meaningless verdict — surface the error instead (mirrors the
+    # CLI guard from #994 / cycle-review).
+    try:
+        provider_callable = provider_service.resolve_provider_callable(model or None)
+    except ValueError as exc:
+        return _verdict_fragment(request, error=str(exc))
+
+    svc = _rating_svc(request)
+    sample_size = _clamp_positive(sample_size, _MAX_RATING_SAMPLE)
+    # Guard against an empty channel before spending a provider call: no posts
+    # would otherwise persist a defaulted "useless/original" verdict (n_total=0)
+    # that looks valid but carries zero signal.
+    posts = await svc.sample_posts(channel_id, sample_size)
+    if not posts:
+        return _verdict_fragment(
+            request,
+            error=f"У канала {channel_id} нет текстовых постов для оценки.",
+        )
+
+    try:
+        rating = await svc.classify_channel(
+            channel_id, provider_callable=provider_callable, sample_size=sample_size
+        )
+    except Exception as exc:  # provider/network/parse failure
+        return _verdict_fragment(request, error=f"Судья не отработал: {exc}")
+
+    return _verdict_fragment(request, rating=rating)
 
 
 @router.get("/channels/api/subscribers")
