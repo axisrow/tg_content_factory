@@ -60,3 +60,22 @@ async def test_jobs_fragment_renders(route_client):
     assert resp.status_code == 200
     assert "Jobs Chan" in resp.text
     assert 'hx-target="#jobs-table"' in resp.text
+
+
+async def test_jobs_api_sorts_mixed_null_and_naive_timestamps(route_client):
+    # Regression: the sort key mixed a tz-aware None-sentinel with the naive
+    # ``created_at`` values SQLite stores, so a job with ``created_at IS NULL``
+    # next to one with a real timestamp raised ``TypeError: can't compare
+    # offset-naive and offset-aware datetimes`` → HTTP 500. One NULL + one naive
+    # row must now sort cleanly.
+    db = route_client._transport_app.state.db
+    await db.repos.tasks.create_collection_task(700901, "Has Timestamp")
+    await db.repos.tasks.create_collection_task(700902, "Null Timestamp")
+    await db.execute_write(
+        "UPDATE collection_tasks SET created_at = NULL WHERE channel_id = ?", (700902,)
+    )
+    resp = await route_client.get("/jobs/api/list")
+    assert resp.status_code == 200
+    # channel_title surfaces via the JobView ``summary`` field.
+    summaries = {j["summary"] for j in resp.json()}
+    assert {"Has Timestamp", "Null Timestamp"} <= summaries

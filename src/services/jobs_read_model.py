@@ -33,6 +33,7 @@ from src.models import (
     TelegramCommand,
     TelegramCommandStatus,
 )
+from src.utils.datetime import normalize_utc
 
 if TYPE_CHECKING:
     from src.database.facade import Database
@@ -57,6 +58,10 @@ _PHOTO_ITEM_STATE = {
     PhotoBatchStatus.FAILED: JobRuntimeState.FAILED,
     PhotoBatchStatus.CANCELLED: JobRuntimeState.CANCELLED,
 }
+
+# UTC-aware floor for jobs without a timestamp (e.g. scheduler jobs) so they sort
+# last; kept aware to match ``normalize_utc`` keys in the sort below.
+_NO_TIMESTAMP_SENTINEL = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _future(dt: datetime | None, now: datetime) -> bool:
@@ -111,7 +116,10 @@ class JobsReadModel:
             jobs = [j for j in jobs if j.runtime_state in wanted_states]
 
         # Newest activity first; jobs without timestamps (scheduler) sort last.
-        jobs.sort(key=lambda j: (j.created_at or datetime.min.replace(tzinfo=timezone.utc)), reverse=True)
+        # ``created_at`` mixes naive (SQLite ``datetime('now')``) and aware values
+        # across sources; normalise every key to UTC-aware so ``sort`` never raises
+        # ``TypeError`` on a naive-vs-aware comparison (the ``None``-sentinel is aware).
+        jobs.sort(key=lambda j: (normalize_utc(j.created_at) or _NO_TIMESTAMP_SENTINEL), reverse=True)
         # ``limit`` is the unified cap; each source is also fetched with it as a
         # per-source bound, so the final slice honours the documented contract.
         return jobs[:limit]
