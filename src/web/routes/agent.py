@@ -21,12 +21,21 @@ async def get_thread_messages(request: Request, thread_id: int):
     if thread is None:
         return JSONResponse({"error": "thread_not_found"}, status_code=404)
     messages = await db.get_agent_messages(thread_id)
-    return JSONResponse({"thread_id": thread_id, "title": thread.get("title"), "messages": messages})
+    return JSONResponse(
+        {"thread_id": thread_id, "title": thread.get("title"), "messages": messages}
+    )
 
 
 @router.get("", response_class=HTMLResponse)
 async def agent_page(request: Request, thread_id: int | None = None):
     return agent_response(request, await handlers.agent_page(request, thread_id))
+
+
+@router.get("/fragments/threads", response_class=HTMLResponse)
+async def agent_threads_fragment(request: Request, thread_id: int | None = None):
+    return agent_response(
+        request, await handlers.agent_threads_fragment(request, thread_id)
+    )
 
 
 @router.post("/threads", response_class=HTMLResponse)
@@ -61,7 +70,9 @@ async def inject_context(request: Request, thread_id: int):
 
 @router.post("/threads/{thread_id}/permission/{request_id}")
 async def resolve_permission(request: Request, thread_id: int, request_id: str):
-    return agent_response(request, await handlers.resolve_permission(request, thread_id, request_id))
+    return agent_response(
+        request, await handlers.resolve_permission(request, thread_id, request_id)
+    )
 
 
 @router.post("/threads/{thread_id}/stop")
