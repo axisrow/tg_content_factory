@@ -29,7 +29,7 @@ TG Agent — это self-hosted платформа для мониторинга
     ```
 
 === "Web UI"
-    Запустите `python -m src.main serve` и откройте `http://localhost:8000`
+    Запустите `python -m src.main serve` и откройте `http://localhost:8080` (порт по умолчанию — `WebConfig.port`)
 
 === "AI Agent"
     ```bash
