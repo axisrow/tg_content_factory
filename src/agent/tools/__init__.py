@@ -185,6 +185,7 @@ _PIPELINE_SAFE_TOOLS: frozenset[str] = frozenset({
     "get_pipeline_stats",
     "get_trending_topics",
     "get_trending_channels",
+    "get_channel_ratings",
     "get_message_velocity",
     "get_peak_hours",
     "get_calendar",

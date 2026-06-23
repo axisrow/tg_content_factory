@@ -93,6 +93,7 @@
     "get_hourly_activity": "read",
     "get_trending_emojis": "read",
     "get_channel_analytics": "read",
+    "get_channel_ratings": "read",
     "get_scheduler_status": "read",
     "start_scheduler": "write",
     "stop_scheduler": "write",
@@ -282,7 +283,8 @@
       "get_content_type_stats",
       "get_hourly_activity",
       "get_trending_emojis",
-      "get_channel_analytics"
+      "get_channel_analytics",
+      "get_channel_ratings"
     ],
     "Планировщик": [
       "get_scheduler_status",

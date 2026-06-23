@@ -25,6 +25,9 @@ def _clamp_positive(value: int, upper: int) -> int:
     return max(1, min(value, upper))
 
 
+_MAX_RATING_LIMIT = 1000
+
+
 
 
 # Permission metadata for this module's tools (#245). Single source of
@@ -47,6 +50,7 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
         "get_hourly_activity": ToolMeta(ToolCategory.READ),
         "get_trending_emojis": ToolMeta(ToolCategory.READ),
         "get_channel_analytics": ToolMeta(ToolCategory.READ),
+        "get_channel_ratings": ToolMeta(ToolCategory.READ),
     }),
 ]
 
@@ -440,5 +444,41 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка аналитики канала: {e}")
 
     tools.append(get_channel_analytics)
+
+    @tool(
+        "get_channel_ratings",
+        "List channel ratings (usefulness × genre) produced by the AI rater. "
+        "Optional filters: useful (useful|useless), genre "
+        "(ad|infobiz|aggregator|copy|original).",
+        {
+            "useful": Annotated[str, "Фильтр по оси полезности: useful или useless"],
+            "genre": Annotated[str, "Фильтр по жанру: ad/infobiz/aggregator/copy/original"],
+            "limit": Annotated[int, "Сколько строк (по умолчанию 50)"],
+        },
+    )
+    async def get_channel_ratings(args):
+        try:
+            from src.services.channel_analysis_service import ChannelAnalysisService
+
+            limit = _clamp_positive(int(args.get("limit", 50) or 50), _MAX_RATING_LIMIT)
+            ratings = await ChannelAnalysisService(db).list_ratings(
+                useful=args.get("useful") or None,
+                genre=args.get("genre") or None,
+                limit=limit,
+            )
+            if not ratings:
+                return _text_response("Рейтингов каналов не найдено.")
+            lines = ["Рейтинг каналов (полезность × жанр):"]
+            for r in ratings:
+                name = r.title or (f"@{r.username}" if r.username else str(r.channel_id))
+                lines.append(
+                    f"- {name} (id={r.channel_id}): {r.useful} / {r.genre} "
+                    f"(conf {r.confidence:.2f})"
+                )
+            return _text_response("\n".join(lines))
+        except Exception as e:
+            return _text_response(f"Ошибка рейтинга каналов: {e}")
+
+    tools.append(get_channel_ratings)
 
     return tools
