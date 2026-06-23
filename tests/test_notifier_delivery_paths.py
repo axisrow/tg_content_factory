@@ -503,21 +503,135 @@ class TestNotifierCircuitBreaker:
         assert notifier._breaker.fail_counter == 0
 
     @pytest.mark.anyio
-    async def test_notify_never_leaks_breaker_exception(self, mock_target_service):
-        """notify() must always return a bool, never raise CircuitBreakerError.
-
-        pybreaker raises CircuitBreakerError when the circuit is open; the
-        notifier suppresses it (returns False) so callers see the same
-        fire-and-forget contract the hand-rolled breaker offered.
-        """
+    async def test_notify_skips_while_open_returns_false(self, mock_target_service):
+        """While the circuit is open within cooldown, notify() returns False
+        without attempting a send (no log spam)."""
         notifier = self._failing_notifier(mock_target_service, threshold=1, cooldown=100.0)
 
         # First failure trips the breaker (threshold=1).
         assert await notifier.notify("x") is False
         assert notifier.is_degraded is True
-        # While open, every call returns False rather than raising.
+        # While open, every call returns False rather than raising, and never
+        # acquires a client (the send is skipped at the gate).
+        attempts_after_open = mock_target_service.use_client.call_count
         for _ in range(3):
             assert await notifier.notify("x") is False
+        assert mock_target_service.use_client.call_count == attempts_after_open
+
+    @pytest.mark.anyio
+    async def test_record_outcome_suppresses_breaker_error_on_success_path(self, mock_target_service):
+        """Defence-in-depth (#955 cycle-review A1): if a successful send is
+        recorded while the breaker is OPEN (a race where another caller re-opened
+        it mid-send), pybreaker raises CircuitBreakerError from the success-path
+        breaker.call — it must be swallowed, not leaked out of the notifier.
+        """
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,
+            failure_threshold=1,
+            cooldown_seconds=100.0,
+        )
+        # Drive the breaker OPEN directly (simulates a concurrent re-open while a
+        # send that began in CLOSED/HALF_OPEN was still in flight).
+        notifier._breaker.open()
+        assert notifier._breaker.current_state == pybreaker.STATE_OPEN
+
+        # Recording a success against an open breaker must NOT raise.
+        notifier._record_outcome(True)  # would raise CircuitBreakerError if unguarded
+
+    @pytest.mark.anyio
+    async def test_concurrent_notify_single_half_open_probe(self, mock_target_service):
+        """#955 cycle-review A2: concurrent notify() calls must not double-probe
+        in half-open. The _send_lock serialises the gate→send→record cycle, so a
+        persistent outage emits exactly one probe send per cooldown window."""
+        # A send that blocks until released, so we can hold two callers in flight.
+        gate = asyncio.Event()
+
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+
+        async def _blocking_send(*_a, **_k):
+            await gate.wait()
+            raise RuntimeError("still down")
+
+        mock_client.send_message = AsyncMock(side_effect=_blocking_send)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,
+            failure_threshold=1,
+            cooldown_seconds=100.0,
+        )
+
+        with patch("src.telegram.notifier.time.monotonic", return_value=1000.0):
+            # Trip the breaker open with one failure (gate already releasable).
+            gate.set()
+            assert await notifier.notify("x") is False
+            assert notifier.is_degraded is True
+
+        # Cooldown elapsed: launch two concurrent probes. The lock must admit
+        # only one real send; the second waits, then sees the breaker open again
+        # (the first probe failed) and skips.
+        gate.clear()
+        with patch("src.telegram.notifier.time.monotonic", return_value=1101.0):
+            before = mock_target_service.use_client.call_count
+            task_a = asyncio.create_task(notifier.notify("x"))
+            task_b = asyncio.create_task(notifier.notify("x"))
+            await asyncio.sleep(0)  # let task_a grab the lock and block in send
+            gate.set()  # release the blocked probe
+            results = await asyncio.gather(task_a, task_b)
+            after = mock_target_service.use_client.call_count
+
+        assert results == [False, False]
+        # Exactly ONE real send was attempted across both concurrent callers.
+        assert after - before == 1
+
+    @pytest.mark.anyio
+    async def test_cancelled_send_does_not_strand_half_open(self, mock_target_service):
+        """#955 cycle-review A4: if notify() is cancelled mid-send while the
+        breaker is half-open, the outcome is still recorded (treated as a failed
+        probe) so the breaker re-opens instead of being stranded half-open and
+        admitting every later send with no cooldown."""
+        started = asyncio.Event()
+
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+
+        async def _hang(*_a, **_k):
+            started.set()
+            await asyncio.Event().wait()  # never completes → must be cancelled
+
+        mock_client.send_message = AsyncMock(side_effect=_hang)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,
+            failure_threshold=1,
+            cooldown_seconds=100.0,
+        )
+
+        with patch("src.telegram.notifier.time.monotonic", return_value=1000.0):
+            # Trip open with one failed (hanging) send that we cancel.
+            task = asyncio.create_task(notifier.notify("x"))
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            # The cancelled send was recorded as a failure → breaker is OPEN,
+            # not stranded half-open.
+            assert notifier.is_degraded is True
+            assert notifier._breaker.current_state == pybreaker.STATE_OPEN
 
 
 class TestNotifierInvalidateCache:
