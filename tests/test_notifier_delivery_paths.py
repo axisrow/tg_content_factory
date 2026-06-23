@@ -6,6 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pybreaker
 import pytest
 
 from src.database.bundles import NotificationBundle
@@ -69,9 +70,7 @@ class TestNotifierFastPath:
         mock_target_service.use_client.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_notify_with_cached_me_id_but_no_bot_falls_back(
-        self, mock_target_service, mock_notification_bundle
-    ):
+    async def test_notify_with_cached_me_id_but_no_bot_falls_back(self, mock_target_service, mock_notification_bundle):
         """Test fallback when me.id is cached but bot lookup returns None."""
         mock_notification_bundle.get_bot = AsyncMock(return_value=None)
 
@@ -101,9 +100,7 @@ class TestNotifierSlowPath:
     """Tests for Notifier slow path that requires client connection."""
 
     @pytest.mark.anyio
-    async def test_notify_without_cached_me_id_fetches_it(
-        self, mock_target_service, mock_notification_bundle
-    ):
+    async def test_notify_without_cached_me_id_fetches_it(self, mock_target_service, mock_notification_bundle):
         """Test that notifier fetches and caches me.id when not cached."""
         bot = NotificationBot(
             tg_user_id=123,
@@ -144,9 +141,7 @@ class TestNotifierSlowPath:
         mock_client.get_me.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_notify_fallback_to_client_when_no_bot(
-        self, mock_target_service, mock_notification_bundle
-    ):
+    async def test_notify_fallback_to_client_when_no_bot(self, mock_target_service, mock_notification_bundle):
         """Test fallback to client.send_message when no bot is configured."""
         mock_notification_bundle.get_bot = AsyncMock(return_value=None)
 
@@ -344,13 +339,74 @@ class TestNotifierCircuitBreaker:
         # Two failures, then succeed → counter resets, breaker never opens.
         assert await notifier.notify("x") is False
         assert await notifier.notify("x") is False
-        assert notifier._consecutive_failures == 2
+        assert notifier._breaker.fail_counter == 2
 
         mock_client.send_message = AsyncMock(return_value=None)
         mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
         assert await notifier.notify("x") is True
-        assert notifier._consecutive_failures == 0
+        assert notifier._breaker.fail_counter == 0
         assert notifier.is_degraded is False
+
+    @pytest.mark.anyio
+    async def test_below_threshold_recovery_emits_log(self, mock_target_service, caplog):
+        """Regression (#955 cycle-review): the hand-rolled breaker logged
+        'recovered' on a successful send after ANY accumulated failures, even a
+        below-threshold streak that never opened the circuit. The pybreaker
+        migration must preserve that — a state-change listener alone misses it
+        because no transition fires when the circuit never opened.
+        """
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,  # direct send_message path
+            failure_threshold=3,
+        )
+
+        # Two failures (below threshold=3 → breaker never opens), then success.
+        assert await notifier.notify("x") is False
+        assert await notifier.notify("x") is False
+        assert notifier.is_degraded is False  # never opened
+
+        mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+        mock_client.send_message = AsyncMock(return_value=None)
+        with caplog.at_level("INFO", logger="src.telegram.notifier"):
+            assert await notifier.notify("x") is True
+
+        assert any("recovered" in r.message.lower() for r in caplog.records), (
+            "below-threshold recovery must still log 'recovered'"
+        )
+
+    @pytest.mark.anyio
+    async def test_clean_success_does_not_log_recovery(self, mock_target_service, caplog):
+        """No prior failures → no 'recovered' line (matches the old _on_success
+        guard: log only when failures were accumulated)."""
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+        mock_client.send_message = AsyncMock(return_value=None)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,
+            failure_threshold=3,
+        )
+
+        with caplog.at_level("INFO", logger="src.telegram.notifier"):
+            assert await notifier.notify("x") is True
+            assert await notifier.notify("x") is True
+
+        assert not any("recovered" in r.message.lower() for r in caplog.records), (
+            "a clean success with no prior failures must not log recovery"
+        )
 
     @pytest.mark.anyio
     async def test_recovery_after_cooldown_emits_log(self, mock_target_service, caplog):
@@ -380,7 +436,7 @@ class TestNotifierCircuitBreaker:
             "recovery from degraded state must be logged"
         )
         assert notifier.is_degraded is False
-        assert notifier._consecutive_failures == 0
+        assert notifier._breaker.fail_counter == 0
 
     @pytest.mark.anyio
     async def test_failed_half_open_probe_reopens_immediately(self, mock_target_service):
@@ -413,6 +469,169 @@ class TestNotifierCircuitBreaker:
             cooldown_seconds=0,
         )
         assert notifier._cooldown_seconds >= 0.1
+
+    @pytest.mark.anyio
+    async def test_underlying_breaker_walks_closed_open_halfopen_closed(self, mock_target_service):
+        """The pybreaker state machine transitions through the expected states.
+
+        This pins the migration to pybreaker (#955): the visible behaviour
+        (is_degraded, skip-while-open, single half-open probe) is unchanged, and
+        the underlying breaker reports the canonical closed → open → closed path.
+        """
+        notifier = self._failing_notifier(mock_target_service, threshold=2, cooldown=100.0)
+        assert notifier._breaker.current_state == pybreaker.STATE_CLOSED
+
+        with patch("src.telegram.notifier.time.monotonic", return_value=1000.0):
+            await notifier.notify("x")
+            await notifier.notify("x")
+            assert notifier._breaker.current_state == pybreaker.STATE_OPEN
+
+        # After cooldown, a *successful* half-open probe closes the circuit and
+        # resets the failure counter (success_threshold=1).
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+        mock_client.send_message = AsyncMock(return_value=None)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+        notifier._notification_bundle = None  # direct send_message path
+
+        with patch("src.telegram.notifier.time.monotonic", return_value=1101.0):
+            assert await notifier.notify("x") is True
+        assert notifier._breaker.current_state == pybreaker.STATE_CLOSED
+        assert notifier._breaker.fail_counter == 0
+
+    @pytest.mark.anyio
+    async def test_notify_skips_while_open_returns_false(self, mock_target_service):
+        """While the circuit is open within cooldown, notify() returns False
+        without attempting a send (no log spam)."""
+        notifier = self._failing_notifier(mock_target_service, threshold=1, cooldown=100.0)
+
+        # First failure trips the breaker (threshold=1).
+        assert await notifier.notify("x") is False
+        assert notifier.is_degraded is True
+        # While open, every call returns False rather than raising, and never
+        # acquires a client (the send is skipped at the gate).
+        attempts_after_open = mock_target_service.use_client.call_count
+        for _ in range(3):
+            assert await notifier.notify("x") is False
+        assert mock_target_service.use_client.call_count == attempts_after_open
+
+    @pytest.mark.anyio
+    async def test_record_outcome_suppresses_breaker_error_on_success_path(self, mock_target_service):
+        """Defence-in-depth (#955 cycle-review A1): if a successful send is
+        recorded while the breaker is OPEN (a race where another caller re-opened
+        it mid-send), pybreaker raises CircuitBreakerError from the success-path
+        breaker.call — it must be swallowed, not leaked out of the notifier.
+        """
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,
+            failure_threshold=1,
+            cooldown_seconds=100.0,
+        )
+        # Drive the breaker OPEN directly (simulates a concurrent re-open while a
+        # send that began in CLOSED/HALF_OPEN was still in flight).
+        notifier._breaker.open()
+        assert notifier._breaker.current_state == pybreaker.STATE_OPEN
+
+        # Recording a success against an open breaker must NOT raise.
+        notifier._record_outcome(True)  # would raise CircuitBreakerError if unguarded
+
+    @pytest.mark.anyio
+    async def test_concurrent_notify_single_half_open_probe(self, mock_target_service):
+        """#955 cycle-review A2: concurrent notify() calls must not double-probe
+        in half-open. The _send_lock serialises the gate→send→record cycle, so a
+        persistent outage emits exactly one probe send per cooldown window."""
+        # A send that blocks until released, so we can hold two callers in flight.
+        gate = asyncio.Event()
+
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+
+        async def _blocking_send(*_a, **_k):
+            await gate.wait()
+            raise RuntimeError("still down")
+
+        mock_client.send_message = AsyncMock(side_effect=_blocking_send)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,
+            failure_threshold=1,
+            cooldown_seconds=100.0,
+        )
+
+        with patch("src.telegram.notifier.time.monotonic", return_value=1000.0):
+            # Trip the breaker open with one failure (gate already releasable).
+            gate.set()
+            assert await notifier.notify("x") is False
+            assert notifier.is_degraded is True
+
+        # Cooldown elapsed: launch two concurrent probes. The lock must admit
+        # only one real send; the second waits, then sees the breaker open again
+        # (the first probe failed) and skips.
+        gate.clear()
+        with patch("src.telegram.notifier.time.monotonic", return_value=1101.0):
+            before = mock_target_service.use_client.call_count
+            task_a = asyncio.create_task(notifier.notify("x"))
+            task_b = asyncio.create_task(notifier.notify("x"))
+            await asyncio.sleep(0)  # let task_a grab the lock and block in send
+            gate.set()  # release the blocked probe
+            results = await asyncio.gather(task_a, task_b)
+            after = mock_target_service.use_client.call_count
+
+        assert results == [False, False]
+        # Exactly ONE real send was attempted across both concurrent callers.
+        assert after - before == 1
+
+    @pytest.mark.anyio
+    async def test_cancelled_send_does_not_strand_half_open(self, mock_target_service):
+        """#955 cycle-review A4: if notify() is cancelled mid-send while the
+        breaker is half-open, the outcome is still recorded (treated as a failed
+        probe) so the breaker re-opens instead of being stranded half-open and
+        admitting every later send with no cooldown."""
+        started = asyncio.Event()
+
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+
+        async def _hang(*_a, **_k):
+            started.set()
+            await asyncio.Event().wait()  # never completes → must be cancelled
+
+        mock_client.send_message = AsyncMock(side_effect=_hang)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,
+            failure_threshold=1,
+            cooldown_seconds=100.0,
+        )
+
+        with patch("src.telegram.notifier.time.monotonic", return_value=1000.0):
+            # Trip open with one failed (hanging) send that we cancel.
+            task = asyncio.create_task(notifier.notify("x"))
+            await started.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            # The cancelled send was recorded as a failure → breaker is OPEN,
+            # not stranded half-open.
+            assert notifier.is_degraded is True
+            assert notifier._breaker.current_state == pybreaker.STATE_OPEN
 
 
 class TestNotifierInvalidateCache:
@@ -470,9 +689,7 @@ class TestSendViaBotApi:
     async def test_send_via_bot_api_error_response(self):
         """Test bot API call when response has ok=false."""
         mock_response = AsyncMock()
-        mock_response.json = AsyncMock(
-            return_value={"ok": False, "error_code": 400, "description": "Bad Request"}
-        )
+        mock_response.json = AsyncMock(return_value={"ok": False, "error_code": 400, "description": "Bad Request"})
 
         # session.post(...) is used as async context manager
         mock_post_context = AsyncMock()
