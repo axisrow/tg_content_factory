@@ -97,6 +97,12 @@ class OriginCSRFMiddleware(BaseHTTPMiddleware):
     """
     Lightweight CSRF protection: for unsafe methods, enforce same-origin
     when Origin or Referer is present.
+
+    Note: replacing this with the ``starlette-csrf`` library (a Double Submit
+    Cookie implementation) was investigated and rejected in #957 — that library
+    has no Origin/Referer or proxy-header (Forwarded/X-Forwarded-*) handling and
+    would require threading a CSRF token through every frontend request. See
+    ``docs/plans/csrf-starlette-csrf-investigation.md``.
     """
 
     async def dispatch(self, request: Request, call_next):
