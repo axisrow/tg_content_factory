@@ -8,6 +8,6 @@
      hx-get="/channels/filter/manage/fragments/table?{{ request.url.query }}"
      hx-trigger="load"
      hx-swap="innerHTML">
-    {{ loading('Загрузка отфильтрованных каналов…') }}
+    {{ loading('Загрузка отфильтрованных каналов…', class="my-4") }}
 </div>
 {% endblock %}

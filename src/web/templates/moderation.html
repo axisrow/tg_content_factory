@@ -10,6 +10,6 @@
      hx-get="/moderation/fragments/table?{{ request.url.query }}"
      hx-trigger="load"
      hx-swap="innerHTML">
-    {{ loading('Загрузка очереди модерации…') }}
+    {{ loading('Загрузка очереди модерации…', class="my-4") }}
 </div>
 {% endblock %}
