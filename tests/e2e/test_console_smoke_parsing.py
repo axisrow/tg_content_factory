@@ -19,7 +19,7 @@ are preserved here against fake ``Page`` / ``ConsoleMessage`` objects:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Callable, cast
 
 import pytest
 
@@ -96,6 +96,10 @@ class _FakePage:
         self._console_handlers: list = []
         self._pageerror_handlers: list = []
         self.filled: dict[str, str] = {}
+        self.waited_ms: list[float] = []
+        # Optional callback fired when wait_for_timeout runs, to model an error
+        # emitted asynchronously during the settle window.
+        self.on_wait: "Callable[[], None] | None" = None
 
     def on(self, event: str, handler) -> None:  # noqa: ANN001 - test fake
         if event == "console":
@@ -120,6 +124,11 @@ class _FakePage:
         # The login flow only needs the ``with`` block to run the body; the
         # navigation itself is driven by the press() side-effect in the tests.
         return _NavCtx()
+
+    def wait_for_timeout(self, ms: float) -> None:
+        self.waited_ms.append(ms)
+        if self.on_wait is not None:
+            self.on_wait()
 
     # --- helpers used only by the tests to drive the captured listeners ----
 
@@ -225,6 +234,24 @@ def test_check_page_collects_console_errors() -> None:
     assert result.clean is False
     assert result.error_count == 1
     assert result.errors == ["[ERROR] boom @ u:3"]
+
+
+def test_check_page_settle_zero_does_not_wait() -> None:
+    # The default (settle=0) must read the console immediately — no wait call.
+    page = _FakePage(url="http://host/settings")
+    console_smoke.check_page(_as_page(page), "http://host", "/settings")
+    assert page.waited_ms == []
+
+
+def test_check_page_settle_waits_and_captures_async_errors() -> None:
+    # settle>0 waits the configured window (ms) AND errors fired during it are
+    # still captured, since the listener stays attached.
+    page = _FakePage(url="http://host/settings")
+    page.on_wait = lambda: page.emit_console(_FakeConsoleMessage("error", "late", {"url": "u", "lineNumber": 9}))
+    result = console_smoke.check_page(_as_page(page), "http://host", "/settings", settle=0.5)
+    assert page.waited_ms == [500]  # 0.5s -> 500ms
+    assert result.error_count == 1
+    assert result.errors == ["[ERROR] late @ u:9"]
 
 
 # --- dead-server guard (Python-API equivalent of "exit 0 + ### Error") ------

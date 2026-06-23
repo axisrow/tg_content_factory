@@ -56,6 +56,10 @@ It prints a per-page summary (✓ clean / ✗ N errors) and exits non-zero if an
 page logged an error. Drop `--web-pass` if the panel runs without a password.
 Add `--headed` to watch the run in a visible browser window (default: headless).
 
+Add `--settle N` (or `E2E_SETTLE=N`) to wait N seconds after each page load
+before reading the console — useful when a page logs errors asynchronously a
+moment after load (the default reads the console immediately).
+
 **Auth note:** when a password is set, the script logs in through the real
 `/login` form (which sets a session cookie) rather than embedding credentials in
 the URL — `BasicAuthMiddleware` answers browser navigations with a `303` to

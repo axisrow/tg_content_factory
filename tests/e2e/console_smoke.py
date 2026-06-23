@@ -98,7 +98,11 @@ _PASSWORD_FIELD = "#password"
 _REDACTED = "***"
 # Per-action navigation/console timeout (ms). A hung navigation against a wedged
 # server must fail the gated run loudly rather than block forever — pytest's own
-# 120s deadlock guard is the outer backstop.
+# 120s deadlock guard is the outer backstop. NOTE: a single wedged navigation can
+# burn up to this whole budget, so against a genuinely slow (but working) server
+# the 12-page walk could approach the 120s pytest timeout; this check is run by
+# hand against a local server, so that trade-off is acceptable — lower this or the
+# page set if a slow target trips the outer guard.
 _DEFAULT_TIMEOUT_MS = 30_000
 
 
@@ -258,12 +262,16 @@ def login(page: "Page", base_url: str, password: str) -> None:
         raise RedirectedToLoginError("login failed: still on /login after submitting the password (wrong WEB_PASS?)")
 
 
-def check_page(page: "Page", base_url: str, path: str) -> PageResult:
+def check_page(page: "Page", base_url: str, path: str, *, settle: float = 0.0) -> PageResult:
     """Navigate to one page and read back its console errors.
 
     Raises :class:`RedirectedToLoginError` if the navigation bounced to ``/login``
     (an unauthenticated session) — otherwise a broken auth would silently report
-    the clean login form as a clean panel page.
+    the clean login form as a clean panel page. ``settle`` optionally waits that
+    many seconds after the ``load`` event before reading the console, so errors
+    emitted asynchronously a moment after load (a deferred fetch that rejects,
+    say) are still captured while the listener is live. The default (``0.0``)
+    reads immediately, matching the old CLI behaviour.
     """
     base = base_url.rstrip("/")
     errors: list[str] = []
@@ -272,6 +280,10 @@ def check_page(page: "Page", base_url: str, path: str) -> PageResult:
     landed = _path_of(page.url)
     if _is_login_path(landed) and not _is_login_path(path):
         raise RedirectedToLoginError(f"navigation to {path!r} bounced to {landed!r}: session is not authenticated")
+    if settle > 0:
+        # The listener stays attached, so errors fired during this window land in
+        # ``errors`` too. ``wait_for_timeout`` takes milliseconds.
+        page.wait_for_timeout(settle * 1000)
     return PageResult(path=path, error_count=len(errors), errors=list(errors))
 
 
@@ -282,12 +294,15 @@ def run_smoke(
     *,
     headless: bool = True,
     timeout_ms: int = _DEFAULT_TIMEOUT_MS,
+    settle: float = 0.0,
 ) -> list[PageResult]:
     """Open a browser, (log in if needed,) walk every panel page, return results.
 
     The browser is always closed, even on error (see :func:`browser_session`),
     so a failed run does not leave a zombie process behind. A fresh page is used
     per panel path so each page's console listener only sees its own messages.
+    ``settle`` is forwarded to :func:`check_page` (seconds to wait after each
+    page load before reading the console; default reads immediately).
     """
     base = base_url.rstrip("/")
     with browser_session(headless=headless) as browser:
@@ -297,7 +312,7 @@ def run_smoke(
         try:
             if password:
                 login(context.new_page(), base, password)
-            return [check_page(context.new_page(), base, path) for path in paths]
+            return [check_page(context.new_page(), base, path, settle=settle) for path in paths]
         finally:
             context.close()
 
@@ -346,12 +361,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run with a visible browser window (default: headless).",
     )
+    parser.add_argument(
+        "--settle",
+        type=float,
+        default=float(os.environ.get("E2E_SETTLE", "0") or "0"),
+        help="Seconds to wait after each page load before reading the console "
+        "(catches async errors fired shortly after load; default: %(default)s).",
+    )
     args = parser.parse_args(argv)
     # Basic sanity on the base URL so a typo fails clearly rather than mid-walk.
     if not urlsplit(args.base_url).scheme:
         parser.error(f"--base-url must include a scheme, got {args.base_url!r}")
 
-    results = run_smoke(args.base_url, args.web_pass, headless=not args.headed)
+    results = run_smoke(args.base_url, args.web_pass, headless=not args.headed, settle=args.settle)
     print(format_summary(results))
     return 0 if all(r.clean for r in results) else 1
 
