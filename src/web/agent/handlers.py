@@ -154,9 +154,11 @@ async def agent_threads_fragment(request: Request, thread_id: int | None = None)
     """Lazy fragment: thread list + runtime status panel + composer footer (#949).
 
     Carries `active_thread` so the thread list can mark the open thread and the
-    composer footer (model select vs deepagents hint) renders for the right
-    backend. The skeleton already resolved the active thread via redirect, so the
-    fragment trusts the `thread_id` query param instead of re-running that logic.
+    composer footer (Claude model select vs per-backend hint) renders for the
+    right backend — the picker is Claude-only; codex/adk/deepagents get a hint
+    instead of a dead Claude dropdown (#1002). The skeleton already resolved the
+    active thread via redirect, so the fragment trusts the `thread_id` query
+    param instead of re-running that logic.
     """
     db = deps.get_db(request)
     agent_manager = deps.get_agent_manager(request)
