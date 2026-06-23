@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon %}
+{% from "_macros_ui.html" import loading %}
 {% block title %}Агент — TG Agent{% endblock %}
 
 {% block head_scripts %}
@@ -569,17 +570,10 @@
         <button type="button" class="btn-close" data-bs-dismiss="offcanvas"></button>
     </div>
     <div class="offcanvas-body d-flex flex-column gap-2">
-        {% for thread in threads %}
-        <a class="thread-item {% if active_thread and active_thread.id == thread.id %}active{% endif %}"
-           href="/agent?thread_id={{ thread.id }}">
-            <span class="thread-title" title="{{ thread.title }}">{{ thread.title }}</span>
-            <button class="thread-delete-btn"
-                    onclick="deleteThread(event, {{ thread.id }})"
-                    title="Удалить тред">{{ icon("close") }}</button>
-        </a>
-        {% else %}
-        <p class="small text-muted">Тредов пока нет</p>
-        {% endfor %}
+        {# Thread list loads lazily via the threads fragment (OOB-swapped, #949). #}
+        <div id="offcanvas-threads">
+            {{ loading() }}
+        </div>
         <form method="post" action="/agent/threads" style="margin-top:auto" data-busy>
             <button type="submit" class="btn btn-outline-primary btn-sm w-100">+ Новый тред</button>
         </form>
@@ -611,18 +605,14 @@
     <div class="agent-sidebar">
         <h3 class="text-muted text-uppercase small">Треды</h3>
 
-        {% for thread in threads %}
-        <a class="thread-item {% if active_thread and active_thread.id == thread.id %}active{% endif %}"
-           href="/agent?thread_id={{ thread.id }}"
-           data-thread-id="{{ thread.id }}">
-            <span class="thread-title" title="{{ thread.title }}">{{ thread.title }}</span>
-            <button class="thread-delete-btn"
-                    onclick="deleteThread(event, {{ thread.id }})"
-                    title="Удалить тред">{{ icon("close") }}</button>
-        </a>
-        {% else %}
-        <p class="small text-muted">Тредов пока нет</p>
-        {% endfor %}
+        {# Thread list + runtime status + composer footer load lazily here; the fragment
+           also OOB-swaps the offcanvas list, runtime panel and composer footer (#949). #}
+        <div id="sidebar-threads"
+             hx-get="/agent/fragments/threads{{ '?thread_id=' ~ active_thread.id if active_thread else '' }}"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+            {{ loading() }}
+        </div>
 
         <form method="post" action="/agent/threads" style="margin-top:auto" data-busy>
             <button type="submit" class="btn btn-outline-primary btn-sm w-100 mt-2">+ Новый тред</button>
@@ -632,50 +622,12 @@
     <!-- Main chat area -->
     <div class="agent-chat">
         {% if active_thread %}
-        <div class="chat-status-panel">
+        {# Runtime chips/badges depend on the lazily-probed backend; the threads
+           fragment OOB-swaps this slot once it knows the runtime status (#949). #}
+        <div class="chat-status-panel" id="chat-runtime-slot">
             <div class="chat-header">
                 <div class="chat-header-title">{{ active_thread.title }}</div>
-                <div class="chat-header-badges">
-                    {% if agent_status and agent_status.selected_backend %}
-                    <span class="badge text-bg-secondary">{{ agent_status.selected_backend }}</span>
-                    {% endif %}
-                    {% if agent_status and agent_status.using_override %}
-                    <span class="badge text-bg-warning">dev override</span>
-                    {% endif %}
-                </div>
             </div>
-
-            {% if agent_status %}
-            <div class="chat-runtime">
-                <span class="runtime-chip {{ 'runtime-chip-on' if agent_status.selected_backend == 'claude' else 'runtime-chip-off' }}">
-                    Claude
-                    <strong>{{ "on" if agent_status.selected_backend == "claude" else "off" }}</strong>
-                </span>
-                <span class="runtime-chip {{ 'runtime-chip-on' if agent_status.selected_backend == 'deepagents' else 'runtime-chip-off' }}">
-                    deepagents
-                    <strong>{{ "on" if agent_status.selected_backend == "deepagents" else "off" }}</strong>
-                </span>
-                {% if agent_status.selected_backend == "adk" %}
-                <span class="runtime-chip runtime-chip-on">
-                    google-adk
-                    <strong>on</strong>
-                </span>
-                {% endif %}
-                {% if agent_status.selected_backend == "deepagents" and agent_status.fallback_model %}
-                <span class="runtime-chip runtime-chip-accent">
-                    provider
-                    <code>{{ agent_status.fallback_provider or "unknown" }}</code>
-                </span>
-                <span class="runtime-chip runtime-chip-accent">
-                    model
-                    <code>{{ agent_status.fallback_model }}</code>
-                </span>
-                {% endif %}
-            </div>
-            {% if agent_status.error %}
-            <div class="alert alert-warning py-2 mb-0">{{ agent_status.error }}</div>
-            {% endif %}
-            {% endif %}
         </div>
 
         <div class="chat-stage">
@@ -697,31 +649,17 @@
             <div class="chat-composer">
                 <div class="chat-composer-meta">
                     <span class="composer-caption">Сообщение отправится в текущий тред.</span>
-                    {% if agent_status and agent_status.selected_backend == "deepagents" %}
-                    <span class="composer-subtle">Runtime управляется настройками deepagents.</span>
-                    {% else %}
-                    <span class="composer-subtle">Модель Claude можно переключить прямо здесь.</span>
-                    {% endif %}
+                    {# composer-subtle hint depends on the lazy backend; OOB-filled (#949). #}
+                    <span id="composer-subtle-slot"></span>
                 </div>
                 <div class="chat-input-area">
                     <textarea id="chat-input" class="form-control"
                               placeholder="Введите сообщение… (Enter — отправить, Shift+Enter — перенос строки)"
                               ></textarea>
                     <div class="composer-actions">
-                        {% if not agent_status or agent_status.selected_backend != "deepagents" %}
-                        <div class="composer-caption">Модель Claude</div>
-                        <select id="model-select" class="form-select model-select">
-                            <option value="">Авто</option>
-                            {% for value, label in model_options %}
-                            <option value="{{ value }}">{{ label }}</option>
-                            {% endfor %}
-                        </select>
-                        {% else %}
-                        <div class="composer-hint">
-                            <strong>Deepagents runtime</strong>
-                            Модель и provider берутся из сохраненных настроек и показываются в статусе выше.
-                        </div>
-                        {% endif %}
+                        {# Model select vs deepagents hint depends on the lazy backend; the
+                           threads fragment OOB-swaps this slot (#949). #}
+                        <span id="composer-actions-slot"></span>
                         <button class="btn btn-primary chat-send-btn" id="send-btn"
                                 onclick="sendMessage()">Отправить</button>
                     </div>
@@ -759,15 +697,22 @@
     var sending = false;
     var abortController = null;
 
-    // Model selector: persist in localStorage
-    var modelSelect = document.getElementById('model-select');
-    if (modelSelect) {
-        var savedModel = localStorage.getItem('agent_model') || '';
-        modelSelect.value = savedModel;
-        modelSelect.addEventListener('change', function() {
-            localStorage.setItem('agent_model', this.value);
-        });
+    // Model selector: persist in localStorage. The <select> loads lazily via the
+    // threads fragment (OOB swap, #949), so restore its saved value whenever it
+    // (re)appears and delegate the change handler off the document.
+    function restoreModelSelect() {
+        var modelSelect = document.getElementById('model-select');
+        if (modelSelect) modelSelect.value = localStorage.getItem('agent_model') || '';
     }
+    restoreModelSelect();
+    document.addEventListener('change', function(e) {
+        if (e.target && e.target.id === 'model-select') {
+            localStorage.setItem('agent_model', e.target.value);
+        }
+    });
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        if (e.target && e.target.id === 'sidebar-threads') restoreModelSelect();
+    });
 
     // Configure marked
     marked.setOptions({breaks: true, gfm: true});

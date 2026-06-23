@@ -1,0 +1,107 @@
+{% from "_macros.html" import icon %}
+{#
+  Lazy fragment for the Agent page (#949). Primary swap target is the desktop
+  sidebar (#sidebar-threads, innerHTML). Everything else is filled via HTMX
+  out-of-band swaps in one round-trip:
+    - #offcanvas-threads   mobile thread list
+    - #chat-runtime-slot   backend chips/badges (runtime status)
+    - #composer-subtle-slot / #composer-actions-slot  composer footer
+  The skeleton already resolved the active thread; we just mark it here.
+#}
+
+{# ── macro: a single thread list (shared by sidebar + offcanvas) ── #}
+{% macro thread_list() %}
+    {% for thread in threads %}
+    <a class="thread-item {% if active_thread and active_thread.id == thread.id %}active{% endif %}"
+       href="/agent?thread_id={{ thread.id }}"
+       data-thread-id="{{ thread.id }}">
+        <span class="thread-title" title="{{ thread.title }}">{{ thread.title }}</span>
+        <button class="thread-delete-btn"
+                onclick="deleteThread(event, {{ thread.id }})"
+                title="Удалить тред">{{ icon("close") }}</button>
+    </a>
+    {% else %}
+    <p class="small text-muted">Тредов пока нет</p>
+    {% endfor %}
+{% endmacro %}
+
+{# ── primary swap: desktop sidebar thread list ── #}
+{{ thread_list() }}
+
+{# ── OOB: mobile offcanvas thread list ── #}
+<div id="offcanvas-threads" hx-swap-oob="true">
+    {{ thread_list() }}
+</div>
+
+{# ── OOB: runtime status panel ── #}
+<div class="chat-status-panel" id="chat-runtime-slot" hx-swap-oob="true">
+    <div class="chat-header">
+        <div class="chat-header-title">{{ active_thread.title if active_thread else "" }}</div>
+        <div class="chat-header-badges">
+            {% if agent_status and agent_status.selected_backend %}
+            <span class="badge text-bg-secondary">{{ agent_status.selected_backend }}</span>
+            {% endif %}
+            {% if agent_status and agent_status.using_override %}
+            <span class="badge text-bg-warning">dev override</span>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if agent_status %}
+    <div class="chat-runtime">
+        <span class="runtime-chip {{ 'runtime-chip-on' if agent_status.selected_backend == 'claude' else 'runtime-chip-off' }}">
+            Claude
+            <strong>{{ "on" if agent_status.selected_backend == "claude" else "off" }}</strong>
+        </span>
+        <span class="runtime-chip {{ 'runtime-chip-on' if agent_status.selected_backend == 'deepagents' else 'runtime-chip-off' }}">
+            deepagents
+            <strong>{{ "on" if agent_status.selected_backend == "deepagents" else "off" }}</strong>
+        </span>
+        {% if agent_status.selected_backend == "adk" %}
+        <span class="runtime-chip runtime-chip-on">
+            google-adk
+            <strong>on</strong>
+        </span>
+        {% endif %}
+        {% if agent_status.selected_backend == "deepagents" and agent_status.fallback_model %}
+        <span class="runtime-chip runtime-chip-accent">
+            provider
+            <code>{{ agent_status.fallback_provider or "unknown" }}</code>
+        </span>
+        <span class="runtime-chip runtime-chip-accent">
+            model
+            <code>{{ agent_status.fallback_model }}</code>
+        </span>
+        {% endif %}
+    </div>
+    {% if agent_status.error %}
+    <div class="alert alert-warning py-2 mb-0">{{ agent_status.error }}</div>
+    {% endif %}
+    {% endif %}
+</div>
+
+{# ── OOB: composer footer (subtle hint + model select / deepagents hint) ── #}
+<span id="composer-subtle-slot" hx-swap-oob="true">
+    {% if agent_status and agent_status.selected_backend == "deepagents" %}
+    <span class="composer-subtle">Runtime управляется настройками deepagents.</span>
+    {% else %}
+    <span class="composer-subtle">Модель Claude можно переключить прямо здесь.</span>
+    {% endif %}
+</span>
+
+<span id="composer-actions-slot" hx-swap-oob="true">
+    {% if not agent_status or agent_status.selected_backend != "deepagents" %}
+    <div class="composer-caption">Модель Claude</div>
+    <select id="model-select" class="form-select model-select">
+        <option value="">Авто</option>
+        {% for value, label in model_options %}
+        <option value="{{ value }}">{{ label }}</option>
+        {% endfor %}
+    </select>
+    {% else %}
+    <div class="composer-hint">
+        <strong>Deepagents runtime</strong>
+        Модель и provider берутся из сохраненных настроек и показываются в статусе выше.
+    </div>
+    {% endif %}
+</span>
