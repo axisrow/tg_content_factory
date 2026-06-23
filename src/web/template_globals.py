@@ -122,6 +122,10 @@ FLASH_MESSAGES = {
     "photo_batch_created": "Batch photo tasks созданы.",
     "photo_auto_created": "Авто-загрузка создана.",
     "photo_run_due_ok": "Due photo tasks обработаны.",
+    "photo_run_due_queued": "Обработка due photo tasks поставлена в очередь.",
+    "photo_run_due_dry_queued": (
+        "Dry-run поставлен в очередь: ничего не отправлено — план будет в результате команды."
+    ),
     "photo_item_cancelled": "Photo task отменён.",
     "photo_auto_toggled": "Статус auto job изменён.",
     "photo_auto_deleted": "Auto job удалён.",

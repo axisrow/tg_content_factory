@@ -283,10 +283,16 @@
         </div>
     </div>
 
-    <div class="col-12">
+    <div class="col-12 d-flex gap-2">
         <form method="post" action="/dialogs/photos/run-due" data-busy>
             <input type="hidden" name="phone" value="{{ selected_phone }}">
             <button class="btn btn-sm btn-secondary" type="submit">Запустить due photo tasks сейчас</button>
+        </form>
+        <form method="post" action="/dialogs/photos/run-due" data-busy>
+            <input type="hidden" name="phone" value="{{ selected_phone }}">
+            <input type="hidden" name="dry_run" value="true">
+            <button class="btn btn-sm btn-outline-secondary" type="submit"
+                    title="Показать, что отправилось бы, без реальной отправки">Dry-run (предпросмотр)</button>
         </form>
     </div>
 

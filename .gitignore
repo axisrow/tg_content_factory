@@ -76,3 +76,6 @@ docs/superpowers/
 
 # Beads issue tracker — local Dolt DB + backups (text export not versioned in code PRs)
 .beads/
+
+# Agent Orchestrator runtime artifacts (per-session, not versioned)
+.ao/
