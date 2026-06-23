@@ -66,8 +66,9 @@ def smoke_results() -> list[console_smoke.PageResult]:
 
     base_url = os.environ.get("E2E_BASE_URL", "http://localhost:8080")
     password = os.environ.get("WEB_PASS") or None
+    settle = float(os.environ.get("E2E_SETTLE", "0") or "0")
     try:
-        return console_smoke.run_smoke(base_url, password)
+        return console_smoke.run_smoke(base_url, password, settle=settle)
     except console_smoke.RedirectedToLoginError as exc:
         raise AssertionError(f"console smoke run failed against {base_url}: {exc}") from exc
     except console_smoke.ConsoleSmokeError as exc:
