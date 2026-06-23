@@ -82,6 +82,33 @@ async def test_classify_channel_with_fake_provider(db):
     assert stored is not None and stored.genre == "aggregator"
 
 
+async def test_classify_channel_is_idempotent(db):
+    """Re-running the judge on the same channel updates in place — no duplicate
+    rows (#994 cycle-review: idempotency of the write path)."""
+    calls = {"n": 0}
+
+    async def fake_provider(*, prompt, max_tokens=256, temperature=0.0, **kw):
+        calls["n"] += 1
+        # Return a different verdict on the second run to prove update-in-place.
+        if calls["n"] == 1:
+            return '{"useful": "useful", "genre": "original", "confidence": 0.6, "reason": "first"}'
+        return '{"useful": "useless", "genre": "ad", "confidence": 0.3, "reason": "second"}'
+
+    svc = ChannelAnalysisService(db)
+    before = await db.repos.channel_ratings.count()
+
+    await svc.classify_channel(999003, provider_callable=fake_provider, sample_size=5)
+    after_first = await db.repos.channel_ratings.count()
+    assert after_first == before + 1
+
+    await svc.classify_channel(999003, provider_callable=fake_provider, sample_size=5)
+    after_second = await db.repos.channel_ratings.count()
+    assert after_second == after_first  # no duplicate row
+
+    stored = await svc.get_rating(999003)
+    assert stored is not None and stored.useful == "useless" and stored.genre == "ad"
+
+
 async def test_upsert_preserves_flag_count_on_reclassify(db):
     repo = db.repos.channel_ratings
     await repo.upsert(ChannelRating(channel_id=900100, useful="useful", genre="original", flag_count=3))
