@@ -192,6 +192,7 @@
 | Пиковые часы | `analytics peak-hours` | `GET /analytics/peak-hours` | `get_peak_hours` |
 | Календарь | `analytics calendar` | `GET /calendar/api/calendar` | `get_calendar` |
 | Аналитика канала | `analytics channel` | `GET /analytics/channels/api/overview` | `get_channel_analytics` |
+| Рейтинг каналов | `analytics channel-rating` | _планируется (#968)_ | _планируется (#969)_ |
 
 ## Dialogs
 

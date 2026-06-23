@@ -1072,6 +1072,45 @@ def test_cli_analytics_channel(cli_db, capsys):
 
 
 @pytest.mark.aiosqlite_serial
+def test_cli_analytics_channel_rating(cli_db, capsys):
+    """End-to-end test for `analytics channel-rating` CLI command (#967)."""
+    from src.cli.commands.analytics import run as analytics_run
+    from src.models import ChannelRating
+
+    async def _seed():
+        await cli_db.repos.channel_ratings.upsert(
+            ChannelRating(
+                channel_id=100777, title="Rated Chan", username="rated",
+                useful="useful", genre="original", confidence=0.91,
+            )
+        )
+        await cli_db.repos.channel_ratings.upsert(
+            ChannelRating(
+                channel_id=100888, title="Spam Chan",
+                useful="useless", genre="infobiz", confidence=0.8,
+            )
+        )
+
+    asyncio.run(_seed())
+    config = AppConfig()
+
+    async def fake_init_db(_config_path):
+        return config, cli_db
+
+    with patch("src.cli.commands.analytics.runtime.init_db", side_effect=fake_init_db):
+        analytics_run(argparse.Namespace(
+            config="config.yaml", analytics_action="channel-rating",
+            useful="useful", genre=None, limit=50,
+        ))
+
+    out = capsys.readouterr().out
+    assert "Rated Chan" in out
+    assert "original" in out
+    # --useful=useful filter excludes the useless channel
+    assert "Spam Chan" not in out
+
+
+@pytest.mark.aiosqlite_serial
 def test_cli_analytics_channel_not_found(cli_db, capsys):
     """CLI analytics channel for nonexistent channel prints not found."""
     from src.cli.commands.analytics import run as analytics_run
