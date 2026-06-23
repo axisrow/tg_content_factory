@@ -1,0 +1,57 @@
+{# Unified jobs table fragment (#964). Rendered by GET /jobs/fragments/list and
+   swapped into the dashboard (#965). Filter form reloads the same fragment. #}
+<form method="get" class="row g-2 align-items-end mb-3"
+      hx-get="/jobs/fragments/list" hx-target="#jobs-table" hx-swap="innerHTML">
+    <div class="col-auto">
+        <label class="form-label">Источник</label>
+        <select name="source" class="form-select form-select-sm">
+            <option value="">Все</option>
+            {% for s in sources %}
+            <option value="{{ s }}" {{ 'selected' if selected_source == s else '' }}>{{ s }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label">Статус</label>
+        <select name="status" class="form-select form-select-sm">
+            <option value="">Все</option>
+            {% for st in states %}
+            <option value="{{ st }}" {{ 'selected' if selected_status == st else '' }}>{{ st }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary btn-sm">Фильтр</button>
+    </div>
+</form>
+
+{% if jobs %}
+<div class="table-responsive">
+<table class="tga-table-striped-hover">
+    <thead>
+        <tr>
+            <th>Источник</th>
+            <th>Тип</th>
+            <th>Состояние</th>
+            <th>Описание</th>
+            <th>Создано</th>
+            <th>Ошибка</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for j in jobs %}
+        <tr>
+            <td class="text-nowrap">{{ j.source }}</td>
+            <td>{{ j.job_type }}</td>
+            <td><span class="badge bg-{% if j.runtime_state in ['failed'] %}danger{% elif j.runtime_state in ['running'] %}primary{% elif j.runtime_state in ['completed'] %}success{% elif j.runtime_state in ['pause_gate','flood_wait'] %}warning{% else %}secondary{% endif %}">{{ j.runtime_state }}</span></td>
+            <td>{{ (j.summary or '')[:60] }}</td>
+            <td class="text-nowrap text-muted" style="font-size:0.8rem">{{ j.created_at|local_dt if j.created_at else '—' }}</td>
+            <td class="text-danger" style="font-size:0.8rem">{{ (j.error or '')[:60] }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="alert alert-info">Нет фоновых задач.</div>
+{% endif %}
