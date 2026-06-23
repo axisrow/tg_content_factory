@@ -1,17 +1,43 @@
 name: CI
 
+# Triggers — CI runs only on `main` and on pull requests (owner decision, #1051).
+#   push: [main]   — post-merge verification that main itself stays green.
+#   pull_request:  — fires on PR open AND on every push inside an open PR
+#                    (the `synchronize` event), so PR commits are still covered.
+# Dropped the old `fix/**` / `codex/**` push triggers: they double-ran CI (once
+# for the branch push, once for the PR) and burned runners on intermediate,
+# draft, PR-less pushes. A push to a feature branch with no open PR no longer
+# triggers CI — open the PR to get a run.
 on:
   push:
     branches:
       - main
-      - fix/**
-      - codex/**
   pull_request:
+    # Docs-only changes skip the suite (#1051). paths-ignore is "all-or-nothing":
+    # the run is skipped only when EVERY changed file matches a pattern below, so
+    # a PR touching both code and docs still runs the full CI. The branch-name
+    # guard (check-branch-name) still runs because it is an independent job that
+    # github evaluates after the path filter at the workflow level — a docs-only
+    # PR simply has no test job to run.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - "mkdocs.yml"
+
+# Cancel an in-progress run when a newer commit is pushed to the same ref
+# (#1051). Without this, every push to an open PR left the previous run burning
+# a runner to completion. Grouping by workflow+ref keeps main and each PR
+# independent; cancel-in-progress reclaims the runner for the latest commit.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check-branch-name:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # A trivial github-script job; the timeout is a hang guard, not a budget.
+    timeout-minutes: 5
     steps:
       - name: Reject branch names with "+"
         if: contains(github.head_ref, '+')
@@ -30,6 +56,9 @@ jobs:
   # long test job instead of serializing ~20s in front of pytest (#944).
   static-checks:
     runs-on: ubuntu-latest
+    # Lint + import contracts + complexity gate + security scans (#1051, #1053).
+    # Typically a couple of minutes; 10 leaves headroom over a cold pip install.
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -67,6 +96,24 @@ jobs:
         continue-on-error: true
         run: npx -y jscpd@5.0.10 --min-tokens 70 --format python --threshold 1 src
 
+      # Dependency CVE scan (#1053). Advisory for now (continue-on-error) so a
+      # pre-existing transitive CVE never reds CI on day one — pip-audit LOCATES,
+      # Dependabot (.github/dependabot.yml) FIXES via update PRs. Ratchet to
+      # blocking later once the current findings are triaged. pip-audit ships in
+      # the [dev] extra installed above.
+      - name: Dependency vulnerability scan (advisory)
+        continue-on-error: true
+        run: pip-audit --desc
+
+      # Static security analysis of our own code (#1053). Advisory like the
+      # duplication guard: the codebase has ~hundreds of broad `except Exception`
+      # blocks that bandit flags (B110/B112) — kept non-blocking to avoid noise
+      # until a baseline/skip-list is curated. Config lives in [tool.bandit] in
+      # pyproject.toml (recurses src, excludes tests).
+      - name: Code security scan (advisory)
+        continue-on-error: true
+        run: bandit -c pyproject.toml -r src -q
+
       - name: Enforce pytest warnings as errors
         run: |
           python - <<'PY'
@@ -85,6 +132,10 @@ jobs:
 
   lint-and-test:
     runs-on: ubuntu-latest
+    # The long job: smoke + parallel + serial pytest with coverage. The suite
+    # runs in a few minutes on CI; 15 is a generous hang guard well under the
+    # 6h GitHub default that would otherwise let a deadlocked run idle (#1051).
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -113,10 +164,37 @@ jobs:
       # On CI conftest.py uses every runner core (the load throttle is dev-only),
       # so `-n auto` fans out across all vCPUs. --durations surfaces the slowest
       # tests each run for ongoing tuning (#944).
+      #
+      # Coverage (#1052): both real test runs measure `src` and the per-process
+      # .coverage.* files are combined afterwards. The parallel run starts the
+      # dataset (no --cov-append); the serial run appends so its lines aren't
+      # lost. `[tool.coverage.run] parallel = true` already keeps the xdist
+      # worker datafiles separate; we pass --cov-report= here to defer reporting
+      # (and the pyproject fail_under gate) to the single combined step below.
       - name: Pytest (parallel-safe)
         if: ${{ !cancelled() }}
-        run: pytest tests -q -m "not aiosqlite_serial" -n auto --durations=25
+        run: pytest tests -q -m "not aiosqlite_serial" -n auto --durations=25 --cov=src --cov-report=
 
       - name: Pytest (aiosqlite serial)
         if: ${{ !cancelled() }}
-        run: pytest tests -q -m aiosqlite_serial
+        run: pytest tests -q -m aiosqlite_serial --cov=src --cov-append --cov-report=
+
+      # Combine the parallel + serial datasets into one report. fail_under lives
+      # in [tool.coverage.report] (pyproject) so the ratchet is configured in one
+      # place; this step reds CI if total coverage drops below it (#1052, baseline
+      # for the #1024 bug-hunt epic to push upward). The XML artifact lets PRs
+      # diff coverage without re-running the suite.
+      - name: Coverage report (combined)
+        if: ${{ !cancelled() }}
+        run: |
+          coverage combine
+          coverage report
+          coverage xml -o coverage.xml
+
+      - name: Upload coverage artifact
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
