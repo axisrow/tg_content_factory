@@ -84,6 +84,16 @@ dev = [
     # CI cyclomatic-complexity gate (`--fail-on F`). ruff (above) is the third.
     "radon>=6.0.1",
     "vulture>=2.16",
+    # Console-error e2e smoke (issue #1014): the opt-in browser walk in
+    # tests/e2e/console_smoke.py drives the Playwright Python API directly
+    # instead of shelling out to an undeclared `playwright-cli` binary. The
+    # browser binaries are installed separately with
+    # `playwright install --with-deps chromium`; pytest-playwright pulls in the
+    # `playwright` package and the e2e fixtures. The smoke test is gated behind
+    # RUN_E2E_CONSOLE_SMOKE=1, runs locally against a `python -m src.main serve`
+    # panel, and never runs in the default suite or in CI.
+    "playwright>=1.59.0",
+    "pytest-playwright>=0.8.0",
 ]
 docs = ["mkdocs-material>=9.7.6"]
 # Codex SDK image provider + agent backend. Optional: all imports are lazy, so
