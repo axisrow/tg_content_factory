@@ -10,9 +10,20 @@ Walks every main web-panel page and asserts that none of them logs a JS error to
 the browser console. A manual one-page pass already found 0 errors (#788); this
 turns that into a repeatable check across all pages so regressions get caught.
 
-Pages walked: `/`, `/channels`, `/channels?view=all`, `/channels/filter/manage`,
-`/search`, `/analytics`, `/analytics/trends`, `/dashboard`, `/agent`,
-`/settings`, `/dialogs`, `/pipelines`.
+Pages walked (kept in lockstep with `PANEL_PATHS` in `console_smoke.py` and the
+`test_panel_paths_match_issue_list` guard): `/`, `/channels`,
+`/channels?view=all`, `/channels/filter/manage`, `/channels/renames`, `/search`,
+`/search-queries`, `/analytics`, `/analytics/trends`, `/analytics/channels`,
+`/analytics/channels/ratings`, `/dashboard`, `/agent`, `/settings`, `/dialogs`,
+`/dialogs/photos`, `/pipelines`, `/jobs`, `/moderation`, `/calendar`, `/images`,
+`/scheduler`.
+
+The list was extended in #1013 (part of #1011) to cover newer full-page routes —
+notably the session features `/jobs` (#965), `/analytics/channels` (#951) and
+`/analytics/channels/ratings` (#968/#999). Only GET full-page routes are walked;
+this is a console-only smoke (it catches JS errors on load). Some of the newer
+pages are lazyload skeletons (#756), so a clean console here does not yet prove
+the deferred fragment loaded — that deeper check is tracked separately.
 
 ### Run it by hand (quickest)
 

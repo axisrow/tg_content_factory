@@ -225,18 +225,30 @@ def test_format_summary_reports_counts_and_errors() -> None:
 
 
 def test_panel_paths_match_issue_list() -> None:
-    # Guard: keep the walked set aligned with the pages enumerated in issue #792.
+    # Guard: keep the walked set aligned with the curated page list. Originally
+    # the #792 set; extended in #1013 with newer full-page routes. Change this
+    # tuple and PANEL_PATHS (console_smoke.py) in the same edit, or CI goes red.
     assert console_smoke.PANEL_PATHS == (
         "/",
         "/channels",
         "/channels?view=all",
         "/channels/filter/manage",
+        "/channels/renames",
         "/search",
+        "/search-queries",
         "/analytics",
         "/analytics/trends",
+        "/analytics/channels",
+        "/analytics/channels/ratings",
         "/dashboard",
         "/agent",
         "/settings",
         "/dialogs",
+        "/dialogs/photos",
         "/pipelines",
+        "/jobs",
+        "/moderation",
+        "/calendar",
+        "/images",
+        "/scheduler",
     )
