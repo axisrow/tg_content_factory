@@ -718,11 +718,14 @@
             localStorage.setItem('agent_model', e.target.value);
         }
     });
-    // Re-seed on ANY swap once the select is present — the select arrives via an
-    // OOB swap into #composer-actions-slot, not the primary #sidebar-threads target,
-    // so gating on a specific target id would couple correctness to HTMX's
-    // OOB-vs-primary event ordering. restoreModelSelect() is idempotent and
-    // self-guards on the element, so a broad listener is safe (#949).
+    // Re-seed on ANY swap once the select is present. The select arrives via an
+    // OOB swap into #composer-actions-slot (not the primary #sidebar-threads
+    // target), and the base-layout #rename-badge polls on `every 60s`, so its
+    // afterSwap keeps bubbling to document.body — gating on a specific target id
+    // would couple correctness to HTMX's event order and miss the OOB insertion.
+    // restoreModelSelect() is idempotent, self-guards on the element, and only
+    // ever writes back the localStorage value the change-handler already persisted,
+    // so a broad listener can't clobber an in-session pick (#949).
     document.body.addEventListener('htmx:afterSwap', restoreModelSelect);
 
     // Configure marked
