@@ -20,6 +20,7 @@ issue invocation in a subprocess and asserts it now collects + runs cleanly.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -69,6 +70,44 @@ def test_interleaved_packages_collect_without_fixture_leak() -> None:
     )
     combined = result.stdout + result.stderr
     assert "fixture 'route_client' not found" not in combined, combined
-    # Before the fix the summary line read "47 passed, 26 errors in ...".
-    assert "error" not in combined, combined
-    assert result.returncode == 0, combined
+    # Match the pytest summary line specifically (e.g. "47 passed, 26 errors in
+    # 2.4s") rather than a bare "error" substring — several collected tests carry
+    # "error" in their own names, which a broad check would trip on (review note).
+    assert not re.search(r"\d+ error", combined), combined
+
+
+@pytest.mark.timeout(90)
+def test_fail_fast_keeps_the_users_arg_order() -> None:
+    """Under -x the hook must not reorder, so fail-fast stops where pytest would.
+
+    Reordering args changes which tests run before pytest halts on the first
+    failure, so for a fail-fast run we leave the user's exact order alone (#1008).
+    Assert on the *collection order* of the interleaved files under ``-x``: the
+    files must appear in the order they were passed, proving the regroup was
+    skipped (had it run, the two routes files would be adjacent).
+    """
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            *_INTERLEAVED_ARGS,
+            "-x",
+            "--collect-only",
+            "-q",
+            "-o",
+            "addopts=",
+        ],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=80,
+    )
+    collected = result.stdout + result.stderr
+    # First appearance of each file in the collection listing.
+    positions = [(collected.find(arg), arg) for arg in _INTERLEAVED_ARGS]
+    assert all(pos >= 0 for pos, _ in positions), collected
+    ordered = [arg for _, arg in sorted(positions)]
+    assert ordered == _INTERLEAVED_ARGS, (
+        f"fail-fast run reordered files: {ordered}\n{collected}"
+    )

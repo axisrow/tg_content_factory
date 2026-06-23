@@ -22,13 +22,16 @@ def _config(args: list[str]) -> SimpleNamespace:
     return SimpleNamespace(args=args)
 
 
-def _session(args: list[str]) -> SimpleNamespace:
-    return SimpleNamespace(config=_config(list(args)))
+def _session(args: list[str], *, maxfail: int = 0) -> SimpleNamespace:
+    config = _config(list(args))
+    # pytest_collection reads config.option.maxfail to skip under fail-fast.
+    config.option = SimpleNamespace(maxfail=maxfail)
+    return SimpleNamespace(config=config)
 
 
-def _collect(args: list[str]) -> list[str]:
+def _collect(args: list[str], *, maxfail: int = 0) -> list[str]:
     """Run pytest_collection over ``args`` and return the (possibly) regrouped args."""
-    session = _session(args)
+    session = _session(args, maxfail=maxfail)
     root_conftest.pytest_collection(session)
     return list(session.config.args)
 
@@ -218,4 +221,24 @@ def test_collection_handles_node_id_args() -> None:
         "tests/routes/test_a.py::test_one",
         "tests/routes/test_c.py::test_three",
         "tests/test_b.py::test_two",
+    ]
+
+
+def test_collection_is_skipped_under_fail_fast() -> None:
+    # With -x / --maxfail, the order files run in decides which tests execute
+    # before pytest stops, so we must NOT reorder — leave the user's exact
+    # command untouched and behave like vanilla pytest (#1008).
+    interleaved = [
+        "tests/routes/test_a.py",
+        "tests/test_b.py",
+        "tests/routes/test_c.py",
+    ]
+    # maxfail=1 is what -x sets; any truthy maxfail disables the regroup.
+    assert _collect(interleaved, maxfail=1) == interleaved
+    assert _collect(interleaved, maxfail=3) == interleaved
+    # maxfail=0 (no fail-fast) still regroups.
+    assert _collect(interleaved, maxfail=0) == [
+        "tests/routes/test_a.py",
+        "tests/routes/test_c.py",
+        "tests/test_b.py",
     ]
