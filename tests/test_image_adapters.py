@@ -1,4 +1,9 @@
-"""Tests for image generation adapter factories in provider_adapters.py."""
+"""Tests for image generation adapter factories in provider_adapters.py.
+
+The OpenAI/Together/Replicate adapters drive the official ``openai`` / ``replicate``
+SDKs (issue #958), so those tests mock the SDK client. HuggingFace stays on raw
+aiohttp (its SDK returns a PIL.Image), so its test still mocks ``aiohttp.ClientSession``.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +19,8 @@ from src.services.provider_adapters import (
     make_replicate_image_adapter,
     make_together_image_adapter,
 )
+
+# ── aiohttp mocks (HuggingFace only) ──
 
 
 def _mock_response(
@@ -48,33 +55,85 @@ def _mock_session(responses: list):
     return session
 
 
-# ── Together AI ──
+# ── SDK mocks (OpenAI / Together / Replicate) ──
+
+
+class _SDKImage:
+    """Mirrors the OpenAI SDK ``Image`` model."""
+
+    def __init__(self, url=None, b64_json=None):
+        self.url = url
+        self.b64_json = b64_json
+
+
+def _patch_async_openai(*, images: list):
+    """Return a context manager patching ``openai.AsyncOpenAI`` so its
+    ``images.generate`` returns an object with ``.data == images``."""
+
+    class _FakeImages:
+        async def generate(self, **kwargs):
+            return MagicMock(data=list(images))
+
+    class _FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            self.images = _FakeImages()
+
+    import openai
+
+    return patch.object(openai, "AsyncOpenAI", _FakeAsyncOpenAI)
+
+
+class _FakeFileOutput:
+    """Mirrors the Replicate SDK ``FileOutput``."""
+
+    def __init__(self, url):
+        self.url = url
+
+
+def _patch_replicate(*, output):
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        async def async_run(self, ref, input=None, **params):
+            return output
+
+    import replicate.client
+
+    return patch.object(replicate.client, "Client", _FakeClient)
+
+
+# ── Together AI (OpenAI-compatible SDK) ──
 
 
 @pytest.mark.anyio
 async def test_together_image_adapter_success():
     adapter = make_together_image_adapter("test-key")
-    resp = _mock_response(json_data={"data": [{"url": "https://img.together.xyz/abc.png"}]})
-    session = _mock_session([resp])
-
-    with patch.object(aiohttp, "ClientSession", return_value=session):
+    with _patch_async_openai(images=[_SDKImage(url="https://img.together.xyz/abc.png")]):
         url = await adapter("A cat", "black-forest-labs/FLUX.1-schnell")
-
     assert url == "https://img.together.xyz/abc.png"
 
 
 @pytest.mark.anyio
 async def test_together_image_adapter_error():
     adapter = make_together_image_adapter("test-key")
-    resp = _mock_response(status=429, json_data={})
-    session = _mock_session([resp])
 
-    with patch.object(aiohttp, "ClientSession", return_value=session):
-        with pytest.raises(RuntimeError, match="Together image error 429"):
+    class _FakeImages:
+        async def generate(self, **kwargs):
+            raise RuntimeError("429 rate limited")
+
+    class _FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            self.images = _FakeImages()
+
+    import openai
+
+    with patch.object(openai, "AsyncOpenAI", _FakeAsyncOpenAI):
+        with pytest.raises(RuntimeError, match="Together image error"):
             await adapter("A cat", "")
 
 
-# ── HuggingFace ──
+# ── HuggingFace (raw aiohttp) ──
 
 
 @pytest.mark.anyio
@@ -96,48 +155,25 @@ async def test_huggingface_image_adapter_saves_binary(tmp_path):
     assert Path(path).read_bytes() == fake_png
 
 
-# ── OpenAI ──
+# ── OpenAI (official SDK) ──
 
 
 @pytest.mark.anyio
 async def test_openai_image_adapter_success():
     adapter = make_openai_image_adapter("test-key")
-    resp = _mock_response(json_data={"data": [{"url": "https://oaidalleapi.blob/img.png"}]})
-    session = _mock_session([resp])
-
-    with patch.object(aiohttp, "ClientSession", return_value=session):
+    with _patch_async_openai(images=[_SDKImage(url="https://oaidalleapi.blob/img.png")]):
         url = await adapter("A sunset", "dall-e-3")
-
     assert url == "https://oaidalleapi.blob/img.png"
 
 
-# ── Replicate ──
+# ── Replicate (official SDK) ──
 
 
 @pytest.mark.anyio
-async def test_replicate_image_adapter_polls_until_complete():
+async def test_replicate_image_adapter_returns_url():
     adapter = make_replicate_image_adapter("test-token", timeout=5.0)
-
-    create_resp = _mock_response(
-        status=201,
-        json_data={"urls": {"get": "https://api.replicate.com/v1/predictions/abc123"}},
-    )
-    poll_processing = _mock_response(
-        status=200,
-        json_data={"status": "processing", "output": None},
-    )
-    poll_succeeded = _mock_response(
-        status=200,
-        json_data={"status": "succeeded", "output": ["https://replicate.delivery/img.png"]},
-    )
-
-    session = _mock_session([create_resp, poll_processing, poll_succeeded])
-
-    with patch.object(aiohttp, "ClientSession", return_value=session), patch(
-        "src.services.provider_adapters.asyncio.sleep", new_callable=AsyncMock
-    ):
-        url = await adapter("A mountain", "flux-schnell")
-
+    with _patch_replicate(output=_FakeFileOutput("https://replicate.delivery/img.png")):
+        url = await adapter("A mountain", "black-forest-labs/flux-schnell")
     assert url == "https://replicate.delivery/img.png"
 
 
@@ -145,19 +181,15 @@ async def test_replicate_image_adapter_polls_until_complete():
 async def test_replicate_image_adapter_failed_prediction():
     adapter = make_replicate_image_adapter("test-token", timeout=5.0)
 
-    create_resp = _mock_response(
-        status=201,
-        json_data={"urls": {"get": "https://api.replicate.com/v1/predictions/abc"}},
-    )
-    poll_failed = _mock_response(
-        status=200,
-        json_data={"status": "failed", "error": "model crashed"},
-    )
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            pass
 
-    session = _mock_session([create_resp, poll_failed])
+        async def async_run(self, ref, input=None, **params):
+            raise RuntimeError("model crashed")
 
-    with patch.object(aiohttp, "ClientSession", return_value=session), patch(
-        "src.services.provider_adapters.asyncio.sleep", new_callable=AsyncMock
-    ):
+    import replicate.client
+
+    with patch.object(replicate.client, "Client", _FakeClient):
         with pytest.raises(RuntimeError, match="model crashed"):
-            await adapter("A test", "some-model")
+            await adapter("A test", "some/model")
