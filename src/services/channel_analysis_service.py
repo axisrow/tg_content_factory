@@ -1,9 +1,10 @@
 """Channel rating service (#966): two-axis (usefulness × genre) classification.
 
-Ports the *channel-level* classifier from ``ai_detect_tool/channel_eval.py`` —
-the LLM judge prompt + verdict parser — plus the lightweight ``emoji_trash_score``
-feature. The per-message HeuristicAnalyzer detector is intentionally NOT ported
-(it pulls heavy text features and risks XL scope, per #966).
+Ports the *channel-level* classifier from the now-removed ``ai_detect_tool``
+standalone seed (see #781) — the LLM judge prompt + verdict parser — plus the
+lightweight ``emoji_trash_score`` feature. The per-message HeuristicAnalyzer
+detector is intentionally NOT ported (it pulls heavy text features and risks XL
+scope, per #966).
 
 Reads/writes verdicts through ``db.repos.channel_ratings``. The LLM judge is
 reached via a provider callable (``ProviderService.get_provider_callable()``),
@@ -27,7 +28,7 @@ ProviderCallable = Callable[..., Awaitable[str]]
 USEFULNESS_VALUES: tuple[ChannelUsefulness, ...] = ("useful", "useless")
 GENRE_VALUES: tuple[ChannelGenre, ...] = ("ad", "infobiz", "aggregator", "copy", "original")
 
-# Channel-title / post emoji detector (ported from ai_detect_tool/ai_detect.py).
+# Channel-title / post emoji detector (ported from the removed ai_detect_tool seed, #781).
 _EMOJI_RE = re.compile(
     "[\U0001f600-\U0001f64f\U0001f300-\U0001f5ff\U0001f680-\U0001f6ff"
     "\U0001f1e0-\U0001f1ff\U00002702-\U000027b0\U0001f900-\U0001f9ff"
@@ -147,7 +148,7 @@ class ChannelAnalysisService:
     def _emoji_trash_score(title: str | None, posts: list[str]) -> float:
         """Lightweight emoji-spam signal: post emoji density + title emoji count.
 
-        Ported formula from ai_detect_tool/channel_features.py (channel-level
+        Ported formula from the removed ai_detect_tool seed (#781; channel-level
         only — no per-message detector).
         """
         long_posts = [p for p in posts if p and len(p) >= 120]

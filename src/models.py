@@ -197,7 +197,7 @@ class RuntimeSnapshot(BaseModel):
 
 
 # Channel rating (#966): two-axis verdict (usefulness × genre) for a channel,
-# produced by ChannelAnalysisService or imported from the ai_detect_tool seed.
+# produced by ChannelAnalysisService (logic ported from the removed ai_detect_tool seed, #781).
 ChannelUsefulness = Literal["useful", "useless"]
 ChannelGenre = Literal["ad", "infobiz", "aggregator", "copy", "original"]
 
