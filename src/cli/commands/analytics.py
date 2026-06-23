@@ -320,19 +320,42 @@ def run(args: argparse.Namespace) -> None:
                 await provider_service.load_db_providers()
                 if not provider_service.has_providers():
                     print(
-                        "LLM provider is not configured. Add one in /settings or set an API key "
-                        "env var (e.g. OPENAI_API_KEY)."
+                        "LLM provider is not configured. Add one with `provider add`, in the web "
+                        "/settings page, or set an API key env var (e.g. OPENAI_API_KEY)."
                     )
                     return
 
-                provider_callable = provider_service.get_provider_callable(args.model)
+                # A mistyped --model must NOT silently fall back to the stub
+                # provider and persist a meaningless verdict — fail loudly instead
+                # (cycle-review #994, both reviewers flagged this as the top risk).
+                try:
+                    provider_callable = provider_service.resolve_provider_callable(args.model)
+                except ValueError as exc:
+                    print(str(exc))
+                    return
+
                 svc = ChannelAnalysisService(db)
-                sample_size = max(1, getattr(args, "sample_size", 40))
-                rating = await svc.classify_channel(
-                    channel_id,
-                    provider_callable=provider_callable,
-                    sample_size=sample_size,
-                )
+                # Guard against an empty channel before spending a provider call:
+                # no posts would otherwise persist a defaulted "useless/original"
+                # verdict (n_total=0) that looks valid but carries zero signal.
+                # Cap the sample upper bound so a huge --sample-size can't build a
+                # prompt that trips token limits / OOM.
+                sample_size = min(max(1, getattr(args, "sample_size", 40)), 200)
+                posts = await svc.sample_posts(channel_id, sample_size)
+                if not posts:
+                    print(f"Channel {channel_id} has no text posts to judge; skipping.")
+                    return
+
+                try:
+                    rating = await svc.classify_channel(
+                        channel_id,
+                        provider_callable=provider_callable,
+                        sample_size=sample_size,
+                    )
+                except Exception as exc:  # provider/network/parse failure
+                    print(f"Judge failed for channel {channel_id}: {exc}")
+                    raise SystemExit(1) from exc
+
                 name = rating.title or rating.username or str(rating.channel_id)
                 print(f"Channel {rating.channel_id} ({name}):")
                 print(f"  useful:     {rating.useful}")

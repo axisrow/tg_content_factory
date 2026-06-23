@@ -197,9 +197,10 @@
 
 > **CLI-first (#994).** Запуск LLM-судьи (`ChannelAnalysisService.classify_channel`) — write-операция:
 > делает реальный provider-вызов и апсертит вердикт в `channel_ratings`. Подключён сначала к CLI
-> (`analytics channel-rate`). Web POST-эндпоинт и agent write-tool — осознанный follow-up: судью можно
-> запустить из любого UI, но read-путь (`channel-rating` / `GET …/ratings` / `get_channel_ratings`)
-> уже даёт паритетный просмотр результата во всех трёх интерфейсах.
+> (`analytics channel-rate`). Прочерки в колонках Web/Agent означают **«ещё не реализовано»** (осознанный
+> follow-up), а не «исключено»: Web POST-эндпоинт и agent write-tool для запуска судьи появятся отдельным
+> PR. Read-путь (`channel-rating` / `GET …/ratings` / `get_channel_ratings`) уже даёт паритетный просмотр
+> результата во всех трёх интерфейсах.
 
 ## Dialogs
 
