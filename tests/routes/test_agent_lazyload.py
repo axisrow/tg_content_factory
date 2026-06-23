@@ -169,7 +169,7 @@ async def test_fragment_deepagents_hides_model_select(client, db, agent_manager_
 
 @pytest.mark.anyio
 async def test_fragment_claude_shows_model_select(client, db, agent_manager_mock):
-    """For a non-deepagents backend the composer shows the Claude model select."""
+    """The Claude backend is the only one that renders the model select."""
     thread_id = await db.create_agent_thread("Claude")
     runtime = agent_manager_mock.get_runtime_status.return_value
     runtime.selected_backend = "claude"
@@ -178,3 +178,27 @@ async def test_fragment_claude_shows_model_select(client, db, agent_manager_mock
 
     assert resp.status_code == 200
     assert 'id="model-select"' in resp.text
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("backend", ["codex", "adk"])
+async def test_fragment_codex_adk_hide_dead_model_select(client, db, agent_manager_mock, backend):
+    """codex/adk must NOT render the Claude-labelled model select (#1002).
+
+    These backends validate the submitted model against their own ID sets
+    (CODEX_MODEL_IDS / ADK_MODEL_IDS); a Claude-model dropdown there is a dead
+    control whose value is always discarded server-side. The fragment shows a
+    backend hint instead of the picker.
+    """
+    thread_id = await db.create_agent_thread(backend)
+    runtime = agent_manager_mock.get_runtime_status.return_value
+    runtime.selected_backend = backend
+
+    resp = await client.get(f"/agent/fragments/threads?thread_id={thread_id}")
+
+    assert resp.status_code == 200
+    # No dead Claude dropdown and no "Модель Claude" caption for these backends.
+    assert 'id="model-select"' not in resp.text
+    assert "Модель Claude" not in resp.text
+    # A backend-named hint replaces the picker so the slot is not empty.
+    assert f"{backend} runtime" in resp.text

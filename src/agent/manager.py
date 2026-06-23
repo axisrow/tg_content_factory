@@ -36,10 +36,8 @@ from claude_agent_sdk import (
 from src.agent.adk_backend import AdkSdkBackend
 from src.agent.codex_backend import CodexSdkBackend
 from src.agent.models import (
-    ADK_MODEL_IDS,
-    CLAUDE_MODEL_IDS,
-    CODEX_MODEL_IDS,
     VALID_AGENT_BACKENDS,
+    model_for_backend,
 )
 from src.agent.prompt_template import (
     AGENT_PROMPT_TEMPLATE_SETTING,
@@ -2211,22 +2209,19 @@ class AgentManager:
             return
         if backend_name == "claude":
             backend = self._claude_backend
-            if model not in CLAUDE_MODEL_IDS:
-                model = None
         elif backend_name == "deepagents":
             backend = self._deepagents_backend
-            model = None
         elif backend_name == "codex":
             backend = self._codex_backend
-            if model not in CODEX_MODEL_IDS:
-                model = None
         elif backend_name == "adk":
             backend = self._adk_backend
-            if model not in ADK_MODEL_IDS:
-                model = None
         else:
             yield _sse({"error": "Ошибка агента: не удалось выбрать backend."})
             return
+        # Drop a model ID that doesn't belong to the selected backend (e.g. a
+        # Claude ID still in the request while codex/adk is active) → backend
+        # default. deepagents always resolves to None (its model is settings-led).
+        model = model_for_backend(backend_name, model)
 
         queue: asyncio.Queue[str | None] = asyncio.Queue()
 
