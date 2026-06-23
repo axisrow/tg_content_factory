@@ -80,17 +80,25 @@
     {% endif %}
 </div>
 
-{# ── OOB: composer footer (subtle hint + model select / deepagents hint) ── #}
+{# ── OOB: composer footer (subtle hint + model select / backend hint) ──
+   The Claude model <select> is the only real UI model picker. Other backends
+   pick their model elsewhere (deepagents from saved settings; codex/adk have a
+   fixed/managed model with no display-name table — see src/agent/models.py), so
+   showing a Claude-labelled dropdown there is a dead control: select_model()
+   only validates Claude IDs and chat_stream drops foreign IDs for those
+   backends. Render the picker for claude only; everyone else gets a hint (#1002). #}
 <span id="composer-subtle-slot" hx-swap-oob="true">
-    {% if agent_status and agent_status.selected_backend == "deepagents" %}
+    {% if agent_status and agent_status.selected_backend == "claude" %}
+    <span class="composer-subtle">Модель Claude можно переключить прямо здесь.</span>
+    {% elif agent_status and agent_status.selected_backend == "deepagents" %}
     <span class="composer-subtle">Runtime управляется настройками deepagents.</span>
     {% else %}
-    <span class="composer-subtle">Модель Claude можно переключить прямо здесь.</span>
+    <span class="composer-subtle">Модель задаётся backend'ом и показана в статусе выше.</span>
     {% endif %}
 </span>
 
 <span id="composer-actions-slot" hx-swap-oob="true">
-    {% if not agent_status or agent_status.selected_backend != "deepagents" %}
+    {% if agent_status and agent_status.selected_backend == "claude" %}
     <div class="composer-caption">Модель Claude</div>
     <select id="model-select" class="form-select model-select">
         <option value="">Авто</option>
@@ -98,10 +106,15 @@
         <option value="{{ value }}">{{ label }}</option>
         {% endfor %}
     </select>
-    {% else %}
+    {% elif agent_status and agent_status.selected_backend == "deepagents" %}
     <div class="composer-hint">
         <strong>Deepagents runtime</strong>
         Модель и provider берутся из сохраненных настроек и показываются в статусе выше.
+    </div>
+    {% elif agent_status and agent_status.selected_backend %}
+    <div class="composer-hint">
+        <strong>{{ agent_status.selected_backend }} runtime</strong>
+        Модель управляется backend'ом — выбор в UI недоступен.
     </div>
     {% endif %}
 </span>
