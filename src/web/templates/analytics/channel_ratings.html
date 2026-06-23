@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Рейтинг каналов — TG Agent{% endblock %}
+{% block content %}
+<h1 class="h3 mb-4">Рейтинг каналов</h1>
+
+<form method="get" class="row g-2 align-items-end mb-3">
+    <div class="col-auto">
+        <label class="form-label">Полезность</label>
+        <select name="useful" class="form-select form-select-sm">
+            <option value="">Все</option>
+            {% for v in ["useful", "useless"] %}
+            <option value="{{ v }}" {{ 'selected' if selected_useful == v else '' }}>{{ v }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label">Жанр</label>
+        <select name="genre" class="form-select form-select-sm">
+            <option value="">Все</option>
+            {% for g in ["ad", "infobiz", "aggregator", "copy", "original"] %}
+            <option value="{{ g }}" {{ 'selected' if selected_genre == g else '' }}>{{ g }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="col-auto">
+        <label class="form-label">Лимит</label>
+        <input type="number" name="limit" value="{{ limit }}" min="1" max="1000" class="form-control form-control-sm" style="width:6rem">
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-primary btn-sm">Фильтр</button>
+    </div>
+</form>
+
+{% if ratings %}
+<div class="table-responsive">
+<table class="tga-table-striped-hover">
+    <thead>
+        <tr>
+            <th>channel_id</th>
+            <th>Название</th>
+            <th>Полезность</th>
+            <th>Жанр</th>
+            <th>Уверенность</th>
+            <th>Причина</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in ratings %}
+        <tr>
+            <td class="text-nowrap">{{ r.channel_id }}</td>
+            <td>{{ r.title or ('@' ~ r.username if r.username else '—') }}</td>
+            <td><span class="badge bg-{{ 'success' if r.useful == 'useful' else 'secondary' }}">{{ r.useful }}</span></td>
+            <td>{{ r.genre }}</td>
+            <td>{{ '%.2f'|format(r.confidence) }}</td>
+            <td class="text-muted" style="font-size:0.85rem">{{ (r.reason or '')[:120] }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+{% else %}
+<div class="alert alert-info">Нет рейтингов каналов.</div>
+{% endif %}
+{% endblock %}

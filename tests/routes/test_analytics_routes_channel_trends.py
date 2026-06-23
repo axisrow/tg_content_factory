@@ -281,3 +281,46 @@ async def test_api_cross_citations(route_client):
         assert resp.status_code == 200
         data = resp.json()
         assert isinstance(data, list)
+
+
+# ── Channel ratings (#968) ──────────────────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_channel_ratings_api_and_filter(route_client):
+    from src.models import ChannelRating
+
+    db = route_client._transport_app.state.db
+    await db.repos.channel_ratings.upsert(
+        ChannelRating(channel_id=700100, title="Good Chan", useful="useful", genre="original", confidence=0.9)
+    )
+    await db.repos.channel_ratings.upsert(
+        ChannelRating(channel_id=700200, title="Spam Chan", useful="useless", genre="infobiz", confidence=0.8)
+    )
+
+    resp = await route_client.get("/analytics/channels/api/ratings?limit=1000")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert {r["channel_id"] for r in data} >= {700100, 700200}
+
+    only_useful = await route_client.get("/analytics/channels/api/ratings?useful=useful&limit=1000")
+    ids = {r["channel_id"] for r in only_useful.json()}
+    assert 700100 in ids and 700200 not in ids
+
+    only_ad = await route_client.get("/analytics/channels/api/ratings?genre=infobiz&limit=1000")
+    ids2 = {r["channel_id"] for r in only_ad.json()}
+    assert 700200 in ids2 and 700100 not in ids2
+
+
+@pytest.mark.anyio
+async def test_channel_ratings_page_renders(route_client):
+    from src.models import ChannelRating
+
+    db = route_client._transport_app.state.db
+    await db.repos.channel_ratings.upsert(
+        ChannelRating(channel_id=700300, title="Rated Page Chan", useful="useful", genre="original", confidence=0.7)
+    )
+    resp = await route_client.get("/analytics/channels/ratings?limit=1000")
+    assert resp.status_code == 200
+    assert "Rated Page Chan" in resp.text
+    assert "Рейтинг каналов" in resp.text

@@ -5,6 +5,7 @@ import dataclasses
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from src.services.channel_analysis_service import ChannelAnalysisService
 from src.services.channel_analytics_service import ChannelAnalyticsService
 from src.services.content_analytics_service import ContentAnalyticsService
 from src.services.trend_service import TrendService
@@ -14,6 +15,7 @@ router = APIRouter()
 
 _MAX_TREND_DAYS = 365
 _MAX_TREND_LIMIT = 100
+_MAX_RATING_LIMIT = 1000
 
 
 def _clamp_positive(value: int, upper: int) -> int:
@@ -261,6 +263,46 @@ def _svc(request: Request) -> ChannelAnalyticsService:
 async def api_channel_overview(request: Request, channel_id: int, days: int = 30):
     overview = await _svc(request).get_channel_overview(channel_id, days=max(1, days))
     return JSONResponse(dataclasses.asdict(overview))
+
+
+def _rating_svc(request: Request) -> ChannelAnalysisService:
+    return ChannelAnalysisService(deps.get_db(request))
+
+
+@router.get("/channels/api/ratings")
+async def api_channel_ratings(
+    request: Request,
+    useful: str | None = None,
+    genre: str | None = None,
+    limit: int = 100,
+):
+    """Read-only channel ratings (usefulness × genre) as JSON (#968)."""
+    ratings = await _rating_svc(request).list_ratings(
+        useful=useful, genre=genre, limit=_clamp_positive(limit, _MAX_RATING_LIMIT)
+    )
+    return JSONResponse([r.model_dump(mode="json") for r in ratings])
+
+
+@router.get("/channels/ratings", response_class=HTMLResponse)
+async def channel_ratings_page(
+    request: Request,
+    useful: str | None = None,
+    genre: str | None = None,
+    limit: int = 100,
+):
+    """Minimal channel-ratings table (#968). Read-only; full two-axis UI is a follow-up."""
+    limit = _clamp_positive(limit, _MAX_RATING_LIMIT)
+    ratings = await _rating_svc(request).list_ratings(useful=useful, genre=genre, limit=limit)
+    return deps.get_templates(request).TemplateResponse(
+        request,
+        "analytics/channel_ratings.html",
+        {
+            "ratings": ratings,
+            "selected_useful": useful or "",
+            "selected_genre": genre or "",
+            "limit": limit,
+        },
+    )
 
 
 @router.get("/channels/api/subscribers")
