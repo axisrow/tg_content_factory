@@ -19,6 +19,10 @@
         <input type="text" name="model" placeholder="по умолчанию" class="form-control form-control-sm" style="width:10rem">
     </div>
     <div class="col-auto">
+        <label class="form-label">Постов (1-200)</label>
+        <input type="number" name="sample_size" value="40" min="1" max="200" class="form-control form-control-sm" style="width:7rem">
+    </div>
+    <div class="col-auto">
         <button type="submit" class="btn btn-warning btn-sm">Запустить судью</button>
         <span id="rate-spinner" class="htmx-indicator spinner-border spinner-border-sm ms-2" role="status"></span>
     </div>

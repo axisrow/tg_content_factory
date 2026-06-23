@@ -19,7 +19,10 @@
     {% if rating.reason %}
     <p class="text-muted mb-1" style="font-size:0.9rem">{{ rating.reason }}</p>
     {% endif %}
-    <p class="text-muted mb-0" style="font-size:0.85rem">Постов оценено: {{ rating.n_total }}</p>
+    <p class="text-muted mb-1" style="font-size:0.85rem">Постов оценено: {{ rating.n_total }}</p>
+    {# The list table below is part of the full page render and is not swapped
+       here; offer a reload so the fresh verdict shows up in it (#999 review). #}
+    <a href="" onclick="location.reload(); return false;" class="small">Обновить список ниже</a>
   </div>
 </div>
 {% endif %}
