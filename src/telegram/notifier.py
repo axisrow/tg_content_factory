@@ -5,6 +5,7 @@ import logging
 import time
 
 import aiohttp
+import pybreaker
 
 from src.database.bundles import NotificationBundle
 from src.services.notification_target_service import NotificationTargetService
@@ -18,6 +19,62 @@ _BOT_API_URL = "https://api.telegram.org/bot{token}/sendMessage"
 # the same persistent error indefinitely.
 _DEFAULT_FAILURE_THRESHOLD = 3
 _DEFAULT_COOLDOWN_SECONDS = 3600.0
+
+
+class _NotifierProbeError(RuntimeError):
+    """Sentinel raised to drive the pybreaker state machine on a failed send.
+
+    ``_attempt_send`` already swallows the real exception and returns a bool, so
+    we synthesise this marker exception purely to feed pybreaker's failure path
+    (``CircuitBreaker.call`` counts a failure only when the wrapped callable
+    raises). It never escapes the notifier.
+    """
+
+
+class _NotifierBreakerListener(pybreaker.CircuitBreakerListener):
+    """Bridge pybreaker state transitions back to the notifier.
+
+    Two jobs: (1) emit the exact "entering degraded state" warning the
+    hand-rolled breaker logged on every open (#553), and (2) stamp/clear the
+    cooldown deadline on a monotonic clock so the notifier never has to read
+    pybreaker's private storage to decide whether the cooldown has elapsed.
+
+    Note: the "recovered" INFO is NOT emitted here. The old breaker logged it on
+    *any* successful send that followed accumulated failures — including
+    below-threshold streaks that never tripped the circuit, which produce no
+    state transition. ``Notifier._record_outcome`` owns that log instead.
+    """
+
+    def __init__(self, notifier: Notifier, cooldown_seconds: float) -> None:
+        self._notifier = notifier
+        self._cooldown_seconds = cooldown_seconds
+
+    def state_change(
+        self,
+        cb: pybreaker.CircuitBreaker,
+        old_state: pybreaker.CircuitBreakerState | None,
+        new_state: pybreaker.CircuitBreakerState,
+    ) -> None:
+        old_name = old_state.name if old_state is not None else None
+        new_name = new_state.name
+        if new_name == pybreaker.STATE_OPEN:
+            self._notifier._degraded_until = time.monotonic() + self._cooldown_seconds
+            # Mirror the previous warning wording/format so log-scraping and the
+            # "no more than N errors per outage" guarantee (#553) are unchanged.
+            if old_name == pybreaker.STATE_HALF_OPEN:
+                reason = "half-open probe failed"
+            else:
+                reason = f"{cb.fail_counter} consecutive failures"
+            logger.warning(
+                "Notifier entering degraded state (%s); suppressing further attempts for %.0fs",
+                reason,
+                self._cooldown_seconds,
+            )
+        elif new_name == pybreaker.STATE_CLOSED and old_name in (
+            pybreaker.STATE_OPEN,
+            pybreaker.STATE_HALF_OPEN,
+        ):
+            self._notifier._degraded_until = None
 
 
 class Notifier:
@@ -36,13 +93,36 @@ class Notifier:
         self._admin_chat_id = admin_chat_id
         self._notification_bundle = notification_bundle
         self._cached_me_id: int | None = None
+        # Serialises the whole gate → send → record cycle of notify(). The
+        # Notifier is a long-lived instance shared by concurrent collection
+        # workers (each can alert on FloodWait), and pybreaker's own threading
+        # lock cannot bridge the `await` between the breaker check and the
+        # outcome record. Without this, two coroutines could both pass the
+        # half-open gate (double-probe), or one could re-open the breaker while
+        # another is mid-send and then trip an uncaught CircuitBreakerError on
+        # the success path (#955 cycle-review).
+        self._send_lock = asyncio.Lock()
         # Circuit-breaker state. Both knobs are clamped to sane minimums: a
         # non-positive cooldown would expire immediately and turn the breaker
         # into a no-op (degraded state never holds), defeating the whole point.
-        self._failure_threshold = max(1, failure_threshold)
+        failure_threshold = max(1, failure_threshold)
         self._cooldown_seconds = max(0.1, cooldown_seconds)
-        self._consecutive_failures = 0
+        # Monotonic deadline until which sends are skipped while degraded. Kept
+        # in sync by the listener on every open/close transition; the cooldown
+        # check reads this instead of pybreaker's private opened_at storage.
         self._degraded_until: float | None = None
+        # pybreaker drives the state machine; the previously bespoke semantics
+        # map 1:1 — open after `fail_max` consecutive failures, hold the circuit
+        # open for `reset_timeout`, then allow a single half-open trial call
+        # (`success_threshold=1`) that closes on success or re-opens on failure.
+        self._breaker = pybreaker.CircuitBreaker(
+            fail_max=failure_threshold,
+            reset_timeout=self._cooldown_seconds,
+            success_threshold=1,
+            name="notifier",
+            throw_new_error_on_trip=False,
+            listeners=[_NotifierBreakerListener(self, self._cooldown_seconds)],
+        )
 
     @property
     def admin_chat_id(self) -> int | None:
@@ -50,7 +130,7 @@ class Notifier:
 
     @property
     def is_degraded(self) -> bool:
-        """True while the circuit breaker is open (sends are being skipped)."""
+        """True while the circuit breaker is open and the cooldown still holds."""
         if self._degraded_until is None:
             return False
         return time.monotonic() < self._degraded_until
@@ -59,49 +139,82 @@ class Notifier:
         """Invalidate the cached me.id. Call when the notification account changes."""
         self._cached_me_id = None
 
-    def _on_success(self) -> None:
-        # Read the recovery flag BEFORE clearing state, otherwise the log can
-        # never fire (the half-open path zeroes the counters before the probe).
-        if self._consecutive_failures or self._degraded_until is not None:
-            logger.info("Notifier recovered; resuming notifications")
-        self._consecutive_failures = 0
-        self._degraded_until = None
-
-    def _open_breaker(self, *, reason: str) -> None:
-        self._degraded_until = time.monotonic() + self._cooldown_seconds
-        logger.warning(
-            "Notifier entering degraded state (%s); suppressing further attempts for %.0fs",
-            reason,
-            self._cooldown_seconds,
-        )
-
-    def _on_failure(self) -> None:
-        self._consecutive_failures += 1
-        if self._consecutive_failures >= self._failure_threshold and self._degraded_until is None:
-            self._open_breaker(reason=f"{self._consecutive_failures} consecutive failures")
-
     async def notify(self, text: str) -> bool:
-        # Circuit breaker: while degraded, skip the attempt entirely (no log spam).
-        half_open = False
-        if self._degraded_until is not None:
-            if time.monotonic() < self._degraded_until:
+        # The send is async and already returns a bool (it swallows its own
+        # exceptions), so it runs outside pybreaker; we only feed the outcome
+        # through the synchronous state machine. pybreaker owns open/half-open/
+        # cooldown exactly as the previous hand-rolled logic did.
+        #
+        # The whole cycle is serialised so the breaker can never observe an
+        # interleaved state change across the `await` below: that would let two
+        # callers both probe in half-open, or re-open the breaker mid-send and
+        # surface an uncaught CircuitBreakerError to the caller (#955).
+        async with self._send_lock:
+            if not self._enter_attempt():
+                # Degraded and still within cooldown: skip (no log spam).
                 return False
-            # Cooldown elapsed — half-open: try exactly one probe. Keep the open
-            # state intact for now so _on_success can still log the recovery and
-            # a failed probe re-opens immediately (single-probe semantics).
-            half_open = True
 
-        ok = await self._attempt_send(text)
+            # _enter_attempt may have flipped the breaker to half-open, so the
+            # outcome MUST be recorded even if the send is cancelled — otherwise
+            # the breaker is stranded half-open and admits every later send with
+            # no cooldown. Treat cancellation as a failed probe (re-opens).
+            ok = False
+            try:
+                ok = await self._attempt_send(text)
+            finally:
+                self._record_outcome(ok)
+            return ok
+
+    def _enter_attempt(self) -> bool:
+        """Decide whether a send may be attempted, advancing the breaker.
+
+        Returns ``True`` if the circuit is closed/half-open (a real send should
+        run), ``False`` if it is open and the cooldown has not elapsed (skip).
+        When the cooldown has elapsed this transitions the breaker to half-open
+        so the next send becomes the single half-open trial call.
+        """
+        if self._breaker.current_state != pybreaker.STATE_OPEN:
+            return True
+        if self._degraded_until is not None and time.monotonic() < self._degraded_until:
+            return False
+        # Cooldown elapsed: flip to half-open directly (NOT via the open state's
+        # before_call, which would consume the trial slot on a no-op probe and
+        # close the circuit). The upcoming real send becomes the genuine trial:
+        # success closes the breaker, failure re-opens it immediately.
+        self._breaker.half_open()
+        return True
+
+    def _record_outcome(self, ok: bool) -> None:
+        """Advance the breaker state machine for the just-completed send."""
         if ok:
-            self._on_success()
-        elif half_open:
-            # The single half-open probe failed: re-enter degraded right away
-            # instead of granting another full failure_threshold window of
-            # error logs (issue #553 — "no more than N errors per outage").
-            self._open_breaker(reason="half-open probe failed")
+            # Recovery log: the hand-rolled breaker logged "recovered" on ANY
+            # successful send that followed accumulated failures — including a
+            # below-threshold streak (e.g. fail, fail, success at threshold=3)
+            # where the circuit never opened, so no state transition fires. The
+            # listener only sees open/half-open → closed transitions, so we own
+            # the recovery log here (and the listener does NOT duplicate it) to
+            # preserve the exact #553 log contract 1:1.
+            had_failures = self._breaker.fail_counter != 0 or self._degraded_until is not None
+            try:
+                self._breaker.call(lambda: None)
+            except pybreaker.CircuitBreakerError:
+                # Defence in depth: the _send_lock means the breaker should not
+                # be open here, but pybreaker raises if it ever is (open + cooldown
+                # not elapsed). Swallow it so notify() keeps its bool contract.
+                return
+            if had_failures:
+                logger.info("Notifier recovered; resuming notifications")
         else:
-            self._on_failure()
-        return ok
+            try:
+                self._breaker.call(self._raise_probe_error)
+            except (_NotifierProbeError, pybreaker.CircuitBreakerError):
+                # Expected: the marker (counted as a failure) or the trip error
+                # are both consumed here so notify() never leaks an exception.
+                pass
+
+    @staticmethod
+    def _raise_probe_error() -> None:
+        raise _NotifierProbeError
 
     async def _attempt_send(self, text: str) -> bool:
         try:
