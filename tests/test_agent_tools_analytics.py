@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -454,3 +454,121 @@ class TestGetChannelAnalyticsTool:
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["get_channel_analytics"]({"channel_id": 100})
         assert "Ошибка" in _text(result)
+
+
+class TestRateChannelTool:
+    """Agent write-tool parity for the LLM judge (#999).
+
+    rate_channel spends a provider call + writes channel_ratings, so it is gated
+    by confirm=true and shares the CLI guards (no provider / mistyped model /
+    empty channel). Tested with a fake provider — no live calls, no real spend.
+    """
+
+    @pytest.mark.anyio
+    async def test_missing_channel_id(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["rate_channel"]({"confirm": True})
+        assert "channel_id обязателен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_requires_confirmation(self, mock_db):
+        """Without confirm=true the judge must NOT run (no spend, no write)."""
+        with patch("src.services.provider_service.build_provider_service") as mock_build:
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["rate_channel"]({"channel_id": 100})
+        assert "Подтвердите" in _text(result)
+        mock_build.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_no_provider(self, mock_db):
+        provider_svc = MagicMock()
+        provider_svc.has_providers = MagicMock(return_value=False)
+        with patch(
+            "src.services.provider_service.build_provider_service",
+            AsyncMock(return_value=provider_svc),
+        ):
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["rate_channel"]({"channel_id": 100, "confirm": True})
+        assert "не настроен" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_unknown_model_aborts(self, mock_db):
+        """A mistyped model surfaces an error, never a silent stub verdict."""
+        provider_svc = MagicMock()
+        provider_svc.has_providers = MagicMock(return_value=True)
+        provider_svc.resolve_provider_callable = MagicMock(
+            side_effect=ValueError("Model/provider 'gpt-nope' is not registered.")
+        )
+        analysis_svc = MagicMock()
+        analysis_svc.classify_channel = AsyncMock()
+        with patch(
+            "src.services.provider_service.build_provider_service",
+            AsyncMock(return_value=provider_svc),
+        ), patch(
+            "src.services.channel_analysis_service.ChannelAnalysisService",
+            return_value=analysis_svc,
+        ):
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["rate_channel"](
+                {"channel_id": 100, "model": "gpt-nope", "confirm": True}
+            )
+        assert "not registered" in _text(result)
+        analysis_svc.classify_channel.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_empty_channel_skips(self, mock_db):
+        provider_svc = MagicMock()
+        provider_svc.has_providers = MagicMock(return_value=True)
+        provider_svc.resolve_provider_callable = MagicMock(return_value=AsyncMock())
+        analysis_svc = MagicMock()
+        analysis_svc.sample_posts = AsyncMock(return_value=[])
+        analysis_svc.classify_channel = AsyncMock()
+        with patch(
+            "src.services.provider_service.build_provider_service",
+            AsyncMock(return_value=provider_svc),
+        ), patch(
+            "src.services.channel_analysis_service.ChannelAnalysisService",
+            return_value=analysis_svc,
+        ):
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["rate_channel"]({"channel_id": 100, "confirm": True})
+        assert "нет текстовых постов" in _text(result)
+        analysis_svc.classify_channel.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_runs_judge(self, mock_db):
+        from src.models import ChannelRating
+
+        rating = ChannelRating(
+            channel_id=100, title="JudgedCh", username="judged",
+            useful="useless", genre="ad", confidence=0.77,
+            reason="реклама без сути", n_total=8,
+        )
+        provider_callable = AsyncMock(return_value="{}")
+        provider_svc = MagicMock()
+        provider_svc.has_providers = MagicMock(return_value=True)
+        provider_svc.resolve_provider_callable = MagicMock(return_value=provider_callable)
+        analysis_svc = MagicMock()
+        analysis_svc.sample_posts = AsyncMock(return_value=["a", "b"])
+        analysis_svc.classify_channel = AsyncMock(return_value=rating)
+        with patch(
+            "src.services.provider_service.build_provider_service",
+            AsyncMock(return_value=provider_svc),
+        ), patch(
+            "src.services.channel_analysis_service.ChannelAnalysisService",
+            return_value=analysis_svc,
+        ):
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["rate_channel"](
+                {"channel_id": 100, "model": "gpt-4o-mini", "sample_size": 8, "confirm": True}
+            )
+        text = _text(result)
+        assert "JudgedCh" in text
+        assert "useless" in text
+        assert "ad" in text
+        assert "0.77" in text
+        assert "реклама без сути" in text
+        provider_svc.resolve_provider_callable.assert_called_once_with("gpt-4o-mini")
+        analysis_svc.classify_channel.assert_awaited_once_with(
+            100, provider_callable=provider_callable, sample_size=8
+        )
