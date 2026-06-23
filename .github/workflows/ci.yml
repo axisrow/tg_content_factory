@@ -41,7 +41,7 @@ jobs:
     steps:
       - name: Reject branch names with "+"
         if: contains(github.head_ref, '+')
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             await github.rest.issues.createComment({
