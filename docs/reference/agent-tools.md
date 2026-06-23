@@ -142,6 +142,7 @@
 | `get_trending_emojis` | READ | Трендовые эмодзи за период |
 | `get_channel_analytics` | READ | Обзорная аналитика одного канала |
 | `get_channel_ratings` | READ | Рейтинг каналов (полезность × жанр) |
+| `rate_channel` | WRITE | Запуск LLM-судьи для канала (provider spend + запись вердикта); требует `confirm=true` |
 
 ## Планировщик
 

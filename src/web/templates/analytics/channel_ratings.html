@@ -3,6 +3,32 @@
 {% block content %}
 <h1 class="h3 mb-4">Рейтинг каналов</h1>
 
+{# Run the LLM judge for one channel (#999) — server-driven HTMX swap of the
+   verdict fragment into #rate-result. Mirrors CLI `analytics channel-rate`. #}
+<form class="row g-2 align-items-end mb-3"
+      hx-post="/analytics/channels/rate"
+      hx-target="#rate-result"
+      hx-swap="innerHTML"
+      hx-indicator="#rate-spinner">
+    <div class="col-auto">
+        <label class="form-label">Оценить канал (channel_id)</label>
+        <input type="number" name="channel_id" required class="form-control form-control-sm" style="width:12rem">
+    </div>
+    <div class="col-auto">
+        <label class="form-label">Модель (опц.)</label>
+        <input type="text" name="model" placeholder="по умолчанию" class="form-control form-control-sm" style="width:10rem">
+    </div>
+    <div class="col-auto">
+        <label class="form-label">Постов (1-200)</label>
+        <input type="number" name="sample_size" value="40" min="1" max="200" class="form-control form-control-sm" style="width:7rem">
+    </div>
+    <div class="col-auto">
+        <button type="submit" class="btn btn-warning btn-sm">Запустить судью</button>
+        <span id="rate-spinner" class="htmx-indicator spinner-border spinner-border-sm ms-2" role="status"></span>
+    </div>
+</form>
+<div id="rate-result" class="mb-3"></div>
+
 <form method="get" class="row g-2 align-items-end mb-3">
     <div class="col-auto">
         <label class="form-label">Полезность</label>
