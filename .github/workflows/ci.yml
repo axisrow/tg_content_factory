@@ -179,15 +179,20 @@ jobs:
         if: ${{ !cancelled() }}
         run: pytest tests -q -m aiosqlite_serial --cov=src --cov-append --cov-report=
 
-      # Combine the parallel + serial datasets into one report. fail_under lives
-      # in [tool.coverage.report] (pyproject) so the ratchet is configured in one
-      # place; this step reds CI if total coverage drops below it (#1052, baseline
-      # for the #1024 bug-hunt epic to push upward). The XML artifact lets PRs
-      # diff coverage without re-running the suite.
+      # Report the combined parallel + serial coverage. pytest-cov already merged
+      # the per-worker datafiles into a single `.coverage` at the end of each run
+      # (`[tool.coverage.run] parallel = true`), and the serial run's
+      # `--cov-append` added its lines to that same file — so the dataset is
+      # already combined here. We deliberately do NOT run `coverage combine`: with
+      # no leftover `.coverage.*` suffix files it exits 1 ("No data to combine"),
+      # which under the Actions default `bash -e` would red the step before the
+      # report runs. `coverage report` reads `.coverage` directly and applies the
+      # fail_under=88 ratchet from [tool.coverage.report] (#1052, baseline for the
+      # #1024 bug-hunt epic). The XML artifact lets PRs diff coverage without
+      # re-running the suite.
       - name: Coverage report (combined)
         if: ${{ !cancelled() }}
         run: |
-          coverage combine
           coverage report
           coverage xml -o coverage.xml
 
