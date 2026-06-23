@@ -133,6 +133,60 @@ def pytest_xdist_auto_num_workers(config) -> int:
     return min(available_workers, _xdist_auto_worker_cap())
 
 
+def _arg_dir_key(arg: str) -> str:
+    """Directory portion of a collection arg (path / ``file.py::node`` id).
+
+    ``tests/routes/test_x.py::test_foo`` → ``tests/routes`` (drop the node id,
+    then the filename). A bare directory (``tests/routes``) or separator-less
+    token maps to itself — only a ``.py`` final segment is treated as a file.
+    Used only to *group* args by directory, never to reorder within a directory.
+    """
+    head = arg.split("::", 1)[0]
+    if not head.endswith(".py") or "/" not in head:
+        return head
+    return head.rsplit("/", 1)[0]
+
+
+def pytest_collection(session) -> None:
+    """Group command-line collection args by directory before collection (#1005).
+
+    pytest builds one ``Package`` collector per directory in the order each first
+    appears among the collection args. When args from sibling directories are
+    *interleaved* — e.g. selecting ``tests/routes/a.py tests/b.py
+    tests/routes/c.py`` — pytest enters ``tests/routes``, leaves it for
+    ``tests``, then re-enters ``tests/routes``. On that second entry the
+    duplicate ``Package``/``Directory`` node is built with a corrupted ``nodeid``
+    (the module path instead of ``tests/routes``), so the package's
+    ``conftest.py`` fixtures no longer match the re-entered file's items: every
+    test there fails setup with ``fixture '<name>' not found`` even though the
+    file passes in isolation.
+
+    The reorder must happen here, before collection — it changes how the
+    collection tree is built. Sorting the already-collected ``items`` in
+    ``modifyitems`` is too late: the corrupted ``Package`` nodes already exist.
+    CI never hits the bug (``--dist=loadfile`` shards whole files across workers,
+    and a plain ``pytest tests/`` walks each directory contiguously); it is the
+    ad-hoc local mixed-file run from the issue that interleaves.
+
+    Make same-directory args contiguous so each package is collected exactly
+    once. Stable on two axes — directories keep their first-appearance order and
+    args keep their order within a directory — so an already-contiguous
+    invocation is a no-op and the run order is otherwise untouched.
+    """
+    args = list(session.config.args)
+    if len(args) < 3:
+        # Fewer than three args cannot interleave (need A, foreign, A again),
+        # so there is nothing to regroup.
+        return
+
+    order: dict[str, int] = {}
+    for arg in args:
+        order.setdefault(_arg_dir_key(arg), len(order))
+    grouped = sorted(args, key=lambda arg: order[_arg_dir_key(arg)])
+    if grouped != args:
+        session.config.args = grouped
+
+
 @lru_cache(maxsize=None)
 def _read_test_source(path_str: str) -> str:
     """Cached read of a test file's source (shared by the collection scans).

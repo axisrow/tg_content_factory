@@ -22,6 +22,17 @@ def _config(args: list[str]) -> SimpleNamespace:
     return SimpleNamespace(args=args)
 
 
+def _session(args: list[str]) -> SimpleNamespace:
+    return SimpleNamespace(config=_config(list(args)))
+
+
+def _collect(args: list[str]) -> list[str]:
+    """Run pytest_collection over ``args`` and return the (possibly) regrouped args."""
+    session = _session(args)
+    root_conftest.pytest_collection(session)
+    return list(session.config.args)
+
+
 def _set_cpu_state(monkeypatch, *, cpu_count: int, load_average: float) -> None:
     # These cases exercise the dev-laptop load-aware path; ensure CI is unset so
     # the CI "use all cores" short-circuit (#944) does not mask the load logic.
@@ -125,3 +136,86 @@ def test_xdist_ci_still_respects_env_cap(monkeypatch) -> None:
     monkeypatch.setenv("TGCF_PYTEST_XDIST_WORKERS", "3")
 
     assert root_conftest.pytest_xdist_auto_num_workers(_config(["tests"])) == 3
+
+
+# --- collection arg regrouping (#1005) -------------------------------------
+# A cross-file fixture leak: when collection args from sibling directories are
+# interleaved on the command line, pytest re-enters a package and drops that
+# package's conftest fixtures, so every test in the re-entered file fails setup
+# with ``fixture '<name>' not found``. pytest_collection regroups same-directory
+# args so each package is collected once. The reorder must run before collection
+# (it shapes the collection tree) — sorting items in modifyitems is too late.
+# These pin that behaviour at the unit level; see
+# test_collection_interleave_regression.py for the end-to-end subprocess repro.
+
+
+def test_arg_dir_key_strips_node_id_and_filename() -> None:
+    assert root_conftest._arg_dir_key("tests/routes/test_x.py::test_foo") == "tests/routes"
+    assert root_conftest._arg_dir_key("tests/routes/test_x.py") == "tests/routes"
+    assert root_conftest._arg_dir_key("tests/test_y.py") == "tests"
+    # A bare directory or separator-less token maps to itself.
+    assert root_conftest._arg_dir_key("tests") == "tests"
+    assert root_conftest._arg_dir_key("tests/routes") == "tests/routes"
+
+
+def test_collection_de_interleaves_sibling_directories() -> None:
+    # The issue repro: a foreign-directory file splits two routes files.
+    args = [
+        "tests/routes/test_agent_lazyload.py",
+        "tests/test_notifier_delivery_paths.py",
+        "tests/routes/test_analytics_routes_channel_trends.py",
+    ]
+    assert _collect(args) == [
+        "tests/routes/test_agent_lazyload.py",
+        "tests/routes/test_analytics_routes_channel_trends.py",
+        "tests/test_notifier_delivery_paths.py",
+    ]
+
+
+def test_collection_preserves_directory_first_appearance_order() -> None:
+    # tests/ appears before tests/routes/, so its group must stay first — we
+    # only de-interleave, we don't sort directories alphabetically.
+    args = [
+        "tests/test_b.py",
+        "tests/routes/test_a.py",
+        "tests/test_c.py",
+        "tests/routes/test_d.py",
+    ]
+    assert _collect(args) == [
+        "tests/test_b.py",
+        "tests/test_c.py",
+        "tests/routes/test_a.py",
+        "tests/routes/test_d.py",
+    ]
+
+
+def test_collection_keeps_arg_order_within_a_directory() -> None:
+    # Same directory throughout: nothing to de-interleave, order is untouched.
+    args = ["tests/routes/test_z.py", "tests/routes/test_a.py", "tests/routes/test_m.py"]
+    assert _collect(args) == args
+
+
+def test_collection_noop_for_fewer_than_three_args() -> None:
+    # Can't interleave (A, foreign, A again) with fewer than three args.
+    assert _collect(["tests/routes/test_b.py", "tests/test_a.py"]) == [
+        "tests/routes/test_b.py",
+        "tests/test_a.py",
+    ]
+
+
+def test_collection_noop_for_default_testpaths() -> None:
+    # The full-suite invocation passes a single ``tests`` arg — untouched.
+    assert _collect(["tests"]) == ["tests"]
+
+
+def test_collection_handles_node_id_args() -> None:
+    args = [
+        "tests/routes/test_a.py::test_one",
+        "tests/test_b.py::test_two",
+        "tests/routes/test_c.py::test_three",
+    ]
+    assert _collect(args) == [
+        "tests/routes/test_a.py::test_one",
+        "tests/routes/test_c.py::test_three",
+        "tests/test_b.py::test_two",
+    ]
