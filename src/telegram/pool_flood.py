@@ -73,9 +73,16 @@ class FloodRotationMixin:
             self, phone: str, *, active_only: bool = True
         ) -> Account | None: ...
 
-        def get_resolve_username_backoff_remaining_sec(self, phone: str) -> float: ...
+        # Signatures mirror ResolveGuardMixin exactly: ClientPool inherits all
+        # four mixins, so a divergent stub here would make mypy flag the method
+        # as incompatibly redefined across base classes (#1046).
+        def get_resolve_username_backoff_remaining_sec(
+            self, phone: str | None = None
+        ) -> int: ...
 
-        def get_resolve_username_backoff_until(self, phone: str) -> datetime | None: ...
+        def get_resolve_username_backoff_until(
+            self, phone: str | None = None
+        ) -> datetime | None: ...
 
     async def has_rotatable_resolve_phone(
         self, exclude: set[str] | frozenset[str] = frozenset()
