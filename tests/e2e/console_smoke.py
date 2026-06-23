@@ -39,21 +39,40 @@ import sys
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
-# The main panel pages to walk, mirroring the list in issue #792. Paths are
-# relative to the base URL; the leading "/" page is the dashboard.
+# The main panel pages to walk. Originally mirrored the list in issue #792;
+# extended in #1013 to cover newer full-page routes (incl. the session features
+# /jobs #965, /analytics/channels #951, /analytics/channels/ratings #968/#999).
+# Only GET full-page routes belong here — no POST endpoints, no /fragments/*
+# routes, and no {id}-parametric pages. Some routes are declared as @get("/")
+# under a non-empty router prefix, so their canonical URL has a trailing slash
+# (e.g. /moderation/, /calendar/); we list them without the slash to match the
+# existing convention — a browser navigation follows the 307 redirect and the
+# bounce-to-/login guard in check_page still holds. Keep this in lockstep with
+# test_panel_paths_match_issue_list (tests/e2e/test_console_smoke_parsing.py)
+# and the "Pages walked" list in tests/e2e/README.md.
 PANEL_PATHS: tuple[str, ...] = (
     "/",
     "/channels",
     "/channels?view=all",
     "/channels/filter/manage",
+    "/channels/renames",
     "/search",
+    "/search-queries",
     "/analytics",
     "/analytics/trends",
+    "/analytics/channels",
+    "/analytics/channels/ratings",
     "/dashboard",
     "/agent",
     "/settings",
     "/dialogs",
+    "/dialogs/photos",
     "/pipelines",
+    "/jobs",
+    "/moderation",
+    "/calendar",
+    "/images",
+    "/scheduler",
 )
 
 # "Total messages: 4 (Errors: 2, Warnings: 1)" — the summary line that
