@@ -167,7 +167,7 @@ async def _safe_search(
     coro: Awaitable[SearchResult],
     *,
     log_msg: str,
-    log_args: tuple = (),
+    log_args: tuple[object, ...] = (),
     error_text: str,
     error_query: str,
 ) -> SearchResult:

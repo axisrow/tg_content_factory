@@ -8,6 +8,6 @@
      hx-get="/pipelines/fragments/list?{{ request.url.query }}"
      hx-trigger="load"
      hx-swap="innerHTML">
-    {{ loading('Загрузка пайплайнов…') }}
+    {{ loading('Загрузка пайплайнов…', class="my-4") }}
 </div>
 {% endblock %}

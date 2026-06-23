@@ -8,6 +8,6 @@
      hx-get="/dialogs/photos/fragments/dialogs?{{ request.url.query }}"
      hx-trigger="load"
      hx-swap="innerHTML">
-    {{ loading('Загрузка диалогов…') }}
+    {{ loading('Загрузка диалогов…', class="my-4") }}
 </div>
 {% endblock %}
