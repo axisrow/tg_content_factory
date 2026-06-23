@@ -42,6 +42,17 @@ async def _list(request: Request, source: str | None, status: str | None, limit:
     )
 
 
+@router.get("", response_class=HTMLResponse)
+async def jobs_page(request: Request):
+    """Unified jobs dashboard (#965).
+
+    Paints the page shell instantly (no DB query); the filterable table is loaded
+    lazily via the ``/jobs/fragments/list`` fragment with ``hx-trigger="load"``
+    (the #756 lazyload pattern), so TTFB stays flat on large databases.
+    """
+    return deps.get_templates(request).TemplateResponse(request, "jobs.html", {})
+
+
 @router.get("/api/list")
 async def api_jobs_list(
     request: Request,
