@@ -413,6 +413,44 @@ async def test_chat_with_model_parameter(client, db):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("backend", ["codex", "adk"])
+async def test_chat_codex_adk_model_survives_validation(client, db, backend):
+    """A submitted model ID must not crash chat for codex/adk backends (#1002).
+
+    These backends have no UI model picker; the page no longer renders a Claude
+    dropdown for them, but a stale localStorage value could still POST a model.
+    The web handler must accept the request (200) and hand it to chat_stream,
+    which is where the per-backend model allow-list is enforced. We assert via a
+    stream that captures the model kwarg so the request demonstrably reaches it.
+    """
+    thread_id = await db.create_agent_thread("Chat")
+
+    runtime = MagicMock()
+    runtime.selected_backend = backend
+    runtime.using_override = False
+    runtime.error = None
+    client._transport_app.state.agent_manager.get_runtime_status = AsyncMock(return_value=runtime)
+
+    captured = {}
+
+    async def fake_stream(*args, **kwargs):
+        captured["model"] = kwargs.get("model")
+        yield 'data: {"done": true, "full_text": "ok"}\n\n'
+
+    client._transport_app.state.agent_manager.chat_stream = fake_stream
+
+    # A stale Claude model id from localStorage must not 500 the codex/adk chat.
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/chat",
+        content=json.dumps({"message": "hi", "model": "claude-sonnet-4-6"}),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert resp.status_code == 200
+    assert "model" in captured  # reached chat_stream, never crashed mid-validation
+
+
+@pytest.mark.anyio
 async def test_chat_enables_interactive_permissions(client, db):
     """Web chat requests opt into request-scoped PermissionGate prompts."""
     thread_id = await db.create_agent_thread("Chat")
