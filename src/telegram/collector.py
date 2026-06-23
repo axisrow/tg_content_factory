@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from inspect import isawaitable
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
@@ -25,10 +24,26 @@ from src.filters.criteria import (
 )
 from src.live_runtime_pause import LiveRuntimePauseGate
 from src.models import Channel, ChannelStats, Message
-from src.services.translation_service import TranslationService
 from src.settings_utils import parse_int_setting
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
+from src.telegram.collector_message_parse import (
+    SERVICE_ACTION_SEMANTICS,
+    build_message_from_telethon,
+    extract_reactions,
+    get_media_type_for,
+    get_message_kind,
+    get_sender_kind,
+    get_sender_name,
+    get_service_action_payload,
+    get_service_action_raw,
+    get_service_action_semantic,
+)
+from src.telegram.collector_resolve import (
+    RESOLVE_USERNAME_OPERATION,
+    ResolveOutcome,
+    resolve_channel_entity,
+)
 from src.telegram.flood_wait import (
     HandledFloodWaitError,
     coerce_flood_wait_seconds,
@@ -37,7 +52,6 @@ from src.telegram.flood_wait import (
     run_with_flood_wait_retry,
     sleep_for_flood_wait_seconds,
 )
-from src.telegram.identity import extract_message_sender_identity
 from src.telegram.notifier import Notifier
 from src.telegram.rate_limiter import (
     GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC,
@@ -49,12 +63,13 @@ from src.telegram.rate_limiter import (
 from src.telegram.rate_limiter import (
     RESOLVE_USERNAME_BACKOFF_BUFFER_SEC as RESOLVE_USERNAME_BACKOFF_BUFFER_SEC,
 )
-from src.telegram.reactions import extract_message_reactions_json
 from src.utils.safe_logging import mask_phone
 
 logger = logging.getLogger(__name__)
 
-RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
+# Re-exported from ``collector_resolve`` (#1045) — the resolve logic moved there,
+# but ``collection_queue`` / CLI / tests still import this label from here.
+RESOLVE_USERNAME_OPERATION = RESOLVE_USERNAME_OPERATION
 # Global cross-account resolve backoff. Only a *long* resolve flood freezes
 # live resolves for every account; short floods are left to normal rotation.
 MESSAGE_FLUSH_BATCH_SIZE = 500
@@ -85,45 +100,10 @@ class _StreamOutcome:
         self.stop_due_to_persistence_error = False
 
 
-class _ResolveOutcome:
-    """Result of ``Collector._resolve_channel_entity`` — exactly one outcome the
-    collection loop acts on, replacing the inline resolve block's mix of
-    ``continue`` / ``return`` / ``raise`` (#923).
-
-    - ``entity`` set → proceed (run pre-filters + stream);
-    - ``action == "retry"`` → ``continue`` the loop (account rotation / preferred-
-      phone rediscovery), adopting ``channel`` when it was updated;
-    - ``action == "stop"`` → ``return total_collected`` (resolve timeout / deactivation);
-    - ``flood_wait_sec`` set → record the flood wait and fall through to the
-      ``finally`` + post-collection flood handler. The operation label is
-      preserved exactly: ``RESOLVE_USERNAME_OPERATION`` for the username resolve,
-      otherwise ``exc.info.operation``.
-
-    FloodWaits are encoded here rather than re-raised so the operation label is
-    preserved without relying on the outer ``except HandledFloodWaitError``.
-    ``UsernameResolveRateLimitedError`` propagates out of ``_resolve_channel_entity``
-    as an exception. The username-not-found errors (``UsernameNotOccupiedError`` /
-    ``UsernameInvalidError``) are handled inside the resolve path (numeric
-    fallback) and only ever reach ``_collect_channel``'s outer handler from
-    streaming — exactly as in the pre-extraction code.
-    """
-
-    __slots__ = ("entity", "action", "channel", "flood_wait_sec", "flood_wait_operation")
-
-    def __init__(
-        self,
-        *,
-        entity=None,
-        action: str = "proceed",
-        channel: "Channel | None" = None,
-        flood_wait_sec: int | None = None,
-        flood_wait_operation: str | None = None,
-    ) -> None:
-        self.entity = entity
-        self.action = action
-        self.channel = channel
-        self.flood_wait_sec = flood_wait_sec
-        self.flood_wait_operation = flood_wait_operation
+# Backward-compatible alias: the resolve outcome and its logic now live in
+# ``collector_resolve`` (#1045). Kept under the historical private name so
+# existing references and the rich docstring there remain the single source.
+_ResolveOutcome = ResolveOutcome
 
 
 # How far back the notification check re-scans persisted messages so a send that
@@ -173,20 +153,9 @@ class AllCollectionClientsFloodedError(RuntimeError):
 
 
 class Collector:
-    _SERVICE_ACTION_SEMANTICS = {
-        "MessageActionChatAddUser": "join",
-        "MessageActionChatJoinedByLink": "join",
-        "MessageActionChatJoinedByRequest": "join",
-        "MessageActionChatDeleteUser": "leave",
-        "MessageActionPinMessage": "pin",
-        "MessageActionChatEditTitle": "title_changed",
-        "MessageActionChatEditPhoto": "photo_changed",
-        "MessageActionChatDeletePhoto": "photo_changed",
-        "MessageActionChatMigrateTo": "migrate",
-        "MessageActionChannelMigrateFrom": "migrate",
-        "MessageActionChatCreate": "created",
-        "MessageActionChannelCreate": "created",
-    }
+    # Kept as a class attribute for backward compatibility; the canonical
+    # mapping now lives in ``collector_message_parse`` (#1045).
+    _SERVICE_ACTION_SEMANTICS = SERVICE_ACTION_SEMANTICS
 
     def __init__(
         self,
@@ -747,9 +716,7 @@ class Collector:
     @staticmethod
     def _get_media_type(msg) -> str | None:
         """Determine media type from a Telethon message."""
-        from src.telegram.media import get_media_type
-
-        return get_media_type(msg)
+        return get_media_type_for(msg)
 
     async def _release_collection_client(
         self,
@@ -1113,53 +1080,7 @@ class Collector:
             while True:
                 msg = await _next_message()
 
-                topic_id = None
-                reply_to = getattr(msg, "reply_to", None)
-                if reply_to and getattr(reply_to, "forum_topic", False):
-                    topic_id = (
-                        getattr(reply_to, "reply_to_top_id", None)
-                        or getattr(reply_to, "reply_to_msg_id", None)
-                        or 1
-                    )
-                elif reply_to:
-                    pass
-                # Extract forward source channel for cross-channel citation tracking
-                fwd_from_channel_id = None
-                fwd_from = getattr(msg, "fwd_from", None)
-                if fwd_from and getattr(fwd_from, "from_id", None):
-                    from_id = fwd_from.from_id
-                    if hasattr(from_id, "channel_id"):
-                        fwd_from_channel_id = from_id.channel_id
-
-                sender_identity = extract_message_sender_identity(msg)
-                message = Message(
-                    channel_id=channel_id,
-                    message_id=msg.id,
-                    sender_id=sender_identity.sender_id,
-                    sender_name=sender_identity.sender_name,
-                    sender_first_name=sender_identity.sender_first_name,
-                    sender_last_name=sender_identity.sender_last_name,
-                    sender_username=sender_identity.sender_username,
-                    text=msg.text,
-                    message_kind=self._get_message_kind(msg),
-                    detected_lang=TranslationService.detect_language(msg.text),
-                    media_type=self._get_media_type(msg),
-                    service_action_raw=self._get_service_action_raw(msg),
-                    service_action_semantic=self._get_service_action_semantic(msg),
-                    service_action_payload_json=self._get_service_action_payload(msg),
-                    sender_kind=self._get_sender_kind(msg),
-                    topic_id=topic_id,
-                    reactions_json=self._extract_reactions(msg),
-                    views=getattr(msg, "views", None),
-                    forwards=getattr(msg, "forwards", None),
-                    reply_count=getattr(getattr(msg, "replies", None), "replies", None),
-                    date=(
-                        msg.date.replace(tzinfo=timezone.utc)
-                        if msg.date and msg.date.tzinfo is None
-                        else msg.date
-                    ),
-                    forward_from_channel_id=fwd_from_channel_id,
-                )
+                message = build_message_from_telethon(msg, channel_id)
                 messages_batch.append(message)
 
                 if (
@@ -1211,6 +1132,88 @@ class Collector:
                     channel_id,
                     channel.username or channel.title or "",
                 )
+
+    async def _verify_persisted_ids(self, channel_id: int, expected_ids: set[int]) -> set[int]:
+        """Return which of ``expected_ids`` are actually present in ``messages``.
+
+        Queried in ``PERSISTED_ID_VERIFY_CHUNK_SIZE``-sized ``IN (...)`` chunks to
+        keep the SQL parameter count bounded. Extracted from ``_flush_batch``
+        (#1045) so the flush path's control flow stays readable; behavior is
+        unchanged.
+        """
+        persisted_ids: set[int] = set()
+        expected_id_list = list(expected_ids)
+        for start in range(0, len(expected_id_list), PERSISTED_ID_VERIFY_CHUNK_SIZE):
+            chunk = expected_id_list[start : start + PERSISTED_ID_VERIFY_CHUNK_SIZE]
+            placeholders = ",".join("?" for _ in chunk)
+            cur = await self._db.execute(
+                f"SELECT message_id FROM messages WHERE channel_id = ? "
+                f"AND message_id IN ({placeholders})",
+                (channel_id, *chunk),
+            )
+            rows = await cur.fetchall()
+            persisted_ids.update(row["message_id"] for row in rows)
+        return persisted_ids
+
+    async def _finalize_collection_pass(
+        self,
+        *,
+        channel_id: int,
+        messages_batch: list[Message],
+        flush_batch: Callable[[list[Message]], Awaitable[bool]],
+        get_persisted_max_msg_id: Callable[[], int],
+        min_id: int,
+        phone: str,
+        session,
+        stream_outcome: _StreamOutcome,
+    ) -> bool:
+        """Run the per-pass cleanup that used to live in ``_collect_channel``'s
+        ``finally`` (#1045): flush any leftover batch, advance
+        ``last_collected_id``, and release/retire the client. Each step is guarded
+        independently so a failure in one still runs the others — behavior is
+        unchanged. Returns the resulting ``stop_due_to_persistence_error`` flag,
+        seeded from a mid-stream failure recorded on ``stream_outcome``.
+
+        ``get_persisted_max_msg_id`` is read **after** the leftover flush so it
+        reflects the id the flush just advanced (the value lives in the caller's
+        closure that ``flush_batch`` mutates), exactly as the old inline
+        ``finally`` observed the ``nonlocal``.
+        """
+        # Carry over a mid-stream persistence failure (the streamer set it on
+        # `stream_outcome`); the leftover-flush below may overwrite it.
+        stop_due_to_persistence_error = stream_outcome.stop_due_to_persistence_error
+        # Flush remaining messages — each operation is protected independently so
+        # a failure in one doesn't prevent the other from executing.
+        try:
+            if messages_batch:
+                if not await self._channel_still_exists(channel_id):
+                    messages_batch = []
+                else:
+                    stop_due_to_persistence_error = not await flush_batch(messages_batch)
+        except Exception as flush_err:
+            logger.error(
+                "Failed to flush %d messages for channel %d: %s",
+                len(messages_batch),
+                channel_id,
+                flush_err,
+            )
+            stop_due_to_persistence_error = True
+        persisted_max_msg_id = get_persisted_max_msg_id()
+        try:
+            if persisted_max_msg_id > min_id and await self._channel_still_exists(channel_id):
+                await self._db.update_channel_last_id(channel_id, persisted_max_msg_id)
+        except Exception as update_err:
+            logger.error(
+                "Failed to update last_collected_id for " "channel %d: %s",
+                channel_id,
+                update_err,
+            )
+        await self._release_collection_client(
+            phone,
+            session,
+            retire=stream_outcome.retire_client,
+        )
+        return stop_due_to_persistence_error
 
     async def _collect_channel(
         self,
@@ -1299,18 +1302,7 @@ class Collector:
                         channel_log_name,
                     )
                     return False
-                persisted_ids: set[int] = set()
-                expected_id_list = list(expected_ids)
-                for start in range(0, len(expected_id_list), PERSISTED_ID_VERIFY_CHUNK_SIZE):
-                    chunk = expected_id_list[start : start + PERSISTED_ID_VERIFY_CHUNK_SIZE]
-                    placeholders = ",".join("?" for _ in chunk)
-                    cur = await self._db.execute(
-                        f"SELECT message_id FROM messages WHERE channel_id = ? "
-                        f"AND message_id IN ({placeholders})",
-                        (channel_id, *chunk),
-                    )
-                    rows = await cur.fetchall()
-                    persisted_ids.update(row["message_id"] for row in rows)
+                persisted_ids = await self._verify_persisted_ids(channel_id, expected_ids)
                 missing_ids = expected_ids - persisted_ids
                 if missing_ids:
                     logger.error(
@@ -1421,41 +1413,15 @@ class Collector:
                 )
                 stream_idle_timeout = True
             finally:
-                # Carry over a mid-stream persistence failure (the streamer set it
-                # on `stream_outcome`); the leftover-flush below may overwrite it.
-                stop_due_to_persistence_error = stream_outcome.stop_due_to_persistence_error
-                # Flush remaining messages — each operation is protected
-                # independently so a failure in one doesn't prevent the
-                # other from executing.
-                try:
-                    if messages_batch:
-                        if not await self._channel_still_exists(channel_id):
-                            messages_batch = []
-                        else:
-                            stop_due_to_persistence_error = not await _flush_batch(messages_batch)
-                except Exception as flush_err:
-                    logger.error(
-                        "Failed to flush %d messages for channel %d: %s",
-                        len(messages_batch),
-                        channel_id,
-                        flush_err,
-                    )
-                    stop_due_to_persistence_error = True
-                try:
-                    if persisted_max_msg_id > min_id and await self._channel_still_exists(
-                        channel_id
-                    ):
-                        await self._db.update_channel_last_id(channel_id, persisted_max_msg_id)
-                except Exception as update_err:
-                    logger.error(
-                        "Failed to update last_collected_id for " "channel %d: %s",
-                        channel_id,
-                        update_err,
-                    )
-                await self._release_collection_client(
-                    phone,
-                    session,
-                    retire=stream_outcome.retire_client,
+                stop_due_to_persistence_error = await self._finalize_collection_pass(
+                    channel_id=channel_id,
+                    messages_batch=messages_batch,
+                    flush_batch=_flush_batch,
+                    get_persisted_max_msg_id=lambda: persisted_max_msg_id,
+                    min_id=min_id,
+                    phone=phone,
+                    session=session,
+                    stream_outcome=stream_outcome,
                 )
 
             if stream_idle_timeout and not stop_due_to_persistence_error:
@@ -1556,178 +1522,22 @@ class Collector:
         channel_id: int,
         resolve_cache_only: bool,
         attempted_resolve_phones: set[str],
-    ) -> _ResolveOutcome:
-        """Resolve a channel's Telegram entity for collection, handling the
-        username→numeric fallback, resolve rate-limit account rotation,
-        preferred-phone invalidation/rediscovery, and flood waits. Returns a
-        :class:`_ResolveOutcome` the caller acts on (see its docstring). Split out
-        of ``_collect_channel`` (#923); behavior preserved exactly, including the
-        ``RESOLVE_USERNAME_OPERATION`` flood label for username resolves."""
-        if channel.username:
-            try:
-                entity = await self._resolve_channel_input_entity(
-                    session,
-                    channel_id=channel_id,
-                    username=channel.username,
-                    phone=phone,
-                    cache_only=resolve_cache_only,
-                )
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "get_input_entity timed out for channel %d, skipping",
-                    channel_id,
-                )
-                return _ResolveOutcome(action="stop")
-            except HandledFloodWaitError as exc:
-                return _ResolveOutcome(
-                    flood_wait_sec=exc.info.wait_seconds,
-                    flood_wait_operation=RESOLVE_USERNAME_OPERATION,
-                )
-            except UsernameResolveRateLimitedError:
-                # This phone cannot resolve live right now (backoff or
-                # limiter). Rotate to a free account when one exists;
-                # defer the channel only when every account is blocked
-                # (#790). The outer finally releases the client.
-                attempted_resolve_phones.add(phone)
-                if await self._can_rotate_resolve(attempted_resolve_phones):
-                    logger.warning(
-                        "Channel %d (%s): live resolve unavailable on %s; "
-                        "rotating to another account",
-                        channel_id,
-                        channel.username,
-                        mask_phone(phone),
-                    )
-                    return _ResolveOutcome(action="retry")
-                # No account can live-resolve right now — defer the
-                # channel for the moment the *first* account becomes
-                # capable again, combining per-phone resolve backoff
-                # with generic flood waits; this phone's own (possibly
-                # hours-long) window must not dictate the retry when
-                # another account frees up sooner (#790 review P2).
-                capable_at = await self._next_resolve_capable_at()
-                if capable_at is not None:
-                    now = datetime.now(timezone.utc)
-                    raise UsernameResolveRateLimitedError(
-                        phone,
-                        (capable_at - now).total_seconds(),
-                        now=now,
-                    )
-                raise
-            except (ValueError, UsernameNotOccupiedError, UsernameInvalidError):
-                logger.warning(
-                    "Channel %d (%s): username not found, " "trying numeric ID fallback",
-                    channel_id,
-                    channel.username,
-                )
-                try:
-                    fallback_entity = await self._pool.resolve_entity_with_warm(
-                        session,
-                        phone,
-                        PeerChannel(channel_id),
-                        operation="collect_channel_resolve_channel_id",
-                    )
-                except HandledFloodWaitError as exc:
-                    return _ResolveOutcome(
-                        flood_wait_sec=exc.info.wait_seconds,
-                        flood_wait_operation=exc.info.operation,
-                    )
-                except Exception:
-                    logger.warning(
-                        "Channel %d: all entity lookups failed, " "deactivating",
-                        channel_id,
-                    )
-                    if channel.id:
-                        await self._db.set_channel_active(channel.id, False)
-                    return _ResolveOutcome(action="stop")
-                new_username = getattr(fallback_entity, "username", None)
-                new_title = (
-                    getattr(fallback_entity, "title", None)
-                    or channel.title
-                    or channel.username
-                    or str(channel_id)
-                )
-                await self._handle_meta_change_review(
-                    channel,
-                    new_username,
-                    new_title,
-                    log_prefix="Channel",
-                )
-                return _ResolveOutcome(action="stop")
-            return _ResolveOutcome(entity=entity)
+    ) -> ResolveOutcome:
+        """Resolve a channel's Telegram entity for collection.
 
-        try:
-            entity = await self._pool.resolve_entity_with_warm(
-                session,
-                phone,
-                PeerChannel(channel_id),
-                operation="collect_channel_resolve_numeric",
-            )
-        except asyncio.TimeoutError:
-            logger.warning(
-                "get_entity timed out for channel %d, skipping",
-                channel_id,
-            )
-            return _ResolveOutcome(action="stop")
-        except HandledFloodWaitError as exc:
-            return _ResolveOutcome(
-                flood_wait_sec=exc.info.wait_seconds,
-                flood_wait_operation=exc.info.operation,
-            )
-        except ValueError:
-            # preferred_phone turned out to be wrong (account was kicked,
-            # or channel added before warming finished). Invalidate and rediscover.
-            if channel.preferred_phone or self._pool.get_phone_for_channel(
-                channel_id
-            ):
-                channel = channel.model_copy(update={"preferred_phone": None})
-                self._pool.clear_channel_phone(channel_id)
-                try:
-                    await self._db.repos.channels.update_channel_preferred_phone(
-                        channel_id, None
-                    )
-                except Exception:
-                    # Pool is already cleared; a stale DB value just causes the
-                    # same rediscovery next restart. Log so the loop is visible.
-                    logger.warning(
-                        "Channel %d: failed to clear stale preferred_phone in DB",
-                        channel_id,
-                        exc_info=True,
-                    )
-            found = await self._discover_phone_for_channel(
-                channel_id, exclude=phone
-            )
-            if found is not None:
-                self._pool.register_channel_phone(channel_id, found)
-                try:
-                    await self._db.repos.channels.update_channel_preferred_phone(
-                        channel_id, found
-                    )
-                except Exception:
-                    # Pool already knows the right phone; a failed DB write only
-                    # means the rediscovery repeats next restart. Log it.
-                    logger.warning(
-                        "Channel %d: failed to persist rediscovered preferred_phone=%s",
-                        channel_id,
-                        found,
-                        exc_info=True,
-                    )
-                logger.info(
-                    "Channel %d: rediscovered on %s, retrying",
-                    channel_id,
-                    found,
-                )
-                # finally releases current phone; next iter picks up found
-                return _ResolveOutcome(action="retry", channel=channel)
-            logger.warning(
-                "Channel %d (%s): no connected account can resolve entity; "
-                "deactivating and skipping collection",
-                channel_id,
-                channel.title or channel.username or "no title",
-            )
-            if channel.id:
-                await self._db.set_channel_active(channel.id, False)
-            return _ResolveOutcome(action="stop", channel=channel)
-        return _ResolveOutcome(entity=entity)
+        Thin delegate to :func:`collector_resolve.resolve_channel_entity`; the
+        logic (username→numeric fallback, resolve rate-limit rotation,
+        preferred-phone rediscovery, flood-wait encoding) lives there (#1045).
+        """
+        return await resolve_channel_entity(
+            self,
+            channel,
+            session,
+            phone,
+            channel_id,
+            resolve_cache_only,
+            attempted_resolve_phones,
+        )
 
     async def _apply_pre_collection_filters(
         self,
@@ -2154,6 +1964,51 @@ class Collector:
             )
             return None
 
+    async def _collect_stats_metrics(
+        self, session, entity, phone: str, channel_id: int
+    ) -> tuple[list[int], list[int], list[int]]:
+        """Stream up to 50 recent messages and accumulate ``(views, reactions,
+        forwards)`` totals for stats averaging. Extracted from
+        ``_collect_channel_stats`` (#1045); the stats-cancel break, the 90s flood
+        timeout, and the swallowed idle ``TimeoutError`` are preserved.
+        """
+        views_list: list[int] = []
+        reactions_list: list[int] = []
+        forwards_list: list[int] = []
+
+        async def _collect_stats_messages() -> None:
+            async for msg in session.stream_messages(
+                entity,
+                limit=50,
+                wait_time=self._config.delay_between_requests_sec,
+            ):
+                if self._is_stats_cancelled():
+                    break
+                if getattr(msg, "views", None) is not None:
+                    views_list.append(msg.views)
+                if getattr(msg, "forwards", None) is not None:
+                    forwards_list.append(msg.forwards)
+                reactions = getattr(msg, "reactions", None)
+                if reactions:
+                    total = sum(
+                        getattr(r, "count", 0) for r in getattr(reactions, "results", [])
+                    )
+                    reactions_list.append(total)
+
+        try:
+            await run_with_flood_wait(
+                _collect_stats_messages(),
+                operation="collect_channel_stats_stream_messages",
+                phone=phone,
+                pool=self._pool,
+                logger_=logger,
+                timeout=90.0,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("iter_messages timed out for stats on channel %d", channel_id)
+
+        return views_list, reactions_list, forwards_list
+
     async def _collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
         while True:
             result = await self._pool.get_available_client()
@@ -2258,40 +2113,9 @@ class Collector:
                 )
                 subscriber_count = getattr(full.full_chat, "participants_count", None)
 
-                views_list, reactions_list, forwards_list = [], [], []
-
-                async def _collect_stats_messages() -> None:
-                    async for msg in session.stream_messages(
-                        entity,
-                        limit=50,
-                        wait_time=self._config.delay_between_requests_sec,
-                    ):
-                        if self._is_stats_cancelled():
-                            break
-                        if getattr(msg, "views", None) is not None:
-                            views_list.append(msg.views)
-                        if getattr(msg, "forwards", None) is not None:
-                            forwards_list.append(msg.forwards)
-                        reactions = getattr(msg, "reactions", None)
-                        if reactions:
-                            total = sum(
-                                getattr(r, "count", 0) for r in getattr(reactions, "results", [])
-                            )
-                            reactions_list.append(total)
-
-                try:
-                    await run_with_flood_wait(
-                        _collect_stats_messages(),
-                        operation="collect_channel_stats_stream_messages",
-                        phone=phone,
-                        pool=self._pool,
-                        logger_=logger,
-                        timeout=90.0,
-                    )
-                except asyncio.TimeoutError:
-                    logger.warning(
-                        "iter_messages timed out for stats on channel %d", channel.channel_id
-                    )
+                views_list, reactions_list, forwards_list = await self._collect_stats_metrics(
+                    session, entity, phone, channel.channel_id
+                )
 
                 stats = ChannelStats(
                     channel_id=channel.channel_id,
@@ -2528,57 +2352,42 @@ class Collector:
             finally:
                 self._stats_all_running = False
 
+    # --- Telethon ``msg`` → field helpers ---------------------------------
+    # The conversion logic lives in ``collector_message_parse`` as stateless
+    # functions (#1045). These thin delegates keep the historical
+    # ``Collector._get_*`` / ``_build_message`` surface the test-suite and a few
+    # other call sites depend on, without re-implementing anything here.
+
+    @staticmethod
+    def _build_message(msg, channel_id: int) -> Message:
+        """Build a :class:`Message` from a Telethon message."""
+        return build_message_from_telethon(msg, channel_id)
+
     @staticmethod
     def _extract_reactions(msg) -> str | None:
         """Extract reactions from a Telethon message as JSON string."""
-        return extract_message_reactions_json(msg)
+        return extract_reactions(msg)
 
     @staticmethod
     def _get_sender_name(msg) -> str | None:
-        if msg.sender:
-            if hasattr(msg.sender, "first_name"):
-                parts = [msg.sender.first_name or "", msg.sender.last_name or ""]
-                return " ".join(p for p in parts if p) or None
-            if hasattr(msg.sender, "title"):
-                return msg.sender.title
-        return None
+        return get_sender_name(msg)
 
     @classmethod
     def _get_message_kind(cls, msg) -> str:
-        return "service" if getattr(msg, "action", None) is not None else "regular"
+        return get_message_kind(msg)
 
     @staticmethod
     def _get_service_action_raw(msg) -> str | None:
-        action = getattr(msg, "action", None)
-        return type(action).__name__ if action is not None else None
+        return get_service_action_raw(msg)
 
     @classmethod
     def _get_service_action_semantic(cls, msg) -> str | None:
-        action_raw = cls._get_service_action_raw(msg)
-        if action_raw is None:
-            return None
-        return cls._SERVICE_ACTION_SEMANTICS.get(action_raw, "other")
+        return get_service_action_semantic(msg)
 
     @staticmethod
     def _get_service_action_payload(msg) -> str | None:
-        action = getattr(msg, "action", None)
-        if action is None:
-            return None
-        payload = {key: value for key, value in action.to_dict().items() if key != "_"}
-
-        def _default(obj):
-            if isinstance(obj, (datetime, date)):
-                return obj.isoformat()
-            if isinstance(obj, bytes):
-                return obj.hex()
-            return repr(obj)
-
-        return json.dumps(payload, ensure_ascii=False, sort_keys=True, default=_default) if payload else None
+        return get_service_action_payload(msg)
 
     @staticmethod
     def _get_sender_kind(msg) -> str:
-        if getattr(msg, "post", False):
-            return "channel"
-        if getattr(msg, "sender_id", None) is None:
-            return "anonymous_admin"
-        return "user"
+        return get_sender_kind(msg)
