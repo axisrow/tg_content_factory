@@ -1140,6 +1140,25 @@ class TelegramCommandDispatcher:
         return {"item_id": item.id, "batch_id": item.batch_id}
 
     async def _handle_photo_run_due(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if payload.get("dry_run"):
+            # Preview only: skip the photo-item path (no dry-run there) and ask the
+            # auto-upload service for a plan without sending, marking, or advancing state.
+            previews = await self._photo_auto_upload_service().run_due(dry_run=True)
+            assert isinstance(previews, list)  # narrow run_due's int|list return
+            return {
+                "dry_run": True,
+                "jobs": [
+                    {
+                        "job_id": preview.job_id,
+                        "target_dialog_id": preview.target_dialog_id,
+                        "target_title": preview.target_title,
+                        "target_type": preview.target_type,
+                        "send_mode": preview.send_mode.value,
+                        "files": list(preview.files),
+                    }
+                    for preview in previews
+                ],
+            }
         items = await self._photo_task_service().run_due()
         jobs = await self._photo_auto_upload_service().run_due()
         return {"processed_items": items, "processed_jobs": jobs}

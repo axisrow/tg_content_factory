@@ -75,3 +75,8 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
 
     photo_run_due = photo_sub.add_parser("run-due", help="Run due photo items and auto jobs now")
     photo_run_due.add_argument("--item-id", type=int, default=None, help="Run only one due photo item")
+    photo_run_due.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview which auto-job files would be posted (where/when) without sending or marking",
+    )

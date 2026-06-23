@@ -199,13 +199,37 @@ def register_batch_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]
     @tool(
         "run_photo_due",
         "⚠️ Process all due photo items and auto-upload jobs (sends to Telegram). "
-        "Ask user for confirmation first.",
+        "Ask user for confirmation first. Pass dry_run=true to preview what would be "
+        "sent without sending anything (no confirmation needed).",
         RUN_PHOTO_DUE_SCHEMA,
     )
     async def run_photo_due(args):
         pool_gate = ctx.require_pool("Обработка фото")
         if pool_gate:
             return pool_gate
+        dry_run = bool(args.get("dry_run"))
+        if dry_run:
+            # Preview only — no send, no mark, no state change. Skip the confirmation
+            # gate (nothing happens) and the photo-item path (it has no dry-run).
+            try:
+                auto_svc = photo_auto_upload_service(db, client_pool)
+                previews = await auto_svc.run_due(dry_run=True)
+                if not isinstance(previews, list):  # defensive: dry_run always returns a list
+                    return _text_response("Ошибка обработки фото: неожиданный ответ dry-run.")
+                if not previews:
+                    return _text_response("[dry-run] Нет due авто-заданий — отправлять нечего.")
+                lines = [f"[dry-run] Отправилось бы {len(previews)} авто-задани(е/я/й); ничего не отправлено:"]
+                for preview in previews:
+                    title = preview.target_title or preview.target_dialog_id
+                    lines.append(
+                        f"  job #{preview.job_id} → {title} "
+                        f"(dialog_id={preview.target_dialog_id}, mode={preview.send_mode.value}): "
+                        f"{len(preview.files)} файл(ов)"
+                    )
+                    lines.extend(f"    - {file_path}" for file_path in preview.files)
+                return _text_response("\n".join(lines))
+            except Exception as exc:
+                return _text_response(f"Ошибка обработки фото: {exc}")
         gate = require_confirmation("отправит все запланированные фото в Telegram", args)
         if gate:
             return gate

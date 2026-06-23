@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.database import Database
-from src.models import Account
+from src.models import Account, PhotoSendMode
 
 pytestmark = pytest.mark.aiosqlite_serial
 
@@ -517,6 +517,58 @@ def test_run_due_action_with_item_id_skips_auto_jobs(tmp_path, cli_init_patch, c
     assert "auto_jobs=0" in out
     run_due.assert_awaited_once_with(item_id=77)
     auto_run_due.assert_not_awaited()
+
+
+def test_run_due_dry_run_previews_without_running_items(tmp_path, cli_init_patch, capsys):
+    """run-due --dry-run prints the auto-job plan, asks auto.run_due(dry_run=True),
+    and never touches the photo-item path (which has no dry-run)."""
+    from src.services.photo_auto_upload_service import PhotoAutoPreview
+
+    db_path = str(tmp_path / "photo_run_due_dry.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _setup_photo_db(db)
+
+    async def fake_init_pool(_config, _db):
+        pool = MagicMock()
+        pool.disconnect_all = AsyncMock()
+        return MagicMock(), pool
+
+    preview = PhotoAutoPreview(
+        job_id=3,
+        target_dialog_id=-100500,
+        target_title="My Channel",
+        target_type="channel",
+        send_mode=PhotoSendMode.ALBUM,
+        files=["/photos/a.jpg", "/photos/b.png"],
+    )
+    task_run_due = AsyncMock(return_value=9)
+    auto_run_due = AsyncMock(return_value=[preview])
+    fake_task, fake_auto = _create_fake_services(
+        task_methods={"run_due": task_run_due},
+        auto_methods={"run_due": auto_run_due},
+    )
+
+    with (
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
+        patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
+    ):
+        from src.cli.commands.photo_loader import run
+
+        run(_ns(photo_loader_action="run-due", dry_run=True))
+
+    out = capsys.readouterr().out
+    assert "dry-run" in out
+    assert "job #3" in out
+    assert "My Channel" in out
+    assert "/photos/a.jpg" in out
+    assert "/photos/b.png" in out
+    assert "2 file(s)" in out
+    # The auto path is asked for a preview, the item path is never run.
+    auto_run_due.assert_awaited_once_with(dry_run=True)
+    task_run_due.assert_not_awaited()
 
 
 def test_auto_delete_action(tmp_path, cli_init_patch, capsys):
