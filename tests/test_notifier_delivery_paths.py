@@ -6,6 +6,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pybreaker
 import pytest
 
 from src.database.bundles import NotificationBundle
@@ -69,9 +70,7 @@ class TestNotifierFastPath:
         mock_target_service.use_client.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_notify_with_cached_me_id_but_no_bot_falls_back(
-        self, mock_target_service, mock_notification_bundle
-    ):
+    async def test_notify_with_cached_me_id_but_no_bot_falls_back(self, mock_target_service, mock_notification_bundle):
         """Test fallback when me.id is cached but bot lookup returns None."""
         mock_notification_bundle.get_bot = AsyncMock(return_value=None)
 
@@ -101,9 +100,7 @@ class TestNotifierSlowPath:
     """Tests for Notifier slow path that requires client connection."""
 
     @pytest.mark.anyio
-    async def test_notify_without_cached_me_id_fetches_it(
-        self, mock_target_service, mock_notification_bundle
-    ):
+    async def test_notify_without_cached_me_id_fetches_it(self, mock_target_service, mock_notification_bundle):
         """Test that notifier fetches and caches me.id when not cached."""
         bot = NotificationBot(
             tg_user_id=123,
@@ -144,9 +141,7 @@ class TestNotifierSlowPath:
         mock_client.get_me.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_notify_fallback_to_client_when_no_bot(
-        self, mock_target_service, mock_notification_bundle
-    ):
+    async def test_notify_fallback_to_client_when_no_bot(self, mock_target_service, mock_notification_bundle):
         """Test fallback to client.send_message when no bot is configured."""
         mock_notification_bundle.get_bot = AsyncMock(return_value=None)
 
@@ -344,12 +339,12 @@ class TestNotifierCircuitBreaker:
         # Two failures, then succeed → counter resets, breaker never opens.
         assert await notifier.notify("x") is False
         assert await notifier.notify("x") is False
-        assert notifier._consecutive_failures == 2
+        assert notifier._breaker.fail_counter == 2
 
         mock_client.send_message = AsyncMock(return_value=None)
         mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
         assert await notifier.notify("x") is True
-        assert notifier._consecutive_failures == 0
+        assert notifier._breaker.fail_counter == 0
         assert notifier.is_degraded is False
 
     @pytest.mark.anyio
@@ -380,7 +375,7 @@ class TestNotifierCircuitBreaker:
             "recovery from degraded state must be logged"
         )
         assert notifier.is_degraded is False
-        assert notifier._consecutive_failures == 0
+        assert notifier._breaker.fail_counter == 0
 
     @pytest.mark.anyio
     async def test_failed_half_open_probe_reopens_immediately(self, mock_target_service):
@@ -413,6 +408,55 @@ class TestNotifierCircuitBreaker:
             cooldown_seconds=0,
         )
         assert notifier._cooldown_seconds >= 0.1
+
+    @pytest.mark.anyio
+    async def test_underlying_breaker_walks_closed_open_halfopen_closed(self, mock_target_service):
+        """The pybreaker state machine transitions through the expected states.
+
+        This pins the migration to pybreaker (#955): the visible behaviour
+        (is_degraded, skip-while-open, single half-open probe) is unchanged, and
+        the underlying breaker reports the canonical closed → open → closed path.
+        """
+        notifier = self._failing_notifier(mock_target_service, threshold=2, cooldown=100.0)
+        assert notifier._breaker.current_state == pybreaker.STATE_CLOSED
+
+        with patch("src.telegram.notifier.time.monotonic", return_value=1000.0):
+            await notifier.notify("x")
+            await notifier.notify("x")
+            assert notifier._breaker.current_state == pybreaker.STATE_OPEN
+
+        # After cooldown, a *successful* half-open probe closes the circuit and
+        # resets the failure counter (success_threshold=1).
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+        mock_client.send_message = AsyncMock(return_value=None)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+        notifier._notification_bundle = None  # direct send_message path
+
+        with patch("src.telegram.notifier.time.monotonic", return_value=1101.0):
+            assert await notifier.notify("x") is True
+        assert notifier._breaker.current_state == pybreaker.STATE_CLOSED
+        assert notifier._breaker.fail_counter == 0
+
+    @pytest.mark.anyio
+    async def test_notify_never_leaks_breaker_exception(self, mock_target_service):
+        """notify() must always return a bool, never raise CircuitBreakerError.
+
+        pybreaker raises CircuitBreakerError when the circuit is open; the
+        notifier suppresses it (returns False) so callers see the same
+        fire-and-forget contract the hand-rolled breaker offered.
+        """
+        notifier = self._failing_notifier(mock_target_service, threshold=1, cooldown=100.0)
+
+        # First failure trips the breaker (threshold=1).
+        assert await notifier.notify("x") is False
+        assert notifier.is_degraded is True
+        # While open, every call returns False rather than raising.
+        for _ in range(3):
+            assert await notifier.notify("x") is False
 
 
 class TestNotifierInvalidateCache:
@@ -470,9 +514,7 @@ class TestSendViaBotApi:
     async def test_send_via_bot_api_error_response(self):
         """Test bot API call when response has ok=false."""
         mock_response = AsyncMock()
-        mock_response.json = AsyncMock(
-            return_value={"ok": False, "error_code": 400, "description": "Bad Request"}
-        )
+        mock_response.json = AsyncMock(return_value={"ok": False, "error_code": 400, "description": "Bad Request"})
 
         # session.post(...) is used as async context manager
         mock_post_context = AsyncMock()
