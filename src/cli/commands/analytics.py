@@ -8,7 +8,7 @@ from src.cli import runtime
 
 def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
-        _config, db = await runtime.init_db(args.config)
+        config, db = await runtime.init_db(args.config)
         try:
             action = getattr(args, "analytics_action", None) or "top"
             date_from = getattr(args, "date_from", None)
@@ -306,6 +306,63 @@ def run(args: argparse.Namespace) -> None:
                 for r in ratings:
                     title = (r.title or r.username or str(r.channel_id))[:30]
                     print(f"{r.channel_id:<14} {r.useful:<8} {r.genre:<11} {r.confidence:<5.2f} {title}")
+
+            elif action == "channel-rate":
+                # Write path (#994): run the LLM judge for one channel and upsert
+                # its verdict into channel_ratings. The read-only `channel-rating`
+                # branch above only lists existing verdicts; this is the single
+                # entry point that invokes ChannelAnalysisService.classify_channel.
+                from src.services.channel_analysis_service import ChannelAnalysisService
+                from src.services.provider_service import RuntimeProviderRegistry
+
+                channel_id = args.channel_id
+                provider_service = RuntimeProviderRegistry(db, config)
+                await provider_service.load_db_providers()
+                if not provider_service.has_providers():
+                    print(
+                        "LLM provider is not configured. Add one with `provider add`, in the web "
+                        "/settings page, or set an API key env var (e.g. OPENAI_API_KEY)."
+                    )
+                    return
+
+                # A mistyped --model must NOT silently fall back to the stub
+                # provider and persist a meaningless verdict — fail loudly instead
+                # (cycle-review #994, both reviewers flagged this as the top risk).
+                try:
+                    provider_callable = provider_service.resolve_provider_callable(args.model)
+                except ValueError as exc:
+                    print(str(exc))
+                    return
+
+                svc = ChannelAnalysisService(db)
+                # Guard against an empty channel before spending a provider call:
+                # no posts would otherwise persist a defaulted "useless/original"
+                # verdict (n_total=0) that looks valid but carries zero signal.
+                # Cap the sample upper bound so a huge --sample-size can't build a
+                # prompt that trips token limits / OOM.
+                sample_size = min(max(1, getattr(args, "sample_size", 40)), 200)
+                posts = await svc.sample_posts(channel_id, sample_size)
+                if not posts:
+                    print(f"Channel {channel_id} has no text posts to judge; skipping.")
+                    return
+
+                try:
+                    rating = await svc.classify_channel(
+                        channel_id,
+                        provider_callable=provider_callable,
+                        sample_size=sample_size,
+                    )
+                except Exception as exc:  # provider/network/parse failure
+                    print(f"Judge failed for channel {channel_id}: {exc}")
+                    raise SystemExit(1) from exc
+
+                name = rating.title or rating.username or str(rating.channel_id)
+                print(f"Channel {rating.channel_id} ({name}):")
+                print(f"  useful:     {rating.useful}")
+                print(f"  genre:      {rating.genre}")
+                print(f"  confidence: {rating.confidence:.2f}")
+                print(f"  reason:     {rating.reason or '-'}")
+                print(f"  posts seen: {rating.n_total}")
         finally:
             await db.close()
 

@@ -93,6 +93,47 @@ def test_get_provider_unknown_falls_back_to_default():
     assert "DRAFT" in result
 
 
+def test_resolve_provider_callable_raises_on_unknown_name():
+    """resolve_provider_callable must NOT silently return the stub (#994)."""
+    import pytest
+
+    svc = RuntimeProviderRegistry()
+
+    async def custom_provider(prompt: str = "", **kwargs) -> str:
+        return prompt
+
+    svc.register_provider("cohere", custom_provider)
+
+    with pytest.raises(ValueError) as excinfo:
+        svc.resolve_provider_callable("does-not-exist")
+    # The error must name the registered providers so the operator can recover.
+    assert "cohere" in str(excinfo.value)
+
+
+def test_resolve_provider_callable_returns_registered():
+    """A registered name resolves to the real callable, no error."""
+    svc = RuntimeProviderRegistry()
+
+    async def custom_provider(prompt: str = "", **kwargs) -> str:
+        return f"Custom: {prompt}"
+
+    svc.register_provider("custom", custom_provider)
+    provider = svc.resolve_provider_callable("custom")
+    assert asyncio.run(provider(prompt="x")) == "Custom: x"
+
+
+def test_resolve_provider_callable_no_name_uses_first_real():
+    """With no name, resolve picks the first real provider (no stub error)."""
+    svc = RuntimeProviderRegistry()
+
+    async def custom_provider(prompt: str = "", **kwargs) -> str:
+        return "real"
+
+    svc.register_provider("custom", custom_provider)
+    provider = svc.resolve_provider_callable(None)
+    assert asyncio.run(provider(prompt="x")) == "real"
+
+
 # === OpenAI provider tests ===
 
 

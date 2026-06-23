@@ -77,6 +77,11 @@ class ChannelAnalysisService:
         return await self._db.repos.channel_ratings.get(channel_id)
 
     # --- classify ---------------------------------------------------------
+    async def sample_posts(self, channel_id: int, sample_size: int = 40) -> list[str]:
+        """Public view of the posts the judge would see — lets callers cheaply
+        pre-check for an empty channel before spending a provider call (#994)."""
+        return await self._sample_posts(channel_id, sample_size)
+
     async def classify_channel(
         self,
         channel_id: int,

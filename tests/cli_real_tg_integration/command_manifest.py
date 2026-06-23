@@ -161,6 +161,10 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("agent", "thread-delete"): "cleanup-only live CLI command; deletes agent thread rows",
     ("agent", "thread-rename"): "local agent-thread mutation",
     ("agent", "thread-stop"): "local agent-stream cancel + last-exchange rollback (DB-only)",
+    ("analytics", "channel-rate"): (
+        "LLM-judge run: provider spend + channel_ratings DB write; no live Telegram. "
+        "Covered by unit/integration tests with a fake provider_callable (#994)"
+    ),
     ("channel", "delete"): "local channel delete mutation",
     ("channel", "import"): "bulk local channel write",
     ("channel", "list-for-import"): "list-only but depends on mutable dialog cache / live dialogs",
