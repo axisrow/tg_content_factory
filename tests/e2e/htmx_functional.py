@@ -342,9 +342,12 @@ def check_rate_swap(page: "Page", base_url: str) -> RateSwapResult:
     base = base_url.rstrip("/")
     _goto(page, f"{base}{RATINGS_PATH}")
     _landed_off(page, RATINGS_PATH)  # bounce-to-login guard
-    page.fill("input[name='channel_id']", "1")
     post_status: int | None = None
+    # Fill + submit + capture the POST status under one guard: a failed form
+    # interaction (e.g. a missing field) becomes ok=False with a clear detail
+    # rather than a raw Playwright error — consistent with the other checks.
     try:
+        page.fill("input[name='channel_id']", "1")
         with page.expect_response(
             lambda r: RATE_POST_URL in r.url and r.request.method == "POST", timeout=HTMX_WAIT_TIMEOUT_MS
         ) as resp_info:
