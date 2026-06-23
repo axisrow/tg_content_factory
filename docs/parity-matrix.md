@@ -109,11 +109,11 @@
 ### Production Limits & Quality (#25) — детально
 - `QualityScoringService` — **подключён** (импортируется в `src/web/pipelines/handlers.py:576`, `src/cli/commands/pipeline.py`, `src/services/task_handlers/base.py`), пишет `quality_score`.
 - `ProductionLimitsService` — **подключён, но off-by-default**: `from_config()` возвращает `None` если `config.production_limits.enabled` ложно (`src/services/production_limits_service.py:387-391`, #814). Используется в `image_generation_service.py`, `task_handlers/base.py`.
-- `ErrorRecoveryService` — **мёртвый код**: импортов вне своего файла = 0 (только `tests/test_error_recovery_service.py`).
+- `ErrorRecoveryService` — **сейчас не подключён**: импортов вне своего файла = 0 (только `tests/test_error_recovery_service.py`). По решению владельца (vulture-аудит #1044) — **подключить**, не удалять.
 - **Нет выделенной поверхности** ни в CLI, ни в Web, ни в agent — управление только через `config.yaml` / косвенно `settings`.
 
 ### A/B Testing (#26) — детально
-- `ABTestingService` (`src/services/ab_testing_service.py`) — **изолирован**: импортов вне своего файла = 0 (только `tests/test_ab_testing_service.py`, `tests/test_cross_domain_regression_paths.py`). Не подключён ни к одной из 5 поверхностей.
+- `ABTestingService` (`src/services/ab_testing_service.py`) — **сейчас изолирован**: импортов вне своего файла = 0 (только `tests/test_ab_testing_service.py`, `tests/test_cross_domain_regression_paths.py`). Не подключён ни к одной из 5 поверхностей. По решению владельца (vulture-аудит #1044) — **подключить**, не удалять; parity по поверхностям появится после подключения.
 
 ### Инвариант parity
 Декларирован в `CLAUDE.md:160`: *«CLI/Web parity: every web operation must have a CLI equivalent and vice versa»*. Нарушается в ячейках, помеченных ⚠️ ниже.
@@ -146,8 +146,8 @@
 |---|-------|--------|--------------|
 | D1 | **MCP-Server (`mcp-server`) → Web/agent** | CLI-only | **By design.** Спец-команда запуска stdio-MCP для внешних агентов (Codex/ADK). Поверхность процесса, не продуктовая фича. Оставить. |
 | D2 | **Prod Limits & Quality (#25) — нет поверхности** | config-only, off-by-default | **Спорно/debt.** Если лимиты реально нужны в проде — они по умолчанию не работают (риск перерасхода). Кандидат на `settings limits get/set` + web-тумблер. Решает владелец: нужны ли лимиты как продуктовая фича. |
-| D3 | **ErrorRecoveryService — мёртвый код** | импортов 0 | **Debt.** Удалить ИЛИ подключить. Не parity-вопрос. Кандидат на отдельный cleanup-issue. |
-| D4 | **ABTestingService (#26) — изолирован** | импортов 0 (кроме тестов) | **Debt.** Сервисный код есть, не подключён ни к одной поверхности. Либо доделать (тогда parity по 4 поверхностям), либо удалить. Решает владелец. |
+| D3 | **ErrorRecoveryService — не подключён** | импортов 0 | **Подключить** (решение владельца, #1044 — НЕ удалять). Не parity-вопрос до подключения; после — войдёт в матрицу. Входит в эпик «подключить неиспользуемое». |
+| D4 | **ABTestingService (#26) — изолирован** | импортов 0 (кроме тестов) | **Подключить** (решение владельца, #1044 — НЕ удалять). После подключения — parity по 4 поверхностям (FastAPI узкий). Входит в эпик «подключить неиспользуемое». |
 
 ---
 
@@ -157,8 +157,8 @@
 
 1. **`feat: jobs CLI + agent-tool parity`** (закрывает P1+P2) — read-only `jobs list` CLI-команда + `get_jobs` agent-tool поверх `JobsReadModel`; зеркалят `/jobs/api/list`. Размер S. Инвариант `CLAUDE.md:160`.
 2. **`feat: providers list agent-tool`** (закрывает P3, минимум) — `list_providers` (READ) для паритета к `provider list` / web. Опционально write-tools под confirmation. Размер S.
-3. **`chore: убрать мёртвый код ErrorRecoveryService`** (D3) — удалить или подключить + тесты. Размер XS. Не parity.
-4. **`decision: A/B Testing — доделать или удалить`** (D4) — решение владельца по `ABTestingService`. Если доделать → отдельный feat по 4 поверхностям.
+3. **`feat: подключить ErrorRecoveryService`** (D3) — решение владельца уже принято (#1044: подключить, не удалять). Часть эпика «подключить неиспользуемое». Не parity до подключения.
+4. **`feat: подключить ABTestingService`** (D4) — решение владельца уже принято (#1044: подключить, не удалять). После подключения → parity по 4 поверхностям (FastAPI узкий). Часть того же эпика.
 5. **`decision: Production Limits — продуктовая фича или config-only`** (D2) — решение владельца: нужен ли `settings limits` + web-тумблер, или off-by-default config достаточно.
 
 > P4 (server-control→web), P5 (test→web), P6 (messages-read→agent), D1 (mcp-server) — **рекомендация: оставить by design**, sub-issue не заводить без явного запроса владельца.
@@ -170,6 +170,6 @@
 - **26 сервисов × 5 поверхностей** — матрица построена, ячейки верифицированы реальным кодом.
 - **Настоящие пробелы parity: 3** (Jobs→CLI, Jobs→agent, Providers→agent) — нарушают инвариант `CLAUDE.md:160`, рекомендованы к закрытию (sub-issue 1–2).
 - **Спорные: 3** (server-control, test, messages-read) — склоняюсь к «by design».
-- **Технический долг (не parity): 2 мёртвых сервиса** (ErrorRecovery, A/B) + 1 config-only (Prod Limits) — отдельный трек/решение владельца.
+- **Не подключённые сервисы (не parity): ErrorRecovery + A/B** — владелец решил их **подключить** (#1044, эпик «подключить неиспользуемое»), не удалять; parity появится после подключения. Plus 1 config-only off-by-default (Prod Limits).
 - **TUI и FastAPI** ведут себя как узкие поверхности корректно: TUI = только чат (1/26), FastAPI = interop + JSON-зеркала, без неоправданных пробелов.
 - **Известные из #1022 пробелы верифицированы и расширены**: к Jobs/Providers/Limits добавлены server-control, test, messages-read, mcp-server; уточнён статус Export-web (JSON, не HTML) и Providers-web (JSON в settings-роутере).
