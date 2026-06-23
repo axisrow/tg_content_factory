@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros_ui.html" import loading %}
 {% block title %}Пайплайны — TG Agent{% endblock %}
 {% block content %}
 {# Lazyload (#947): the page shell renders instantly; the pipeline list and its
@@ -7,9 +8,6 @@
      hx-get="/pipelines/fragments/list?{{ request.url.query }}"
      hx-trigger="load"
      hx-swap="innerHTML">
-    <div class="text-center text-muted py-5">
-        <span class="spinner-border" role="status"></span>
-        <div class="mt-2">Загрузка пайплайнов…</div>
-    </div>
+    {{ loading('Загрузка пайплайнов…', class="my-4") }}
 </div>
 {% endblock %}

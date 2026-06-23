@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 
 from fastapi import Request
@@ -160,6 +161,30 @@ async def _telegram_search_via_worker(
             "Задача могла ещё выполняться в Telegram-worker; проверьте логи."
         ),
     )
+
+
+async def _safe_search(
+    coro: Awaitable[SearchResult],
+    *,
+    log_msg: str,
+    log_args: tuple[object, ...] = (),
+    error_text: str,
+    error_query: str,
+) -> SearchResult:
+    """Await a search coroutine, converting any failure into an error
+    ``SearchResult`` so the fragment renders a message instead of a 500.
+
+    Centralises the ``try/except logger.exception → fallback SearchResult``
+    boilerplate that the three search branches in :func:`render_search_results`
+    each repeated verbatim (#1009). ``error_text`` is formatted with the caught
+    exception (it must contain a single ``{exc}`` placeholder); ``log_msg`` and
+    ``log_args`` are passed straight to ``logger.exception``.
+    """
+    try:
+        return await coro
+    except Exception as exc:
+        logger.exception(log_msg, *log_args)
+        return SearchResult(messages=[], total=0, query=error_query, error=error_text.format(exc=exc))
 
 
 async def root_page(request: Request) -> SearchRedirect:
@@ -328,8 +353,8 @@ async def render_search_results(
 
     # Browse mode: channel_id without query shows latest messages from that channel
     if not q and channel_id_int and mode in _DB_SEARCH_MODES:
-        try:
-            result = await service.search(
+        result = await _safe_search(
+            service.search(
                 mode="local",
                 query="",
                 limit=limit,
@@ -339,31 +364,29 @@ async def render_search_results(
                 offset=offset,
                 is_fts=False,
                 include_filtered=include_filtered,
-            )
-        except Exception as exc:
-            logger.exception("Browse mode failed: channel_id=%s", channel_id_int)
-            result = SearchResult(
-                messages=[], total=0, query="", error=f"Ошибка загрузки сообщений: {exc}"
-            )
+            ),
+            log_msg="Browse mode failed: channel_id=%s",
+            log_args=(channel_id_int,),
+            error_text="Ошибка загрузки сообщений: {exc}",
+            error_query="",
+        )
     elif q:
         if ctx.channel_id_error and mode in _DB_SEARCH_MODES | {"channel"}:
             result = SearchResult(messages=[], total=0, query=q, error=ctx.channel_id_error)
         elif mode in _TELEGRAM_SEARCH_MODES and ctx.runtime_mode == "web":
             # Web container has no live ClientPool — run it on the worker (#643).
-            try:
-                result = await _telegram_search_via_worker(
+            result = await _safe_search(
+                _telegram_search_via_worker(
                     request, mode=mode, query=ctx.fts_query, limit=limit, channel_id=channel_id_int
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Worker search proxy failed: mode=%s query_hash=%s",
-                    mode,
-                    query_log_fields(q)["query_hash"],
-                )
-                result = SearchResult(messages=[], total=0, query=q, error=f"Ошибка поиска: {exc}")
+                ),
+                log_msg="Worker search proxy failed: mode=%s query_hash=%s",
+                log_args=(mode, query_log_fields(q)["query_hash"]),
+                error_text="Ошибка поиска: {exc}",
+                error_query=q,
+            )
         else:
-            try:
-                result = await service.search(
+            result = await _safe_search(
+                service.search(
                     mode=mode,
                     query=ctx.fts_query,
                     limit=limit,
@@ -375,14 +398,12 @@ async def render_search_results(
                     min_length=ctx.min_length,
                     max_length=ctx.max_length,
                     include_filtered=include_filtered,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "Search request failed: mode=%s query_hash=%s",
-                    mode,
-                    query_log_fields(q)["query_hash"],
-                )
-                result = SearchResult(messages=[], total=0, query=q, error=f"Ошибка поиска: {exc}")
+                ),
+                log_msg="Search request failed: mode=%s query_hash=%s",
+                log_args=(mode, query_log_fields(q)["query_hash"]),
+                error_text="Ошибка поиска: {exc}",
+                error_query=q,
+            )
 
     # Page-based navigation without an exact total (#766): «Далее» is shown when
     # the LIMIT N+1 probe saw another page. Semantic/hybrid/telegram modes still
