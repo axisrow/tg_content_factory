@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import sqlite3
+from typing import TYPE_CHECKING
 
 from fastapi import HTTPException, Request
 
@@ -14,6 +15,9 @@ from src.utils.json import safe_json_dumps
 from src.web import deps
 from src.web.agent.forms import select_model
 from src.web.agent.responses import AgentJson, AgentRedirect, AgentStream, AgentTemplate
+
+if TYPE_CHECKING:
+    from src.agent.manager import AgentManager
 
 logger = logging.getLogger(__name__)
 
@@ -78,30 +82,42 @@ def _agent_unavailable_result(runtime_state: deps.AgentRuntimeState) -> AgentJso
     )
 
 
+async def _agent_status_dict(agent_manager: AgentManager | None) -> dict | None:
+    """Probe the agent backend and map its runtime status to a template dict.
+
+    This is the heavy bit (`refresh_settings_cache` + per-backend availability
+    probes); kept out of the skeleton route so it only runs when the lazy
+    threads fragment loads (#949 / part of #756).
+    """
+    if agent_manager is None:
+        return None
+    runtime_status = await agent_manager.get_runtime_status()
+    return {
+        "claude_available": runtime_status.claude_available,
+        "deepagents_available": runtime_status.deepagents_available,
+        "codex_available": runtime_status.codex_available,
+        "adk_available": runtime_status.adk_available,
+        "dev_mode_enabled": runtime_status.dev_mode_enabled,
+        "backend_override": runtime_status.backend_override,
+        "selected_backend": runtime_status.selected_backend,
+        "fallback_model": runtime_status.fallback_model,
+        "fallback_provider": runtime_status.fallback_provider,
+        "using_override": runtime_status.using_override,
+        "error": runtime_status.error,
+    }
+
+
 async def agent_page(request: Request, thread_id: int | None = None):
+    # Onboarding/redirect logic MUST stay synchronous — it decides which thread the
+    # page renders (a skeleton 200 would swallow the redirect, mirroring dashboard.py).
+    # The runtime-status probe (refresh_settings_cache + backend availability) is the
+    # heavy per-load cost; it loads lazily in the threads fragment (#949).
     db = deps.get_db(request)
     agent_runtime_state = deps.get_agent_runtime_state(request)
-    agent_manager = agent_runtime_state.manager
     threads = await db.get_agent_threads()
-    agent_status = None
     agent_disabled_title = None
     agent_disabled_reason = None
-    if agent_manager is not None:
-        runtime_status = await agent_manager.get_runtime_status()
-        agent_status = {
-            "claude_available": runtime_status.claude_available,
-            "deepagents_available": runtime_status.deepagents_available,
-            "codex_available": runtime_status.codex_available,
-            "adk_available": runtime_status.adk_available,
-            "dev_mode_enabled": runtime_status.dev_mode_enabled,
-            "backend_override": runtime_status.backend_override,
-            "selected_backend": runtime_status.selected_backend,
-            "fallback_model": runtime_status.fallback_model,
-            "fallback_provider": runtime_status.fallback_provider,
-            "using_override": runtime_status.using_override,
-            "error": runtime_status.error,
-        }
-    else:
+    if agent_runtime_state.manager is None:
         agent_disabled_title, agent_disabled_reason = _agent_unavailable_copy(agent_runtime_state)
 
     messages = []
@@ -125,13 +141,34 @@ async def agent_page(request: Request, thread_id: int | None = None):
     return AgentTemplate(
         "agent.html",
         {
-            "threads": threads,
             "active_thread": active_thread,
             "messages": messages,
-            "agent_status": agent_status,
             "agent_runtime_state": agent_runtime_state.state,
             "agent_disabled_title": agent_disabled_title,
             "agent_disabled_reason": agent_disabled_reason,
+        },
+    )
+
+
+async def agent_threads_fragment(request: Request, thread_id: int | None = None) -> AgentTemplate:
+    """Lazy fragment: thread list + runtime status panel + composer footer (#949).
+
+    Carries `active_thread` so the thread list can mark the open thread and the
+    composer footer (model select vs deepagents hint) renders for the right
+    backend. The skeleton already resolved the active thread via redirect, so the
+    fragment trusts the `thread_id` query param instead of re-running that logic.
+    """
+    db = deps.get_db(request)
+    agent_manager = deps.get_agent_manager(request)
+    threads = await db.get_agent_threads()
+    active_thread = await db.get_agent_thread(thread_id) if thread_id is not None else None
+    agent_status = await _agent_status_dict(agent_manager)
+    return AgentTemplate(
+        "agent/_threads.html",
+        {
+            "threads": threads,
+            "active_thread": active_thread,
+            "agent_status": agent_status,
             "model_options": CLAUDE_MODELS,
         },
     )

@@ -3455,7 +3455,7 @@ class TestWebAgent:
         assert str(resp.url).endswith("?thread_id=1")
 
     @pytest.mark.anyio
-    async def test_agent_page_shows_deepagents_status_and_hides_claude_model_select(self, client):
+    async def test_agent_fragment_shows_deepagents_status_and_hides_claude_model_select(self, client):
         db = client._transport.app.state.db
         await db.create_agent_thread("First")
         client._transport.app.state.agent_manager = AsyncMock()
@@ -3475,7 +3475,9 @@ class TestWebAgent:
             )
         )
 
-        resp = await client.get("/agent?thread_id=1")
+        # Runtime status + the composer's model-select/hint moved into the lazy
+        # threads fragment (#949); the skeleton route no longer renders them.
+        resp = await client.get("/agent/fragments/threads?thread_id=1")
 
         assert resp.status_code == 200
         assert "deepagents" in resp.text
