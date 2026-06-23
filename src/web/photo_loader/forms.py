@@ -69,6 +69,7 @@ class PhotoAutoCreateForm(_FrozenForm):
 
 class PhotoPhoneForm(_FrozenForm):
     phone: str
+    dry_run: bool = False
 
 
 class PhotoAutoUpdateForm(_FrozenForm):

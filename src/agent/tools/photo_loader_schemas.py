@@ -48,7 +48,10 @@ CREATE_PHOTO_BATCH_SCHEMA = {
     "confirm": CONFIRM_ARG,
 }
 
-RUN_PHOTO_DUE_SCHEMA = {"confirm": CONFIRM_ARG}
+RUN_PHOTO_DUE_SCHEMA = {
+    "dry_run": Annotated[bool, "Только предпросмотр: показать, что отправилось бы, без реальной отправки"],
+    "confirm": CONFIRM_ARG,
+}
 TOGGLE_AUTO_UPLOAD_SCHEMA = {"job_id": AUTO_JOB_ID_ARG}
 DELETE_AUTO_UPLOAD_SCHEMA = {"job_id": AUTO_JOB_ID_ARG, "confirm": CONFIRM_ARG}
 

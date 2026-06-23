@@ -155,8 +155,8 @@ async def photo_auto_create(
 
 
 @router.post("/run-due")
-async def photo_run_due(request: Request, phone: str = Form("")):
-    result = await handle_photo_run_due(request, PhotoPhoneForm(phone=phone))
+async def photo_run_due(request: Request, phone: str = Form(""), dry_run: bool = Form(False)):
+    result = await handle_photo_run_due(request, PhotoPhoneForm(phone=phone, dry_run=dry_run))
     return photo_loader_response(request, result)
 
 

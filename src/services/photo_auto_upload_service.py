@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -10,6 +11,24 @@ from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import IMAGE_EXTENSIONS
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PhotoAutoPreview:
+    """A dry-run plan: the files a job *would* publish, and where, without sending.
+
+    Returned by ``run_job(dry_run=True)`` / ``run_due(dry_run=True)`` so callers can
+    show "what would be posted" without any Telegram I/O, dedup marking, or job-state
+    mutation. ``send_mode`` already reflects the album→separate fallback so the preview
+    matches what the real send would do.
+    """
+
+    job_id: int
+    target_dialog_id: int
+    target_title: str | None
+    target_type: str | None
+    send_mode: PhotoSendMode
+    files: list[str] = field(default_factory=list)
 
 
 class PhotoAutoUploadService:
@@ -51,31 +70,52 @@ class PhotoAutoUploadService:
     async def delete_job(self, job_id: int) -> None:
         await self._bundle.delete_auto_job(job_id)
 
-    async def run_due(self) -> int:
+    async def run_due(self, dry_run: bool = False) -> int | list[PhotoAutoPreview]:
+        """Run every due job. In dry-run mode, return a per-job preview list instead of
+        sending — no Telegram I/O, no dedup marking, no job-state mutation."""
         jobs = await self._bundle.list_auto_jobs(active_only=True)
-        processed = 0
         now = datetime.now(timezone.utc)
-        for job in jobs:
-            if not self._is_due(job, now):
-                continue
+        due_jobs = [job for job in jobs if self._is_due(job, now)]
+        if dry_run:
+            previews: list[PhotoAutoPreview] = []
+            for job in due_jobs:
+                preview = await self.run_job(job.id or 0, dry_run=True)
+                assert isinstance(preview, PhotoAutoPreview)  # narrow for type-checkers
+                previews.append(preview)
+            return previews
+        processed = 0
+        for job in due_jobs:
             await self.run_job(job.id or 0)
             processed += 1
         return processed
 
-    async def run_job(self, job_id: int) -> int:
+    async def run_job(self, job_id: int, dry_run: bool = False) -> int | PhotoAutoPreview:
+        """Publish new files for a job. In dry-run mode, return a :class:`PhotoAutoPreview`
+        of what *would* be sent and exit before any send, dedup mark, or state update."""
         job = await self._bundle.get_auto_job(job_id)
         if job is None:
             raise ValueError(f"Auto job not found: {job_id}")
         self._validate_folder(job.folder_path)
         files = await self._collect_new_files(job)
+        send_mode = job.send_mode
+        if send_mode == PhotoSendMode.ALBUM and len(files) < 2:
+            send_mode = PhotoSendMode.SEPARATE
+        if dry_run:
+            # Build the plan and bail out before any side effect: no send_now(), no
+            # mark_auto_file_sent(), no update_auto_job() — job state stays frozen.
+            return PhotoAutoPreview(
+                job_id=job.id or 0,
+                target_dialog_id=job.target_dialog_id,
+                target_title=job.target_title,
+                target_type=job.target_type,
+                send_mode=send_mode,
+                files=files,
+            )
         now = datetime.now(timezone.utc)
         if not files:
             await self._bundle.update_auto_job(job.id or 0, error="", last_run_at=now)
             return 0
         try:
-            send_mode = job.send_mode
-            if send_mode == PhotoSendMode.ALBUM and len(files) < 2:
-                send_mode = PhotoSendMode.SEPARATE
 
             async def _mark_sent(file_path: str, _ids: list[int], _jid: int = job.id or 0) -> None:
                 # Mark each file the moment it is published so a mid-batch failure

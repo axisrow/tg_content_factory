@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.models import PhotoAutoUploadJob, PhotoSendMode
-from src.services.photo_auto_upload_service import PhotoAutoUploadService
+from src.services.photo_auto_upload_service import PhotoAutoPreview, PhotoAutoUploadService
 
 
 def _make_job(**overrides) -> PhotoAutoUploadJob:
@@ -243,6 +243,130 @@ async def test_run_job_error_records(service, bundle, tmp_path):
     # Error should be recorded
     error_calls = [c for c in bundle.update_auto_job.call_args_list if c[1].get("error")]
     assert len(error_calls) > 0
+
+
+# --- run_job dry-run ---
+
+
+async def test_run_job_dry_run_does_not_send(service, bundle, tmp_path):
+    """dry-run must build a preview without ever calling send_now (no Telegram I/O)."""
+    job = _make_job(folder_path=str(tmp_path))
+    bundle.get_auto_job.return_value = job
+    bundle.has_sent_auto_file.return_value = False
+
+    (tmp_path / "img1.jpg").write_bytes(b"\xff\xd8\xff")
+    (tmp_path / "img2.png").write_bytes(b"\x89PNG")
+
+    preview = await service.run_job(1, dry_run=True)
+
+    # No real send — the publish service must not be touched at all.
+    service._publish.send_now.assert_not_awaited()
+    # Preview carries the files that *would* be sent plus the routing context.
+    assert isinstance(preview, PhotoAutoPreview)
+    assert preview.job_id == 1
+    assert preview.target_dialog_id == job.target_dialog_id
+    assert len(preview.files) == 2
+    assert all(f.endswith((".jpg", ".png")) for f in preview.files)
+
+
+async def test_run_job_dry_run_does_not_mark_or_advance_state(service, bundle, tmp_path):
+    """dry-run must not touch the dedup table nor shift last_run_at/last_seen_marker."""
+    job = _make_job(folder_path=str(tmp_path))
+    bundle.get_auto_job.return_value = job
+    bundle.has_sent_auto_file.return_value = False
+
+    (tmp_path / "img1.jpg").write_bytes(b"\xff\xd8\xff")
+
+    await service.run_job(1, dry_run=True)
+
+    # Dedup table untouched — file is NOT recorded as sent.
+    bundle.mark_auto_file_sent.assert_not_awaited()
+    # Job state untouched — no last_run_at / last_seen_marker / error write.
+    bundle.update_auto_job.assert_not_awaited()
+
+
+async def test_run_job_dry_run_no_files_empty_preview(service, bundle, tmp_path):
+    """dry-run over an empty/fully-sent folder yields an empty preview, no state writes."""
+    job = _make_job(folder_path=str(tmp_path))
+    bundle.get_auto_job.return_value = job
+
+    preview = await service.run_job(1, dry_run=True)
+
+    assert isinstance(preview, PhotoAutoPreview)
+    assert preview.files == []
+    service._publish.send_now.assert_not_awaited()
+    bundle.update_auto_job.assert_not_awaited()
+
+
+async def test_run_job_dry_run_album_fallback_reflected(service, bundle, tmp_path):
+    """A single-file ALBUM job previews as SEPARATE, mirroring the real send path."""
+    job = _make_job(folder_path=str(tmp_path), send_mode=PhotoSendMode.ALBUM)
+    bundle.get_auto_job.return_value = job
+    bundle.has_sent_auto_file.return_value = False
+
+    (tmp_path / "single.jpg").write_bytes(b"\xff\xd8\xff")
+
+    preview = await service.run_job(1, dry_run=True)
+
+    assert preview.send_mode == PhotoSendMode.SEPARATE
+    service._publish.send_now.assert_not_awaited()
+
+
+# --- run_due dry-run ---
+
+
+async def test_run_due_dry_run_returns_previews_without_sending(service, bundle, tmp_path):
+    """run_due(dry_run=True) collects per-job previews and never sends or marks."""
+    job = _make_job(folder_path=str(tmp_path))
+    bundle.list_auto_jobs.return_value = [job]
+    bundle.get_auto_job.return_value = job
+    bundle.has_sent_auto_file.return_value = False
+
+    (tmp_path / "img1.jpg").write_bytes(b"\xff\xd8\xff")
+
+    previews = await service.run_due(dry_run=True)
+
+    assert isinstance(previews, list)
+    assert len(previews) == 1
+    assert isinstance(previews[0], PhotoAutoPreview)
+    assert previews[0].files
+    service._publish.send_now.assert_not_awaited()
+    bundle.mark_auto_file_sent.assert_not_awaited()
+    bundle.update_auto_job.assert_not_awaited()
+
+
+async def test_run_due_dry_run_skips_not_due(service, bundle):
+    job = _make_job(is_active=False)
+    bundle.list_auto_jobs.return_value = [job]
+    previews = await service.run_due(dry_run=True)
+    assert previews == []
+
+
+# --- regression: normal mode unchanged ---
+
+
+async def test_run_job_normal_mode_still_sends(service, bundle, tmp_path):
+    """dry_run=False (default) keeps the original send + mark + state-advance behavior."""
+    job = _make_job(folder_path=str(tmp_path))
+    bundle.get_auto_job.return_value = job
+    bundle.has_sent_auto_file.return_value = False
+
+    async def _fake_send_now(**kwargs):
+        cb = kwargs.get("on_file_sent")
+        if cb is not None:
+            for path in kwargs["file_paths"]:
+                await cb(path, [1])
+        return [1] * len(kwargs["file_paths"])
+
+    service._publish.send_now = AsyncMock(side_effect=_fake_send_now)
+
+    (tmp_path / "img1.jpg").write_bytes(b"\xff\xd8\xff")
+
+    result = await service.run_job(1)
+    assert result == 1
+    service._publish.send_now.assert_awaited_once()
+    bundle.mark_auto_file_sent.assert_awaited()
+    bundle.update_auto_job.assert_awaited()
 
 
 # --- _validate_folder ---
