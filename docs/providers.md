@@ -35,9 +35,25 @@ Context7 & operator caution
 
 - A Context7 shim adapter exists (provider name "context7") but operator consent is required before routing production traffic to third-party MSPs. Prefer local or operator-controlled providers.
 
+Image adapters (issue #958)
+
+- The OpenAI, Together and Replicate image adapters use their official SDKs
+  (`openai`, `replicate`) rather than raw aiohttp: OpenAI via `AsyncOpenAI.images.generate`,
+  Together via the same SDK pointed at Together's OpenAI-compatible `base_url`
+  (so no heavy `together` SDK), and Replicate via `replicate` `async_run`
+  (which replaces the hand-rolled create-then-poll loop).
+- The `openai` SDK was already in the tree transitively via `langchain-openai`;
+  it is now a direct dependency. `replicate` is lightweight (httpx + pydantic).
+- HuggingFace deliberately stays on raw aiohttp: its SDK's `text_to_image`
+  returns a `PIL.Image` (a Pillow dependency) whereas the raw path saves the
+  returned `image/*` bytes directly.
+
 Testing
 
-- Adapter unit tests mock aiohttp.ClientSession (see tests/test_provider_adapters.py).
+- Image-adapter unit tests mock the SDK client (`openai.AsyncOpenAI`,
+  `replicate.client.Client`); the HuggingFace adapter test still mocks
+  `aiohttp.ClientSession`. See tests/test_image_adapters.py and tests/test_provider_adapters.py.
+- The text/LLM adapters still mock aiohttp.ClientSession.
 - For integration tests, mock HTTP responses with aioresponses or monkeypatch aiohttp.ClientSession.
 
 Security
