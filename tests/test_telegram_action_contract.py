@@ -23,6 +23,17 @@ ENTRYPOINT_ROOTS = (
 )
 ENTRYPOINT_FILES = {
     Path("src/services/telegram_command_dispatcher.py"),
+    # Per-domain dispatcher mixins (#1047) must keep delegating Telegram actions
+    # through TelegramActionService, same as the facade they were split out of.
+    Path("src/services/dispatcher/dialogs_mixin.py"),
+    Path("src/services/dispatcher/channels_mixin.py"),
+    Path("src/services/dispatcher/accounts_mixin.py"),
+    Path("src/services/dispatcher/auth_mixin.py"),
+    Path("src/services/dispatcher/scheduler_mixin.py"),
+    Path("src/services/dispatcher/notifications_mixin.py"),
+    Path("src/services/dispatcher/photo_mixin.py"),
+    Path("src/services/dispatcher/search_mixin.py"),
+    Path("src/services/dispatcher/moderation_mixin.py"),
 }
 ENTRYPOINT_FORBIDDEN_ACTION_CALLS = {
     "send_message",
