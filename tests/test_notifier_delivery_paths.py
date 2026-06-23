@@ -348,6 +348,67 @@ class TestNotifierCircuitBreaker:
         assert notifier.is_degraded is False
 
     @pytest.mark.anyio
+    async def test_below_threshold_recovery_emits_log(self, mock_target_service, caplog):
+        """Regression (#955 cycle-review): the hand-rolled breaker logged
+        'recovered' on a successful send after ANY accumulated failures, even a
+        below-threshold streak that never opened the circuit. The pybreaker
+        migration must preserve that — a state-change listener alone misses it
+        because no transition fires when the circuit never opened.
+        """
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,  # direct send_message path
+            failure_threshold=3,
+        )
+
+        # Two failures (below threshold=3 → breaker never opens), then success.
+        assert await notifier.notify("x") is False
+        assert await notifier.notify("x") is False
+        assert notifier.is_degraded is False  # never opened
+
+        mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+        mock_client.send_message = AsyncMock(return_value=None)
+        with caplog.at_level("INFO", logger="src.telegram.notifier"):
+            assert await notifier.notify("x") is True
+
+        assert any("recovered" in r.message.lower() for r in caplog.records), (
+            "below-threshold recovery must still log 'recovered'"
+        )
+
+    @pytest.mark.anyio
+    async def test_clean_success_does_not_log_recovery(self, mock_target_service, caplog):
+        """No prior failures → no 'recovered' line (matches the old _on_success
+        guard: log only when failures were accumulated)."""
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(return_value=SimpleNamespace(id=42))
+        mock_client.send_message = AsyncMock(return_value=None)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,
+            failure_threshold=3,
+        )
+
+        with caplog.at_level("INFO", logger="src.telegram.notifier"):
+            assert await notifier.notify("x") is True
+            assert await notifier.notify("x") is True
+
+        assert not any("recovered" in r.message.lower() for r in caplog.records), (
+            "a clean success with no prior failures must not log recovery"
+        )
+
+    @pytest.mark.anyio
     async def test_recovery_after_cooldown_emits_log(self, mock_target_service, caplog):
         """The 'recovered' INFO must fire when a half-open probe succeeds."""
         notifier = self._failing_notifier(mock_target_service, threshold=2, cooldown=100.0)

@@ -34,10 +34,15 @@ class _NotifierProbeError(RuntimeError):
 class _NotifierBreakerListener(pybreaker.CircuitBreakerListener):
     """Bridge pybreaker state transitions back to the notifier.
 
-    Two jobs: (1) preserve the exact log lines the hand-rolled breaker emitted
-    (#553), and (2) stamp/clear the cooldown deadline on a monotonic clock so the
-    notifier never has to read pybreaker's private storage to decide whether the
-    cooldown has elapsed.
+    Two jobs: (1) emit the exact "entering degraded state" warning the
+    hand-rolled breaker logged on every open (#553), and (2) stamp/clear the
+    cooldown deadline on a monotonic clock so the notifier never has to read
+    pybreaker's private storage to decide whether the cooldown has elapsed.
+
+    Note: the "recovered" INFO is NOT emitted here. The old breaker logged it on
+    *any* successful send that followed accumulated failures — including
+    below-threshold streaks that never tripped the circuit, which produce no
+    state transition. ``Notifier._record_outcome`` owns that log instead.
     """
 
     def __init__(self, notifier: Notifier, cooldown_seconds: float) -> None:
@@ -70,7 +75,6 @@ class _NotifierBreakerListener(pybreaker.CircuitBreakerListener):
             pybreaker.STATE_HALF_OPEN,
         ):
             self._notifier._degraded_until = None
-            logger.info("Notifier recovered; resuming notifications")
 
 
 class Notifier:
@@ -161,7 +165,17 @@ class Notifier:
     def _record_outcome(self, ok: bool) -> None:
         """Advance the breaker state machine for the just-completed send."""
         if ok:
+            # Recovery log: the hand-rolled breaker logged "recovered" on ANY
+            # successful send that followed accumulated failures — including a
+            # below-threshold streak (e.g. fail, fail, success at threshold=3)
+            # where the circuit never opened, so no state transition fires. The
+            # listener only sees open/half-open → closed transitions, so we own
+            # the recovery log here (and the listener does NOT duplicate it) to
+            # preserve the exact #553 log contract 1:1.
+            had_failures = self._breaker.fail_counter != 0 or self._degraded_until is not None
             self._breaker.call(lambda: None)
+            if had_failures:
+                logger.info("Notifier recovered; resuming notifications")
         else:
             try:
                 self._breaker.call(self._raise_probe_error)
