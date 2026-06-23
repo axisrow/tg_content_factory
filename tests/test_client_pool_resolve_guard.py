@@ -250,7 +250,7 @@ class TestNextResolveCapableAt:
         pool.clients = clients
         pool._db = SimpleNamespace()
         monkeypatch.setattr(
-            "src.telegram.client_pool.load_live_usable_accounts",
+            "src.telegram.pool_flood.load_live_usable_accounts",
             AsyncMock(return_value=accounts),
         )
         return pool

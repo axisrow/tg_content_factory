@@ -87,6 +87,16 @@ def _bind_dialog_cache_methods(pool):
     pool._get_cached_dialogs = ClientPool._get_cached_dialogs.__get__(pool, ClientPool)
     pool._get_db_cached_dialogs = ClientPool._get_db_cached_dialogs.__get__(pool, ClientPool)
     pool._store_cached_dialogs = ClientPool._store_cached_dialogs.__get__(pool, ClientPool)
+    # The #1046 decomposition rewrote get_dialogs_for_phone's internal dispatch
+    # from the class-qualified ``ClientPool._fetch_dialogs_for_phone(self, …)`` to
+    # ``self._fetch_dialogs_for_phone(…)`` (equivalent on a real instance). On a
+    # MagicMock(spec=ClientPool) the latter resolves to a mock, so bind the real
+    # collaborators these tests rely on (same pattern as the cache helpers above).
+    pool._fetch_dialogs_for_phone = ClientPool._fetch_dialogs_for_phone.__get__(pool, ClientPool)
+    pool._mark_degraded_cached_dialogs = ClientPool._mark_degraded_cached_dialogs.__get__(
+        pool, ClientPool
+    )
+    pool._dialog_refresh_tasks = {}
 
 
 def _make_channel_dialog(
@@ -236,7 +246,7 @@ async def test_leave_channels_success():
     pool.invalidate_dialogs_cache = MagicMock()
 
     dialogs = [(-100111, "channel"), (999, "dm")]
-    with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
+    with patch("src.telegram.pool_dialogs.asyncio.sleep", AsyncMock()):
         result = await ClientPool.leave_channels(pool, "+1234567890", dialogs)
 
     assert result == {-100111: True, 999: True}
@@ -278,7 +288,7 @@ async def test_leave_channels_partial_failure():
     pool.invalidate_dialogs_cache = MagicMock()
 
     dialogs = [(-100111, "channel"), (-100222, "supergroup")]
-    with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
+    with patch("src.telegram.pool_dialogs.asyncio.sleep", AsyncMock()):
         result = await ClientPool.leave_channels(pool, "+1234567890", dialogs)
 
     assert result[-100111] is False
@@ -315,7 +325,7 @@ async def test_leave_channels_flood_breaks_loop():
     pool.invalidate_dialogs_cache = MagicMock()
 
     dialogs = [(-100111, "channel"), (-100222, "supergroup")]
-    with patch("src.telegram.client_pool.asyncio.sleep", AsyncMock()):
+    with patch("src.telegram.pool_dialogs.asyncio.sleep", AsyncMock()):
         result = await ClientPool.leave_channels(pool, "+1234567890", dialogs)
 
     assert result[-100111] is False
@@ -512,7 +522,7 @@ async def test_get_dialogs_for_phone_partial_on_timeout():
     async def fast_wait_for(coro, timeout):
         return await original_wait_for(coro, timeout=min(timeout, 0.05))
 
-    with patch("src.telegram.client_pool.asyncio.wait_for", fast_wait_for):
+    with patch("src.telegram.pool_dialogs.asyncio.wait_for", fast_wait_for):
         result = await ClientPool.get_dialogs_for_phone(pool, "+1234567890")
 
     assert len(result) == 1
@@ -751,7 +761,7 @@ async def test_get_dialogs_for_phone_partial_timeout_keeps_existing_db_cache(db)
     async def fast_wait_for(coro, timeout):
         return await original_wait_for(coro, timeout=min(timeout, 0.05))
 
-    with patch("src.telegram.client_pool.asyncio.wait_for", fast_wait_for):
+    with patch("src.telegram.pool_dialogs.asyncio.wait_for", fast_wait_for):
         result = await ClientPool.get_dialogs_for_phone(
             pool,
             "+1234567890",

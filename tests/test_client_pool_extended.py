@@ -427,7 +427,7 @@ async def test_resolve_any_entity_warms_cache_on_cold_lookup(mock_db, mock_auth)
     pool.mark_dialogs_fetched = MagicMock()
 
     with patch(
-        "src.telegram.client_pool.adapt_transport_session",
+        "src.telegram.pool_dialogs.adapt_transport_session",
         side_effect=lambda candidate, **_kwargs: candidate,
     ):
         result = await pool.resolve_any_entity("-100777", phone="+7001")
@@ -455,7 +455,7 @@ async def test_resolve_any_entity_no_warm_on_direct_hit(mock_db, mock_auth):
     pool.mark_dialogs_fetched = MagicMock()
 
     with patch(
-        "src.telegram.client_pool.adapt_transport_session",
+        "src.telegram.pool_dialogs.adapt_transport_session",
         side_effect=lambda candidate, **_kwargs: candidate,
     ):
         result = await pool.resolve_any_entity("-100888", phone="+7001")
@@ -479,7 +479,7 @@ async def test_resolve_entity_with_warm_retries_after_warm(mock_db, mock_auth):
     pool.mark_dialogs_fetched = MagicMock()
 
     with patch(
-        "src.telegram.client_pool.adapt_transport_session",
+        "src.telegram.pool_dialogs.adapt_transport_session",
         side_effect=lambda candidate, **_kwargs: candidate,
     ):
         result = await pool.resolve_entity_with_warm(session, "+7001", object())
@@ -503,7 +503,7 @@ async def test_resolve_entity_with_warm_uses_input_entity_resolver(mock_db, mock
     pool.mark_dialogs_fetched = MagicMock()
 
     with patch(
-        "src.telegram.client_pool.adapt_transport_session",
+        "src.telegram.pool_dialogs.adapt_transport_session",
         side_effect=lambda candidate, **_kwargs: candidate,
     ):
         result = await pool.resolve_entity_with_warm(
@@ -525,7 +525,7 @@ async def test_await_transient_flood_sleeps_for_short_flood(mock_db, mock_auth):
     pool = ClientPool(mock_auth, mock_db)
     pool._get_account_for_phone = AsyncMock(return_value=acc)
 
-    with patch("src.telegram.client_pool.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+    with patch("src.telegram.pool_flood.asyncio.sleep", new=AsyncMock()) as sleep_mock:
         await pool._await_transient_flood("+7001")
 
     sleep_mock.assert_awaited_once()
@@ -541,7 +541,7 @@ async def test_await_transient_flood_skips_long_flood(mock_db, mock_auth):
     pool = ClientPool(mock_auth, mock_db)
     pool._get_account_for_phone = AsyncMock(return_value=acc)
 
-    with patch("src.telegram.client_pool.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+    with patch("src.telegram.pool_flood.asyncio.sleep", new=AsyncMock()) as sleep_mock:
         await pool._await_transient_flood("+7001")
 
     sleep_mock.assert_not_awaited()
@@ -555,7 +555,7 @@ async def test_await_transient_flood_noop_when_clear(mock_db, mock_auth):
     pool = ClientPool(mock_auth, mock_db)
     pool._get_account_for_phone = AsyncMock(return_value=acc)
 
-    with patch("src.telegram.client_pool.asyncio.sleep", new=AsyncMock()) as sleep_mock:
+    with patch("src.telegram.pool_flood.asyncio.sleep", new=AsyncMock()) as sleep_mock:
         await pool._await_transient_flood("+7001")
 
     sleep_mock.assert_not_awaited()

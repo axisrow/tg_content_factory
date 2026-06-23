@@ -821,8 +821,8 @@ class TestClientPoolResolveChannel:
         async def fake_run_with_flood_wait(coro, **kw):
             return await coro
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=fake_run_with_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=fake_run_with_flood_wait):
             result = await pool.resolve_channel("-12345")
 
         assert result is not None
@@ -842,8 +842,8 @@ class TestClientPoolResolveChannel:
         async def fake_run_with_flood_wait(coro, **kw):
             return coro
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=fake_run_with_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=fake_run_with_flood_wait):
             result = await pool.resolve_channel("@some_user")
 
         assert result is None
@@ -858,8 +858,8 @@ class TestClientPoolResolveChannel:
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
         pool.release_client = AsyncMock()
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=asyncio.TimeoutError):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=asyncio.TimeoutError):
             result = await pool.resolve_channel("@test")
 
         assert result is None

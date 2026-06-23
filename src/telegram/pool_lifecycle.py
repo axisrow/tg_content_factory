@@ -90,8 +90,11 @@ class ClientLifecycleMixin:
 
         async def force_reconnect_phone(self, phone: str) -> bool: ...
 
+        # Signature mirrors ResolveGuardMixin exactly: ClientPool inherits all
+        # four mixins, so a divergent stub here would make mypy flag the method
+        # as incompatibly redefined across base classes (#1046).
         async def restore_resolve_username_backoff(
-            self, db: Database, *, phones: list[str] | None = None
+            self, db: object, *, phones: Iterable[str] | None = None
         ) -> None: ...
 
     def _connected_phones(self) -> set[str]:
