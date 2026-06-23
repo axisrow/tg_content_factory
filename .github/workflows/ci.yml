@@ -138,6 +138,9 @@ jobs:
   # "Assert the smoke test really ran" step.
   e2e:
     runs-on: ubuntu-latest
+    # Bound the whole job so a hung browser/server can't burn the 6h default.
+    # Each playwright-cli call also has its own 120s timeout (console_smoke._run_cli).
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -197,6 +200,9 @@ jobs:
           RUN_E2E_CONSOLE_SMOKE: "1"
           E2E_BASE_URL: http://localhost:8080
           WEB_PASS: ci-secret
+          # Wait briefly after each page load so console errors fired async
+          # shortly after load are still captured before the one-shot read.
+          E2E_SETTLE: "0.5"
         run: pytest tests/e2e/test_console_smoke.py -m e2e -rs --junitxml=e2e-results.xml
 
       # Guard against the "silent zero": prove the smoke actually executed as
