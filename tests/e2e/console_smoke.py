@@ -1,4 +1,4 @@
-"""Console-error smoke check for the web panel, driven by ``playwright-cli``.
+"""Console-error smoke check for the web panel, driven by ``pytest-playwright``.
 
 Why a standalone module (issue #792): a manual ``playwright-cli console`` pass on
 one page already found 0 errors (#788), but regressions are inevitable. This
@@ -6,14 +6,22 @@ walks **every** main panel page in a real browser and asserts that none of them
 logs a JS error to the console. The check is opt-in (a live server must be
 running) and intentionally lives next to ``tests/e2e/test_collection_flow.py``.
 
-Design notes:
+Design notes (issue #1014 — migrated off the external ``playwright-cli`` binary):
 
-- We shell out to the already-installed ``playwright-cli`` binary rather than
-  pulling in ``pytest-playwright`` + uvicorn-in-a-thread fixtures. The CLI keeps
-  a persistent browser session between invocations, so the flow is just
-  ``open`` → (login once) → ``goto`` (per page) → ``console error`` → ``close``.
-- ``playwright-cli`` clears its console buffer on navigation, so after a
-  ``goto`` the buffer holds only that page's messages — exactly what we want.
+- We drive the **Playwright Python API** (a declared ``[dev]`` dependency; the
+  browser is installed locally with ``playwright install --with-deps chromium``)
+  instead of shelling out to the ``playwright-cli`` binary. This removes the
+  "undeclared external dependency" and the brittle text-parsing of the CLI's
+  stdout: console errors are read directly off ``page.on("console")`` /
+  ``page.on("pageerror")`` and the landed path off ``page.url`` — no regex over
+  CLI output. This check is run **locally** (gate ``RUN_E2E_CONSOLE_SMOKE=1``
+  against a server started with ``python -m src.main serve``); it is not wired
+  into CI.
+- Console capture: Playwright does NOT buffer console events across navigations
+  the way the CLI did, so we attach a listener once per page and ``goto`` with
+  that listener live, collecting only that page's messages. ``pageerror`` catches
+  uncaught JS exceptions (which Chromium also logs to the console, but the
+  dedicated event is the robust source).
 - Auth: ``BasicAuthMiddleware`` only sends a ``401`` Basic challenge for
   non-HTML requests; a browser navigation (``Accept: text/html``) instead gets a
   ``303`` redirect to ``/login``, and Chromium never replays URL-embedded
@@ -23,21 +31,30 @@ Design notes:
   which authenticates every later navigation, and after each ``goto`` we assert
   the page did NOT bounce back to ``/login`` so a broken auth fails loudly rather
   than passing green. With no password configured the panel is open and we skip
-  the login step. The password is typed into the form field (never embedded in a
-  navigation URL); ``playwright-cli`` diagnostics are redacted so it never leaks
-  into log/exception text (it can still be visible in local process args while
-  the ``fill`` runs — an inherent limit of any CLI that takes the value as argv).
+  the login step. The password is typed into the form field (``page.fill``) and
+  never embedded in a navigation URL; Playwright never echoes the value back, but
+  we still redact it from any diagnostic/exception text as a belt-and-braces
+  guard so ``WEB_PASS`` can never leak into a log or a failure message.
+- Dead server: ``page.goto`` raises a Playwright error (``ERR_CONNECTION_REFUSED``,
+  a timeout, …) which we wrap in :class:`ConsoleSmokeError`. A mute/misconfigured
+  server therefore fails loudly instead of walking every page and reporting "0
+  errors" (the silent false-negative the gated test must never produce) — the
+  Python-API equivalent of the old "exit 0 + ``### Error``" guard.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
-import re
-import subprocess
 import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import TYPE_CHECKING, Generator
 from urllib.parse import urlsplit
+
+if TYPE_CHECKING:
+    from playwright.sync_api import Browser, ConsoleMessage, Page
+    from playwright.sync_api import Error as PlaywrightError
 
 # The main panel pages to walk. Originally mirrored the list in issue #792;
 # extended in #1013 to cover newer full-page routes (incl. the session features
@@ -75,30 +92,28 @@ PANEL_PATHS: tuple[str, ...] = (
     "/scheduler",
 )
 
-# "Total messages: 4 (Errors: 2, Warnings: 1)" — the summary line that
-# ``playwright-cli console`` always prints. We read the error count from it
-# rather than counting "[ERROR]" lines, so the parse is robust even when the
-# CLI truncates or reformats the message bodies.
-_ERROR_COUNT_RE = re.compile(r"Errors:\s*(\d+)", re.IGNORECASE)
-
-PLAYWRIGHT_CLI = "playwright-cli"
 LOGIN_PATH = "/login"
 # CSS selector for the panel's login form field (src/web/templates/web_login.html).
 _PASSWORD_FIELD = "#password"
 _REDACTED = "***"
-# ``playwright-cli`` reports operational failures (connection refused, element not
-# found, failed eval, …) by printing a ``### Error`` block to stdout while still
-# exiting 0 — so a non-zero exit code alone misses them. We treat this marker as a
-# failure too, otherwise a dead/misconfigured server would walk every page and
-# report "0 errors" (a silent false-negative the gated test must never produce).
-_CLI_ERROR_MARKER = "### Error"
+# Per-action navigation/console timeout (ms). A hung navigation against a wedged
+# server must fail the gated run loudly rather than block forever — pytest's own
+# 120s deadlock guard is the outer backstop. NOTE: a single wedged navigation can
+# burn up to this whole budget, so against a genuinely slow (but working) server
+# the 12-page walk could approach the 120s pytest timeout; this check is run by
+# hand against a local server, so that trade-off is acceptable — lower this or the
+# page set if a slow target trips the outer guard.
+_DEFAULT_TIMEOUT_MS = 30_000
 
 
-class PlaywrightCliError(RuntimeError):
-    """Raised when a ``playwright-cli`` invocation fails.
+class ConsoleSmokeError(RuntimeError):
+    """Raised when a Playwright operation fails (dead server, bad navigation, …).
 
-    Covers both a non-zero exit and the exit-0 ``### Error`` stdout block the CLI
-    emits for operational failures (connection refused, missing element, …).
+    This is the Python-API equivalent of the old CLI's "exit 0 + ``### Error``"
+    guard: it turns an operational failure (connection refused, navigation
+    timeout, missing login field, …) into a loud error so a dead/misconfigured
+    server can never walk every page and report "0 errors" — a silent
+    false-negative the gated test must never produce.
     """
 
 
@@ -124,54 +139,22 @@ class PageResult:
 
 
 def _redact(text: str, secrets: tuple[str, ...]) -> str:
-    """Replace each non-empty secret in ``text`` with ``***``."""
+    """Replace each non-empty secret in ``text`` with ``***``.
+
+    The Playwright Python API never puts the password on a process argv (unlike
+    the old ``playwright-cli``), but we still scrub it from any diagnostic or
+    exception text as a belt-and-braces guard so ``WEB_PASS`` can never leak into
+    a log or a failure message via a caller that interpolates the error.
+    """
     for secret in secrets:
         if secret:
             text = text.replace(secret, _REDACTED)
     return text
 
 
-def _run_cli(*args: str, session: str | None = None, secrets: tuple[str, ...] = ()) -> str:
-    """Run ``playwright-cli`` and return its stdout; raise on failure.
-
-    Failure is either a non-zero exit OR an exit-0 ``### Error`` stdout block (the
-    CLI reports operational errors that way — see ``_CLI_ERROR_MARKER``).
-
-    ``secrets`` are redacted from EVERYTHING this function returns or raises (the
-    echoed command, captured stdout/stderr, the success-path return value, and a
-    timeout diagnostic), so a password passed to ``fill`` — which the CLI echoes
-    back verbatim on success (``…fill('<pw>')``) — never leaks into the returned
-    text, logs, or exceptions. NOTE: ``subprocess.TimeoutExpired`` is converted to
-    ``PlaywrightCliError`` here because its own ``str()`` embeds the raw argv
-    (cleartext password); letting it propagate would leak the secret via any caller
-    that interpolates the exception (e.g. the gated pytest fixture).
-    """
-    cmd = [PLAYWRIGHT_CLI]
-    if session:
-        cmd.append(f"-s={session}")
-    cmd.extend(args)
-    cmd_shown = _redact(" ".join(cmd), secrets)
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    except subprocess.TimeoutExpired as exc:
-        out = _redact(exc.stdout or "", secrets) if isinstance(exc.stdout, str) else ""
-        err = _redact(exc.stderr or "", secrets) if isinstance(exc.stderr, str) else ""
-        raise PlaywrightCliError(f"`{cmd_shown}` timed out after {exc.timeout}s:\n{out}\n{err}") from None
-    stdout = _redact(proc.stdout, secrets)
-    if proc.returncode != 0 or _CLI_ERROR_MARKER in proc.stdout:
-        stderr = _redact(proc.stderr, secrets)
-        raise PlaywrightCliError(f"`{cmd_shown}` failed (exit {proc.returncode}):\n{stdout}\n{stderr}")
-    return stdout
-
-
-def current_path(*, session: str | None = None) -> str:
-    """Return the browser's current ``location.pathname`` (no query/host)."""
-    output = _run_cli("eval", "() => location.pathname", session=session)
-    # ``eval`` prints the JSON result on its own line, e.g. `"/settings/"`.
-    match = re.search(r'"([^"]*)"', output)
-    if match is None:
-        raise PlaywrightCliError(f"could not read location.pathname from:\n{output}")
-    return match.group(1)
+def _path_of(url: str) -> str:
+    """Return just the ``location.pathname`` of a full URL (no scheme/host/query)."""
+    return urlsplit(url).path
 
 
 def _is_login_path(path: str) -> bool:
@@ -179,52 +162,129 @@ def _is_login_path(path: str) -> bool:
     return path.rstrip("/") == LOGIN_PATH
 
 
-def login(base_url: str, password: str, *, session: str | None = None) -> None:
+def _console_error_text(msg: "ConsoleMessage") -> str:
+    """Render a console error message in the old ``[ERROR] ...`` reporting shape.
+
+    The location (URL:line) mirrors the ``@ file:line`` suffix the CLI printed,
+    so ``format_summary`` output stays familiar across the migration.
+    """
+    loc = msg.location or {}
+    where = loc.get("url", "") if isinstance(loc, dict) else ""
+    line = loc.get("lineNumber", 0) if isinstance(loc, dict) else 0
+    suffix = f" @ {where}:{line}" if where else ""
+    return f"[ERROR] {msg.text}{suffix}"
+
+
+def _attach_error_listeners(page: "Page", sink: list[str]) -> None:
+    """Collect console *errors* and uncaught page errors into ``sink``.
+
+    Mirrors the old ``console error`` filter: only ``console.error`` calls and
+    uncaught JS exceptions count — warnings/info/log are ignored.
+    """
+
+    def _on_console(msg: "ConsoleMessage") -> None:
+        if msg.type == "error":
+            sink.append(_console_error_text(msg))
+
+    def _on_pageerror(exc: "PlaywrightError") -> None:
+        # Uncaught JS exception (e.g. a thrown Error). ``exc.message`` is the
+        # error text; Chromium also surfaces these on the console, but the
+        # dedicated event is the robust source.
+        sink.append(f"[ERROR] {exc.message}")
+
+    page.on("console", _on_console)
+    page.on("pageerror", _on_pageerror)
+
+
+@contextmanager
+def browser_session(*, headless: bool = True) -> Generator["Browser", None, None]:
+    """Launch a headless Chromium and always close it, even on error.
+
+    A failed run must not leave a zombie browser process behind, mirroring the
+    old ``finally: close`` contract. Import is local so merely importing this
+    module (e.g. for the pure-logic unit tests) does not require Playwright. A
+    missing Chromium build (``playwright install`` not run) raises a Playwright
+    error at launch, which we wrap in :class:`ConsoleSmokeError` so the caller
+    sees the same operational-failure type as a navigation error.
+    """
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.launch(headless=headless)
+        except PlaywrightError as exc:
+            raise ConsoleSmokeError(f"failed to launch Chromium: {exc.message}") from None
+        try:
+            yield browser
+        finally:
+            browser.close()
+
+
+def _goto(page: "Page", url: str, *, secrets: tuple[str, ...] = ()) -> None:
+    """Navigate, converting any Playwright error into a redacted ConsoleSmokeError.
+
+    A dead/misconfigured server raises here (``ERR_CONNECTION_REFUSED``, a
+    navigation timeout, …) rather than silently walking on — the Python-API
+    equivalent of the old "exit 0 + ``### Error``" guard.
+    """
+    from playwright.sync_api import Error as PlaywrightError
+
+    try:
+        page.goto(url, wait_until="load")
+    except PlaywrightError as exc:
+        raise ConsoleSmokeError(_redact(f"navigation to {url} failed: {exc.message}", secrets)) from None
+
+
+def login(page: "Page", base_url: str, password: str) -> None:
     """Authenticate the browser session via the real ``/login`` form.
 
     Navigates to ``/login``, fills the password field and submits; the panel
     responds with a session cookie that authenticates every later navigation.
-    Raises if the form did not authenticate (still on ``/login`` afterwards).
+    Raises :class:`RedirectedToLoginError` if the form did not authenticate
+    (still on ``/login`` afterwards). The password is typed into the field and
+    never embedded in a URL; it is redacted from any error text as a guard.
     """
+    from playwright.sync_api import Error as PlaywrightError
+
     base = base_url.rstrip("/")
     secrets = (password,)
-    _run_cli("goto", f"{base}{LOGIN_PATH}", session=session, secrets=secrets)
-    _run_cli("fill", _PASSWORD_FIELD, password, "--submit", session=session, secrets=secrets)
-    if _is_login_path(current_path(session=session)):
+    _goto(page, f"{base}{LOGIN_PATH}", secrets=secrets)
+    try:
+        page.fill(_PASSWORD_FIELD, password)
+        # Submitting reloads to the target page; wait for that navigation so the
+        # session cookie is set before we read the landed path.
+        with page.expect_navigation(wait_until="load"):
+            page.press(_PASSWORD_FIELD, "Enter")
+    except PlaywrightError as exc:
+        raise ConsoleSmokeError(_redact(f"login form interaction failed: {exc.message}", secrets)) from None
+    if _is_login_path(_path_of(page.url)):
         raise RedirectedToLoginError("login failed: still on /login after submitting the password (wrong WEB_PASS?)")
 
 
-def parse_error_count(console_output: str) -> int:
-    """Extract the error count from ``playwright-cli console`` output."""
-    match = _ERROR_COUNT_RE.search(console_output)
-    if match is None:
-        raise PlaywrightCliError(f"could not find an error count in console output:\n{console_output}")
-    return int(match.group(1))
-
-
-def _error_lines(console_output: str) -> list[str]:
-    """Collect the ``[ERROR] ...`` lines, for human-readable reporting."""
-    return [line.strip() for line in console_output.splitlines() if line.lstrip().startswith("[ERROR]")]
-
-
-def check_page(base_url: str, path: str, *, session: str | None = None, settle: float = 0.0) -> PageResult:
+def check_page(page: "Page", base_url: str, path: str, *, settle: float = 0.0) -> PageResult:
     """Navigate to one page and read back its console errors.
 
     Raises :class:`RedirectedToLoginError` if the navigation bounced to ``/login``
     (an unauthenticated session) — otherwise a broken auth would silently report
-    the clean login form as a clean panel page. ``settle`` optionally sleeps after
-    navigation so console errors emitted shortly after load (async/deferred) are
-    still captured before the one-shot console read.
+    the clean login form as a clean panel page. ``settle`` optionally waits that
+    many seconds after the ``load`` event before reading the console, so errors
+    emitted asynchronously a moment after load (a deferred fetch that rejects,
+    say) are still captured while the listener is live. The default (``0.0``)
+    reads immediately, matching the old CLI behaviour.
     """
     base = base_url.rstrip("/")
-    _run_cli("goto", f"{base}{path}", session=session)
-    landed = current_path(session=session)
+    errors: list[str] = []
+    _attach_error_listeners(page, errors)
+    _goto(page, f"{base}{path}")
+    landed = _path_of(page.url)
     if _is_login_path(landed) and not _is_login_path(path):
         raise RedirectedToLoginError(f"navigation to {path!r} bounced to {landed!r}: session is not authenticated")
     if settle > 0:
-        _run_cli("eval", f"() => new Promise(r => setTimeout(r, {int(settle * 1000)}))", session=session)
-    output = _run_cli("console", "error", session=session)
-    return PageResult(path=path, error_count=parse_error_count(output), errors=_error_lines(output))
+        # The listener stays attached, so errors fired during this window land in
+        # ``errors`` too. ``wait_for_timeout`` takes milliseconds.
+        page.wait_for_timeout(settle * 1000)
+    return PageResult(path=path, error_count=len(errors), errors=list(errors))
 
 
 def run_smoke(
@@ -232,25 +292,29 @@ def run_smoke(
     password: str | None = None,
     paths: tuple[str, ...] = PANEL_PATHS,
     *,
-    session: str | None = None,
+    headless: bool = True,
+    timeout_ms: int = _DEFAULT_TIMEOUT_MS,
     settle: float = 0.0,
 ) -> list[PageResult]:
     """Open a browser, (log in if needed,) walk every panel page, return results.
 
-    The browser session is always closed, even on error, so a failed run does
-    not leave a zombie ``playwright-cli`` process behind.
+    The browser is always closed, even on error (see :func:`browser_session`),
+    so a failed run does not leave a zombie process behind. A fresh page is used
+    per panel path so each page's console listener only sees its own messages.
+    ``settle`` is forwarded to :func:`check_page` (seconds to wait after each
+    page load before reading the console; default reads immediately).
     """
     base = base_url.rstrip("/")
-    _run_cli("open", base, session=session)
-    try:
-        if password:
-            login(base, password, session=session)
-        return [check_page(base, path, session=session, settle=settle) for path in paths]
-    finally:
+    with browser_session(headless=headless) as browser:
+        context = browser.new_context()
+        context.set_default_timeout(timeout_ms)
+        context.set_default_navigation_timeout(timeout_ms)
         try:
-            _run_cli("close", session=session)
-        except PlaywrightCliError:
-            pass
+            if password:
+                login(context.new_page(), base, password)
+            return [check_page(context.new_page(), base, path, settle=settle) for path in paths]
+        finally:
+            context.close()
 
 
 def format_summary(results: list[PageResult]) -> str:
@@ -293,6 +357,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Panel password (defaults to the WEB_PASS env var; omit if the panel is open).",
     )
     parser.add_argument(
+        "--headed",
+        action="store_true",
+        help="Run with a visible browser window (default: headless).",
+    )
+    parser.add_argument(
         "--settle",
         type=float,
         default=float(os.environ.get("E2E_SETTLE", "0") or "0"),
@@ -304,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
     if not urlsplit(args.base_url).scheme:
         parser.error(f"--base-url must include a scheme, got {args.base_url!r}")
 
-    results = run_smoke(args.base_url, args.web_pass, settle=args.settle)
+    results = run_smoke(args.base_url, args.web_pass, headless=not args.headed, settle=args.settle)
     print(format_summary(results))
     return 0 if all(r.clean for r in results) else 1
 
