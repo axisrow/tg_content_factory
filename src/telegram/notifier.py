@@ -93,6 +93,15 @@ class Notifier:
         self._admin_chat_id = admin_chat_id
         self._notification_bundle = notification_bundle
         self._cached_me_id: int | None = None
+        # Serialises the whole gate → send → record cycle of notify(). The
+        # Notifier is a long-lived instance shared by concurrent collection
+        # workers (each can alert on FloodWait), and pybreaker's own threading
+        # lock cannot bridge the `await` between the breaker check and the
+        # outcome record. Without this, two coroutines could both pass the
+        # half-open gate (double-probe), or one could re-open the breaker while
+        # another is mid-send and then trip an uncaught CircuitBreakerError on
+        # the success path (#955 cycle-review).
+        self._send_lock = asyncio.Lock()
         # Circuit-breaker state. Both knobs are clamped to sane minimums: a
         # non-positive cooldown would expire immediately and turn the breaker
         # into a no-op (degraded state never holds), defeating the whole point.
@@ -135,13 +144,26 @@ class Notifier:
         # exceptions), so it runs outside pybreaker; we only feed the outcome
         # through the synchronous state machine. pybreaker owns open/half-open/
         # cooldown exactly as the previous hand-rolled logic did.
-        if not self._enter_attempt():
-            # Degraded and still within cooldown: skip entirely (no log spam).
-            return False
+        #
+        # The whole cycle is serialised so the breaker can never observe an
+        # interleaved state change across the `await` below: that would let two
+        # callers both probe in half-open, or re-open the breaker mid-send and
+        # surface an uncaught CircuitBreakerError to the caller (#955).
+        async with self._send_lock:
+            if not self._enter_attempt():
+                # Degraded and still within cooldown: skip (no log spam).
+                return False
 
-        ok = await self._attempt_send(text)
-        self._record_outcome(ok)
-        return ok
+            # _enter_attempt may have flipped the breaker to half-open, so the
+            # outcome MUST be recorded even if the send is cancelled — otherwise
+            # the breaker is stranded half-open and admits every later send with
+            # no cooldown. Treat cancellation as a failed probe (re-opens).
+            ok = False
+            try:
+                ok = await self._attempt_send(text)
+            finally:
+                self._record_outcome(ok)
+            return ok
 
     def _enter_attempt(self) -> bool:
         """Decide whether a send may be attempted, advancing the breaker.
@@ -173,7 +195,13 @@ class Notifier:
             # the recovery log here (and the listener does NOT duplicate it) to
             # preserve the exact #553 log contract 1:1.
             had_failures = self._breaker.fail_counter != 0 or self._degraded_until is not None
-            self._breaker.call(lambda: None)
+            try:
+                self._breaker.call(lambda: None)
+            except pybreaker.CircuitBreakerError:
+                # Defence in depth: the _send_lock means the breaker should not
+                # be open here, but pybreaker raises if it ever is (open + cooldown
+                # not elapsed). Swallow it so notify() keeps its bool contract.
+                return
             if had_failures:
                 logger.info("Notifier recovered; resuming notifications")
         else:
