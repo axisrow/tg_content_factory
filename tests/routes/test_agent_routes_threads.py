@@ -419,9 +419,10 @@ async def test_chat_codex_adk_model_survives_validation(client, db, backend):
 
     These backends have no UI model picker; the page no longer renders a Claude
     dropdown for them, but a stale localStorage value could still POST a model.
-    The web handler must accept the request (200) and hand it to chat_stream,
-    which is where the per-backend model allow-list is enforced. We assert via a
-    stream that captures the model kwarg so the request demonstrably reaches it.
+    The web handler must accept the request (200) and forward the model to
+    chat_stream, which is where the per-backend allow-list (model_for_backend)
+    drops a cross-backend ID. We capture the model kwarg and assert the exact
+    value forwarded so a wrong value can't slip past a mere membership check.
     """
     thread_id = await db.create_agent_thread("Chat")
 
@@ -431,7 +432,8 @@ async def test_chat_codex_adk_model_survives_validation(client, db, backend):
     runtime.error = None
     client._transport_app.state.agent_manager.get_runtime_status = AsyncMock(return_value=runtime)
 
-    captured = {}
+    sentinel = object()
+    captured = {"model": sentinel}
 
     async def fake_stream(*args, **kwargs):
         captured["model"] = kwargs.get("model")
@@ -440,6 +442,8 @@ async def test_chat_codex_adk_model_survives_validation(client, db, backend):
     client._transport_app.state.agent_manager.chat_stream = fake_stream
 
     # A stale Claude model id from localStorage must not 500 the codex/adk chat.
+    # select_model() accepts it (a real Claude ID), so the handler forwards it
+    # verbatim; chat_stream is where model_for_backend would then drop it.
     resp = await client.post(
         f"/agent/threads/{thread_id}/chat",
         content=json.dumps({"message": "hi", "model": "claude-sonnet-4-6"}),
@@ -447,7 +451,19 @@ async def test_chat_codex_adk_model_survives_validation(client, db, backend):
     )
 
     assert resp.status_code == 200
-    assert "model" in captured  # reached chat_stream, never crashed mid-validation
+    assert captured["model"] == "claude-sonnet-4-6"  # reached chat_stream, exact value
+
+    # An unknown/garbage model id is coerced to None by the handler's select_model
+    # before chat_stream ever sees it — never a 500.
+    captured["model"] = sentinel
+    resp = await client.post(
+        f"/agent/threads/{thread_id}/chat",
+        content=json.dumps({"message": "hi again", "model": "not-a-real-model"}),
+        headers={"Content-Type": "application/json"},
+    )
+
+    assert resp.status_code == 200
+    assert captured["model"] is None
 
 
 @pytest.mark.anyio
