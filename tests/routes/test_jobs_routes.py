@@ -71,6 +71,7 @@ async def test_jobs_page_renders_lazyload_shell(route_client):
     assert 'id="jobs-table"' in body
     assert 'hx-get="/jobs/fragments/list"' in body
     assert 'hx-trigger="load"' in body
+    assert 'hx-swap="innerHTML"' in body
 
 
 async def test_jobs_page_omits_table_data(route_client):

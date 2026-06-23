@@ -1,9 +1,10 @@
-"""Unified background-jobs read API + fragment (#964).
+"""Unified background-jobs read API + fragment (#964) + dashboard page (#965).
 
 Read-only views over JobsReadModel (the #963 unified read-model): a JSON list and
-an HTML table fragment, both filterable by source / runtime-state. No DB writes
-and no Telegram API calls — purely reads collection_tasks/telegram_commands/
-photo_* tables plus the runtime snapshots.
+an HTML table fragment, both filterable by source / runtime-state, plus the
+lazyloaded dashboard page that hosts the fragment. No DB writes and no Telegram
+API calls — purely reads collection_tasks/telegram_commands/photo_* tables plus
+the runtime snapshots.
 """
 
 from __future__ import annotations
