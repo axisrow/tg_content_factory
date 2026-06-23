@@ -173,11 +173,13 @@ def pytest_collection(session) -> None:
     args keep their order within a directory — so an already-contiguous
     invocation is a no-op and the run order is otherwise untouched.
 
-    Skip entirely under fail-fast (``-x`` / ``--maxfail``): there the *order* in
-    which files run decides which tests execute before pytest stops, so silently
-    reordering args could change the result of the user's exact command. Leaving
-    fail-fast runs untouched means they behave exactly as vanilla pytest would —
-    we never alter their stop point (review note, #1008).
+    Skip entirely under fail-fast (``-x`` / ``--maxfail=N``, N>0): there the
+    *order* in which files run decides which tests execute before pytest stops,
+    so silently reordering args could change the result of the user's exact
+    command. Leaving fail-fast runs untouched means they behave exactly as
+    vanilla pytest would — we never alter their stop point (review note, #1008).
+    ``--maxfail=0`` is "no limit" in pytest (not fail-fast), so its falsey value
+    correctly lets the regroup run.
     """
     if getattr(session.config.option, "maxfail", 0):
         return
