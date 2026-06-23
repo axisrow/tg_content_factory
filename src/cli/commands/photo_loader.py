@@ -217,8 +217,29 @@ def run(args: argparse.Namespace) -> None:
 
             if action == "run-due":
                 item_id = getattr(args, "item_id", None)
+                dry_run = getattr(args, "dry_run", False)
+                if dry_run:
+                    # Preview only: never touch scheduled photo items (the task path has no
+                    # dry-run); show the auto-job plan and exit before any send/mark.
+                    previews = await auto.run_due(dry_run=True)
+                    assert isinstance(previews, list)  # narrow run_due's int|list return
+                    print(f"[dry-run] Would process {len(previews)} due auto job(s); nothing sent.")
+                    for preview in previews:
+                        title = preview.target_title or preview.target_dialog_id
+                        print(
+                            f"  job #{preview.job_id} → {title} "
+                            f"(dialog_id={preview.target_dialog_id}, mode={preview.send_mode.value}): "
+                            f"{len(preview.files)} file(s)"
+                        )
+                        for file_path in preview.files:
+                            print(f"    - {file_path}")
+                    return
                 items = await tasks.run_due(item_id=item_id)
-                jobs = 0 if item_id is not None else await auto.run_due()
+                jobs = 0
+                if item_id is None:
+                    processed = await auto.run_due()
+                    assert isinstance(processed, int)  # non-dry-run returns a count
+                    jobs = processed
                 print(f"Processed due photo items={items} auto_jobs={jobs}")
                 return
         except ValueError as exc:

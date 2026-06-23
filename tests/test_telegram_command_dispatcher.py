@@ -1048,6 +1048,44 @@ async def test_photo_run_due():
     assert r["processed_jobs"] == 1
 
 
+async def test_photo_run_due_dry_run_returns_plan_without_sending():
+    """dry_run payload previews auto jobs, serializes them, and never runs the item path."""
+    from src.models import PhotoSendMode
+    from src.services.photo_auto_upload_service import PhotoAutoPreview
+
+    db = _mock_db()
+    pool = _mock_pool()
+    d = _dispatcher(db=db, pool=pool)
+    mock_task_svc = MagicMock()
+    mock_task_svc.run_due = AsyncMock(return_value=99)
+    preview = PhotoAutoPreview(
+        job_id=4,
+        target_dialog_id=-100777,
+        target_title="Chan",
+        target_type="channel",
+        send_mode=PhotoSendMode.ALBUM,
+        files=["/x/1.jpg", "/x/2.jpg"],
+    )
+    mock_auto_svc = MagicMock()
+    mock_auto_svc.run_due = AsyncMock(return_value=[preview])
+    with patch.object(type(d), "_photo_task_service", return_value=mock_task_svc), \
+         patch.object(type(d), "_photo_auto_upload_service", return_value=mock_auto_svc):
+        r = await d._handle_photo_run_due({"dry_run": True})
+    assert r["dry_run"] is True
+    assert r["jobs"] == [
+        {
+            "job_id": 4,
+            "target_dialog_id": -100777,
+            "target_title": "Chan",
+            "target_type": "channel",
+            "send_mode": "album",
+            "files": ["/x/1.jpg", "/x/2.jpg"],
+        }
+    ]
+    mock_auto_svc.run_due.assert_awaited_once_with(dry_run=True)
+    mock_task_svc.run_due.assert_not_awaited()
+
+
 # --- moderation_publish_run ---
 
 

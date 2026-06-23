@@ -187,6 +187,25 @@ async def test_photo_run_due_redirects(route_client):
         mock_auto_svc.return_value.run_due.assert_not_awaited()
     commands = await db.repos.telegram_commands.list_commands(limit=1)
     assert commands[0].command_type == "photo.run_due"
+    assert commands[0].payload == {"dry_run": False}
+
+
+@pytest.mark.anyio
+async def test_photo_run_due_dry_run_enqueues_preview(route_client):
+    """dry_run=true enqueues a photo.run_due command carrying dry_run, with a dry-run
+    redirect code — no send happens in the web layer (the worker previews later)."""
+    db = route_client._transport.app.state.db
+    resp = await route_client.post(
+        "/dialogs/photos/run-due",
+        data={"phone": "+1234567890", "dry_run": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=photo_run_due_dry_queued" in resp.headers["location"]
+    assert "command_id=" in resp.headers["location"]
+    commands = await db.repos.telegram_commands.list_commands(limit=1)
+    assert commands[0].command_type == "photo.run_due"
+    assert commands[0].payload == {"dry_run": True}
 
 
 @pytest.mark.anyio

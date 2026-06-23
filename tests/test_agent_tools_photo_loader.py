@@ -526,6 +526,54 @@ class TestRunPhotoDue:
         assert "items=3" in text
         assert "auto_jobs=2" in text
 
+    @pytest.mark.anyio
+    async def test_dry_run_previews_without_send_or_confirm(self, mock_db):
+        """dry_run=true returns a preview without confirmation, never sends, and never
+        touches the photo-item path."""
+        from src.models import PhotoSendMode
+        from src.services.photo_auto_upload_service import PhotoAutoPreview
+
+        photo_task_svc, auto_upload_svc = _make_photo_services()
+        preview = PhotoAutoPreview(
+            job_id=7,
+            target_dialog_id=-100123,
+            target_title="Канал",
+            target_type="channel",
+            send_mode=PhotoSendMode.SEPARATE,
+            files=["/srv/a.jpg", "/srv/b.png"],
+        )
+        auto_upload_svc.run_due = AsyncMock(return_value=[preview])
+        mock_pool, _ = _make_mock_pool()
+
+        with _photo_ctx(photo_task_svc, auto_upload_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            # No confirm passed — dry-run must not be gated on confirmation.
+            result = await handlers["run_photo_due"]({"dry_run": True})
+
+        text = _text(result)
+        assert "dry-run" in text
+        assert "job #7" in text
+        assert "Канал" in text
+        assert "/srv/a.jpg" in text
+        assert "confirm=true" not in text
+        auto_upload_svc.run_due.assert_awaited_once_with(dry_run=True)
+        photo_task_svc.run_due.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_dry_run_empty_preview(self, mock_db):
+        photo_task_svc, auto_upload_svc = _make_photo_services()
+        auto_upload_svc.run_due = AsyncMock(return_value=[])
+        mock_pool, _ = _make_mock_pool()
+
+        with _photo_ctx(photo_task_svc, auto_upload_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["run_photo_due"]({"dry_run": True})
+
+        text = _text(result)
+        assert "dry-run" in text
+        assert "отправлять нечего" in text
+        photo_task_svc.run_due.assert_not_awaited()
+
 
 class TestCreateAutoUpload:
     @pytest.mark.anyio

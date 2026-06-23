@@ -418,13 +418,16 @@ async def handle_photo_run_due(request: Request, form: PhotoPhoneForm) -> PhotoL
     try:
         command_id = await deps.telegram_command_service(request).enqueue(
             "photo.run_due",
-            payload={},
+            payload={"dry_run": form.dry_run},
             requested_by="web:photo_loader.run_due",
         )
     except Exception:
-        logger.exception("Photo run_due failed: phone=%s", form.phone)
+        logger.exception("Photo run_due failed: phone=%s dry_run=%s", form.phone, form.dry_run)
         return PhotoLoaderRedirect(form.phone, "photo_run_due_failed", error=True)
-    return PhotoLoaderRedirect(form.phone, "photo_run_due_queued", command_id=command_id)
+    # Dry-run still goes through the worker queue (same as a real run); the preview
+    # lands in the command's result for the admin to inspect — nothing is sent.
+    code = "photo_run_due_dry_queued" if form.dry_run else "photo_run_due_queued"
+    return PhotoLoaderRedirect(form.phone, code, command_id=command_id)
 
 
 async def handle_photo_cancel_item(request: Request, item_id: int, form: PhotoPhoneForm) -> PhotoLoaderRedirect:
