@@ -1,0 +1,25 @@
+{# LLM-judge verdict fragment (#999) — swapped into the DOM after a POST to
+   /analytics/channels/rate. `error` carries a user-facing failure reason;
+   `rating` is the persisted ChannelRating on success. #}
+{% if error %}
+<div class="alert alert-warning mb-0" role="alert">{{ error }}</div>
+{% else %}
+<div class="card mb-0">
+  <div class="card-body">
+    <h2 class="h6 mb-2">
+      {{ rating.title or ('@' ~ rating.username if rating.username else rating.channel_id) }}
+      <span class="text-muted">(id={{ rating.channel_id }})</span>
+    </h2>
+    <p class="mb-1">
+      Полезность:
+      <span class="badge bg-{{ 'success' if rating.useful == 'useful' else 'secondary' }}">{{ rating.useful }}</span>
+      &nbsp; Жанр: <span class="badge bg-info">{{ rating.genre }}</span>
+      &nbsp; Уверенность: <strong>{{ '%.2f'|format(rating.confidence) }}</strong>
+    </p>
+    {% if rating.reason %}
+    <p class="text-muted mb-1" style="font-size:0.9rem">{{ rating.reason }}</p>
+    {% endif %}
+    <p class="text-muted mb-0" style="font-size:0.85rem">Постов оценено: {{ rating.n_total }}</p>
+  </div>
+</div>
+{% endif %}

@@ -193,14 +193,15 @@
 | Календарь | `analytics calendar` | `GET /calendar/api/calendar` | `get_calendar` |
 | Аналитика канала | `analytics channel` | `GET /analytics/channels/api/overview` | `get_channel_analytics` |
 | Рейтинг каналов | `analytics channel-rating` | `GET /analytics/channels/api/ratings` | `get_channel_ratings` |
-| Запуск LLM-судьи | `analytics channel-rate <channel_id>` | — (CLI-first, #994) | — (CLI-first, #994) |
+| Запуск LLM-судьи | `analytics channel-rate <channel_id>` | `POST /analytics/channels/rate` | `rate_channel` |
 
-> **CLI-first (#994).** Запуск LLM-судьи (`ChannelAnalysisService.classify_channel`) — write-операция:
-> делает реальный provider-вызов и апсертит вердикт в `channel_ratings`. Подключён сначала к CLI
-> (`analytics channel-rate`). Прочерки в колонках Web/Agent означают **«ещё не реализовано»** (осознанный
-> follow-up), а не «исключено»: Web POST-эндпоинт и agent write-tool для запуска судьи появятся отдельным
-> PR. Read-путь (`channel-rating` / `GET …/ratings` / `get_channel_ratings`) уже даёт паритетный просмотр
-> результата во всех трёх интерфейсах.
+> **LLM-судья — write-операция (#994 CLI, #999 web+agent).** Запуск судьи
+> (`ChannelAnalysisService.classify_channel`) делает реальный provider-вызов и апсертит вердикт в
+> `channel_ratings`. Подключён к CLI (`analytics channel-rate`, #994), web (HTMX POST со swap-фрагментом
+> вердикта) и agent (`rate_channel`, WRITE-категория, гейт `confirm=true`). Все три интерфейса
+> разделяют одни и те же гарды: нет провайдера → отказ без траты; mistyped-модель → ошибка (не молчаливый
+> stub-вердикт); пустой канал → пропуск без provider-вызова. Read-путь (`channel-rating` /
+> `GET …/ratings` / `get_channel_ratings`) даёт паритетный просмотр результата.
 
 ## Dialogs
 
