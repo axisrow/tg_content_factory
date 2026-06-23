@@ -22,7 +22,7 @@
 
 ### Важно про FastAPI vs Web
 
-- **FastAPI REST** — JSON-эндпоинты, потребляемые **программами**. Единственный полноценный REST-контур для внешних интеграций — `/api/tasks` (interop #829: create/claim/complete/fail). Остальные JSON-эндпоинты (`/jobs/api/list`, `/calendar/api/calendar`, `/messages/{id}`, `/pipelines/{id}/runs`, `/settings/flood-status`, `/rss.xml`…) — это **машинные parity-зеркала** внутри HTML-роутеров, дающие CLI↔Web паритет и доступ для скриптов. (Пути указаны с реальными префиксами роутеров из `src/web/assembly.py`.)
+- **FastAPI REST** — JSON-эндпоинты, потребляемые **программами**. Единственный полноценный REST-контур для внешних интеграций — `/api/tasks` (interop #829: create/claim/complete/fail). Остальные JSON-эндпоинты (`/jobs/api/list`, `/calendar/api/calendar`, `/messages/{identifier}`, `/pipelines/{id}/runs`, `/settings/flood-status`, `/rss.xml`…) — это **машинные parity-зеркала** внутри HTML-роутеров, дающие CLI↔Web паритет и доступ для скриптов. (Пути указаны с реальными префиксами роутеров из `src/web/assembly.py`.)
 - **Web** — то, что видит человек: HTML-страницы, HTMX-частичные обновления, SSE-стримы (agent chat, generate-stream), формы. Это НЕ JSON и НЕ для программ.
 - Один и тот же роутер часто отдаёт **обе** поверхности (HTML-страница + JSON parity-эндпоинт). В таблицах ниже они разнесены.
 
@@ -444,9 +444,9 @@ Rate/cost-лимиты на провайдеров, учёт дневных за
 
 Инвентарь поверхностей:
 - **FastAPI REST** — 1 полноценный REST-контур (`/api/tasks`, interop #829) + машинные JSON parity-эндпоинты в ~14 роутерах
-- **Web** (HTML/HTMX) — 27 роутеров, 18 UI-страниц меню
+- **Web** (HTML/HTMX) — 26 смонтированных роутеров (`src/web/routes/`), 18 UI-страниц меню
 - **CLI** — 26 top-level команд, ~209 leaf-команд
-- **Agent-tools** — 20 групп (26 файлов с тулами), 173 tools (75 read / 82 write / 16 delete) — авторитетный счёт из `TOOL_CATEGORIES`/`MODULE_GROUPS` (`src/agent/tools/permissions.py`, инвариант `tests/test_agent_tools_permissions.py`)
+- **Agent-tools** — 20 групп, 173 tools (75 read / 82 write / 16 delete) — авторитетный счёт из `TOOL_CATEGORIES`/`MODULE_GROUPS` (`src/agent/tools/permissions.py`, инвариант `tests/test_agent_tools_permissions.py`)
 - **TUI** — 1 app (`AgentTuiApp`), покрывает только сервис «AI-агент»
 
 Распределение по статусу:
