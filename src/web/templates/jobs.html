@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "_macros_ui.html" import loading %}
+{% block title %}Задачи — TG Agent{% endblock %}
+{% block content %}
+<h1 class="h3 mb-3">Фоновые задачи</h1>
+<p class="text-muted">
+  Единая таблица всех agent/runtime задач: что выполняется сейчас, что ждёт из-за
+  pause-gate, что отложено flood-wait, pending и failed. Фильтры по источнику и статусу.
+</p>
+
+{# The table (and its filter form) paints lazily via an HTMX fragment so the page
+   shell loads instantly on large databases (#756 lazyload pattern, #965). The
+   fragment route renders the filter form too, so filtering re-swaps in place. #}
+<div id="jobs-table"
+     hx-get="/jobs/fragments/list"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  {{ loading() }}
+</div>
+{% endblock %}
