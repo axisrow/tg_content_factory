@@ -10,7 +10,7 @@ import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional, Protocol, runtime_checkable
 
 import aiohttp
 
@@ -18,6 +18,17 @@ logger = logging.getLogger(__name__)
 
 # Type alias for image generation adapters
 ImageAdapter = Callable[[str, str], Awaitable[Optional[str]]]
+
+
+@runtime_checkable
+class _ImageResultLike(Protocol):
+    """Structural type for a provider image result: a hosted ``url`` or inline
+    ``b64_json``.  The OpenAI SDK's ``Image`` model satisfies this, so SDK and
+    raw-HTTP (``dict``) results share one normalisation path."""
+
+    url: Optional[str]
+    b64_json: Optional[str]
+
 
 # Default directory where binary / base64 image results are persisted.
 # Must match where the web app serves generated images from — ``DATA_IMAGE_DIR``
@@ -63,18 +74,25 @@ async def save_image_b64(b64_data: str, output_dir: str | None = None) -> str:
 
 
 async def finalize_image_result(
-    item: dict[str, Any], output_dir: str | None = None
+    item: dict[str, Any] | _ImageResultLike, output_dir: str | None = None
 ) -> Optional[str]:
     """Normalise one provider result entry to a URL or a saved file path.
 
     Providers return either a hosted ``url`` (kept as-is) or an inline
     ``b64_json`` payload (decoded and saved to disk).  Centralising this keeps
-    every adapter's output shape identical.
+    every adapter's output shape identical.  Accepts either a plain ``dict`` (raw
+    HTTP adapters) or any object exposing ``url`` / ``b64_json`` attributes — the
+    OpenAI SDK's typed ``Image`` model — so SDK and HTTP adapters share one
+    normalisation path.
     """
-    url = item.get("url")
+    if isinstance(item, dict):
+        url = item.get("url")
+        b64_data = item.get("b64_json")
+    else:  # OpenAI SDK Image (or any url/b64_json-bearing object)
+        url = getattr(item, "url", None)
+        b64_data = getattr(item, "b64_json", None)
     if url:
         return str(url)
-    b64_data = item.get("b64_json")
     if b64_data:
         return await save_image_b64(str(b64_data), output_dir)
     return None
@@ -83,6 +101,19 @@ async def finalize_image_result(
 # Without it aiohttp waits indefinitely and a stalled upstream hangs the calling
 # coroutine forever (#633 bug #10).
 _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=120)
+
+# Same 120s budget for the SDK-backed image adapters (OpenAI/Together/Replicate).
+# Passed to the SDK clients so a stalled upstream surfaces a timeout instead of
+# hanging the calling coroutine — matching the raw-aiohttp behaviour above.
+_OPENAI_TIMEOUT_SECONDS = 120.0
+
+# Image generation is NOT idempotent and is billed per request. The openai SDK
+# defaults to max_retries=2, so a transient timeout/5xx/429 would replay the POST
+# — and a provider that already produced (and charged for) the first image would
+# bill again, while the effective wall-clock stretches past the 120s budget. The
+# old raw-aiohttp adapters issued exactly one POST, so we restore that by passing
+# max_retries=0 to every image client (cycle-review #1003 / Codex finding).
+_OPENAI_MAX_RETRIES = 0
 
 
 def _coerce_str(v: Any) -> str:
@@ -212,28 +243,43 @@ def make_context7_adapter(
 # ── Image generation adapters ──────────────────────────────────────────
 
 
+TOGETHER_API_BASE = "https://api.together.xyz/v1"
+TOGETHER_DEFAULT_IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell"
+
+
 def make_together_image_adapter(api_key: str) -> ImageAdapter:
-    """Together AI image generation via FLUX models."""
+    """Together AI image generation via FLUX models.
+
+    Together's images endpoint is OpenAI-compatible, so this drives the official
+    ``openai`` SDK with Together's ``base_url`` instead of a heavy ``together``
+    SDK.  ``steps`` is a Together-specific knob with no slot in the OpenAI
+    request model, so it rides along via ``extra_body``.
+    """
 
     async def adapter(prompt: str, model: str = "") -> Optional[str]:
-        url = "https://api.together.xyz/v1/images/generations"
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload: Dict[str, Any] = {
-            "model": model or "black-forest-labs/FLUX.1-schnell",
-            "prompt": prompt,
-            "n": 1,
-            "steps": 4,
-        }
-        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise RuntimeError(f"Together image error {resp.status}: {text}")
-                data = await resp.json()
-                items = data.get("data")
-                if not items:
-                    raise RuntimeError(f"Together image: empty 'data' in response: {data}")
-                return await finalize_image_result(items[0])
+        from openai import AsyncOpenAI
+
+        # ``async with`` closes the client's httpx connection pool after the call,
+        # matching the old ``async with aiohttp.ClientSession`` lifecycle — the
+        # client is built per call, so leaving it open would leak a pool each time.
+        async with AsyncOpenAI(
+            api_key=api_key,
+            base_url=TOGETHER_API_BASE,
+            timeout=_OPENAI_TIMEOUT_SECONDS,
+            max_retries=_OPENAI_MAX_RETRIES,
+        ) as client:
+            try:
+                response = await client.images.generate(
+                    model=model or TOGETHER_DEFAULT_IMAGE_MODEL,
+                    prompt=prompt,
+                    n=1,
+                    extra_body={"steps": 4},
+                )
+            except Exception as exc:  # surface SDK/API errors with provider context
+                raise RuntimeError(f"Together image error: {exc}") from exc
+            if not response.data:
+                raise RuntimeError(f"Together image: empty 'data' in response: {response}")
+            return await finalize_image_result(response.data[0])
 
     return adapter
 
@@ -271,92 +317,129 @@ def make_huggingface_image_adapter(
 OPENAI_DEFAULT_IMAGE_MODEL = "gpt-image-1"
 
 
-def _build_openai_image_payload(prompt: str, model_id: str) -> Dict[str, Any]:
-    """Assemble the images/generations payload, varying params by model family.
+def _openai_image_params(prompt: str, model_id: str) -> Dict[str, Any]:
+    """Assemble ``images.generate`` kwargs, varying params by model family.
 
     ``gpt-image-1*`` rejects DALL·E-only fields (``response_format``), so only
     the parameters each family accepts are sent.  ``gpt-image-1`` always returns
     ``b64_json``; legacy ``dall-e-*`` returns a hosted ``url``.
     """
-    payload: Dict[str, Any] = {"model": model_id, "prompt": prompt, "n": 1}
+    params: Dict[str, Any] = {"model": model_id, "prompt": prompt, "n": 1}
     if model_id.startswith("gpt-image"):
-        payload["size"] = "auto"
-        payload["quality"] = "auto"
+        params["size"] = "auto"
+        params["quality"] = "auto"
     else:  # legacy dall-e-* family
-        payload["size"] = "1024x1024"
-    return payload
+        params["size"] = "1024x1024"
+    return params
 
 
 def make_openai_image_adapter(api_key: str) -> ImageAdapter:
-    """OpenAI image generation (gpt-image-1, with legacy DALL-E support)."""
+    """OpenAI image generation (gpt-image-1, with legacy DALL-E support).
+
+    Uses the official ``openai`` SDK (``AsyncOpenAI.images.generate``) instead of
+    raw aiohttp, so retries, typed responses and error handling come from the
+    SDK.  ``OPENAI_API_BASE`` is still honoured for OpenAI-compatible gateways.
+    """
 
     async def adapter(prompt: str, model: str = "") -> Optional[str]:
+        from openai import AsyncOpenAI
+
         base = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
-        url = f"{base.rstrip('/')}/images/generations"
-        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-        payload = _build_openai_image_payload(prompt, model or OPENAI_DEFAULT_IMAGE_MODEL)
-        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
-            async with session.post(url, json=payload, headers=headers) as resp:
-                if resp.status != 200:
-                    text = await resp.text()
-                    raise RuntimeError(f"OpenAI image error {resp.status}: {text}")
-                data = await resp.json()
-                items = data.get("data")
-                if not items:
-                    raise RuntimeError(f"OpenAI image: empty 'data' in response: {data}")
-                return await finalize_image_result(items[0])
+        params = _openai_image_params(prompt, model or OPENAI_DEFAULT_IMAGE_MODEL)
+        # ``async with`` closes the httpx pool after the call (per-call client);
+        # ``max_retries=0`` keeps it to a single billed POST like the old adapter.
+        async with AsyncOpenAI(
+            api_key=api_key,
+            base_url=base.rstrip("/"),
+            timeout=_OPENAI_TIMEOUT_SECONDS,
+            max_retries=_OPENAI_MAX_RETRIES,
+        ) as client:
+            try:
+                response = await client.images.generate(**params)
+            except Exception as exc:  # surface SDK/API errors with provider context
+                raise RuntimeError(f"OpenAI image error: {exc}") from exc
+            if not response.data:
+                raise RuntimeError(f"OpenAI image: empty 'data' in response: {response}")
+            return await finalize_image_result(response.data[0])
 
     return adapter
+
+
+REPLICATE_DEFAULT_IMAGE_MODEL = "black-forest-labs/flux-schnell"
+
+
+def _replicate_output_to_url(output: Any) -> Optional[str]:
+    """Normalise a Replicate ``async_run`` result to a hosted URL string.
+
+    Image models return a ``FileOutput`` (``.url``), a list of them, or a bare
+    URL string.  Mirrors the old polling adapter's "first item / string" rule so
+    the returned shape (a URL) is unchanged.
+    """
+    if isinstance(output, list):
+        output = output[0] if output else None
+    if output is None:
+        return None
+    if isinstance(output, str):
+        return output
+    url = getattr(output, "url", None)  # FileOutput
+    return str(url) if url else None
 
 
 def make_replicate_image_adapter(api_token: str, timeout: float = 60.0) -> ImageAdapter:
-    """Replicate async prediction API with polling."""
+    """Replicate image generation via the official ``replicate`` SDK.
+
+    ``replicate.Client.async_run`` creates the prediction and awaits completion
+    internally, replacing the hand-rolled create-then-poll loop.  An outer
+    ``asyncio.wait_for`` preserves the previous overall *timeout* deadline so a
+    stuck prediction still fails instead of hanging forever.
+    """
 
     async def adapter(prompt: str, model: str = "") -> Optional[str]:
-        default_model = "black-forest-labs/flux-schnell"
-        if model and "/" not in model:
-            logger.warning("Replicate: model %r lacks '/' separator, falling back to %s", model, default_model)
-        model_id = model if model and "/" in model else default_model
-        # Use the model route: POST /v1/models/{owner}/{name}/predictions
-        url = f"https://api.replicate.com/v1/models/{model_id}/predictions"
-        headers = {"Authorization": f"Bearer {api_token}", "Content-Type": "application/json"}
-        payload: Dict[str, Any] = {
-            "input": {"prompt": prompt},
-        }
-        async with aiohttp.ClientSession(timeout=_HTTP_TIMEOUT) as session:
-            # Create prediction
-            async with session.post(url, json=payload, headers=headers) as resp:
-                if resp.status not in (200, 201):
-                    text = await resp.text()
-                    raise RuntimeError(f"Replicate create error {resp.status}: {text}")
-                prediction = await resp.json()
+        from replicate.client import Client
 
-            # Poll for completion
-            poll_url = prediction.get("urls", {}).get("get")
-            if not poll_url:
-                raise RuntimeError(f"Replicate: missing poll URL in response: {prediction}")
-            elapsed = 0.0
-            while elapsed < timeout:
-                await asyncio.sleep(1.0)
-                elapsed += 1.0
-                async with session.get(poll_url, headers=headers) as resp:
-                    if resp.status != 200:
-                        continue
-                    result = await resp.json()
-                    status = result.get("status")
-                    if status == "succeeded":
-                        output = result.get("output")
-                        if isinstance(output, list) and output:
-                            return output[0]
-                        if isinstance(output, str):
-                            return output
-                        return None
-                    if status in ("failed", "canceled"):
-                        error = result.get("error", "unknown error")
-                        raise RuntimeError(f"Replicate prediction failed: {error}")
-            raise RuntimeError(f"Replicate prediction timed out after {timeout}s")
+        if model and "/" not in model:
+            logger.warning(
+                "Replicate: model %r lacks '/' separator, falling back to %s",
+                model,
+                REPLICATE_DEFAULT_IMAGE_MODEL,
+            )
+        model_id = model if model and "/" in model else REPLICATE_DEFAULT_IMAGE_MODEL
+        client = Client(api_token=api_token)
+        try:
+            output = await asyncio.wait_for(
+                client.async_run(model_id, input={"prompt": prompt}),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError(f"Replicate prediction timed out after {timeout}s") from exc
+        except Exception as exc:  # surface SDK/API/model errors with provider context
+            raise RuntimeError(f"Replicate prediction failed: {exc}") from exc
+        finally:
+            # replicate.Client lazily builds an internal httpx.AsyncClient but
+            # exposes no public close(), so close its httpx pool directly to match
+            # the old ``async with aiohttp.ClientSession`` lifecycle — the client
+            # is per call, so leaving the pool open would leak one each time.
+            await _aclose_replicate_client(client)
+        return _replicate_output_to_url(output)
 
     return adapter
+
+
+async def _aclose_replicate_client(client: Any) -> None:
+    """Close the httpx pool a ``replicate.Client`` lazily opened, if any.
+
+    The SDK has no public close hook; its internal ``_async_client`` is an
+    ``httpx.AsyncClient`` with ``aclose()``. Best-effort: never let cleanup raise
+    into the caller (the image result has already been produced).
+    """
+    internal = getattr(client, "_async_client", None)
+    aclose = getattr(internal, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except Exception:  # cleanup must not mask a successful generation
+        logger.debug("Replicate: failed to close internal httpx client", exc_info=True)
 
 
 # ── Codex SDK image generation ──
