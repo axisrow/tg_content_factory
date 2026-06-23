@@ -79,7 +79,11 @@ class _FakeImagesResponse:
 def patch_async_openai(monkeypatch, *, response=None, error=None, capture=None):
     """Patch ``openai.AsyncOpenAI`` so ``images.generate`` returns *response*
     (an iterable of ``_FakeImage``) or raises *error*.  When *capture* is a dict,
-    the ``generate`` kwargs and client init kwargs are recorded for assertions.
+    the ``generate`` kwargs, client init kwargs and whether the client was closed
+    (``async with``) are recorded for assertions.
+
+    The fake is an async context manager because the adapters use ``async with
+    AsyncOpenAI(...)`` to close the httpx pool after each call.
     """
 
     class _FakeImages:
@@ -94,7 +98,16 @@ def patch_async_openai(monkeypatch, *, response=None, error=None, capture=None):
         def __init__(self, **kwargs):
             if capture is not None:
                 capture["client_kwargs"] = kwargs
+                capture["closed"] = False
             self.images = _FakeImages()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            if capture is not None:
+                capture["closed"] = True
+            return False
 
     import openai
 
@@ -109,14 +122,31 @@ class _FakeFileOutput:
         self.url = url
 
 
+class _FakeReplicateHttpx:
+    """Stand-in for replicate.Client's internal httpx.AsyncClient (has aclose)."""
+
+    def __init__(self, capture):
+        self._capture = capture
+
+    async def aclose(self):
+        if self._capture is not None:
+            self._capture["closed"] = True
+
+
 def patch_replicate_client(monkeypatch, *, output=None, error=None, hang=False, capture=None):
     """Patch ``replicate.client.Client`` so ``async_run`` returns *output*,
-    raises *error*, or hangs forever (to exercise the timeout path)."""
+    raises *error*, or hangs forever (to exercise the timeout path).
+
+    Exposes a fake ``_async_client`` (with ``aclose``) so the adapter's cleanup
+    path is exercised; sets ``capture["closed"]`` when it is closed.
+    """
 
     class _FakeClient:
         def __init__(self, **kwargs):
             if capture is not None:
                 capture["client_kwargs"] = kwargs
+                capture["closed"] = False
+            self._async_client = _FakeReplicateHttpx(capture)
 
         async def async_run(self, ref, input=None, **params):
             if capture is not None:
@@ -429,6 +459,10 @@ async def test_together_image_adapter_success(monkeypatch):
     assert cap["client_kwargs"]["base_url"] == "https://api.together.xyz/v1"
     assert cap["generate_kwargs"]["model"] == "black-forest-labs/FLUX.1-schnell"
     assert cap["generate_kwargs"]["extra_body"] == {"steps": 4}
+    # Image generation is not idempotent + is billed per request: no SDK retries,
+    # and the per-call client is closed (httpx pool released) like the old adapter.
+    assert cap["client_kwargs"]["max_retries"] == 0
+    assert cap["closed"] is True
 
 
 @pytest.mark.anyio
@@ -540,6 +574,9 @@ async def test_openai_image_adapter_success(monkeypatch):
     assert result == "https://img.example.com/dalle.png"
     assert cap["client_kwargs"]["api_key"] == "fake-key"
     assert cap["client_kwargs"]["base_url"] == "https://api.openai.com/v1"
+    # No SDK retries on the non-idempotent, billed image POST; client is closed.
+    assert cap["client_kwargs"]["max_retries"] == 0
+    assert cap["closed"] is True
 
 
 @pytest.mark.anyio
@@ -667,6 +704,9 @@ async def test_replicate_image_adapter_success(monkeypatch):
     assert cap["client_kwargs"]["api_token"] == "fake-token"
     assert cap["ref"] == "black-forest-labs/flux-schnell"
     assert cap["input"] == {"prompt": "a cat"}
+    # The SDK exposes no public close(), so the adapter closes the internal httpx
+    # pool itself — matching the old ``async with aiohttp.ClientSession`` cleanup.
+    assert cap["closed"] is True
 
 
 @pytest.mark.anyio
@@ -684,10 +724,12 @@ async def test_replicate_image_adapter_string_output(monkeypatch):
 async def test_replicate_image_adapter_error(monkeypatch):
     from src.services.provider_adapters import make_replicate_image_adapter
 
-    patch_replicate_client(monkeypatch, error=RuntimeError("model load error"))
+    cap = patch_replicate_client(monkeypatch, error=RuntimeError("model load error"), capture={})
     adapter = make_replicate_image_adapter("fake-token")
     with pytest.raises(RuntimeError, match="model load error"):
         await adapter("a cat")
+    # Cleanup runs in finally, so the httpx pool is closed even on failure.
+    assert cap["closed"] is True
 
 
 @pytest.mark.anyio

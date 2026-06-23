@@ -68,7 +68,9 @@ class _SDKImage:
 
 def _patch_async_openai(*, images: list):
     """Return a context manager patching ``openai.AsyncOpenAI`` so its
-    ``images.generate`` returns an object with ``.data == images``."""
+    ``images.generate`` returns an object with ``.data == images``.
+
+    The fake is an async context manager — the adapters use ``async with``."""
 
     class _FakeImages:
         async def generate(self, **kwargs):
@@ -77,6 +79,12 @@ def _patch_async_openai(*, images: list):
     class _FakeAsyncOpenAI:
         def __init__(self, **kwargs):
             self.images = _FakeImages()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
 
     import openai
 
@@ -90,10 +98,15 @@ class _FakeFileOutput:
         self.url = url
 
 
+class _FakeReplicateHttpx:
+    async def aclose(self):
+        return None
+
+
 def _patch_replicate(*, output):
     class _FakeClient:
         def __init__(self, **kwargs):
-            pass
+            self._async_client = _FakeReplicateHttpx()
 
         async def async_run(self, ref, input=None, **params):
             return output
@@ -125,6 +138,12 @@ async def test_together_image_adapter_error():
     class _FakeAsyncOpenAI:
         def __init__(self, **kwargs):
             self.images = _FakeImages()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
 
     import openai
 

@@ -107,6 +107,14 @@ _HTTP_TIMEOUT = aiohttp.ClientTimeout(total=120)
 # hanging the calling coroutine — matching the raw-aiohttp behaviour above.
 _OPENAI_TIMEOUT_SECONDS = 120.0
 
+# Image generation is NOT idempotent and is billed per request. The openai SDK
+# defaults to max_retries=2, so a transient timeout/5xx/429 would replay the POST
+# — and a provider that already produced (and charged for) the first image would
+# bill again, while the effective wall-clock stretches past the 120s budget. The
+# old raw-aiohttp adapters issued exactly one POST, so we restore that by passing
+# max_retries=0 to every image client (cycle-review #1003 / Codex finding).
+_OPENAI_MAX_RETRIES = 0
+
 
 def _coerce_str(v: Any) -> str:
     """Coerce a parsed JSON value to ``str``, mapping JSON null to ``""``.
@@ -251,19 +259,27 @@ def make_together_image_adapter(api_key: str) -> ImageAdapter:
     async def adapter(prompt: str, model: str = "") -> Optional[str]:
         from openai import AsyncOpenAI
 
-        client = AsyncOpenAI(api_key=api_key, base_url=TOGETHER_API_BASE, timeout=_OPENAI_TIMEOUT_SECONDS)
-        try:
-            response = await client.images.generate(
-                model=model or TOGETHER_DEFAULT_IMAGE_MODEL,
-                prompt=prompt,
-                n=1,
-                extra_body={"steps": 4},
-            )
-        except Exception as exc:  # surface SDK/API errors with provider context
-            raise RuntimeError(f"Together image error: {exc}") from exc
-        if not response.data:
-            raise RuntimeError(f"Together image: empty 'data' in response: {response}")
-        return await finalize_image_result(response.data[0])
+        # ``async with`` closes the client's httpx connection pool after the call,
+        # matching the old ``async with aiohttp.ClientSession`` lifecycle — the
+        # client is built per call, so leaving it open would leak a pool each time.
+        async with AsyncOpenAI(
+            api_key=api_key,
+            base_url=TOGETHER_API_BASE,
+            timeout=_OPENAI_TIMEOUT_SECONDS,
+            max_retries=_OPENAI_MAX_RETRIES,
+        ) as client:
+            try:
+                response = await client.images.generate(
+                    model=model or TOGETHER_DEFAULT_IMAGE_MODEL,
+                    prompt=prompt,
+                    n=1,
+                    extra_body={"steps": 4},
+                )
+            except Exception as exc:  # surface SDK/API errors with provider context
+                raise RuntimeError(f"Together image error: {exc}") from exc
+            if not response.data:
+                raise RuntimeError(f"Together image: empty 'data' in response: {response}")
+            return await finalize_image_result(response.data[0])
 
     return adapter
 
@@ -329,15 +345,22 @@ def make_openai_image_adapter(api_key: str) -> ImageAdapter:
         from openai import AsyncOpenAI
 
         base = os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1")
-        client = AsyncOpenAI(api_key=api_key, base_url=base.rstrip("/"), timeout=_OPENAI_TIMEOUT_SECONDS)
         params = _openai_image_params(prompt, model or OPENAI_DEFAULT_IMAGE_MODEL)
-        try:
-            response = await client.images.generate(**params)
-        except Exception as exc:  # surface SDK/API errors with provider context
-            raise RuntimeError(f"OpenAI image error: {exc}") from exc
-        if not response.data:
-            raise RuntimeError(f"OpenAI image: empty 'data' in response: {response}")
-        return await finalize_image_result(response.data[0])
+        # ``async with`` closes the httpx pool after the call (per-call client);
+        # ``max_retries=0`` keeps it to a single billed POST like the old adapter.
+        async with AsyncOpenAI(
+            api_key=api_key,
+            base_url=base.rstrip("/"),
+            timeout=_OPENAI_TIMEOUT_SECONDS,
+            max_retries=_OPENAI_MAX_RETRIES,
+        ) as client:
+            try:
+                response = await client.images.generate(**params)
+            except Exception as exc:  # surface SDK/API errors with provider context
+                raise RuntimeError(f"OpenAI image error: {exc}") from exc
+            if not response.data:
+                raise RuntimeError(f"OpenAI image: empty 'data' in response: {response}")
+            return await finalize_image_result(response.data[0])
 
     return adapter
 
@@ -391,9 +414,32 @@ def make_replicate_image_adapter(api_token: str, timeout: float = 60.0) -> Image
             raise RuntimeError(f"Replicate prediction timed out after {timeout}s") from exc
         except Exception as exc:  # surface SDK/API/model errors with provider context
             raise RuntimeError(f"Replicate prediction failed: {exc}") from exc
+        finally:
+            # replicate.Client lazily builds an internal httpx.AsyncClient but
+            # exposes no public close(), so close its httpx pool directly to match
+            # the old ``async with aiohttp.ClientSession`` lifecycle — the client
+            # is per call, so leaving the pool open would leak one each time.
+            await _aclose_replicate_client(client)
         return _replicate_output_to_url(output)
 
     return adapter
+
+
+async def _aclose_replicate_client(client: Any) -> None:
+    """Close the httpx pool a ``replicate.Client`` lazily opened, if any.
+
+    The SDK has no public close hook; its internal ``_async_client`` is an
+    ``httpx.AsyncClient`` with ``aclose()``. Best-effort: never let cleanup raise
+    into the caller (the image result has already been produced).
+    """
+    internal = getattr(client, "_async_client", None)
+    aclose = getattr(internal, "aclose", None)
+    if aclose is None:
+        return
+    try:
+        await aclose()
+    except Exception:  # cleanup must not mask a successful generation
+        logger.debug("Replicate: failed to close internal httpx client", exc_info=True)
 
 
 # ── Codex SDK image generation ──
