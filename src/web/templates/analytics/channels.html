@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros_ui.html" import loading %}
 {% block title %}Статистика каналов — TG Agent{% endblock %}
 {% block head_scripts %}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
@@ -17,15 +18,10 @@
 {{ analytics_tabs('channels') }}
 
 <div class="row g-3 mb-3">
-  <div class="col-md-5">
-    <select id="channel-select" class="form-select">
-      <option value="">— выберите канал —</option>
-      {% for ch in channels %}
-      <option value="{{ ch.channel_id }}" {% if ch.channel_id == selected_channel_id %}selected{% endif %}>
-        {{ ch.title or ch.username or ch.channel_id }}
-      </option>
-      {% endfor %}
-    </select>
+  <div class="col-md-5"
+       hx-get="/analytics/channels/fragments/selector?channel_id={{ selected_channel_id | default(0) }}"
+       hx-trigger="load" hx-swap="innerHTML">
+    {{ loading() }}
   </div>
   <div class="col-md-3">
     <div class="btn-group btn-group-sm" role="group" id="period-btns">
@@ -394,9 +390,11 @@
     }
   }
 
-  // Channel select
-  document.getElementById('channel-select').addEventListener('change', function() {
-    var val = parseInt(this.value);
+  // Channel select. The dropdown is loaded lazily via an HTMX fragment (#951),
+  // so the listener is delegated on document rather than bound to the element.
+  document.addEventListener('change', function(e) {
+    if (!e.target || e.target.id !== 'channel-select') return;
+    var val = parseInt(e.target.value);
     if (val) {
       channelId = val;
       var url = new URL(window.location);
