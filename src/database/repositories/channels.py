@@ -400,6 +400,25 @@ class ChannelsRepository:
             await conn.execute(
                 "DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,),
             )
+            # Sidecar tables keyed on `channel_id`/`message_id` with no FK back to
+            # `channels` (so no automatic cascade) would otherwise survive as
+            # orphans pointing at a channel that no longer exists (#1039). These
+            # run after the FK RESTRICT preflight above, so a blocked delete still
+            # rolls back fully — atomicity is preserved. `message_reactions` is
+            # cascaded by the messages DELETE above; `channel_tags` cascades on the
+            # `channels` row delete below.
+            await conn.execute(
+                "DELETE FROM channel_ratings WHERE channel_id = ?", (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM channel_rename_events WHERE channel_id = ?", (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM notified_messages WHERE channel_id = ?", (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM pipeline_action_log WHERE channel_id = ?", (channel_id,),
+            )
             await conn.execute("DELETE FROM channels WHERE id = ?", (pk,))
 
     # ── Tag helpers ──────────────────────────────────────────────────────────

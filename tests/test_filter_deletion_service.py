@@ -4,9 +4,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
+import aiosqlite
 import pytest
 
 from src.database import Database
+from src.database.bundles import ChannelBundle
 from src.models import Channel, Message
 from src.services.channel_service import ChannelService
 from src.services.filter_deletion_service import FilterDeletionService
@@ -232,3 +234,288 @@ async def test_hard_delete_exception_handling(db, channel_service):
     assert result.skipped_count == 1
     assert len(result.errors) == 1
     assert "DB error" in result.errors[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cascade / orphan / atomicity / race coverage (issue #1039)
+#
+# The unit tests above mock ChannelService, so they never exercise the real
+# DELETE cascade. These tests wire a *real* ChannelService over the same
+# in-memory DB the CLI builds (filter.py `_build_deletion_service`), then assert
+# that no sidecar table is left pointing at a deleted channel or message.
+# JOIN convention: every sidecar table keys on the Telegram channel_id, never the
+# `channels.id` pk (see CLAUDE.md "JOIN on channels").
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _real_deletion_service(db: Database) -> FilterDeletionService:
+    """Mirror the CLI's `_build_deletion_service`: a real ChannelService over db
+    with no client pool / queue. hard_delete then runs the genuine cascade."""
+    channel_bundle = ChannelBundle.from_database(db)
+    channel_service = ChannelService(channel_bundle, None, queue=None)  # type: ignore[arg-type]
+    return FilterDeletionService(db, channel_service)
+
+
+async def _seed_channel_with_sidecars(
+    db: Database, *, channel_id: int, message_id: int = 1
+) -> int:
+    """Add a filtered channel plus one message and a row in every sidecar table
+    that references it, so a delete that leaks orphans is observable. Returns pk."""
+    pk = await _add_filtered_channel(db, channel_id=channel_id, title="Sidecar Channel")
+    await db.insert_message(
+        Message(
+            channel_id=channel_id,
+            message_id=message_id,
+            text="msg",
+            date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+    # message-keyed sidecars
+    await db.execute_write(
+        "INSERT INTO message_reactions (channel_id, message_id, emoji, count) "
+        "VALUES (?, ?, ?, ?)",
+        (channel_id, message_id, "👍", 3),
+    )
+    await db.execute_write(
+        "INSERT INTO notified_messages (query_id, channel_id, message_id) VALUES (?, ?, ?)",
+        (1, channel_id, message_id),
+    )
+    await db.execute_write(
+        "INSERT INTO pipeline_action_log "
+        "(pipeline_id, node_id, action, channel_id, message_id) VALUES (?, ?, ?, ?, ?)",
+        (1, "node-a", "publish", channel_id, message_id),
+    )
+    # channel-keyed sidecars
+    await db.execute_write(
+        "INSERT INTO channel_stats (channel_id, subscriber_count) VALUES (?, ?)",
+        (channel_id, 100),
+    )
+    await db.execute_write(
+        "INSERT INTO channel_ratings (channel_id, title, username, useful, genre) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (channel_id, "Sidecar Channel", None, "yes", "news"),
+    )
+    await db.execute_write(
+        "INSERT INTO channel_rename_events (channel_id, old_title, new_title) "
+        "VALUES (?, ?, ?)",
+        (channel_id, "old", "new"),
+    )
+    await db.execute_write(
+        "INSERT INTO forum_topics (channel_id, topic_id, title) VALUES (?, ?, ?)",
+        (channel_id, 7, "General"),
+    )
+    return pk
+
+
+async def _count(db: Database, table: str, channel_id: int) -> int:
+    cur = await db.execute(
+        f"SELECT COUNT(*) AS c FROM {table} WHERE channel_id = ?", (channel_id,)
+    )
+    row = await cur.fetchone()
+    return row["c"]
+
+
+# ── Cascade & orphans: purge (soft-delete, channel stays) ────────────────────
+
+
+@pytest.mark.anyio
+async def test_purge_cascades_to_message_reactions(db):
+    """purge deletes messages; message_reactions FK (ON DELETE CASCADE) must
+    follow so no reaction is left pointing at a now-deleted message."""
+    cid = 100
+    await _seed_channel_with_sidecars(db, channel_id=cid)
+    pk = (await db.get_channel_by_channel_id(cid)).id
+
+    result = await _real_deletion_service(db).purge_channels_by_pks([pk])
+
+    assert result.purged_count == 1
+    assert await _count(db, "messages", cid) == 0
+    assert await _count(db, "message_reactions", cid) == 0
+
+
+@pytest.mark.anyio
+async def test_purge_leaves_no_orphan_notified_messages(db):
+    """Regression (#1039): purge wipes the messages but notified_messages rows
+    keyed on the same message_id were left dangling — an orphan."""
+    cid = 100
+    await _seed_channel_with_sidecars(db, channel_id=cid)
+    pk = (await db.get_channel_by_channel_id(cid)).id
+
+    await _real_deletion_service(db).purge_channels_by_pks([pk])
+
+    assert await _count(db, "notified_messages", cid) == 0
+
+
+@pytest.mark.anyio
+async def test_purge_leaves_no_orphan_pipeline_action_log(db):
+    """Regression (#1039): pipeline_action_log keys on message_id and was orphaned
+    by purge once the parent message vanished."""
+    cid = 100
+    await _seed_channel_with_sidecars(db, channel_id=cid)
+    pk = (await db.get_channel_by_channel_id(cid)).id
+
+    await _real_deletion_service(db).purge_channels_by_pks([pk])
+
+    assert await _count(db, "pipeline_action_log", cid) == 0
+
+
+@pytest.mark.anyio
+async def test_purge_keeps_channel_and_channel_keyed_stats(db):
+    """purge is a *soft* delete: the channel row and its channel-level stats stay.
+    Only message-derived data is removed."""
+    cid = 100
+    await _seed_channel_with_sidecars(db, channel_id=cid)
+    pk = (await db.get_channel_by_channel_id(cid)).id
+
+    await _real_deletion_service(db).purge_channels_by_pks([pk])
+
+    assert await db.get_channel_by_channel_id(cid) is not None
+    assert await _count(db, "channel_stats", cid) == 1
+
+
+# ── Cascade & orphans: hard_delete (channel removed entirely) ────────────────
+
+
+@pytest.mark.anyio
+async def test_hard_delete_removes_channel_and_message_data(db):
+    """hard_delete removes the channel plus its messages, reactions, stats and
+    forum topics — the data delete_channel already handled."""
+    cid = 200
+    pk = await _seed_channel_with_sidecars(db, channel_id=cid)
+
+    result = await _real_deletion_service(db).hard_delete_channels_by_pks([pk])
+
+    assert result.purged_count == 1
+    assert await db.get_channel_by_channel_id(cid) is None
+    assert await _count(db, "messages", cid) == 0
+    assert await _count(db, "message_reactions", cid) == 0
+    assert await _count(db, "channel_stats", cid) == 0
+    assert await _count(db, "forum_topics", cid) == 0
+
+
+@pytest.mark.anyio
+async def test_hard_delete_leaves_no_orphan_channel_ratings(db):
+    """Regression (#1039): channel_ratings (PK=channel_id, no FK) survived
+    hard_delete as an orphan rating for a channel that no longer exists."""
+    cid = 200
+    pk = await _seed_channel_with_sidecars(db, channel_id=cid)
+
+    await _real_deletion_service(db).hard_delete_channels_by_pks([pk])
+
+    assert await _count(db, "channel_ratings", cid) == 0
+
+
+@pytest.mark.anyio
+async def test_hard_delete_leaves_no_orphan_rename_events(db):
+    """Regression (#1039): channel_rename_events orphaned after hard_delete."""
+    cid = 200
+    pk = await _seed_channel_with_sidecars(db, channel_id=cid)
+
+    await _real_deletion_service(db).hard_delete_channels_by_pks([pk])
+
+    assert await _count(db, "channel_rename_events", cid) == 0
+
+
+@pytest.mark.anyio
+async def test_hard_delete_leaves_no_orphan_notified_or_action_log(db):
+    """Regression (#1039): message-keyed sidecars must also be gone after the
+    channel is hard-deleted."""
+    cid = 200
+    pk = await _seed_channel_with_sidecars(db, channel_id=cid)
+
+    await _real_deletion_service(db).hard_delete_channels_by_pks([pk])
+
+    assert await _count(db, "notified_messages", cid) == 0
+    assert await _count(db, "pipeline_action_log", cid) == 0
+
+
+# ── Atomicity: hard_delete must roll back fully on FK RESTRICT ────────────────
+
+
+async def _attach_pipeline_source(db: Database, channel_id: int) -> None:
+    """Create a pipeline + pipeline_source row → a FK RESTRICT on channels."""
+    await db.execute_write(
+        "INSERT INTO content_pipelines (id, name, prompt_template) VALUES (?, ?, ?)",
+        (1, "Pipeline", "tpl"),
+    )
+    await db.execute_write(
+        "INSERT INTO pipeline_sources (pipeline_id, channel_id) VALUES (?, ?)",
+        (1, channel_id),
+    )
+
+
+@pytest.mark.anyio
+async def test_hard_delete_rolls_back_on_fk_restrict(db):
+    """Atomicity (#1039): pipeline_sources.channel_id is FK RESTRICT. delete_channel
+    preflights it and raises *before* deleting any child rows, so a blocked
+    hard_delete leaves messages, reactions and the channel fully intact — no
+    half-deleted state."""
+    cid = 300
+    pk = await _seed_channel_with_sidecars(db, channel_id=cid)
+    await _attach_pipeline_source(db, cid)
+
+    result = await _real_deletion_service(db).hard_delete_channels_by_pks([pk])
+
+    # The service swallows the per-channel error into result.errors, not a raise.
+    assert result.purged_count == 0
+    assert result.skipped_count == 1
+    assert len(result.errors) == 1
+    assert "FOREIGN KEY" in result.errors[0] or "pipeline_sources" in result.errors[0]
+    # Nothing was half-deleted: every row survives the blocked delete.
+    assert await db.get_channel_by_channel_id(cid) is not None
+    assert await _count(db, "messages", cid) == 1
+    assert await _count(db, "message_reactions", cid) == 1
+    assert await _count(db, "channel_stats", cid) == 1
+
+
+@pytest.mark.anyio
+async def test_delete_channel_atomic_rollback_keeps_messages(db):
+    """Lower-level guard on ChannelService.delete: a FK RESTRICT failure raises
+    IntegrityError and the messages DELETE that ran first inside the same
+    transaction is rolled back (BEGIN IMMEDIATE, issue #569)."""
+    cid = 301
+    await _seed_channel_with_sidecars(db, channel_id=cid)
+    pk = (await db.get_channel_by_channel_id(cid)).id
+    await _attach_pipeline_source(db, cid)
+
+    service = ChannelService(ChannelBundle.from_database(db), None, queue=None)  # type: ignore[arg-type]
+    with pytest.raises(aiosqlite.IntegrityError):
+        await service.delete(pk)
+
+    assert await _count(db, "messages", cid) == 1
+    assert await db.get_channel_by_channel_id(cid) is not None
+
+
+# ── Race: ChannelService.delete vs scheduler (task cancel ordering) ───────────
+
+
+@pytest.mark.anyio
+async def test_delete_cancels_tasks_only_after_successful_delete(db):
+    """Race window (#1039, Codex round 11): active collection tasks are *collected*
+    before delete but *cancelled* only after delete_channel succeeds. On FK
+    RESTRICT the delete fails, the channel survives, and its tasks must NOT be
+    cancelled — otherwise a live channel keeps its work silently disabled."""
+    cid = 400
+    await _seed_channel_with_sidecars(db, channel_id=cid)
+    pk = (await db.get_channel_by_channel_id(cid)).id
+    await _attach_pipeline_source(db, cid)
+    # An active collection task the scheduler could still pick up.
+    await db.execute_write(
+        "INSERT INTO collection_tasks (channel_id, task_type, status) VALUES (?, ?, ?)",
+        (cid, "channel_collect", "pending"),
+    )
+
+    queue = MagicMock()
+    queue.cancel_task = AsyncMock()
+    service = ChannelService(ChannelBundle.from_database(db), None, queue=queue)  # type: ignore[arg-type]
+
+    with pytest.raises(aiosqlite.IntegrityError):
+        await service.delete(pk)
+
+    # Delete failed → the surviving channel's task must be left alone.
+    queue.cancel_task.assert_not_awaited()
+    cur = await db.execute(
+        "SELECT status FROM collection_tasks WHERE channel_id = ?", (cid,)
+    )
+    row = await cur.fetchone()
+    assert row["status"] == "pending"
