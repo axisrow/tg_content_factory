@@ -37,6 +37,7 @@ from src.web.panel_auth import (
 )
 from src.web.paths import TEMPLATES_DIR
 from src.web.routes.import_channels import MAX_IMPORT_FILE_BYTES
+from src.web.schemas import OPENAPI_TAGS
 from src.web.snapshot_refresher import SnapshotRefresher
 from src.web.template_globals import configure_template_globals
 
@@ -379,7 +380,16 @@ def create_app(config: AppConfig | None = None) -> FastAPI:
     if config is None:
         config = load_config()
 
-    app = FastAPI(title="TG Post Search", lifespan=lifespan)
+    app = FastAPI(
+        title="TG Post Search",
+        lifespan=lifespan,
+        description=(
+            "REST/JSON endpoints (the `/api/*`-style routes documented here) are "
+            "intended for programmatic consumers. HTML/HTMX routes that render the "
+            "human-facing web UI are omitted from this schema."
+        ),
+        openapi_tags=OPENAPI_TAGS,
+    )
     app.state.config = config
     app.state.log_buffer = build_log_buffer()
     app.state.timing_buffer = build_timing_buffer()

@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.tools.accounts import get_live_account_info_text
 from src.web import deps
+from src.web.schemas.accounts import AccountInfoResponse, FloodStatusItem
+from src.web.schemas.common import ErrorResponse
 
 router = APIRouter()
 
@@ -78,8 +80,19 @@ async def set_primary_account(request: Request, account_id: int):
     return RedirectResponse(url="/settings?msg=account_set_primary", status_code=303)
 
 
-@router.get("/flood-status")
+@router.get(
+    "/flood-status",
+    response_model=list[FloodStatusItem],
+    status_code=200,
+    tags=["accounts"],
+    summary="List per-account flood-wait status",
+)
 async def flood_status(request: Request):
+    """Return flood-wait status for every account (parity with CLI `account flood-status`).
+
+    Each item is 'ok' when the account is not rate-limited, otherwise carries the
+    flood-wait expiry and remaining seconds.
+    """
     db = deps.get_db(request)
     accounts = await db.get_account_summaries()
     now = datetime.now(timezone.utc)
@@ -106,9 +119,19 @@ async def flood_status(request: Request):
     return JSONResponse(result)
 
 
-@router.get("/{account_id}/info")
+@router.get(
+    "/{account_id}/info",
+    response_model=AccountInfoResponse,
+    status_code=200,
+    tags=["accounts"],
+    summary="Account summary plus live diagnostics",
+    responses={404: {"model": ErrorResponse, "description": "Account not found"}},
+)
 async def account_info(request: Request, account_id: int):
-    """Account summary plus live diagnostics as JSON (parity with CLI `account info`)."""
+    """Account summary plus live diagnostics as JSON (parity with CLI `account info`).
+
+    Returns 404 with ``{"error": "account_not_found"}`` for an unknown id.
+    """
     db = deps.get_db(request)
     accounts = await db.get_account_summaries(active_only=False)
     acc = next((a for a in accounts if a.id == account_id), None)
