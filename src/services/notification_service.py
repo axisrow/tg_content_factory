@@ -97,7 +97,18 @@ class NotificationService:
         return True
 
     async def teardown_bot(self) -> None:
-        """Delete the notification bot via BotFather and remove it from DB."""
+        """Delete the notification bot via BotFather and remove it from DB.
+
+        Idempotent after a remote delete (issue #1085): if the bot is already
+        gone from Telegram, ``botfather.delete_bot`` raises
+        :class:`~src.telegram.botfather.BotNotFoundError`. That is treated as
+        "the Telegram delete already happened" — we skip the TG step and proceed
+        straight to the DB-row cleanup, so a repeat teardown can finally remove
+        an orphan row left behind when a prior DB-delete failed (#1041). Any
+        *other* BotFather error means the live bot may still exist, so it is
+        re-raised *before* the DB-delete: we never wipe the row while the bot
+        might still be reachable in Telegram.
+        """
         async with self._target_service.use_client() as (client, _phone):
             me = await asyncio.wait_for(client.get_me(), timeout=15.0)
             tg_user_id: int = me.id
@@ -105,7 +116,20 @@ class NotificationService:
             if bot is None:
                 raise RuntimeError("No notification bot found for this user")
 
-            await botfather.delete_bot(client, bot.bot_username)
+            try:
+                await botfather.delete_bot(client, bot.bot_username)
+            except botfather.BotNotFoundError:
+                # The bot is no longer in /mybots — it was already deleted in
+                # Telegram (e.g. a previous teardown that then failed at the
+                # DB-delete step). Fall through to the local cleanup so the
+                # orphan row can be removed; this is what makes teardown
+                # idempotent and recoverable, not just observable.
+                logger.info(
+                    "Notification bot @%s already absent from Telegram; "
+                    "proceeding with local DB cleanup for user %s",
+                    bot.bot_username,
+                    tg_user_id,
+                )
 
         # BotFather already destroyed the live bot. If the DB row delete now
         # fails the row becomes an orphan: get_status() keeps reporting the bot
