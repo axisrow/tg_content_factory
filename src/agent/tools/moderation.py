@@ -166,11 +166,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            approved = []
-            for rid in ids:
-                await db.repos.generation_runs.set_moderation_status(rid, "approved")
-                approved.append(rid)
-            return _text_response(f"Одобрено {len(approved)} run(s): {approved}")
+            # Atomic batch (#1041): one transaction for all ids — either every
+            # run flips to "approved" or none does. The previous per-id loop
+            # autocommitted each update, so a mid-batch failure left earlier
+            # ids approved with no rollback yet still reported full success.
+            await db.repos.generation_runs.set_moderation_status_bulk(ids, "approved")
+            return _text_response(f"Одобрено {len(ids)} run(s): {ids}")
         except Exception as e:
             return _text_response(f"Ошибка массового одобрения: {e}")
 
@@ -198,11 +199,10 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            rejected = []
-            for rid in ids:
-                await db.repos.generation_runs.set_moderation_status(rid, "rejected")
-                rejected.append(rid)
-            return _text_response(f"Отклонено {len(rejected)} run(s): {rejected}")
+            # Atomic batch (#1041): all ids reject together or none does. See
+            # bulk_approve_runs for the rationale on the prior per-id loop.
+            await db.repos.generation_runs.set_moderation_status_bulk(ids, "rejected")
+            return _text_response(f"Отклонено {len(ids)} run(s): {ids}")
         except Exception as e:
             return _text_response(f"Ошибка массового отклонения: {e}")
 

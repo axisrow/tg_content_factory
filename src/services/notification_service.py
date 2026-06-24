@@ -107,5 +107,21 @@ class NotificationService:
 
             await botfather.delete_bot(client, bot.bot_username)
 
-        await self._notifications.delete_bot(tg_user_id)
+        # BotFather already destroyed the live bot. If the DB row delete now
+        # fails the row becomes an orphan: get_status() keeps reporting the bot
+        # as configured while it no longer exists in Telegram (issue #1041).
+        # Surface that loudly so the operator can clean the stale row instead of
+        # letting it fail silently.
+        try:
+            await self._notifications.delete_bot(tg_user_id)
+        except Exception:
+            logger.error(
+                "Orphan notification bot record: @%s (user %s) was deleted in "
+                "Telegram via BotFather but its DB row could not be removed; "
+                "the row is now stale and must be cleaned up manually",
+                bot.bot_username,
+                tg_user_id,
+                exc_info=True,
+            )
+            raise
         logger.info("Notification bot deleted for user %s", tg_user_id)

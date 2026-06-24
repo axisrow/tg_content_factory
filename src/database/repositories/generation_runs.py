@@ -85,6 +85,25 @@ class GenerationRunsRepository:
             (status, run_id),
         )
 
+    async def set_moderation_status_bulk(self, run_ids: list[int], status: str) -> None:
+        """Atomically set ``moderation_status`` for many runs (issue #1041).
+
+        Bulk approve/reject previously looped one autocommit
+        :meth:`set_moderation_status` per id, so a failure on id N left ids
+        1..N-1 committed with no rollback — a half-applied batch that the tool
+        still reported as a full success. Wrapping every id in a single
+        ``BEGIN IMMEDIATE`` transaction makes the batch all-or-nothing: a
+        mid-batch error rolls the whole update back and propagates so the
+        caller can surface the failure instead of a partial-success message.
+        """
+        if not run_ids:
+            return
+        async with self._database.transaction() as conn:
+            await conn.executemany(
+                "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') WHERE id = ?",
+                [(status, run_id) for run_id in run_ids],
+            )
+
     async def set_image_url(self, run_id: int, image_url: str) -> None:
         await self._database.execute_write(
             "UPDATE generation_runs SET image_url = ?, updated_at = datetime('now') WHERE id = ?",
