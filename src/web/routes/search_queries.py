@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from src.models import SearchQuery, SearchQueryDailyStat
 from src.web import deps
+from src.web.schemas.common import ErrorResponse
 from src.web.search_queries import handlers
 from src.web.search_queries.forms import SearchQueryForm, search_query_form
 from src.web.search_queries.responses import search_query_response
@@ -9,18 +11,40 @@ from src.web.search_queries.responses import search_query_response
 router = APIRouter()
 
 
-@router.get("/{sq_id}", response_class=JSONResponse)
+@router.get(
+    "/{sq_id}",
+    response_class=JSONResponse,
+    response_model=SearchQuery,
+    status_code=200,
+    tags=["search-queries"],
+    summary="Get one saved search query",
+    responses={404: {"model": ErrorResponse, "description": "Search query not found"}},
+)
 async def get_search_query(request: Request, sq_id: int):
-    """Get one search query as JSON (parity with CLI `search-query get`)."""
+    """Get one search query as JSON (parity with CLI `search-query get`).
+
+    Returns 404 with ``{"error": "search_query_not_found"}`` for an unknown id.
+    """
     sq = await deps.search_query_service(request).get(sq_id)
     if sq is None:
         return JSONResponse({"error": "search_query_not_found"}, status_code=404)
     return JSONResponse(sq.model_dump(mode="json"))
 
 
-@router.get("/{sq_id}/stats", response_class=JSONResponse)
+@router.get(
+    "/{sq_id}/stats",
+    response_class=JSONResponse,
+    response_model=list[SearchQueryDailyStat],
+    status_code=200,
+    tags=["search-queries"],
+    summary="Daily match stats for a saved search query",
+    responses={404: {"model": ErrorResponse, "description": "Search query not found"}},
+)
 async def get_search_query_stats(request: Request, sq_id: int, days: int = 30):
-    """Get daily match stats for a search query (parity with CLI `search-query stats`)."""
+    """Get daily match stats for a search query (parity with CLI `search-query stats`).
+
+    Returns 404 with ``{"error": "search_query_not_found"}`` for an unknown id.
+    """
     svc = deps.search_query_service(request)
     if await svc.get(sq_id) is None:
         return JSONResponse({"error": "search_query_not_found"}, status_code=404)
