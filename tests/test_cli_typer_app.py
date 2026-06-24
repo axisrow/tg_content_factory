@@ -4,15 +4,18 @@ These tests stand up the ``typer.testing.CliRunner`` infrastructure *before* the
 first command is migrated, so Waves 1–4 can be written test-first. They cover the
 scaffold contract only:
 
-* ``--version`` prints ``src.__version__`` and exits (parity with argparse).
+* ``--version`` prints ``src.__version__`` and exits (the version string is the
+  hard parity invariant; the program-name prefix is intentionally ``src``).
 * ``--help`` / no-args show usage without running startup side effects.
-* ``--config`` exports ``TG_CONFIG_PATH`` as an abspath (the one side effect the
-  whole migration depends on).
+* ``apply_startup`` exports ``TG_CONFIG_PATH`` as an abspath (the one side effect
+  the whole migration depends on) and is the argparse-identical place for it —
+  notably it does NOT fire on ``subcommand --help`` (regression test for the
+  Wave-0 review finding that a callback-resident side effect would).
 * ``run_async`` is the single async bridge.
 
 The scaffold has no leaf commands yet (Wave 0 is pure infrastructure), so the
-``--config`` side effect — which Typer only runs when a subcommand is invoked —
-is exercised via a throwaway ``probe`` command registered on a *fresh* Typer app
+startup side effects — which a real command triggers via ``apply_startup`` — are
+exercised via a throwaway ``probe`` command registered on a *fresh* Typer app
 that reuses ``main_callback``. This never touches the production ``app``, so the
 invariant "no command name appears or disappears" holds.
 """
@@ -29,24 +32,26 @@ from typer.testing import CliRunner
 
 from src import __version__
 from src.cli import typer_app
-from src.cli.typer_app import DEFAULT_CONFIG, app, main_callback, run_async
+from src.cli.typer_app import DEFAULT_CONFIG, app, apply_startup, main_callback, run_async
 
 runner = CliRunner()
 
 
 def _app_with_probe() -> typer.Typer:
-    """Build a throwaway Typer app reusing the real callback + a no-op command.
+    """Build a throwaway Typer app reusing the real callback + a probe command.
 
-    Typer only invokes ``@app.callback()`` when a subcommand runs, and the
-    production ``app`` has no commands yet (Wave 0). To exercise the callback's
-    side effects we register a minimal ``probe`` command on a fresh app that
-    binds the *same* ``main_callback``. The production ``app`` stays untouched.
+    The production ``app`` has no commands yet (Wave 0). To exercise the real
+    startup path we register a minimal ``probe`` command on a fresh app that
+    binds the *same* ``main_callback`` and calls the *same* ``apply_startup``
+    (exactly the pattern Waves 1–4 follow). The production ``app`` stays
+    untouched, so no command name appears or disappears.
     """
     probe_app = typer.Typer(no_args_is_help=True)
     probe_app.callback()(main_callback)
 
     @probe_app.command("probe")
-    def _probe() -> None:
+    def _probe(ctx: typer.Context) -> None:
+        apply_startup(ctx)
         typer.echo("PROBE_OK")
 
     return probe_app
@@ -59,11 +64,13 @@ def _app_with_probe() -> typer.Typer:
 
 class TestGlobalOptions:
     def test_version_flag_prints_version_and_exits(self):
-        """--version prints ``src.__version__`` and exits 0 (argparse parity)."""
+        """--version prints ``src.__version__`` and exits 0."""
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
-        # The version string itself must match the argparse path exactly; this is
-        # the hard invariant from #1120 (``--version`` via ``src.__version__``).
+        # The version string itself is the hard invariant from #1120 (``--version``
+        # via ``src.__version__``). The ``src`` program-name prefix is intentional
+        # and differs from argparse's ``%(prog)s`` (``main.py``) banner — only the
+        # version component must match across the two entry points.
         assert __version__ in result.output
         assert result.output.strip() == f"src {__version__}"
 
@@ -90,7 +97,7 @@ class TestGlobalOptions:
         assert "--version" in result.output
 
     def test_help_flag_skips_startup_side_effects(self):
-        """--help uses resilient parsing: no startup side effects fire."""
+        """Root --help: no startup side effects fire."""
         with (
             patch.object(typer_app, "setup_logging") as mock_log,
             patch.object(typer_app, "ensure_data_dirs") as mock_dirs,
@@ -112,13 +119,13 @@ class TestGlobalOptions:
 
 
 # --------------------------------------------------------------------------- #
-# --config side effect: TG_CONFIG_PATH export (the migration's load-bearing bit)
+# Startup side effects: TG_CONFIG_PATH export (the migration's load-bearing bit)
 # --------------------------------------------------------------------------- #
 
 
-class TestConfigSideEffect:
+class TestStartupSideEffects:
     def test_config_exports_abspath_to_environ(self, monkeypatch):
-        """--config <path> exports TG_CONFIG_PATH as an absolute path."""
+        """--config <path> + a command exports TG_CONFIG_PATH as an absolute path."""
         monkeypatch.delenv("TG_CONFIG_PATH", raising=False)
         # Keep the test hermetic: stub the FS/logging side effects so only the
         # TG_CONFIG_PATH export is under test.
@@ -151,7 +158,7 @@ class TestConfigSideEffect:
         exported = os.environ["TG_CONFIG_PATH"]
         assert exported == os.path.abspath("config.yaml")
 
-    def test_config_runs_startup_side_effects_in_order(self, monkeypatch):
+    def test_command_runs_startup_side_effects_in_order(self, monkeypatch):
         """A real subcommand triggers dotenv + logging + data-dirs (1:1 main())."""
         monkeypatch.delenv("TG_CONFIG_PATH", raising=False)
         with (
@@ -167,6 +174,49 @@ class TestConfigSideEffect:
         mock_dotenv.assert_called_once_with("x.yaml")
         mock_log.assert_called_once_with()
         mock_dirs.assert_called_once_with()
+
+    def test_subcommand_help_skips_startup_side_effects(self, monkeypatch):
+        """Regression (Wave-0 review): ``subcommand --help`` must NOT run startup.
+
+        argparse short-circuits subcommand help during ``parse_args()`` before
+        any side effect runs. A Typer ``@app.callback()`` body, by contrast,
+        still executes on a subcommand's ``--help`` — so keeping the side effects
+        in the callback would spuriously export TG_CONFIG_PATH and touch the
+        filesystem on ``probe --help``. ``apply_startup`` lives on the command
+        path precisely to keep the two entry points behaviourally identical.
+        """
+        monkeypatch.delenv("TG_CONFIG_PATH", raising=False)
+        with (
+            patch.object(typer_app, "setup_logging") as mock_log,
+            patch.object(typer_app, "ensure_data_dirs") as mock_dirs,
+            patch.object(typer_app, "load_cli_dotenv") as mock_dotenv,
+        ):
+            result = runner.invoke(_app_with_probe(), ["--config", "bad.yaml", "probe", "--help"])
+
+        assert result.exit_code == 0
+        # Help was rendered, but none of the startup work fired …
+        mock_log.assert_not_called()
+        mock_dirs.assert_not_called()
+        mock_dotenv.assert_not_called()
+        # … and the process env was left untouched.
+        assert "TG_CONFIG_PATH" not in os.environ
+
+    def test_apply_startup_is_idempotent(self, monkeypatch):
+        """A second apply_startup in the same process is a no-op (CliState.started)."""
+        monkeypatch.delenv("TG_CONFIG_PATH", raising=False)
+        ctx = typer.Context(typer.main.get_command(app))
+        ctx.obj = typer_app.CliState(config="once.yaml")
+        with (
+            patch.object(typer_app, "setup_logging") as mock_log,
+            patch.object(typer_app, "ensure_data_dirs") as mock_dirs,
+            patch.object(typer_app, "load_cli_dotenv") as mock_dotenv,
+        ):
+            apply_startup(ctx)
+            apply_startup(ctx)
+
+        mock_log.assert_called_once_with()
+        mock_dirs.assert_called_once_with()
+        mock_dotenv.assert_called_once_with("once.yaml")
 
 
 # --------------------------------------------------------------------------- #
