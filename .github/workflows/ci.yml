@@ -114,6 +114,17 @@ jobs:
         continue-on-error: true
         run: bandit -c pyproject.toml -r src -q
 
+      # Doc-coverage gate (#1072): interrogate measures the % of functions /
+      # classes / modules carrying a docstring (documentation debt). Soft
+      # baseline `fail_under = 23` lives in [tool.interrogate] (pyproject.toml);
+      # the script reads it. ADVISORY for now (continue-on-error) — it surfaces
+      # regressions without forcing a docstring sprint. Ratchet to blocking and
+      # raise the baseline as coverage climbs. NOT a dead-code check — that's the
+      # complexity/vulture path above; "no docstring" ≠ "uncalled".
+      - name: Doc-coverage report (advisory)
+        continue-on-error: true
+        run: python scripts/doc_coverage.py --path src
+
       - name: Enforce pytest warnings as errors
         run: |
           python - <<'PY'

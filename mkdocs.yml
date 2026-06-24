@@ -69,6 +69,7 @@ nav:
     - CLI / Web Parity: reference/parity.md
     - Agent Tools: reference/agent-tools.md
     - RSS / Atom Feeds: reference/rss-feeds.md
+    - Doc-coverage: reference/doc-coverage.md
   - Architecture: architecture.md
   - Service Map: feature-map.md
   - Parity Matrix: parity-matrix.md
