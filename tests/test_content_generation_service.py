@@ -58,6 +58,31 @@ class FakeGenerationRunsRepo:
             self._runs[run_id].quality_score = score
             self._runs[run_id].quality_issues = issues
 
+    async def set_image_url(self, run_id, image_url):
+        if run_id in self._runs:
+            self._runs[run_id].image_url = image_url
+
+    async def find_orphan_image(self, pipeline_id, exclude_run_id=None):
+        # Mirror the production contract (#1117): the most recent FAILED run of
+        # this pipeline that already paid for an image, as (run_id, url).
+        for run in sorted(self._runs.values(), key=lambda r: r.id, reverse=True):
+            if run.id == exclude_run_id:
+                continue
+            if run.pipeline_id != pipeline_id:
+                continue
+            if run.status != "failed":
+                continue
+            if not run.image_url:
+                continue
+            return (run.id, run.image_url)
+        return None
+
+    async def claim_orphan_image(self, source_run_id, target_run_id, image_url):
+        if target_run_id in self._runs:
+            self._runs[target_run_id].image_url = image_url
+        if source_run_id in self._runs:
+            self._runs[source_run_id].image_url = None
+
 
 class FakeRepos:
     def __init__(self):

@@ -303,6 +303,38 @@ class ImageGenerateHandler(BaseNodeHandler):
             logger.info("ImageGenerateHandler: no image model configured, skipping")
             return
 
+        # Double-billing guard on retry (#1117). The paid image POST below runs
+        # inside the DAG, before ContentGenerationService can dedupe it across
+        # runs. If a prior failed run of this pipeline already paid for an image,
+        # ContentGenerationService resolved it into services["reusable_image"]
+        # as (source_run_id, url). Reuse-and-consume it instead of paying again:
+        # claim_orphan_image transfers the URL onto this run and clears it on the
+        # source so a later scheduled post cannot re-inherit the same stale image.
+        reusable = services.get("reusable_image")
+        run_id = services.get("run_id")
+        db = services.get("db")
+        if reusable and run_id is not None and db is not None:
+            source_run_id, reusable_url = reusable
+            try:
+                await db.repos.generation_runs.claim_orphan_image(
+                    source_run_id, run_id, reusable_url
+                )
+                context.set_global("image_url", reusable_url)
+                logger.info(
+                    "ImageGenerateHandler[%s]: reused already-paid image from failed "
+                    "run_id=%s instead of re-billing the provider (#1117)",
+                    node_id,
+                    source_run_id,
+                )
+                return
+            except Exception:
+                logger.warning(
+                    "ImageGenerateHandler[%s]: failed to claim orphan image; "
+                    "falling back to a fresh generation",
+                    node_id,
+                    exc_info=True,
+                )
+
         try:
             image_url = await image_service.generate(model, text)
             if image_url:
