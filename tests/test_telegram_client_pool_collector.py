@@ -304,7 +304,7 @@ async def test_warm_all_dialogs_logs_when_preferred_phone_persist_fails(
     )
 
     with patch.object(pool, "get_client_by_phone", return_value=(session, "+7001")):
-        with caplog.at_level(logging.DEBUG, logger="src.telegram.client_pool"):
+        with caplog.at_level(logging.DEBUG, logger="src.telegram.pool_dialogs"):
             await pool.warm_all_dialogs()
 
     # In-memory map is still updated despite the DB failure...
@@ -1535,7 +1535,7 @@ async def test_remove_client_disconnect_timeout_marks_client_removed(pool, monke
     async def _hung_disconnect():
         await asyncio.Event().wait()
 
-    monkeypatch.setattr("src.telegram.client_pool.REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr("src.telegram.pool_lifecycle.REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC", 0.01)
     client = AsyncMock()
     client.disconnect = AsyncMock(side_effect=_hung_disconnect)
     pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
@@ -1856,7 +1856,7 @@ async def test_get_forum_topics_channel_invalid_returns_empty_without_traceback(
             "fetch_forum_topics",
             new=AsyncMock(side_effect=ChannelInvalidError(request=None)),
         ),
-        caplog.at_level(logging.INFO, logger="src.telegram.client_pool"),
+        caplog.at_level(logging.INFO, logger="src.telegram.pool_dialogs"),
     ):
         result = await pool.get_forum_topics(1)
 

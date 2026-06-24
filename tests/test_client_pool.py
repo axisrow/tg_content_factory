@@ -367,8 +367,8 @@ async def test_warm_flood_wait_fail_fast(real_pool_harness_factory, monkeypatch,
     """FloodWait on one phone should NOT sleep+retry — fail fast, move to next."""
     import time
 
-    monkeypatch.setattr("src.telegram.client_pool.WARM_SINGLE_PHONE_TIMEOUT_SEC", 5.0)
-    monkeypatch.setattr("src.telegram.client_pool.WARM_STAGGER_DELAY_SEC", 0.0)
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_SINGLE_PHONE_TIMEOUT_SEC", 5.0)
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
 
     harness = real_pool_harness_factory()
     fw_client = FakeCliTelethonClient(dialogs=FloodWaitError(24))
@@ -396,8 +396,8 @@ async def test_warm_single_phone_timeout(real_pool_harness_factory, monkeypatch)
     import asyncio
     import time
 
-    monkeypatch.setattr("src.telegram.client_pool.WARM_SINGLE_PHONE_TIMEOUT_SEC", 1.0)
-    monkeypatch.setattr("src.telegram.client_pool.WARM_STAGGER_DELAY_SEC", 0.0)
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_SINGLE_PHONE_TIMEOUT_SEC", 1.0)
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
 
     harness = real_pool_harness_factory()
 
@@ -429,9 +429,9 @@ async def test_warm_overall_budget_exhausted(real_pool_harness_factory, monkeypa
     import asyncio
     import time
 
-    monkeypatch.setattr("src.telegram.client_pool.WARM_SINGLE_PHONE_TIMEOUT_SEC", 2.0)
-    monkeypatch.setattr("src.telegram.client_pool.WARM_ALL_PHONES_TOTAL_SEC", 3.0)
-    monkeypatch.setattr("src.telegram.client_pool.WARM_STAGGER_DELAY_SEC", 0.0)
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_SINGLE_PHONE_TIMEOUT_SEC", 2.0)
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_ALL_PHONES_TOTAL_SEC", 3.0)
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
 
     harness = real_pool_harness_factory()
 
@@ -464,8 +464,8 @@ async def test_warm_stagger_between_phones(real_pool_harness_factory, monkeypatc
     import time
 
     stagger = 0.3
-    monkeypatch.setattr("src.telegram.client_pool.WARM_STAGGER_DELAY_SEC", stagger)
-    monkeypatch.setattr("src.telegram.client_pool.WARM_SINGLE_PHONE_TIMEOUT_SEC", 5.0)
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", stagger)
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_SINGLE_PHONE_TIMEOUT_SEC", 5.0)
 
     harness = real_pool_harness_factory()
 

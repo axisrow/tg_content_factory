@@ -122,12 +122,13 @@ class TestResolveAnyEntityClientPool:
     def _mirror_flood_wait_into_resolve_guard(self):
         # Live username resolves run via ResolveGuardMixin.run_live_username_resolve
         # (src.telegram.resolve_guard), which has its own bound run_with_flood_wait.
-        # These tests patch the client_pool binding; mirror it so the guard path
+        # These tests patch the pool_dialogs binding (the #1046 split moved the
+        # resolve call sites into that mixin module); mirror it so the guard path
         # sees the same fake. Defers to the current (possibly patched) binding.
-        import src.telegram.client_pool as cp_mod
+        import src.telegram.pool_dialogs as pd_mod
 
         async def _delegating(coro, **kw):
-            return await cp_mod.run_with_flood_wait(coro, **kw)
+            return await pd_mod.run_with_flood_wait(coro, **kw)
 
         with patch("src.telegram.resolve_guard.run_with_flood_wait", side_effect=_delegating):
             yield
@@ -140,8 +141,8 @@ class TestResolveAnyEntityClientPool:
         mock_session.resolve_entity = AsyncMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait):
             result = await pool.resolve_any_entity("@alxz500")
 
         assert result is not None
@@ -158,8 +159,8 @@ class TestResolveAnyEntityClientPool:
         mock_session.resolve_entity = AsyncMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait):
             result = await pool.resolve_any_entity("@mybot")
 
         assert result is not None
@@ -173,8 +174,8 @@ class TestResolveAnyEntityClientPool:
         mock_session.resolve_entity = AsyncMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait):
             result = await pool.resolve_any_entity("@newschan")
 
         assert result is not None
@@ -189,8 +190,8 @@ class TestResolveAnyEntityClientPool:
         mock_session.resolve_entity = AsyncMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait):
             result = await pool.resolve_any_entity("@mygroup")
 
         assert result is not None
@@ -204,8 +205,8 @@ class TestResolveAnyEntityClientPool:
         mock_session.resolve_entity = AsyncMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait):
             result = await pool.resolve_any_entity("https://t.me/alxz500")
 
         assert result is not None
@@ -220,8 +221,8 @@ class TestResolveAnyEntityClientPool:
         mock_session.resolve_entity = AsyncMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait):
             result = await pool.resolve_any_entity("https://t.me/chan/123")
 
         assert result is not None
@@ -239,8 +240,8 @@ class TestResolveAnyEntityClientPool:
         mock_session.resolve_entity = AsyncMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait):
             await pool.resolve_any_entity("12345")
 
         peer_arg = mock_session.resolve_entity.call_args[0][0]
@@ -260,8 +261,8 @@ class TestResolveAnyEntityClientPool:
         mock_session.resolve_entity = AsyncMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait):
             await pool.resolve_any_entity("-1001234567890")
 
         peer_arg = mock_session.resolve_entity.call_args[0][0]
@@ -279,8 +280,8 @@ class TestResolveAnyEntityClientPool:
             coro.close()
             raise UsernameNotOccupiedError(request=None)
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=raise_not_found):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=raise_not_found):
             result = await pool.resolve_any_entity("@nonexistent_skdjfsdlkjf")
 
         assert result is None
@@ -296,8 +297,8 @@ class TestResolveAnyEntityClientPool:
             coro.close()
             raise UsernameInvalidError(request=None)
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=raise_invalid):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=raise_invalid):
             result = await pool.resolve_any_entity("@!!!")
 
         assert result is None
@@ -312,8 +313,8 @@ class TestResolveAnyEntityClientPool:
             coro.close()
             raise asyncio.TimeoutError()
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=raise_timeout):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=raise_timeout):
             result = await pool.resolve_any_entity("@alxz500")
 
         assert result is None
@@ -335,9 +336,9 @@ class TestResolveAnyEntityClientPool:
         mock_session.resolve_entity = AsyncMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait), \
-             patch("src.telegram.client_pool.ChannelForbidden", ChannelForbidden):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait), \
+             patch("src.telegram.pool_dialogs.ChannelForbidden", ChannelForbidden):
             result = await pool.resolve_any_entity("@private_chan")
 
         assert result is None
@@ -352,8 +353,8 @@ class TestResolveAnyEntityClientPool:
         pool.get_client_by_phone = AsyncMock(return_value=(mock_session, "+123"))
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+999"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait):
             await pool.resolve_any_entity("@alxz500", phone="+123")
 
         pool.get_client_by_phone.assert_called_once_with("+123")
@@ -369,8 +370,8 @@ class TestResolveAnyEntityClientPool:
         pool.get_client_by_phone = AsyncMock(return_value=None)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+999"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait):
             result = await pool.resolve_any_entity("@alxz500", phone="+123")
 
         assert result is not None
@@ -385,8 +386,8 @@ class TestResolveAnyEntityClientPool:
         mock_session.resolve_entity = AsyncMock(return_value=entity)
         pool.get_available_client = AsyncMock(return_value=(mock_session, "+1"))
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=_fake_flood_wait):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=_fake_flood_wait):
             result = await pool.resolve_any_entity("@alxz500")
 
         assert result["title"] == "Alex"
@@ -402,8 +403,8 @@ class TestResolveAnyEntityClientPool:
             coro.close()
             raise ValueError("unexpected")
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=raise_generic):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=raise_generic):
             result = await pool.resolve_any_entity("@whatever")
 
         assert result is None
@@ -420,8 +421,8 @@ class TestResolveAnyEntityClientPool:
             coro.close()
             raise UsernameInvalidError(request=None)
 
-        with patch("src.telegram.client_pool.adapt_transport_session", return_value=mock_session), \
-             patch("src.telegram.client_pool.run_with_flood_wait", side_effect=raise_invalid):
+        with patch("src.telegram.pool_dialogs.adapt_transport_session", return_value=mock_session), \
+             patch("src.telegram.pool_dialogs.run_with_flood_wait", side_effect=raise_invalid):
             result = await pool.resolve_any_entity("ывдлаоывладо ывдлао")
 
         assert result is None
