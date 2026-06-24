@@ -26,11 +26,14 @@ module-level timeout constants, ``__init__`` (the single source of all instance
 state the mixins read), and ``_normalize_runtime_config``.
 
 The mixin modules import their own collaborators (``run_with_flood_wait``,
-``adapt_transport_session``, ``load_live_usable_accounts`` …) in their own
-namespaces; tests that ``patch("src.telegram.client_pool.<name>")`` must patch
-the module that now owns the call site (``pool_dialogs`` / ``pool_lifecycle`` /
-``pool_flood``). The patch-target re-exports below keep the historical
-``client_pool.<name>`` references importable.
+``adapt_transport_session``, ``load_live_usable_accounts`` …) and own the
+timeout constants (``WARM_*`` / ``REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC``) in
+their own namespaces; tests that ``patch``/``monkeypatch`` such a name must
+target the module that owns the call site (``pool_dialogs`` / ``pool_lifecycle``
+/ ``pool_flood``), not ``client_pool``. The few re-exports below
+(``run_with_flood_wait``, ``adapt_transport_session``,
+``load_live_usable_accounts``, ``ChannelForbidden``) keep the historical
+``from src.telegram.client_pool import <name>`` imports working.
 """
 
 from __future__ import annotations
@@ -75,14 +78,10 @@ from src.telegram.session_materializer import SessionMaterializer
 
 logger = logging.getLogger(__name__)
 
-# Module-level timeout constants. Kept here (and monkeypatched here by the test
-# suite) for backwards compatibility; the mixins that use them keep their own
-# module-level copies, so a test that needs to shrink a timeout must patch the
-# owning module (``pool_dialogs`` / ``pool_lifecycle``).
-REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC = 5.0
-WARM_SINGLE_PHONE_TIMEOUT_SEC = 30.0
-WARM_ALL_PHONES_TOTAL_SEC = 150.0
-WARM_STAGGER_DELAY_SEC = 1.0
+# The dialog/lifecycle timeout constants (WARM_* / REMOVE_CLIENT_DISCONNECT_TIMEOUT_SEC)
+# now live only in the module that uses them (``pool_dialogs`` / ``pool_lifecycle``);
+# a test that needs to shrink a timeout patches that owning module. They are NOT
+# duplicated here — nothing reads ``client_pool.<CONST>`` any more (#1046 cleanup).
 
 
 @dataclass(frozen=True)
