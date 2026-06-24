@@ -1166,11 +1166,34 @@ class MessagesRepository:
             "MessagesRepository.delete_messages_for_channel requires a Database reference"
         )
         async with self._database.transaction() as conn:
+            # Both embedding stores key on messages.id (no FK) and use
+            # INSERT OR REPLACE on that id alone. messages.id is INTEGER PRIMARY
+            # KEY without AUTOINCREMENT, so SQLite may reissue a deleted rowid to
+            # a future message, which would then join a stale vector. Clear both
+            # the JSON store (#173) and the older BLOB index together (#1039,
+            # Codex cycle-2 review) while the rows still resolve the subquery.
             await conn.execute(
                 "DELETE FROM message_embeddings_json WHERE message_id IN "
                 "(SELECT id FROM messages WHERE channel_id = ?)",
                 (channel_id,),
             )
+            await conn.execute(
+                "DELETE FROM message_embeddings WHERE message_id IN "
+                "(SELECT id FROM messages WHERE channel_id = ?)",
+                (channel_id,),
+            )
+            # NOTE (#1039): `notified_messages` and `pipeline_action_log` are
+            # deliberately NOT deleted here. purge is a *soft* delete — the
+            # channel stays tracked and the same Telegram (channel_id, message_id)
+            # can be collected again. Those two tables are dedup ledgers
+            # (sent-notification ledger; "already reacted/forwarded/deleted"
+            # ledger, #471), not message-owned sidecars: clearing them would
+            # replay duplicate notifications and repeat external Telegram actions
+            # after recollection. They are cleared only by hard-delete, where the
+            # channel is gone for good (see channels.delete_channel).
+            # `message_reactions` IS removed, but implicitly: its composite FK on
+            # messages(channel_id, message_id) is ON DELETE CASCADE, so SQLite
+            # (foreign_keys=ON) drops it together with the message.
             cur = await conn.execute(
                 "DELETE FROM messages WHERE channel_id = ?", (channel_id,)
             )
@@ -1191,8 +1214,16 @@ class MessagesRepository:
             "MessagesRepository.delete_premium_search_results requires a Database reference"
         )
         async with self._database.transaction() as conn:
+            # Clear both embedding stores (JSON + BLOB) before the messages they
+            # key on are gone, same rowid-reuse reasoning as the channel deletes
+            # (#1039, cycle-2 review).
             await conn.execute(
                 "DELETE FROM message_embeddings_json WHERE message_id IN "
+                "(SELECT id FROM messages WHERE premium_search_query = ?)",
+                (query,),
+            )
+            await conn.execute(
+                "DELETE FROM message_embeddings WHERE message_id IN "
                 "(SELECT id FROM messages WHERE premium_search_query = ?)",
                 (query,),
             )

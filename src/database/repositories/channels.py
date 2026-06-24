@@ -391,6 +391,25 @@ class ChannelsRepository:
                     "FOREIGN KEY constraint failed: pipeline_sources references "
                     f"channel_id={channel_id}"
                 )
+            # Both embedding stores key on messages.id (the rowid) with no FK, so
+            # they must be cleared *before* the messages they point at are gone —
+            # the subquery resolves messages.id while the rows still exist (#1039).
+            # Leaving them orphaned is not just dead rows: messages.id is INTEGER
+            # PRIMARY KEY without AUTOINCREMENT, so SQLite can reissue a deleted
+            # rowid to a future message, and both stores use INSERT OR REPLACE on
+            # message_id alone — a new message could silently inherit a stale
+            # vector. Clear the JSON store (#173) and the older BLOB index
+            # (Codex cycle-2 review) together; purge does the same.
+            await conn.execute(
+                "DELETE FROM message_embeddings_json WHERE message_id IN "
+                "(SELECT id FROM messages WHERE channel_id = ?)",
+                (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM message_embeddings WHERE message_id IN "
+                "(SELECT id FROM messages WHERE channel_id = ?)",
+                (channel_id,),
+            )
             await conn.execute(
                 "DELETE FROM messages WHERE channel_id = ?", (channel_id,),
             )
@@ -399,6 +418,25 @@ class ChannelsRepository:
             )
             await conn.execute(
                 "DELETE FROM forum_topics WHERE channel_id = ?", (channel_id,),
+            )
+            # Sidecar tables keyed on `channel_id`/`message_id` with no FK back to
+            # `channels` (so no automatic cascade) would otherwise survive as
+            # orphans pointing at a channel that no longer exists (#1039). These
+            # run after the FK RESTRICT preflight above, so a blocked delete still
+            # rolls back fully — atomicity is preserved. `message_reactions` is
+            # cascaded by the messages DELETE above; `channel_tags` cascades on the
+            # `channels` row delete below.
+            await conn.execute(
+                "DELETE FROM channel_ratings WHERE channel_id = ?", (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM channel_rename_events WHERE channel_id = ?", (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM notified_messages WHERE channel_id = ?", (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM pipeline_action_log WHERE channel_id = ?", (channel_id,),
             )
             await conn.execute("DELETE FROM channels WHERE id = ?", (pk,))
 
