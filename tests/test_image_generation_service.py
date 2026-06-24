@@ -1083,3 +1083,36 @@ async def test_generate_records_cost_when_allowed():
     result = await svc.generate("together:flux", "a cat")
     assert result == "http://img/result.png"
     assert limits._cost_tracker.get_daily_cost() == pytest.approx(1.0)
+
+
+@pytest.mark.anyio
+async def test_generate_invokes_adapter_once_with_limits_configured():
+    """Even on the limits-enabled path (acquire → adapter → record_cost), the paid
+    adapter is invoked exactly once — the cost-cap wiring adds no retry around the
+    non-idempotent billed call (#958 class, limits branch of generate())."""
+    from src.services.production_limits_service import (
+        CostConfig,
+        ProductionLimitsService,
+        RateLimitConfig,
+    )
+
+    db = MagicMock()
+    db.get_setting = AsyncMock(return_value=None)
+    limits = ProductionLimitsService(
+        db, RateLimitConfig(), CostConfig(cost_per_image=1.0, daily_cost_cap=100.0)
+    )
+    calls = {"n": 0}
+
+    async def counting(text, model_id):
+        calls["n"] += 1
+        return "http://img/result.png"
+
+    svc = ImageGenerationService.__new__(ImageGenerationService)
+    svc._adapters = {"together": counting}
+    svc._s3 = None
+    svc._last_failure = None
+    svc._limits = limits
+
+    result = await svc.generate("together:flux", "a cat")
+    assert result == "http://img/result.png"
+    assert calls["n"] == 1
