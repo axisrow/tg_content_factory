@@ -864,6 +864,64 @@ async def test_generate_exception_sets_failed():
         _restore_provider(orig)
 
 
+@pytest.mark.anyio
+async def test_auto_not_approved_when_post_save_step_fails():
+    """A fallible post-save step (set_quality_score) that raises after the text
+    is saved must NOT leave an AUTO run publish-eligible (issue #1036 review,
+    Codex finding). Otherwise the background CONTENT_PUBLISH handler — which
+    selects moderation_status='approved' without checking status — could later
+    deliver a failed generation to Telegram. The run must end 'failed' and keep
+    its non-publishable 'pending' moderation_status."""
+    engine = DummySearchEngine([_make_msg()])
+    db = FakeDB()
+
+    # set_quality_score blows up (e.g. a transient DB write error) AFTER
+    # save_result has persisted generated_text.
+    async def boom_quality(run_id, score, issues=None):
+        raise RuntimeError("DB locked writing quality score")
+
+    db.repos.generation_runs.set_quality_score = boom_quality
+
+    class _Quality:
+        async def score_content(self, text, model=None):
+            from src.services.quality_scoring_service import QualityScore
+
+            return QualityScore(
+                relevance=0.9,
+                language_quality=0.9,
+                informativeness=0.9,
+                structure=0.9,
+                overall=0.9,
+                issues=[],
+            )
+
+    service = ContentGenerationService(db, engine, quality_service=_Quality())
+    pipeline = ContentPipeline(
+        id=1,
+        name="Test",
+        prompt_template="prompt",
+        llm_model="m",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        publish_mode=PipelinePublishMode.AUTO,
+    )
+
+    orig = _patch_provider(_provider())
+    try:
+        with pytest.raises(RuntimeError, match="DB locked"):
+            await service.generate(pipeline)
+    finally:
+        _restore_provider(orig)
+
+    # The run exists, generated_text was saved, but it must be 'failed' and
+    # NOT publish-eligible: moderation_status stays 'pending', never 'approved'.
+    runs = list(db.repos.generation_runs._runs.values())
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.status == "failed"
+    assert run.moderation_status != "approved"
+    assert run.moderation_status == "pending"
+
+
 # ---------------------------------------------------------------------------
 # Tests: _generate_image edge cases
 # ---------------------------------------------------------------------------
