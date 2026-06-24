@@ -205,6 +205,47 @@ class DialogsCommandsMixin(_Base):
                 },
             )
 
+    async def _record_reaction(self, *phones: str) -> None:
+        """Stamp the last-reaction time for every phone a reaction went out for,
+        then evict entries that are older than the rate-limit window.
+
+        Two phones are passed when the pool normalises the requested phone
+        (``"+1"`` requested, ``"1"`` acquired): ``_ensure_reaction_can_run`` reads
+        under the *requested* phone, so we must record under it too — recording
+        only under the acquired phone would let the next reaction for ``"+1"``
+        skip the gate entirely (#1030). Recording under both keys keeps the gate
+        correct whichever form the next command carries.
+
+        The map is in-memory only and keyed by phone, so without eviction a
+        long-lived worker reacting across many accounts grows it without bound.
+        Entries older than the interval carry no information — the gate would let
+        that phone react regardless — so pruning them changes no behaviour and is
+        not an idempotency ledger.
+
+        This runs *after* the (irreversible) Telegram send, so the stamping —
+        plain in-memory writes that cannot fail — happens unconditionally, while
+        the prune is best-effort: it needs a live DB settings read for the
+        interval, and a transient failure there must not bubble up and flip an
+        already-sent reaction to FAILED (which would re-send it on retry, #1030).
+        """
+        now = time.monotonic()
+        for phone in phones:
+            if phone:
+                self._last_reaction_at_monotonic[phone] = now
+        try:
+            min_interval = await self._reaction_min_interval()
+        except Exception as exc:  # noqa: BLE001 — bookkeeping must not fail the send
+            logger.warning("reaction timestamp prune skipped (interval read failed): %s", exc)
+            return
+        stale_before = now - min_interval
+        stale = [
+            phone
+            for phone, stamp in self._last_reaction_at_monotonic.items()
+            if stamp < stale_before
+        ]
+        for phone in stale:
+            del self._last_reaction_at_monotonic[phone]
+
     async def _handle_dialogs_pin_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         result = await TelegramActionService(self._pool).pin_message(
             phone=str(payload["phone"]),
@@ -226,7 +267,9 @@ class DialogsCommandsMixin(_Base):
             native=True,
             resolve_entity=True,
         )
-        self._last_reaction_at_monotonic[result.phone] = time.monotonic()
+        # Record under both the requested phone (what the gate reads) and the
+        # acquired phone the pool handed out, then prune stale entries (#1030).
+        await self._record_reaction(phone, result.phone)
         return {"phone": result.phone}
 
     async def _handle_dialogs_unpin_message(self, payload: dict[str, Any]) -> dict[str, Any]:

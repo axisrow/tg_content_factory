@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -462,6 +463,207 @@ async def test_cancel_pending_commands_unfiltered_skips_running(tmp_path):
         running_check = await db.repos.telegram_commands.get_command(running_id)
         assert running_check is not None
         assert running_check.status == TelegramCommandStatus.RUNNING
+    finally:
+        await db.close()
+
+
+# ---------------------------------------------------------------------------
+# Claim races, recovery, and run_after gating (#1030, epic #1024 tier-1).
+#
+# These guard the thin spots a single dispatcher worker shares with any peer:
+# the claim transaction must hand a PENDING row to exactly one caller, a worker
+# crash must not strand RUNNING rows, and run_after must gate by wall-clock.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_concurrent_claim_hands_command_to_exactly_one_worker(tmp_path):
+    """Two workers racing on one PENDING row: exactly one wins (#1030).
+
+    ``claim_next_command`` runs SELECT+UPDATE inside ``db.transaction()`` under
+    the connection-wide write lock (#569). Even with five concurrent claims,
+    only one transitions the single row PENDING → RUNNING; the rest see it gone
+    and return None. A regression that drops the lock or splits the
+    select-then-update would let two workers run the same Telegram command.
+
+    Scope: web and worker share one connection in one process (#569), so this
+    races coroutines on that shared connection — it proves the select-then-update
+    stays atomic under the write lock, not cross-process SQLite isolation (which
+    the architecture does not rely on).
+    """
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        command_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="dialogs.react",
+                payload={"phone": "+1", "message_id": 1, "emoji": "👍"},
+                requested_by="test",
+            )
+        )
+
+        results = await asyncio.gather(
+            *[db.repos.telegram_commands.claim_next_command() for _ in range(5)]
+        )
+
+        claimed = [cmd for cmd in results if cmd is not None]
+        assert len(claimed) == 1, f"expected exactly one winner, got {len(claimed)}"
+        assert claimed[0].id == command_id
+        assert claimed[0].status == TelegramCommandStatus.RUNNING
+
+        stored = await db.repos.telegram_commands.get_command(command_id)
+        assert stored is not None
+        assert stored.status == TelegramCommandStatus.RUNNING
+        # No second claim possible — the queue is now empty.
+        assert await db.repos.telegram_commands.claim_next_command() is None
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_concurrent_claim_two_commands_two_workers_no_overlap(tmp_path):
+    """Two PENDING rows, four racing claims: each row goes to a distinct worker.
+
+    Guards against a claim that re-reads the same lowest-id row twice before the
+    UPDATE lands — every claimed command id must be unique.
+    """
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        first = await db.repos.telegram_commands.create_command(
+            TelegramCommand(command_type="dialogs.react", payload={"phone": "+1"}, requested_by="t")
+        )
+        second = await db.repos.telegram_commands.create_command(
+            TelegramCommand(command_type="dialogs.react", payload={"phone": "+2"}, requested_by="t")
+        )
+
+        results = await asyncio.gather(
+            *[db.repos.telegram_commands.claim_next_command() for _ in range(4)]
+        )
+        claimed_ids = sorted(cmd.id for cmd in results if cmd is not None)
+
+        assert claimed_ids == [first, second]
+        assert len(claimed_ids) == len(set(claimed_ids)), "a command was claimed twice"
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_claim_and_cancel_race_never_leaves_command_in_two_states(tmp_path):
+    """claim ↔ cancel on the same PENDING row resolve to one outcome (#1030).
+
+    Either cancel wins (CANCELLED, claim returns None) or claim wins (RUNNING,
+    cancel returns False). The row must never end up RUNNING *and* reported
+    cancelled, which would let a cancelled command still fire a Telegram call.
+    """
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        command_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(command_type="dialogs.react", payload={"phone": "+1"}, requested_by="t")
+        )
+
+        claimed, cancelled = await asyncio.gather(
+            db.repos.telegram_commands.claim_next_command(),
+            db.repos.telegram_commands.cancel_command(command_id),
+        )
+        final = await db.repos.telegram_commands.get_command(command_id)
+        assert final is not None
+
+        claim_won = claimed is not None
+        # Exactly one side took effect — never both, never neither.
+        assert claim_won != cancelled, (
+            f"claim_won={claim_won} cancelled={cancelled} — both or neither acted"
+        )
+        if claim_won:
+            assert final.status == TelegramCommandStatus.RUNNING
+            assert claimed.id == command_id
+        else:
+            assert final.status == TelegramCommandStatus.CANCELLED
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_reset_running_on_startup_requeues_orphaned_commands(tmp_path):
+    """A worker crash leaves rows RUNNING; startup must requeue them (#1030).
+
+    ``claim_next_command`` only picks PENDING rows, so a RUNNING row left behind
+    by a killed worker would stay claimed forever. ``reset_running_on_startup``
+    flips RUNNING → PENDING and clears started_at so the command is eligible and
+    its retry shows a fresh run timestamp. PENDING / terminal rows are untouched.
+    """
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        repo = db.repos.telegram_commands
+        # Orphaned RUNNING (claimed, then "crash" before finishing).
+        orphan_id = await repo.create_command(
+            TelegramCommand(command_type="dialogs.react", payload={"phone": "+1"}, requested_by="t")
+        )
+        claimed = await repo.claim_next_command()
+        assert claimed is not None and claimed.id == orphan_id
+        assert claimed.status == TelegramCommandStatus.RUNNING
+        assert claimed.started_at is not None
+
+        # An untouched PENDING row and a terminal SUCCEEDED row must survive intact.
+        pending_id = await repo.create_command(
+            TelegramCommand(command_type="dialogs.react", payload={"phone": "+2"}, requested_by="t")
+        )
+        done_id = await repo.create_command(
+            TelegramCommand(command_type="dialogs.react", payload={"phone": "+3"}, requested_by="t")
+        )
+        await repo.update_command(done_id, status=TelegramCommandStatus.SUCCEEDED)
+
+        reset_count = await repo.reset_running_on_startup()
+        assert reset_count == 1, "only the single RUNNING row should be requeued"
+
+        recovered = await repo.get_command(orphan_id)
+        assert recovered is not None
+        assert recovered.status == TelegramCommandStatus.PENDING
+        assert recovered.started_at is None, "started_at must reset so retry shows fresh run"
+
+        pending = await repo.get_command(pending_id)
+        assert pending is not None and pending.status == TelegramCommandStatus.PENDING
+        done = await repo.get_command(done_id)
+        assert done is not None and done.status == TelegramCommandStatus.SUCCEEDED
+
+        # The recovered command is claimable again — recovery actually worked.
+        reclaimed = await repo.claim_next_command()
+        assert reclaimed is not None and reclaimed.id == orphan_id
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_claim_next_command_picks_due_run_after(tmp_path):
+    """A run_after in the past is due and gets claimed (#1030).
+
+    Complements ``test_claim_next_command_skips_future_run_after``: that proves
+    the future row is *skipped*; this proves a past row is *picked*, so a delayed
+    retry actually resumes once its run_after passes.
+    """
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        due_id = await db.repos.telegram_commands.create_command(
+            TelegramCommand(
+                command_type="dialogs.react",
+                payload={"phone": "+1", "message_id": 1},
+                requested_by="test",
+                run_after=datetime.now(timezone.utc) - timedelta(minutes=5),
+            )
+        )
+
+        claimed = await db.repos.telegram_commands.claim_next_command()
+        assert claimed is not None
+        assert claimed.id == due_id
+        assert claimed.status == TelegramCommandStatus.RUNNING
     finally:
         await db.close()
 
