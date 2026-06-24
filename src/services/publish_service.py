@@ -95,7 +95,6 @@ class PublishService:
         delivered: set[str] = set(metadata.get("published_targets") or [])
 
         results: list[PublishResult] = []
-        newly_delivered: list[str] = []
         for target in targets:
             key = _target_key(target)
             if key in delivered:
@@ -104,12 +103,19 @@ class PublishService:
                 continue
             result = await self._publish_to_target(run, target)
             results.append(result)
-            if result.success:
-                newly_delivered.append(key)
-
-        # Persist incremental progress so a later retry resumes only the failed targets.
-        if newly_delivered:
-            delivered.update(newly_delivered)
+            if not result.success:
+                continue
+            # Persist progress immediately after EACH delivery — never batched to a
+            # single end-of-loop write (issue #1116). A send to Telegram is
+            # irreversible and there is no transaction spanning send + DB write, so
+            # if this write fails the run goes FAILED and is retried. Recording the
+            # delivered target right now bounds the worst case to re-sending the one
+            # in-flight target on retry; a batched write would instead lose every
+            # target delivered in this attempt and duplicate them all. The write is
+            # deliberately NOT wrapped in try/except: a failed write means we can no
+            # longer remember what we delivered, so the raised exception must stop
+            # the loop rather than keep sending to targets we cannot track.
+            delivered.add(key)
             metadata["published_targets"] = sorted(delivered)
             await self._db.repos.generation_runs.set_metadata(run.id, metadata)
 

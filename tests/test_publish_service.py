@@ -5,14 +5,16 @@ from src.services.publish_service import PublishService
 
 
 class FakeDB:
-    def __init__(self):
-        self.repos = FakeRepos()
+    def __init__(self, fail_set_metadata_after=None):
+        self.repos = FakeRepos(fail_set_metadata_after=fail_set_metadata_after)
 
 
 class FakeRepos:
-    def __init__(self):
+    def __init__(self, fail_set_metadata_after=None):
         self._pipelines = FakePipelinesRepo()
-        self._generation_runs = FakeGenerationRunsRepo()
+        self._generation_runs = FakeGenerationRunsRepo(
+            fail_set_metadata_after=fail_set_metadata_after
+        )
 
     @property
     def content_pipelines(self):
@@ -35,15 +37,26 @@ class FakePipelinesRepo:
 
 
 class FakeGenerationRunsRepo:
-    def __init__(self):
+    def __init__(self, fail_set_metadata_after=None):
         self.published_ids = []
         self.metadata_by_id = {}
+        # When set, set_metadata raises after this many successful writes,
+        # simulating a DB failure mid-publish (issue #1116). The metadata of the
+        # last *successful* write stays persisted — exactly what the next retry
+        # would read back.
+        self._fail_after = fail_set_metadata_after
+        self.set_metadata_calls = 0
 
     async def set_published_at(self, run_id):
         self.published_ids.append(run_id)
 
     async def set_metadata(self, run_id, metadata):
-        self.metadata_by_id[run_id] = metadata
+        self.set_metadata_calls += 1
+        if self._fail_after is not None and self.set_metadata_calls > self._fail_after:
+            raise RuntimeError("simulated DB failure during publish progress write")
+        # Store a copy: the run's metadata is mutated in place across attempts,
+        # so without copying every persisted snapshot would alias the same dict.
+        self.metadata_by_id[run_id] = dict(metadata)
 
 
 class FakeClientPool:
@@ -694,3 +707,125 @@ async def test_publish_service_resolve_entity_no_wait_for():
             assert "resolve" not in str(coro_name).lower(), (
                 f"asyncio.wait_for called on resolve operation: {call}"
             )
+
+
+# === issue #1116: per-target progress must be persisted incrementally so a DB
+# failure after a partial delivery cannot lose already-delivered targets and
+# cause a duplicate send on retry. ===
+
+
+@pytest.mark.anyio
+async def test_publish_service_persists_progress_after_each_delivery():
+    """Per-target delivery is persisted after EACH successful send, not once at
+    the end (issue #1116).
+
+    The single end-of-loop set_metadata is the data-loss hole: if that one write
+    fails after 2 of 3 targets were already delivered, the run goes FAILED with
+    NO published_targets recorded, so the retry re-sends to the 2 already-
+    delivered targets → duplicate. Writing progress incrementally bounds the loss
+    to at most the single in-flight target.
+    """
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [
+            PipelineTarget(id=1, pipeline_id=1, phone="+1111111111", dialog_id=-1001),
+            PipelineTarget(id=2, pipeline_id=1, phone="+2222222222", dialog_id=-1002),
+            PipelineTarget(id=3, pipeline_id=1, phone="+3333333333", dialog_id=-1003),
+        ]
+    )
+    pool = FakeClientPool()
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert [r.success for r in results] == [True, True, True]
+    # One write per delivered target — progress is incremental, not a single
+    # end-of-loop write whose failure would lose every delivered target.
+    assert db.repos.generation_runs.set_metadata_calls == 3
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
+        "+1111111111:-1001",
+        "+2222222222:-1002",
+        "+3333333333:-1003",
+    ]
+    assert 1 in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
+async def test_publish_service_db_failure_after_partial_delivery_no_duplicate_on_retry():
+    """The #1116 scenario end to end: 3 targets, delivered to 2, the DB write
+    after the 2nd target fails → run FAILED → retry must NOT re-send to the 2
+    already-delivered targets.
+
+    Without incremental persistence the first attempt records nothing (the lone
+    end-of-loop write is the one that fails), so the retry duplicates the first
+    two sends. With per-target persistence the 2 delivered targets are already on
+    record before the failing write, so the retry skips them.
+    """
+    targets = [
+        PipelineTarget(id=1, pipeline_id=1, phone="+1111111111", dialog_id=-1001),
+        PipelineTarget(id=2, pipeline_id=1, phone="+2222222222", dialog_id=-1002),
+        PipelineTarget(id=3, pipeline_id=1, phone="+3333333333", dialog_id=-1003),
+    ]
+
+    # Attempt 1: the DB write fails right after the 2nd successful delivery.
+    db = FakeDB(fail_set_metadata_after=1)
+    db.repos.content_pipelines.set_targets(targets)
+    pool1 = FakeClientPool()
+    service1 = PublishService(db, pool1)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    with pytest.raises(RuntimeError, match="simulated DB failure"):
+        await service1.publish_run(run, make_pipeline())
+
+    # Two targets were physically sent on attempt 1.
+    assert "+1111111111" in pool1._clients
+    assert "+2222222222" in pool1._clients
+    # The first delivery was persisted before the failing write, so the retry can
+    # see at least the first target as already delivered.
+    persisted = db.repos.generation_runs.metadata_by_id[1]["published_targets"]
+    assert "+1111111111:-1001" in persisted
+
+    # Attempt 2 (retry): a fresh run row built from the persisted metadata, like
+    # the dispatcher would reload it. No DB failure this time.
+    db.repos.generation_runs._fail_after = None
+    pool2 = FakeClientPool()
+    service2 = PublishService(db, pool2)
+    retry_run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+        metadata=dict(db.repos.generation_runs.metadata_by_id[1]),
+    )
+
+    retry_results = await service2.publish_run(retry_run, make_pipeline())
+
+    assert all(r.success for r in retry_results)
+    # The first target was already on record → NOT re-sent on the retry. This is
+    # the duplicate that #1116 is about.
+    assert "+1111111111" not in pool2._clients, (
+        "already-delivered target was re-sent on retry — duplicate (issue #1116)"
+    )
+    # The run is fully delivered and closed after the retry.
+    assert 1 in db.repos.generation_runs.published_ids
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
+        "+1111111111:-1001",
+        "+2222222222:-1002",
+        "+3333333333:-1003",
+    ]
