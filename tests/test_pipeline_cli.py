@@ -716,7 +716,11 @@ def test_pipeline_run_with_preview(tmp_path, cli_init_patch, capsys):
         )
     )
 
-    async def fake_run_generation(self, pipeline, model, max_tokens, temperature, since_hours=24.0):
+    async def fake_run_generation(
+        self, pipeline, model, max_tokens, temperature, since_hours=24.0, **kwargs
+    ):
+        # **kwargs absorbs optional keyword args the production signature may add
+        # (e.g. run_id/dry_run for the #1117 image-reuse guard) without breaking.
         return {
             "generated_text": "Preview content here",
             "citations": [{"id": 1}],

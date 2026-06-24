@@ -604,7 +604,11 @@ async def test_generate_pipeline_no_llm_nodes_runs_graph(route_client, base_app)
         edges=[PipelineEdge(from_node="src", to_node="pub")],
     )
 
-    async def fake_run_generation(self, pipeline, model, max_tokens, temperature, since_hours=24.0):
+    async def fake_run_generation(
+        self, pipeline, model, max_tokens, temperature, since_hours=24.0, **kwargs
+    ):
+        # **kwargs absorbs optional keyword args the production signature may add
+        # (e.g. run_id/dry_run for the #1117 image-reuse guard) without breaking.
         return {
             "generated_text": "",
             "citations": [],
