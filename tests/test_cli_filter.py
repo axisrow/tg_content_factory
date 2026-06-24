@@ -351,3 +351,73 @@ def test_filter_toggle_not_found(tmp_path, cli_init_patch, capsys):
         assert "not found" in out
     finally:
         asyncio.run(db.close())
+
+
+# ── Confirm-gate consistency (issue #1039 p.4) ───────────────────────────────
+#
+# purge/purge-messages accept a case-insensitive "y"; hard-delete keeps the
+# stronger "YES" word as a deliberate barrier for an irreversible op — but the
+# *case handling* must be consistent. A lowercase "yes" used to be rejected
+# (case-sensitive == "YES"), which is the inconsistency these tests pin down.
+
+
+def _run_hard_delete_with_prompt(tmp_path, cli_init_patch, db_name, typed):
+    """Run `filter hard-delete` once in dev mode with the prompt stubbed to *typed*
+    and the deletion service mocked. Returns (mock_service, stdout).
+
+    Seeds the dev-mode flag, then closes the seed DB *before* run() — run() reopens
+    the same file via cli_init_patch and closes it in its own finally. Keeping two
+    aiosqlite connections open on one WAL file would deadlock on the write lock.
+    """
+    db_path = str(tmp_path / db_name)
+    seed = Database(db_path)
+    asyncio.run(seed.initialize())
+    asyncio.run(seed.set_setting("agent_dev_mode_enabled", "1"))
+    asyncio.run(seed.close())
+
+    captured = {}
+    with cli_init_patch(seed, _FILTER_INIT_DB_TARGET):
+        from src.cli.commands.filter import run
+
+        with patch("src.cli.commands.filter._build_deletion_service") as mock_build, patch(
+            "builtins.input", return_value=typed
+        ):
+            mock_svc = MagicMock()
+            mock_result = MagicMock()
+            mock_result.purged_count = 1
+            mock_result.purged_titles = ["DelCh"]
+            mock_result.skipped_count = 0
+            mock_result.errors = []
+            mock_svc.hard_delete_channels_by_pks = AsyncMock(return_value=mock_result)
+            mock_build.return_value = mock_svc
+            captured["svc"] = mock_svc
+
+            run(_ns(filter_action="hard-delete", pks="1", yes=False))
+
+    return captured["svc"]
+
+
+def test_hard_delete_confirm_accepts_lowercase_yes(tmp_path, cli_init_patch, capsys):
+    """Regression (#1039): a lowercase 'yes' must confirm hard-delete. Before the
+    fix the gate compared case-sensitively against 'YES' and aborted."""
+    svc = _run_hard_delete_with_prompt(tmp_path, cli_init_patch, "hd_lower.db", "yes")
+    out = capsys.readouterr().out
+    assert "Aborted." not in out
+    svc.hard_delete_channels_by_pks.assert_awaited_once()
+
+
+def test_hard_delete_confirm_accepts_mixed_case_yes(tmp_path, cli_init_patch, capsys):
+    """'Yes' (mixed case) is also accepted — the gate is case-insensitive (#1039)."""
+    svc = _run_hard_delete_with_prompt(tmp_path, cli_init_patch, "hd_mixed.db", "Yes")
+    out = capsys.readouterr().out
+    assert "Aborted." not in out
+    svc.hard_delete_channels_by_pks.assert_awaited_once()
+
+
+def test_hard_delete_confirm_rejects_other_words(tmp_path, cli_init_patch, capsys):
+    """A non-'yes' answer still aborts — the confirmation word stays meaningful,
+    so a bare 'y' is NOT enough for the irreversible hard-delete (#1039)."""
+    svc = _run_hard_delete_with_prompt(tmp_path, cli_init_patch, "hd_reject.db", "y")
+    out = capsys.readouterr().out
+    assert "Aborted." in out
+    svc.hard_delete_channels_by_pks.assert_not_awaited()
