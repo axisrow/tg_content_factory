@@ -12,6 +12,7 @@ import pytest
 from src.database.bundles import NotificationBundle
 from src.models import NotificationBot
 from src.telegram.notifier import Notifier, _send_via_bot_api
+from tests.helpers import wait_until
 
 
 @pytest.fixture
@@ -583,7 +584,11 @@ class TestNotifierCircuitBreaker:
             before = mock_target_service.use_client.call_count
             task_a = asyncio.create_task(notifier.notify("x"))
             task_b = asyncio.create_task(notifier.notify("x"))
-            await asyncio.sleep(0)  # let task_a grab the lock and block in send
+            # Wait until the first caller has grabbed the lock and reached the
+            # send (use_client opened) — then it is parked on gate.wait().
+            await wait_until(
+                lambda: mock_target_service.use_client.call_count > before
+            )
             gate.set()  # release the blocked probe
             results = await asyncio.gather(task_a, task_b)
             after = mock_target_service.use_client.call_count

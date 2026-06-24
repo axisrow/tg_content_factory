@@ -830,6 +830,7 @@ async def test_generate_run_not_found_after_save():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow  # real provider-retry backoff on the exception path (~9s)
 @pytest.mark.anyio
 async def test_generate_exception_sets_failed():
     """Any exception during generation should mark run as failed."""

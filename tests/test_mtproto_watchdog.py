@@ -23,6 +23,7 @@ from src.telegram.mtproto_watchdog import (
     MTProtoSecurityWatchdog,
     bind_telethon_base_logger,
 )
+from tests.helpers import drain_loop, wait_until
 
 PHONE_A = "+70001112233"
 PHONE_B = "+70002223344"
@@ -59,9 +60,9 @@ class TestEmitFiltering:
                 base = wd.register_phone(PHONE_A)
                 for _ in range(6):
                     wd.emit(_security_record(base))
-                # Let call_soon_threadsafe callbacks and the spawned task run.
-                await asyncio.sleep(0)
-                await asyncio.sleep(0)
+                # Wait for the call_soon_threadsafe callback to spawn the
+                # reconnect task and that task to invoke the callback.
+                await wait_until(lambda: cb.await_count >= 1)
                 cb.assert_awaited_once_with(PHONE_A)
             finally:
                 wd.uninstall()
@@ -76,7 +77,7 @@ class TestEmitFiltering:
                 base = wd.register_phone(PHONE_A)
                 wd.emit(_security_record(base))
                 wd.emit(_security_record(base))
-                await asyncio.sleep(0)
+                await drain_loop()
                 cb.assert_not_awaited()
             finally:
                 wd.uninstall()
@@ -93,7 +94,7 @@ class TestEmitFiltering:
                 wd.emit(_security_record(base_a))
                 wd.emit(_security_record(base_a))
                 wd.emit(_security_record(base_b))
-                await asyncio.sleep(0)
+                await drain_loop()
                 # Neither phone reached 3 on its own.
                 cb.assert_not_awaited()
             finally:
@@ -123,7 +124,7 @@ class TestEmitFiltering:
                     exc_info=None,
                 )
                 wd.emit(rec2)
-                await asyncio.sleep(0)
+                await drain_loop()
                 cb.assert_not_awaited()
             finally:
                 wd.uninstall()
@@ -138,7 +139,7 @@ class TestEmitFiltering:
                 base = wd.register_phone(PHONE_A)
                 wd.unregister_phone(PHONE_A)
                 wd.emit(_security_record(base))
-                await asyncio.sleep(0)
+                await drain_loop()
                 cb.assert_not_awaited()
             finally:
                 wd.uninstall()
@@ -153,8 +154,7 @@ class TestEmitFiltering:
                 base = wd.register_phone(PHONE_A)
                 wd.emit(_security_record(base))
                 wd.emit(_security_record(base))
-                await asyncio.sleep(0)
-                await asyncio.sleep(0)
+                await wait_until(lambda: cb.await_count >= 1)
                 cb.assert_awaited_once()
             finally:
                 wd.uninstall()
@@ -184,8 +184,7 @@ class TestPropagationThroughLoggingTree:
                     "Security error while unpacking a received message: %s",
                     "Too many messages had to be ignored consecutively",
                 )
-                await asyncio.sleep(0)
-                await asyncio.sleep(0)
+                await wait_until(lambda: cb.await_count >= 1)
                 cb.assert_awaited_once_with(PHONE_A)
             finally:
                 wd.uninstall()

@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import base64
 import hashlib
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -800,3 +801,54 @@ def make_pipeline_node_message(
     m.sender_name = sender_name
     m.date = date or datetime(2024, 1, 1, tzinfo=timezone.utc)
     return m
+
+
+# --- deterministic async synchronisation (#1091) ---------------------------
+#
+# These replace the ``await asyncio.sleep(0)`` idiom used across the suite to
+# "let a freshly-spawned task run". A bare ``sleep(0)`` yields exactly one loop
+# iteration, so it is both fragile (the awaited task may need several yields to
+# reach its blocking point) and silently slow when guessed wrong. The helpers
+# below wait for an observable *condition* instead of a fixed number of yields.
+
+
+async def wait_until(
+    predicate: Callable[[], bool],
+    *,
+    timeout: float = 1.0,
+    interval: float = 0.0,
+) -> None:
+    """Spin the event loop until ``predicate()`` is truthy or ``timeout`` elapses.
+
+    Deterministic replacement for ``await asyncio.sleep(0)`` when a test needs to
+    wait for a spawned task/callback to reach an observable state (a counter, a
+    flag, a queue mutation). Yields with ``sleep(0)`` while ``interval`` is 0 so
+    cooperatively-scheduled work runs without burning wall-clock; a positive
+    ``interval`` is only needed when progress depends on a timer firing.
+
+    Raises ``AssertionError`` (not ``TimeoutError``) on timeout so a stuck wait
+    surfaces as a clear test failure rather than a bare cancellation.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() >= deadline:
+            raise AssertionError(
+                f"wait_until: predicate stayed false for {timeout}s"
+            )
+        await asyncio.sleep(interval)
+
+
+async def drain_loop(rounds: int = 3) -> None:
+    """Flush pending callbacks and let already-scheduled tasks run to a yield.
+
+    For *negative* assertions ("the callback must NOT have fired") there is no
+    state to wait on, so we drain the ready queue a few times: each ``sleep(0)``
+    runs one batch of ready callbacks, and a callback that schedules a task
+    (``call_soon_threadsafe`` → ``ensure_future``) needs a couple of rounds for
+    that task to start and reach its first ``await``. Three rounds covers the
+    deepest such chain in the suite (watchdog: threadsafe-callback → spawn task →
+    task body) with margin; it is bounded and never waits on wall-clock.
+    """
+    for _ in range(rounds):
+        await asyncio.sleep(0)

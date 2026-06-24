@@ -1628,6 +1628,7 @@ class TestDeepagentsProbeAndRun:
         assert result.status == "supported"
         assert result.model == "gpt-4"
 
+    @pytest.mark.slow  # exercises a real probe timeout (~10s)
     @pytest.mark.anyio
     async def test_probe_config_timeout(self, mock_db):
         """probe_config returns 'unknown' on timeout."""

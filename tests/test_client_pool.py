@@ -496,14 +496,19 @@ async def test_warm_overall_budget_exhausted(real_pool_harness_factory, monkeypa
     import asyncio
     import time
 
-    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_SINGLE_PHONE_TIMEOUT_SEC", 2.0)
-    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_ALL_PHONES_TOTAL_SEC", 3.0)
+    # Timings scaled down 10× from 2.0/3.0s (#1091): the test only needs the
+    # *relative* shape — per-phone dialog work == single-phone timeout, and the
+    # overall budget between 1× and 2× that — so the first phone consumes the
+    # budget and the second is the last to start before it runs out. Smaller
+    # absolute values keep the same assertions while cutting ~4s → ~0.4s.
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_SINGLE_PHONE_TIMEOUT_SEC", 0.2)
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_ALL_PHONES_TOTAL_SEC", 0.3)
     monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
 
     harness = real_pool_harness_factory()
 
     async def _slow_dialogs():
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(0.2)
         return []
 
     clients = {}
@@ -518,7 +523,7 @@ async def test_warm_overall_budget_exhausted(real_pool_harness_factory, monkeypa
     await harness.pool.warm_all_dialogs()
     elapsed = time.monotonic() - t0
 
-    # Budget 3s: first phone takes 2s, second starts but budget runs out
+    # Budget 0.3s: first phone takes 0.2s, second starts but budget runs out.
     assert elapsed < 8.0, f"warm took {elapsed:.1f}s, budget should cap it"
     # Not all 4 phones should have been called
     called_count = sum(1 for c in clients.values() if c.get_dialogs.await_count > 0)
@@ -530,7 +535,9 @@ async def test_warm_stagger_between_phones(real_pool_harness_factory, monkeypatc
     """Phones are staggered with a small delay between them."""
     import time
 
-    stagger = 0.3
+    # 0.1s stagger (was 0.3s, #1091): still comfortably above the ±0.05s
+    # measurement tolerance below, but a third of the wall-clock.
+    stagger = 0.1
     monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", stagger)
     monkeypatch.setattr("src.telegram.pool_dialogs.WARM_SINGLE_PHONE_TIMEOUT_SEC", 5.0)
 

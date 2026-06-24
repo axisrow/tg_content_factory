@@ -5,6 +5,7 @@ import pytest
 # pipeline_client fixture is shared from tests/conftest.py (deduped).
 
 
+@pytest.mark.slow  # real provider-retry backoff on the success path (~8s)
 @pytest.mark.anyio
 async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
     # Mock LLM provider service so the Generate button is shown in the template

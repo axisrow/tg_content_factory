@@ -13,6 +13,7 @@ import pytest
 
 from src.database.connection import open_connection
 from src.database.pool import BufferedCursor, ReadConnectionPool, ReadPoolProxy
+from tests.helpers import wait_until
 
 # A heavy pure-SQL query: a recursive CTE that SQLite evaluates in C, so it occupies
 # its connection's worker thread WITHOUT holding the Python GIL (a time.sleep UDF would
@@ -46,7 +47,9 @@ async def test_long_select_does_not_block_other_reads(tmp_path):
             await proxy.execute(_HEAVY_SQL)
 
         heavy_task = asyncio.create_task(heavy())
-        await asyncio.sleep(0.05)  # let the heavy query grab its connection first
+        # Wait until the heavy query has actually grabbed a pooled connection
+        # (the pool starts with `size` idle conns) instead of guessing a delay.
+        await wait_until(lambda: pool._queue.qsize() < 2)
 
         # The quick SELECT runs on the *other* pooled connection while heavy is busy.
         t0 = time.perf_counter()
