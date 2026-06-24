@@ -11,6 +11,18 @@ logger = logging.getLogger(__name__)
 BOTFATHER = "BotFather"
 _TOKEN_RE = re.compile(r"(\d{8,}:[A-Za-z0-9_\-]{35,})")
 
+
+class BotNotFoundError(RuntimeError):
+    """The requested bot is absent from BotFather's ``/mybots`` list.
+
+    Raised by :func:`delete_bot` when the bot button is missing from the
+    ``/mybots`` keyboard — i.e. the bot does not exist in Telegram for this
+    account (typically because it was already deleted). This is a *distinct,
+    recoverable* signal, NOT a generic BotFather failure: a repeat teardown can
+    treat it as "the Telegram delete already happened" and safely proceed to the
+    local DB cleanup, making teardown idempotent (issue #1085, follow-up #1041).
+    """
+
 # Redaction is intentionally BROADER than _TOKEN_RE: the orphan branch fires
 # precisely when BotFather's reply drifted from the expected token format, so a
 # valid token may still be present in the text yet not match the strict regex.
@@ -69,14 +81,42 @@ async def create_bot(client: TelegramClient, name: str, username: str) -> str:
         return token_match.group(1)
 
 
+def _has_inline(message: Message, text: str) -> bool:
+    """Return True if any inline button's text contains *text* (case-insensitive).
+
+    Mirrors the matching used by :func:`_click_inline` so callers can probe for a
+    button (e.g. the bot entry in ``/mybots``) without clicking it.
+    """
+    if not message.reply_markup:
+        return False
+    low = text.lower()
+    for row in message.reply_markup.rows:
+        for button in row.buttons:
+            btn_text = getattr(button, "text", "") or ""
+            if low in btn_text.lower():
+                return True
+    return False
+
+
 async def delete_bot(client: TelegramClient, bot_username: str) -> None:
-    """Delete a bot via BotFather by username."""
+    """Delete a bot via BotFather by username.
+
+    Raises :class:`BotNotFoundError` if the bot is absent from ``/mybots`` (it
+    no longer exists in Telegram for this account); the caller can treat that as
+    an already-completed delete and continue with local cleanup (#1085).
+    """
+    target = bot_username.lstrip("@")
     async with client.conversation(BOTFATHER, timeout=60) as conv:
         await conv.send_message("/mybots")
         resp = await conv.get_response()
 
-        # Click on the bot button
-        await _click_inline(resp, bot_username.lstrip("@"))
+        # Click on the bot button. A missing button here means the bot is not in
+        # /mybots — it was already deleted in Telegram — so raise the distinct
+        # BotNotFoundError (recoverable) rather than a generic "button not found".
+        if not _has_inline(resp, target):
+            logger.info("Bot @%s not found in /mybots — already deleted in Telegram", target)
+            raise BotNotFoundError(f"Bot @{target} not found in /mybots")
+        await _click_inline(resp, target)
         resp = await conv.get_edit()
 
         # Click "Delete Bot"

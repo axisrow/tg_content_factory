@@ -307,6 +307,30 @@ async def test_delete_bot_success():
     confirm_msg.click.assert_awaited_once()
 
 
+async def test_delete_bot_missing_from_mybots_raises_bot_not_found():
+    """RED→GREEN (#1085): a bot absent from /mybots is a distinct, recoverable signal.
+
+    When ``teardown_bot``'s first BotFather call already destroyed the bot but the
+    DB-delete then failed, the row becomes an orphan (issue #1041). A *repeat*
+    teardown calls ``delete_bot`` again, but the bot is gone from Telegram, so it
+    is no longer listed in ``/mybots`` and the first ``_click_inline`` (which looks
+    up the bot button) finds nothing.
+
+    That "bot is not in /mybots" condition must be a *typed* signal
+    (``BotNotFoundError``) — separable from a real BotFather failure — so the
+    caller can treat it as "TG step already done, proceed to DB cleanup" instead
+    of a hard error that strands the orphan row forever.
+    """
+    # /mybots reply that does NOT contain our bot — only some other bot.
+    mybots_msg = _make_message([["@someone_else_bot"]])
+    mock_conv = _make_conv(mybots_msg)
+    mock_client = MagicMock()
+    mock_client.conversation.return_value = mock_conv
+
+    with pytest.raises(botfather.BotNotFoundError):
+        await botfather.delete_bot(mock_client, "@leadhunter_gone_bot")
+
+
 @pytest.mark.anyio
 async def test_setup_bot_success(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
@@ -572,6 +596,96 @@ async def test_teardown_bot_db_delete_failure_warns_about_orphan(
     combined = " ".join(r.getMessage() for r in caplog.records).lower()
     assert "orphan" in combined
     assert "leadhunter_frank_bot" in combined or "999" in combined
+
+
+@pytest.mark.anyio
+async def test_teardown_bot_idempotent_after_orphan_cleans_db(db, real_pool_harness_factory):
+    """RED→GREEN (#1085): a repeat teardown must clean the orphan DB row.
+
+    Scenario from the issue: the first teardown deleted the live bot via
+    BotFather, then the DB-delete failed (#1041) — leaving an orphan row. The
+    bot is now gone from Telegram. A repeat ``teardown_bot`` calls
+    ``botfather.delete_bot`` again, which can no longer find the bot in
+    ``/mybots`` and raises ``BotNotFoundError``.
+
+    Before the fix that error propagated *before* the DB-delete ran, so the
+    orphan row could never be removed via the normal flow. After the fix the
+    "bot missing in Telegram" signal is treated as "TG step already done" and
+    teardown proceeds to delete the DB row — making the operation idempotent.
+    """
+    saved = NotificationBot(
+        tg_user_id=1010,
+        tg_username="grace",
+        bot_id=444,
+        bot_username="leadhunter_grace_bot",
+        bot_token="101010101:AABBCCDDEEFFaabbccddeeffAABBCCDDEEFF",
+    )
+    await db.save_notification_bot(saved)
+
+    harness = real_pool_harness_factory()
+    await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-1",
+        me_id=1010,
+        me_username="grace",
+        is_primary=True,
+    )
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
+
+    # The bot was already deleted in Telegram on the first (failed) teardown, so
+    # BotFather can't find it in /mybots — signalled by BotNotFoundError.
+    with patch(
+        "src.services.notification_service.botfather.delete_bot",
+        new_callable=AsyncMock,
+        side_effect=botfather.BotNotFoundError("@leadhunter_grace_bot not in /mybots"),
+    ):
+        await svc.teardown_bot()
+
+    # The orphan row must be gone — teardown is idempotent.
+    assert await db.get_notification_bot(1010) is None
+
+
+@pytest.mark.anyio
+async def test_teardown_bot_real_botfather_error_does_not_delete_db(db, real_pool_harness_factory):
+    """GUARD (#1085): a genuine BotFather failure must NOT delete the DB row.
+
+    The idempotent path only forgives the specific "bot missing in Telegram"
+    signal (``BotNotFoundError``). Any *other* BotFather failure means the live
+    bot may still exist (the irreversible TG delete did NOT happen), so we must
+    keep the DB row and propagate the error — never run the DB-delete after a
+    failed TG-delete. This guards against over-broadening the forgiving branch.
+    """
+    saved = NotificationBot(
+        tg_user_id=1111,
+        tg_username="heidi",
+        bot_id=555,
+        bot_username="leadhunter_heidi_bot",
+        bot_token="111111222:AABBCCDDEEFFaabbccddeeffAABBCCDDEEFF",
+    )
+    await db.save_notification_bot(saved)
+
+    harness = real_pool_harness_factory()
+    await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-1",
+        me_id=1111,
+        me_username="heidi",
+        is_primary=True,
+    )
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
+
+    with patch(
+        "src.services.notification_service.botfather.delete_bot",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("BotFather: Sorry, something went wrong"),
+    ):
+        with pytest.raises(RuntimeError, match="something went wrong"):
+            await svc.teardown_bot()
+
+    # DB row must survive — the bot might still be live in Telegram.
+    assert await db.get_notification_bot(1111) is not None
 
 
 @pytest.mark.anyio
