@@ -161,6 +161,81 @@ async def test_create_bot_no_token_in_response():
         await botfather.create_bot(mock_client, "MyBot", "mybot_bot")
 
 
+# ---------------------------------------------------------------------------
+# Brittle BotFather parsing (issue #1041) — failure modes around create_bot's
+# token regex, _click_inline button matching, and _is_error coverage. The token
+# regex in particular is a blind spot: by the time it runs, BotFather has
+# ALREADY created the bot, so a regex miss orphans a live bot in Telegram.
+# ---------------------------------------------------------------------------
+
+
+async def test_create_bot_token_miss_warns_about_orphan(caplog):
+    """RED→GREEN (#1041): a token-regex miss leaves a live orphan bot.
+
+    By the time ``create_bot`` reaches the final response, the username has been
+    accepted and BotFather has created the bot. If ``_TOKEN_RE`` fails to match
+    (BotFather changed its reply format), the bot exists in Telegram but we have
+    no token and no record — an orphan. The raised error must name the bot
+    username and the word "orphan" so the operator can find and delete it.
+    """
+    import logging
+
+    mock_conv = _make_conv(
+        MagicMock(text="Alright, send me the name."),
+        MagicMock(text="Good. Now choose a username."),
+        MagicMock(text="Your bot is ready! (but the token format changed)"),
+    )
+    mock_client = MagicMock()
+    mock_client.conversation.return_value = mock_conv
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError) as exc_info:
+            await botfather.create_bot(mock_client, "MyBot", "mybot_orphan_bot")
+
+    message = str(exc_info.value).lower()
+    logged = " ".join(r.getMessage() for r in caplog.records).lower()
+    combined = message + " " + logged
+    assert "orphan" in combined
+    assert "mybot_orphan_bot" in combined
+
+
+def test_is_error_does_not_false_positive_on_token_reply():
+    """A successful token reply must not be misread as an error (#1041).
+
+    ``_is_error`` runs on the name/username step replies. The substring list
+    must not flag a legitimate BotFather success message — otherwise create_bot
+    raises AFTER the bot is created, orphaning it. Guard the known-good replies.
+    """
+    assert botfather._is_error("Good. Now let's choose a username for your bot.") is False
+    assert botfather._is_error("Alright! A new bot. How are we going to call it?") is False
+    assert (
+        botfather._is_error(
+            "Done! Congratulations on your new bot. Use this token to access the HTTP API:"
+        )
+        is False
+    )
+
+
+def test_is_error_matches_too_many_requests():
+    """Rate-limit replies are errors too — currently uncovered (#1041)."""
+    # BotFather rate-limit / generic failure wordings beyond the original set.
+    assert botfather._is_error("Sorry, too many attempts. Please try again later.") is True
+
+
+async def test_click_inline_localized_label_raises_clearly():
+    """_click_inline matches by English substring; a localized keyboard misses.
+
+    This documents the brittleness called out in #1041: if BotFather renders
+    the keyboard in another language, the substring match fails and we get a
+    clear 'not found' error rather than a silent wrong-button click.
+    """
+    # Russian "Удалить бота" instead of "Delete Bot".
+    msg = _make_message([["Удалить бота", "Отмена"]])
+    with pytest.raises(RuntimeError, match="not found"):
+        await botfather._click_inline(msg, "Delete Bot")
+    msg.click.assert_not_awaited()
+
+
 async def test_delete_bot_success():
     bot_msg = _make_message([["@mybot_bot"]])
     options_msg = _make_message([["Bot Info", "Delete Bot"]])
@@ -388,6 +463,66 @@ async def test_teardown_bot_success(db, real_pool_harness_factory):
         await svc.teardown_bot()
 
     assert await db.get_notification_bot(777) is None
+
+
+@pytest.mark.anyio
+async def test_teardown_bot_db_delete_failure_warns_about_orphan(
+    db, real_pool_harness_factory, caplog
+):
+    """RED→GREEN (#1041): a DB-delete failure AFTER BotFather succeeds must not
+    fail silently — it leaves an orphan DB row pointing at a bot that no longer
+    exists in Telegram.
+
+    ``teardown_bot`` deletes the live bot via BotFather first, then removes the
+    DB row. If the DB delete raises after BotFather already destroyed the bot,
+    the row survives: ``get_status`` will keep reporting the bot as configured
+    while ``send_notification`` silently can't reach it. The service must log a
+    loud orphan warning (so the operator can clean the row) and surface the
+    failure rather than swallow it.
+    """
+    saved = NotificationBot(
+        tg_user_id=999,
+        tg_username="frank",
+        bot_id=333,
+        bot_username="leadhunter_frank_bot",
+        bot_token="999999999:AABBCCDDEEFFaabbccddeeffAABBCCDDEEFF",
+    )
+    await db.save_notification_bot(saved)
+
+    harness = real_pool_harness_factory()
+    await _connect_notification_account(
+        harness,
+        phone="+70001111111",
+        session_string="session-1",
+        me_id=999,
+        me_username="frank",
+        is_primary=True,
+    )
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
+
+    # BotFather succeeds (bot is gone from Telegram) but the DB delete blows up.
+    with (
+        patch(
+            "src.services.notification_service.botfather.delete_bot",
+            new_callable=AsyncMock,
+        ),
+        patch.object(
+            svc._notifications.notification_bots,
+            "delete_bot",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("db locked"),
+        ),
+    ):
+        import logging
+
+        with caplog.at_level(logging.ERROR):
+            with pytest.raises(RuntimeError):
+                await svc.teardown_bot()
+
+    # The operator must be told the live bot is gone but the row remains.
+    combined = " ".join(r.getMessage() for r in caplog.records).lower()
+    assert "orphan" in combined
+    assert "leadhunter_frank_bot" in combined or "999" in combined
 
 
 @pytest.mark.anyio

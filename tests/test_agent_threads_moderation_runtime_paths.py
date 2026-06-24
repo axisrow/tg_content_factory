@@ -316,18 +316,22 @@ class TestBulkApproveRuns:
 
     @pytest.mark.anyio
     async def test_approves_multiple(self, mock_db):
+        # Atomic batch (#1041): one bulk call carries every id, not a per-id loop.
         mock_db.repos = MagicMock()
-        mock_db.repos.generation_runs.set_moderation_status = AsyncMock()
+        bulk = AsyncMock()
+        mock_db.repos.generation_runs.set_moderation_status_bulk = bulk
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["bulk_approve_runs"]({"run_ids": "1,2,3", "confirm": True})
         text = _text(result)
         assert "Одобрено 3 run(s)" in text
-        assert mock_db.repos.generation_runs.set_moderation_status.await_count == 3
+        bulk.assert_awaited_once_with([1, 2, 3], "approved")
 
     @pytest.mark.anyio
     async def test_exception(self, mock_db):
         mock_db.repos = MagicMock()
-        mock_db.repos.generation_runs.set_moderation_status = AsyncMock(side_effect=Exception("fail"))
+        mock_db.repos.generation_runs.set_moderation_status_bulk = AsyncMock(
+            side_effect=Exception("fail")
+        )
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["bulk_approve_runs"]({"run_ids": "1", "confirm": True})
         assert "Ошибка массового одобрения" in _text(result)
@@ -336,12 +340,15 @@ class TestBulkApproveRuns:
 class TestBulkRejectRuns:
     @pytest.mark.anyio
     async def test_rejects_multiple(self, mock_db):
+        # Atomic batch (#1041): one bulk call carries every id, not a per-id loop.
         mock_db.repos = MagicMock()
-        mock_db.repos.generation_runs.set_moderation_status = AsyncMock()
+        bulk = AsyncMock()
+        mock_db.repos.generation_runs.set_moderation_status_bulk = bulk
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["bulk_reject_runs"]({"run_ids": "4,5", "confirm": True})
         text = _text(result)
         assert "Отклонено 2 run(s)" in text
+        bulk.assert_awaited_once_with([4, 5], "rejected")
 
     @pytest.mark.anyio
     async def test_invalid_ids(self, mock_db):

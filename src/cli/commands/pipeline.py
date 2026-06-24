@@ -681,26 +681,34 @@ def run(args: argparse.Namespace) -> None:
                 print(f"Rejected run id={args.run_id}")
 
             elif args.pipeline_action == "bulk-approve":
-                approved = 0
+                # Atomic batch (#1041): resolve which ids exist (preserving the
+                # skip-missing behaviour), then flip them all in one transaction
+                # so a mid-batch failure rolls back instead of half-applying.
+                existing_approve_ids: list[int] = []
                 for run_id in args.run_ids:
                     run = await db.repos.generation_runs.get(run_id)
                     if run is None:
                         print(f"  Run id={run_id} not found, skipping.")
                         continue
-                    await db.repos.generation_runs.set_moderation_status(run_id, "approved")
-                    approved += 1
-                print(f"Bulk approved: {approved}/{len(args.run_ids)}")
+                    existing_approve_ids.append(run_id)
+                await db.repos.generation_runs.set_moderation_status_bulk(
+                    existing_approve_ids, "approved"
+                )
+                print(f"Bulk approved: {len(existing_approve_ids)}/{len(args.run_ids)}")
 
             elif args.pipeline_action == "bulk-reject":
-                rejected = 0
+                # Atomic batch (#1041): see bulk-approve above for the rationale.
+                existing_reject_ids: list[int] = []
                 for run_id in args.run_ids:
                     run = await db.repos.generation_runs.get(run_id)
                     if run is None:
                         print(f"  Run id={run_id} not found, skipping.")
                         continue
-                    await db.repos.generation_runs.set_moderation_status(run_id, "rejected")
-                    rejected += 1
-                print(f"Bulk rejected: {rejected}/{len(args.run_ids)}")
+                    existing_reject_ids.append(run_id)
+                await db.repos.generation_runs.set_moderation_status_bulk(
+                    existing_reject_ids, "rejected"
+                )
+                print(f"Bulk rejected: {len(existing_reject_ids)}/{len(args.run_ids)}")
 
             elif args.pipeline_action == "publish":
                 run = await db.repos.generation_runs.get(args.run_id)

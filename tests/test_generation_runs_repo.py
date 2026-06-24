@@ -1,4 +1,74 @@
+from contextlib import contextmanager
+
 import pytest
+
+
+@contextmanager
+def _patched(obj, attr, value):
+    """Temporarily swap an attribute, restoring it on exit."""
+    original = getattr(obj, attr)
+    setattr(obj, attr, value)
+    try:
+        yield
+    finally:
+        setattr(obj, attr, original)
+
+
+@pytest.mark.anyio
+async def test_set_moderation_status_bulk_applies_all(db):
+    """set_moderation_status_bulk flips every id in one call (issue #1041)."""
+    repo = db.repos.generation_runs
+    ids = [await repo.create_run(7, f"p-{i}") for i in range(3)]
+
+    await repo.set_moderation_status_bulk(ids, "approved")
+
+    for run_id in ids:
+        run = await repo.get(run_id)
+        assert run is not None
+        assert run.moderation_status == "approved"
+
+
+@pytest.mark.anyio
+async def test_set_moderation_status_bulk_empty_is_noop(db):
+    """An empty id list must not open a transaction or raise (issue #1041)."""
+    repo = db.repos.generation_runs
+    await repo.set_moderation_status_bulk([], "approved")
+
+
+@pytest.mark.anyio
+async def test_set_moderation_status_bulk_rolls_back_on_midbatch_failure(db):
+    """RED→GREEN (#1041): a mid-batch failure leaves NO id half-applied.
+
+    The pre-fix bulk tool looped one autocommit ``set_moderation_status`` per
+    id, so a crash after committing ids 1..N-1 left those approved with no way
+    back. The atomic version wraps the whole batch in one ``BEGIN IMMEDIATE``;
+    we prove the rollback is real by letting the underlying ``executemany``
+    apply the first row and then raise — the committed DB must still show every
+    run as ``pending``.
+    """
+    repo = db.repos.generation_runs
+    ids = [await repo.create_run(7, f"p-{i}") for i in range(3)]
+
+    conn = db.db
+    assert conn is not None
+    real_executemany = conn.executemany
+
+    async def exploding_executemany(sql, seq):
+        seq = list(seq)
+        # Apply the first row for real, then blow up mid-batch — exactly the
+        # window where the old per-id loop would have left a partial commit.
+        await real_executemany(sql, seq[:1])
+        raise RuntimeError("simulated mid-batch crash")
+
+    with pytest.raises(RuntimeError, match="mid-batch"):
+        with _patched(conn, "executemany", exploding_executemany):
+            await repo.set_moderation_status_bulk(ids, "approved")
+
+    # The transaction must have rolled the first (real) write back.
+    for run_id in ids:
+        run = await repo.get(run_id)
+        assert run is not None
+        assert run.moderation_status == "pending"
 
 
 @pytest.mark.anyio

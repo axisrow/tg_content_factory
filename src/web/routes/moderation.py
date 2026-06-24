@@ -130,20 +130,25 @@ async def publish_run(request: Request, run_id: int):
 @router.post("/bulk-approve")
 async def bulk_approve(request: Request, run_ids: list[int] = Form(default=[])):
     db = deps.get_db(request)
-    for run_id in run_ids:
-        run = await db.repos.generation_runs.get(run_id)
-        if run is not None:
-            await db.repos.generation_runs.set_moderation_status(run_id, "approved")
-
+    await _bulk_set_moderation(db, run_ids, "approved")
     return _moderation_redirect("runs_approved")
 
 
 @router.post("/bulk-reject")
 async def bulk_reject(request: Request, run_ids: list[int] = Form(default=[])):
     db = deps.get_db(request)
-    for run_id in run_ids:
-        run = await db.repos.generation_runs.get(run_id)
-        if run is not None:
-            await db.repos.generation_runs.set_moderation_status(run_id, "rejected")
-
+    await _bulk_set_moderation(db, run_ids, "rejected")
     return _moderation_redirect("runs_rejected")
+
+
+async def _bulk_set_moderation(db, run_ids: list[int], status: str) -> None:
+    """Atomically flip moderation status for existing runs (issue #1041).
+
+    The previous per-id loop autocommitted each update, so a failure partway
+    through left the batch half-applied with no rollback. We resolve which ids
+    actually exist (preserving the old skip-missing behaviour), then route the
+    survivors through a single transaction so the batch is all-or-nothing.
+    """
+    existing = [rid for rid in run_ids if await db.repos.generation_runs.get(rid) is not None]
+    if existing:
+        await db.repos.generation_runs.set_moderation_status_bulk(existing, status)

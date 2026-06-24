@@ -354,7 +354,8 @@ class TestDeepagentsSyncRejectRun:
 
 class TestDeepagentsSyncBulkApproveRuns:
     def test_success(self, mock_db):
-        mock_db.repos.generation_runs.set_moderation_status = AsyncMock(return_value=None)
+        # Atomic batch (#1041): one bulk call, not a per-id loop.
+        mock_db.repos.generation_runs.set_moderation_status_bulk = AsyncMock(return_value=None)
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["bulk_approve_runs"]("1,2,3", confirm=True)
         assert "Одобрено 3" in result
@@ -365,7 +366,7 @@ class TestDeepagentsSyncBulkApproveRuns:
         assert "Ошибка" in result
 
     def test_empty_string(self, mock_db):
-        mock_db.repos.generation_runs.set_moderation_status = AsyncMock(return_value=None)
+        mock_db.repos.generation_runs.set_moderation_status_bulk = AsyncMock(return_value=None)
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["bulk_approve_runs"]("")
         assert "run_ids пуст" in result
@@ -373,7 +374,8 @@ class TestDeepagentsSyncBulkApproveRuns:
 
 class TestDeepagentsSyncBulkRejectRuns:
     def test_success(self, mock_db):
-        mock_db.repos.generation_runs.set_moderation_status = AsyncMock(return_value=None)
+        # Atomic batch (#1041): one bulk call, not a per-id loop.
+        mock_db.repos.generation_runs.set_moderation_status_bulk = AsyncMock(return_value=None)
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["bulk_reject_runs"]("10,20", confirm=True)
         assert "Отклонено 2" in result
