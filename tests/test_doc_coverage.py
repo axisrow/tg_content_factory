@@ -193,6 +193,35 @@ def test_split_pyproject_config_handles_empty() -> None:
     assert fail_under is None
 
 
+def test_known_config_kwargs_drops_unknown_keys() -> None:
+    """Неизвестный для InterrogateConfig ключ отсеивается, а не роняет конструктор."""
+    pytest.importorskip("interrogate.config")
+    kept, dropped = doc_coverage.known_config_kwargs(
+        {"ignore_magic": True, "generate_badge": "x", "output": "y"}
+    )
+    assert kept == {"ignore_magic": True}
+    assert dropped == ["generate_badge", "output"]
+
+
+def test_known_config_kwargs_keeps_all_valid() -> None:
+    pytest.importorskip("interrogate.config")
+    kept, dropped = doc_coverage.known_config_kwargs({"ignore_magic": True, "ignore_private": True})
+    assert kept == {"ignore_magic": True, "ignore_private": True}
+    assert dropped == []
+
+
+def test_known_config_kwargs_result_constructs_config() -> None:
+    """То, что прошло фильтр, гарантированно конструирует InterrogateConfig."""
+    cfg = pytest.importorskip("interrogate.config")
+    raw = cfg.parse_pyproject_toml("pyproject.toml") or {}
+    conf_kwargs, _, _ = doc_coverage.split_pyproject_config(raw)
+    # Подсунем заведомо чужой ключ — он не должен дойти до конструктора.
+    conf_kwargs["definitely_not_a_field"] = 123
+    kept, dropped = doc_coverage.known_config_kwargs(conf_kwargs)
+    assert "definitely_not_a_field" in dropped
+    cfg.InterrogateConfig(**kept)  # не должно бросить TypeError
+
+
 def test_split_pyproject_config_matches_real_pyproject() -> None:
     """Реальный [tool.interrogate] раскладывается без лишних ключей.
 

@@ -38,9 +38,11 @@ except ImportError:  # pragma: no cover - проверяется через по
     InterrogateCoverage = None  # type: ignore[assignment, misc]
     interrogate_config = None  # type: ignore[assignment]
 
-# Ключи [tool.interrogate], которые НЕ являются полями InterrogateConfig:
-# `exclude` уходит отдельным аргументом, `fail_under`/`verbose` к подсчёту
-# покрытия отношения не имеют (их трогает только сам отчёт/гейт).
+# Служебные ключи [tool.interrogate], которые НЕ передаются в InterrogateConfig
+# как kwargs: `exclude`/`paths` идут отдельными аргументами InterrogateCoverage;
+# `verbose` — не поле конфига вовсе; `fail_under` поле конфига есть, но к
+# подсчёту покрытия (get_coverage) отношения не имеет — гейт мы считаем сами,
+# поэтому его тоже отделяем.
 _NON_CONF_KEYS = {"exclude", "fail_under", "verbose", "paths"}
 
 _COLOR = sys.stdout.isatty()
@@ -140,6 +142,25 @@ def split_pyproject_config(raw: dict) -> tuple[dict, list[str], float | None]:
     return conf_kwargs, excluded, (float(fail_under) if fail_under is not None else None)
 
 
+def known_config_kwargs(conf_kwargs: dict) -> tuple[dict, list[str]]:
+    """Оставить только ключи, которые реально являются полями InterrogateConfig.
+
+    Возвращает (отфильтрованные kwargs, имена отброшенных неизвестных ключей).
+    Без этого фильтра новый ключ в [tool.interrogate], валидный для CLI
+    interrogate, но не для InterrogateConfig (например `generate_badge`,
+    `output`), уронил бы `InterrogateConfig(**kwargs)` с TypeError. Лучше
+    предупредить и продолжить, чем падать трейсбеком на advisory-прогоне.
+    """
+    if interrogate_config is None:  # pragma: no cover - main() выходит раньше
+        return conf_kwargs, []
+    import attr
+
+    valid = {field.name for field in attr.fields(interrogate_config.InterrogateConfig)}
+    kept = {k: v for k, v in conf_kwargs.items() if k in valid}
+    dropped = sorted(k for k in conf_kwargs if k not in valid)
+    return kept, dropped
+
+
 # --------------------------------------------------------------------------- #
 # Секции отчёта
 # --------------------------------------------------------------------------- #
@@ -214,9 +235,18 @@ def main() -> int:
 
     # Читаем [tool.interrogate] из pyproject.toml, чтобы наш отчёт считал
     # покрытие ровно как CLI-гейт `interrogate -c pyproject.toml` (те же
-    # ignore-флаги и exclude). Без этого total/процент расходятся.
-    raw = interrogate_config.parse_pyproject_toml("pyproject.toml") or {}
+    # ignore-флаги и exclude). Без этого total/процент расходятся. Ищем pyproject
+    # рядом со скриптом (корень репо), а не в текущем cwd — иначе запуск из
+    # подкаталога ронял бы чтение конфига (как и graceful-выход выше по --path).
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    if not pyproject.exists():
+        print(f"Не найден {pyproject} — нечего читать как [tool.interrogate].", file=sys.stderr)
+        return 2
+    raw = interrogate_config.parse_pyproject_toml(str(pyproject)) or {}
     conf_kwargs, excluded, cfg_fail_under = split_pyproject_config(raw)
+    conf_kwargs, dropped = known_config_kwargs(conf_kwargs)
+    if dropped:
+        print(warn(f"Игнорирую неизвестные ключи [tool.interrogate]: {', '.join(dropped)}"), file=sys.stderr)
     conf = interrogate_config.InterrogateConfig(**conf_kwargs)
 
     # interrogate конкатенирует excluded как tuple — list туда передавать нельзя.
