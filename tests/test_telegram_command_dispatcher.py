@@ -608,6 +608,265 @@ async def test_run_loop_marks_invalid_reaction_failed_without_calling_telegram()
     assert kwargs["result_payload"]["emoji"] == "✅"
 
 
+# ---------------------------------------------------------------------------
+# Per-phone reaction rate-limit: real enforcement, key consistency, and the
+# memory-growth guard (#1030, epic #1024 tier-1).
+# ---------------------------------------------------------------------------
+
+
+def _react_db(*, min_interval: str = "30"):
+    """A mock DB whose only relevant behaviour is the reaction-interval setting
+    and an empty account list (so the flood-wait gate is a no-op)."""
+    db = _mock_db()
+    db.get_setting.return_value = min_interval
+    db.get_account_summaries.return_value = []
+    db.get_accounts.return_value = []
+    return db
+
+
+def _patch_reaction_service(acquired_phone: str):
+    """Patch TelegramActionService in the dialogs mixin so send_reaction reports
+    ``acquired_phone`` (the phone the pool actually handed out, which the pool is
+    free to normalise) regardless of the requested phone.
+
+    Returns ``(patcher, send_reaction_mock)``; the patcher is already started and
+    the caller must ``.stop()`` it when done.
+    """
+    svc_patch = patch("src.services.dispatcher.dialogs_mixin.TelegramActionService")
+    svc_cls = svc_patch.start()
+    send_reaction = AsyncMock(return_value=MagicMock(phone=acquired_phone))
+    svc_cls.return_value.send_reaction = send_reaction
+    return svc_patch, send_reaction
+
+
+async def test_reaction_rate_limit_enforced_after_a_successful_reaction():
+    """A second reaction within the interval is delayed, not sent (#1030).
+
+    The existing suite seeds ``_last_reaction_at_monotonic`` by hand; this drives
+    the real handler so the success path that records the timestamp is exercised
+    end-to-end. The first reaction goes out; the second (immediate) one must be
+    bounced to PENDING with run_after instead of hitting Telegram again.
+    """
+    db = _react_db(min_interval="30")
+    pool = _mock_pool()
+    pool.is_warming = MagicMock(return_value=False)
+    d = _dispatcher(db=db, pool=pool)
+
+    svc_patch, send_reaction = _patch_reaction_service(acquired_phone="+1")
+    try:
+        payload = {"phone": "+1", "chat_id": -100, "message_id": 1, "emoji": "👍"}
+        await d._handle_dialogs_react(payload)
+        assert send_reaction.await_count == 1
+
+        with pytest.raises(TelegramCommandRetryLaterError, match="rate limit"):
+            await d._handle_dialogs_react({**payload, "message_id": 2})
+        # The blocked reaction must NOT have reached Telegram.
+        assert send_reaction.await_count == 1
+    finally:
+        svc_patch.stop()
+
+
+async def test_reaction_rate_limit_keyed_by_requested_phone_not_normalized():
+    """Rate-limit must hold even when the pool normalises the phone (#1030).
+
+    Bug: ``_handle_dialogs_react`` recorded the last-reaction time under the
+    phone the *pool returned* (``result.phone``), while ``_ensure_reaction_can_run``
+    reads under the phone from the *payload*. When the pool hands back a
+    normalised phone (``"+1"`` requested, ``"1"`` acquired), the write and the
+    read land on different keys, so the gate never sees the prior reaction and
+    the next one fires immediately — defeating the per-phone FloodWait guard.
+    """
+    db = _react_db(min_interval="30")
+    pool = _mock_pool()
+    pool.is_warming = MagicMock(return_value=False)
+    d = _dispatcher(db=db, pool=pool)
+
+    # Pool acquires under a normalised phone that differs from the request.
+    svc_patch, send_reaction = _patch_reaction_service(acquired_phone="1")
+    try:
+        payload = {"phone": "+1", "chat_id": -100, "message_id": 1, "emoji": "👍"}
+        await d._handle_dialogs_react(payload)
+        assert send_reaction.await_count == 1
+
+        # Same requested phone, immediately again — must be rate-limited.
+        with pytest.raises(TelegramCommandRetryLaterError, match="rate limit"):
+            await d._handle_dialogs_react({**payload, "message_id": 2})
+        assert send_reaction.await_count == 1, (
+            "second reaction slipped past the rate-limit because the timestamp "
+            "was keyed by the normalised acquired phone, not the requested one"
+        )
+    finally:
+        svc_patch.stop()
+
+
+async def test_reaction_timestamps_do_not_grow_unbounded():
+    """Stale per-phone reaction timestamps are pruned (#1030 memory leak).
+
+    ``_last_reaction_at_monotonic`` is an in-memory dict keyed by phone with no
+    eviction: every distinct phone that ever reacted left a permanent entry, so
+    a long-lived worker reacting across many accounts grows it without bound.
+    Entries older than the rate-limit window carry no information (the gate would
+    let that phone react anyway), so they must be evicted. This is not a DB
+    ledger — pruning a stale monotonic timestamp changes no idempotency state.
+    """
+    db = _react_db(min_interval="30")
+    pool = _mock_pool()
+    pool.is_warming = MagicMock(return_value=False)
+    d = _dispatcher(db=db, pool=pool)
+
+    now = time.monotonic()
+    # 500 phones reacted long ago (well past any sane interval ceiling).
+    for i in range(500):
+        d._last_reaction_at_monotonic[f"+{i}"] = now - 100_000
+    # One phone reacted just now — its entry is still meaningful.
+    d._last_reaction_at_monotonic["+recent"] = now
+
+    svc_patch, _ = _patch_reaction_service(acquired_phone="+fresh")
+    try:
+        await d._handle_dialogs_react(
+            {"phone": "+fresh", "chat_id": -100, "message_id": 1, "emoji": "👍"}
+        )
+    finally:
+        svc_patch.stop()
+
+    tracked = d._last_reaction_at_monotonic
+    assert len(tracked) < 500, (
+        f"reaction timestamp map is not pruned (size={len(tracked)}); stale "
+        "per-phone entries accumulate forever"
+    )
+    # The recently-active phone and the just-reacted one are retained.
+    assert "+recent" in tracked
+    assert "+fresh" in tracked
+
+
+# ---------------------------------------------------------------------------
+# Phone-bound isolation: a command for account X must run on X's client, two
+# commands for different phones must run on different clients, and a command
+# with no phone must fail loudly rather than silently mis-route (#1030).
+# ---------------------------------------------------------------------------
+
+
+class _PhoneRoutingClient:
+    """A per-phone fake Telethon client that records the phone it belongs to."""
+
+    def __init__(self, phone: str):
+        self.phone = phone
+        self.sent: list[tuple[object, str]] = []
+
+    async def get_entity(self, identifier):
+        return MagicMock(id=identifier, _client_phone=self.phone)
+
+    async def send_message(self, entity, text):
+        # Tag every send with the owning phone so the test can assert isolation.
+        self.sent.append((entity, text))
+        return MagicMock(id=len(self.sent), _client_phone=self.phone)
+
+
+class _PhoneRoutingPool:
+    """Pool double that hands back a *distinct* client per phone.
+
+    A real class (not MagicMock) so ``explicit_pool_method`` recognises
+    ``get_native_client_by_phone`` as implemented and ``TelegramActionService``
+    routes through it — proving the requested phone selects the right client.
+    """
+
+    def __init__(self, clients: dict[str, _PhoneRoutingClient]):
+        self._clients = clients
+        self.acquired: list[str] = []
+        self.released: list[str] = []
+
+    async def get_native_client_by_phone(self, phone, *, wait_for_flood=False):
+        client = self._clients.get(phone)
+        if client is None:
+            return None
+        self.acquired.append(phone)
+        return client, phone
+
+    def release_client(self, phone):
+        self.released.append(phone)
+
+
+async def test_dialogs_send_routes_to_the_clients_own_phone():
+    """A send for +1 must go out on +1's client, never another account's (#1030)."""
+    client_a = _PhoneRoutingClient("+1")
+    client_b = _PhoneRoutingClient("+2")
+    pool = _PhoneRoutingPool({"+1": client_a, "+2": client_b})
+    d = _dispatcher(pool=pool)
+
+    result = await d._handle_dialogs_send({"phone": "+1", "recipient": -100, "text": "hi"})
+
+    assert result["phone"] == "+1"
+    assert len(client_a.sent) == 1, "the +1 client must be the one that sent"
+    assert client_b.sent == [], "the +2 client must not have been touched"
+    assert pool.released == ["+1"], "the acquired client must be released"
+
+
+async def test_concurrent_sends_for_distinct_phones_use_distinct_clients():
+    """Two sends for different phones at once each hit their own client (#1030).
+
+    Guards against the dispatcher cross-wiring accounts under concurrency — a
+    +1 command sending through +2's session would post to the wrong account.
+    """
+    client_a = _PhoneRoutingClient("+1")
+    client_b = _PhoneRoutingClient("+2")
+    pool = _PhoneRoutingPool({"+1": client_a, "+2": client_b})
+    d = _dispatcher(pool=pool)
+
+    await asyncio.gather(
+        d._handle_dialogs_send({"phone": "+1", "recipient": -100, "text": "from-1"}),
+        d._handle_dialogs_send({"phone": "+2", "recipient": -200, "text": "from-2"}),
+    )
+
+    assert [text for _, text in client_a.sent] == ["from-1"]
+    assert [text for _, text in client_b.sent] == ["from-2"]
+    assert sorted(pool.acquired) == ["+1", "+2"]
+
+
+async def test_dialogs_send_missing_phone_fails_loudly():
+    """A phone-bound command with no phone must raise, not run on a random client.
+
+    The handler reads ``payload["phone"]`` directly, so a missing phone is a
+    hard KeyError — surfaced to ``_run_loop`` as a FAILED command rather than
+    silently sending from whichever account the pool happens to pick (#1030).
+    """
+    pool = _PhoneRoutingPool({"+1": _PhoneRoutingClient("+1")})
+    d = _dispatcher(pool=pool)
+
+    with pytest.raises(KeyError):
+        await d._handle_dialogs_send({"recipient": -100, "text": "orphan"})
+
+    assert pool.acquired == [], "no client should have been acquired without a phone"
+
+
+async def test_run_loop_marks_missing_phone_command_failed_not_silent():
+    """A command with no phone is recorded FAILED, never silently dropped (#1030).
+
+    The poll loop must convert the handler's KeyError into a FAILED status (so an
+    operator sees the bad command) instead of letting it kill the loop or pass
+    unnoticed.
+    """
+    db = _mock_db()
+    command = TelegramCommand(
+        id=11,
+        command_type="dialogs.send",
+        payload={"recipient": -100, "text": "no phone here"},
+    )
+    db.repos.telegram_commands.claim_next_command = AsyncMock(return_value=command)
+    d = _dispatcher(db=db, pool=_PhoneRoutingPool({}))
+
+    async def _update_and_stop(*args, **kwargs):
+        d._stop_event.set()
+
+    db.repos.telegram_commands.update_command = AsyncMock(side_effect=_update_and_stop)
+
+    await d._run_loop()
+
+    db.repos.telegram_commands.update_command.assert_awaited_once()
+    kwargs = db.repos.telegram_commands.update_command.await_args.kwargs
+    assert kwargs["status"] == TelegramCommandStatus.FAILED
+    assert "phone" in kwargs["error"]
+
+
 async def test_dialogs_pin_unpin():
     pool = _mock_pool()
     c = _client_mock()

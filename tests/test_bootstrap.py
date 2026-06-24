@@ -10,6 +10,7 @@ from telethon import TelegramClient
 from src.config import AppConfig, DatabaseConfig
 from src.database import Database
 from src.database.repositories.accounts import AccountSessionDecryptError
+from src.models import TelegramCommand, TelegramCommandStatus
 from src.search.engine import SearchEngine
 from src.web.bootstrap import _log_task_exception, build_web_container, start_container
 from src.web.log_handler import LogBuffer
@@ -144,6 +145,85 @@ async def test_start_container_worker_mode_runs_inflight_recovery(tmp_path):
         await start_container(container)
         container.photo_task_service.recover_running.assert_awaited_once()
         container.db.repos.generation_runs.reset_running_on_startup.assert_awaited_once()
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_worker_recovers_orphaned_telegram_commands(tmp_path):
+    """Worker startup requeues telegram_commands stranded in RUNNING (#1030).
+
+    A worker killed mid-dispatch leaves its claimed command RUNNING; only
+    PENDING rows are claimable, so without recovery that command is stuck
+    forever. Driving the real start_container path (not just the repo method)
+    proves the dispatcher's recovery is actually wired into worker boot.
+    """
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    # Seed a command and promote it to RUNNING, simulating an interrupted worker.
+    command_id = await db.repos.telegram_commands.create_command(
+        TelegramCommand(
+            command_type="dialogs.react",
+            payload={"phone": "+1", "message_id": 1, "emoji": "👍"},
+            requested_by="test",
+        )
+    )
+    await db.repos.telegram_commands.update_command(
+        command_id, status=TelegramCommandStatus.RUNNING
+    )
+
+    container = _make_container(db)
+    container.runtime_mode = "worker"
+    container.auth.is_configured = False
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+
+    try:
+        await start_container(container)
+
+        recovered = await db.repos.telegram_commands.get_command(command_id)
+        assert recovered is not None
+        assert recovered.status == TelegramCommandStatus.PENDING
+        assert recovered.started_at is None
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_web_mode_skips_telegram_command_recovery(tmp_path):
+    """Web restart must not touch the live worker's RUNNING telegram_commands.
+
+    Mirror of the photo/generation web-skip guard (#836/2) for telegram_commands:
+    in a split deploy the web side shares the DB and must leave in-flight rows for
+    the worker to own.
+    """
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    command_id = await db.repos.telegram_commands.create_command(
+        TelegramCommand(
+            command_type="dialogs.react",
+            payload={"phone": "+1", "message_id": 1, "emoji": "👍"},
+            requested_by="test",
+        )
+    )
+    await db.repos.telegram_commands.update_command(
+        command_id, status=TelegramCommandStatus.RUNNING
+    )
+
+    container = _make_container(db)
+    container.runtime_mode = "web"
+    container.scheduler = AsyncMock()
+    container.scheduler.load_settings = AsyncMock()
+
+    try:
+        await start_container(container)
+
+        # The worker still owns this row — web must not have requeued it.
+        still_running = await db.repos.telegram_commands.get_command(command_id)
+        assert still_running is not None
+        assert still_running.status == TelegramCommandStatus.RUNNING
     finally:
         await db.close()
 
