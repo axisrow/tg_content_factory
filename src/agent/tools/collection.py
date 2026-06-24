@@ -7,7 +7,7 @@ from typing import Annotated
 from claude_agent_sdk import tool
 
 from src.agent.tools._categories import ToolCategory, ToolMeta
-from src.agent.tools._registry import _text_response, require_pool
+from src.agent.tools._registry import _text_response, arg_bool, require_pool
 
 # Permission metadata for this module's tools (#245). Single source of
 # truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
@@ -47,7 +47,9 @@ def register(db, client_pool, embedding_service, **kwargs):
             ch = await db.get_channel_by_pk(int(pk))
             if ch is None:
                 return _text_response(f"Канал pk={pk} не найден.")
-            force = bool(args.get("force", False))
+            # bool("false") is True — coerce so a JSON-string force="false" does not
+            # silently force-collect a filtered channel (#1115).
+            force = arg_bool(args, "force", False)
             if ch.is_filtered and not force:
                 return _text_response(
                     f"Канал '{ch.title}' отфильтрован. Используйте force=true для принудительного сбора."

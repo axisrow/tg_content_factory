@@ -12,7 +12,11 @@ from src.agent.tools._photo_loader_runtime import (
     split_file_paths,
 )
 from src.agent.tools._registry import (
+    ToolInputError,
     _text_response,
+    arg_bool,
+    arg_int,
+    is_affirmative,
     require_confirmation,
 )
 from src.agent.tools.photo_loader_schemas import (
@@ -207,7 +211,9 @@ def register_batch_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]
         pool_gate = ctx.require_pool("Обработка фото")
         if pool_gate:
             return pool_gate
-        dry_run = bool(args.get("dry_run"))
+        # bool("false") is True — a JSON-string dry_run="false" would silently force
+        # preview-only and never actually send; coerce via is_affirmative (#1115).
+        dry_run = arg_bool(args, "dry_run", False)
         if dry_run:
             # Preview only — no send, no mark, no state change. Skip the confirmation
             # gate (nothing happens) and the photo-item path (it has no dry-run).
@@ -350,15 +356,35 @@ def register_auto_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
         job_id = args.get("job_id")
         if job_id is None:
             return _text_response("Ошибка: job_id обязателен.")
+        # Three-state: None leaves is_active unchanged; only coerce when present, so a
+        # JSON-string is_active="false" deactivates instead of staying truthy (#1115).
+        raw_is_active = args.get("is_active")
+        is_active = is_affirmative(raw_is_active) if raw_is_active is not None else None
+        # Validate the interval BEFORE writing: arg_int turns a non-numeric value into a
+        # friendly ToolInputError (instead of an unhandled ValueError escaping the
+        # handler), and a sub-1 value would violate PhotoAutoUploadJob.interval_minutes
+        # (Field ge=1) and poison every later get/list_auto_jobs read — reject it up
+        # front rather than corrupt the job (#1115 cycle-review, Codex finding).
+        # Validate the interval BEFORE writing: arg_int turns a non-numeric value into a
+        # friendly ToolInputError (instead of an unhandled ValueError escaping the
+        # handler), and a sub-1 value would violate PhotoAutoUploadJob.interval_minutes
+        # (Field ge=1) and poison every later get/list_auto_jobs read — reject it up
+        # front rather than corrupt the job (#1115 cycle-review, Codex finding).
+        try:
+            interval_minutes = arg_int(args, "interval_minutes")
+        except ToolInputError as exc:
+            return exc.to_response()
+        if interval_minutes is not None and interval_minutes < 1:
+            return _text_response("Ошибка: interval_minutes должен быть >= 1.")
         changes = []
         if args.get("folder_path"):
             changes.append(f"folder={args['folder_path']}")
         if args.get("mode"):
             changes.append(f"mode={args['mode']}")
-        if args.get("interval_minutes") is not None:
-            changes.append(f"interval={args['interval_minutes']}m")
-        if args.get("is_active") is not None:
-            changes.append(f"active={args['is_active']}")
+        if interval_minutes is not None:
+            changes.append(f"interval={interval_minutes}m")
+        if is_active is not None:
+            changes.append(f"active={is_active}")
         desc = f"обновит автозагрузку id={job_id}"
         if changes:
             desc += f" ({', '.join(changes)})"
@@ -376,8 +402,8 @@ def register_auto_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
                 folder_path=args.get("folder_path"),
                 send_mode=PhotoSendMode(mode_str) if mode_str else None,
                 caption=args.get("caption"),
-                interval_minutes=args.get("interval_minutes"),
-                is_active=args.get("is_active"),
+                interval_minutes=interval_minutes,
+                is_active=is_active,
             )
             return _text_response(f"Автозагрузка id={job_id} обновлена.")
         except Exception as exc:
