@@ -1,3 +1,10 @@
+"""Репозиторий сохранённых поисковых запросов и их дневной статистики.
+
+Доступ через `db.repos.search_queries`. Хранит две сущности: сами запросы
+(`search_queries` — текст/regex/FTS, расписание, уведомления) и временной ряд
+числа совпадений по дням (`search_query_stats`) для графиков активности темы.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -12,6 +19,8 @@ if TYPE_CHECKING:
 
 
 class SearchQueriesRepository:
+    """CRUD сохранённых поисковых запросов и запись/чтение их дневной статистики."""
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -22,6 +31,7 @@ class SearchQueriesRepository:
         self._database = database
 
     async def add(self, sq: SearchQuery) -> int:
+        """Создать сохранённый запрос; вернуть его новый id."""
         cur = await self._database.execute_write(
             "INSERT INTO search_queries "
             "(name, query, is_regex, is_fts, is_active, notify_on_collect, "
@@ -44,6 +54,7 @@ class SearchQueriesRepository:
         return cur.lastrowid or 0
 
     async def get_all(self, active_only: bool = False) -> list[SearchQuery]:
+        """Все запросы по возрастанию id; с ``active_only`` — только активные."""
         sql = "SELECT * FROM search_queries"
         if active_only:
             sql += " WHERE is_active = 1"
@@ -53,16 +64,19 @@ class SearchQueriesRepository:
         return [self._row_to_model(r) for r in rows]
 
     async def get_by_id(self, sq_id: int) -> SearchQuery | None:
+        """Один запрос по id, либо ``None`` если такого нет."""
         cur = await self._db.execute("SELECT * FROM search_queries WHERE id = ?", (sq_id,))
         row = await cur.fetchone()
         return self._row_to_model(row) if row else None
 
     async def set_active(self, sq_id: int, active: bool) -> None:
+        """Включить/выключить запрос (неактивный не запускается планировщиком)."""
         await self._database.execute_write(
             "UPDATE search_queries SET is_active = ? WHERE id = ?", (int(active), sq_id)
         )
 
     async def update(self, sq_id: int, sq: SearchQuery) -> None:
+        """Перезаписать редактируемые поля запроса (флаг is_active не трогается — для него есть set_active)."""
         await self._database.execute_write(
             "UPDATE search_queries SET name = ?, query = ?, is_regex = ?, is_fts = ?, "
             "notify_on_collect = ?, track_stats = ?, interval_minutes = ?, "
@@ -84,6 +98,7 @@ class SearchQueriesRepository:
         )
 
     async def delete(self, sq_id: int) -> None:
+        """Удалить запрос вместе с его дневной статистикой (одной транзакцией)."""
         assert self._database is not None, (
             "SearchQueriesRepository.delete requires a Database reference"
         )
@@ -92,6 +107,7 @@ class SearchQueriesRepository:
             await conn.execute("DELETE FROM search_queries WHERE id = ?", (sq_id,))
 
     async def record_stat(self, query_id: int, match_count: int) -> None:
+        """Записать число совпадений запроса за сегодня (одна запись на день — перезаписывает текущую)."""
         # One stat per query per day: delete existing entry for today, then insert
         assert self._database is not None, (
             "SearchQueriesRepository.record_stat requires a Database reference"
@@ -108,6 +124,7 @@ class SearchQueriesRepository:
             )
 
     async def get_daily_stats(self, query_id: int, days: int = 30) -> list[SearchQueryDailyStat]:
+        """Ряд «день → число совпадений» для одного запроса за последние ``days`` дней."""
         cur = await self._db.execute(
             """
             SELECT date(recorded_at) AS day, SUM(match_count) AS count
@@ -123,6 +140,7 @@ class SearchQueriesRepository:
         return [SearchQueryDailyStat(day=r["day"], count=r["count"]) for r in rows]
 
     async def get_stats_for_all(self, days: int = 30) -> dict[int, list[SearchQueryDailyStat]]:
+        """Дневная статистика всех запросов за ``days`` дней, сгруппированная по query_id (один запрос вместо N)."""
         cur = await self._db.execute(
             """
             SELECT query_id, date(recorded_at) AS day, SUM(match_count) AS count
@@ -142,6 +160,7 @@ class SearchQueriesRepository:
         return result
 
     async def get_last_recorded_at(self, query_id: int) -> str | None:
+        """ISO-время последней записи статистики запроса (для решения «пора ли пересчитать»), либо ``None``."""
         cur = await self._db.execute(
             "SELECT MAX(recorded_at) AS last FROM search_query_stats WHERE query_id = ?",
             (query_id,),
@@ -150,6 +169,7 @@ class SearchQueriesRepository:
         return row["last"] if row else None
 
     async def get_last_recorded_at_all(self) -> dict[int, str]:
+        """Карта query_id → ISO-время последней записи статистики (только запросы, у которых она есть)."""
         cur = await self._db.execute(
             "SELECT query_id, MAX(recorded_at) AS last " "FROM search_query_stats GROUP BY query_id"
         )
@@ -157,6 +177,7 @@ class SearchQueriesRepository:
         return {r["query_id"]: r["last"] for r in rows if r["last"]}
 
     async def get_notification_queries(self, active_only: bool = True) -> list[SearchQuery]:
+        """Запросы с включёнными уведомлениями о новых совпадениях (по умолчанию только активные)."""
         sql = "SELECT * FROM search_queries WHERE notify_on_collect = 1"
         if active_only:
             sql += " AND is_active = 1"

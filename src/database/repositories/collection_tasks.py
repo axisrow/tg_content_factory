@@ -1,3 +1,17 @@
+"""Репозиторий фоновых задач (таблица ``collection_tasks``).
+
+Доступ через `db.repos.tasks`. Одна таблица обслуживает несколько видов работы:
+сбор каналов (CHANNEL_COLLECT, тянет `CollectionQueue`), периодические
+служебные задачи (STATS_ALL, FILTER_ANALYZE) и «генерические» задачи диспетчера
+(PIPELINE_RUN, CONTENT_*, EXPORT…, тянет `UnifiedDispatcher`). Payload хранится
+как JSON и десериализуется в типизированную модель по полю ``task_kind``.
+
+Многие методы устойчивы к гонкам и сбоям: атомарный claim через UPDATE…RETURNING,
+создание «если нет активной» через INSERT…WHERE NOT EXISTS, восстановление
+зависших RUNNING-задач на старте, и защита терминального CANCELLED от перезаписи
+запоздалым апдейтом воркера (#633).
+"""
+
 from __future__ import annotations
 
 import json
@@ -37,6 +51,8 @@ if TYPE_CHECKING:
 
 
 class CollectionTasksRepository:
+    """CRUD и атомарные переходы статусов фоновых задач (`collection_tasks`)."""
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -153,6 +169,11 @@ class CollectionTasksRepository:
         payload: dict[str, Any] | None = None,
         parent_task_id: int | None = None,
     ) -> int:
+        """Поставить задачу сбора канала (CHANNEL_COLLECT); вернуть её id.
+
+        ``run_after`` откладывает запуск (хранится в UTC); если нужна дедупликация
+        по уже активной задаче канала — см. :meth:`create_collection_task_if_not_active`.
+        """
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
         payload_json = self._serialize_payload(payload)
         cur = await self._database.execute_write(
@@ -222,6 +243,7 @@ class CollectionTasksRepository:
         run_after: datetime | None = None,
         parent_task_id: int | None = None,
     ) -> int:
+        """Поставить задачу обновления статистики всех каналов (STATS_ALL); вернуть её id."""
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
         cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
@@ -270,6 +292,7 @@ class CollectionTasksRepository:
         return None
 
     async def get_active_filter_analyze_task(self) -> CollectionTask | None:
+        """Самая ранняя активная (pending/running) задача анализа фильтров, либо ``None``."""
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks "
             "WHERE task_type = ? AND status IN (?, ?) "
@@ -286,6 +309,7 @@ class CollectionTasksRepository:
         return self._to_task(row)
 
     async def get_latest_filter_analyze_task(self) -> CollectionTask | None:
+        """Самая последняя (по id) задача анализа фильтров в любом статусе, либо ``None``."""
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks WHERE task_type = ? ORDER BY id DESC LIMIT 1",
             (CollectionTaskType.FILTER_ANALYZE.value,),
@@ -296,6 +320,7 @@ class CollectionTasksRepository:
         return self._to_task(row)
 
     async def update_collection_task_progress(self, task_id: int, messages_collected: int) -> None:
+        """Записать прогресс задачи (число собранных сообщений) и обновить «часы прогресса» (`last_progress_at`)."""
         now = datetime.now(tz=timezone.utc).isoformat()
         await self._database.execute_write(
             "UPDATE collection_tasks SET messages_collected = ?, last_progress_at = ? WHERE id = ?",
@@ -386,6 +411,10 @@ class CollectionTasksRepository:
         note: str | None = None,
         messages_collected: int = 0,
     ) -> None:
+        """Вернуть задачу в PENDING с новым ``run_after`` (отложить и сбросить отметки выполнения).
+
+        Терминальный CANCELLED не трогается (#633).
+        """
         sets = [
             "status = ?",
             "run_after = ?",
@@ -418,6 +447,7 @@ class CollectionTasksRepository:
         *,
         note: str | None = None,
     ) -> None:
+        """Сбросить задачу в PENDING немедленно, очистив отметки выполнения; CANCELLED не трогается."""
         sets = [
             "status = ?",
             "started_at = NULL",
@@ -439,6 +469,7 @@ class CollectionTasksRepository:
         )
 
     async def get_collection_task(self, task_id: int) -> CollectionTask | None:
+        """Одна задача по id, либо ``None`` если такой нет."""
         cur = await self._db.execute("SELECT * FROM collection_tasks WHERE id = ?", (task_id,))
         row = await cur.fetchone()
         if row is None:
@@ -446,6 +477,10 @@ class CollectionTasksRepository:
         return self._to_task(row)
 
     async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
+        """Последние ``limit`` задач любого типа, новые первыми.
+
+        Без постраничности — для неё см. :meth:`get_collection_tasks_paginated`.
+        """
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks ORDER BY id DESC LIMIT ?", (limit,)
         )
@@ -502,6 +537,7 @@ class CollectionTasksRepository:
         self,
         channel_id: int,
     ) -> list[CollectionTask]:
+        """Активные (pending/running) задачи сбора для конкретного канала, по возрастанию id."""
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks "
             "WHERE task_type = ? AND channel_id = ? AND status IN (?, ?) "
@@ -517,6 +553,7 @@ class CollectionTasksRepository:
         return [self._to_task(r) for r in rows]
 
     async def get_channel_ids_with_active_tasks(self) -> set[int]:
+        """Множество ``channel_id``, по которым есть активная задача сбора (для дедупликации постановки)."""
         cur = await self._db.execute(
             "SELECT DISTINCT channel_id FROM collection_tasks "
             "WHERE task_type = ? AND status IN (?, ?) AND channel_id IS NOT NULL",
@@ -530,6 +567,7 @@ class CollectionTasksRepository:
         return {int(row["channel_id"]) for row in rows}
 
     async def get_active_stats_task(self) -> CollectionTask | None:
+        """Самая ранняя активная (pending/running) задача обновления статистики, либо ``None``."""
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks "
             "WHERE task_type = ? AND status IN (?, ?) "
@@ -569,6 +607,7 @@ class CollectionTasksRepository:
         )
 
     async def get_pending_channel_tasks(self) -> list[CollectionTask]:
+        """Ожидающие (pending) задачи сбора в порядке готовности к запуску (по ``run_after``, затем id)."""
         cur = await self._db.execute(
             "SELECT * FROM collection_tasks "
             "WHERE task_type = ? AND status = ? "
@@ -582,6 +621,7 @@ class CollectionTasksRepository:
         return [self._to_task(r) for r in rows]
 
     async def delete_pending_channel_tasks(self) -> int:
+        """Удалить все ожидающие задачи сбора (очистить очередь); вернуть число удалённых."""
         cur = await self._database.execute_write(
             "DELETE FROM collection_tasks "
             "WHERE task_type = ? AND status = ?",
@@ -593,6 +633,11 @@ class CollectionTasksRepository:
         return cur.rowcount or 0
 
     async def fail_running_collection_tasks_on_startup(self) -> int:
+        """На старте пометить «провисшие» RUNNING-задачи сбора как failed; вернуть число помеченных.
+
+        Вариант, требующий ручного перезапуска; см. :meth:`reset_orphaned_running_tasks`,
+        который вместо этого возвращает их в PENDING для авто-восстановления.
+        """
         now = datetime.now(tz=timezone.utc).isoformat()
         cur = await self._database.execute_write(
             "UPDATE collection_tasks "
@@ -643,6 +688,7 @@ class CollectionTasksRepository:
         run_after: datetime | None = None,
         parent_task_id: int | None = None,
     ) -> int:
+        """Поставить «генерическую» задачу диспетчера (PIPELINE_RUN, CONTENT_*, EXPORT…); вернуть её id."""
         tt = task_type
         task_type_value = tt.value if isinstance(tt, CollectionTaskType) else tt
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
@@ -666,6 +712,12 @@ class CollectionTasksRepository:
     async def claim_next_due_generic_task(
         self, now: datetime, handled_types: list[str]
     ) -> CollectionTask | None:
+        """Атомарно захватить следующую готовую задачу из ``handled_types``, переведя её в RUNNING.
+
+        Один UPDATE…RETURNING исключает гонку двух воркеров за одну задачу. Берётся
+        самая ранняя PENDING с наступившим ``run_after``; возвращает ``None``, если
+        готовых нет или список типов пуст.
+        """
         if not handled_types:
             return None
         assert self._database is not None, (
@@ -693,6 +745,7 @@ class CollectionTasksRepository:
     async def requeue_running_generic_tasks_on_startup(
         self, now: datetime, handled_types: list[str]
     ) -> int:
+        """На старте вернуть зависшие RUNNING генерические задачи в PENDING (авто-восстановление); вернуть число."""
         if not handled_types:
             return 0
         now_iso = now.astimezone(timezone.utc).isoformat()
@@ -713,6 +766,7 @@ class CollectionTasksRepository:
         error: str,
         note: str | None = None,
     ) -> int:
+        """На старте пометить зависшие RUNNING генерические задачи как failed с заданным ``error``; вернуть число."""
         if not handled_types:
             return 0
         now_iso = now.astimezone(timezone.utc).isoformat()
@@ -741,6 +795,12 @@ class CollectionTasksRepository:
         payload_filter_key: str | None = None,
         payload_filter_value: str | int | None = None,
     ) -> bool:
+        """Есть ли активная (pending/running) задача данного типа.
+
+        Необязательный фильтр по полю payload (``sq_id``/``pipeline_id`` —
+        только из белого списка, иначе ``ValueError``) сужает проверку до
+        конкретной сущности, например «уже идёт генерация этого пайплайна».
+        """
         tt = task_type
         task_type_value = tt.value if isinstance(tt, CollectionTaskType) else tt
         sql = (
@@ -762,6 +822,11 @@ class CollectionTasksRepository:
         return (row["cnt"] if row else 0) > 0
 
     async def cancel_collection_task(self, task_id: int, note: str | None = None) -> bool:
+        """Отменить активную (pending/running) задачу; вернуть ``True``, если что-то отменили.
+
+        Терминальные задачи не трогаются (WHERE по статусу), поэтому ``False``
+        означает «нечего было отменять».
+        """
         now = datetime.now(tz=timezone.utc).isoformat()
         sets = ["status = 'cancelled'", "completed_at = ?"]
         params: list[Any] = [now]

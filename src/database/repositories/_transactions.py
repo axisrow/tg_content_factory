@@ -1,3 +1,5 @@
+"""Низкоуровневые помощники транзакций для общего aiosqlite-соединения (#569)."""
+
 from __future__ import annotations
 
 import logging
