@@ -500,6 +500,14 @@ class ClientLifecycleMixin:
                 if not force_native:
                     # Store persistent session for future direct reuse.
                     # force_native sessions are short-lived and must not replace the pool session.
+                    #
+                    # This branch installs a *fresh* backend client (the cached
+                    # direct session was absent or its auto-reconnect failed
+                    # above): a new session object with an empty in-memory entity
+                    # cache. Drop the warm flag so the next numeric-PeerChannel
+                    # collection re-warms instead of skipping against the empty
+                    # cache (#1043) — same hazard as add_client's re-auth.
+                    self.reset_dialogs_warm(phone)
                     self.clients[phone] = TelegramTransportSession(
                         lease.session.raw_client,
                         disconnect_on_close=False,

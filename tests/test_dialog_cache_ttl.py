@@ -31,6 +31,7 @@ Fix surface (cache flags only, no ClientPool refactor — #1023 boundary):
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -192,6 +193,71 @@ async def test_force_reconnect_phone_keeps_warm_flag(pool):
     result = await pool.force_reconnect_phone("+7001")
 
     assert result is True
+    assert pool.is_dialogs_fetched("+7001") is True
+
+
+@pytest.mark.anyio
+async def test_acquire_from_lease_resets_warm_flag_on_session_replacement(pool):
+    """Auto-reconnect fallback swaps in a fresh backend session → warm flag drops.
+
+    When a cached direct session is disconnected and ``connect()`` fails,
+    ``_acquire_from_lease`` falls back to the backend, which builds a brand-new
+    client / StringSession (empty entity cache) and replaces ``clients[phone]``.
+    The warm flag must be invalidated there too — otherwise numeric PeerChannel
+    collection would skip the warm against the fresh empty session (#1043,
+    cycle-review HIGH finding). A bare reconnect that *succeeds* is covered
+    separately and keeps the flag.
+    """
+    # A cached direct session that looks disconnected → triggers the fallback.
+    stale_client = AsyncMock()
+    stale_client.is_connected = MagicMock(return_value=False)
+    stale_client.connect = AsyncMock(side_effect=RuntimeError("stream closed"))
+    pool.clients["+7001"] = TelegramTransportSession(stale_client, disconnect_on_close=False)
+    pool.mark_dialogs_fetched("+7001")
+    assert pool.is_dialogs_fetched("+7001") is True
+
+    # Backend hands back a fresh session (new object → cold entity cache).
+    fresh_client = AsyncMock()
+    fresh_session = TelegramTransportSession(fresh_client, disconnect_on_close=False)
+    lease = MagicMock()
+    lease.session = fresh_session
+    lease.disconnect_on_release = True
+    pool._backend_router = MagicMock()
+    pool._backend_router.acquire_client = AsyncMock(return_value=lease)
+
+    account_lease = SimpleNamespace(
+        account=SimpleNamespace(phone="+7001"), shared=False
+    )
+    result = await pool._acquire_from_lease(account_lease)
+
+    assert result is not None
+    assert pool.is_dialogs_fetched("+7001") is False
+
+
+@pytest.mark.anyio
+async def test_acquire_from_lease_keeps_warm_flag_on_successful_inplace_reconnect(pool):
+    """A successful in-place auto-reconnect reuses the same session object →
+    entity cache survives → the warm flag must be kept (no needless re-warm).
+
+    Complements the replacement case above: the reset is precise — it fires only
+    when the backend swaps in a fresh session, not on every reconnect.
+    """
+    client = AsyncMock()
+    client.is_connected = MagicMock(return_value=False)  # cached session looks down
+    client.connect = AsyncMock()  # reconnect SUCCEEDS in place
+    pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
+    pool.mark_dialogs_fetched("+7001")
+    pool._active_leases["+7001"] = []
+    pool._backend_router = MagicMock()
+    pool._backend_router.acquire_client = AsyncMock()  # must NOT be used
+
+    account_lease = SimpleNamespace(
+        account=SimpleNamespace(phone="+7001"), shared=False
+    )
+    result = await pool._acquire_from_lease(account_lease)
+
+    assert result is not None
+    pool._backend_router.acquire_client.assert_not_awaited()  # same session reused
     assert pool.is_dialogs_fetched("+7001") is True
 
 
