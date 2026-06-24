@@ -129,8 +129,14 @@ async def test_retry_after_flood_resumes_from_advanced_cursor(db):
 @pytest.mark.anyio
 async def test_retry_redelivering_same_id_does_not_duplicate(db):
     """If a retry re-delivers an already-persisted id (e.g. a fake/Telethon that
-    ignores min_id, or an off-by-one), INSERT OR IGNORE must absorb it — exactly
-    one row survives and the pass does not raise a UNIQUE violation.
+    ignores min_id, or an off-by-one), the collector pass must end with exactly
+    one row per id and no error surfaced.
+
+    Dedup here is enforced by UNIQUE(channel_id, message_id) (schema.py) — the
+    persistence layer absorbs the re-collected id. (The INSERT OR IGNORE clause
+    itself is pinned at the repository level in
+    tests/repositories/test_messages_repository.py and test_database.py; this
+    test guards the *collector*'s end-state across the flood→retry boundary.)
     """
     stored = await _add_channel(db, -100506, last_collected_id=5)
 
@@ -285,55 +291,53 @@ async def test_channel_deleted_between_flush_and_update_does_not_resurrect(db):
 
 
 @pytest.mark.anyio
-async def test_cancellation_mid_stream_persists_flushed_progress(db):
-    """Cancel tripped mid-stream must keep whatever was already flushed.
+async def test_cancellation_mid_stream_breaks_at_ten_boundary_and_keeps_progress(db):
+    """Cancel tripped mid-stream STOPS the stream at the next `% 10 == 0` check
+    AND keeps the partial batch that finalize flushes.
 
-    With a flush boundary smaller than the stream, the first batch is persisted
-    and last_collected_id advanced before cancellation breaks the loop. The
-    leftover (sub-batch) tail is still flushed by finalize, so no collected
-    message is silently dropped.
+    The flush boundary is left at the default 500 (larger than the 25-message
+    stream) so no batch flush happens mid-stream — the ONLY thing that can break
+    the loop early is the `% 10 == 0` cancellation check in
+    _stream_channel_messages. Cancellation is set as the 10th message is yielded,
+    so the loop must break right at len==10 and finalize flushes those 10. The
+    exact `total == 10` upper bound pins that mid-stream break: a regression that
+    ignores the `% 10` cancel check would drain all 25 and fail here
+    (cycle-review #1080 — the earlier flush-boundary variant did not pin this).
     """
     stored = await _add_channel(db, -100505, last_collected_id=0)
     cancel_event = asyncio.Event()
 
+    def _stream_cancelling_at_ten(*_args, **_kwargs):
+        # 25 messages; arm cancellation exactly as the 10th is delivered so the
+        # next `% 10 == 0` check (at len == 10) breaks the stream.
+        async def _gen():
+            for i in range(1, 26):
+                if i == 10:
+                    cancel_event.set()
+                yield _msg(i)
+
+        return _gen()
+
     client = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
-    # 25 messages; with the flush boundary shrunk to 10 the loop flushes at 10
-    # and 20. We trip cancellation right after the first flush, so the loop must
-    # break at the next `% 10 == 0` check without losing the persisted batch.
-    msgs = [_msg(i) for i in range(1, 26)]
-    client.iter_messages = MagicMock(side_effect=lambda *a, **kw: AsyncIterMessages(list(msgs)))
+    client.iter_messages = MagicMock(side_effect=_stream_cancelling_at_ten)
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(client, "+7000")))
     collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
 
-    real_flush = db.insert_messages_batch
-
-    async def _flush_then_cancel(batch):
-        result = await real_flush(batch)
-        # After the first real flush, request cancellation so the next
-        # `% 10 == 0` check inside the stream breaks the loop.
-        cancel_event.set()
-        return result
-
-    db.insert_messages_batch = AsyncMock(side_effect=_flush_then_cancel)  # type: ignore[method-assign]
-
-    import src.telegram.collector as collector_mod
-
-    original_batch_size = collector_mod.MESSAGE_FLUSH_BATCH_SIZE
-    collector_mod.MESSAGE_FLUSH_BATCH_SIZE = 10
-    try:
-        await collector.collect_single_channel(stored, cancel_event=cancel_event)
-    finally:
-        collector_mod.MESSAGE_FLUSH_BATCH_SIZE = original_batch_size
+    # Default MESSAGE_FLUSH_BATCH_SIZE (500) > 25, so no mid-stream flush fires;
+    # the `% 10` cancel check is the sole early-exit path.
+    await collector.collect_single_channel(stored, cancel_event=cancel_event)
 
     updated = await db.get_channel_by_channel_id(-100505)
     assert updated is not None
-    # Progress persisted up to at least the first flushed batch — never lost.
-    assert updated.last_collected_id >= 10
     messages, total = await db.search_messages(channel_id=-100505, limit=100)
-    # Every persisted id must be contiguous from 1 (no gaps, no dupes).
+    # Stream broke at the 10th message: exactly 10 persisted, none of the
+    # remaining 15. The upper bound is what pins the cancellation break — `>= 10`
+    # alone would pass even if the `% 10` check were a no-op and all 25 streamed.
+    assert total == 10
+    assert updated.last_collected_id == 10
+    # The partial batch was flushed by finalize — contiguous 1..10, no loss.
     persisted_ids = sorted(m.message_id for m in messages)
-    assert persisted_ids == list(range(1, total + 1))
-    assert total >= 10
+    assert persisted_ids == list(range(1, 11))
 
 
 # ---------------------------------------------------------------------------
@@ -508,24 +512,41 @@ async def test_acquire_flood_during_warm_retries_without_marking_fetched(db):
 @pytest.mark.anyio
 async def test_two_consecutive_stream_floods_rotate_and_keep_progress(db):
     """Two stream FloodWaits in a row rotate across three accounts without losing
-    progress: each flooded pass persists its partial batch before rotating, and
-    the durable cursor ends at the last id seen by the account that finished.
+    progress: each flooded pass persists its partial batch, advances the cursor,
+    and the NEXT rotation resumes from that advanced cursor (not the original
+    min_id). The durable cursor ends at the last id seen by the account that
+    finished.
+
+    Each rotated client is Telethon-faithful — it records the min_id it was
+    handed and yields only ids > min_id. A stale-cursor regression (a rotation
+    reusing the original min_id=5) is therefore caught by the recorded min_id
+    sequence, not merely inferred from the final DB state (cycle-review #1080).
     """
     stored = await _add_channel(db, -100601, last_collected_id=5)
 
     client1 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
     client2 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
     client3 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    seen_min_ids: list[int] = []
 
-    async def _flood_after(msg_id: int):
-        yield _msg(msg_id)
-        raise FloodWaitError(request=None, capture=3)
+    def _faithful_flood(new_id: int, *, flood: bool):
+        """Yield `new_id` only if it is past the handed-in min_id, then flood."""
 
-    client1.iter_messages = MagicMock(side_effect=lambda *a, **kw: _flood_after(6))
-    client2.iter_messages = MagicMock(side_effect=lambda *a, **kw: _flood_after(7))
-    client3.iter_messages = MagicMock(
-        side_effect=lambda *a, **kw: AsyncIterMessages([_msg(8)])
-    )
+        async def _gen(min_id: int):
+            seen_min_ids.append(min_id)
+            if new_id > min_id:
+                yield _msg(new_id)
+            if flood:
+                raise FloodWaitError(request=None, capture=3)
+
+        def _factory(*_args, **kwargs):
+            return _gen(kwargs.get("min_id", 0))
+
+        return _factory
+
+    client1.iter_messages = MagicMock(side_effect=_faithful_flood(6, flood=True))
+    client2.iter_messages = MagicMock(side_effect=_faithful_flood(7, flood=True))
+    client3.iter_messages = MagicMock(side_effect=_faithful_flood(8, flood=False))
 
     pool = make_mock_pool(
         get_available_client=AsyncMock(
@@ -542,6 +563,9 @@ async def test_two_consecutive_stream_floods_rotate_and_keep_progress(db):
 
     count = await collector._collect_channel(stored)
 
+    # Each rotation resumed from the cursor the previous pass advanced — never
+    # re-scanning from the original min_id=5.
+    assert seen_min_ids == [5, 6, 7]
     assert count == 3  # msgs 6, 7, 8 each persisted across the rotations
     updated = await db.get_channel_by_channel_id(-100601)
     assert updated is not None
@@ -563,13 +587,24 @@ async def test_all_accounts_flooded_after_multiple_rotations_preserves_cursor(db
 
     client1 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
     client2 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+    seen_min_ids: list[int] = []
 
-    async def _flood_after(msg_id: int):
-        yield _msg(msg_id)
-        raise FloodWaitError(request=None, capture=600)  # long → rotate, not retry
+    def _faithful_long_flood(new_id: int):
+        """Yield `new_id` only if past the handed-in min_id, then long-flood."""
 
-    client1.iter_messages = MagicMock(side_effect=lambda *a, **kw: _flood_after(6))
-    client2.iter_messages = MagicMock(side_effect=lambda *a, **kw: _flood_after(7))
+        async def _gen(min_id: int):
+            seen_min_ids.append(min_id)
+            if new_id > min_id:
+                yield _msg(new_id)
+            raise FloodWaitError(request=None, capture=600)  # long → rotate, not retry
+
+        def _factory(*_args, **kwargs):
+            return _gen(kwargs.get("min_id", 0))
+
+        return _factory
+
+    client1.iter_messages = MagicMock(side_effect=_faithful_long_flood(6))
+    client2.iter_messages = MagicMock(side_effect=_faithful_long_flood(7))
 
     pool = make_mock_pool(
         get_available_client=AsyncMock(
@@ -595,6 +630,10 @@ async def test_all_accounts_flooded_after_multiple_rotations_preserves_cursor(db
 
     with pytest.raises(AllCollectionClientsFloodedError):
         await collector._collect_channel(stored)
+
+    # The second rotation resumed from the cursor the first flooded pass
+    # advanced (6), not the original min_id=5 — progress carried through.
+    assert seen_min_ids == [5, 6]
 
     updated = await db.get_channel_by_channel_id(-100602)
     assert updated is not None
