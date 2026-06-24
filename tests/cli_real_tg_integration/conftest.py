@@ -949,6 +949,48 @@ def cleanup_verified_messages(
     return verify_leak
 
 
+def force_delete_messages_by_id(
+    cli_env: CliEnv,
+    *,
+    phone: str,
+    chat_ref: str,
+    message_ids: list[int],
+) -> str | None:
+    """Best-effort delete of EXACT message ids, skipping nonce verification.
+
+    Unlike ``cleanup_verified_messages`` (which reads the message back and matches
+    a text nonce before deleting), this deletes the literal ids passed in. It is a
+    LAST-RESORT fallback for the narrow case where the ownership marker cannot be
+    recovered (e.g. ``pipeline run-show`` failed, so there is no run text to derive
+    a nonce from) yet a real message WAS published and must not leak.
+
+    Safe to use ONLY when ``message_ids`` came from this test's own publish output
+    (a ``published_message_id=`` line we printed for a message we just created) —
+    they are not guessed, so there is no risk of deleting a foreign message. Returns
+    a leak-reason string if deletion could not be confirmed, else ``None``.
+    """
+    if not message_ids:
+        return None
+    try:
+        cleanup = _capture_cli(
+            cli_env,
+            "dialogs",
+            "delete-message",
+            "--yes",
+            "--phone",
+            phone,
+            chat_ref,
+            *[str(mid) for mid in message_ids],
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        return f"message(s) {message_ids} in {chat_ref} may be left: forced cleanup timed out"
+    cleanup_failure = cli_result_failure_summary(cleanup)
+    if cleanup_failure is not None:
+        return f"message(s) {message_ids} in {chat_ref} may be left: {cleanup_failure}"
+    return None
+
+
 def snapshot_pending_collection_task_ids(db_path: Path) -> tuple[set[int], bool]:
     """Return (pending channel-collect task ids, ok) currently in the DB.
 
