@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Awaitable, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Mapping, Optional
 
 from src.agent.provider_registry import (
     ProviderRuntimeConfig,
@@ -18,9 +18,20 @@ logger = logging.getLogger(__name__)
 async def build_provider_service(
     db: object | None = None,
     config: object | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> "RuntimeProviderRegistry":
-    """Create RuntimeProviderRegistry and eagerly load DB-backed providers when possible."""
-    svc = RuntimeProviderRegistry(db, config)
+    """Create RuntimeProviderRegistry and eagerly load DB-backed providers when possible.
+
+    ``env`` is the explicit environment mapping the registry registers env-based
+    providers from. The registry itself never reads ``os.environ`` (that global
+    process state coupling was the root cause of the #1050 parallel flake); this
+    factory snapshots ``os.environ`` exactly once when ``env`` is not supplied, so
+    production call-sites keep their env-based providers while tests can inject an
+    explicit (and isolated) mapping.
+    """
+    if env is None:
+        env = dict(os.environ)
+    svc = RuntimeProviderRegistry(db, config, env=env)
     if db is not None and config is not None:
         await svc.load_db_providers()
     return svc
@@ -47,9 +58,22 @@ class RuntimeProviderRegistry:
     env-based ones.
     """
 
-    def __init__(self, db: Optional[object] = None, config: Optional[object] = None) -> None:
+    def __init__(
+        self,
+        db: Optional[object] = None,
+        config: Optional[object] = None,
+        *,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
         self.db = db
         self._config = config
+        # Env is injected explicitly. The registry NEVER reads the process
+        # environment: doing so coupled provider registration to shared process
+        # state, which under ``pytest -n auto`` let a neighbouring xdist worker's
+        # env mutations leak in and produce a non-deterministic provider set
+        # (#1050). ``env=None`` means "no env-based providers" — pulling env from
+        # the process is the caller's / factory's job (see build_provider_service).
+        self._env: dict[str, str] = dict(env) if env is not None else {}
         self._registry: Dict[str, Callable[..., Awaitable[str]]] = {}
         self._db_provider_names: set[str] = set()
         # register default provider
@@ -57,17 +81,17 @@ class RuntimeProviderRegistry:
         self._register_env_providers()
 
     def _register_env_providers(self) -> None:
-        """Register providers from environment variables (original behaviour)."""
+        """Register providers from the injected env mapping (``self._env``)."""
         # Optional OpenAI provider. Runtime calls go through LangChain so the
         # app uses the same model integration path as DeepAgents.
-        openai_key = os.environ.get("OPENAI_API_KEY")
+        openai_key = self._env.get("OPENAI_API_KEY")
         if openai_key:
             self.register_provider("openai", self._make_openai_provider(openai_key))
 
         # optional Z.AI provider. ZAI_BASE_URL is optional; empty value means
         # the subscription/Coding Plan endpoint.
-        zai_key = os.environ.get("ZAI_API_KEY")
-        zai_base = normalize_zai_base_url(os.environ.get("ZAI_BASE_URL") or "")
+        zai_key = self._env.get("ZAI_API_KEY")
+        zai_base = normalize_zai_base_url(self._env.get("ZAI_BASE_URL") or "")
         if zai_key and "zai" not in self._registry:
             try:
                 self.register_provider(
@@ -83,7 +107,7 @@ class RuntimeProviderRegistry:
                 logger.debug("Failed to register zai adapter", exc_info=True)
 
         # optional Context7 provider (user may supply CONTEXT7_API_KEY)
-        context7_key = os.environ.get("CONTEXT7_API_KEY") or os.environ.get("CTX7_API_KEY")
+        context7_key = self._env.get("CONTEXT7_API_KEY") or self._env.get("CTX7_API_KEY")
         if context7_key:
             try:
                 from src.services.provider_adapters import make_context7_adapter
@@ -95,7 +119,7 @@ class RuntimeProviderRegistry:
         # Register LangChain-backed adapters when env vars are present. Each
         # provider is isolated so one bad env config does not block the rest.
         env_adapters: list[tuple[str, Callable[[], Callable[..., Awaitable[str]]]]] = []
-        cohere_key = os.environ.get("COHERE_API_KEY")
+        cohere_key = self._env.get("COHERE_API_KEY")
         if cohere_key and "cohere" not in self._registry:
             env_adapters.append(
                 (
@@ -106,8 +130,8 @@ class RuntimeProviderRegistry:
                 )
             )
 
-        ollama_base = os.environ.get("OLLAMA_BASE") or os.environ.get("OLLAMA_URL")
-        ollama_key = os.environ.get("OLLAMA_API_KEY", "")
+        ollama_base = self._env.get("OLLAMA_BASE") or self._env.get("OLLAMA_URL")
+        ollama_key = self._env.get("OLLAMA_API_KEY", "")
         if (ollama_base or ollama_key) and "ollama" not in self._registry:
             env_adapters.append(
                 (
@@ -122,7 +146,7 @@ class RuntimeProviderRegistry:
                 )
             )
 
-        hf_key = os.environ.get("HUGGINGFACE_API_KEY") or os.environ.get("HUGGINGFACE_TOKEN")
+        hf_key = self._env.get("HUGGINGFACE_API_KEY") or self._env.get("HUGGINGFACE_TOKEN")
         if hf_key and "huggingface" not in self._registry:
             env_adapters.append(
                 (
@@ -136,18 +160,18 @@ class RuntimeProviderRegistry:
         openai_compatible_env = (
             (
                 "fireworks",
-                os.environ.get("FIREWORKS_BASE") or os.environ.get("FIREWORKS_API_BASE"),
-                os.environ.get("FIREWORKS_API_KEY"),
+                self._env.get("FIREWORKS_BASE") or self._env.get("FIREWORKS_API_BASE"),
+                self._env.get("FIREWORKS_API_KEY"),
             ),
             (
                 "deepseek",
-                os.environ.get("DEEPSEEK_BASE") or os.environ.get("DEEPSEEK_API_BASE"),
-                os.environ.get("DEEPSEEK_API_KEY"),
+                self._env.get("DEEPSEEK_BASE") or self._env.get("DEEPSEEK_API_BASE"),
+                self._env.get("DEEPSEEK_API_KEY"),
             ),
             (
                 "together",
-                os.environ.get("TOGETHER_BASE") or os.environ.get("TOGETHER_API_BASE"),
-                os.environ.get("TOGETHER_API_KEY"),
+                self._env.get("TOGETHER_BASE") or self._env.get("TOGETHER_API_BASE"),
+                self._env.get("TOGETHER_API_KEY"),
             ),
         )
         for provider_name, base_env, key_env in openai_compatible_env:
@@ -484,10 +508,10 @@ class RuntimeProviderRegistry:
 
     def _make_openai_provider(self, api_key: str) -> Callable[..., Awaitable[str]]:
         return self._make_openai_compat_provider(
-            os.environ.get("OPENAI_API_BASE", "https://api.openai.com/v1"),
+            self._env.get("OPENAI_API_BASE", "https://api.openai.com/v1"),
             api_key,
             provider_name="openai",
-            default_model=os.environ.get("OPENAI_DEFAULT_MODEL", "gpt-3.5-turbo"),
+            default_model=self._env.get("OPENAI_DEFAULT_MODEL", "gpt-3.5-turbo"),
         )
 
     async def _default_provider(self, **kwargs: Any) -> str:
