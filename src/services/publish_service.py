@@ -51,6 +51,23 @@ class PublishService:
             logger.warning("Run %s has no generated_text, skipping publish", run.id)
             return [PublishResult(success=False, error="No generated text")]
 
+        # Single, service-level guard against publishing a run whose generation
+        # did not complete (issue #1036 review, Codex). publish_run is the one
+        # path every publish entrypoint funnels through — CONTENT_GENERATE
+        # auto-publish, the CONTENT_PUBLISH batch, the web/CLI moderation
+        # "publish" button (via the dispatcher), and the agent publish tool. A
+        # run can carry generated_text (saved before a later step failed) yet end
+        # at status='failed'; or a human/agent could approve a failed run. Gating
+        # delivery on status='completed' here blocks every such case at the one
+        # irreversible boundary, not just in CONTENT_PUBLISH's SQL filter.
+        if run.status != "completed":
+            logger.warning(
+                "Run %s is not eligible for publish: status=%s (must be 'completed')",
+                run.id,
+                run.status,
+            )
+            return [PublishResult(success=False, error="Run generation is not completed")]
+
         effective_mode = (
             (run.metadata or {}).get("effective_publish_mode", pipeline.publish_mode.value)
         )
