@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -57,25 +58,49 @@ class PipelineRetrievalScope:
     channel_id: int | None
 
 
+class PipelineScopeError(RuntimeError):
+    """Raised when a pipeline's source scope cannot be resolved.
+
+    Fail-closed for content isolation (#1077): a ``channel_id`` of ``None``
+    means UNSCOPED retrieval across ALL channels. The old code swallowed a
+    failed source lookup and returned ``channel_id=None``, silently widening a
+    single-source pipeline into a cross-channel search on a transient DB blip —
+    content could then be generated/published from channels outside the
+    configured sources (a trust-boundary breach). We therefore abort the run
+    instead of widening the scope.
+    """
+
+
 async def resolve_retrieval_scope(
     pipeline: ContentPipeline,
     list_sources: Callable[[int], Awaitable[list[Any]]] | None = None,
 ) -> PipelineRetrievalScope:
-    """Return retrieval query and optional single-source scope for a pipeline."""
+    """Return retrieval query and optional single-source scope for a pipeline.
+
+    Raises :class:`PipelineScopeError` if the source lookup fails — we must not
+    fall back to an unscoped (all-channels) retrieval on a transient failure
+    (#1077, fail-closed). A genuinely unscoped pipeline (no ``list_sources``, or
+    zero/multiple configured sources) still returns ``channel_id=None``; only an
+    *errored* lookup is rejected.
+    """
     query = pipeline.name or ""
     channel_id: int | None = None
     if list_sources is None:
         return PipelineRetrievalScope(query=query, channel_id=channel_id)
     try:
         sources = await list_sources(pipeline.id)
-        if len(sources) == 1:
-            channel_id = sources[0].channel_id
-    except Exception:
-        logger.warning(
-            "Failed to load pipeline sources for %s, continuing without channel scoping",
+    except Exception as exc:
+        logger.error(
+            "Failed to load pipeline sources for %s; refusing to widen scope to all channels",
             pipeline.id,
             exc_info=True,
         )
+        raise PipelineScopeError(
+            f"Could not resolve source scope for pipeline {pipeline.id}; "
+            "aborting to avoid cross-channel retrieval"
+        ) from exc
+    if len(sources) == 1:
+        channel_id = sources[0].channel_id
     return PipelineRetrievalScope(query=query, channel_id=channel_id)
 
 
@@ -757,8 +782,39 @@ class PipelineService:
         await self._bundle.content_pipelines.set_pipeline_json(pipeline_id, graph)
         return True
 
+    @staticmethod
+    def _edge_creates_cycle(graph: PipelineGraph, from_node: str, to_node: str) -> bool:
+        """Return True if adding ``from_node -> to_node`` would create a cycle.
+
+        A new edge closes a cycle iff ``to_node`` can already reach ``from_node``
+        through the existing edges (or it is a self-loop). Reject such edges up
+        front so a cyclic graph never reaches the executor (#1077, defence in
+        depth — the executor also rejects cycles at run time)."""
+        if from_node == to_node:
+            return True
+        adj: dict[str, list[str]] = defaultdict(list)
+        for edge in graph.edges:
+            adj[edge.from_node].append(edge.to_node)
+        # DFS from to_node; if we reach from_node, the edge would close a loop.
+        stack = [to_node]
+        seen: set[str] = set()
+        while stack:
+            current = stack.pop()
+            if current == from_node:
+                return True
+            if current in seen:
+                continue
+            seen.add(current)
+            stack.extend(adj[current])
+        return False
+
     async def add_edge(self, pipeline_id: int, from_node: str, to_node: str) -> bool:
-        """Add an edge to the pipeline's graph. Returns False if pipeline/graph not found or endpoints don't exist."""
+        """Add an edge to the pipeline's graph.
+
+        Returns False if pipeline/graph not found or endpoints don't exist.
+        Raises :class:`PipelineValidationError` if the edge would create a cycle
+        (#1077, fail-closed) — a cyclic graph cannot be executed safely.
+        """
         graph = await self.get_graph(pipeline_id)
         if graph is None:
             return False
@@ -768,6 +824,10 @@ class PipelineService:
         # Idempotent: don't add duplicate edges
         existing = {(e.from_node, e.to_node) for e in graph.edges}
         if (from_node, to_node) not in existing:
+            if self._edge_creates_cycle(graph, from_node, to_node):
+                raise PipelineValidationError(
+                    f"Edge {from_node} -> {to_node} would create a cycle in the pipeline graph."
+                )
             graph.edges.append(PipelineEdge(from_node=from_node, to_node=to_node))
             await self._bundle.content_pipelines.set_pipeline_json(pipeline_id, graph)
         return True
