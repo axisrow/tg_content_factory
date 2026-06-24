@@ -7,7 +7,7 @@
 Или через CLI (интерактивно в браузере):
 
 ```
-http://localhost:8000/auth/login
+http://localhost:8080/auth/login
 ```
 
 ## 2. Добавить каналы
