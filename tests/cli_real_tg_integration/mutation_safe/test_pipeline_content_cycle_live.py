@@ -3,11 +3,12 @@
 Тест доказывает весь цикл живьём: generate (реальный провайдер) → MODERATED
 очередь → approve → publish в Saved Messages → сообщение реально доставлено.
 
-Двойной гейт:
-  - RUN_CLI_REAL_TG_LIVE=1   — живая Telegram сессия
-  - RUN_REAL_PROVIDER_SMOKE=1 — реальный LLM-провайдер (тратит кредиты)
+Тройной гейт:
+  - RUN_CLI_REAL_TG_LIVE=1          — живая Telegram сессия
+  - RUN_REAL_TELEGRAM_MUTATION_SAFE=1 — разрешение на мутации (marker real_tg_mutation_safe)
+  - RUN_REAL_PROVIDER_SMOKE=1       — реальный LLM-провайдер (тратит кредиты)
 
-Без обоих гейтов тест скипается — никогда не запускается автоматически.
+Без всех трёх гейтов тест скипается — никогда не запускается автоматически.
 """
 from __future__ import annotations
 
@@ -62,7 +63,13 @@ def _create_live_cycle_pipeline(
             """,
             (
                 pipeline_name,
-                f"Напиши одно короткое позитивное предложение о природе. Nonce: {nonce}",
+                # Требуем ДЛИННОЕ предложение (>= 60 символов в одну строку), чтобы
+                # distinctive_text_fragment() гарантированно нашёл маркер >= 40 симв.
+                # и cleanup точно сработал — иначе короткий ответ дал бы None и пост
+                # остался бы в Saved Messages (leak). Длина — первая линия защиты;
+                # вторая (fail при nonce_marker=None) ниже в finally.
+                "Напиши одно позитивное предложение о природе — не короче 60 символов, "
+                f"одной строкой, без переносов. Nonce: {nonce}",
                 phone,
             ),
         )
@@ -89,7 +96,10 @@ def _delete_live_cycle_pipeline(db_path, *, pipeline_id: int) -> None:
         )
 
 
-@pytest.mark.timeout(300)
+# Сумма CLI-таймаутов шагов: run 180 + moderation-list 30 + approve 30 + publish 120 = 360s.
+# Берём 420 (>= 360 + запас на медленный LLM/cleanup), чтобы pytest-timeout не убил тест
+# до finally и не оставил реальный пост неудалённым.
+@pytest.mark.timeout(420)
 def test_pipeline_content_cycle_live(run_cli, assert_cli_ok, cli_real_cli_env, live_scratch_message_dialog):
     """Сквозной живой прогон: LLM-generate → moderated → approve → publish → Saved Messages.
 
@@ -117,6 +127,11 @@ def test_pipeline_content_cycle_live(run_cli, assert_cli_ok, cli_real_cli_env, l
 
     try:
         # === Step 1: pipeline run — реальный LLM-провайдер ===
+        # --preview лишь ДОПЕЧАТЫВАЕт черновик в stdout; сам run всё равно
+        # создаётся и пишется в generation_runs (см. pipeline.py: generate()
+        # вызывается до проверки args.preview), поэтому дальше он реально
+        # попадает в очередь модерации и публикуется. Флаг тут — для удобства
+        # отладки вывода, он НЕ делает прогон «сухим».
         result = run_cli("pipeline", "run", str(pipeline_id), "--preview", timeout=180)
         assert_cli_ok(result)
         combined = f"{result.stdout}\n{result.stderr}"
@@ -164,10 +179,8 @@ def test_pipeline_content_cycle_live(run_cli, assert_cli_ok, cli_real_cli_env, l
         if run_id is not None:
             run_text = fetch_pipeline_run_text(cli_real_cli_env, run_id)
 
+        nonce_marker = distinctive_text_fragment(run_text) if run_text else None
         for message_id, published_phone, _ in published_entries:
-            nonce_marker = (
-                distinctive_text_fragment(run_text) if run_text else None
-            )
             if nonce_marker is not None:
                 current_leak = cleanup_verified_messages(
                     cli_real_cli_env,
@@ -178,7 +191,18 @@ def test_pipeline_content_cycle_live(run_cli, assert_cli_ok, cli_real_cli_env, l
                 )
                 if current_leak and sys.exc_info()[0] is None:
                     leak_msg = current_leak
-            # если fragment слишком короткий — оставляем (fail-safe, не удаляем чужое)
+            else:
+                # Маркер слишком короткий → cleanup НЕ удаляет (не трогаем чужое),
+                # но сообщение реально опубликовано в Saved Messages = LEAK. Не
+                # молчим: фиксируем явный leak, чтобы тест не «прошёл» молча,
+                # оставив реальный пост. (Промпт требует длинную строку, так что
+                # сюда мы попадаем лишь если LLM проигнорировал инструкцию.)
+                leak_msg = (
+                    f"LEAK: published message_id={message_id} остался в Saved Messages "
+                    f"(phone={published_phone}) — run text слишком короткий для "
+                    f"безопасного маркера, cleanup пропущен. Удалите вручную. "
+                    f"run_text={run_text!r}"
+                )
 
         _delete_live_cycle_pipeline(
             cli_real_cli_env.db_path,
