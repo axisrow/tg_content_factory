@@ -1647,9 +1647,10 @@ async def test_collect_correct_across_flush_boundaries_for_batch_size(db, monkey
     (the INSERT itself is 98% of persist time and is work-bound, not partition-
     bound) while it lengthens write-lock hold (#569) and peak memory — so the
     default stays 500. This locks that decision in: whichever value the constant
-    holds, collecting N > batch_size messages must dedup and advance
-    last_collected_id correctly across *every* flush boundary, not just the
-    single-batch case. Runs the real ``_collect_channel`` persist path against a
+    holds, collecting N > batch_size messages must persist exactly N unique rows
+    (no gaps/dups at flush boundaries) and advance last_collected_id correctly
+    across *every* boundary, and a second pass must re-collect nothing
+    (incrementality). Runs the real ``_collect_channel`` persist path against a
     real in-memory DB (no insert mock), parameterised on both the current default
     and the rejected 1000 hypothesis.
     """
@@ -1691,9 +1692,11 @@ async def test_collect_correct_across_flush_boundaries_for_batch_size(db, monkey
     assert len(page.messages) == total_msgs
     assert {m.message_id for m in page.messages} == set(range(1, total_msgs + 1))
 
-    # Second pass over the same source: incremental min_id (= last_collected_id)
-    # means nothing new is collected and INSERT OR IGNORE keeps the row count at N
-    # — dedup is intact regardless of batch size.
+    # Second pass over the same source proves *incrementality*, not DB-level
+    # dedup: min_id (= last_collected_id) filters the stream so _msgs yields
+    # nothing, so no second INSERT runs and the row count stays at N — regardless
+    # of batch size. (INSERT OR IGNORE conflict resolution is exercised elsewhere;
+    # here min_id is the load-bearing guard against re-collection.)
     stored_again = await db.get_channel_by_pk(ch_id)
     assert stored_again is not None
     recount = await collector._collect_channel(stored_again)
