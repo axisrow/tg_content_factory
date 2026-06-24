@@ -128,10 +128,10 @@ class GenerationRunsRepository:
             (image_url, run_id),
         )
 
-    async def find_orphan_image_url(
+    async def find_orphan_image(
         self, pipeline_id: int, exclude_run_id: int | None = None
-    ) -> str | None:
-        """Return an already-paid-for image URL that a retry can safely reuse (#1117).
+    ) -> tuple[int, str] | None:
+        """Find a paid-for image a retry can reuse, as ``(source_run_id, url)`` (#1117).
 
         Image generation is billed per request (#958). The paid POST happens
         before the fallible post-image steps (quality scoring, moderation-status
@@ -141,9 +141,13 @@ class GenerationRunsRepository:
         ``run_id``, so an in-run ``image_url`` check cannot dedupe it. Without a
         cross-run guard the retry would generate (and pay for) the image again.
 
-        This finds the most recent **failed** run of the same pipeline that already
-        persisted an ``image_url``, so its image is paid for yet stranded. The caller
-        reuses that URL instead of issuing a second billed POST.
+        This returns the most recent **failed** run of the same pipeline that still
+        carries an ``image_url`` (paid yet stranded), together with its run id so the
+        caller can :meth:`claim_orphan_image` — moving the URL onto the retry run AND
+        clearing it on the source in one transaction. Returning the id is what lets
+        the orphan be *consumed*: a plain reuse-by-value would leave the failed row
+        matchable forever, so every later scheduled post would inherit the same stale
+        image (review: Codex, Claude). Consuming it bounds reuse to exactly once.
 
         The ``status = 'failed'`` filter is deliberate and load-bearing. A run only
         leaves a paid-but-orphaned image behind when it failed *after* the image POST
@@ -157,7 +161,7 @@ class GenerationRunsRepository:
         """
         cur = await self._db.execute(
             (
-                "SELECT image_url FROM generation_runs "
+                "SELECT id, image_url FROM generation_runs "
                 "WHERE pipeline_id = ? AND status = 'failed' "
                 "AND image_url IS NOT NULL AND image_url != '' "
                 "AND id != ? "
@@ -168,7 +172,31 @@ class GenerationRunsRepository:
         row = await cur.fetchone()
         if not row:
             return None
-        return row["image_url"]
+        return (row["id"], row["image_url"])
+
+    async def claim_orphan_image(
+        self, source_run_id: int, target_run_id: int, image_url: str
+    ) -> None:
+        """Move a stranded paid image from a failed run onto the retry run (#1117).
+
+        Atomically (one transaction) sets ``image_url`` on ``target_run_id`` and
+        clears it on ``source_run_id``. Clearing the source is what makes reuse a
+        one-shot **transfer**, not an unbounded copy: once consumed, the failed run
+        no longer matches :meth:`find_orphan_image`, so a later scheduled post will
+        not re-inherit the same image (review: Codex, Claude — the stale-image
+        defect). Clearing the source is safe: a ``failed`` run is never published
+        (the publish path gates on ``status='completed'``), so its ``image_url`` is
+        dead bookkeeping once the live retry owns the picture.
+        """
+        async with self._database.transaction() as conn:
+            await conn.execute(
+                "UPDATE generation_runs SET image_url = ?, updated_at = datetime('now') WHERE id = ?",
+                (image_url, target_run_id),
+            )
+            await conn.execute(
+                "UPDATE generation_runs SET image_url = NULL, updated_at = datetime('now') WHERE id = ?",
+                (source_run_id,),
+            )
 
     async def set_published_at(self, run_id: int) -> None:
         await self._database.execute_write(

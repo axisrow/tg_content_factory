@@ -127,6 +127,8 @@ class ContentGenerationService:
                 max_tokens=max_tokens,
                 temperature=temperature,
                 since_hours=since_hours,
+                run_id=run_id,
+                dry_run=dry_run,
             )
             generated_text = result.get("generated_text", "")
             effective_publish_mode = result.get("publish_mode") or pipeline.publish_mode.value
@@ -183,23 +185,28 @@ class ContentGenerationService:
                         # one of those raised, the run was marked 'failed' and the
                         # periodic content_generate job creates a fresh run on its next
                         # tick — a new run_id that an in-run image_url check can't
-                        # dedupe. So before issuing a new billed POST, reuse any image
-                        # an earlier unpublished run of this pipeline already paid for.
-                        # Same category as #958, different call site (the generation
-                        # service, not the adapter).
-                        reusable = None
+                        # dedupe. So before issuing a new billed POST, reuse the image
+                        # an earlier *failed* run of this pipeline already paid for, and
+                        # consume it (transfer, not copy) so it cannot be re-inherited
+                        # by a later scheduled post. Same category as #958, different
+                        # call site (the generation service, not the adapter).
+                        orphan = None
                         if pipeline.id is not None:
-                            reusable = await self._db.repos.generation_runs.find_orphan_image_url(
+                            orphan = await self._db.repos.generation_runs.find_orphan_image(
                                 pipeline.id, exclude_run_id=run_id
                             )
-                        if reusable:
+                        if orphan is not None:
+                            source_run_id, reusable_url = orphan
                             logger.info(
-                                "Reusing already-paid image for pipeline_id=%s run_id=%s "
-                                "instead of re-billing the provider (#1117)",
+                                "Reusing already-paid image from failed run_id=%s for "
+                                "pipeline_id=%s run_id=%s instead of re-billing the provider (#1117)",
+                                source_run_id,
                                 pipeline.id,
                                 run_id,
                             )
-                            await self._db.repos.generation_runs.set_image_url(run_id, reusable)
+                            await self._db.repos.generation_runs.claim_orphan_image(
+                                source_run_id, run_id, reusable_url
+                            )
                         else:
                             image_url = await self._generate_image(pipeline, generated_text, model=image_model)
                             if image_url:
@@ -268,10 +275,15 @@ class ContentGenerationService:
         max_tokens: int,
         temperature: float,
         since_hours: float = 24.0,
+        run_id: int | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         """Execute the generation backend."""
         if pipeline.pipeline_json is not None:
-            return await self._run_graph(pipeline, model, max_tokens, temperature, since_hours)
+            return await self._run_graph(
+                pipeline, model, max_tokens, temperature, since_hours,
+                run_id=run_id, dry_run=dry_run,
+            )
 
         if pipeline.generation_backend == PipelineGenerationBackend.DEEP_AGENTS:
             return await self._run_deep_agents(pipeline, model, max_tokens, temperature)
@@ -285,6 +297,8 @@ class ContentGenerationService:
         max_tokens: int,
         temperature: float,
         since_hours: float = 24.0,
+        run_id: int | None = None,
+        dry_run: bool = False,
     ) -> dict[str, Any]:
         """Execute the pipeline using the node-based DAG executor."""
         from src.services.pipeline_executor import PipelineExecutor
@@ -300,6 +314,19 @@ class ContentGenerationService:
 
         default_image_model = await self._db.get_setting("default_image_model") or ""
 
+        # Double-billing guard for the graph path (#1117). The graph's
+        # ImageGenerateHandler issues the paid image POST inside the DAG, before
+        # generate()'s legacy-branch guard can run — so on a retry it would
+        # re-bill. Resolve any orphaned paid image from a prior failed run here
+        # and hand both the URL and its source run id to the handler so it can
+        # reuse-and-consume instead of paying again. Skipped for dry runs (they
+        # never generate an image). Mirrors the legacy branch's behavior.
+        reusable_image: tuple[int, str] | None = None
+        if not dry_run and run_id is not None and pipeline.id is not None:
+            reusable_image = await self._db.repos.generation_runs.find_orphan_image(
+                pipeline.id, exclude_run_id=run_id
+            )
+
         services = {
             "search_engine": self._search,
             "provider_callable": provider_callable,
@@ -314,6 +341,8 @@ class ContentGenerationService:
             "channel_id": scope.channel_id,
             "account_phone": pipeline.account_phone,
             "pipeline_id": pipeline.id,
+            "run_id": run_id,
+            "reusable_image": reusable_image,
         }
 
         # Inject read-only agent tools for AgentLoopHandler

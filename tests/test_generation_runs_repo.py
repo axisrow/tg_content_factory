@@ -176,24 +176,24 @@ async def test_generation_runs_repo_hydrates_quality_fields(db):
 
 
 @pytest.mark.anyio
-async def test_find_orphan_image_url_reuses_unpublished_paid_image(db):
+async def test_find_orphan_image_reuses_failed_paid_image(db):
     """A failed run that already paid for an image exposes it for reuse (#1117).
 
     The paid image POST happens before the fallible post-image steps, so a run
     can fail with a persisted (already-billed) image_url. A retry must reuse it
-    instead of re-billing the provider.
+    instead of re-billing the provider. The lookup returns (source_run_id, url).
     """
     repo = db.repos.generation_runs
     run_id = await repo.create_run(42, "prompt")
     await repo.set_image_url(run_id, "https://img.example/paid.png")
     await repo.set_status(run_id, "failed")
 
-    found = await repo.find_orphan_image_url(42)
-    assert found == "https://img.example/paid.png"
+    found = await repo.find_orphan_image(42)
+    assert found == (run_id, "https://img.example/paid.png")
 
 
 @pytest.mark.anyio
-async def test_find_orphan_image_url_ignores_published_image(db):
+async def test_find_orphan_image_ignores_published_image(db):
     """A published run's image was already delivered, so it is NOT reusable (#1117).
 
     A fresh scheduled run is a fresh post and must render its own image; reusing
@@ -207,12 +207,12 @@ async def test_find_orphan_image_url_ignores_published_image(db):
     await repo.set_moderation_status(run_id, "approved")
     await repo.set_published_at(run_id)  # -> moderation_status='published'
 
-    found = await repo.find_orphan_image_url(42)
+    found = await repo.find_orphan_image(42)
     assert found is None
 
 
 @pytest.mark.anyio
-async def test_find_orphan_image_url_ignores_completed_unpublished_image(db):
+async def test_find_orphan_image_ignores_completed_unpublished_image(db):
     """A completed-but-unpublished run's image belongs to THAT post (#1117).
 
     This is the load-bearing edge case: a run can finish generation
@@ -229,12 +229,12 @@ async def test_find_orphan_image_url_ignores_completed_unpublished_image(db):
     await repo.set_image_url(run_id, "https://img.example/inflight.png")
     await repo.set_moderation_status(run_id, "pending")
 
-    found = await repo.find_orphan_image_url(42)
+    found = await repo.find_orphan_image(42)
     assert found is None
 
 
 @pytest.mark.anyio
-async def test_find_orphan_image_url_excludes_self_and_prefers_latest(db):
+async def test_find_orphan_image_excludes_self_and_prefers_latest(db):
     """exclude_run_id skips the in-flight run; newest reusable image wins (#1117)."""
     repo = db.repos.generation_runs
 
@@ -249,35 +249,96 @@ async def test_find_orphan_image_url_excludes_self_and_prefers_latest(db):
     # The in-flight retry run, which has no image yet.
     current_id = await repo.create_run(42, "current")
 
-    found = await repo.find_orphan_image_url(42, exclude_run_id=current_id)
-    assert found == "https://img.example/newer.png"
+    found = await repo.find_orphan_image(42, exclude_run_id=current_id)
+    assert found == (newer_id, "https://img.example/newer.png")
 
     # Excluding the newest reusable run falls back to the older one.
-    found_old = await repo.find_orphan_image_url(42, exclude_run_id=newer_id)
-    assert found_old == "https://img.example/old.png"
+    found_old = await repo.find_orphan_image(42, exclude_run_id=newer_id)
+    assert found_old == (old_id, "https://img.example/old.png")
 
 
 @pytest.mark.anyio
-async def test_find_orphan_image_url_scoped_to_pipeline(db):
+async def test_find_orphan_image_scoped_to_pipeline(db):
     """A paid image from another pipeline must never be reused (#1117)."""
     repo = db.repos.generation_runs
     other_id = await repo.create_run(99, "other-pipeline")
     await repo.set_image_url(other_id, "https://img.example/other.png")
     await repo.set_status(other_id, "failed")
 
-    found = await repo.find_orphan_image_url(42)
+    found = await repo.find_orphan_image(42)
     assert found is None
 
 
 @pytest.mark.anyio
-async def test_find_orphan_image_url_none_without_image(db):
+async def test_find_orphan_image_none_without_image(db):
     """A failed run without any image yields nothing to reuse (#1117)."""
     repo = db.repos.generation_runs
     run_id = await repo.create_run(42, "no-image")
     await repo.set_status(run_id, "failed")
 
-    found = await repo.find_orphan_image_url(42)
+    found = await repo.find_orphan_image(42)
     assert found is None
+
+
+@pytest.mark.anyio
+async def test_claim_orphan_image_transfers_and_consumes(db):
+    """claim_orphan_image moves the image to the retry AND clears the source (#1117).
+
+    Consuming the source is what bounds reuse to once: after the claim, the failed
+    source no longer matches find_orphan_image, so a later scheduled run cannot
+    re-inherit the same stale image (review: Codex, Claude).
+    """
+    repo = db.repos.generation_runs
+
+    source_id = await repo.create_run(42, "failed-with-image")
+    await repo.set_image_url(source_id, "https://img.example/paid.png")
+    await repo.set_status(source_id, "failed")
+
+    target_id = await repo.create_run(42, "retry")
+
+    await repo.claim_orphan_image(source_id, target_id, "https://img.example/paid.png")
+
+    # The retry now owns the image.
+    target = await repo.get(target_id)
+    assert target is not None
+    assert target.image_url == "https://img.example/paid.png"
+
+    # The source has been consumed — image_url cleared.
+    source = await repo.get(source_id)
+    assert source is not None
+    assert source.image_url is None
+
+    # And it no longer surfaces as an orphan for a future run.
+    assert await repo.find_orphan_image(42) is None
+
+
+@pytest.mark.anyio
+async def test_orphan_image_not_re_inherited_after_successful_retry(db):
+    """Regression for indefinite stale reuse (#1117, review: Claude/Codex).
+
+    Run #1 fails after paying for an image. Run #2 (retry) claims+consumes it and
+    publishes. Run #3 (the next legitimate scheduled post) must NOT re-inherit
+    run #1's image — the orphan was consumed exactly once.
+    """
+    repo = db.repos.generation_runs
+
+    # Run #1: failed after paying for the image.
+    run1 = await repo.create_run(42, "run1")
+    await repo.set_image_url(run1, "https://img.example/paid.png")
+    await repo.set_status(run1, "failed")
+
+    # Run #2: retry claims the orphan, succeeds, publishes.
+    run2 = await repo.create_run(42, "run2")
+    orphan = await repo.find_orphan_image(42, exclude_run_id=run2)
+    assert orphan == (run1, "https://img.example/paid.png")
+    await repo.claim_orphan_image(orphan[0], run2, orphan[1])
+    await repo.save_result(run2, "text", {})
+    await repo.set_moderation_status(run2, "approved")
+    await repo.set_published_at(run2)
+
+    # Run #3: next scheduled post — no orphan left to inherit.
+    run3 = await repo.create_run(42, "run3")
+    assert await repo.find_orphan_image(42, exclude_run_id=run3) is None
 
 
 @pytest.mark.anyio

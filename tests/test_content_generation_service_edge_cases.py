@@ -84,10 +84,11 @@ class FakeGenerationRunsRepo:
         if run_id in self._runs:
             self._runs[run_id].image_url = image_url
 
-    async def find_orphan_image_url(self, pipeline_id, exclude_run_id=None):
+    async def find_orphan_image(self, pipeline_id, exclude_run_id=None):
         # Mirror the production contract: the most recent FAILED run of this
-        # pipeline that already paid for an image. Newest first. Only 'failed'
-        # runs — a completed-but-unpublished run's image belongs to that post.
+        # pipeline that already paid for an image, as (run_id, url). Newest
+        # first. Only 'failed' runs — a completed-but-unpublished run's image
+        # belongs to that post.
         for run in sorted(self._runs.values(), key=lambda r: r.id, reverse=True):
             if run.id == exclude_run_id:
                 continue
@@ -97,8 +98,16 @@ class FakeGenerationRunsRepo:
                 continue
             if not run.image_url:
                 continue
-            return run.image_url
+            return (run.id, run.image_url)
         return None
+
+    async def claim_orphan_image(self, source_run_id, target_run_id, image_url):
+        # Transfer the paid image onto the retry run and consume it on the
+        # source so it cannot be re-inherited by a later scheduled post.
+        if target_run_id in self._runs:
+            self._runs[target_run_id].image_url = image_url
+        if source_run_id in self._runs:
+            self._runs[source_run_id].image_url = None
 
     async def get(self, run_id):
         return self._runs.get(run_id)
@@ -507,6 +516,16 @@ async def test_retry_after_failed_post_image_step_does_not_rebill_image():
         # The retry must REUSE the already-paid image, not generate a new one.
         assert len(image_svc.calls) == 1, "image provider was billed twice on retry"
         assert run.image_url == "https://img.example/paid.png"
+        # The orphan was CONSUMED: the failed source run no longer carries it,
+        # so a later scheduled post cannot re-inherit the stale image (#1117).
+        assert first_run.image_url is None
+
+        # A third, legitimate scheduled run finds no orphan and pays once for a
+        # fresh image — reuse was bounded to exactly one retry, not unbounded.
+        run3 = await service.generate(pipeline)
+        assert run3 is not None
+        assert len(image_svc.calls) == 2, "third run should pay for its own image"
+        assert run3.image_url == "https://img.example/paid.png"  # same fake url
     finally:
         _restore_provider(orig)
 
