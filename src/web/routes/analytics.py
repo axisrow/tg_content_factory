@@ -10,6 +10,21 @@ from src.services.channel_analytics_service import ChannelAnalyticsService
 from src.services.content_analytics_service import ContentAnalyticsService
 from src.services.trend_service import TrendService
 from src.web import deps
+from src.web.schemas.analytics import (
+    ChannelOverviewResponse,
+    ChannelRatingItem,
+    ContentSummary,
+    ContentTypeStat,
+    DailyStat,
+    HourlyMessageItem,
+    MessageVelocityItem,
+    PeakHourItem,
+    PipelineStat,
+    TopMessageItem,
+    TrendingChannelItem,
+    TrendingEmojiItem,
+    TrendingTopicItem,
+)
 
 router = APIRouter()
 
@@ -120,15 +135,27 @@ async def fragment_content_pipelines(request: Request):
     )
 
 
-@router.get("/content/api/summary")
+@router.get(
+    "/content/api/summary",
+    response_model=ContentSummary,
+    status_code=200,
+    tags=["analytics"],
+    summary="Aggregate content generation/publication counters",
+)
 async def api_content_summary(request: Request):
-    """Get content summary statistics as JSON."""
+    """Get content summary statistics as JSON (totals across all pipelines)."""
     db = deps.get_db(request)
     analytics = ContentAnalyticsService(db)
     return JSONResponse(await analytics.get_summary())
 
 
-@router.get("/content/api/types")
+@router.get(
+    "/content/api/types",
+    response_model=list[ContentTypeStat],
+    status_code=200,
+    tags=["analytics"],
+    summary="Engagement grouped by media/content type",
+)
 async def api_content_type_stats(
     request: Request,
     date_from: str = "",
@@ -140,9 +167,15 @@ async def api_content_type_stats(
     return JSONResponse(rows)
 
 
-@router.get("/content/api/pipelines")
+@router.get(
+    "/content/api/pipelines",
+    response_model=list[PipelineStat],
+    status_code=200,
+    tags=["analytics"],
+    summary="Per-pipeline generation statistics",
+)
 async def api_pipeline_stats(request: Request, pipeline_id: int | None = None):
-    """Get pipeline statistics as JSON."""
+    """Get pipeline statistics as JSON (optionally filtered by pipeline_id)."""
     db = deps.get_db(request)
     analytics = ContentAnalyticsService(db)
     stats = await analytics.get_pipeline_stats(pipeline_id)
@@ -160,7 +193,13 @@ async def api_pipeline_stats(request: Request, pipeline_id: int | None = None):
     ])
 
 
-@router.get("/content/api/daily")
+@router.get(
+    "/content/api/daily",
+    response_model=list[DailyStat],
+    status_code=200,
+    tags=["analytics"],
+    summary="Daily generation/publication/rejection stats",
+)
 async def api_daily_stats(request: Request, days: int = 30, pipeline_id: int | None = None):
     """Get daily generation/publication/rejection stats as JSON."""
     db = deps.get_db(request)
@@ -201,7 +240,13 @@ async def fragment_trends_emojis(request: Request, days: int = 7):
     )
 
 
-@router.get("/trends/topics")
+@router.get(
+    "/trends/topics",
+    response_model=list[TrendingTopicItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Trending topics (keywords)",
+)
 async def api_trending_topics(request: Request, days: int = 7, limit: int = 20):
     """Get trending topics as JSON."""
     db = deps.get_db(request)
@@ -213,7 +258,13 @@ async def api_trending_topics(request: Request, days: int = 7, limit: int = 20):
     return JSONResponse([dataclasses.asdict(row) for row in topics])
 
 
-@router.get("/trends/channels")
+@router.get(
+    "/trends/channels",
+    response_model=list[TrendingChannelItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Trending channels by average views",
+)
 async def api_trending_channels(request: Request, days: int = 7, limit: int = 10):
     """Get trending channels as JSON."""
     db = deps.get_db(request)
@@ -225,7 +276,13 @@ async def api_trending_channels(request: Request, days: int = 7, limit: int = 10
     return JSONResponse([dataclasses.asdict(row) for row in channels])
 
 
-@router.get("/trends/emojis")
+@router.get(
+    "/trends/emojis",
+    response_model=list[TrendingEmojiItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Trending reaction emojis",
+)
 async def api_trending_emojis(request: Request, days: int = 7, limit: int = 15):
     """Get trending reaction emojis as JSON."""
     db = deps.get_db(request)
@@ -276,8 +333,15 @@ async def fragment_channel_selector(request: Request, channel_id: int = 0):
     )
 
 
-@router.get("/channels/api/overview")
+@router.get(
+    "/channels/api/overview",
+    response_model=ChannelOverviewResponse,
+    status_code=200,
+    tags=["analytics"],
+    summary="Single-channel summary card",
+)
 async def api_channel_overview(request: Request, channel_id: int, days: int = 30):
+    """Get the summary card for one channel (subscribers, ERR, post counts, averages)."""
     overview = await _svc(request).get_channel_overview(channel_id, days=max(1, days))
     return JSONResponse(dataclasses.asdict(overview))
 
@@ -286,7 +350,13 @@ def _rating_svc(request: Request) -> ChannelAnalysisService:
     return ChannelAnalysisService(deps.get_db(request))
 
 
-@router.get("/channels/api/ratings")
+@router.get(
+    "/channels/api/ratings",
+    response_model=list[ChannelRatingItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Channel quality ratings (usefulness × genre)",
+)
 async def api_channel_ratings(
     request: Request,
     useful: str | None = None,
@@ -438,7 +508,13 @@ async def api_cross_citations(
     return JSONResponse(data)
 
 
-@router.get("/messages/top")
+@router.get(
+    "/messages/top",
+    response_model=list[TopMessageItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Top messages by total reactions",
+)
 async def api_messages_top(
     request: Request, limit: int = 20, date_from: str = "", date_to: str = "",
 ):
@@ -449,7 +525,13 @@ async def api_messages_top(
     return JSONResponse(rows)
 
 
-@router.get("/messages/hourly")
+@router.get(
+    "/messages/hourly",
+    response_model=list[HourlyMessageItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Message distribution by hour-of-day",
+)
 async def api_messages_hourly(
     request: Request,
     date_from: str = "",
@@ -461,7 +543,13 @@ async def api_messages_hourly(
     return JSONResponse(rows)
 
 
-@router.get("/pipelines/stats")
+@router.get(
+    "/pipelines/stats",
+    response_model=list[PipelineStat],
+    status_code=200,
+    tags=["analytics"],
+    summary="Per-pipeline statistics (alias of /content/api/pipelines)",
+)
 async def api_pipeline_stats_alias(request: Request, pipeline_id: int | None = None):
     """Pipeline statistics (parity with CLI `analytics pipeline-stats`)."""
     db = deps.get_db(request)
@@ -469,7 +557,13 @@ async def api_pipeline_stats_alias(request: Request, pipeline_id: int | None = N
     return JSONResponse([dataclasses.asdict(s) for s in stats])
 
 
-@router.get("/messages/velocity")
+@router.get(
+    "/messages/velocity",
+    response_model=list[MessageVelocityItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Daily message velocity",
+)
 async def api_message_velocity(request: Request, days: int = 30):
     """Daily message velocity (parity with CLI `analytics velocity`)."""
     db = deps.get_db(request)
@@ -477,7 +571,13 @@ async def api_message_velocity(request: Request, days: int = 30):
     return JSONResponse([dataclasses.asdict(v) for v in data])
 
 
-@router.get("/peak-hours")
+@router.get(
+    "/peak-hours",
+    response_model=list[PeakHourItem],
+    status_code=200,
+    tags=["analytics"],
+    summary="Peak posting hours",
+)
 async def api_peak_hours(request: Request, days: int = 30):
     """Peak posting hours (parity with CLI `analytics peak-hours`)."""
     db = deps.get_db(request)

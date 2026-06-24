@@ -5,6 +5,8 @@ from fastapi.responses import HTMLResponse
 
 from src.web.dialogs import handlers
 from src.web.dialogs.responses import dialog_response
+from src.web.schemas.common import QueuedCommandResponse
+from src.web.schemas.dialogs import BroadcastStatsResponse, ParticipantsResponse
 
 router = APIRouter()
 
@@ -122,8 +124,21 @@ async def download_media(request: Request):
     return dialog_response(request, await handle_download_media(request))
 
 
-@router.get("/participants")
+@router.get(
+    "/participants",
+    response_model=ParticipantsResponse,
+    status_code=200,
+    tags=["dialogs"],
+    summary="List chat participants",
+    responses={202: {"model": QueuedCommandResponse, "description": "Fetch enqueued for the worker"}},
+)
 async def get_participants(request: Request):
+    """Chat participants from the cached worker snapshot (parity with CLI `dialogs participants`).
+
+    Requires ``phone`` and ``chat_id`` query params. When no snapshot is cached
+    the endpoint enqueues a worker command and returns HTTP 202 with a
+    ``{"status": "queued", "command_id": …}`` body instead.
+    """
     return dialog_response(request, await handle_get_participants(request))
 
 
@@ -142,8 +157,21 @@ async def kick_participant(request: Request):
     return dialog_response(request, await handle_kick_participant(request))
 
 
-@router.get("/broadcast-stats")
+@router.get(
+    "/broadcast-stats",
+    response_model=BroadcastStatsResponse,
+    status_code=200,
+    tags=["dialogs"],
+    summary="Channel broadcast statistics",
+    responses={202: {"model": QueuedCommandResponse, "description": "Fetch enqueued for the worker"}},
+)
 async def broadcast_stats(request: Request):
+    """Channel broadcast stats from the cached worker snapshot (parity with CLI `dialogs broadcast-stats`).
+
+    Requires ``phone`` and ``chat_id`` query params. When no snapshot is cached
+    the endpoint enqueues a worker command and returns HTTP 202 with a
+    ``{"status": "queued", "command_id": …}`` body instead.
+    """
     return dialog_response(request, await handlers.broadcast_stats(request))
 
 
