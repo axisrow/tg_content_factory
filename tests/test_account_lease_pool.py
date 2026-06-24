@@ -247,3 +247,60 @@ async def test_shared_fallback_uses_round_robin_order(db):
 
     assert seen[:3] == phones
     assert seen[3] == phones[0]
+
+
+@pytest.mark.anyio
+async def test_mixed_flooded_leased_free_returns_only_free_exclusive(db):
+    """#1029: with one flooded, one already-leased (in_use) and one free account,
+    acquire_available must return the FREE one as an exclusive (non-shared) lease.
+    Covers the mixed-state path the existing single-condition tests miss."""
+    phones = ["+78001", "+78002", "+78003"]
+    for p in phones:
+        await db.add_account(Account(phone=p, session_string=p, is_active=True))
+
+    # +78001 flooded, +78002 already leased out, +78003 free.
+    await db.update_account_flood("+78001", datetime.now(timezone.utc) + timedelta(hours=1))
+    pool = AccountLeasePool(db, {"+78002"})
+
+    lease = await pool.acquire_available(set(phones))
+    assert lease is not None
+    assert lease.account.phone == "+78003"
+    assert lease.shared is False
+
+
+@pytest.mark.anyio
+async def test_mixed_flood_plus_all_others_leased_falls_back_to_shared_non_flooded(db):
+    """#1029: when the only free account is flooded and every non-flooded account
+    is already leased, acquire_available must fall back to a SHARED lease on a
+    non-flooded account — never on the flooded one. Flooded accounts are excluded
+    in BOTH the exclusive and shared passes."""
+    phones = ["+78101", "+78102", "+78103"]
+    for p in phones:
+        await db.add_account(Account(phone=p, session_string=p, is_active=True))
+
+    # +78101 flooded (and free); +78102, +78103 leased but NOT flooded.
+    await db.update_account_flood("+78101", datetime.now(timezone.utc) + timedelta(hours=1))
+    pool = AccountLeasePool(db, {"+78102", "+78103"})
+
+    lease = await pool.acquire_available(set(phones))
+    assert lease is not None
+    assert lease.shared is True
+    # The flooded account must never be handed out, even as a shared fallback.
+    assert lease.account.phone != "+78101"
+    assert lease.account.phone in {"+78102", "+78103"}
+
+
+@pytest.mark.anyio
+async def test_all_flooded_returns_none_even_when_some_free(db):
+    """#1029: if every connected account is flood-waited, acquire_available
+    returns None regardless of in_use state — flood is a hard gate in both
+    passes, so there is nothing to hand out."""
+    phones = ["+78201", "+78202", "+78203"]
+    for p in phones:
+        await db.add_account(Account(phone=p, session_string=p, is_active=True))
+    future = datetime.now(timezone.utc) + timedelta(hours=1)
+    for p in phones:
+        await db.update_account_flood(p, future)
+
+    pool = AccountLeasePool(db, set())  # all free, but all flooded
+    assert await pool.acquire_available(set(phones)) is None

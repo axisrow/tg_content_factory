@@ -256,7 +256,6 @@ class TelegramAuth:
         if stored_hash != phone_code_hash:
             raise ValueError("Phone code hash mismatch")
 
-        needs_2fa = False
         try:
             try:
                 logger.info(
@@ -271,7 +270,6 @@ class TelegramAuth:
                 )
             except SessionPasswordNeededError:
                 if not password_2fa:
-                    needs_2fa = True
                     raise TwoFactorRequiredError()
                 logger.info(
                     "auth.verify_code rpc start phone=%s rpc=sign_in_2fa timeout_s=%s",
@@ -283,6 +281,12 @@ class TelegramAuth:
                     "sign_in",
                     AUTH_RPC_TIMEOUT_SECONDS,
                 )
+            # sign_in succeeded — Telegram now considers this client authorized.
+            # session.save() is the ONLY way to capture that session for reuse, so
+            # if it raises we must NOT tear down the pending client (#1029): doing
+            # so would strand an authorized session with no string to persist,
+            # forcing a fresh send-code/verify onboarding. Keep the pending entry
+            # so the operator can retry verify_code and recover the session.
             session_string = client.session.save()
         except TwoFactorRequiredError:
             duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -292,13 +296,15 @@ class TelegramAuth:
             duration_ms = int((time.monotonic() - started_at) * 1000)
             logger.exception("auth.verify_code error phone=%s duration_ms=%d", phone, duration_ms)
             raise
-        finally:
-            if not needs_2fa:
-                del self._pending[phone]
-                try:
-                    await client.disconnect()
-                except Exception:
-                    logger.warning("Failed to disconnect temporary auth client for %s", phone)
+
+        # Only now that the session string is captured is it safe to drop the
+        # pending client and disconnect — a failure before this point leaves the
+        # pending entry intact for a retry (#1029).
+        del self._pending[phone]
+        try:
+            await client.disconnect()
+        except Exception:
+            logger.warning("Failed to disconnect temporary auth client for %s", phone)
 
         duration_ms = int((time.monotonic() - started_at) * 1000)
         logger.info("auth.verify_code success phone=%s duration_ms=%d", phone, duration_ms)
