@@ -93,6 +93,9 @@ class _PipelineFormBase(_FrozenForm):
     generation_backend: str = "chain"
     generate_interval_minutes: int = 60
     is_active: bool = False
+    # A/B testing (issue #1068): N variants + optional auto-select of the best.
+    ab_num_variants: int = 1
+    ab_auto_select: bool = False
 
 
 class PipelineCreateForm(_PipelineFormBase):
@@ -125,6 +128,19 @@ class PipelineGenerateForm(_FrozenForm):
 
 
 class PipelinePublishForm(_FrozenForm):
+    run_id: int | None = None
+
+
+class PipelineSelectVariantForm(_FrozenForm):
+    """Select a specific A/B variant as a run's final content (issue #1068)."""
+
+    run_id: int | None = None
+    variant_index: int | None = None
+
+
+class PipelineAutoSelectVariantForm(_FrozenForm):
+    """Auto-select the best A/B variant of a run by quality score (issue #1068)."""
+
     run_id: int | None = None
 
 

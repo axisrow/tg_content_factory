@@ -58,6 +58,8 @@ def register_pipeline_write_tools(db: Any, ctx: Any) -> list[Any]:
                 target_refs=target_refs,
                 llm_model=args.get("llm_model"),
                 publish_mode=args.get("publish_mode", "moderated"),
+                ab_num_variants=int(args.get("ab_num_variants") or 1),
+                ab_auto_select=bool(args.get("ab_auto_select", False)),
             )
             return _text_response(f"Пайплайн '{name}' создан (id={pipeline_id}).")
         except ToolInputError as exc:
@@ -111,6 +113,17 @@ def register_pipeline_write_tools(db: Any, ctx: Any) -> list[Any]:
                     for target in existing["targets"]
                 ]
 
+            ab_num_variants = (
+                int(args["ab_num_variants"])
+                if args.get("ab_num_variants") is not None
+                else pipeline.ab_num_variants
+            )
+            ab_auto_select = (
+                bool(args["ab_auto_select"])
+                if args.get("ab_auto_select") is not None
+                else pipeline.ab_auto_select
+            )
+
             ok = await svc.update(
                 pipeline_id,
                 name=name,
@@ -119,6 +132,8 @@ def register_pipeline_write_tools(db: Any, ctx: Any) -> list[Any]:
                 target_refs=target_refs,
                 llm_model=llm_model,
                 publish_mode=publish_mode,
+                ab_num_variants=ab_num_variants,
+                ab_auto_select=ab_auto_select,
             )
             if ok:
                 return _text_response(f"Пайплайн '{name}' (id={pipeline_id}) обновлён.")

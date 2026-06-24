@@ -117,6 +117,8 @@ FLASH_MESSAGES = {
     "pipeline_run_with_since": "Запуск поставлен в очередь.",
     "pipeline_dry_run_enqueued": "Тест pipeline поставлен в очередь.",
     "pipeline_published": "Pipeline опубликован.",
+    "variant_selected": "A/B-вариант выбран.",
+    "variant_auto_selected": "Лучший A/B-вариант выбран автоматически.",
     "photo_sent": "Фото отправлены.",
     "photo_scheduled": "Фото поставлены в отложенную отправку Telegram.",
     "photo_batch_created": "Batch photo tasks созданы.",

@@ -312,6 +312,8 @@ def run(args: argparse.Namespace) -> None:
                             generation_backend=args.generation_backend,
                             generate_interval_minutes=args.interval,
                             is_active=not args.inactive,
+                            ab_num_variants=getattr(args, "ab_variants", 1) or 1,
+                            ab_auto_select=getattr(args, "ab_auto_select", False),
                         )
                 except PipelineValidationError as exc:
                     print(f"Error: {exc}")
@@ -360,6 +362,16 @@ def run(args: argparse.Namespace) -> None:
                             else existing.generate_interval_minutes
                         ),
                         is_active=existing.is_active if args.active is None else args.active,
+                        ab_num_variants=(
+                            args.ab_variants
+                            if getattr(args, "ab_variants", None) is not None
+                            else existing.ab_num_variants
+                        ),
+                        ab_auto_select=(
+                            args.ab_auto_select
+                            if getattr(args, "ab_auto_select", None) is not None
+                            else existing.ab_auto_select
+                        ),
                     )
                 except PipelineValidationError as exc:
                     print(f"Error: {exc}")
@@ -439,6 +451,15 @@ def run(args: argparse.Namespace) -> None:
                 if pipeline is None:
                     print(f"Pipeline id={args.id} not found")
                     return
+                # Per-run A/B overrides (issue #1068): --ab-variants / --auto-select
+                # override the pipeline's stored A/B config for this single run only.
+                ab_overrides: dict[str, object] = {}
+                if getattr(args, "ab_variants", None) is not None:
+                    ab_overrides["ab_num_variants"] = args.ab_variants
+                if getattr(args, "auto_select", False):
+                    ab_overrides["ab_auto_select"] = True
+                if ab_overrides:
+                    pipeline = pipeline.model_copy(update=ab_overrides)
                 engine = SearchEngine(db)
                 from src.services.provider_service import build_provider_service
                 from src.services.quality_scoring_service import QualityScoringService
@@ -476,6 +497,12 @@ def run(args: argparse.Namespace) -> None:
                         temperature=args.temperature,
                     )
                     print(f"Created generation run id={run.id}")
+                    if run.variants:
+                        sel = run.selected_variant
+                        print(f"--- A/B VARIANTS ({len(run.variants)}) ---")
+                        for idx, variant_text in enumerate(run.variants):
+                            marker = " *selected*" if sel == idx else ""
+                            print(f"[{idx}]{marker} {variant_text[:120]}")
                     if run.generated_text:
                         print("--- DRAFT PREVIEW ---")
                         print(run.generated_text)
@@ -622,6 +649,43 @@ def run(args: argparse.Namespace) -> None:
                         if err.get("retry_after") is not None:
                             line += f" retry_after={err['retry_after']}"
                         print(line)
+
+            elif args.pipeline_action == "variants":
+                from src.services.ab_testing_service import ABTestingService
+
+                ab_service = ABTestingService(db, config=config)
+                ab_result = await ab_service.get_variants(args.run_id)
+                if ab_result is None:
+                    print(f"Run id={args.run_id} not found")
+                    return
+                print(f"Run id={ab_result.run_id}: {len(ab_result.variants)} variant(s)")
+                for variant in ab_result.variants:
+                    marker = " *selected*" if ab_result.selected_index == variant.index else ""
+                    print(f"[{variant.index}]{marker} {variant.text[:200]}")
+
+            elif args.pipeline_action == "select-variant":
+                from src.services.ab_testing_service import ABTestingService
+
+                ab_service = ABTestingService(db, config=config)
+                try:
+                    await ab_service.select_variant(args.run_id, args.index)
+                except ValueError as exc:
+                    print(f"Error: {exc}")
+                    return
+                print(f"Selected variant {args.index} for run id={args.run_id}")
+
+            elif args.pipeline_action == "auto-select":
+                from src.services.ab_testing_service import ABTestingService
+                from src.services.provider_service import build_provider_service
+                from src.services.quality_scoring_service import QualityScoringService
+
+                provider_svc = await build_provider_service(db, config)
+                quality_service = QualityScoringService(db, provider_service=provider_svc)
+                ab_service = ABTestingService(db, provider_service=provider_svc, config=config)
+                best_index = await ab_service.auto_select_best(
+                    args.run_id, scoring_service=quality_service
+                )
+                print(f"Auto-selected variant {best_index} for run id={args.run_id}")
 
             elif args.pipeline_action == "queue":
                 pipeline = await svc.get(args.id)

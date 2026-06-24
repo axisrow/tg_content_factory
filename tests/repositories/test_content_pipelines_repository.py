@@ -129,3 +129,45 @@ async def test_malformed_pipeline_json_logs_and_falls_back(content_pipelines_rep
         "failed to deserialize pipeline_json" in rec.message and str(pipeline_id) in rec.message
         for rec in caplog.records
     )
+
+
+async def test_ab_fields_default_when_omitted(content_pipelines_repo):
+    """A pipeline added without A/B config round-trips to the off defaults (#1068)."""
+    pipeline_id = await content_pipelines_repo.add(make_pipeline(), [1001], [])
+
+    pipeline = await content_pipelines_repo.get_by_id(pipeline_id)
+    assert pipeline is not None
+    assert pipeline.ab_num_variants == 1
+    assert pipeline.ab_auto_select is False
+
+
+async def test_ab_fields_persist_through_add_and_read(content_pipelines_repo):
+    """add() must persist ab_num_variants/ab_auto_select and _to_pipeline read them back (#1068)."""
+    pipeline_id = await content_pipelines_repo.add(
+        make_pipeline(ab_num_variants=4, ab_auto_select=True),
+        [1001],
+        [],
+    )
+
+    pipeline = await content_pipelines_repo.get_by_id(pipeline_id)
+    assert pipeline is not None
+    assert pipeline.ab_num_variants == 4
+    assert pipeline.ab_auto_select is True
+
+
+async def test_ab_fields_persist_through_update(content_pipelines_repo):
+    """update() must overwrite ab_num_variants/ab_auto_select (#1068)."""
+    pipeline_id = await content_pipelines_repo.add(make_pipeline(), [1001], [])
+
+    ok = await content_pipelines_repo.update(
+        pipeline_id,
+        make_pipeline(name="Digest", ab_num_variants=5, ab_auto_select=True),
+        [1001],
+        [],
+    )
+
+    assert ok is True
+    pipeline = await content_pipelines_repo.get_by_id(pipeline_id)
+    assert pipeline is not None
+    assert pipeline.ab_num_variants == 5
+    assert pipeline.ab_auto_select is True

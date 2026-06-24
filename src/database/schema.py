@@ -336,6 +336,8 @@ CREATE TABLE IF NOT EXISTS content_pipelines (
     refinement_steps TEXT,
     pipeline_json TEXT,
     account_phone TEXT,
+    ab_num_variants INTEGER NOT NULL DEFAULT 1,
+    ab_auto_select INTEGER NOT NULL DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
 );
 

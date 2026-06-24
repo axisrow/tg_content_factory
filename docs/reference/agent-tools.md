@@ -64,6 +64,9 @@
 | `list_pipeline_runs` | READ | История запусков |
 | `get_pipeline_run` | READ | Детали запуска |
 | `publish_pipeline_run` | WRITE | Опубликовать |
+| `get_ab_variants` | READ | A/B варианты запуска (список) |
+| `select_variant` | WRITE | Выбрать A/B вариант как финальный |
+| `auto_select_best` | WRITE | Авто-выбор лучшего A/B варианта по quality score |
 | `get_pipeline_queue` | READ | Очередь модерации |
 | `get_refinement_steps` | READ | Шаги refinement |
 | `set_refinement_steps` | WRITE | Сохранить шаги refinement |

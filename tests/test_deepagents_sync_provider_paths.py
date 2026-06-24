@@ -1012,6 +1012,8 @@ class TestPipelinesToolEditPipeline:
             prompt_template="Old tmpl",
             llm_model="gpt-3",
             publish_mode="moderated",
+            ab_num_variants=1,
+            ab_auto_select=False,
         )
         detail = {
             "pipeline": p,
@@ -1042,6 +1044,8 @@ class TestPipelinesToolEditPipeline:
             prompt_template="t",
             llm_model=None,
             publish_mode="moderated",
+            ab_num_variants=1,
+            ab_auto_select=False,
         )
         detail = {"pipeline": p, "source_ids": [], "targets": []}
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:

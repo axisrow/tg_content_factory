@@ -10,6 +10,7 @@ from src.services.error_recovery_service import ErrorRecoveryService, for_llm
 from src.services.generation_service import GenerationService
 
 if TYPE_CHECKING:
+    from src.services.ab_testing_service import ABTestingService
     from src.services.draft_notification_service import DraftNotificationService
     from src.services.quality_scoring_service import QualityScoringService
 
@@ -39,6 +40,7 @@ class ContentGenerationService:
         client_pool: Any | None = None,
         provider_service: Any | None = None,
         error_recovery: ErrorRecoveryService | None = None,
+        ab_testing_service: "ABTestingService | None" = None,
     ) -> None:
         self._db = db
         self._search = search_engine
@@ -52,6 +54,7 @@ class ContentGenerationService:
         # Refinement steps are idempotent LLM rewrites — safe to retry on
         # transient provider failures (#1069).
         self._error_recovery = error_recovery or for_llm()
+        self._ab_testing_service = ab_testing_service
 
     @staticmethod
     def _build_metadata(result: dict, *, dry_run: bool) -> dict[str, Any]:
@@ -139,6 +142,30 @@ class ContentGenerationService:
                 )
                 metadata["refinement_steps_applied"] = len(pipeline.refinement_steps)
 
+            # Persist the base text first, then run A/B selection, THEN generate
+            # the image — so the image is rendered from the finally-selected
+            # text, not a discarded base variant (review: Codex). Quality scoring
+            # below likewise sees the final text.
+            await self._db.repos.generation_runs.save_result(run_id, generated_text, metadata)
+
+            # A/B variant generation (issue #1068). Runs after the base text is
+            # persisted and before image generation + quality scoring so both the
+            # image and the score reflect the finally-selected text. Skipped for
+            # dry runs (×N token cost) and when disabled (ab_num_variants <= 1).
+            # A failure here must not lose the already-saved base run, so it
+            # degrades gracefully. It runs before the AUTO moderation_status
+            # alignment below (#1036), so an AUTO run publishes the selected
+            # variant (and its matching image), not the base text.
+            if (
+                not dry_run
+                and generated_text
+                and pipeline.ab_num_variants
+                and pipeline.ab_num_variants > 1
+            ):
+                generated_text = await self._run_ab_testing(
+                    run_id, pipeline, generated_text
+                )
+
             # Use image_url from graph executor if available, otherwise fall back to legacy image gen
             # Image generation is skipped for dry runs to save time and cost
             if not dry_run:
@@ -153,8 +180,6 @@ class ContentGenerationService:
                         image_url = await self._generate_image(pipeline, generated_text, model=image_model)
                         if image_url:
                             await self._db.repos.generation_runs.set_image_url(run_id, image_url)
-
-            await self._db.repos.generation_runs.save_result(run_id, generated_text, metadata)
 
             if self._quality_service and generated_text:
                 quality = await self._quality_service.score_content(
@@ -446,3 +471,65 @@ class ContentGenerationService:
         """Resolve provider callable — prefer injected shared service, fall back to local."""
         provider_service = await self._ensure_provider_service()
         return provider_service.get_provider_callable(model)
+
+    async def _ensure_ab_testing_service(self) -> "ABTestingService":
+        """Resolve or lazily build the A/B testing service.
+
+        Built from the already-resolved provider service + config so every
+        ContentGenerationService call site gets A/B support for free without
+        having to thread an extra constructor argument through all of them
+        (issue #1068). An injected service short-circuits the builder.
+        """
+        if self._ab_testing_service is None:
+            from src.services.ab_testing_service import ABTestingService
+
+            provider_service = await self._ensure_provider_service()
+            self._ab_testing_service = ABTestingService(
+                self._db,
+                provider_service=provider_service,
+                config=self._config,
+            )
+        return self._ab_testing_service
+
+    async def _run_ab_testing(
+        self,
+        run_id: int,
+        pipeline: ContentPipeline,
+        base_text: str,
+    ) -> str:
+        """Generate, persist, and optionally auto-select A/B variants.
+
+        Returns the text that should be used downstream (quality scoring,
+        notification): the auto-selected variant when ``ab_auto_select`` is set,
+        otherwise the unchanged base text. Degrades gracefully — any failure
+        keeps the already-saved base run intact and returns ``base_text``.
+        """
+        try:
+            ab_service = await self._ensure_ab_testing_service()
+            variants = await ab_service.generate_variants(
+                pipeline=pipeline,
+                base_text=base_text,
+                num_variants=pipeline.ab_num_variants,
+            )
+            if len(variants) <= 1:
+                # Nothing meaningful generated (e.g. provider unavailable) —
+                # don't overwrite the run with a single-element variant list.
+                return base_text
+            await ab_service.save_variants(run_id, variants)
+
+            if pipeline.ab_auto_select:
+                best_index = await ab_service.auto_select_best(
+                    run_id,
+                    scoring_service=self._quality_service,
+                )
+                return variants[best_index]
+            return base_text
+        except Exception:
+            logger.warning(
+                "A/B variant generation failed for pipeline_id=%s run_id=%s; "
+                "keeping base text",
+                pipeline.id,
+                run_id,
+                exc_info=True,
+            )
+            return base_text
