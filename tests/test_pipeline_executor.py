@@ -539,3 +539,192 @@ class TestExecutorResultSemantics:
         assert result["result_kind"] == "processed_messages"
         assert result["result_count"] == 6  # 2+3+1
         assert result["action_counts"] == {"react": 2, "forward": 3, "delete_message": 1}
+
+
+# ---------------------------------------------------------------------------
+# 13. execute() DAG run-through edge cases (#1037, epic #1024 tier-2).
+#
+# _topological_sort is unit-tested above; these exercise the full execute()
+# loop where the order interacts with inbound-edge suppression, cycle fallback,
+# and diamond fan-in (does the merge node run exactly once?).
+# ---------------------------------------------------------------------------
+
+
+def _counting_handler_factory(call_log: list[str], condition_false: set[str] | None = None):
+    """get_handler stand-in that logs every node run by its _current_node_id and
+    can mark named CONDITION nodes False to suppress their outgoing edges."""
+    condition_false = condition_false or set()
+
+    def fake_get_handler(node_type):
+        handler = AsyncMock()
+
+        async def _run(config, ctx, services):
+            nid = services.get("_current_node_id")
+            call_log.append(nid)
+            if node_type == PipelineNodeType.CONDITION and nid in condition_false:
+                ctx.set_global("condition_result", False)
+
+        handler.execute.side_effect = _run
+        return handler
+
+    return fake_get_handler
+
+
+class TestExecuteDiamondRunsMergeOnce:
+    @pytest.mark.anyio
+    async def test_diamond_merge_node_executes_exactly_once(self):
+        """Diamond A->B, A->C, B->D, C->D: D has two inbound edges but must run
+        exactly once — the executor iterates the topo order, it does not re-run a
+        node per inbound edge."""
+        graph = PipelineGraph(
+            nodes=[_node("a"), _node("b"), _node("c"), _node("d")],
+            edges=[_edge("a", "b"), _edge("a", "c"), _edge("b", "d"), _edge("c", "d")],
+        )
+        pipeline = _pipeline()
+        call_log: list[str] = []
+
+        with patch(
+            "src.services.pipeline_executor.get_handler",
+            side_effect=_counting_handler_factory(call_log),
+        ):
+            await PipelineExecutor().execute(pipeline, graph, {})
+
+        assert call_log.count("d") == 1
+        # Every node ran, fan-in node last.
+        assert sorted(call_log) == ["a", "b", "c", "d"]
+        assert call_log.index("a") == 0
+        assert call_log[-1] == "d"
+
+
+class TestExecuteCycleRunsAllNodes:
+    @pytest.mark.anyio
+    async def test_cycle_fallback_still_runs_every_node_once(self):
+        """A cyclic graph (x->y->z->x) can't be topo-sorted; the executor falls
+        back to original node order and must still run each node exactly once
+        (no infinite loop, no dropped node) — issue #1037 names the cycle
+        fallback's *end-to-end* behaviour as uncovered."""
+        graph = PipelineGraph(
+            nodes=[_node("x"), _node("y"), _node("z")],
+            edges=[_edge("x", "y"), _edge("y", "z"), _edge("z", "x")],
+        )
+        pipeline = _pipeline()
+        call_log: list[str] = []
+
+        with patch(
+            "src.services.pipeline_executor.get_handler",
+            side_effect=_counting_handler_factory(call_log),
+        ):
+            result = await PipelineExecutor().execute(pipeline, graph, {})
+
+        # Original order, each once. NOTE: in the cycle fallback every node has a
+        # live predecessor that already ran, so none are suppressed.
+        assert call_log == ["x", "y", "z"]
+        assert isinstance(result["context"], NodeContext)
+
+
+class TestExecutePartialInboundSuppression:
+    @pytest.mark.anyio
+    async def test_merge_runs_when_only_some_inbound_edges_suppressed(self):
+        """Partial inbound suppression: merge has two inbound edges, one from a
+        False CONDITION (suppressed) and one from a live branch. Because NOT
+        every inbound path is dead, merge must still run (audit #837/3 semantics,
+        the partial case the issue calls out as uncovered)."""
+        graph = PipelineGraph(
+            nodes=[
+                _node("cond", PipelineNodeType.CONDITION),
+                _node("live"),
+                _node("merge"),
+            ],
+            edges=[_edge("cond", "merge"), _edge("live", "merge")],
+        )
+        pipeline = _pipeline()
+        call_log: list[str] = []
+
+        with patch(
+            "src.services.pipeline_executor.get_handler",
+            side_effect=_counting_handler_factory(call_log, condition_false={"cond"}),
+        ):
+            await PipelineExecutor().execute(pipeline, graph, {})
+
+        assert "cond" in call_log
+        assert "live" in call_log
+        assert "merge" in call_log  # reachable via the live branch
+        assert call_log.count("merge") == 1
+
+    @pytest.mark.anyio
+    async def test_merge_skipped_when_all_inbound_edges_suppressed(self):
+        """Complement: when EVERY inbound edge of merge originates from a False
+        condition, merge (and its downstream) is skipped — confirms the partial
+        case above is genuinely about *partial*, not blanket, suppression."""
+        graph = PipelineGraph(
+            nodes=[
+                _node("cond1", PipelineNodeType.CONDITION),
+                _node("cond2", PipelineNodeType.CONDITION),
+                _node("merge"),
+                _node("tail"),
+            ],
+            edges=[
+                _edge("cond1", "merge"),
+                _edge("cond2", "merge"),
+                _edge("merge", "tail"),
+            ],
+        )
+        pipeline = _pipeline()
+        call_log: list[str] = []
+
+        with patch(
+            "src.services.pipeline_executor.get_handler",
+            side_effect=_counting_handler_factory(
+                call_log, condition_false={"cond1", "cond2"}
+            ),
+        ):
+            await PipelineExecutor().execute(pipeline, graph, {})
+
+        assert "cond1" in call_log and "cond2" in call_log
+        assert "merge" not in call_log
+        assert "tail" not in call_log  # suppression propagates downstream
+
+
+class TestExecuteFullSourceToPublishChain:
+    @pytest.mark.anyio
+    async def test_source_filter_llm_image_publish_run_in_order(self):
+        """A realistic linear content pipeline (source -> filter -> llm -> image
+        -> publish) runs every node in dependency order and threads context
+        values end-to-end."""
+        graph = PipelineGraph(
+            nodes=[
+                _node("src", PipelineNodeType.SOURCE),
+                _node("flt", PipelineNodeType.FILTER),
+                _node("llm", PipelineNodeType.LLM_GENERATE),
+                _node("img", PipelineNodeType.IMAGE_GENERATE),
+                _node("pub", PipelineNodeType.PUBLISH),
+            ],
+            edges=[
+                _edge("src", "flt"),
+                _edge("flt", "llm"),
+                _edge("llm", "img"),
+                _edge("img", "pub"),
+            ],
+        )
+        pipeline = _pipeline()
+        call_log: list[str] = []
+
+        def fake_get_handler(node_type):
+            handler = AsyncMock()
+
+            async def _run(config, ctx, services):
+                call_log.append(services.get("_current_node_id"))
+                if node_type == PipelineNodeType.LLM_GENERATE:
+                    ctx.set_global("generated_text", "drafted")
+                if node_type == PipelineNodeType.IMAGE_GENERATE:
+                    ctx.set_global("image_url", "https://example.com/x.png")
+
+            handler.execute.side_effect = _run
+            return handler
+
+        with patch("src.services.pipeline_executor.get_handler", side_effect=fake_get_handler):
+            result = await PipelineExecutor().execute(pipeline, graph, {})
+
+        assert call_log == ["src", "flt", "llm", "img", "pub"]
+        assert result["generated_text"] == "drafted"
+        assert result["image_url"] == "https://example.com/x.png"
