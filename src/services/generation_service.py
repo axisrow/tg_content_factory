@@ -67,6 +67,22 @@ class GenerationService:
         result = await self._search.search_local(query, channel_id=channel_id, limit=limit)
         return result.messages
 
+    @staticmethod
+    def _extract_delta(chunk: Any) -> str:
+        """Coerce a streaming chunk into its text delta, mapping "empty" to "".
+
+        Returns ``""`` for ``None`` and for dict chunks whose text fields are all
+        absent/``None`` so callers can skip them — this prevents the literal
+        ``"None"`` (from ``str(None)``) from leaking into the generated text and
+        avoids emitting do-nothing deltas (issue #1034).
+        """
+        if chunk is None:
+            return ""
+        if isinstance(chunk, dict):
+            text = chunk.get("text") or chunk.get("content") or chunk.get("generated_text")
+            return text if isinstance(text, str) else ""
+        return str(chunk)
+
     def _build_source_messages(self, messages: List[Message]) -> str:
         parts: List[str] = []
         for m in messages:
@@ -77,6 +93,33 @@ class GenerationService:
             when = m.date.isoformat() if isinstance(m.date, datetime) else str(m.date)
             parts.append(f"[{header}] {text} (id:{m.message_id} date:{when})")
         return "\n\n".join(parts)
+
+    @staticmethod
+    def _build_citations(messages: List[Message]) -> List[Dict[str, Any]]:
+        """Bake citations from retrieved messages, deduplicated in retrieval order.
+
+        Hybrid + FTS retrieval can surface the same message twice, which used to
+        emit duplicate citations (issue #1034). Dedup on ``(channel_id,
+        message_id)`` — ``message_id`` is only unique per channel, so the channel
+        must be part of the key to keep same-id messages from different channels
+        distinct. First occurrence wins, preserving retrieval order.
+        """
+        citations: List[Dict[str, Any]] = []
+        seen: set[tuple[int | None, int]] = set()
+        for m in messages:
+            key = (m.channel_id, m.message_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            citations.append(
+                {
+                    "channel_title": (m.channel_title or m.channel_username or ""),
+                    "message_id": m.message_id,
+                    "text": (m.text or "")[:512],
+                    "date": m.date.isoformat() if isinstance(m.date, datetime) else str(m.date),
+                }
+            )
+        return citations
 
     async def generate_stream(
         self,
@@ -112,16 +155,8 @@ class GenerationService:
         if provider is None:
             raise RuntimeError("No provider callable configured for generation")
 
-        # Citations baked from retrieved messages
-        citations = [
-            {
-                "channel_title": (m.channel_title or m.channel_username or ""),
-                "message_id": m.message_id,
-                "text": (m.text or "")[:512],
-                "date": m.date.isoformat() if isinstance(m.date, datetime) else str(m.date),
-            }
-            for m in messages
-        ]
+        # Citations baked from retrieved messages (deduplicated, see #1034)
+        citations = self._build_citations(messages)
 
         # Call the provider with stream=True. The provider may return:
         #  - an async generator directly (async def with yield)
@@ -146,23 +181,39 @@ class GenerationService:
 
         # If it's an async iterable (async generator), iterate and yield
         if hasattr(result, "__aiter__"):
+            import logging
+
             buffer = ""
-            async for chunk in result:  # type: ignore
-                if isinstance(chunk, dict):
-                    delta = (
-                        chunk.get("text")
-                        or chunk.get("content")
-                        or chunk.get("generated_text")
-                        or str(chunk)
-                    )
-                else:
-                    delta = str(chunk)
-                buffer += delta
+            try:
+                async for chunk in result:  # type: ignore
+                    delta = self._extract_delta(chunk)
+                    if not delta:
+                        # Empty/None chunks carry no text — skip so they neither
+                        # pollute the buffer (``str(None)`` → ``"None"``) nor emit
+                        # a do-nothing delta downstream (issue #1034).
+                        continue
+                    buffer += delta
+                    yield {
+                        "prompt": rendered_prompt,
+                        "generated_text": buffer,
+                        "delta": delta,
+                        "citations": citations,
+                    }
+            except Exception as exc:
+                # Provider closed the connection mid-stream / timed out. Return the
+                # partial text gracefully instead of losing it (owner decision,
+                # issue #1034). A trailing update carries the accumulated buffer
+                # plus the error markers so consumers can persist what arrived.
+                logging.getLogger(__name__).warning(
+                    "Streaming provider failed mid-stream (%s); returning partial text", exc
+                )
                 yield {
                     "prompt": rendered_prompt,
                     "generated_text": buffer,
-                    "delta": delta,
+                    "delta": "",
                     "citations": citations,
+                    "partial": True,
+                    "stream_error": str(exc) or exc.__class__.__name__,
                 }
             return
 
@@ -170,16 +221,9 @@ class GenerationService:
         if hasattr(result, "__iter__") and not isinstance(result, (str, bytes)):
             buffer = ""
             for chunk in result:  # type: ignore
-                delta = (
-                    str(chunk)
-                    if not isinstance(chunk, dict)
-                    else (
-                        chunk.get("text")
-                        or chunk.get("content")
-                        or chunk.get("generated_text")
-                        or str(chunk)
-                    )
-                )
+                delta = self._extract_delta(chunk)
+                if not delta:
+                    continue
                 buffer += delta
                 yield {
                     "prompt": rendered_prompt,
@@ -271,15 +315,7 @@ class GenerationService:
             stream=False,
         )
 
-        citations = [
-            {
-                "channel_title": (m.channel_title or m.channel_username or ""),
-                "message_id": m.message_id,
-                "text": (m.text or "")[:512],
-                "date": m.date.isoformat() if isinstance(m.date, datetime) else str(m.date),
-            }
-            for m in messages
-        ]
+        citations = self._build_citations(messages)
 
         return {
             "prompt": rendered_prompt,
