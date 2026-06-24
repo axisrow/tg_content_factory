@@ -478,10 +478,13 @@ def journal_row(finding: Finding, date: str) -> str:
     «Находка» включает файл:строку, чтобы строка была самодостаточной при вставке
     в журнал. `Решение`/`PR` — заглушки: решение принимает владелец, не детектор.
     """
+    # Дата тоже экранируется: `--date` приходит от оператора без валидации, '|' в
+    # нём ломал бы таблицу журнала так же, как в любой другой ячейке (ревью #1113).
+    date_cell = _md_cell(date)
     finding_cell = _md_cell(f"{finding.what} ({finding.file}:{finding.line})")
     replacement_cell = _md_cell(finding.replacement)
     return (
-        f"| {date} | {finding_cell} | {replacement_cell} "
+        f"| {date_cell} | {finding_cell} | {replacement_cell} "
         f"| {_JOURNAL_DECISION_PLACEHOLDER} | {_JOURNAL_PR_PLACEHOLDER} |"
     )
 
@@ -522,7 +525,12 @@ def build_issue_body(findings: list[Finding], date: str) -> str:
 
     Содержит: (1) связь с зонтичным эпиком #1083 и журналом #782; (2) читаемую
     таблицу находок; (3) готовые строки для механической дозаписи в журнал #782.
+
+    Пустой список — ошибка: issue без находок не создаётся (вызывающий код гвардит
+    `if not new`), а тело с header-only таблицами бессмысленно (ревью #1113).
     """
+    if not findings:
+        raise ValueError("build_issue_body: пустой список находок — issue без находок не создаётся")
     parts: list[str] = []
     parts.append(
         f"Автоматический прогон детектора «изобретённого велосипеда» "
