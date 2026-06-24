@@ -37,6 +37,11 @@ dependencies = [
     "pyyaml>=6.0.3",
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.29",
+    # CLI framework (epic #959, argparse→Typer migration). Typer was already in
+    # the tree transitively; pinning it directly makes the dependency explicit
+    # for the Wave-0 scaffold (src/cli/typer_app.py). 0.12 is the first release
+    # with the modern click 8.x API the scaffold relies on.
+    "typer>=0.12.0",
     "cryptography>=48.0.0",
     "openpyxl>=3.1.5",
     "aiohttp>=3.13.5",
