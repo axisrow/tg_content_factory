@@ -1,9 +1,15 @@
 name: CI
 
 # Triggers — CI runs only on `main` and on pull requests (owner decision, #1051).
-#   push: [main]   — post-merge verification that main itself stays green.
+#   push: [main]   — post-merge verification that main itself stays green; this
+#                    is where the FULL ~9000-test suite runs as the blocking gate.
 #   pull_request:  — fires on PR open AND on every push inside an open PR
 #                    (the `synchronize` event), so PR commits are still covered.
+#                    On a PR the test gate is SELECTIVE (`pytest --testmon`,
+#                    #1090): only the tests affected by the change run, cutting
+#                    PR CI time. The full suite still gates main post-merge, so a
+#                    test that testmon couldn't link to the change is caught
+#                    before a release — conservative by design.
 # Dropped the old `fix/**` / `codex/**` push triggers: they double-ran CI (once
 # for the branch push, once for the PR) and burned runners on intermediate,
 # draft, PR-less pushes. A push to a feature branch with no open PR no longer
@@ -52,12 +58,13 @@ jobs:
             });
             core.setFailed('Branch name contains "+", which is not allowed.');
 
-  # Static gates run as their own job so they fail fast and in parallel with the
-  # long test job instead of serializing ~20s in front of pytest (#944).
-  static-checks:
+  # Lint is its own job (#1097 §5) so a style slip reds CI in seconds, in
+  # parallel with the slower static-checks and tests jobs — no waiting on pytest
+  # to learn ruff is unhappy.
+  lint:
     runs-on: ubuntu-latest
-    # Lint + import contracts + complexity gate + security scans (#1051, #1053).
-    # Typically a couple of minutes; 10 leaves headroom over a cold pip install.
+    # Just `pip install` + ruff; minutes at most. 10 leaves headroom for a cold
+    # pip cache.
     timeout-minutes: 10
 
     steps:
@@ -76,6 +83,29 @@ jobs:
 
       - name: Ruff
         run: ruff check src tests conftest.py
+
+  # Static gates run as their own job so they fail fast and in parallel with the
+  # long tests job (#944, #1097 §5). Holds the import-architecture contracts and
+  # the blocking complexity gate, plus the advisory security/duplication scans.
+  static-checks:
+    runs-on: ubuntu-latest
+    # Import contracts + complexity gate + security scans + strict docs build.
+    # Typically a couple of minutes; 10 leaves headroom over a cold pip install.
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
 
       - name: Import architecture contracts
         run: lint-imports --config .importlinter
@@ -96,8 +126,8 @@ jobs:
         continue-on-error: true
         run: npx -y jscpd@5.0.10 --min-tokens 70 --format python --threshold 1 src
 
-      # Dependency CVE scan (#1053). Advisory for now (continue-on-error) so a
-      # pre-existing transitive CVE never reds CI on day one — pip-audit LOCATES,
+      # Dependency CVE scan (#1053, #1097 §4). Advisory for now (continue-on-error)
+      # so a pre-existing transitive CVE never reds CI — pip-audit LOCATES,
       # Dependabot (.github/dependabot.yml) FIXES via update PRs. Ratchet to
       # blocking later once the current findings are triaged. pip-audit ships in
       # the [dev] extra installed above.
@@ -114,16 +144,9 @@ jobs:
         continue-on-error: true
         run: bandit -c pyproject.toml -r src -q
 
-      # Doc-coverage gate (#1072): interrogate measures the % of functions /
-      # classes / modules carrying a docstring (documentation debt). Soft
-      # baseline `fail_under = 23` lives in [tool.interrogate] (pyproject.toml);
-      # the script reads it. ADVISORY for now (continue-on-error) — it surfaces
-      # regressions without forcing a docstring sprint. Ratchet to blocking and
-      # raise the baseline as coverage climbs. NOT a dead-code check — that's the
-      # complexity/vulture path above; "no docstring" ≠ "uncalled".
-      - name: Doc-coverage report (advisory)
-        continue-on-error: true
-        run: python scripts/doc_coverage.py --path src
+      # Doc-coverage (interrogate) is intentionally NOT a CI step (#1097 §3): it
+      # stays a LOCAL script (scripts/doc_coverage.py, #1072) the owner runs on
+      # demand. Wiring it into CI added noise without a gate, so it was removed.
 
       # Гейт строгой сборки доков (#1071). Тестовые job'ы ставят только [dev],
       # где нет mkdocs/mkdocstrings, поэтому build-тест в test_docs_api_reference.py
@@ -151,11 +174,24 @@ jobs:
               sys.exit(1)
           PY
 
-  lint-and-test:
+  # The test gate. SELECTIVE on PRs, FULL on main (#1090, #1097 §1+6).
+  #
+  #   pull_request → `pytest --testmon`: testmon tracks each test's source
+  #     dependencies in `.testmondata` and re-runs only the tests a change
+  #     touches. The baseline `.testmondata` is restored from the cache main
+  #     populates; on a cache miss testmon safely re-runs everything (no false
+  #     green). This is the fast PR gate that cuts CI time 50-70%.
+  #
+  #   push (main) → the full smoke + parallel + serial suite with coverage, the
+  #     same blocking gate as before. testmon NEVER replaces it: a regression in
+  #     a test testmon couldn't link to the PR diff is still caught here before a
+  #     release. Conservative by design (#1090). main also REBUILDS the
+  #     `.testmondata` baseline and saves it so the next PRs select against it.
+  tests:
     runs-on: ubuntu-latest
-    # The long job: smoke + parallel + serial pytest with coverage. The suite
-    # runs in a few minutes on CI; 15 is a generous hang guard well under the
-    # 6h GitHub default that would otherwise let a deadlocked run idle (#1051).
+    # smoke + (selective | full) pytest with coverage. The full suite runs in a
+    # few minutes on CI; 15 is a generous hang guard well under the 6h GitHub
+    # default that would otherwise let a deadlocked run idle (#1051).
     timeout-minutes: 15
 
     steps:
@@ -172,19 +208,70 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
+      # Restore the testmon dependency DB so a PR can select only the tests its
+      # diff affects (#1090). The cache is keyed PER-PR-BRANCH (head_ref): the
+      # first push in a PR builds the baseline (testmon runs everything once),
+      # and every later push to the SAME PR restores it and re-runs only the
+      # affected tests. `key` includes run_id so each run writes a fresh entry;
+      # `restore-keys` falls back to the newest entry for this branch. A cache
+      # miss just means testmon rebuilds the baseline that run (safe — no false
+      # green). main does NOT use testmon (see below), so this step is PR-only.
+      #
+      # Why per-branch and not a shared main baseline: testmon only deselects in
+      # a single process, and testmon-collection is incompatible with
+      # xdist+coverage (it INTERNALERRORs). main keeps its `-n auto --cov` full
+      # run untouched and can't cheaply produce a single-process baseline, so
+      # each PR self-bootstraps its own. See CLAUDE.md "Selective test run".
+      - name: Restore testmon baseline (PR only)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/cache@v4
+        with:
+          path: .testmondata
+          key: testmon-${{ runner.os }}-py311-${{ github.head_ref }}-${{ github.run_id }}
+          restore-keys: |
+            testmon-${{ runner.os }}-py311-${{ github.head_ref }}-
+
       # Fast offline preflight: a sub-second-ish sanity gate over real critical
       # paths (package import, CLI parser, DB schema, web /health). Runs first
-      # so a fundamentally broken build fails before the full suite starts.
-      # Kept (not dropped) as a cheap fail-fast — the ~30s is mostly whole-tree
-      # collection overhead, not the handful of smoke tests (#944 decision).
+      # so a fundamentally broken build fails before the heavier run starts.
       # Live smoke (real_provider_smoke / codex_*) stays opt-in and is skipped
       # here — no gate env vars are set.
       - name: Pytest (smoke preflight)
         run: pytest tests -q -m smoke
 
+      # ── PR: SELECTIVE run (#1090) ───────────────────────────────────────────
+      # `pytest --testmon` re-runs only the tests affected by the change, against
+      # the `.testmondata` baseline restored above (first PR push builds it).
+      # This is the fast, blocking PR test gate; the full suite gates main
+      # post-merge, so a regression testmon couldn't link to the diff is still
+      # caught before a release — conservative by design.
+      #
+      # IMPORTANT — single-process (NO `-n auto`): testmon's deselection only
+      # takes effect in one process. Under pytest-xdist workers it still
+      # *collects* dependency data but does NOT deselect the stable tests, and
+      # testmon-collection + xdist + coverage INTERNALERRORs (both verified
+      # empirically against pytest-testmon 2.2.0). So these legs run
+      # single-process and without coverage. We keep the parallel-safe vs
+      # aiosqlite_serial marker split (so the serial contract holds), but each
+      # leg is one process. On a typical narrow PR only a handful of tests run —
+      # far faster than a full `-n auto` sweep; on a very broad change it can be
+      # slower, an acceptable conservative trade (#1090).
+      - name: Pytest (selective, PR — parallel-safe set)
+        if: ${{ github.event_name == 'pull_request' && !cancelled() }}
+        run: pytest tests -q -m "not aiosqlite_serial" --testmon --durations=25
+
+      - name: Pytest (selective, PR — aiosqlite serial)
+        if: ${{ github.event_name == 'pull_request' && !cancelled() }}
+        run: pytest tests -q -m aiosqlite_serial --testmon
+
+      # ── main: FULL suite (blocking gate, conservative) ──────────────────────
       # On CI conftest.py uses every runner core (the load throttle is dev-only),
       # so `-n auto` fans out across all vCPUs. --durations surfaces the slowest
-      # tests each run for ongoing tuning (#944).
+      # tests each run for ongoing tuning (#944). This is the SAME full
+      # smoke+parallel+serial+coverage gate as before #1090 — testmon is NOT used
+      # on main: testmon-collection is incompatible with xdist+coverage
+      # (INTERNALERROR), and the full run must never be weakened. The selective
+      # PR run is the only place testmon plays.
       #
       # Coverage (#1052): both real test runs measure `src` and the per-process
       # .coverage.* files are combined afterwards. The parallel run starts the
@@ -192,16 +279,18 @@ jobs:
       # lost. `[tool.coverage.run] parallel = true` already keeps the xdist
       # worker datafiles separate; we pass --cov-report= here to defer reporting
       # (and the pyproject fail_under gate) to the single combined step below.
-      - name: Pytest (parallel-safe)
-        if: ${{ !cancelled() }}
+      - name: Pytest (full, main — parallel-safe)
+        if: ${{ github.event_name == 'push' && !cancelled() }}
         run: pytest tests -q -m "not aiosqlite_serial" -n auto --durations=25 --cov=src --cov-report=
 
-      - name: Pytest (aiosqlite serial)
-        if: ${{ !cancelled() }}
+      - name: Pytest (full, main — aiosqlite serial)
+        if: ${{ github.event_name == 'push' && !cancelled() }}
         run: pytest tests -q -m aiosqlite_serial --cov=src --cov-append --cov-report=
 
-      # Report the combined parallel + serial coverage. pytest-cov already merged
-      # the per-worker datafiles into a single `.coverage` at the end of each run
+      # Report the combined parallel + serial coverage (main only — the PR
+      # selective run measures only affected tests, so its coverage would be
+      # misleadingly low). pytest-cov already merged the per-worker datafiles
+      # into a single `.coverage` at the end of each run
       # (`[tool.coverage.run] parallel = true`), and the serial run's
       # `--cov-append` added its lines to that same file — so the dataset is
       # already combined here. We deliberately do NOT run `coverage combine`: with
@@ -212,13 +301,13 @@ jobs:
       # #1024 bug-hunt epic). The XML artifact lets PRs diff coverage without
       # re-running the suite.
       - name: Coverage report (combined)
-        if: ${{ !cancelled() }}
+        if: ${{ github.event_name == 'push' && !cancelled() }}
         run: |
           coverage report
           coverage xml -o coverage.xml
 
       - name: Upload coverage artifact
-        if: ${{ !cancelled() }}
+        if: ${{ github.event_name == 'push' && !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: coverage-xml

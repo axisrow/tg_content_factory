@@ -58,6 +58,10 @@ coverage*.json
 .coverage
 .coverage.*
 htmlcov/
+# pytest-testmon selective-run DB (#1090): per-checkout test↔source map, never
+# versioned. In CI it is restored/saved via actions/cache, not git.
+.testmondata
+.testmondata-*
 output*
 *,cover
 
