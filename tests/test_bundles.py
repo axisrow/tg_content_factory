@@ -487,7 +487,7 @@ class TestCollectionBundle:
         await b.channels.add_channel(_channel(channel_id=1012))
         await b.insert_message(_message(channel_id=1012, message_id=1, text="findme"))
         results, total = await b.search_messages(SearchParams(query="findme"))
-        assert total >= 1
+        assert total >= 1  # MessageSearchPage.total is a lower bound by design (#766)
 
     async def test_search_total_is_exact_when_offset_past_end(self, db):
         # Regression #971: an empty overflow page (offset beyond the result set)
@@ -575,7 +575,7 @@ class TestSearchBundle:
         await b.add_channel(_channel(channel_id=2002))
         await b.insert_messages_batch([_message(channel_id=2002, message_id=1, text="searchterm")])
         results, total = await b.search_messages(SearchParams(query="searchterm"))
-        assert total >= 1
+        assert total >= 1  # MessageSearchPage.total is a lower bound by design (#766)
 
     async def test_log_and_get_searches(self, db):
         b = SearchBundle.from_database(db)
