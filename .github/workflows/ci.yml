@@ -4,6 +4,8 @@ name: CI
 #   push: [main]   — post-merge verification that main itself stays green.
 #   pull_request:  — fires on PR open AND on every push inside an open PR
 #                    (the `synchronize` event), so PR commits are still covered.
+# Both run the same full test suite; the CI speedup from #1090 is the parallel
+# job split (lint | static-checks | tests), not test selection (#1097 §5).
 # Dropped the old `fix/**` / `codex/**` push triggers: they double-ran CI (once
 # for the branch push, once for the PR) and burned runners on intermediate,
 # draft, PR-less pushes. A push to a feature branch with no open PR no longer
@@ -52,12 +54,13 @@ jobs:
             });
             core.setFailed('Branch name contains "+", which is not allowed.');
 
-  # Static gates run as their own job so they fail fast and in parallel with the
-  # long test job instead of serializing ~20s in front of pytest (#944).
-  static-checks:
+  # Lint is its own job (#1097 §5) so a style slip reds CI in seconds, in
+  # parallel with the slower static-checks and tests jobs — no waiting on pytest
+  # to learn ruff is unhappy.
+  lint:
     runs-on: ubuntu-latest
-    # Lint + import contracts + complexity gate + security scans (#1051, #1053).
-    # Typically a couple of minutes; 10 leaves headroom over a cold pip install.
+    # Just `pip install` + ruff; minutes at most. 10 leaves headroom for a cold
+    # pip cache.
     timeout-minutes: 10
 
     steps:
@@ -76,6 +79,29 @@ jobs:
 
       - name: Ruff
         run: ruff check src tests conftest.py
+
+  # Static gates run as their own job so they fail fast and in parallel with the
+  # long tests job (#944, #1097 §5). Holds the import-architecture contracts and
+  # the blocking complexity gate, plus the advisory security/duplication scans.
+  static-checks:
+    runs-on: ubuntu-latest
+    # Import contracts + complexity gate + security scans + strict docs build.
+    # Typically a couple of minutes; 10 leaves headroom over a cold pip install.
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
 
       - name: Import architecture contracts
         run: lint-imports --config .importlinter
@@ -96,8 +122,8 @@ jobs:
         continue-on-error: true
         run: npx -y jscpd@5.0.10 --min-tokens 70 --format python --threshold 1 src
 
-      # Dependency CVE scan (#1053). Advisory for now (continue-on-error) so a
-      # pre-existing transitive CVE never reds CI on day one — pip-audit LOCATES,
+      # Dependency CVE scan (#1053, #1097 §4). Advisory for now (continue-on-error)
+      # so a pre-existing transitive CVE never reds CI — pip-audit LOCATES,
       # Dependabot (.github/dependabot.yml) FIXES via update PRs. Ratchet to
       # blocking later once the current findings are triaged. pip-audit ships in
       # the [dev] extra installed above.
@@ -114,16 +140,9 @@ jobs:
         continue-on-error: true
         run: bandit -c pyproject.toml -r src -q
 
-      # Doc-coverage gate (#1072): interrogate measures the % of functions /
-      # classes / modules carrying a docstring (documentation debt). Soft
-      # baseline `fail_under = 23` lives in [tool.interrogate] (pyproject.toml);
-      # the script reads it. ADVISORY for now (continue-on-error) — it surfaces
-      # regressions without forcing a docstring sprint. Ratchet to blocking and
-      # raise the baseline as coverage climbs. NOT a dead-code check — that's the
-      # complexity/vulture path above; "no docstring" ≠ "uncalled".
-      - name: Doc-coverage report (advisory)
-        continue-on-error: true
-        run: python scripts/doc_coverage.py --path src
+      # Doc-coverage (interrogate) is intentionally NOT a CI step (#1097 §3): it
+      # stays a LOCAL script (scripts/doc_coverage.py, #1072) the owner runs on
+      # demand. Wiring it into CI added noise without a gate, so it was removed.
 
       # Гейт строгой сборки доков (#1071). Тестовые job'ы ставят только [dev],
       # где нет mkdocs/mkdocstrings, поэтому build-тест в test_docs_api_reference.py
@@ -151,11 +170,22 @@ jobs:
               sys.exit(1)
           PY
 
-  lint-and-test:
+  # The full test gate — runs on every PR and on main (#1051). Split into its
+  # own parallel job (#1097 §5) so it fans out alongside lint and static-checks
+  # instead of serializing behind them.
+  #
+  # NOTE (#1090): we evaluated pytest-testmon for a selective PR run and dropped
+  # it. testmon only deselects in a single process (no-op under `-n auto`) and
+  # testmon-collection + xdist + coverage INTERNALERRORs — so a testmon PR gate
+  # would have to run single-process without coverage, which on this large suite
+  # is often SLOWER than the full `-n auto` sweep, not faster. The real CI
+  # speedup here is the parallel-job split, not test selection. The full suite
+  # stays the gate on both PR and main.
+  tests:
     runs-on: ubuntu-latest
-    # The long job: smoke + parallel + serial pytest with coverage. The suite
-    # runs in a few minutes on CI; 15 is a generous hang guard well under the
-    # 6h GitHub default that would otherwise let a deadlocked run idle (#1051).
+    # smoke + full parallel + serial pytest with coverage. The suite runs in a
+    # few minutes on CI; 15 is a generous hang guard well under the 6h GitHub
+    # default that would otherwise let a deadlocked run idle (#1051).
     timeout-minutes: 15
 
     steps:
@@ -175,8 +205,6 @@ jobs:
       # Fast offline preflight: a sub-second-ish sanity gate over real critical
       # paths (package import, CLI parser, DB schema, web /health). Runs first
       # so a fundamentally broken build fails before the full suite starts.
-      # Kept (not dropped) as a cheap fail-fast — the ~30s is mostly whole-tree
-      # collection overhead, not the handful of smoke tests (#944 decision).
       # Live smoke (real_provider_smoke / codex_*) stays opt-in and is skipped
       # here — no gate env vars are set.
       - name: Pytest (smoke preflight)

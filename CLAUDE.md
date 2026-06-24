@@ -168,10 +168,11 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 
 ## CI
 
-- GitHub Actions: `.github/workflows/ci.yml` — ruff lint + pytest on push to `main`/`fix/**`/`codex/**` and all PRs; branch names containing `+` are rejected
+- GitHub Actions: `.github/workflows/ci.yml` — runs on push to `main` and on all PRs; branch names containing `+` are rejected. Split into **parallel jobs** (#1090, #1097 §5) that fan out for speed: `check-branch-name` (PR only), `lint` (ruff), `static-checks` (gates below), `tests`. This parallel split is the CI speedup that landed. Structure is regression-guarded by `tests/test_ci_workflow_structure.py`.
+- **Test gate (#1090)**: the `tests` job runs the **full** suite on both PR and main — smoke first, then parallel (`-n auto -m "not aiosqlite_serial"`), then serial (`-m aiosqlite_serial`), with coverage. (pytest-testmon selective runs were evaluated and dropped: testmon only deselects single-process and crashes under xdist+coverage, so a testmon PR gate would run single-process without coverage — often *slower* than the full `-n auto` sweep on this large suite, not faster. The parallel-job split is the real win.)
 - Import architecture contracts: `lint-imports --config .importlinter` — CLI/web/agent-tools entrypoints must not import `telethon` directly (raw Telethon stays behind the telegram layer)
-- CI enforces `filterwarnings = ["error"]` in `pyproject.toml` (dedicated check step), then runs parallel tests (`-n auto -m "not aiosqlite_serial"`), then serial (`-m aiosqlite_serial`)
-- Code-health/doc tooling in `static-checks`: `scripts/code_health.py --fail-on F` (blocking cyclomatic-complexity gate, radon+vulture) and `scripts/doc_coverage.py` (advisory doc-coverage report, wraps `interrogate`; config in `[tool.interrogate]`). **Doc-coverage (no docstring) ≠ dead code (uncalled, vulture) — independent signals, different PRs.**
+- CI enforces `filterwarnings = ["error"]` in `pyproject.toml` (dedicated check step in `static-checks`)
+- Code-health tooling in `static-checks`: `scripts/code_health.py --fail-on F` (blocking cyclomatic-complexity gate, radon+vulture). Advisory scans (`continue-on-error`): jscpd duplication, `pip-audit` (dependency CVEs, #1053/#1097 §4), bandit. **Doc-coverage (interrogate, #1072) is NOT in CI** — it stays a local script (`scripts/doc_coverage.py`); "no docstring" ≠ "dead code (uncalled, vulture)" — independent signals, different PRs.
 - Other workflows: `real-provider.yml` (opt-in live provider smoke), `docs.yml` (mkdocs → GitHub Pages), `release.yml`
 
 ## Real Telegram Testing
