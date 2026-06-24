@@ -23,6 +23,7 @@ from tests.cli_real_tg_integration.conftest import (
     cleanup_verified_messages,
     distinctive_text_fragment,
     fetch_pipeline_run_text,
+    force_delete_messages_by_id,
     make_cli_nonce,
     resolve_saved_messages_dialog_id,
 )
@@ -96,10 +97,15 @@ def _delete_live_cycle_pipeline(db_path, *, pipeline_id: int) -> None:
         )
 
 
-# Сумма CLI-таймаутов шагов: run 180 + moderation-list 30 + approve 30 + publish 120 = 360s.
-# Берём 420 (>= 360 + запас на медленный LLM/cleanup), чтобы pytest-timeout не убил тест
-# до finally и не оставил реальный пост неудалённым.
-@pytest.mark.timeout(420)
+# pytest-timeout — это hard deadlock-guard, поэтому считаем ПОЛНЫЙ worst-case всех
+# bounded CLI-вызовов на критическом пути (в норме каждый отрабатывает за секунды):
+#   resolve Saved Messages 60
+#   + run 180 + moderation-list 30 + approve 30 + publish 120            (= 360, тело)
+#   + finally: run-show 30 + cleanup (verify 2×60 + delete 60 = 180)     (= 210, cleanup)
+#   ≈ 630s суммарно.
+# Берём 660 (>= 630), чтобы pytest-timeout не убил тест ВНУТРИ finally и не оставил
+# реальный пост неудалённым даже при медленном провайдере/повторных live-reads.
+@pytest.mark.timeout(660)
 def test_pipeline_content_cycle_live(run_cli, assert_cli_ok, cli_real_cli_env, live_scratch_message_dialog):
     """Сквозной живой прогон: LLM-generate → moderated → approve → publish → Saved Messages.
 
@@ -192,17 +198,26 @@ def test_pipeline_content_cycle_live(run_cli, assert_cli_ok, cli_real_cli_env, l
                 if current_leak and sys.exc_info()[0] is None:
                     leak_msg = current_leak
             else:
-                # Маркер слишком короткий → cleanup НЕ удаляет (не трогаем чужое),
-                # но сообщение реально опубликовано в Saved Messages = LEAK. Не
-                # молчим: фиксируем явный leak, чтобы тест не «прошёл» молча,
-                # оставив реальный пост. (Промпт требует длинную строку, так что
-                # сюда мы попадаем лишь если LLM проигнорировал инструкцию.)
-                leak_msg = (
-                    f"LEAK: published message_id={message_id} остался в Saved Messages "
-                    f"(phone={published_phone}) — run text слишком короткий для "
-                    f"безопасного маркера, cleanup пропущен. Удалите вручную. "
-                    f"run_text={run_text!r}"
+                # Маркер недоступен (короткий run text ИЛИ run-show упал/сменил
+                # формат → run_text=None). Текстовая верификация невозможна, но
+                # сообщение РЕАЛЬНО опубликовано → молча оставить = leak. Удаляем
+                # best-effort по ТОЧНОМУ message_id из нашего же publish-вывода
+                # (это id, который мы сами создали, не угаданный — безопасно
+                # удалять без nonce-проверки). Если удаление не подтвердилось —
+                # фиксируем leak, чтобы не «пройти» молча с реальным постом.
+                force_leak = force_delete_messages_by_id(
+                    cli_real_cli_env,
+                    phone=published_phone,
+                    chat_ref="me",
+                    message_ids=[int(message_id)],
                 )
+                if force_leak and sys.exc_info()[0] is None:
+                    leak_msg = (
+                        f"LEAK: published message_id={message_id} мог остаться в "
+                        f"Saved Messages (phone={published_phone}) — маркер недоступен "
+                        f"(run_text={run_text!r}) и forced cleanup не подтвердился: "
+                        f"{force_leak}"
+                    )
 
         _delete_live_cycle_pipeline(
             cli_real_cli_env.db_path,
