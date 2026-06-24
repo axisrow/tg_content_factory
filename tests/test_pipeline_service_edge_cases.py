@@ -1173,3 +1173,85 @@ async def test_remove_edge(svc, graph_pipeline_id):
 async def test_remove_edge_not_found(svc, graph_pipeline_id):
     ok = await svc.remove_edge(graph_pipeline_id, "src", "gen")
     assert ok is False
+
+
+# ---------------------------------------------------------------------------
+# resolve_retrieval_scope — channel scoping graceful fallback (#1037, epic #1024).
+#
+# get_retrieval_scope's happy paths (single / multi source) are covered above;
+# the issue calls out the *error* path — a failing source lookup must degrade to
+# an unscoped retrieval, never crash the pipeline run.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_resolve_scope_no_lister_returns_unscoped():
+    """With no source lister, scope is the pipeline name and no channel."""
+    from src.services.pipeline_service import resolve_retrieval_scope
+
+    pipeline = ContentPipeline(id=5, name="Unscoped", prompt_template="t")
+    scope = await resolve_retrieval_scope(pipeline, list_sources=None)
+    assert scope.query == "Unscoped"
+    assert scope.channel_id is None
+
+
+@pytest.mark.anyio
+async def test_resolve_scope_source_lookup_error_falls_back_gracefully():
+    """A scoping error (source lister raises) is swallowed: retrieval continues
+    unscoped instead of propagating the exception into the run — this pins the
+    *current* graceful-fallback contract that issue #1037 asks to cover.
+
+    NOTE (design fork, raised on #1037 from cycle-review/Codex): `channel_id is
+    None` means UNSCOPED retrieval, so this fallback widens a single-source
+    pipeline to a cross-channel search on a transient lookup failure. Whether
+    that should instead fail closed (block/empty scope) is a content-isolation
+    decision for the owner and a behaviour change beyond this test-only PR. This
+    test documents today's behaviour; it does not endorse it as safe."""
+    from src.services.pipeline_service import resolve_retrieval_scope
+
+    pipeline = ContentPipeline(id=7, name="Boom", prompt_template="t")
+
+    async def exploding_lister(_pid):
+        raise RuntimeError("DB unavailable")
+
+    scope = await resolve_retrieval_scope(pipeline, list_sources=exploding_lister)
+    assert scope.query == "Boom"
+    assert scope.channel_id is None  # graceful fallback, no raise
+
+
+@pytest.mark.anyio
+async def test_resolve_scope_multi_source_is_unscoped():
+    """More than one source → no single-channel scope (retrieve across all)."""
+    from src.services.pipeline_service import resolve_retrieval_scope
+
+    pipeline = ContentPipeline(id=9, name="Multi", prompt_template="t")
+
+    async def two_sources(_pid):
+        return [MagicMock(channel_id=1001), MagicMock(channel_id=1002)]
+
+    scope = await resolve_retrieval_scope(pipeline, list_sources=two_sources)
+    assert scope.channel_id is None
+
+
+@pytest.mark.anyio
+async def test_resolve_scope_single_source_is_scoped():
+    """Exactly one source → scope narrows to that channel id."""
+    from src.services.pipeline_service import resolve_retrieval_scope
+
+    pipeline = ContentPipeline(id=11, name="Solo", prompt_template="t")
+
+    async def one_source(_pid):
+        return [MagicMock(channel_id=4242)]
+
+    scope = await resolve_retrieval_scope(pipeline, list_sources=one_source)
+    assert scope.channel_id == 4242
+
+
+@pytest.mark.anyio
+async def test_resolve_scope_empty_name_yields_empty_query():
+    """A nameless pipeline degrades to an empty retrieval query, not None."""
+    from src.services.pipeline_service import resolve_retrieval_scope
+
+    pipeline = ContentPipeline(id=13, name="", prompt_template="t")
+    scope = await resolve_retrieval_scope(pipeline, list_sources=None)
+    assert scope.query == ""

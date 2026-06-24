@@ -126,3 +126,138 @@ def test_genre_fallback_word_boundary():
     # whole-word genre token is matched
     v2 = ChannelAnalysisService._parse_verdict("это явная реклама, жанр ad точно")
     assert v2["genre"] == "ad"
+
+
+# ---------------------------------------------------------------------------
+# Adversarial LLM-judge hardening (#1037, epic #1024 tier-2).
+#
+# The judge is a single fallible LLM call (precedent: the binary AI-detector
+# failed a blind human check with recall 0 → switch to channel-slop, see memory
+# project_ai_detect_tool_verdict). These tests pin the *contract* of the parse /
+# persist path against a hostile or buggy provider: clamp out-of-range
+# confidence, bound an unbounded `reason`, and keep the independent
+# emoji_trash_score signal honest so a human can review verdict disagreements
+# (feedback_minimize_user_work).
+# ---------------------------------------------------------------------------
+
+
+def test_confidence_negative_extreme_is_clamped():
+    """A provider returning a wildly negative confidence (-100.5) must clamp to
+    the [0, 1] range, not leak a nonsensical score into the rating."""
+    v = ChannelAnalysisService._parse_verdict(
+        '{"useful": "useful", "genre": "ad", "confidence": -100.5, "reason": "x"}'
+    )
+    assert v["confidence"] == 0.0
+
+
+def test_confidence_string_garbage_falls_back_to_zero():
+    """Non-numeric confidence must not raise — it falls back to 0.0."""
+    v = ChannelAnalysisService._parse_verdict(
+        '{"useful": "useful", "genre": "ad", "confidence": "не число", "reason": "x"}'
+    )
+    assert v["confidence"] == 0.0
+
+
+def test_long_reason_is_truncated_in_parse():
+    """A judge that returns a multi-kilobyte `reason` (prompt-injection echo, a
+    pasted article, a runaway model) must not push an unbounded blob into the
+    rating row / UI. The parser bounds it to MAX_REASON_LEN (#1037)."""
+    from src.services.channel_analysis_service import MAX_REASON_LEN
+
+    long_reason = "спам " * 1000  # ~5000 chars, well over any sane limit
+    raw = (
+        '{"useful": "useless", "genre": "ad", "confidence": 0.9, '
+        f'"reason": "{long_reason.strip()}"}}'
+    )
+    v = ChannelAnalysisService._parse_verdict(raw)
+    assert v["reason"] is not None
+    assert len(v["reason"]) <= MAX_REASON_LEN
+
+
+def test_short_reason_is_left_intact():
+    """Truncation must only kick in past the limit — normal short reasons pass
+    through unchanged (regression guard for the truncation logic)."""
+    v = ChannelAnalysisService._parse_verdict(
+        '{"useful": "useful", "genre": "original", "confidence": 0.7, "reason": "ясно и кратко"}'
+    )
+    assert v["reason"] == "ясно и кратко"
+
+
+# --- _emoji_trash_score boundary inputs -----------------------------------
+
+
+def test_emoji_score_no_posts():
+    """No posts at all → no density signal, title-only contribution."""
+    assert ChannelAnalysisService._emoji_trash_score(None, []) == 0.0
+    assert ChannelAnalysisService._emoji_trash_score("", []) == 0.0
+
+
+def test_emoji_score_emoji_only_post_saturates():
+    """A long post that is *only* emoji is maximum density; combined with an
+    emoji-heavy title the score saturates near the 1.0 ceiling."""
+    score = ChannelAnalysisService._emoji_trash_score("🔥🔥🔥 канал", ["🔥" * 200])
+    assert 0.0 < score <= 1.0
+    # Density alone (0.7 weight) already dominates a clean-title baseline.
+    clean = ChannelAnalysisService._emoji_trash_score(None, ["🔥" * 200])
+    assert score > clean
+
+
+def test_emoji_score_ignores_short_posts():
+    """Posts shorter than 120 chars carry no density signal (formula guard) —
+    only the title contributes."""
+    short_only = ChannelAnalysisService._emoji_trash_score(None, ["🔥🔥🔥 коротко"])
+    assert short_only == 0.0
+    with_title = ChannelAnalysisService._emoji_trash_score("🔥🔥🔥", ["🔥🔥🔥 коротко"])
+    assert with_title > 0.0  # title-only contribution
+
+
+async def test_classify_persists_truncated_reason(db):
+    """End-to-end: a hostile provider returning a giant `reason` results in a
+    persisted rating whose reason is bounded — the DB / UI never see the blob."""
+    from src.services.channel_analysis_service import MAX_REASON_LEN
+
+    giant = "врёт про пользу " * 500
+
+    async def hostile_provider(*, prompt, max_tokens=256, temperature=0.0, **kw):
+        return (
+            '{"useful": "useful", "genre": "original", "confidence": 0.99, '
+            f'"reason": "{giant.strip()}"}}'
+        )
+
+    svc = ChannelAnalysisService(db)
+    rating = await svc.classify_channel(990501, provider_callable=hostile_provider, sample_size=5)
+    assert rating.reason is not None and len(rating.reason) <= MAX_REASON_LEN
+
+    stored = await svc.get_rating(990501)
+    assert stored is not None and stored.reason is not None
+    assert len(stored.reason) <= MAX_REASON_LEN
+
+
+async def test_classify_trusts_judge_but_emoji_score_is_independent(db):
+    """Adversarial recall: when the judge wrongly rates an obvious emoji-spam
+    channel as 'useful', the service does NOT silently override the verdict (it
+    trusts the judge), but the independent emoji_trash_score still flags the
+    channel — this disagreement is exactly what a human reviewer triages
+    (feedback_minimize_user_work). Without a second signal the false 'useful'
+    would pass invisibly."""
+    # Seed an emoji-spam channel: long emoji-dense posts.
+    spam_post = "🔥🚀💰" * 60 + " купи срочно успей "
+    for mid in range(1, 8):
+        await db.execute_write(
+            "INSERT INTO messages (channel_id, message_id, text, message_kind, date) "
+            "VALUES (?, ?, ?, 'regular', '2026-01-01T00:00:00')",
+            (990601, mid, spam_post),
+        )
+
+    async def lying_judge(*, prompt, max_tokens=256, temperature=0.0, **kw):
+        # Judge confidently (and wrongly) calls obvious spam 'useful'/'original'.
+        return '{"useful": "useful", "genre": "original", "confidence": 0.95, "reason": "топ"}'
+
+    svc = ChannelAnalysisService(db)
+    rating = await svc.classify_channel(990601, provider_callable=lying_judge, sample_size=10)
+
+    # Contract: the LLM verdict is recorded verbatim (no hidden correction).
+    assert rating.useful == "useful"
+    assert rating.genre == "original"
+    # But the independent heuristic disagrees loudly → reviewable signal.
+    assert rating.emoji_trash_score is not None and rating.emoji_trash_score > 0.5
