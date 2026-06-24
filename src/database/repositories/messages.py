@@ -1166,8 +1166,19 @@ class MessagesRepository:
             "MessagesRepository.delete_messages_for_channel requires a Database reference"
         )
         async with self._database.transaction() as conn:
+            # Both embedding stores key on messages.id (no FK) and use
+            # INSERT OR REPLACE on that id alone. messages.id is INTEGER PRIMARY
+            # KEY without AUTOINCREMENT, so SQLite may reissue a deleted rowid to
+            # a future message, which would then join a stale vector. Clear both
+            # the JSON store (#173) and the older BLOB index together (#1039,
+            # Codex cycle-2 review) while the rows still resolve the subquery.
             await conn.execute(
                 "DELETE FROM message_embeddings_json WHERE message_id IN "
+                "(SELECT id FROM messages WHERE channel_id = ?)",
+                (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM message_embeddings WHERE message_id IN "
                 "(SELECT id FROM messages WHERE channel_id = ?)",
                 (channel_id,),
             )
@@ -1203,8 +1214,16 @@ class MessagesRepository:
             "MessagesRepository.delete_premium_search_results requires a Database reference"
         )
         async with self._database.transaction() as conn:
+            # Clear both embedding stores (JSON + BLOB) before the messages they
+            # key on are gone, same rowid-reuse reasoning as the channel deletes
+            # (#1039, cycle-2 review).
             await conn.execute(
                 "DELETE FROM message_embeddings_json WHERE message_id IN "
+                "(SELECT id FROM messages WHERE premium_search_query = ?)",
+                (query,),
+            )
+            await conn.execute(
+                "DELETE FROM message_embeddings WHERE message_id IN "
                 "(SELECT id FROM messages WHERE premium_search_query = ?)",
                 (query,),
             )

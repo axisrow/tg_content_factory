@@ -391,17 +391,22 @@ class ChannelsRepository:
                     "FOREIGN KEY constraint failed: pipeline_sources references "
                     f"channel_id={channel_id}"
                 )
-            # Embeddings key on messages.id (the autoincrement rowid) with no FK,
-            # so they must be cleared *before* the messages they point at are gone
-            # — the subquery resolves messages.id while the rows still exist
-            # (#1039). Leaving them orphaned is not just dead rows: SQLite can
-            # reissue a deleted rowid to a future message, and
-            # `INSERT OR REPLACE INTO message_embeddings_json` keys only on
-            # message_id, so a new message could silently inherit a stale vector.
-            # purge (delete_messages_for_channel) already does this; hard-delete
-            # must match.
+            # Both embedding stores key on messages.id (the rowid) with no FK, so
+            # they must be cleared *before* the messages they point at are gone —
+            # the subquery resolves messages.id while the rows still exist (#1039).
+            # Leaving them orphaned is not just dead rows: messages.id is INTEGER
+            # PRIMARY KEY without AUTOINCREMENT, so SQLite can reissue a deleted
+            # rowid to a future message, and both stores use INSERT OR REPLACE on
+            # message_id alone — a new message could silently inherit a stale
+            # vector. Clear the JSON store (#173) and the older BLOB index
+            # (Codex cycle-2 review) together; purge does the same.
             await conn.execute(
                 "DELETE FROM message_embeddings_json WHERE message_id IN "
+                "(SELECT id FROM messages WHERE channel_id = ?)",
+                (channel_id,),
+            )
+            await conn.execute(
+                "DELETE FROM message_embeddings WHERE message_id IN "
                 "(SELECT id FROM messages WHERE channel_id = ?)",
                 (channel_id,),
             )

@@ -270,7 +270,9 @@ async def _seed_channel_with_sidecars(
             date=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
     )
-    # Embedding keyed on the message's autoincrement id (messages.id), no FK.
+    # Embeddings key on the message's rowid (messages.id), no FK. Seed BOTH
+    # stores — the JSON one (#173) and the older BLOB index — so a delete that
+    # cleans only one of them is observable.
     msg_row = await db.execute(
         "SELECT id FROM messages WHERE channel_id = ? AND message_id = ?",
         (channel_id, message_id),
@@ -280,6 +282,10 @@ async def _seed_channel_with_sidecars(
         "INSERT INTO message_embeddings_json (message_id, embedding, dims) "
         "VALUES (?, ?, ?)",
         (msg_pk, "[0.1,0.2]", 2),
+    )
+    await db.execute_write(
+        "INSERT INTO message_embeddings (message_id, embedding) VALUES (?, ?)",
+        (msg_pk, b"\x00\x01\x02\x03"),
     )
     # message-keyed sidecars
     await db.execute_write(
@@ -327,10 +333,16 @@ async def _count(db: Database, table: str, channel_id: int) -> int:
 
 
 async def _count_embeddings_total(db: Database) -> int:
-    """message_embeddings_json keys on messages.id, not channel_id. Both delete
-    paths remove the channel's only seeded message, so a non-zero total here
-    means an embedding was left orphaned (the bug #1039 / PR #1078 review found)."""
-    cur = await db.execute("SELECT COUNT(*) AS c FROM message_embeddings_json")
+    """Total rows across BOTH embedding stores — the JSON one (#173) and the older
+    BLOB index. Both key on messages.id (not channel_id) with no FK. Each delete
+    path removes the channel's only seeded message, so a non-zero total here means
+    an embedding was left orphaned in at least one store (the bug #1039 / the PR
+    #1078 cycle-1+2 reviews found). Counting both catches a fix that cleans only
+    one table."""
+    cur = await db.execute(
+        "SELECT (SELECT COUNT(*) FROM message_embeddings_json) "
+        "+ (SELECT COUNT(*) FROM message_embeddings) AS c"
+    )
     row = await cur.fetchone()
     return row["c"]
 
@@ -355,9 +367,9 @@ async def test_purge_cascades_to_message_reactions(db):
 
 @pytest.mark.anyio
 async def test_purge_removes_message_embeddings(db):
-    """purge deletes message_embeddings_json keyed on the deleted messages' ids,
-    so no embedding is left orphaned (and can't be mis-attached to a reused
-    rowid)."""
+    """purge deletes BOTH embedding stores (JSON + BLOB) keyed on the deleted
+    messages' ids, so no embedding is left orphaned and can't be mis-attached to
+    a reused rowid (#1039 cycle-2: the BLOB store was missed at first)."""
     cid = 100
     await _seed_channel_with_sidecars(db, channel_id=cid)
     pk = (await db.get_channel_by_channel_id(cid)).id
@@ -462,11 +474,12 @@ async def test_hard_delete_removes_channel_and_message_data(db):
 
 @pytest.mark.anyio
 async def test_hard_delete_leaves_no_orphan_embeddings(db):
-    """Regression (#1039, Claude review of PR #1078): delete_channel deleted the
-    messages but left message_embeddings_json orphaned (keyed on messages.id, no
-    FK). SQLite can reissue a deleted rowid to a future message, and
-    INSERT OR REPLACE keys only on message_id — a new message could inherit a
-    stale embedding. hard-delete must clear embeddings like purge does."""
+    """Regression (#1039, PR #1078 reviews): delete_channel deleted the messages
+    but left embeddings orphaned (both stores key on messages.id, no FK). SQLite
+    can reissue a deleted rowid to a future message, and INSERT OR REPLACE keys
+    only on message_id — a new message could inherit a stale embedding. Cycle-1
+    caught the JSON store; cycle-2 caught the BLOB twin. hard-delete must clear
+    both, like purge does."""
     cid = 200
     pk = await _seed_channel_with_sidecars(db, channel_id=cid)
 
