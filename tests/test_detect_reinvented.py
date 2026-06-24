@@ -477,6 +477,18 @@ def test_journal_row_escapes_pipe_in_text() -> None:
     assert len(cells) == 5
 
 
+def test_journal_row_escapes_pipe_in_date() -> None:
+    """Регресс (ревью #1113): '|' в дате тоже экранируется — иначе ломает таблицу.
+
+    `--date` приходит от оператора без валидации; если в нём окажется '|',
+    ячейка даты не должна плодить лишнюю колонку (как и все прочие ячейки).
+    """
+    f = _finding("a.py", 1, what="счётчик")
+    row = detect_reinvented.journal_row(f, date="бяка | injected")
+    cells = [c.strip() for c in re.split(r"(?<!\\)\|", row.strip().strip("|"))]
+    assert len(cells) == 5
+
+
 # --------------------------------------------------------------------------- #
 # Тело и заголовок авто-создаваемого GitHub issue с находками (#1109)
 # --------------------------------------------------------------------------- #
@@ -508,6 +520,12 @@ def test_issue_title_summarizes_count_and_date() -> None:
     title = detect_reinvented.build_issue_title([_finding("a.py", 1), _finding("b.py", 2)], date="2026-06-24")
     assert "2" in title
     assert "2026-06-24" in title
+
+
+def test_issue_body_empty_findings_raises() -> None:
+    """Регресс (ревью #1113): пустой список → ValueError, а не header-only таблицы."""
+    with pytest.raises(ValueError, match="пустой список"):
+        detect_reinvented.build_issue_body([], date="2026-06-24")
 
 
 def test_issue_body_tables_have_no_blank_rows() -> None:
@@ -550,7 +568,7 @@ def test_create_github_issue_invokes_gh_and_returns_url() -> None:
         return _Result()
 
     url = detect_reinvented.create_github_issue(
-        title="t", body="b", labels=["priority/medium"], runner=fake_runner
+        title="t", body="b", labels=["priority/medium"], repo="owner/repo", runner=fake_runner
     )
     assert url == "https://github.com/axisrow/tg_content_factory/issues/1234"
     assert len(calls) == 1
@@ -559,6 +577,8 @@ def test_create_github_issue_invokes_gh_and_returns_url() -> None:
     assert "--title" in cmd and "t" in cmd
     assert "--body" in cmd and "b" in cmd
     assert "--label" in cmd and "priority/medium" in cmd
+    # --repo прокидывается в argv (ревью #1113: ветка repo была непокрыта).
+    assert "--repo" in cmd and "owner/repo" in cmd
 
 
 def test_create_github_issue_raises_on_failure() -> None:
