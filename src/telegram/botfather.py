@@ -110,9 +110,23 @@ async def delete_bot(client: TelegramClient, bot_username: str) -> None:
         await conv.send_message("/mybots")
         resp = await conv.get_response()
 
-        # Click on the bot button. A missing button here means the bot is not in
-        # /mybots — it was already deleted in Telegram — so raise the distinct
-        # BotNotFoundError (recoverable) rather than a generic "button not found".
+        # BotNotFoundError is the *recoverable* signal (caller may then delete the
+        # DB row), so it must mean "the bot is genuinely absent from a valid
+        # /mybots listing" — NOT "BotFather gave an unexpected reply". A reply
+        # WITHOUT an inline keyboard is not a bot list at all (an error/rate-limit
+        # message, or format drift); the live bot may still exist, so raise a
+        # GENERIC error that teardown will NOT forgive, leaving the DB row intact.
+        # Mapping this to BotNotFoundError would risk wiping a live bot's row
+        # (#1085 review, Codex finding).
+        if not resp.reply_markup:
+            safe = _redact_tokens(resp.text or "")
+            raise RuntimeError(
+                f"Unexpected BotFather reply to /mybots (no bot list): {safe[:200]!r}"
+            )
+
+        # The reply IS a /mybots listing. If our bot's button is absent from it,
+        # the bot was already deleted in Telegram — that is the recoverable
+        # BotNotFoundError the caller can treat as "TG step already done".
         if not _has_inline(resp, target):
             logger.info("Bot @%s not found in /mybots — already deleted in Telegram", target)
             raise BotNotFoundError(f"Bot @{target} not found in /mybots")
