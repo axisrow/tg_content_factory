@@ -171,6 +171,7 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 - GitHub Actions: `.github/workflows/ci.yml` — ruff lint + pytest on push to `main`/`fix/**`/`codex/**` and all PRs; branch names containing `+` are rejected
 - Import architecture contracts: `lint-imports --config .importlinter` — CLI/web/agent-tools entrypoints must not import `telethon` directly (raw Telethon stays behind the telegram layer)
 - CI enforces `filterwarnings = ["error"]` in `pyproject.toml` (dedicated check step), then runs parallel tests (`-n auto -m "not aiosqlite_serial"`), then serial (`-m aiosqlite_serial`)
+- Code-health/doc tooling in `static-checks`: `scripts/code_health.py --fail-on F` (blocking cyclomatic-complexity gate, radon+vulture) and `scripts/doc_coverage.py` (advisory doc-coverage report, wraps `interrogate`; config in `[tool.interrogate]`). **Doc-coverage (no docstring) ≠ dead code (uncalled, vulture) — independent signals, different PRs.**
 - Other workflows: `real-provider.yml` (opt-in live provider smoke), `docs.yml` (mkdocs → GitHub Pages), `release.yml`
 
 ## Real Telegram Testing

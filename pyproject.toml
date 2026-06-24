@@ -84,6 +84,11 @@ dev = [
     # CI cyclomatic-complexity gate (`--fail-on F`). ruff (above) is the third.
     "radon>=6.0.1",
     "vulture>=2.16",
+    # Doc-coverage tooling (#1072): scripts/doc_coverage.py wraps interrogate
+    # (% of functions/classes/modules with a docstring → documentation debt
+    # report). Config in [tool.interrogate] below. NOT dead code — that's
+    # vulture above; "no docstring" and "uncalled" are independent signals.
+    "interrogate>=1.7.0",
     # Security scans wired into CI static-checks (issue #1053), advisory for now:
     # pip-audit scans installed deps for known CVEs, bandit flags security
     # anti-patterns in src/. Dependabot (.github/dependabot.yml) opens the fix
@@ -194,3 +199,21 @@ exclude_lines = [
 # skip-list / `# nosec` here before the step is ever made blocking.
 [tool.bandit]
 exclude_dirs = ["tests"]
+
+# Doc-coverage (interrogate, #1072). scripts/doc_coverage.py and the advisory
+# CI step read this. `fail_under` is a SOFT baseline — the project is at ~24%
+# today; 23 is a ratchet floor that surfaces regressions without forcing a
+# docstring-everything sprint. Raise it as coverage climbs. interrogate ignores
+# things that don't need a docstring (magic/init/nested/private, overloads).
+[tool.interrogate]
+fail_under = 23
+ignore_init_method = true
+ignore_init_module = true
+ignore_magic = true
+ignore_nested_functions = true
+ignore_private = true
+ignore_semiprivate = true
+ignore_property_decorators = true
+ignore_overloaded_functions = true
+exclude = ["tests", "scripts", "build", "dist", "site"]
+verbose = 1
