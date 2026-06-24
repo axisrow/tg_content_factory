@@ -611,13 +611,15 @@ class TestDeepagentsSyncModeration:
         assert "отклонён" in result.lower()
 
     def test_bulk_approve_runs(self, mock_db):
-        mock_db.repos.generation_runs.set_moderation_status = AsyncMock()
+        # Atomic batch (#1041): one bulk call, not a per-id loop.
+        mock_db.repos.generation_runs.set_moderation_status_bulk = AsyncMock()
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["bulk_approve_runs"]("1,2,3", confirm=True)
         assert "Одобрено 3" in result
 
     def test_bulk_reject_runs(self, mock_db):
-        mock_db.repos.generation_runs.set_moderation_status = AsyncMock()
+        # Atomic batch (#1041): one bulk call, not a per-id loop.
+        mock_db.repos.generation_runs.set_moderation_status_bulk = AsyncMock()
         tool_map = _build_sync_tools(mock_db)
         result = tool_map["bulk_reject_runs"]("10,20", confirm=True)
         assert "Отклонено 2" in result

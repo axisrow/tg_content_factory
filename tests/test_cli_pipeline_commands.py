@@ -320,12 +320,62 @@ class TestPipelineReject:
 # ---------------------------------------------------------------------------
 
 
+def _create_pending_run(cli_env) -> int:
+    """Create a generation run in the CLI DB and return its id."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(cli_env.repos.generation_runs.create_run(1, "tmpl"))
+    finally:
+        loop.close()
+
+
 class TestPipelineBulkApprove:
     def test_not_found_run(self, cli_env, capsys):
 
         run(_ns(pipeline_action="bulk-approve", run_ids=[998, 999]))
         out = capsys.readouterr().out
         assert "Bulk approved: 0/2" in out
+
+    def test_approves_existing_runs(self, cli_env, capsys):
+        rid1 = _create_pending_run(cli_env)
+        rid2 = _create_pending_run(cli_env)
+
+        run(_ns(pipeline_action="bulk-approve", run_ids=[rid1, rid2]))
+        assert "Bulk approved: 2/2" in capsys.readouterr().out
+
+        db_path = cli_env._db_path
+        assert _read_run_moderation(db_path, rid1) == "approved"
+        assert _read_run_moderation(db_path, rid2) == "approved"
+
+    def test_atomic_on_midbatch_failure(self, cli_env, capsys):
+        """RED→GREEN (#1041): a mid-batch failure leaves NO run approved.
+
+        The pre-fix CLI loop autocommitted one set_moderation_status per id, so
+        a crash partway through left earlier ids approved with no rollback. The
+        atomic path wraps the survivors in one transaction — proven here by
+        making the underlying executemany apply the first row then explode.
+        """
+        rid1 = _create_pending_run(cli_env)
+        rid2 = _create_pending_run(cli_env)
+
+        conn = cli_env.db
+        real_executemany = conn.executemany
+
+        async def exploding_executemany(sql, seq):
+            seq = list(seq)
+            await real_executemany(sql, seq[:1])
+            raise RuntimeError("simulated mid-batch crash")
+
+        conn.executemany = exploding_executemany
+        try:
+            with pytest.raises(RuntimeError, match="mid-batch"):
+                run(_ns(pipeline_action="bulk-approve", run_ids=[rid1, rid2]))
+        finally:
+            conn.executemany = real_executemany
+
+        db_path = cli_env._db_path
+        assert _read_run_moderation(db_path, rid1) == "pending"
+        assert _read_run_moderation(db_path, rid2) == "pending"
 
 
 class TestPipelineBulkReject:
@@ -334,6 +384,17 @@ class TestPipelineBulkReject:
         run(_ns(pipeline_action="bulk-reject", run_ids=[998, 999]))
         out = capsys.readouterr().out
         assert "Bulk rejected: 0/2" in out
+
+    def test_rejects_existing_runs(self, cli_env, capsys):
+        rid1 = _create_pending_run(cli_env)
+        rid2 = _create_pending_run(cli_env)
+
+        run(_ns(pipeline_action="bulk-reject", run_ids=[rid1, rid2]))
+        assert "Bulk rejected: 2/2" in capsys.readouterr().out
+
+        db_path = cli_env._db_path
+        assert _read_run_moderation(db_path, rid1) == "rejected"
+        assert _read_run_moderation(db_path, rid2) == "rejected"
 
 
 # ---------------------------------------------------------------------------

@@ -34,7 +34,22 @@ async def create_bot(client: TelegramClient, name: str, username: str) -> str:
 
         token_match = _TOKEN_RE.search(resp.text)
         if not token_match:
-            raise RuntimeError(f"Could not extract token from BotFather response: {resp.text}")
+            # The username step already succeeded, so BotFather has CREATED the
+            # bot in Telegram. A regex miss here (e.g. BotFather changed its
+            # reply format) means we have a live orphan bot we can't record or
+            # use — flag it loudly with the username so it can be deleted by
+            # hand (issue #1041).
+            logger.error(
+                "Orphan bot @%s: BotFather created it but the token could not be "
+                "parsed from the response; delete it manually. Response: %s",
+                username,
+                resp.text,
+            )
+            raise RuntimeError(
+                f"Could not extract token from BotFather response — orphan bot "
+                f"@{username} was created in Telegram but has no token and must "
+                f"be deleted manually. Response: {resp.text}"
+            )
 
         logger.info("Bot @%s created successfully", username)
         return token_match.group(1)
