@@ -28,6 +28,13 @@ ProviderCallable = Callable[..., Awaitable[str]]
 USEFULNESS_VALUES: tuple[ChannelUsefulness, ...] = ("useful", "useless")
 GENRE_VALUES: tuple[ChannelGenre, ...] = ("ad", "infobiz", "aggregator", "copy", "original")
 
+# Upper bound on the judge's free-text `reason`. The prompt asks for "кратко",
+# but a buggy or hostile provider can echo a prompt-injection payload, paste an
+# article, or run away — and `channel_ratings.reason` is plain TEXT (no DB-side
+# limit) shown verbatim in the CLI / agent / web UI. Bound it at parse time so an
+# unbounded blob never reaches the row or the screen (#1037).
+MAX_REASON_LEN = 500
+
 # Channel-title / post emoji detector (ported from the removed ai_detect_tool seed, #781).
 _EMOJI_RE = re.compile(
     "[\U0001f600-\U0001f64f\U0001f300-\U0001f5ff\U0001f680-\U0001f6ff"
@@ -137,11 +144,16 @@ class ChannelAnalysisService:
             confidence = 0.0
         confidence = min(max(confidence, 0.0), 1.0)
         reason = parsed.get("reason")
+        if not isinstance(reason, str):
+            reason = None
+        elif len(reason) > MAX_REASON_LEN:
+            # Keep the lead (the verdict gist usually comes first) and mark the cut.
+            reason = reason[: MAX_REASON_LEN - 1].rstrip() + "…"
         return {
             "useful": useful,
             "genre": genre,
             "confidence": confidence,
-            "reason": reason if isinstance(reason, str) else None,
+            "reason": reason,
         }
 
     @staticmethod
