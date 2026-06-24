@@ -140,11 +140,12 @@ async def _parse_json_for_text(data: Any) -> str:
                 c = data["choices"][0]
                 if isinstance(c, dict):
                     if "message" in c:
-                        # `content` can be JSON null (tool-call/refusal/filter);
-                        # dict.get(default) keeps the stored None, breaking the
-                        # -> str contract downstream (audit #836/8). Coerce to "".
-                        return c["message"].get("content") or ""
-                    return c.get("text") or ""
+                        # `content` can be JSON null (tool-call/refusal/filter) or
+                        # — for a malformed/unexpected payload — a nested object;
+                        # either breaks the -> str contract downstream. Coerce so a
+                        # dict/null never leaks out (audit #836/8, #971 class).
+                        return _coerce_str(c["message"].get("content"))
+                    return _coerce_str(c.get("text"))
             except Exception:
                 pass
         # Cohere style
@@ -160,8 +161,10 @@ async def _parse_json_for_text(data: Any) -> str:
             try:
                 out = data["outputs"][0]
                 if isinstance(out, dict):
-                    # values can be JSON null; coerce to "" to keep the -> str contract
-                    return out.get("content") or out.get("text") or ""
+                    # values can be JSON null OR a nested object on a malformed
+                    # payload; coerce so the -> str contract holds either way
+                    # (#836 null case + #971 nested-object class).
+                    return _coerce_str(out.get("content") or out.get("text"))
                 return str(out)
             except Exception:
                 pass
