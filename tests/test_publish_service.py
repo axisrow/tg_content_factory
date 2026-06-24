@@ -759,15 +759,16 @@ async def test_publish_service_persists_progress_after_each_delivery():
 
 
 @pytest.mark.anyio
-async def test_publish_service_db_failure_after_partial_delivery_no_duplicate_on_retry():
-    """The #1116 scenario end to end: 3 targets, delivered to 2, the DB write
-    after the 2nd target fails → run FAILED → retry must NOT re-send to the 2
-    already-delivered targets.
+async def test_publish_service_db_failure_on_second_write_bounds_loss_to_one_target():
+    """The irreducible 1-target floor (issue #1116): the DB write that fails is
+    the one right after the 2nd delivery, so only the 1st target is on record.
 
-    Without incremental persistence the first attempt records nothing (the lone
-    end-of-loop write is the one that fails), so the retry duplicates the first
-    two sends. With per-target persistence the 2 delivered targets are already on
-    record before the failing write, so the retry skips them.
+    This is the worst case the fix accepts — there is no transaction spanning the
+    Telegram send and the DB write, so the one in-flight target whose write did
+    not land (here the 2nd) is legitimately re-sent on retry. What the fix
+    guarantees is that the 1st target, persisted by its own earlier write, is NOT
+    re-sent. The old batched-write code recorded *nothing* and would have
+    duplicated both.
     """
     targets = [
         PipelineTarget(id=1, pipeline_id=1, phone="+1111111111", dialog_id=-1001),
@@ -775,7 +776,7 @@ async def test_publish_service_db_failure_after_partial_delivery_no_duplicate_on
         PipelineTarget(id=3, pipeline_id=1, phone="+3333333333", dialog_id=-1003),
     ]
 
-    # Attempt 1: the DB write fails right after the 2nd successful delivery.
+    # Attempt 1: the 1st write lands, the 2nd write (after the 2nd delivery) fails.
     db = FakeDB(fail_set_metadata_after=1)
     db.repos.content_pipelines.set_targets(targets)
     pool1 = FakeClientPool()
@@ -792,13 +793,12 @@ async def test_publish_service_db_failure_after_partial_delivery_no_duplicate_on
     with pytest.raises(RuntimeError, match="simulated DB failure"):
         await service1.publish_run(run, make_pipeline())
 
-    # Two targets were physically sent on attempt 1.
+    # Two targets were physically sent on attempt 1, but only the 1st was persisted
+    # (its write landed before the failing 2nd write).
     assert "+1111111111" in pool1._clients
     assert "+2222222222" in pool1._clients
-    # The first delivery was persisted before the failing write, so the retry can
-    # see at least the first target as already delivered.
     persisted = db.repos.generation_runs.metadata_by_id[1]["published_targets"]
-    assert "+1111111111:-1001" in persisted
+    assert persisted == ["+1111111111:-1001"]
 
     # Attempt 2 (retry): a fresh run row built from the persisted metadata, like
     # the dispatcher would reload it. No DB failure this time.
@@ -817,12 +817,85 @@ async def test_publish_service_db_failure_after_partial_delivery_no_duplicate_on
     retry_results = await service2.publish_run(retry_run, make_pipeline())
 
     assert all(r.success for r in retry_results)
-    # The first target was already on record → NOT re-sent on the retry. This is
-    # the duplicate that #1116 is about.
+    # The persisted 1st target was NOT re-sent → no duplicate (issue #1116).
     assert "+1111111111" not in pool2._clients, (
         "already-delivered target was re-sent on retry — duplicate (issue #1116)"
     )
+    # The 2nd target's write never landed, so it IS re-sent — the accepted floor.
+    assert "+2222222222" in pool2._clients
     # The run is fully delivered and closed after the retry.
+    assert 1 in db.repos.generation_runs.published_ids
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
+        "+1111111111:-1001",
+        "+2222222222:-1002",
+        "+3333333333:-1003",
+    ]
+
+
+@pytest.mark.anyio
+async def test_publish_service_db_failure_after_two_deliveries_no_duplicate_on_retry():
+    """The exact #1116 headline: 3 targets, delivered to 2, the DB failure strikes
+    on the NEXT write (after the 3rd delivery) → run FAILED → retry must NOT
+    re-send to EITHER of the 2 already-delivered targets.
+
+    Both successful deliveries (1 and 2) have their own writes landed before the
+    failure, so both are on record and skipped on retry. This is the headline
+    duplicate scenario from the issue — distinct from the 1-target-floor case
+    above, where the failure lands on one of the two deliveries' own writes.
+    """
+    targets = [
+        PipelineTarget(id=1, pipeline_id=1, phone="+1111111111", dialog_id=-1001),
+        PipelineTarget(id=2, pipeline_id=1, phone="+2222222222", dialog_id=-1002),
+        PipelineTarget(id=3, pipeline_id=1, phone="+3333333333", dialog_id=-1003),
+    ]
+
+    # Attempt 1: the first TWO writes land (targets 1 and 2 persisted), the THIRD
+    # write — after the 3rd delivery — fails.
+    db = FakeDB(fail_set_metadata_after=2)
+    db.repos.content_pipelines.set_targets(targets)
+    pool1 = FakeClientPool()
+    service1 = PublishService(db, pool1)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    with pytest.raises(RuntimeError, match="simulated DB failure"):
+        await service1.publish_run(run, make_pipeline())
+
+    # All three were physically sent, but only the first two writes landed.
+    assert {"+1111111111", "+2222222222", "+3333333333"} <= set(pool1._clients)
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
+        "+1111111111:-1001",
+        "+2222222222:-1002",
+    ]
+
+    # Attempt 2 (retry): reload from persisted metadata, no DB failure this time.
+    db.repos.generation_runs._fail_after = None
+    pool2 = FakeClientPool()
+    service2 = PublishService(db, pool2)
+    retry_run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+        metadata=dict(db.repos.generation_runs.metadata_by_id[1]),
+    )
+
+    retry_results = await service2.publish_run(retry_run, make_pipeline())
+
+    assert all(r.success for r in retry_results)
+    # NEITHER already-delivered target is re-sent — the headline #1116 duplicate
+    # is fully prevented for every target whose progress write landed.
+    assert "+1111111111" not in pool2._clients
+    assert "+2222222222" not in pool2._clients
+    # Only the one target whose write never landed (the 3rd) is re-sent.
+    assert "+3333333333" in pool2._clients
     assert 1 in db.repos.generation_runs.published_ids
     assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
         "+1111111111:-1001",
