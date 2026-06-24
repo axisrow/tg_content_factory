@@ -485,6 +485,11 @@ async def test_concurrent_claim_hands_command_to_exactly_one_worker(tmp_path):
     only one transitions the single row PENDING → RUNNING; the rest see it gone
     and return None. A regression that drops the lock or splits the
     select-then-update would let two workers run the same Telegram command.
+
+    Scope: web and worker share one connection in one process (#569), so this
+    races coroutines on that shared connection — it proves the select-then-update
+    stays atomic under the write lock, not cross-process SQLite isolation (which
+    the architecture does not rely on).
     """
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()

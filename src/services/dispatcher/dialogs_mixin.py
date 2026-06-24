@@ -221,12 +221,22 @@ class DialogsCommandsMixin(_Base):
         Entries older than the interval carry no information — the gate would let
         that phone react regardless — so pruning them changes no behaviour and is
         not an idempotency ledger.
+
+        This runs *after* the (irreversible) Telegram send, so the stamping —
+        plain in-memory writes that cannot fail — happens unconditionally, while
+        the prune is best-effort: it needs a live DB settings read for the
+        interval, and a transient failure there must not bubble up and flip an
+        already-sent reaction to FAILED (which would re-send it on retry, #1030).
         """
         now = time.monotonic()
         for phone in phones:
             if phone:
                 self._last_reaction_at_monotonic[phone] = now
-        min_interval = await self._reaction_min_interval()
+        try:
+            min_interval = await self._reaction_min_interval()
+        except Exception as exc:  # noqa: BLE001 — bookkeeping must not fail the send
+            logger.warning("reaction timestamp prune skipped (interval read failed): %s", exc)
+            return
         stale_before = now - min_interval
         stale = [
             phone

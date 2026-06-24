@@ -739,6 +739,40 @@ async def test_reaction_timestamps_do_not_grow_unbounded():
     assert "+fresh" in tracked
 
 
+async def test_reaction_bookkeeping_failure_does_not_fail_an_already_sent_reaction():
+    """Post-send rate-limit bookkeeping must not fail a sent reaction (#1030).
+
+    ``_handle_dialogs_react`` sends the reaction (an irreversible Telegram side
+    effect) *before* recording it. Recording now reads the live interval setting
+    from the DB to prune stale entries; if that read raises after the reaction
+    already went out, the exception would bubble to ``_run_loop`` and the command
+    would be persisted FAILED — so a retry/recovery re-sends a reaction Telegram
+    already saw. The bookkeeping is best-effort: a settings read that blows up
+    must not undo a completed send. The in-memory timestamp is still recorded so
+    the rate-limit gate keeps working.
+    """
+    db = _react_db(min_interval="30")
+    # The interval read (used only for pruning) fails after the send succeeded.
+    db.get_setting.side_effect = RuntimeError("settings DB unavailable")
+    pool = _mock_pool()
+    pool.is_warming = MagicMock(return_value=False)
+    d = _dispatcher(db=db, pool=pool)
+
+    svc_patch, send_reaction = _patch_reaction_service(acquired_phone="+1")
+    try:
+        result = await d._handle_dialogs_react(
+            {"phone": "+1", "chat_id": -100, "message_id": 1, "emoji": "👍"}
+        )
+    finally:
+        svc_patch.stop()
+
+    # The reaction was sent once and the handler returned success, not an error.
+    assert send_reaction.await_count == 1
+    assert result == {"phone": "+1"}
+    # The timestamp is still recorded so the gate enforces spacing next time.
+    assert "+1" in d._last_reaction_at_monotonic
+
+
 # ---------------------------------------------------------------------------
 # Phone-bound isolation: a command for account X must run on X's client, two
 # commands for different phones must run on different clients, and a command
