@@ -6,6 +6,10 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      # autodoc (mkdocstrings) рендерит API-страницы из docstring в src/,
+      # поэтому изменения кода тоже должны пере-деплоить доки (#1071).
+      - "src/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
 
 permissions:
@@ -30,11 +34,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install mkdocs-material
-        run: pip install mkdocs-material
+      - name: Install docs dependencies
+        # mkdocstrings[python] нужен для autodoc API-страниц из docstring (#1071);
+        # держим список в синхроне с pyproject.toml [project.optional-dependencies].docs.
+        run: pip install mkdocs-material 'mkdocstrings[python]>=0.25.0'
 
       - name: Build docs
-        run: mkdocs build
+        # --strict: падать на любых warning (битые ссылки, нерезолвленные
+        # autoref'ы mkdocstrings) — autodoc API-страниц обязан собираться чисто.
+        run: mkdocs build --strict
 
       - uses: actions/upload-pages-artifact@v5
         with:
