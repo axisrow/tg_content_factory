@@ -94,7 +94,9 @@ class ABTestingService:
                         temperature=0.8,
                     )
 
-                result = await self._error_recovery.execute_provider_call(_call)
+                result = await self._error_recovery.execute_provider_call(
+                    _call, provider=provider_callable
+                )
 
                 variant_text = result if isinstance(result, str) else str(result)
                 variants.append(variant_text)

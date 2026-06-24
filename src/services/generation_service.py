@@ -278,7 +278,8 @@ class GenerationService:
                 max_tokens=max_tokens,
                 temperature=temperature,
                 stream=False,
-            )
+            ),
+            provider=provider,
         )
 
         citations = [
