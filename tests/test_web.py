@@ -38,7 +38,7 @@ from src.web.app import create_app
 from src.web.routes.channel_collection import _COLLECT_ALL_BTN, _COLLECT_ALL_FORM
 from src.web.session import COOKIE_NAME, create_session_token
 from src.web.template_globals import PYPROJECT_PATH, _agent_available_for_request, get_app_version
-from tests.helpers import build_web_app, make_auth_client, make_test_config
+from tests.helpers import build_web_app, drain_loop, make_auth_client, make_test_config
 
 
 @pytest.fixture
@@ -1351,12 +1351,17 @@ async def test_settings_bulk_test_exports_catalog(client, monkeypatch, tmp_path)
     payload = resp.json()
     assert payload["ok"] is True
     assert payload["started"] is True
-    await asyncio.sleep(0)
 
-    status_resp = await client.get("/settings/agent-providers/test-all/status")
-
-    assert status_resp.status_code == 200
-    status_payload = status_resp.json()
+    # The POST spawns the bulk-test job as a background task; poll the status
+    # endpoint until that job has run (deterministic, no fixed sleep).
+    status_payload: dict = {}
+    for _ in range(50):
+        await drain_loop()
+        status_resp = await client.get("/settings/agent-providers/test-all/status")
+        assert status_resp.status_code == 200
+        status_payload = status_resp.json()
+        if status_payload.get("summary", {}).get("supported") == 2:
+            break
     assert status_payload["summary"]["supported"] == 2
     assert status_payload["providers"]["openai"]["summary"]["supported"] == 2
     assert status_payload["catalog_path"] == str(export_path)

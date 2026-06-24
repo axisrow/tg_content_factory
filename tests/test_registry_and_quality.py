@@ -4,6 +4,8 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from src.agent.tools._registry import (
     _text_response,
     normalize_phone,
@@ -204,6 +206,7 @@ async def test_quality_scoring_passes():
     assert svc.passes_threshold(score, threshold=0.9) is False
 
 
+@pytest.mark.slow  # real provider-retry backoff on the exception path (~8s)
 async def test_quality_scoring_no_provider():
     from src.services.quality_scoring_service import QualityScoringService
 

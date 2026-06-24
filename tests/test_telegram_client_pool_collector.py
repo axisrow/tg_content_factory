@@ -54,6 +54,7 @@ from tests.helpers import (
     AsyncIterMessages,
     make_mock_message,
     make_mock_pool,
+    wait_until,
 )
 
 # ---------------------------------------------------------------------------
@@ -239,8 +240,11 @@ async def test_wait_for_warm_no_task(pool):
 
 @pytest.mark.anyio
 async def test_wait_for_warm_completed_task(pool):
-    pool._warming_task = asyncio.create_task(asyncio.sleep(0))
-    await asyncio.sleep(0.05)
+    async def _noop() -> None:
+        return None
+
+    pool._warming_task = asyncio.create_task(_noop())
+    await wait_until(lambda: pool._warming_task.done())
     await pool.wait_for_warm(timeout=1.0)
 
 

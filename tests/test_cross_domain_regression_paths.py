@@ -4252,6 +4252,7 @@ class TestQualityScoringServiceCoverage:
             # Should get defaults when no JSON found
             assert score.relevance == 0.5
 
+    @pytest.mark.slow  # real provider-retry backoff on the exception path (~8s)
     async def test_score_content_os_error(self):
         """Lines 117-119: OSError during scoring."""
         from src.services.quality_scoring_service import QualityScoringService
@@ -4267,6 +4268,7 @@ class TestQualityScoringServiceCoverage:
             score = await svc.score_content("test text", model="test")
             assert score.overall == 0.5
 
+    @pytest.mark.slow  # real provider-retry backoff on the exception path (~9s)
     async def test_score_content_unexpected_error(self):
         """Lines 120-122: unexpected error during scoring."""
         from src.services.quality_scoring_service import QualityScoringService
