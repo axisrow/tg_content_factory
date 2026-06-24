@@ -855,7 +855,7 @@ async def test_messages_get_by_id_existing(db):
     await db.repos.messages.insert_message(msg)
 
     msgs, _ = await db.repos.messages.search_messages(SearchParams(channel_id=90, limit=1))
-    assert len(msgs) >= 1
+    assert len(msgs) == 1
     fetched = await db.repos.messages.get_by_id(msgs[0].id)
     assert fetched is not None
     assert fetched.channel_id == 90
@@ -966,7 +966,7 @@ async def test_messages_insert_batch_with_reactions(db):
     msgs[0].reactions_json = reactions
 
     count = await db.repos.messages.insert_messages_batch(msgs)
-    assert count >= 1
+    assert count == 3
 
 
 @pytest.mark.anyio
@@ -1245,7 +1245,7 @@ async def test_photo_loader_list_batches(db):
         await db.repos.photo_loader.create_batch(batch)
 
     batches = await db.repos.photo_loader.list_batches()
-    assert len(batches) >= 3
+    assert len(batches) == 3
 
 
 @pytest.mark.anyio
@@ -1331,7 +1331,7 @@ async def test_photo_loader_list_items(db):
         await db.repos.photo_loader.create_item(item)
 
     items = await db.repos.photo_loader.list_items()
-    assert len(items) >= 3
+    assert len(items) == 3
 
 
 @pytest.mark.anyio
@@ -1475,7 +1475,7 @@ async def test_photo_loader_requeue_running_items(db):
     await db.repos.photo_loader.claim_next_due_item(now)
 
     count = await db.repos.photo_loader.requeue_running_items_on_startup(now)
-    assert count >= 1
+    assert count == 1
 
     fetched = await db.repos.photo_loader.get_item(item_id)
     assert fetched.status == PhotoBatchStatus.PENDING
@@ -1507,7 +1507,7 @@ async def test_photo_loader_list_auto_jobs(db):
         await db.repos.photo_loader.create_auto_job(job)
 
     jobs = await db.repos.photo_loader.list_auto_jobs()
-    assert len(jobs) >= 3
+    assert len(jobs) == 3
 
 
 @pytest.mark.anyio

@@ -246,7 +246,7 @@ class TestRunBenchmarkStep:
         mock_run.return_value = MagicMock(returncode=0)
         step = BenchmarkStep("test_step", (sys.executable, "-c", "pass"))
         elapsed = _run_benchmark_step(step)
-        assert elapsed >= 0
+        assert isinstance(elapsed, float)
         out = capsys.readouterr().out
         assert "test_step" in out
 

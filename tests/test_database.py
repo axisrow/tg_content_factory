@@ -368,7 +368,7 @@ async def test_set_channels_filtered_bulk_and_reset(db):
     assert by_channel_id[-1007002].filter_flags == "non_cyrillic,chat_noise"
 
     reset_count = await db.reset_all_channel_filters()
-    assert reset_count >= 2
+    assert reset_count == 2
 
     channels = await db.get_channels()
     by_channel_id = {channel.channel_id: channel for channel in channels}

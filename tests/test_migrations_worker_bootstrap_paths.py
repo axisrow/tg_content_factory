@@ -568,8 +568,10 @@ async def test_publish_snapshots_basic():
 
     await _publish_snapshots(container)
 
-    # Should have called upsert_snapshot multiple times
-    assert mock_runtime_snapshots.upsert_snapshot.call_count >= 5
+    # _publish_snapshots makes exactly 8 upsert_snapshot calls (heartbeat,
+    # accounts_status, pool_counters, collector_status, scheduler_status,
+    # scheduler_jobs, collection_queue_status, notification_target_status).
+    assert mock_runtime_snapshots.upsert_snapshot.call_count == 8
 
 
 @pytest.mark.anyio
@@ -611,7 +613,7 @@ async def test_publish_snapshots_with_available_notification():
         mock_notif_svc.return_value.get_status = AsyncMock(return_value=None)
         await _publish_snapshots(container)
 
-    assert mock_runtime_snapshots.upsert_snapshot.call_count >= 5
+    assert mock_runtime_snapshots.upsert_snapshot.call_count == 8
 
 
 @pytest.mark.anyio
@@ -653,7 +655,7 @@ async def test_publish_snapshots_notification_exception():
         mock_notif_svc.return_value.get_status = AsyncMock(side_effect=Exception("bot error"))
         await _publish_snapshots(container)
 
-    assert mock_runtime_snapshots.upsert_snapshot.call_count >= 5
+    assert mock_runtime_snapshots.upsert_snapshot.call_count == 8
 
 
 # ============================================================================

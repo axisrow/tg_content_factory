@@ -302,8 +302,9 @@ async def test_collect_channel_stats_warms_cache_for_uncached_numeric_id(
     collector = Collector(harness.pool, db, SchedulerConfig())
     stats = await collector.collect_channel_stats(channel)
 
-    # Warm-then-retry must have happened (resolve called twice) and stats saved.
-    assert calls["n"] >= 2
+    # Warm-then-retry: resolve called exactly twice (1st raises on cache miss,
+    # 2nd succeeds after warm_dialog_cache()).
+    assert calls["n"] == 2
     assert stats is not None
     assert stats.subscriber_count == 4200
 
