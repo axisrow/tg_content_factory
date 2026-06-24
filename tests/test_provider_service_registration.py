@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.services.provider_service import RuntimeProviderRegistry
 
 
 def _make_service(**env_vars):
-    with patch.dict(os.environ, env_vars, clear=False):
-        svc = RuntimeProviderRegistry(db=None, config=None)
-    return svc
+    return RuntimeProviderRegistry(db=None, config=None, env=dict(env_vars))
 
 
 def test_default_provider_registered():
