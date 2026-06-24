@@ -486,6 +486,43 @@ class RuntimeProviderRegistry:
         logger.warning("Provider %r not registered, falling back to stub default", name)
         return self._registry["default"]
 
+    def get_recovered_provider_callable(
+        self,
+        name: Optional[str] = None,
+        error_recovery: object | None = None,
+    ) -> Callable[..., Awaitable[str]]:
+        """Resolve a provider callable wrapped in ErrorRecoveryService (#1069).
+
+        Returns a callable with the same signature as :meth:`get_provider_callable`
+        but whose invocation is retried (transient) / circuit-broken / fatal-aware
+        via :class:`ErrorRecoveryService`. This is the sanctioned seam for callers
+        that want recovery without each wrapping the call themselves.
+
+        ⚠️ Image generation is intentionally NOT reachable here: this registry only
+        ever holds LLM *text* providers, and the resolved callable is screened by
+        :func:`guard_not_image` so a billed image adapter can never be retried
+        (#958 — retrying a billed POST double-bills).
+        """
+        from src.services.error_recovery_service import (
+            ErrorRecoveryService,
+            for_llm,
+            guard_not_image,
+        )
+
+        base = self.get_provider_callable(name)
+        guard_not_image(base)
+        recovery = error_recovery if isinstance(error_recovery, ErrorRecoveryService) else for_llm()
+
+        async def _recovered(prompt: str = "", **kwargs: Any) -> str:
+            # ``stream`` responses are not idempotent to replay; force the
+            # non-streaming scalar contract through the recovery path.
+            kwargs.pop("stream", None)
+            return await recovery.execute_provider_call(
+                lambda: base(prompt=prompt, **kwargs)
+            )
+
+        return _recovered
+
     def resolve_provider_callable(self, name: Optional[str] = None) -> Callable[..., Awaitable[str]]:
         """Like :meth:`get_provider_callable`, but never silently returns the stub.
 
