@@ -928,6 +928,33 @@ class TestPipelineEdgeRW:
         assert ("llm_generate_0", new_node["id"]) not in _edge_pairs(graph3)
         assert "Removed edge" in capsys.readouterr().out
 
+    def test_edge_add_rejecting_cycle_fails_closed(self, tmp_path, cli_init_patch, capsys):
+        """Fail-closed (#1077): the seeded graph is source_0 -> llm_generate_0 ->
+        publish_0. Adding publish_0 -> source_0 would close a cycle, so the CLI
+        must reject it with an Error message and NOT persist the back-edge."""
+        db_path = _empty_db_path(tmp_path, "pipeline_edge_cycle.db")
+        pid = _seed_pipeline_with_graph(db_path)
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "edge",
+                pipeline_id=pid,
+                edge_action="add",
+                from_node="publish_0",
+                to_node="source_0",
+            ),
+        )
+
+        out = capsys.readouterr().out
+        assert "Error" in out
+        assert "Added edge" not in out
+        # The back-edge must NOT be persisted — the graph stays acyclic.
+        row = _read_pipeline_row(db_path, pid)
+        graph = json.loads(row["pipeline_json"])
+        assert ("publish_0", "source_0") not in _edge_pairs(graph)
+
 
 class TestPipelineExportRW:
     def test_export_writes_new_file(self, tmp_path, cli_init_patch, capsys):

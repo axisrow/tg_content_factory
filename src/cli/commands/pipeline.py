@@ -13,6 +13,7 @@ from src.services.pipeline_llm_requirements import pipeline_needs_llm
 from src.services.pipeline_refs import parse_pipeline_target_refs
 from src.services.pipeline_result import result_kind_label
 from src.services.pipeline_service import (
+    PipelineScopeError,
     PipelineService,
     PipelineTargetRef,
     PipelineValidationError,
@@ -508,7 +509,13 @@ def run(args: argparse.Namespace) -> None:
                 provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
                 engine = SearchEngine(db)
                 gen = GenerationService(engine, provider_callable=provider_callable)
-                scope = await svc.get_retrieval_scope(pipeline)
+                # Fail-closed (#1077): never widen a failed source-scope lookup to
+                # an all-channels retrieval. Abort before creating a run.
+                try:
+                    scope = await svc.get_retrieval_scope(pipeline)
+                except PipelineScopeError as exc:
+                    print(safe_json_dumps({"event": "error", "error": str(exc)}), flush=True)
+                    return
 
                 run_id = await db.repos.generation_runs.create_run(
                     pipeline.id, pipeline.prompt_template
@@ -961,7 +968,12 @@ def run(args: argparse.Namespace) -> None:
 
             elif args.pipeline_action == "edge":
                 if args.edge_action == "add":
-                    ok = await svc.add_edge(args.pipeline_id, args.from_node, args.to_node)
+                    try:
+                        ok = await svc.add_edge(args.pipeline_id, args.from_node, args.to_node)
+                    except PipelineValidationError as exc:
+                        # Fail-closed (#1077): a cycle-creating edge is rejected.
+                        print(f"Error: {exc}")
+                        return
                     if ok:
                         print(f"Added edge {args.from_node} -> {args.to_node}")
                     else:
