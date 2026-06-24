@@ -1,5 +1,8 @@
 """Tests for provider adapters."""
 
+import asyncio
+
+import aiohttp
 import pytest
 
 from src.services.provider_adapters import (
@@ -49,6 +52,55 @@ def fake_client_session_factory(resp):
 
         async def __aenter__(self):
             return FakeSession(resp)
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    return _Factory
+
+
+class _CountingSession:
+    """aiohttp.ClientSession stand-in that counts ``post`` calls and either
+    returns a fixed response or raises a (transient) network error on every call.
+
+    Used by the retry/billing regression guards (#958): a raw-HTTP image/LLM POST
+    is non-idempotent + billed, so the adapter must issue EXACTLY ONE ``post`` and
+    never silently auto-retry on a transient failure. The counter makes a hidden
+    retry loop observable — a single ``post`` keeps the count at 1, any retry
+    drives it past 1 and fails the assertion.
+    """
+
+    def __init__(self, *, resp=None, raise_exc=None, timeout=None):
+        self._resp = resp
+        self._raise_exc = raise_exc
+        self.post_calls = 0
+        # Record the ClientTimeout the adapter passed to ClientSession so the
+        # lifecycle guard can assert the 120s budget is wired through (#633 bug #10).
+        self.init_timeout = timeout
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    def post(self, *args, **kwargs):
+        self.post_calls += 1
+        if self._raise_exc is not None:
+            raise self._raise_exc
+        return self._resp
+
+
+def counting_session_factory(session: "_CountingSession"):
+    """Return a fake ``aiohttp.ClientSession`` class yielding *session* and
+    capturing the ``timeout=`` kwarg the adapter constructs it with."""
+
+    class _Factory:
+        def __init__(self, *args, **kwargs):
+            session.init_timeout = kwargs.get("timeout")
+
+        async def __aenter__(self):
+            return session
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
@@ -360,6 +412,59 @@ async def test_generic_http_adapter_error(monkeypatch):
     assert "502" in str(exc_info.value)
 
 
+# === Retry/billing regression guards: raw-HTTP adapters issue exactly one POST ===
+#
+# The image/LLM POST is non-idempotent and billed per request, so a transient
+# network failure must NOT silently auto-retry (the #958 double-billing class:
+# the SDK image adapters pin ``max_retries=0`` for the same reason). The raw
+# aiohttp adapters never wrapped the POST in a retry loop — these guards make
+# that contract explicit so a future "add a retry for resilience" change to a
+# billed POST trips a red test instead of shipping silent double-charges.
+
+
+@pytest.mark.anyio
+async def test_generic_http_adapter_no_retry_on_network_error(monkeypatch):
+    """A transient connection error must surface after exactly ONE POST.
+
+    Regression guard (#958 class): wrapping a billed POST in an auto-retry loop
+    would replay the charge. The counting session proves a single ``post`` —
+    any retry drives the count past 1 and fails here.
+    """
+    session = _CountingSession(raise_exc=aiohttp.ClientConnectionError("connection reset"))
+    monkeypatch.setattr("aiohttp.ClientSession", counting_session_factory(session))
+    adapter = make_generic_http_adapter("https://api.example.com/generate")
+    with pytest.raises(aiohttp.ClientConnectionError):
+        await adapter("prompt")
+    assert session.post_calls == 1
+
+
+@pytest.mark.anyio
+async def test_generic_http_adapter_no_retry_on_5xx(monkeypatch):
+    """A 5xx is a transient error the openai SDK would retry — the raw adapter
+    must not: it raises after a single POST so a billed request is not replayed."""
+    resp = FakeResp(status=503, text_data="Service Unavailable")
+    session = _CountingSession(resp=resp)
+    monkeypatch.setattr("aiohttp.ClientSession", counting_session_factory(session))
+    adapter = make_generic_http_adapter("https://api.example.com/generate")
+    with pytest.raises(RuntimeError, match="503"):
+        await adapter("prompt")
+    assert session.post_calls == 1
+
+
+@pytest.mark.anyio
+async def test_generic_http_adapter_passes_http_timeout(monkeypatch):
+    """The adapter wires the shared 120s budget into ClientSession so a stalled
+    upstream surfaces a timeout instead of hanging the coroutine (#633 bug #10)."""
+    from src.services.provider_adapters import _HTTP_TIMEOUT
+
+    resp = FakeResp(status=200, json_data={"text": "ok"})
+    session = _CountingSession(resp=resp)
+    monkeypatch.setattr("aiohttp.ClientSession", counting_session_factory(session))
+    adapter = make_generic_http_adapter("https://api.example.com/generate")
+    await adapter("prompt")
+    assert session.init_timeout is _HTTP_TIMEOUT
+
+
 # === Context7 adapter tests ===
 
 
@@ -498,6 +603,21 @@ async def test_together_image_adapter_empty_data(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_together_image_adapter_wraps_non_runtime_crash(monkeypatch):
+    """A provider crash that surfaces as a non-RuntimeError (e.g. ConnectionError)
+    must still be wrapped in a RuntimeError carrying provider context, so callers
+    get a uniform error type and a single billed POST is not retried (#958)."""
+    from src.services.provider_adapters import make_together_image_adapter
+
+    patch_async_openai(monkeypatch, error=ConnectionError("upstream dropped"))
+    adapter = make_together_image_adapter("fake-key")
+    with pytest.raises(RuntimeError, match="Together image error") as exc_info:
+        await adapter("a cat")
+    # Original crash is chained for diagnostics, not swallowed.
+    assert isinstance(exc_info.value.__cause__, ConnectionError)
+
+
+@pytest.mark.anyio
 async def test_huggingface_image_adapter_warns_no_slash(monkeypatch, caplog):
     import logging
 
@@ -562,6 +682,77 @@ async def test_huggingface_image_adapter_non_image_content_type(monkeypatch):
             await adapter("a cat")
 
 
+# === HuggingFace retry/billing + lifecycle guards ===
+#
+# HuggingFace is the ONLY image adapter still on raw aiohttp (its SDK returns a
+# PIL.Image, pulling Pillow). Its image POST is just as non-idempotent and billed
+# as the SDK adapters that pin ``max_retries=0`` (#958), so it gets the same
+# regression guard: exactly one POST, no silent retry, and the 120s budget wired
+# through so a stalled upstream times out instead of hanging the worker.
+
+
+@pytest.mark.anyio
+async def test_huggingface_image_adapter_no_retry_on_network_error(monkeypatch):
+    """A transient connection error surfaces after exactly ONE POST — the billed
+    image request is never silently replayed (the #958 double-billing class)."""
+    from src.services.provider_adapters import make_huggingface_image_adapter
+
+    session = _CountingSession(raise_exc=aiohttp.ClientConnectionError("connection reset"))
+    monkeypatch.setattr("aiohttp.ClientSession", counting_session_factory(session))
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        adapter = make_huggingface_image_adapter("fake-token", output_dir=tmpdir)
+        with pytest.raises(aiohttp.ClientConnectionError):
+            await adapter("a cat", "stabilityai/sdxl")
+    assert session.post_calls == 1
+
+
+@pytest.mark.anyio
+async def test_huggingface_image_adapter_no_retry_on_timeout(monkeypatch):
+    """A timeout (the openai SDK's prime retry trigger) is propagated after a
+    single POST — the raw HF adapter must not auto-retry a billed request."""
+    from src.services.provider_adapters import make_huggingface_image_adapter
+
+    session = _CountingSession(raise_exc=asyncio.TimeoutError())
+    monkeypatch.setattr("aiohttp.ClientSession", counting_session_factory(session))
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        adapter = make_huggingface_image_adapter("fake-token", output_dir=tmpdir)
+        with pytest.raises((asyncio.TimeoutError, TimeoutError)):
+            await adapter("a cat", "stabilityai/sdxl")
+    assert session.post_calls == 1
+
+
+@pytest.mark.anyio
+async def test_huggingface_image_adapter_passes_http_timeout(monkeypatch):
+    """The HF adapter wires the shared 120s budget into ClientSession (#633 bug #10)."""
+    from src.services.provider_adapters import _HTTP_TIMEOUT, make_huggingface_image_adapter
+
+    class ImageResp(FakeResp):
+        content_type = "image/png"
+
+        def __init__(self):
+            super().__init__(status=200)
+
+        async def read(self):
+            return b"\x89PNG\r\n\x1a\n"
+
+    session = _CountingSession(resp=ImageResp())
+    monkeypatch.setattr("aiohttp.ClientSession", counting_session_factory(session))
+
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        adapter = make_huggingface_image_adapter("fake-token", output_dir=tmpdir)
+        await adapter("a cat", "stabilityai/sdxl")
+    assert session.init_timeout is _HTTP_TIMEOUT
+    assert session.post_calls == 1
+
+
 @pytest.mark.anyio
 async def test_openai_image_adapter_success(monkeypatch):
     from src.services.provider_adapters import make_openai_image_adapter
@@ -609,6 +800,50 @@ async def test_openai_image_adapter_empty_data(monkeypatch):
     adapter = make_openai_image_adapter("fake-key")
     with pytest.raises(RuntimeError, match="empty"):
         await adapter("a sunset")
+
+
+@pytest.mark.anyio
+async def test_openai_image_adapter_wraps_non_runtime_crash(monkeypatch):
+    """A non-RuntimeError SDK crash is wrapped in a RuntimeError with provider
+    context and the original cause chained (uniform error type, no retry)."""
+    from src.services.provider_adapters import make_openai_image_adapter
+
+    patch_async_openai(monkeypatch, error=ConnectionError("upstream dropped"))
+    adapter = make_openai_image_adapter("fake-key")
+    with pytest.raises(RuntimeError, match="OpenAI image error") as exc_info:
+        await adapter("a sunset")
+    assert isinstance(exc_info.value.__cause__, ConnectionError)
+
+
+@pytest.mark.anyio
+async def test_openai_image_adapter_single_generate_call(monkeypatch):
+    """The billed images.generate POST is issued exactly once — no service- or
+    adapter-level auto-retry on the non-idempotent paid request (#958 class)."""
+    from src.services.provider_adapters import make_openai_image_adapter
+
+    calls = {"n": 0}
+
+    class _CountingImages:
+        async def generate(self, **kwargs):
+            calls["n"] += 1
+            return _FakeImagesResponse([_FakeImage(url="https://x/y.png")])
+
+    class _CountingClient:
+        def __init__(self, **kwargs):
+            self.images = _CountingImages()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    import openai
+
+    monkeypatch.setattr(openai, "AsyncOpenAI", _CountingClient)
+    adapter = make_openai_image_adapter("fake-key")
+    await adapter("a sunset", "dall-e-3")
+    assert calls["n"] == 1
 
 
 @pytest.mark.anyio
@@ -1031,3 +1266,58 @@ async def test_parse_json_openai_content_null_returns_empty():
     """OpenAI content can be JSON null (tool-call/refusal) — coerce to "" not None (#836/8)."""
     data = {"choices": [{"message": {"content": None}}]}
     assert await _parse_json_for_text(data) == ""
+
+
+# === _parse_json_for_text -> str contract on unexpected nested shapes (#836/#971) ===
+#
+# The function is annotated ``-> str`` and downstream treats the result as text
+# (string ops, prompt assembly). Earlier audits (#836/#971) closed this leak for
+# the ``result`` / ``outputs`` *null* cases via ``_coerce_str``, but two extraction
+# points still returned the raw value when a provider nested an object where text
+# was expected: ``choices[0].message.content`` and ``outputs[0].content``. A
+# malformed/unexpected provider payload would then leak a ``dict`` out of a
+# ``-> str`` function. These guards lock every shape to a real ``str``.
+
+
+@pytest.mark.anyio
+async def test_parse_json_openai_content_dict_coerced_to_str():
+    """choices[0].message.content as an object (not text) must coerce to str,
+    not leak the dict out of the -> str contract (#836/#971 class)."""
+    data = {"choices": [{"message": {"content": {"unexpected": "object"}}}]}
+    result = await _parse_json_for_text(data)
+    assert isinstance(result, str)
+
+
+@pytest.mark.anyio
+async def test_parse_json_outputs_content_dict_coerced_to_str():
+    """outputs[0].content as an object must coerce to str (-> str contract)."""
+    data = {"outputs": [{"content": {"unexpected": "object"}}]}
+    result = await _parse_json_for_text(data)
+    assert isinstance(result, str)
+
+
+@pytest.mark.anyio
+async def test_parse_json_choices_text_dict_coerced_to_str():
+    """choices[0].text as an object must coerce to str (-> str contract)."""
+    data = {"choices": [{"text": {"unexpected": "object"}}]}
+    result = await _parse_json_for_text(data)
+    assert isinstance(result, str)
+
+
+@pytest.mark.anyio
+async def test_parse_json_deeply_nested_result_stays_str():
+    """A deeply nested ``{"result": {"result": {...}}}`` (no known text key at the
+    top level) falls through to the str() fallback — always a str, never a dict."""
+    data = {"result": {"result": {"text": "deep"}}}
+    result = await _parse_json_for_text(data)
+    assert isinstance(result, str)
+    # The inner object is stringified (no top-level text/content/generated_text key).
+    assert "result" in result
+
+
+@pytest.mark.anyio
+async def test_parse_json_outputs_text_dict_coerced_to_str():
+    """outputs[0].text as an object must coerce to str (-> str contract)."""
+    data = {"outputs": [{"text": {"unexpected": "object"}}]}
+    result = await _parse_json_for_text(data)
+    assert isinstance(result, str)
