@@ -8,12 +8,14 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from src.web.pipelines import handlers
 from src.web.pipelines.forms import (
     CreateWizardForm,
+    PipelineAutoSelectVariantForm,
     PipelineCreateForm,
     PipelineEditForm,
     PipelineGenerateForm,
     PipelineImportForm,
     PipelinePublishForm,
     PipelineRunForm,
+    PipelineSelectVariantForm,
     PipelineTemplateCreateForm,
     form_model_dependency,
 )
@@ -32,6 +34,14 @@ PipelineTemplateCreateFormDep = Annotated[
     Depends(form_model_dependency(PipelineTemplateCreateForm)),
 ]
 PipelineImportFormDep = Annotated[PipelineImportForm, Depends(form_model_dependency(PipelineImportForm))]
+PipelineSelectVariantFormDep = Annotated[
+    PipelineSelectVariantForm,
+    Depends(form_model_dependency(PipelineSelectVariantForm)),
+]
+PipelineAutoSelectVariantFormDep = Annotated[
+    PipelineAutoSelectVariantForm,
+    Depends(form_model_dependency(PipelineAutoSelectVariantForm)),
+]
 
 
 @router.get("/api/channels/search", response_class=JSONResponse)
@@ -144,6 +154,31 @@ async def generate_pipeline(
 @router.post("/{pipeline_id}/publish")
 async def publish_pipeline(request: Request, pipeline_id: int, form: PipelinePublishFormDep):
     return pipeline_response(request, await handlers.publish_pipeline(request, pipeline_id, form))
+
+
+@router.get("/{pipeline_id}/variants/{run_id}", response_class=JSONResponse)
+async def get_pipeline_variants(request: Request, pipeline_id: int, run_id: int):
+    return pipeline_response(
+        request, await handlers.get_pipeline_variants(request, pipeline_id, run_id)
+    )
+
+
+@router.post("/{pipeline_id}/select-variant")
+async def select_pipeline_variant(
+    request: Request, pipeline_id: int, form: PipelineSelectVariantFormDep
+):
+    return pipeline_response(
+        request, await handlers.select_pipeline_variant(request, pipeline_id, form)
+    )
+
+
+@router.post("/{pipeline_id}/auto-select-best")
+async def auto_select_pipeline_variant(
+    request: Request, pipeline_id: int, form: PipelineAutoSelectVariantFormDep
+):
+    return pipeline_response(
+        request, await handlers.auto_select_pipeline_variant(request, pipeline_id, form)
+    )
 
 
 @router.get("/{pipeline_id}/refinement-steps")

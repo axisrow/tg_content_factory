@@ -79,6 +79,24 @@
     </div>
     {% endif %}
 
+    {# A/B testing (#1068) — always rendered so a non-LLM DAG submit never
+       silently resets the stored A/B config (review: Claude). #}
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3">
+            <label class="form-label">A/B вариантов</label>
+            <input class="form-control" type="number" name="ab_num_variants" min="1"
+                   value="{{ pipeline.ab_num_variants }}">
+            <div class="form-text">&gt;1 включает A/B-тест (×N расход токенов)</div>
+        </div>
+        <div class="col-6 col-md-3 d-flex align-items-center">
+            <div class="form-check mt-4">
+                <input class="form-check-input" type="checkbox" name="ab_auto_select" value="true"
+                       id="edit-ab-auto-select" {{ "checked" if pipeline.ab_auto_select }}>
+                <label class="form-check-label" for="edit-ab-auto-select">Авто-выбор лучшего</label>
+            </div>
+        </div>
+    </div>
+
     {# DAG: канал для реакций / источник (из pipeline_json source ноды) #}
     {% if dag_source_channel_ids is not none %}
     <div class="mb-3">
