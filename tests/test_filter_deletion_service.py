@@ -270,6 +270,17 @@ async def _seed_channel_with_sidecars(
             date=datetime(2024, 1, 1, tzinfo=timezone.utc),
         )
     )
+    # Embedding keyed on the message's autoincrement id (messages.id), no FK.
+    msg_row = await db.execute(
+        "SELECT id FROM messages WHERE channel_id = ? AND message_id = ?",
+        (channel_id, message_id),
+    )
+    msg_pk = (await msg_row.fetchone())["id"]
+    await db.execute_write(
+        "INSERT INTO message_embeddings_json (message_id, embedding, dims) "
+        "VALUES (?, ?, ?)",
+        (msg_pk, "[0.1,0.2]", 2),
+    )
     # message-keyed sidecars
     await db.execute_write(
         "INSERT INTO message_reactions (channel_id, message_id, emoji, count) "
@@ -315,6 +326,15 @@ async def _count(db: Database, table: str, channel_id: int) -> int:
     return row["c"]
 
 
+async def _count_embeddings_total(db: Database) -> int:
+    """message_embeddings_json keys on messages.id, not channel_id. Both delete
+    paths remove the channel's only seeded message, so a non-zero total here
+    means an embedding was left orphaned (the bug #1039 / PR #1078 review found)."""
+    cur = await db.execute("SELECT COUNT(*) AS c FROM message_embeddings_json")
+    row = await cur.fetchone()
+    return row["c"]
+
+
 # ── Cascade & orphans: purge (soft-delete, channel stays) ────────────────────
 
 
@@ -334,29 +354,76 @@ async def test_purge_cascades_to_message_reactions(db):
 
 
 @pytest.mark.anyio
-async def test_purge_leaves_no_orphan_notified_messages(db):
-    """Regression (#1039): purge wipes the messages but notified_messages rows
-    keyed on the same message_id were left dangling — an orphan."""
+async def test_purge_removes_message_embeddings(db):
+    """purge deletes message_embeddings_json keyed on the deleted messages' ids,
+    so no embedding is left orphaned (and can't be mis-attached to a reused
+    rowid)."""
     cid = 100
     await _seed_channel_with_sidecars(db, channel_id=cid)
     pk = (await db.get_channel_by_channel_id(cid)).id
 
     await _real_deletion_service(db).purge_channels_by_pks([pk])
 
-    assert await _count(db, "notified_messages", cid) == 0
+    assert await _count_embeddings_total(db) == 0
 
 
 @pytest.mark.anyio
-async def test_purge_leaves_no_orphan_pipeline_action_log(db):
-    """Regression (#1039): pipeline_action_log keys on message_id and was orphaned
-    by purge once the parent message vanished."""
+async def test_purge_preserves_notified_messages_dedup_ledger(db):
+    """Regression (#1039, Codex review of PR #1078): purge is a SOFT delete — the
+    channel stays tracked and the same (channel_id, message_id) can be collected
+    again. `notified_messages` is a sent-notification dedup ledger, NOT a
+    message-owned sidecar: wiping it on purge would re-send notifications for
+    messages already delivered once the channel is recollected. It must survive."""
     cid = 100
     await _seed_channel_with_sidecars(db, channel_id=cid)
     pk = (await db.get_channel_by_channel_id(cid)).id
 
     await _real_deletion_service(db).purge_channels_by_pks([pk])
 
-    assert await _count(db, "pipeline_action_log", cid) == 0
+    assert await _count(db, "notified_messages", cid) == 1
+
+
+@pytest.mark.anyio
+async def test_purge_preserves_pipeline_action_log_dedup_ledger(db):
+    """Regression (#1039, Codex review of PR #1078): `pipeline_action_log` is the
+    'already reacted/forwarded/deleted' ledger (#471). purge must NOT clear it,
+    or a pipeline re-run after recollection would re-perform external Telegram
+    actions on the same messages."""
+    cid = 100
+    await _seed_channel_with_sidecars(db, channel_id=cid)
+    pk = (await db.get_channel_by_channel_id(cid)).id
+
+    await _real_deletion_service(db).purge_channels_by_pks([pk])
+
+    assert await _count(db, "pipeline_action_log", cid) == 1
+
+
+@pytest.mark.anyio
+async def test_purge_then_recollect_does_not_replay_notifications(db):
+    """End-to-end idempotency guard (#1039): seed a notified message, purge it,
+    'recollect' the same (channel_id, message_id), and confirm the notification
+    ledger still suppresses it as already-sent. This is the invariant the naive
+    'delete the orphan' fix would have broken."""
+    cid = 100
+    pk = await _add_filtered_channel(db, channel_id=cid, title="Recollect")
+    msg = Message(
+        channel_id=cid,
+        message_id=42,
+        text="m",
+        date=datetime(2024, 1, 1, tzinfo=timezone.utc),
+    )
+    await db.insert_message(msg)
+    await db.execute_write(
+        "INSERT INTO notified_messages (query_id, channel_id, message_id) VALUES (?, ?, ?)",
+        (7, cid, 42),
+    )
+
+    await _real_deletion_service(db).purge_channels_by_pks([pk])
+
+    # Recollect the same message id and check the ledger still marks it notified.
+    await db.insert_message(msg)
+    unnotified = await db.repos.notified_messages.filter_unnotified(7, cid, [42])
+    assert unnotified == set()  # already-notified → suppressed, no replay
 
 
 @pytest.mark.anyio
@@ -391,6 +458,21 @@ async def test_hard_delete_removes_channel_and_message_data(db):
     assert await _count(db, "message_reactions", cid) == 0
     assert await _count(db, "channel_stats", cid) == 0
     assert await _count(db, "forum_topics", cid) == 0
+
+
+@pytest.mark.anyio
+async def test_hard_delete_leaves_no_orphan_embeddings(db):
+    """Regression (#1039, Claude review of PR #1078): delete_channel deleted the
+    messages but left message_embeddings_json orphaned (keyed on messages.id, no
+    FK). SQLite can reissue a deleted rowid to a future message, and
+    INSERT OR REPLACE keys only on message_id — a new message could inherit a
+    stale embedding. hard-delete must clear embeddings like purge does."""
+    cid = 200
+    pk = await _seed_channel_with_sidecars(db, channel_id=cid)
+
+    await _real_deletion_service(db).hard_delete_channels_by_pks([pk])
+
+    assert await _count_embeddings_total(db) == 0
 
 
 @pytest.mark.anyio

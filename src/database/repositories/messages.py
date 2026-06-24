@@ -1171,17 +1171,18 @@ class MessagesRepository:
                 "(SELECT id FROM messages WHERE channel_id = ?)",
                 (channel_id,),
             )
-            # Message-keyed sidecars that have no FK back to `messages` and so
-            # would otherwise be left orphaned once the messages vanish (#1039).
-            # `message_reactions` is NOT listed: its composite FK on
+            # NOTE (#1039): `notified_messages` and `pipeline_action_log` are
+            # deliberately NOT deleted here. purge is a *soft* delete — the
+            # channel stays tracked and the same Telegram (channel_id, message_id)
+            # can be collected again. Those two tables are dedup ledgers
+            # (sent-notification ledger; "already reacted/forwarded/deleted"
+            # ledger, #471), not message-owned sidecars: clearing them would
+            # replay duplicate notifications and repeat external Telegram actions
+            # after recollection. They are cleared only by hard-delete, where the
+            # channel is gone for good (see channels.delete_channel).
+            # `message_reactions` IS removed, but implicitly: its composite FK on
             # messages(channel_id, message_id) is ON DELETE CASCADE, so SQLite
-            # (foreign_keys=ON) removes it automatically with the message.
-            await conn.execute(
-                "DELETE FROM notified_messages WHERE channel_id = ?", (channel_id,)
-            )
-            await conn.execute(
-                "DELETE FROM pipeline_action_log WHERE channel_id = ?", (channel_id,)
-            )
+            # (foreign_keys=ON) drops it together with the message.
             cur = await conn.execute(
                 "DELETE FROM messages WHERE channel_id = ?", (channel_id,)
             )
