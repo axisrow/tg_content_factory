@@ -88,7 +88,9 @@ class ClientLifecycleMixin:
 
         async def _await_transient_flood(self, phone: str) -> None: ...
 
-        async def force_reconnect_phone(self, phone: str) -> bool: ...
+        # NB: force_reconnect_phone is a *real* method of this mixin (defined
+        # below), so it must NOT be re-declared as a stub here — a stub plus the
+        # real def is a mypy no-redef error within the same class (#1046).
 
         # Signature mirrors ResolveGuardMixin exactly: ClientPool inherits all
         # four mixins, so a divergent stub here would make mypy flag the method
