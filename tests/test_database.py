@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -92,6 +93,76 @@ async def test_single_primary_partial_index_rejects_raw_double_primary(db):
             "INSERT INTO accounts (phone, session_string, is_primary) VALUES (?, ?, 1)",
             ("+70000000004", "s2"),
         )
+
+
+@pytest.mark.anyio
+async def test_concurrent_add_primary_yields_exactly_one(db):
+    """#1029 / #733 race: two coroutines each adding an account with
+    is_primary=True concurrently must NOT both win. The atomic CASE/NOT EXISTS
+    derivation inside the INSERT (and the partial unique index behind it) means
+    exactly one ends up primary even when the inserts interleave."""
+    await asyncio.gather(
+        db.add_account(Account(phone="+70000010001", session_string="s1", is_primary=True)),
+        db.add_account(Account(phone="+70000010002", session_string="s2", is_primary=True)),
+    )
+
+    accounts = await db.get_accounts()
+    primaries = [a for a in accounts if a.is_primary]
+    assert len(primaries) == 1
+
+
+@pytest.mark.anyio
+async def test_delete_primary_reassigns_to_remaining_account(db):
+    """#1029: deleting the primary account must auto-promote the lowest-id
+    remaining account so the system never sits with zero primary while other
+    accounts exist. Regression guard for the delete→reassign half of the
+    one-primary invariant (delete_account → _promote_primary_if_none)."""
+    primary_id = await db.add_account(
+        Account(phone="+70000020001", session_string="s1", is_primary=True)
+    )
+    await db.add_account(Account(phone="+70000020002", session_string="s2"))
+    await db.add_account(Account(phone="+70000020003", session_string="s3"))
+
+    await db.delete_account(primary_id)
+
+    accounts = await db.get_accounts()
+    assert all(a.phone != "+70000020001" for a in accounts)
+    primaries = [a for a in accounts if a.is_primary]
+    assert len(primaries) == 1
+    # Lowest remaining id wins.
+    assert primaries[0].phone == "+70000020002"
+
+
+@pytest.mark.anyio
+async def test_delete_last_account_leaves_no_primary(db):
+    """#1029: deleting the only account must not crash trying to promote a
+    non-existent successor — zero accounts means zero primary, cleanly."""
+    only_id = await db.add_account(
+        Account(phone="+70000030001", session_string="s1", is_primary=True)
+    )
+
+    await db.delete_account(only_id)
+
+    accounts = await db.get_accounts()
+    assert accounts == []
+
+
+@pytest.mark.anyio
+async def test_delete_non_primary_does_not_change_primary(db):
+    """#1029: deleting a NON-primary account must leave the existing primary
+    untouched (the reassign only fires when the primary slot is empty)."""
+    primary_id = await db.add_account(
+        Account(phone="+70000040001", session_string="s1", is_primary=True)
+    )
+    secondary_id = await db.add_account(Account(phone="+70000040002", session_string="s2"))
+    assert primary_id and secondary_id
+
+    await db.delete_account(secondary_id)
+
+    accounts = await db.get_accounts()
+    primaries = [a for a in accounts if a.is_primary]
+    assert len(primaries) == 1
+    assert primaries[0].phone == "+70000040001"
 
 
 @pytest.mark.anyio

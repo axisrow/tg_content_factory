@@ -199,3 +199,143 @@ class TestVerifyCode:
         )
         # needs_2fa keeps the pending client alive for the follow-up password step.
         assert "+1234567890" in auth._pending
+
+    @pytest.mark.anyio
+    async def test_verify_code_hash_mismatch_raises_before_sign_in(self):
+        """A phone_code_hash that does not match the pending one is rejected
+        before any sign_in RPC — the stored hash is bound to the MTProto session,
+        so a stale hash must fail loudly rather than silently signing in."""
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        mock_client = AsyncMock()
+        mock_client.session = SimpleNamespace(save=lambda: "session123")
+        auth._pending["+1234567890"] = (mock_client, "hash123")
+
+        with pytest.raises(ValueError, match="Phone code hash mismatch"):
+            await auth.verify_code("+1234567890", "11111", "stale_hash")
+
+        mock_client.sign_in.assert_not_awaited()
+        # Pending stays intact so a retry with the right hash can still succeed.
+        assert "+1234567890" in auth._pending
+
+    @pytest.mark.anyio
+    async def test_verify_code_no_pending_raises(self):
+        """#1029: verifying with no pending entry (e.g. a cross-process verify
+        that never ran send_code in this process) must fail with a clear error,
+        not a KeyError."""
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        with pytest.raises(ValueError, match="No pending auth"):
+            await auth.verify_code("+1234567890", "11111", "hash123")
+
+    @pytest.mark.anyio
+    async def test_verify_code_session_save_failure_does_not_lose_pending(self):
+        """#1029 data-loss regression: if ``session.save()`` raises AFTER a
+        successful ``sign_in``, the account is already authorized on Telegram's
+        side but we have no session string. The pending entry MUST survive so the
+        operator can retry the save instead of losing the authenticated session
+        forever (which would force a fresh send-code/verify onboarding)."""
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        mock_client = AsyncMock()
+
+        def _exploding_save():
+            raise RuntimeError("session serialization failed")
+
+        mock_client.session = SimpleNamespace(save=_exploding_save)
+        auth._pending["+1234567890"] = (mock_client, "hash123")
+
+        with pytest.raises(RuntimeError, match="session serialization failed"):
+            await auth.verify_code("+1234567890", "11111", "hash123")
+
+        # sign_in succeeded — the account is authorized — so the pending client
+        # must NOT have been dropped/disconnected: that would strand the session.
+        assert "+1234567890" in auth._pending
+        mock_client.disconnect.assert_not_awaited()
+
+    @pytest.mark.anyio
+    async def test_verify_code_retry_after_save_failure_recovers_session(self):
+        """#1029: after a transient ``session.save()`` failure the operator can
+        retry ``verify_code`` and recover the session — the surviving pending
+        client signs in idempotently and the second save succeeds."""
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        mock_client = AsyncMock()
+        save_calls = {"n": 0}
+
+        def _flaky_save():
+            save_calls["n"] += 1
+            if save_calls["n"] == 1:
+                raise RuntimeError("transient serialization failure")
+            return "recovered_session"
+
+        mock_client.session = SimpleNamespace(save=_flaky_save)
+        auth._pending["+1234567890"] = (mock_client, "hash123")
+
+        with pytest.raises(RuntimeError):
+            await auth.verify_code("+1234567890", "11111", "hash123")
+
+        # Retry: pending survived, so this call recovers the session.
+        session = await auth.verify_code("+1234567890", "11111", "hash123")
+        assert session == "recovered_session"
+        # Now that the session is durably captured, the client is cleaned up.
+        assert "+1234567890" not in auth._pending
+        mock_client.disconnect.assert_awaited_once()
+
+
+class TestSignInFresh:
+    @pytest.mark.anyio
+    async def test_sign_in_fresh_restores_string_session(self):
+        """#1029 cross-process: sign_in_fresh must rebuild the MTProto session
+        from the session_str produced by send_code (possibly in another process),
+        because Telegram binds phone_code_hash to that exact session."""
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        mock_client = AsyncMock()
+        mock_client.session = SimpleNamespace(save=lambda: "final_session")
+
+        captured: dict[str, object] = {}
+
+        def _fake_string_session(value=""):
+            captured["session_str"] = value
+            return SimpleNamespace(_value=value)
+
+        with (
+            patch("src.telegram.auth.TelegramClient", return_value=mock_client),
+            patch("src.telegram.auth.StringSession", _fake_string_session),
+        ):
+            session = await auth.sign_in_fresh(
+                "+1234567890",
+                "11111",
+                "hash123",
+                session_str="restored_mtproto_state",
+            )
+
+        assert session == "final_session"
+        # The send_code session string was fed back into StringSession verbatim.
+        assert captured["session_str"] == "restored_mtproto_state"
+        mock_client.sign_in.assert_awaited_once_with(
+            "+1234567890", "11111", phone_code_hash="hash123"
+        )
+        mock_client.disconnect.assert_awaited_once()
+
+    @pytest.mark.anyio
+    async def test_sign_in_fresh_session_save_failure_does_not_swallow(self):
+        """#1029 data-loss regression for the cross-process path: a save() that
+        raises after a successful sign_in must propagate (so the caller knows the
+        session was NOT captured) rather than being masked as success."""
+        auth = TelegramAuth(api_id=123, api_hash="abc")
+        mock_client = AsyncMock()
+
+        def _exploding_save():
+            raise RuntimeError("save failed post sign_in")
+
+        mock_client.session = SimpleNamespace(save=_exploding_save)
+
+        with (
+            patch("src.telegram.auth.TelegramClient", return_value=mock_client),
+            patch("src.telegram.auth.StringSession", lambda _value="": SimpleNamespace()),
+        ):
+            with pytest.raises(RuntimeError, match="save failed post sign_in"):
+                await auth.sign_in_fresh(
+                    "+1234567890", "11111", "hash123", session_str="state"
+                )
+
+        # sign_in_fresh has no in-memory pending to preserve, but it must always
+        # disconnect its throwaway client (no leak) even on the save failure.
+        mock_client.disconnect.assert_awaited_once()
