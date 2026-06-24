@@ -32,12 +32,6 @@ pytest tests/ -v -m aiosqlite_serial
 # Run a single test
 pytest tests/test_web.py::test_health_endpoint -v
 
-# Selective run — only tests affected by your changes (pytest-testmon, #1090).
-# First `--testmon` run builds the .testmondata baseline (runs everything);
-# subsequent runs re-execute only tests touching changed source. See the
-# "Selective test run (pytest-testmon)" guide below.
-pytest tests/ --testmon
-
 # Benchmark serial vs safe mixed-mode suite execution
 python -m src.main test benchmark
 ```
@@ -174,10 +168,10 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 
 ## CI
 
-- GitHub Actions: `.github/workflows/ci.yml` — runs on push to `main` and on all PRs; branch names containing `+` are rejected. Split into **parallel jobs** (#1090, #1097 §5) that fan out for speed: `check-branch-name` (PR only), `lint` (ruff), `static-checks` (gates below), `tests`. Structure is regression-guarded by `tests/test_ci_workflow_structure.py`.
-- **Selective vs full test gate (#1090)**: on a **PR** the `tests` job runs `pytest --testmon` **single-process** (NOT `-n auto`, no coverage) — only the tests affected by the change. The `.testmondata` baseline is cached **per PR** (keyed by PR number, not branch name — branch names collide across PRs): the first push in a PR builds it (runs everything once), later pushes to the same PR select against it. On **`main`** (post-merge) it runs the **same full** smoke + parallel (`-n auto`) + serial suite with coverage as the blocking gate — testmon is NOT used on main. testmon never replaces the full run — conservative by design. ⚠️ testmon is single-process-only here because (a) it only deselects in one process and (b) testmon-collection + xdist + coverage INTERNALERRORs (both verified against pytest-testmon 2.2.0). See the "Selective test run" guide at the bottom.
+- GitHub Actions: `.github/workflows/ci.yml` — runs on push to `main` and on all PRs; branch names containing `+` are rejected. Split into **parallel jobs** (#1090, #1097 §5) that fan out for speed: `check-branch-name` (PR only), `lint` (ruff), `static-checks` (gates below), `tests`. This parallel split is the CI speedup that landed. Structure is regression-guarded by `tests/test_ci_workflow_structure.py`.
+- **Test gate (#1090)**: the `tests` job runs the **full** suite on both PR and main — smoke first, then parallel (`-n auto -m "not aiosqlite_serial"`), then serial (`-m aiosqlite_serial`), with coverage. (pytest-testmon selective runs were evaluated and dropped: testmon only deselects single-process and crashes under xdist+coverage, so a testmon PR gate would run single-process without coverage — often *slower* than the full `-n auto` sweep on this large suite, not faster. The parallel-job split is the real win.)
 - Import architecture contracts: `lint-imports --config .importlinter` — CLI/web/agent-tools entrypoints must not import `telethon` directly (raw Telethon stays behind the telegram layer)
-- CI enforces `filterwarnings = ["error"]` in `pyproject.toml` (dedicated check step in `static-checks`); the `tests` job runs smoke first, then parallel (`-n auto -m "not aiosqlite_serial"`), then serial (`-m aiosqlite_serial`)
+- CI enforces `filterwarnings = ["error"]` in `pyproject.toml` (dedicated check step in `static-checks`)
 - Code-health tooling in `static-checks`: `scripts/code_health.py --fail-on F` (blocking cyclomatic-complexity gate, radon+vulture). Advisory scans (`continue-on-error`): jscpd duplication, `pip-audit` (dependency CVEs, #1053/#1097 §4), bandit. **Doc-coverage (interrogate, #1072) is NOT in CI** — it stays a local script (`scripts/doc_coverage.py`); "no docstring" ≠ "dead code (uncalled, vulture)" — independent signals, different PRs.
 - Other workflows: `real-provider.yml` (opt-in live provider smoke), `docs.yml` (mkdocs → GitHub Pages), `release.yml`
 
@@ -209,25 +203,3 @@ A second classification axis layered on top of the markers above, **auto-applied
 - `e2e` — long/full real-surface flows: `tests/e2e/` (Playwright) plus all `real_tg_*` live CLI suites.
 - **Classification is per-test, not per-file**: a file may hold both `unit` (mock-only) and `integration` (DB-touching) tests — each gets its level from its own fixtures/body. Detection order (first match wins): e2e path/marker → live-smoke marker → `tests/routes`|`tests/repositories` path → integration fixture → file-DB (`aiosqlite_serial`) signal → per-test AST source scan (`_INTEGRATION_SOURCE_TOKENS`) → else `unit`. Adding a new way to stand up a subsystem inline may need a token added to `_INTEGRATION_SOURCE_TOKENS`.
 - Invariant (enforced by `tests/test_test_levels.py`): every collected test carries exactly one level; `unit ∩ integration = ∅`; nothing is left unlevelled.
-
-### Selective test run (pytest-testmon)
-`pytest-testmon` (#1090) speeds up local iteration and PR CI by re-running **only the tests affected by your changes** instead of the full ~9000-test suite. It records, per test, which source lines it executes, in a local SQLite DB `.testmondata` (gitignored — never commit it; CI restores/saves it via `actions/cache`).
-
-**Local usage:**
-```bash
-# First run: builds the baseline — runs everything once and records deps.
-pytest tests/ --testmon
-# Edit some source/tests, then re-run: only affected tests execute, the rest
-# are deselected ("N deselected"). Failing tests always re-run.
-pytest tests/ --testmon
-# Still split by marker if you like (each leg single-process — see note below):
-pytest tests/ -m "not aiosqlite_serial" --testmon
-pytest tests/ -m aiosqlite_serial --testmon
-```
-- ⚠️ **Run testmon single-process — NOT with `-n auto`, and NOT with `--cov`.** testmon's *deselection* only takes effect in one process; under pytest-xdist workers it still collects dependency data but re-runs every test anyway, and testmon-collection + xdist + coverage crashes with an xdist INTERNALERROR (both verified against pytest-testmon 2.2.0). So `--testmon -n auto` gives you zero selection and `--testmon -n auto --cov` crashes. Drop `-n auto` (and don't add `--cov`) when you want the affected-only speedup. (On a narrow change single-process testmon is much faster than a full `-n auto` sweep; on a huge change it can be slower.)
-- **Reset the baseline** when it gets stale or confusing: `rm .testmondata` (the next `--testmon` run rebuilds it). Switching branches, big refactors, or dependency bumps are good moments to reset.
-- **`--testmon-noselect`** updates the DB but **never deselects** — every test runs (single-process). Useful to rebuild a complete baseline without selecting.
-
-**In CI (#1090, #1097):**
-- **PR** → `pytest --testmon` single-process (selective, no coverage). The `.testmondata` baseline is cached **per PR** (keyed by PR number): the first push builds it (runs everything once), later pushes to the same PR re-run only affected tests. A cache miss just rebuilds the baseline that run (safe — no false green); even a stale baseline can't false-green since testmon content-hashes sources. This is the fast, blocking PR test gate.
-- **`main`** (post-merge) → the **full** smoke + parallel (`-n auto`) + serial suite with `--cov`, the same blocking gate as before #1090. testmon is NOT used on main (it would crash under xdist+coverage); the full run is never weakened, so any regression a PR's selective run missed is caught here before a release.

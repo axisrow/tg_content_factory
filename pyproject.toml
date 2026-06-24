@@ -80,16 +80,6 @@ dev = [
     "pytest-xdist>=3.8.0",
     "ruff>=0.15.14",
     "pytest-cov>=7.1.0",
-    # Selective test run (#1090): pytest-testmon tracks which source lines each
-    # test touches in a local `.testmondata` DB, so `pytest --testmon` re-runs
-    # only the tests affected by a change. CI uses it as the FAST PR gate
-    # (single-process, per-PR-branch baseline cache), while `main` keeps running
-    # the full `-n auto` suite with coverage (conservative — testmon never
-    # replaces the full run, and is NOT used on main since testmon-collection is
-    # incompatible with xdist+coverage). Locally it lets you skip the ~9000-test
-    # suite while iterating. Must run single-process (no `-n auto`, no `--cov`).
-    # See the "Selective test run" guide in CLAUDE.md.
-    "pytest-testmon>=2.1.0",
     # Code-health tooling: scripts/code_health.py (radon cc/mi + vulture) and the
     # CI cyclomatic-complexity gate (`--fail-on F`). ruff (above) is the third.
     "radon>=6.0.1",

@@ -5,15 +5,20 @@ invariants the #1097 owner-plan locked in, so a future edit can't silently
 undo them:
 
 - the monolithic ``lint-and-test`` job is split into parallel jobs
-  (``lint`` | ``static-checks`` | ``tests``) that fan out for speed (#1097 §5);
-- on a PR the test gate runs ``pytest --testmon`` — only the tests affected by
-  the change — instead of the full ~9000-test suite (#1090 selective run);
-- on ``main`` (post-merge) the full suite still runs as the blocking gate
-  (conservative: testmon never replaces the full run on main);
+  (``lint`` | ``static-checks`` | ``tests``) that fan out for speed (#1097 §5) —
+  this parallel split is the real CI speedup;
 - the ``pip-audit`` dependency scan stays *advisory* (``continue-on-error``)
   like the other security/dup guards (#1097 §4);
 - the ``doc-coverage`` step is **removed** from CI — interrogate stays a local
-  script (#1072) but is no longer a CI step (#1097 §3).
+  script (#1072) but is no longer a CI step (#1097 §3);
+- the existing blocking gates (import contracts, complexity, warnings-as-errors)
+  survive the job split.
+
+Note: pytest-testmon selective runs were evaluated for #1090 and dropped — on
+this large suite testmon must run single-process without coverage (it only
+deselects single-process and crashes under xdist+coverage), which is often
+slower than the full ``-n auto`` sweep, not faster. The parallel-job split is
+the CI win that landed.
 
 These are pure-text/YAML assertions: no DB, no network — a ``unit`` level test.
 """
@@ -32,12 +37,6 @@ CI_YML = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ci.
 def ci_config() -> dict:
     """Parse ci.yml once for the whole module."""
     return yaml.safe_load(CI_YML.read_text(encoding="utf-8"))
-
-
-@pytest.fixture(scope="module")
-def ci_text() -> str:
-    """Raw ci.yml text for substring-level assertions."""
-    return CI_YML.read_text(encoding="utf-8")
 
 
 def _job_steps_text(job: dict) -> str:
@@ -70,125 +69,49 @@ def test_jobs_split_into_parallel_lint_static_tests(ci_config: dict) -> None:
     assert "lint-and-test" not in jobs, "old monolithic `lint-and-test` job must be removed"
 
 
+def test_parallel_jobs_have_no_needs_chains(ci_config: dict) -> None:
+    """The lint/static-checks/tests jobs must run in parallel (no `needs:`).
+
+    A `needs:` dependency would serialize them and erase the #1097 §5 speedup.
+    """
+    jobs = ci_config["jobs"]
+    for name in ("lint", "static-checks", "tests"):
+        assert "needs" not in jobs[name], f"job `{name}` must not declare `needs:` (would serialize the split)"
+
+
 def test_lint_job_runs_ruff(ci_config: dict) -> None:
     """The split-out lint job runs ruff so lint fails fast in parallel."""
     text = _job_steps_text(ci_config["jobs"]["lint"])
     assert "ruff check" in text, "lint job must run `ruff check`"
 
 
-def _is_selective_testmon(run: str) -> bool:
-    """A *selecting* testmon run uses bare ``--testmon`` (re-runs only affected).
+def test_tests_job_runs_full_suite(ci_config: dict) -> None:
+    """The tests job must run the full smoke + parallel + serial suite.
 
-    ``--testmon-noselect`` updates the DB but deselects nothing, so it is a FULL
-    run, not a selective one — distinguish the two precisely.
-    """
-    return "--testmon" in run and "--testmon-noselect" not in run
-
-
-def test_pr_runs_testmon_selective(ci_config: dict) -> None:
-    """#1090: on a pull_request the test gate runs selective `pytest --testmon`.
-
-    Selective run is the whole point: a PR exercises only the affected tests.
-    Every *selecting* testmon step must be guarded to the pull_request event,
-    and at least one must exist.
+    Guards against accidentally dropping a leg of the suite. The parallel-safe
+    leg uses `-n auto`; the serial leg uses the aiosqlite_serial marker; both
+    measure coverage so the fail_under gate has data.
     """
     steps = ci_config["jobs"]["tests"]["steps"]
-    selective_steps = [s for s in steps if _is_selective_testmon(s.get("run") or "")]
-    assert selective_steps, "tests job must have a selective `pytest --testmon` step for PRs"
-    for step in selective_steps:
-        cond = step.get("if", "")
-        assert "pull_request" in cond, (
-            f"selective testmon step must be PR-guarded (`if: ... pull_request ...`); got if={cond!r}"
-        )
+    runs = [s.get("run") or "" for s in steps]
+    assert any("-m smoke" in r for r in runs), "tests job must run the smoke preflight"
+    parallel = [r for r in runs if 'not aiosqlite_serial' in r and "-n auto" in r]
+    serial = [r for r in runs if "-m aiosqlite_serial" in r]
+    assert parallel, "tests job must run the parallel-safe leg with -n auto"
+    assert serial, "tests job must run the aiosqlite_serial leg"
+    assert all("--cov=src" in r for r in parallel + serial), "both test legs must measure coverage"
 
 
-def test_selective_testmon_runs_single_process(ci_config: dict) -> None:
-    """testmon only deselects in one process — selective steps must NOT use -n auto.
+def test_tests_job_does_not_use_testmon(ci_config: dict) -> None:
+    """testmon was dropped for #1090 — no pytest step may pass a --testmon flag.
 
-    Under pytest-xdist workers testmon still collects data but re-runs every
-    test instead of deselecting the stable ones, erasing the speedup. This guard
-    stops a future edit from "optimising" the selective PR steps with `-n auto`
-    and silently killing the selection (#1090).
+    testmon-collection is incompatible with xdist + coverage (it INTERNALERRORs)
+    and only deselects single-process. Guard against it being re-added to the
+    full `-n auto --cov` suite, which would crash the gate.
     """
-    steps = ci_config["jobs"]["tests"]["steps"]
-    selective_steps = [s for s in steps if _is_selective_testmon(s.get("run") or "")]
-    assert selective_steps, "expected selective testmon steps to exist"
-    for step in selective_steps:
+    for step in ci_config["jobs"]["tests"]["steps"]:
         run = step.get("run") or ""
-        assert "-n auto" not in run and "-n " not in run, (
-            f"selective testmon step must run single-process (no xdist); got: {run!r}"
-        )
-
-
-def test_testmon_cache_keyed_by_pr_number_not_branch(ci_config: dict) -> None:
-    """The `.testmondata` cache must be keyed by PR number, not branch name.
-
-    Branch names (`head_ref`) collide across unrelated PRs (`patch-1`,
-    `feature`, …), so a name-keyed cache + restore-keys wildcard could reuse an
-    unrelated PR's baseline and select against the wrong code line — a possible
-    false green. Keying by `github.event.pull_request.number` (repo-unique,
-    stable) removes that class. Regression guard for a review finding (#1090).
-    """
-    steps = ci_config["jobs"]["tests"]["steps"]
-    cache_steps = [s for s in steps if (s.get("uses") or "").startswith("actions/cache")]
-    assert cache_steps, "tests job must have an actions/cache step for the testmon baseline"
-    for step in cache_steps:
-        with_block = step.get("with", {})
-        key = with_block.get("key", "")
-        restore = with_block.get("restore-keys", "")
-        assert "pull_request.number" in key, (
-            f"testmon cache key must include the PR number (repo-unique identity); got key={key!r}"
-        )
-        assert "head_ref" not in key and "head_ref" not in restore, (
-            "testmon cache key/restore must NOT use head_ref (branch names collide across PRs)"
-        )
-
-
-def test_main_runs_full_suite_blocking(ci_config: dict) -> None:
-    """Conservative gate: on `main`/push the FULL suite still runs (no selection).
-
-    On push the run uses the plain `-n auto --cov` full suite with NO testmon
-    flag at all (testmon-collection is incompatible with xdist+coverage). Those
-    steps must be guarded to the push event and must NOT carry continue-on-error
-    (they stay the blocking gate).
-    """
-    steps = ci_config["jobs"]["tests"]["steps"]
-    full_steps = [
-        s
-        for s in steps
-        if "pytest" in (s.get("run") or "")
-        and not _is_selective_testmon(s.get("run") or "")
-        and "-m smoke" not in (s.get("run") or "")
-    ]
-    assert full_steps, "tests job must keep a full-suite pytest step for main"
-    push_guarded = [s for s in full_steps if "push" in (s.get("if", ""))]
-    assert push_guarded, "the full-suite step(s) must be guarded to the push (main) event"
-    for step in push_guarded:
-        assert step.get("continue-on-error") is not True, (
-            "the full-suite gate on main must stay blocking (no continue-on-error)"
-        )
-    # The PR selective steps and the main full steps must be mutually exclusive
-    # by event so a PR never runs the full suite and main never selects.
-    for step in push_guarded:
-        assert "pull_request" not in step.get("if", ""), "full-suite step must not also fire on PRs"
-
-
-def test_main_full_run_does_not_use_testmon(ci_config: dict) -> None:
-    """main's full `-n auto --cov` run must NOT invoke testmon at all.
-
-    testmon-collection is incompatible with xdist + coverage (it INTERNALERRORs,
-    verified against pytest-testmon 2.2.0). Any `--testmon*` flag on a push-time
-    pytest step would crash the blocking main gate, so guard against it.
-    """
-    steps = ci_config["jobs"]["tests"]["steps"]
-    for step in steps:
-        run = step.get("run") or ""
-        cond = step.get("if", "")
-        is_push_only = "push" in cond and "pull_request" not in cond
-        if "pytest" in run and is_push_only:
-            assert "--testmon" not in run, (
-                f"main full-suite step must not use testmon (xdist+cov INTERNALERROR); got: {run!r}"
-            )
+        assert "--testmon" not in run, f"tests job must not use testmon (xdist+cov INTERNALERROR); got: {run!r}"
 
 
 def test_pip_audit_is_advisory(ci_config: dict) -> None:
@@ -231,6 +154,7 @@ def test_complexity_and_import_gates_preserved(ci_config: dict) -> None:
     assert "code_health.py --fail-on F" in combined, "cyclomatic-complexity gate must be preserved"
 
 
-def test_warnings_as_errors_check_preserved(ci_text: str) -> None:
+def test_warnings_as_errors_check_preserved(ci_config: dict) -> None:
     """The filterwarnings=['error'] enforcement check must survive the split."""
-    assert "filterwarnings" in ci_text, "warnings-as-errors enforcement check must be preserved in CI"
+    static_text = _job_steps_text(ci_config["jobs"]["static-checks"])
+    assert "filterwarnings" in static_text, "warnings-as-errors enforcement check must be preserved in CI"

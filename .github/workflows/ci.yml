@@ -1,15 +1,11 @@
 name: CI
 
 # Triggers — CI runs only on `main` and on pull requests (owner decision, #1051).
-#   push: [main]   — post-merge verification that main itself stays green; this
-#                    is where the FULL ~9000-test suite runs as the blocking gate.
+#   push: [main]   — post-merge verification that main itself stays green.
 #   pull_request:  — fires on PR open AND on every push inside an open PR
 #                    (the `synchronize` event), so PR commits are still covered.
-#                    On a PR the test gate is SELECTIVE (`pytest --testmon`,
-#                    #1090): only the tests affected by the change run, cutting
-#                    PR CI time. The full suite still gates main post-merge, so a
-#                    test that testmon couldn't link to the change is caught
-#                    before a release — conservative by design.
+# Both run the same full test suite; the CI speedup from #1090 is the parallel
+# job split (lint | static-checks | tests), not test selection (#1097 §5).
 # Dropped the old `fix/**` / `codex/**` push triggers: they double-ran CI (once
 # for the branch push, once for the PR) and burned runners on intermediate,
 # draft, PR-less pushes. A push to a feature branch with no open PR no longer
@@ -174,23 +170,20 @@ jobs:
               sys.exit(1)
           PY
 
-  # The test gate. SELECTIVE on PRs, FULL on main (#1090, #1097 §1+6).
+  # The full test gate — runs on every PR and on main (#1051). Split into its
+  # own parallel job (#1097 §5) so it fans out alongside lint and static-checks
+  # instead of serializing behind them.
   #
-  #   pull_request → `pytest --testmon`: testmon tracks each test's source
-  #     dependencies in `.testmondata` and re-runs only the tests a change
-  #     touches. The baseline `.testmondata` is cached PER-PR (see the cache
-  #     step below): the first push in a PR builds it, later pushes select
-  #     against it. On a cache miss testmon safely re-runs everything (no false
-  #     green). This is the fast PR gate that cuts CI time.
-  #
-  #   push (main) → the full smoke + parallel + serial suite with coverage, the
-  #     same blocking gate as before. testmon is NOT used on main at all (it
-  #     would crash under xdist+coverage), so the full run is never weakened: a
-  #     regression a PR's selective run couldn't link to the diff is still caught
-  #     here before a release. Conservative by design (#1090).
+  # NOTE (#1090): we evaluated pytest-testmon for a selective PR run and dropped
+  # it. testmon only deselects in a single process (no-op under `-n auto`) and
+  # testmon-collection + xdist + coverage INTERNALERRORs — so a testmon PR gate
+  # would have to run single-process without coverage, which on this large suite
+  # is often SLOWER than the full `-n auto` sweep, not faster. The real CI
+  # speedup here is the parallel-job split, not test selection. The full suite
+  # stays the gate on both PR and main.
   tests:
     runs-on: ubuntu-latest
-    # smoke + (selective | full) pytest with coverage. The full suite runs in a
+    # smoke + full parallel + serial pytest with coverage. The suite runs in a
     # few minutes on CI; 15 is a generous hang guard well under the 6h GitHub
     # default that would otherwise let a deadlocked run idle (#1051).
     timeout-minutes: 15
@@ -209,80 +202,17 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      # Restore the testmon dependency DB so a PR can select only the tests its
-      # diff affects (#1090). The cache is keyed PER-PR by the PR *number* (a
-      # stable, repo-unique identity — NOT the branch name, which collides:
-      # different PRs, especially from forks, routinely share `patch-1` /
-      # `feature` and the restore-keys wildcard would otherwise reuse an
-      # unrelated PR's baseline → wrong-baseline selection / possible false
-      # green). The first push in a PR builds the baseline (testmon runs
-      # everything once); later pushes to the SAME PR restore it and re-run only
-      # the affected tests. `key` includes run_id so each run writes a fresh
-      # entry; `restore-keys` falls back to the newest entry FOR THIS PR only.
-      # A cache miss just means testmon rebuilds the baseline that run (safe —
-      # no false green). main does NOT use testmon (see below), so PR-only.
-      #
-      # Defence-in-depth: even a stale/wrong restored baseline cannot cause a
-      # false green — testmon content-hashes each source file, so any drift
-      # re-runs the affected test (verified against pytest-testmon 2.2.0). The
-      # PR-number key removes the wrong-baseline class entirely; the content
-      # hash is the backstop.
-      #
-      # Why per-PR and not a shared main baseline: testmon only deselects in a
-      # single process, and testmon-collection is incompatible with
-      # xdist+coverage (it INTERNALERRORs). main keeps its `-n auto --cov` full
-      # run untouched and can't cheaply produce a single-process baseline, so
-      # each PR self-bootstraps its own. See CLAUDE.md "Selective test run".
-      - name: Restore testmon baseline (PR only)
-        if: ${{ github.event_name == 'pull_request' }}
-        uses: actions/cache@v4
-        with:
-          path: .testmondata
-          key: testmon-${{ runner.os }}-py311-pr${{ github.event.pull_request.number }}-${{ github.run_id }}
-          restore-keys: |
-            testmon-${{ runner.os }}-py311-pr${{ github.event.pull_request.number }}-
-
       # Fast offline preflight: a sub-second-ish sanity gate over real critical
       # paths (package import, CLI parser, DB schema, web /health). Runs first
-      # so a fundamentally broken build fails before the heavier run starts.
+      # so a fundamentally broken build fails before the full suite starts.
       # Live smoke (real_provider_smoke / codex_*) stays opt-in and is skipped
       # here — no gate env vars are set.
       - name: Pytest (smoke preflight)
         run: pytest tests -q -m smoke
 
-      # ── PR: SELECTIVE run (#1090) ───────────────────────────────────────────
-      # `pytest --testmon` re-runs only the tests affected by the change, against
-      # the `.testmondata` baseline restored above (first PR push builds it).
-      # This is the fast, blocking PR test gate; the full suite gates main
-      # post-merge, so a regression testmon couldn't link to the diff is still
-      # caught before a release — conservative by design.
-      #
-      # IMPORTANT — single-process (NO `-n auto`): testmon's deselection only
-      # takes effect in one process. Under pytest-xdist workers it still
-      # *collects* dependency data but does NOT deselect the stable tests, and
-      # testmon-collection + xdist + coverage INTERNALERRORs (both verified
-      # empirically against pytest-testmon 2.2.0). So these legs run
-      # single-process and without coverage. We keep the parallel-safe vs
-      # aiosqlite_serial marker split (so the serial contract holds), but each
-      # leg is one process. On a typical narrow PR only a handful of tests run —
-      # far faster than a full `-n auto` sweep; on a very broad change it can be
-      # slower, an acceptable conservative trade (#1090).
-      - name: Pytest (selective, PR — parallel-safe set)
-        if: ${{ github.event_name == 'pull_request' && !cancelled() }}
-        run: pytest tests -q -m "not aiosqlite_serial" --testmon --durations=25
-
-      - name: Pytest (selective, PR — aiosqlite serial)
-        if: ${{ github.event_name == 'pull_request' && !cancelled() }}
-        run: pytest tests -q -m aiosqlite_serial --testmon
-
-      # ── main: FULL suite (blocking gate, conservative) ──────────────────────
       # On CI conftest.py uses every runner core (the load throttle is dev-only),
       # so `-n auto` fans out across all vCPUs. --durations surfaces the slowest
-      # tests each run for ongoing tuning (#944). This is the SAME full
-      # smoke+parallel+serial+coverage gate as before #1090 — testmon is NOT used
-      # on main: testmon-collection is incompatible with xdist+coverage
-      # (INTERNALERROR), and the full run must never be weakened. The selective
-      # PR run is the only place testmon plays.
+      # tests each run for ongoing tuning (#944).
       #
       # Coverage (#1052): both real test runs measure `src` and the per-process
       # .coverage.* files are combined afterwards. The parallel run starts the
@@ -290,18 +220,16 @@ jobs:
       # lost. `[tool.coverage.run] parallel = true` already keeps the xdist
       # worker datafiles separate; we pass --cov-report= here to defer reporting
       # (and the pyproject fail_under gate) to the single combined step below.
-      - name: Pytest (full, main — parallel-safe)
-        if: ${{ github.event_name == 'push' && !cancelled() }}
+      - name: Pytest (parallel-safe)
+        if: ${{ !cancelled() }}
         run: pytest tests -q -m "not aiosqlite_serial" -n auto --durations=25 --cov=src --cov-report=
 
-      - name: Pytest (full, main — aiosqlite serial)
-        if: ${{ github.event_name == 'push' && !cancelled() }}
+      - name: Pytest (aiosqlite serial)
+        if: ${{ !cancelled() }}
         run: pytest tests -q -m aiosqlite_serial --cov=src --cov-append --cov-report=
 
-      # Report the combined parallel + serial coverage (main only — the PR
-      # selective run measures only affected tests, so its coverage would be
-      # misleadingly low). pytest-cov already merged the per-worker datafiles
-      # into a single `.coverage` at the end of each run
+      # Report the combined parallel + serial coverage. pytest-cov already merged
+      # the per-worker datafiles into a single `.coverage` at the end of each run
       # (`[tool.coverage.run] parallel = true`), and the serial run's
       # `--cov-append` added its lines to that same file — so the dataset is
       # already combined here. We deliberately do NOT run `coverage combine`: with
@@ -312,13 +240,13 @@ jobs:
       # #1024 bug-hunt epic). The XML artifact lets PRs diff coverage without
       # re-running the suite.
       - name: Coverage report (combined)
-        if: ${{ github.event_name == 'push' && !cancelled() }}
+        if: ${{ !cancelled() }}
         run: |
           coverage report
           coverage xml -o coverage.xml
 
       - name: Upload coverage artifact
-        if: ${{ github.event_name == 'push' && !cancelled() }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: coverage-xml
