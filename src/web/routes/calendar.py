@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from src.services.content_calendar_service import ContentCalendarService
 from src.web import deps
 from src.web.query_params import parse_optional_int
+from src.web.schemas.calendar import CalendarDayItem, CalendarEventItem, CalendarStats
 
 router = APIRouter()
 
@@ -68,13 +69,19 @@ async def fragment_upcoming(request: Request, pipeline_id: str | None = None):
     )
 
 
-@router.get("/api/calendar")
+@router.get(
+    "/api/calendar",
+    response_model=list[CalendarDayItem],
+    status_code=200,
+    tags=["calendar"],
+    summary="Calendar grid: events grouped by day",
+)
 async def api_calendar(
     request: Request,
     days: int = Query(default=7, ge=1, le=90),
     pipeline_id: str | None = None,
 ):
-    """Get calendar data as JSON."""
+    """Get calendar data as JSON: each day with its scheduled/produced events."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
     selected_pipeline_id = parse_optional_int(pipeline_id)
@@ -101,13 +108,19 @@ async def api_calendar(
     ])
 
 
-@router.get("/api/upcoming")
+@router.get(
+    "/api/upcoming",
+    response_model=list[CalendarEventItem],
+    status_code=200,
+    tags=["calendar"],
+    summary="Upcoming scheduled publications",
+)
 async def api_upcoming(
     request: Request,
     limit: int = Query(default=20, ge=1, le=200),
     pipeline_id: str | None = None,
 ):
-    """Get upcoming events as JSON."""
+    """Get upcoming events as JSON, ordered by scheduled time."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
     selected_pipeline_id = parse_optional_int(pipeline_id)
@@ -128,9 +141,15 @@ async def api_upcoming(
     ])
 
 
-@router.get("/api/stats")
+@router.get(
+    "/api/stats",
+    response_model=CalendarStats,
+    status_code=200,
+    tags=["calendar"],
+    summary="Calendar moderation-state counters",
+)
 async def api_stats(request: Request):
-    """Get calendar statistics as JSON."""
+    """Get calendar statistics as JSON: pending/approved/published counts."""
     db = deps.get_db(request)
     calendar = ContentCalendarService(db)
     return JSONResponse(await calendar.get_stats())

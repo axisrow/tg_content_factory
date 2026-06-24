@@ -8,14 +8,27 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from src.web import deps
 from src.web.agent import handlers
 from src.web.agent.responses import agent_response
+from src.web.schemas.agent import AgentChannelItem, ThreadMessagesResponse
+from src.web.schemas.common import ErrorResponse
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/threads/{thread_id}/messages", response_class=JSONResponse)
+@router.get(
+    "/threads/{thread_id}/messages",
+    response_class=JSONResponse,
+    response_model=ThreadMessagesResponse,
+    status_code=200,
+    tags=["agent"],
+    summary="List agent thread messages",
+    responses={404: {"model": ErrorResponse, "description": "Thread not found"}},
+)
 async def get_thread_messages(request: Request, thread_id: int):
-    """List messages of an agent thread as JSON (parity with CLI `agent messages`)."""
+    """List messages of an agent thread as JSON (parity with CLI `agent messages`).
+
+    Returns 404 with ``{"error": "thread_not_found"}`` for an unknown thread.
+    """
     db = deps.get_db(request)
     thread = await db.get_agent_thread(thread_id)
     if thread is None:
@@ -53,8 +66,15 @@ async def rename_thread(request: Request, thread_id: int):
     return agent_response(request, await handlers.rename_thread(request, thread_id))
 
 
-@router.get("/channels-json")
+@router.get(
+    "/channels-json",
+    response_model=list[AgentChannelItem],
+    status_code=200,
+    tags=["agent"],
+    summary="List channels for the agent channel picker",
+)
 async def get_channels_json(request: Request):
+    """Return channels available to the agent (id, title, channel_type) as JSON."""
     return agent_response(request, await handlers.get_channels_json(request))
 
 
