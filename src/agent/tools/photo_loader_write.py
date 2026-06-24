@@ -12,8 +12,10 @@ from src.agent.tools._photo_loader_runtime import (
     split_file_paths,
 )
 from src.agent.tools._registry import (
+    ToolInputError,
     _text_response,
     arg_bool,
+    arg_int,
     is_affirmative,
     require_confirmation,
 )
@@ -358,10 +360,22 @@ def register_auto_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
         # JSON-string is_active="false" deactivates instead of staying truthy (#1115).
         raw_is_active = args.get("is_active")
         is_active = is_affirmative(raw_is_active) if raw_is_active is not None else None
-        # int-coerce the interval the same way create_auto_upload does, so a string
-        # "60" cannot reach the int|None DB column as raw text.
-        raw_interval = args.get("interval_minutes")
-        interval_minutes = int(raw_interval) if raw_interval is not None else None
+        # Validate the interval BEFORE writing: arg_int turns a non-numeric value into a
+        # friendly ToolInputError (instead of an unhandled ValueError escaping the
+        # handler), and a sub-1 value would violate PhotoAutoUploadJob.interval_minutes
+        # (Field ge=1) and poison every later get/list_auto_jobs read — reject it up
+        # front rather than corrupt the job (#1115 cycle-review, Codex finding).
+        # Validate the interval BEFORE writing: arg_int turns a non-numeric value into a
+        # friendly ToolInputError (instead of an unhandled ValueError escaping the
+        # handler), and a sub-1 value would violate PhotoAutoUploadJob.interval_minutes
+        # (Field ge=1) and poison every later get/list_auto_jobs read — reject it up
+        # front rather than corrupt the job (#1115 cycle-review, Codex finding).
+        try:
+            interval_minutes = arg_int(args, "interval_minutes")
+        except ToolInputError as exc:
+            return exc.to_response()
+        if interval_minutes is not None and interval_minutes < 1:
+            return _text_response("Ошибка: interval_minutes должен быть >= 1.")
         changes = []
         if args.get("folder_path"):
             changes.append(f"folder={args['folder_path']}")

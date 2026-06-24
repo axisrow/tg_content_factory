@@ -52,6 +52,13 @@ def register_pipeline_write_tools(db: Any, ctx: Any) -> list[Any]:
             source_ids = arg_csv_ints(args, "source_channel_ids", required=True)
             target_refs = parse_agent_target_refs(target_str)
 
+            # Parse strictly: a bare `... or 1` silently turned a real 0 / "0" into 1
+            # instead of surfacing the invalid count; mirror edit_pipeline and reject
+            # sub-1 values (Pipeline.ab_num_variants is Field ge=1) (#1115 cycle-review).
+            ab_num_variants = arg_int(args, "ab_num_variants", 1)
+            if ab_num_variants is None or ab_num_variants < 1:
+                return _text_response("Ошибка: ab_num_variants должен быть >= 1.")
+
             svc = ctx.pipeline_service()
             pipeline_id = await svc.add(
                 name=name,
@@ -60,7 +67,7 @@ def register_pipeline_write_tools(db: Any, ctx: Any) -> list[Any]:
                 target_refs=target_refs,
                 llm_model=args.get("llm_model"),
                 publish_mode=args.get("publish_mode", "moderated"),
-                ab_num_variants=int(args.get("ab_num_variants") or 1),
+                ab_num_variants=ab_num_variants,
                 # bool("false") is True — coerce so a JSON-string disables A/B
                 # auto-select instead of silently enabling it (#1115).
                 ab_auto_select=arg_bool(args, "ab_auto_select", False),

@@ -201,6 +201,73 @@ async def test_update_auto_upload_string_false_deactivates(db):
     assert job.is_active is False
 
 
+async def _seed_auto_job(db) -> int:
+    return await db.repos.photo_loader.create_auto_job(
+        PhotoAutoUploadJob(
+            phone="+79001234567",
+            target_dialog_id=1,
+            folder_path="/tmp",
+            send_mode=PhotoSendMode("album"),
+            caption=None,
+            interval_minutes=60,
+            is_active=True,
+        )
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("bad_interval", ["abc", 0, -5, "0", "-3"])
+async def test_update_auto_upload_invalid_interval_rejected(db, bad_interval):
+    """A non-numeric or sub-1 interval must be rejected with a safe tool error.
+
+    Writing 0/-5 would violate PhotoAutoUploadJob.interval_minutes (Field ge=1) and
+    poison every later get/list_auto_jobs read; a non-numeric value must surface a
+    friendly error, not an unhandled ValueError escaping the handler (#1115 review).
+    """
+    job_id = await _seed_auto_job(db)
+    handlers = _get_tool_handlers(db, client_pool=MagicMock())
+
+    result = await handlers["update_auto_upload"](
+        {"job_id": job_id, "interval_minutes": bad_interval, "confirm": "true"}
+    )
+
+    text = _text(result)
+    assert "Ошибка" in text
+    # The job must remain readable with its original, valid interval — not poisoned.
+    job = await db.repos.photo_loader.get_auto_job(job_id)
+    assert job.interval_minutes == 60
+
+
+@pytest.mark.anyio
+async def test_update_auto_upload_empty_interval_leaves_unchanged(db):
+    """An empty-string interval means "not supplied" → the interval stays unchanged."""
+    job_id = await _seed_auto_job(db)
+    handlers = _get_tool_handlers(db, client_pool=MagicMock())
+
+    result = await handlers["update_auto_upload"](
+        {"job_id": job_id, "interval_minutes": "", "confirm": "true"}
+    )
+
+    assert "обновлена" in _text(result)
+    job = await db.repos.photo_loader.get_auto_job(job_id)
+    assert job.interval_minutes == 60
+
+
+@pytest.mark.anyio
+async def test_update_auto_upload_valid_string_interval_persists(db):
+    """A valid numeric string interval must still be coerced and persisted."""
+    job_id = await _seed_auto_job(db)
+    handlers = _get_tool_handlers(db, client_pool=MagicMock())
+
+    result = await handlers["update_auto_upload"](
+        {"job_id": job_id, "interval_minutes": "30", "confirm": "true"}
+    )
+
+    assert "обновлена" in _text(result)
+    job = await db.repos.photo_loader.get_auto_job(job_id)
+    assert job.interval_minutes == 30
+
+
 # ---------------------------------------------------------------------------
 # add_search_query: is_regex="false" must NOT enable regex mode.
 # ---------------------------------------------------------------------------
@@ -252,3 +319,35 @@ async def test_collect_channel_string_false_force_respects_filter(db):
     result = await handlers["collect_channel"]({"pk": ch.id, "force": "false"})
     # force="false" must be respected → the filtered guard fires.
     assert "отфильтрован" in _text(result)
+
+
+# ---------------------------------------------------------------------------
+# add_pipeline: ab_num_variants=0 must be rejected, not silently coerced to 1.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("bad_variants", [0, "0", -2])
+async def test_add_pipeline_invalid_ab_num_variants_rejected(mock_db, bad_variants):
+    """A sub-1 ab_num_variants must surface an error instead of `... or 1` → 1.
+
+    Pipeline.ab_num_variants is Field ge=1; silently turning a real 0 into 1 hides
+    an invalid request (#1115 review).
+    """
+    from unittest.mock import patch
+
+    handlers = _get_tool_handlers(mock_db)
+    with patch("src.services.pipeline_service.PipelineService") as mock_svc:
+        mock_svc.return_value.add = AsyncMock(return_value=10)
+        result = await handlers["add_pipeline"](
+            {
+                "confirm": "true",
+                "name": "P",
+                "prompt_template": "t",
+                "source_channel_ids": "1",
+                "target_refs": "+7123456|789",
+                "ab_num_variants": bad_variants,
+            }
+        )
+
+    assert "ab_num_variants" in _text(result)
