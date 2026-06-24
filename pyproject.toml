@@ -106,7 +106,7 @@ dev = [
     "playwright>=1.59.0",
     "pytest-playwright>=0.8.0",
 ]
-docs = ["mkdocs-material>=9.7.6"]
+docs = ["mkdocs-material>=9.7.6", "mkdocstrings[python]>=0.25.0"]
 # Codex SDK image provider + agent backend. Optional: all imports are lazy, so
 # without this group the codex provider/backend simply don't register.
 codex = ["openai-codex>=0.1.0b2"]
