@@ -10,19 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.database import Database
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_db():
-    db = MagicMock(spec=Database)
-    db.repos = MagicMock()
-    db._db_path = ":memory:"
-    db._session_encryption_secret = None
-    return db
 
 
 def _make_pool_with_clients(phones=None):
@@ -39,43 +31,10 @@ def _make_pool_with_clients(phones=None):
     return pool
 
 
-def _get_messaging_handlers(mock_db, client_pool=None):
-    """Build MCP tools and return messaging handlers keyed by name."""
-    get_setting = getattr(mock_db, "get_setting", None)
-    if isinstance(get_setting, AsyncMock) and get_setting.side_effect is None and isinstance(
-        get_setting.return_value, (AsyncMock, MagicMock)
-    ):
-        get_setting.return_value = None
-    captured_tools = []
-
-    with patch(
-        "src.agent.tools.create_sdk_mcp_server",
-        side_effect=lambda **kw: captured_tools.extend(kw.get("tools", [])),
-    ):
-        from src.agent.tools import make_mcp_server
-        make_mcp_server(mock_db, client_pool=client_pool)
-
-    return {t.name: t.handler for t in captured_tools if hasattr(t, "handler")}
 
 
-def _text(result) -> str:
-    """Extract text from tool result payload."""
-    if isinstance(result, dict):
-        return result["content"][0]["text"]
-    if hasattr(result, "content"):
-        return result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
-    return str(result)
 
 
-def _make_args(**kwargs):
-    defaults = {
-        "config": "config.yaml",
-        "dialogs_action": "list",
-        "phone": None,
-        "yes": True,
-    }
-    defaults.update(kwargs)
-    return argparse.Namespace(**defaults)
 
 
 # ===========================================================================
@@ -174,7 +133,6 @@ class TestCLINotificationCoverage:
 
     def test_notification_run_setup(self, cli_env):
         """Lines 23-29: setup action."""
-        import argparse
 
         from src.models import NotificationBot
 
@@ -201,7 +159,6 @@ class TestCLINotificationCoverage:
 
     def test_notification_run_status_none(self, cli_env):
         """Lines 31-38: status action with no bot."""
-        import argparse
 
         with patch(
             "src.cli.commands.notification.runtime.init_pool",
@@ -220,7 +177,6 @@ class TestCLINotificationCoverage:
 
     def test_notification_run_delete(self, cli_env):
         """Lines 40-43: delete action."""
-        import argparse
 
         with patch(
             "src.cli.commands.notification.runtime.init_pool",
@@ -239,7 +195,6 @@ class TestCLINotificationCoverage:
 
     def test_notification_run_test(self, cli_env):
         """Lines 45-48: test action."""
-        import argparse
 
         with patch(
             "src.cli.commands.notification.runtime.init_pool",
@@ -268,7 +223,6 @@ class TestCLIAnalyticsCoverage:
 
     def test_analytics_top(self, cli_env):
         """Lines 17-34: top action."""
-        import argparse
 
         cli_env.get_top_messages = AsyncMock(
             return_value=[
@@ -294,7 +248,6 @@ class TestCLIAnalyticsCoverage:
 
     def test_analytics_top_empty(self, cli_env):
         """Lines 21-23: no messages found."""
-        import argparse
 
         cli_env.get_top_messages = AsyncMock(return_value=[])
 
@@ -311,7 +264,6 @@ class TestCLIAnalyticsCoverage:
 
     def test_analytics_content_types(self, cli_env):
         """Lines 36-47: content-types action."""
-        import argparse
 
         cli_env.get_engagement_by_media_type = AsyncMock(
             return_value=[
@@ -331,7 +283,6 @@ class TestCLIAnalyticsCoverage:
 
     def test_analytics_hourly(self, cli_env):
         """Lines 49-60: hourly action."""
-        import argparse
 
         cli_env.get_hourly_activity = AsyncMock(
             return_value=[{"hour": 12, "message_count": 10, "avg_reactions": 2.0}]
@@ -349,7 +300,6 @@ class TestCLIAnalyticsCoverage:
 
     def test_analytics_summary(self, cli_env):
         """Lines 62-72: summary action."""
-        import argparse
 
         from src.cli.commands.analytics import run
 
@@ -372,7 +322,6 @@ class TestCLIFilterCoverage:
 
     def test_filter_analyze(self, cli_env):
         """Lines 59-91: analyze action."""
-        import argparse
         from types import SimpleNamespace
 
 
@@ -407,7 +356,6 @@ class TestCLIFilterCoverage:
 
     def test_filter_precheck(self, cli_env):
         """Lines 98-103: precheck action."""
-        import argparse
 
         with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
             mock_analyzer.return_value.precheck_subscriber_ratio = AsyncMock(
@@ -424,7 +372,6 @@ class TestCLIFilterCoverage:
 
     def test_filter_toggle(self, cli_env):
         """Lines 105-113: toggle action."""
-        import argparse
 
         from src.models import Channel
 
@@ -443,7 +390,6 @@ class TestCLIFilterCoverage:
 
     def test_filter_reset(self, cli_env):
         """Lines 115-117: reset action."""
-        import argparse
 
         with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
             mock_analyzer.return_value.reset_filters = AsyncMock()
@@ -467,7 +413,6 @@ class TestCLIPipelineCoverage:
 
     def test_pipeline_toggle(self, cli_env):
         """Lines 152-157: toggle action."""
-        import argparse
 
         cli_env.repos.content_pipelines.get_by_id = AsyncMock(return_value=None)
 
@@ -485,7 +430,6 @@ class TestCLIPipelineCoverage:
 
     def test_pipeline_delete(self, cli_env):
         """Lines 159-161: delete action."""
-        import argparse
 
         with patch("src.cli.commands.pipeline.PipelineService") as mock_ps:
             mock_ps.return_value.delete = AsyncMock()
@@ -501,7 +445,6 @@ class TestCLIPipelineCoverage:
 
     def test_pipeline_approve(self, cli_env):
         """Lines 304-310: approve action."""
-        import argparse
 
         from src.models import GenerationRun
 
@@ -520,7 +463,6 @@ class TestCLIPipelineCoverage:
 
     def test_pipeline_reject(self, cli_env):
         """Lines 312-318: reject action."""
-        import argparse
 
         from src.models import GenerationRun
 
@@ -539,7 +481,6 @@ class TestCLIPipelineCoverage:
 
     def test_pipeline_bulk_approve(self, cli_env):
         """Lines 320-329: bulk-approve action."""
-        import argparse
 
         from src.models import GenerationRun
 
@@ -558,7 +499,6 @@ class TestCLIPipelineCoverage:
 
     def test_pipeline_bulk_reject(self, cli_env):
         """Lines 331-340: bulk-reject action."""
-        import argparse
 
         from src.models import GenerationRun
 
@@ -577,7 +517,6 @@ class TestCLIPipelineCoverage:
 
     def test_pipeline_publish_no_run(self, cli_env):
         """Lines 343-346: publish with no run found."""
-        import argparse
 
         cli_env.repos.generation_runs.get = AsyncMock(return_value=None)
 
@@ -593,7 +532,6 @@ class TestCLIPipelineCoverage:
 
     def test_pipeline_run_show(self, cli_env):
         """Lines 261-279: run-show action."""
-        import argparse
 
         from src.models import GenerationRun
 
@@ -619,7 +557,6 @@ class TestCLIPipelineCoverage:
 
     def test_pipeline_queue_empty(self, cli_env):
         """Lines 281-302: queue action with no pending runs."""
-        import argparse
 
         from src.models import ContentPipeline
 
@@ -643,7 +580,6 @@ class TestCLIPipelineCoverage:
 
     def test_pipeline_edit_validation_error(self, cli_env):
         """Lines 144-146: edit with validation error."""
-        import argparse
 
         from src.models import ContentPipeline
         from src.services.pipeline_service import PipelineValidationError
@@ -702,7 +638,6 @@ class TestCLIAnalyticsBatch3:
 
     def test_analytics_trending_topics(self, cli_env):
         """Lines 112-126: trending-topics action."""
-        import argparse
 
         with patch("src.services.trend_service.TrendService") as mock_ts:
             from types import SimpleNamespace
@@ -724,7 +659,6 @@ class TestCLIAnalyticsBatch3:
 
     def test_analytics_trending_channels(self, cli_env):
         """Lines 128-142: trending-channels action."""
-        import argparse
 
         with patch("src.services.trend_service.TrendService") as mock_ts:
             from types import SimpleNamespace
@@ -746,7 +680,6 @@ class TestCLIAnalyticsBatch3:
 
     def test_analytics_velocity(self, cli_env):
         """Lines 144-157: velocity action."""
-        import argparse
 
         with patch("src.services.trend_service.TrendService") as mock_ts:
             from types import SimpleNamespace
@@ -767,7 +700,6 @@ class TestCLIAnalyticsBatch3:
 
     def test_analytics_peak_hours(self, cli_env):
         """Lines 159-171: peak-hours action."""
-        import argparse
 
         with patch("src.services.trend_service.TrendService") as mock_ts:
             from types import SimpleNamespace
@@ -787,7 +719,6 @@ class TestCLIAnalyticsBatch3:
 
     def test_analytics_calendar(self, cli_env):
         """Lines 173-194: calendar action."""
-        import argparse
 
         with patch(
             "src.services.content_calendar_service.ContentCalendarService"
@@ -829,7 +760,6 @@ class TestCLINotificationDryRunBatch3:
 
     def test_notification_dry_run_no_queries(self, cli_env):
         """Lines 50-70: dry-run with no queries."""
-        import argparse
 
         cli_env.get_notification_queries = AsyncMock(return_value=[])
 
@@ -849,7 +779,6 @@ class TestCLINotificationDryRunBatch3:
 
     def test_notification_dry_run_with_queries(self, cli_env):
         """Lines 71-85: dry-run with queries and matches."""
-        import argparse
 
         from src.models import SearchQuery
 
@@ -876,7 +805,6 @@ class TestCLINotificationDryRunBatch3:
 
     def test_notification_status_with_bot(self, cli_env):
         """Lines 31-38: status action with bot."""
-        import argparse
 
         from src.models import NotificationBot
 
@@ -914,7 +842,6 @@ class TestCLIPipelineBatch3:
 
     def test_pipeline_runs_with_status_filter(self, cli_env):
         """Lines 250-259: runs with status filter."""
-        import argparse
 
         from src.models import ContentPipeline, GenerationRun
 
@@ -946,7 +873,6 @@ class TestCLIPipelineBatch3:
 
     def test_pipeline_queue_with_pending_runs(self, cli_env):
         """Lines 293-302: queue with pending runs."""
-        import argparse
 
         from src.models import ContentPipeline, GenerationRun
 
@@ -977,7 +903,6 @@ class TestCLIPipelineBatch3:
 
     def test_pipeline_bulk_approve_missing_run(self, cli_env):
         """Lines 324-326: bulk-approve with missing run."""
-        import argparse
 
         cli_env.repos.generation_runs.get = AsyncMock(return_value=None)
         cli_env.repos.generation_runs.set_moderation_status = AsyncMock()
@@ -993,7 +918,6 @@ class TestCLIPipelineBatch3:
 
     def test_pipeline_bulk_reject_missing_run(self, cli_env):
         """Lines 335-337: bulk-reject with missing run."""
-        import argparse
 
         cli_env.repos.generation_runs.get = AsyncMock(return_value=None)
         cli_env.repos.generation_runs.set_moderation_status = AsyncMock()
@@ -1009,7 +933,6 @@ class TestCLIPipelineBatch3:
 
     def test_pipeline_publish_no_pipeline_id(self, cli_env):
         """Lines 347-349: publish run with no pipeline_id."""
-        import argparse
 
         from src.models import GenerationRun
 
@@ -1028,7 +951,6 @@ class TestCLIPipelineBatch3:
 
     def test_pipeline_publish_no_pipeline(self, cli_env):
         """Lines 352-354: publish run with missing pipeline."""
-        import argparse
 
         from src.models import GenerationRun
 

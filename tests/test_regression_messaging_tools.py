@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -23,18 +22,6 @@ def _make_mock_db():
     return db
 
 
-def _make_pool_with_clients(phones=None):
-    phones = phones or ["+1111"]
-    pool = MagicMock()
-    pool.clients = {p: MagicMock() for p in phones}
-    pool.get_native_client_by_phone = AsyncMock(return_value=None)
-    pool.get_available_client = AsyncMock(return_value=None)
-    pool.get_forum_topics = AsyncMock(return_value=[])
-    pool.invalidate_dialogs_cache = MagicMock()
-    pool.disconnect_all = AsyncMock()
-    pool._dialogs_cache = {}
-    pool._dialogs_cache_ttl_sec = 300
-    return pool
 
 
 def _get_messaging_handlers(mock_db, client_pool=None):
@@ -65,15 +52,6 @@ def _text(result) -> str:
     return str(result)
 
 
-def _make_args(**kwargs):
-    defaults = {
-        "config": "config.yaml",
-        "dialogs_action": "list",
-        "phone": None,
-        "yes": True,
-    }
-    defaults.update(kwargs)
-    return argparse.Namespace(**defaults)
 
 
 # ===========================================================================

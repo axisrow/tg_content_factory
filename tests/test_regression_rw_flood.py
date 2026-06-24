@@ -2,79 +2,25 @@
 
 from __future__ import annotations
 
-import argparse
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.database import Database
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 
-def _make_mock_db():
-    db = MagicMock(spec=Database)
-    db.repos = MagicMock()
-    db._db_path = ":memory:"
-    db._session_encryption_secret = None
-    return db
 
 
-def _make_pool_with_clients(phones=None):
-    phones = phones or ["+1111"]
-    pool = MagicMock()
-    pool.clients = {p: MagicMock() for p in phones}
-    pool.get_native_client_by_phone = AsyncMock(return_value=None)
-    pool.get_available_client = AsyncMock(return_value=None)
-    pool.get_forum_topics = AsyncMock(return_value=[])
-    pool.invalidate_dialogs_cache = MagicMock()
-    pool.disconnect_all = AsyncMock()
-    pool._dialogs_cache = {}
-    pool._dialogs_cache_ttl_sec = 300
-    return pool
 
 
-def _get_messaging_handlers(mock_db, client_pool=None):
-    """Build MCP tools and return messaging handlers keyed by name."""
-    get_setting = getattr(mock_db, "get_setting", None)
-    if isinstance(get_setting, AsyncMock) and get_setting.side_effect is None and isinstance(
-        get_setting.return_value, (AsyncMock, MagicMock)
-    ):
-        get_setting.return_value = None
-    captured_tools = []
-
-    with patch(
-        "src.agent.tools.create_sdk_mcp_server",
-        side_effect=lambda **kw: captured_tools.extend(kw.get("tools", [])),
-    ):
-        from src.agent.tools import make_mcp_server
-        make_mcp_server(mock_db, client_pool=client_pool)
-
-    return {t.name: t.handler for t in captured_tools if hasattr(t, "handler")}
 
 
-def _text(result) -> str:
-    """Extract text from tool result payload."""
-    if isinstance(result, dict):
-        return result["content"][0]["text"]
-    if hasattr(result, "content"):
-        return result.content[0].text if hasattr(result.content[0], "text") else str(result.content[0])
-    return str(result)
 
 
-def _make_args(**kwargs):
-    defaults = {
-        "config": "config.yaml",
-        "dialogs_action": "list",
-        "phone": None,
-        "yes": True,
-    }
-    defaults.update(kwargs)
-    return argparse.Namespace(**defaults)
 
 
 # ===========================================================================
