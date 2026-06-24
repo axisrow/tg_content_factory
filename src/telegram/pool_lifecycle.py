@@ -84,6 +84,8 @@ class ClientLifecycleMixin:
 
         def invalidate_dialogs_cache(self, phone: str | None = None) -> None: ...
 
+        def reset_dialogs_warm(self, phone: str) -> None: ...
+
         def clear_premium_flood(self, phone: str) -> None: ...
 
         async def _await_transient_flood(self, phone: str) -> None: ...
@@ -269,6 +271,10 @@ class ClientLifecycleMixin:
     async def add_client(self, phone: str, session_string: str) -> None:
         """Register a new account as connected and validate its stored session."""
         self._session_overrides[phone] = session_string
+        # Re-auth with a (possibly new) StringSession starts from an empty
+        # in-memory entity cache, so any prior warm flag is stale (#1043).
+        self.reset_dialogs_warm(phone)
+        self.invalidate_dialogs_cache(phone)
         account = Account(phone=phone, session_string=session_string, is_active=True)
         lease = await self._connect_account(account)
         await self._backend_router.release(lease)
@@ -283,6 +289,13 @@ class ClientLifecycleMixin:
             if not client.is_connected():
                 logger.info("Reconnecting client for %s", phone)
                 await client.connect()
+            # NB: no warm-flag reset here. A reconnect reuses the *same*
+            # session object, and the StringSession entity cache
+            # (``session._entities``, the fallback that resolves numeric
+            # PeerChannels) lives in that object and survives disconnect +
+            # connect. Re-warming would be a needless round-trip and a
+            # FloodWait risk (#1043). Long-lived drift is covered by the
+            # warm-flag TTL instead.
             return client.is_connected()
         except Exception:
             logger.exception("Failed to reconnect client for %s", phone)
@@ -307,6 +320,11 @@ class ClientLifecycleMixin:
             except asyncio.TimeoutError:
                 logger.warning("Timeout disconnecting %s during force reconnect", mask_phone(phone))
             await client.connect()
+            # NB: no warm-flag reset here either. force_reconnect (the #556
+            # MTProto-brick recovery) tears down and re-establishes the
+            # transport on the *same* session object, so the StringSession
+            # entity cache (``session._entities``) survives — numeric
+            # PeerChannel resolves keep working without a re-warm (#1043).
             if not await client.is_user_authorized():
                 logger.error("Force reconnect of %s: session no longer authorized", mask_phone(phone))
                 return False
@@ -342,7 +360,7 @@ class ClientLifecycleMixin:
             leases = list(self._active_leases.pop(phone, []))
         client = self.clients.pop(phone, None)
         self._in_use.discard(phone)
-        self._dialogs_fetched.discard(phone)
+        self.reset_dialogs_warm(phone)
         self.invalidate_dialogs_cache(phone)
         self.clear_premium_flood(phone)
         for lease in reversed(leases):
@@ -400,7 +418,7 @@ class ClientLifecycleMixin:
                 self.clients.pop(phone, None)
                 self._in_use.discard(phone)
                 self._active_leases.pop(phone, None)
-                self._dialogs_fetched.discard(phone)
+                self.reset_dialogs_warm(phone)
             except Exception:
                 logger.debug("Error disconnecting %s", phone, exc_info=True)
         # Allow Telethon internal tasks (_send_loop, _recv_loop) to finish
@@ -482,6 +500,14 @@ class ClientLifecycleMixin:
                 if not force_native:
                     # Store persistent session for future direct reuse.
                     # force_native sessions are short-lived and must not replace the pool session.
+                    #
+                    # This branch installs a *fresh* backend client (the cached
+                    # direct session was absent or its auto-reconnect failed
+                    # above): a new session object with an empty in-memory entity
+                    # cache. Drop the warm flag so the next numeric-PeerChannel
+                    # collection re-warms instead of skipping against the empty
+                    # cache (#1043) — same hazard as add_client's re-auth.
+                    self.reset_dialogs_warm(phone)
                     self.clients[phone] = TelegramTransportSession(
                         lease.session.raw_client,
                         disconnect_on_close=False,
