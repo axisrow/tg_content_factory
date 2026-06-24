@@ -1,3 +1,5 @@
+"""Репозиторий кэша диалогов Telegram по аккаунту (снимок для UI без обращения к TG)."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -12,6 +14,14 @@ if TYPE_CHECKING:
 
 
 class DialogCacheRepository:
+    """Кэш диалогов Telegram по аккаунту (`phone`).
+
+    Хранит снимок списка диалогов (id, название, username, тип, флаги
+    deactivate/is_own), чтобы web/CLI показывали диалоги без обращения к
+    Telegram. Записывается воркером целиком (`replace_dialogs` — атомарная
+    замена всех строк телефона), читается остальными слоями.
+    """
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -22,6 +32,7 @@ class DialogCacheRepository:
         self._database = database
 
     async def get_dialog(self, phone: str, dialog_id: int) -> dict | None:
+        """Один кэшированный диалог аккаунта по его id, либо None."""
         cur = await self._db.execute(
             """
             SELECT dialog_id, title, username, channel_type, deactivate, is_own
@@ -44,6 +55,7 @@ class DialogCacheRepository:
         }
 
     async def list_dialogs(self, phone: str) -> list[dict]:
+        """Все кэшированные диалоги аккаунта в порядке их сохранения."""
         cur = await self._db.execute(
             """
             SELECT dialog_id, title, username, channel_type, deactivate, is_own
@@ -67,6 +79,12 @@ class DialogCacheRepository:
         ]
 
     async def replace_dialogs(self, phone: str, dialogs: list[dict]) -> None:
+        """Атомарно заменить весь кэш диалогов аккаунта новым снимком.
+
+        Под транзакцией удаляет прежние строки телефона и вставляет переданные,
+        проставляя `cached_at`. Так кэш всегда консистентен — без частично
+        обновлённого состояния.
+        """
         assert self._database is not None, (
             "DialogCacheRepository.replace_dialogs requires a Database reference"
         )
@@ -97,9 +115,11 @@ class DialogCacheRepository:
                 )
 
     async def clear_dialogs(self, phone: str) -> None:
+        """Удалить кэш диалогов одного аккаунта."""
         await self._database.execute_write("DELETE FROM dialog_cache WHERE phone = ?", (phone,))
 
     async def has_dialogs(self, phone: str) -> bool:
+        """True, если для аккаунта есть хотя бы один кэшированный диалог."""
         cur = await self._db.execute(
             "SELECT 1 FROM dialog_cache WHERE phone = ? LIMIT 1",
             (phone,),
@@ -107,6 +127,7 @@ class DialogCacheRepository:
         return bool(await cur.fetchone())
 
     async def get_cached_at(self, phone: str) -> datetime | None:
+        """Время самого свежего кэшированного диалога аккаунта (для оценки устаревания)."""
         cur = await self._db.execute(
             "SELECT MAX(cached_at) AS cached_at FROM dialog_cache WHERE phone = ?",
             (phone,),

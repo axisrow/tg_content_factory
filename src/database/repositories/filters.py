@@ -1,3 +1,5 @@
+"""Репозиторий аггрегатных метрик каналов для фильтрации качества (ChannelAnalyzer)."""
+
 from __future__ import annotations
 
 import asyncio
@@ -105,6 +107,16 @@ if TYPE_CHECKING:
 
 
 class FilterRepository:
+    """Аггрегатные выборки для `ChannelAnalyzer`: метрики качества каналов.
+
+    Считает по сообщениям/статистике карты признаков (уникальность, доля
+    коротких сообщений, кросс-канальные дубли, доля кириллицы, подписчики),
+    которыми анализатор отсеивает спам/низкокачественные каналы. Тяжёлые карты
+    можно считать параллельно на отдельных read-only соединениях
+    (`fetch_maps_parallel`) — это безопасно только для файловой БД, не `:memory:`.
+    Кириллица определяется через SQLite UDF `has_cyrillic`, регистрируемый лениво.
+    """
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -125,6 +137,7 @@ class FilterRepository:
     async def fetch_channels_for_analysis(
         self, channel_id: int | None = None
     ) -> list[aiosqlite.Row]:
+        """Базовые поля каналов + счётчик сообщений (все или один по channel_id)."""
         sql = _SQL_CHANNELS
         params: tuple = ()
         if channel_id is not None:
@@ -137,6 +150,10 @@ class FilterRepository:
     async def fetch_uniqueness_map(
         self, channel_id: int | None = None
     ) -> dict[int, tuple[int, int]]:
+        """Карта `channel_id → (всего сообщений, уникальных по префиксу текста)`.
+
+        Низкая доля уникальных — признак канала-репостера/спама.
+        """
         sql = _SQL_UNIQUENESS
         params: tuple = ()
         if channel_id is not None:
@@ -148,6 +165,7 @@ class FilterRepository:
         return {row["channel_id"]: (row["total"], row["uniq"]) for row in rows}
 
     async def fetch_subscriber_map(self, channel_id: int | None = None) -> dict[int, int]:
+        """Карта `channel_id → последнее известное число подписчиков` (по свежей записи stats)."""
         sql = _SQL_SUBSCRIBER_BASE
         params: tuple = ()
         if channel_id is not None:
@@ -164,6 +182,10 @@ class FilterRepository:
     async def fetch_short_message_map(
         self, channel_id: int | None = None
     ) -> dict[int, tuple[int, int]]:
+        """Карта `channel_id → (всего сообщений, из них коротких ≤10 символов)`.
+
+        Высокая доля коротких сообщений — признак чата-шума, а не контент-канала.
+        """
         sql = _SQL_SHORT_MESSAGE
         params: tuple = ()
         if channel_id is not None:
@@ -195,6 +217,11 @@ class FilterRepository:
     async def fetch_cross_dupe_map(
         self, channel_id: int | None = None
     ) -> dict[int, tuple[int, int]]:
+        """Карта `channel_id → (уникальных префиксов, из них встречаются в других каналах)`.
+
+        Доля кросс-канальных дублей выявляет агрегаторы/сетки, перепечатывающие
+        чужой контент. Это самый тяжёлый запрос (self-join по префиксам).
+        """
         sql = _SQL_CROSS_DUPE
         params: tuple = ()
         if channel_id is not None:
@@ -206,6 +233,10 @@ class FilterRepository:
         return {row["channel_id"]: (row["uniq_total"], row["duped"] or 0) for row in rows}
 
     async def fetch_cyrillic_map(self, channel_id: int | None = None) -> dict[int, tuple[int, int]]:
+        """Карта `channel_id → (всего сообщений, из них с кириллицей)` через UDF `has_cyrillic`.
+
+        Низкая доля кириллицы отсеивает иноязычные каналы для русскоязычного сбора.
+        """
         await self._ensure_udf()
         sql = _SQL_CYRILLIC
         params: tuple = ()

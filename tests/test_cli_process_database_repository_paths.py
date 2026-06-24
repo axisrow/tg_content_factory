@@ -1577,6 +1577,28 @@ async def test_photo_loader_delete_auto_job(db):
 
 
 @pytest.mark.anyio
+async def test_photo_loader_delete_auto_job_with_ledger(db):
+    """delete_auto_job must drop the sent-files ledger before the parent job.
+
+    Regression (#1134 review): the ledger row in photo_auto_upload_files has a
+    FOREIGN KEY → photo_auto_upload_jobs(id) without ON DELETE CASCADE, and the
+    connection runs PRAGMA foreign_keys=ON. Deleting the parent job first raised
+    "FOREIGN KEY constraint failed", so any auto-job that had ever sent a file
+    could not be deleted. The child ledger must go first.
+    """
+    job = _make_auto_job()
+    job_id = await db.repos.photo_loader.create_auto_job(job)
+    # Mark a file sent → creates a ledger row that FK-references the job.
+    await db.repos.photo_loader.mark_auto_file_sent(job_id, "/tmp/photos/a.jpg")
+
+    await db.repos.photo_loader.delete_auto_job(job_id)
+
+    assert await db.repos.photo_loader.get_auto_job(job_id) is None
+    # Ledger is gone too — no orphaned rows survive the delete.
+    assert await db.repos.photo_loader.has_sent_auto_file(job_id, "/tmp/photos/a.jpg") is False
+
+
+@pytest.mark.anyio
 async def test_photo_loader_has_sent_auto_file(db):
     job = _make_auto_job()
     job_id = await db.repos.photo_loader.create_auto_job(job)

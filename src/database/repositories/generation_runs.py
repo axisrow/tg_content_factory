@@ -1,3 +1,12 @@
+"""Репозиторий запусков генерации контента (таблица ``generation_runs``).
+
+Доступ через `db.repos.generation_runs`. Хранит жизненный цикл одного запуска
+пайплайна: сгенерированный текст/картинку, статус выполнения (status) и
+отдельный статус модерации (moderation_status: pending → approved/rejected →
+published, #1036), A/B-варианты и оценку качества. Запись идёт через
+locked-хелперы Database (execute_write/transaction).
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -13,6 +22,8 @@ if TYPE_CHECKING:
 
 
 class GenerationRunsRepository:
+    """CRUD и переходы статусов запусков генерации (`generation_runs`)."""
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -50,6 +61,7 @@ class GenerationRunsRepository:
         )
 
     async def create_run(self, pipeline_id: int | None, prompt: str) -> int:
+        """Создать запуск в статусе ``pending`` для пайплайна и промпта; вернуть его id."""
         cur = await self._database.execute_write(
             ("INSERT INTO generation_runs (pipeline_id, status, prompt, created_at) "
              "VALUES (?, 'pending', ?, datetime('now'))"),
@@ -58,6 +70,7 @@ class GenerationRunsRepository:
         return cur.lastrowid or 0
 
     async def set_status(self, run_id: int, status: str, metadata: dict | None = None) -> None:
+        """Обновить статус выполнения запуска; при переданном ``metadata`` — заодно перезаписать JSON-метаданные."""
         if metadata is not None:
             await self._database.execute_write(
                 ("UPDATE generation_runs SET status = ?, metadata = ?, "
@@ -73,6 +86,7 @@ class GenerationRunsRepository:
     async def save_result(
         self, run_id: int, generated_text: str, metadata: dict | None = None
     ) -> None:
+        """Сохранить сгенерированный текст и метаданные, переводя запуск в статус ``completed``."""
         await self._database.execute_write(
             ("UPDATE generation_runs SET generated_text = ?, metadata = ?, status = 'completed', "
              "updated_at = datetime('now') WHERE id = ?"),
@@ -123,6 +137,7 @@ class GenerationRunsRepository:
             )
 
     async def set_image_url(self, run_id: int, image_url: str) -> None:
+        """Привязать к запуску URL/путь сгенерированной картинки."""
         await self._database.execute_write(
             "UPDATE generation_runs SET image_url = ?, updated_at = datetime('now') WHERE id = ?",
             (image_url, run_id),
@@ -199,6 +214,14 @@ class GenerationRunsRepository:
             )
 
     async def set_published_at(self, run_id: int) -> None:
+        """Отметить запуск опубликованным: ставит ``published_at`` и ``moderation_status='published'`` атомарно.
+
+        Единственный путь, проставляющий ``published_at`` синхронно со статусом
+        ``published`` — используйте его, а не ручной
+        ``set_moderation_status('published')`` (тот пишет произвольную строку
+        статуса и ``published_at`` не трогает), иначе получите published-запуск
+        без отметки времени.
+        """
         await self._database.execute_write(
             ("UPDATE generation_runs SET published_at = datetime('now'), "
              "moderation_status = 'published', updated_at = datetime('now') WHERE id = ?"),
@@ -219,6 +242,7 @@ class GenerationRunsRepository:
     async def set_quality_score(
         self, run_id: int, score: float, issues: list[str] | None = None
     ) -> None:
+        """Сохранить оценку качества запуска и (опционально) список выявленных проблем."""
         issues_json = safe_json_dumps(issues, ensure_ascii=False) if issues else None
         await self._database.execute_write(
             ("UPDATE generation_runs SET quality_score = ?, quality_issues = ?, "
@@ -227,12 +251,18 @@ class GenerationRunsRepository:
         )
 
     async def set_variants(self, run_id: int, variants: list[str]) -> None:
+        """Сохранить список A/B-вариантов текста запуска (issue #1068)."""
         await self._database.execute_write(
             "UPDATE generation_runs SET variants = ?, updated_at = datetime('now') WHERE id = ?",
             (safe_json_dumps(variants, ensure_ascii=False), run_id),
         )
 
     async def select_variant(self, run_id: int, variant_index: int, generated_text: str) -> None:
+        """Сделать выбранный A/B-вариант финальным текстом запуска (issue #1068).
+
+        Заодно обнуляет ``quality_score``/``quality_issues`` — они относились к
+        прежнему тексту и были бы устаревшими (см. комментарий ниже).
+        """
         # Selecting a variant changes generated_text, so any existing
         # quality_score/quality_issues belong to the PREVIOUS text and would be
         # stale — a low-quality selected variant could otherwise hide behind a
@@ -253,6 +283,11 @@ class GenerationRunsRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> list[GenerationRun]:
+        """Очередь модерации: запуски со статусом ``pending`` или ``approved``.
+
+        Это черновики и одобренные, но ещё не доставленные. Без ``pipeline_id`` —
+        по всем пайплайнам; страница задаётся ``limit``/``offset``, новые первыми.
+        """
         if pipeline_id is None:
             cur = await self._db.execute(
                 "SELECT * FROM generation_runs WHERE moderation_status IN ('pending', 'approved')"
@@ -276,6 +311,7 @@ class GenerationRunsRepository:
         return cur.rowcount or 0
 
     async def get(self, run_id: int) -> GenerationRun | None:
+        """Один запуск по id, либо ``None`` если такого нет."""
         cur = await self._db.execute("SELECT * FROM generation_runs WHERE id = ?", (run_id,))
         row = await cur.fetchone()
         if not row:
@@ -283,6 +319,7 @@ class GenerationRunsRepository:
         return self._to_generation_run(row)
 
     async def list_runs_for_calendar(self, days: int = 30) -> list[GenerationRun]:
+        """Запуски за последние ``days`` дней (для календаря контента), новые первыми."""
         cur = await self._db.execute(
             "SELECT * FROM generation_runs WHERE created_at >= date('now', ?) ORDER BY created_at DESC",
             (f"-{days} days",),
@@ -298,6 +335,8 @@ class GenerationRunsRepository:
         status: str | None = None,
         moderation_status: str | None = None,
     ) -> list[GenerationRun]:
+        """Запуски одного пайплайна, новые первыми; фильтры по ``status`` и
+        ``moderation_status`` опциональны, страница — ``limit``/``offset``."""
         where = "pipeline_id = ?"
         params: list[object] = [pipeline_id]
         if status:

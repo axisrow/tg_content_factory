@@ -1,3 +1,12 @@
+"""Репозиторий контент-пайплайнов и их связей источник/цель.
+
+Доступ через `db.repos.content_pipelines`. Хранит сам пайплайн
+(`content_pipelines` — промпт, модели, режим публикации, DAG `pipeline_json`,
+A/B-настройки) и две дочерние таблицы: `pipeline_sources` (каналы-источники,
+по channel_id) и `pipeline_targets` (диалоги-получатели публикации). Источники и
+цели всегда заменяются целиком в одной транзакции с самим пайплайном.
+"""
+
 from __future__ import annotations
 
 import json
@@ -23,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 
 class ContentPipelinesRepository:
+    """CRUD контент-пайплайнов вместе с их источниками и целями публикации."""
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -108,6 +119,7 @@ class ContentPipelinesRepository:
         source_channel_ids: list[int],
         targets: list[PipelineTarget],
     ) -> int:
+        """Создать пайплайн вместе с его источниками и целями (одной транзакцией); вернуть новый id."""
         assert self._database is not None, (
             "ContentPipelinesRepository.add requires a Database reference"
         )
@@ -144,6 +156,7 @@ class ContentPipelinesRepository:
             return pipeline_id
 
     async def get_all(self, active_only: bool = False) -> list[ContentPipeline]:
+        """Все пайплайны по возрастанию id; с ``active_only`` — только активные."""
         sql = "SELECT * FROM content_pipelines"
         params: tuple[object, ...] = ()
         if active_only:
@@ -153,6 +166,7 @@ class ContentPipelinesRepository:
         return [self._to_pipeline(row) for row in await cur.fetchall()]
 
     async def get_by_id(self, pipeline_id: int) -> ContentPipeline | None:
+        """Один пайплайн по id, либо ``None`` если такого нет."""
         cur = await self._db.execute(
             "SELECT * FROM content_pipelines WHERE id = ?",
             (pipeline_id,),
@@ -161,6 +175,7 @@ class ContentPipelinesRepository:
         return self._to_pipeline(row) if row else None
 
     async def update_generate_interval(self, pipeline_id: int, minutes: int) -> None:
+        """Изменить интервал автогенерации (в минутах) для пайплайна."""
         await self._database.execute_write(
             "UPDATE content_pipelines SET generate_interval_minutes = ? WHERE id = ?",
             (minutes, pipeline_id),
@@ -173,6 +188,11 @@ class ContentPipelinesRepository:
         source_channel_ids: list[int],
         targets: list[PipelineTarget],
     ) -> bool:
+        """Полностью обновить пайплайн и заменить его источники/цели (одной транзакцией).
+
+        Возвращает ``False``, если пайплайна с таким id нет (поля ``last_generated_id``
+        и ``refinement_steps`` тут не трогаются — для них есть отдельные сеттеры).
+        """
         assert self._database is not None, (
             "ContentPipelinesRepository.update requires a Database reference"
         )
@@ -218,12 +238,14 @@ class ContentPipelinesRepository:
         return True
 
     async def set_refinement_steps(self, pipeline_id: int, steps: list[dict]) -> None:
+        """Сохранить шаги доработки текста (список ``{name, prompt}``) для пайплайна как JSON."""
         await self._database.execute_write(
             "UPDATE content_pipelines SET refinement_steps = ? WHERE id = ?",
             (json.dumps(steps, ensure_ascii=False), pipeline_id),
         )
 
     async def set_pipeline_json(self, pipeline_id: int, graph: PipelineGraph | None) -> None:
+        """Сохранить (или очистить через ``None``) DAG-конфигурацию пайплайна (issue #343)."""
         value = graph.to_json() if graph else None
         await self._database.execute_write(
             "UPDATE content_pipelines SET pipeline_json = ? WHERE id = ?",
@@ -231,21 +253,25 @@ class ContentPipelinesRepository:
         )
 
     async def set_active(self, pipeline_id: int, active: bool) -> None:
+        """Включить/выключить пайплайн (неактивный не запускается планировщиком)."""
         await self._database.execute_write(
             "UPDATE content_pipelines SET is_active = ? WHERE id = ?",
             (int(active), pipeline_id),
         )
 
     async def set_last_generated_id(self, pipeline_id: int, value: int) -> None:
+        """Сдвинуть курсор последнего обработанного сообщения-источника (инкрементальная генерация)."""
         await self._database.execute_write(
             "UPDATE content_pipelines SET last_generated_id = ? WHERE id = ?",
             (value, pipeline_id),
         )
 
     async def delete(self, pipeline_id: int) -> None:
+        """Удалить пайплайн по id (источники/цели уходят каскадом по FK)."""
         await self._database.execute_write("DELETE FROM content_pipelines WHERE id = ?", (pipeline_id,))
 
     async def list_sources(self, pipeline_id: int) -> list[PipelineSource]:
+        """Каналы-источники пайплайна (`pipeline_sources`), по возрастанию id."""
         cur = await self._db.execute(
             "SELECT * FROM pipeline_sources WHERE pipeline_id = ? ORDER BY id",
             (pipeline_id,),
@@ -253,6 +279,7 @@ class ContentPipelinesRepository:
         return [self._to_source(row) for row in await cur.fetchall()]
 
     async def list_targets(self, pipeline_id: int) -> list[PipelineTarget]:
+        """Цели публикации пайплайна (`pipeline_targets`), по возрастанию id."""
         cur = await self._db.execute(
             "SELECT * FROM pipeline_targets WHERE pipeline_id = ? ORDER BY id",
             (pipeline_id,),

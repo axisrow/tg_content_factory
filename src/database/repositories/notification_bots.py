@@ -1,3 +1,5 @@
+"""Репозиторий персональных ботов уведомлений (один на пользователя Telegram)."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -12,6 +14,13 @@ if TYPE_CHECKING:
 
 
 class NotificationBotsRepository:
+    """Персональные боты для уведомлений, созданные через BotFather.
+
+    Один бот на пользователя Telegram (`tg_user_id` уникален): хранит токен и
+    идентификаторы бота, через который [`Notifier`][] шлёт оповещения о новых
+    совпадениях. Запись — upsert по `tg_user_id`.
+    """
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -22,6 +31,7 @@ class NotificationBotsRepository:
         self._database = database
 
     async def get_bot(self, tg_user_id: int) -> NotificationBot | None:
+        """Бот пользователя по его Telegram id, либо None."""
         cur = await self._db.execute(
             "SELECT * FROM notification_bots WHERE tg_user_id = ? LIMIT 1",
             (tg_user_id,),
@@ -32,6 +42,12 @@ class NotificationBotsRepository:
         return self._row_to_model(row)
 
     async def save_bot(self, bot: NotificationBot) -> int:
+        """Сохранить/обновить бота пользователя (upsert по `tg_user_id`).
+
+        Возвращает `cur.lastrowid` — надёжный id только на ветке вставки; при
+        конфликте-обновлении lastrowid остаётся от последней вставки в
+        соединении, для точного id читайте строку по `tg_user_id`.
+        """
         cur = await self._database.execute_write(
             """
             INSERT INTO notification_bots (tg_user_id, tg_username, bot_id, bot_username, bot_token)
@@ -47,11 +63,13 @@ class NotificationBotsRepository:
         return cur.lastrowid or 0
 
     async def count(self) -> int:
+        """Число зарегистрированных ботов уведомлений."""
         cur = await self._db.execute("SELECT COUNT(*) FROM notification_bots")
         row = await cur.fetchone()
         return row[0] if row else 0
 
     async def delete_bot(self, tg_user_id: int) -> None:
+        """Удалить бота пользователя по его Telegram id."""
         await self._database.execute_write(
             "DELETE FROM notification_bots WHERE tg_user_id = ?",
             (tg_user_id,),

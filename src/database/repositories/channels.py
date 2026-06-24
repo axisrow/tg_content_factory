@@ -1,3 +1,15 @@
+"""Репозиторий отслеживаемых каналов и их тегов (таблицы ``channels``/``tags``).
+
+Доступ через `db.repos.channels`. Хранит метаданные канала, флаги отслеживания
+(`is_active`), фильтрации (`is_filtered`/`filter_flags`) и карантина на ревью
+(`needs_review`), а также курсор инкрементального сбора (`last_collected_id`).
+
+Конвенция ключей (CLAUDE.md): сторонние таблицы соединяются по Telegram
+``channel_id``, а DB-первичный ключ ``id`` (он же ``pk``) используется только в
+адресных операциях над самой строкой канала (`*_by_pk`, set/delete). Параметр с
+именем ``pk`` — это ``channels.id``, ``channel_id`` — Telegram-идентификатор.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -12,6 +24,8 @@ if TYPE_CHECKING:
 
 
 class ChannelsRepository:
+    """CRUD каналов: метаданные, флаги отслеживания/фильтрации/ревью и теги."""
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -22,6 +36,17 @@ class ChannelsRepository:
         self._database = database
 
     async def add_channel(self, channel: Channel) -> int:
+        """Добавить канал или обновить существующий по Telegram ``channel_id`` (UPSERT); вернуть pk.
+
+        При конфликте обновляет метаданные, но сохраняет уже накопленные
+        ``about``/``linked_chat_id``/``created_at`` (COALESCE — не затирает их
+        значениями NULL из частичного апдейта).
+
+        Возвращает `cur.lastrowid`: надёжный pk только на ветке вставки; при
+        конфликте-обновлении lastrowid остаётся от последней вставки в
+        соединении — для гарантированного pk существующего канала читайте его по
+        ``channel_id`` (например `get_channel_by_channel_id`).
+        """
         cur = await self._database.execute_write(
             """INSERT INTO channels (channel_id, title, username, channel_type, is_active,
                                      about, linked_chat_id, has_comments, created_at)
@@ -90,6 +115,8 @@ class ChannelsRepository:
     async def get_channels(
         self, active_only: bool = False, include_filtered: bool = True
     ) -> list[Channel]:
+        """Каналы по возрастанию pk; ``active_only`` — только активные,
+        ``include_filtered=False`` скрывает отфильтрованные."""
         conditions = []
         if active_only:
             conditions.append("is_active = 1")
@@ -104,6 +131,7 @@ class ChannelsRepository:
         return [self._map_channel(r) for r in rows]
 
     async def get_channel_by_pk(self, pk: int) -> Channel | None:
+        """Канал по DB-первичному ключу (``channels.id``), либо ``None``."""
         cur = await self._db.execute("SELECT * FROM channels WHERE id = ?", (pk,))
         row = await cur.fetchone()
         if not row:
@@ -111,6 +139,7 @@ class ChannelsRepository:
         return self._map_channel(row)
 
     async def get_channel_by_channel_id(self, channel_id: int) -> Channel | None:
+        """Канал по Telegram ``channel_id``, либо ``None``."""
         cur = await self._db.execute(
             "SELECT * FROM channels WHERE channel_id = ?",
             (channel_id,),
@@ -123,6 +152,10 @@ class ChannelsRepository:
     async def get_channels_with_counts(
         self, active_only: bool = False, include_filtered: bool = True
     ) -> list[Channel]:
+        """Каналы вместе с числом сообщений (`message_count`); фильтры как у :meth:`get_channels`.
+
+        JOIN агрегата по ``channel_id`` (не по pk) — см. конвенцию ключей в docstring модуля.
+        """
         sql = """
             SELECT c.*, COALESCE(cnt.total, 0) AS message_count
             FROM channels c
@@ -145,6 +178,7 @@ class ChannelsRepository:
     async def count_channels(
         self, active_only: bool = False, include_filtered: bool = True
     ) -> int:
+        """Число каналов под теми же фильтрами, что и :meth:`get_channels`."""
         conditions = []
         if active_only:
             conditions.append("is_active = 1")
@@ -158,6 +192,7 @@ class ChannelsRepository:
         return row[0] if row else 0
 
     async def update_channel_last_id(self, channel_id: int, last_id: int) -> None:
+        """Продвинуть курсор инкрементального сбора (`last_collected_id`) — только вперёд (монотонно)."""
         await self._database.execute_write(
             """
             UPDATE channels
@@ -171,6 +206,7 @@ class ChannelsRepository:
         )
 
     async def set_channel_active(self, pk: int, active: bool) -> None:
+        """Включить/выключить отслеживание канала (неактивный не собирается)."""
         await self._database.execute_write("UPDATE channels SET is_active = ? WHERE id = ?", (int(active), pk))
 
     async def set_channel_review(self, pk: int, reason: str) -> None:
@@ -196,6 +232,7 @@ class ChannelsRepository:
         return [self._map_channel(row) for row in rows]
 
     async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
+        """Ручная (раз)фильтрация канала: ставит/снимает ``is_filtered`` с флагом ``filter_flags='manual'``."""
         assert self._database is not None, (
             "ChannelsRepository.set_channel_filtered requires a Database reference"
         )
@@ -213,6 +250,12 @@ class ChannelsRepository:
     async def set_filtered_bulk(
         self, updates: list[tuple[int, str]], *, commit: bool = True
     ) -> int:
+        """Массово пометить каналы отфильтрованными по ``(channel_id, flags_csv)``; вернуть число изменённых строк.
+
+        С ``commit=True`` владеет транзакцией сам (#569); с ``commit=False`` пишет
+        на write-соединение внутри уже открытой транзакции вызывающего — см.
+        комментарий в теле о write- против read-пула (#760).
+        """
         if not updates:
             return 0
         # When commit=False, the caller already holds a Database.transaction()
@@ -251,6 +294,7 @@ class ChannelsRepository:
         return updated_rows
 
     async def reset_all_filters(self, *, commit: bool = True) -> int:
+        """Снять фильтрацию со всех каналов; вернуть число снятых. ``commit`` — как в :meth:`set_filtered_bulk`."""
         if commit:
             assert self._database is not None, (
                 "ChannelsRepository.reset_all_filters requires a Database reference "
@@ -268,6 +312,7 @@ class ChannelsRepository:
         return rowcount if rowcount > 0 else 0
 
     async def reset_filters_for_pks(self, pks: list[int], *, commit: bool = True) -> int:
+        """Снять фильтрацию только с указанных pk; вернуть число снятых. ``commit`` как в :meth:`set_filtered_bulk`."""
         if not pks:
             return 0
         placeholders = ",".join("?" * len(pks))
@@ -290,6 +335,7 @@ class ChannelsRepository:
         return rowcount if rowcount > 0 else 0
 
     async def set_channel_type(self, channel_id: int, channel_type: str) -> None:
+        """Обновить тип канала (channel/supergroup/group/…) по Telegram ``channel_id``."""
         await self._database.execute_write(
             "UPDATE channels SET channel_type=? WHERE channel_id=?",
             (channel_type, channel_id),
@@ -298,6 +344,7 @@ class ChannelsRepository:
     async def update_channel_meta(
         self, channel_id: int, *, username: str | None, title: str | None
     ) -> None:
+        """Обновить username и title канала (после переименования/смены @username)."""
         await self._database.execute_write(
             "UPDATE channels SET username = ?, title = ? WHERE channel_id = ?",
             (username, title, channel_id),
@@ -306,6 +353,7 @@ class ChannelsRepository:
     async def update_channel_full_meta(
         self, channel_id: int, *, about: str | None, linked_chat_id: int | None, has_comments: bool
     ) -> None:
+        """Обновить расширенные метаданные канала: описание, привязанный чат и наличие комментариев."""
         await self._database.execute_write(
             "UPDATE channels SET about = ?, linked_chat_id = ?, has_comments = ? WHERE channel_id = ?",
             (about, linked_chat_id, int(has_comments), channel_id),
@@ -338,6 +386,7 @@ class ChannelsRepository:
         )
 
     async def get_forum_topics(self, channel_id: int) -> list[dict]:
+        """Темы форум-супергруппы как ``[{"id", "title"}]``, по возрастанию topic_id."""
         cur = await self._db.execute(
             "SELECT topic_id, title FROM forum_topics WHERE channel_id = ? ORDER BY topic_id",
             (channel_id,),
@@ -346,6 +395,7 @@ class ChannelsRepository:
         return [{"id": row["topic_id"], "title": row["title"]} for row in rows]
 
     async def upsert_forum_topics(self, channel_id: int, topics: list[dict]) -> None:
+        """Полностью заменить список тем форума канала на ``topics`` (delete-then-insert в одной транзакции)."""
         assert self._database is not None, (
             "ChannelsRepository.upsert_forum_topics requires a Database reference"
         )
@@ -359,6 +409,14 @@ class ChannelsRepository:
                 )
 
     async def delete_channel(self, pk: int) -> None:
+        """Жёстко удалить канал и все его сайдкар-данные одной атомарной транзакцией (#569/#1039).
+
+        Чистит сообщения, оба стора эмбеддингов, статистику, темы и леджеры
+        (reactions каскадом, rename/rating/notified/action_log явно), чтобы не
+        осталось сирот, указывающих на исчезнувший канал. Поднимает
+        ``IntegrityError``, если на канал ссылается ``pipeline_sources``
+        (RESTRICT FK) — тогда удаление откатывается целиком.
+        """
         # Atomic delete via the connection-wide write lock + BEGIN
         # IMMEDIATE (issue #569). The only RESTRICT FK on `channels` is
         # `pipeline_sources.channel_id` (src/database/schema.py:326);
@@ -443,19 +501,23 @@ class ChannelsRepository:
     # ── Tag helpers ──────────────────────────────────────────────────────────
 
     async def list_all_tags(self) -> list[str]:
+        """Все существующие имена тегов, отсортированные по алфавиту."""
         cur = await self._db.execute("SELECT name FROM tags ORDER BY name")
         return [row["name"] for row in await cur.fetchall()]
 
     async def create_tag(self, name: str) -> None:
+        """Создать тег по имени (пустое игнорируется, дубликат — no-op через INSERT OR IGNORE)."""
         name = name.strip()
         if not name:
             return
         await self._database.execute_write("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
 
     async def delete_tag(self, name: str) -> None:
+        """Удалить тег по имени (связи каналов с ним уходят каскадом по FK)."""
         await self._database.execute_write("DELETE FROM tags WHERE name = ?", (name,))
 
     async def get_channel_tags(self, channel_pk: int) -> list[str]:
+        """Имена тегов, присвоенных каналу (по его pk), по алфавиту."""
         cur = await self._db.execute(
             """SELECT t.name FROM tags t
                JOIN channel_tags ct ON ct.tag_id = t.id
@@ -466,6 +528,7 @@ class ChannelsRepository:
         return [row["name"] for row in await cur.fetchall()]
 
     async def set_channel_tags(self, channel_pk: int, tag_names: list[str]) -> None:
+        """Полностью заменить набор тегов канала на ``tag_names`` (недостающие теги создаются), одной транзакцией."""
         assert self._database is not None, (
             "ChannelsRepository.set_channel_tags requires a Database reference"
         )
@@ -481,6 +544,7 @@ class ChannelsRepository:
                 )
 
     async def get_channels_by_tag(self, tag: str) -> list[Channel]:
+        """Каналы, помеченные данным тегом, по возрастанию pk."""
         cur = await self._db.execute(
             """SELECT c.* FROM channels c
                JOIN channel_tags ct ON ct.channel_pk = c.id
