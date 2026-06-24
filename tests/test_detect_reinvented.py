@@ -266,6 +266,19 @@ def test_split_on_other_sep_not_flagged() -> None:
     assert "manual-email-parse" not in _kinds(src)
 
 
+def test_url_split_intentionally_not_flagged() -> None:
+    """Регресс (Codex #1110): разбор URL через split('/')/'?'/'#' НЕ ловится.
+
+    Эти разделители слишком частые вне URL — эвристика на них была бы сплошным
+    false-positive. Решение намеренное; детектор не заявляет URL-покрытие.
+    """
+    src = """
+        def path_of(url):
+            return url.split("/")[2], url.split("?")[0], url.split("#")[0]
+    """
+    assert _kinds(src) == set(), "URL-split не должен давать никаких находок"
+
+
 # --------------------------------------------------------------------------- #
 # Эвристика: ручная добивка base64-паддинга
 # --------------------------------------------------------------------------- #
@@ -292,6 +305,20 @@ def test_string_multiply_unrelated_not_flagged() -> None:
     src = """
         def rule(width):
             return "-" * width
+    """
+    assert "manual-base64-padding" not in _kinds(src)
+
+
+def test_equals_multiply_without_b64_not_flagged() -> None:
+    """Регресс (ревью #1110): `print('=' * 80)` без b64-вызова рядом — НЕ паддинг.
+
+    Без b64-контекста `'=' * n` — обычный разделитель; флагить его = low-шум.
+    """
+    src = """
+        def banner():
+            print("=" * 80)
+            print("REPORT")
+            print("=" * 80)
     """
     assert "manual-base64-padding" not in _kinds(src)
 
@@ -332,33 +359,49 @@ def test_human_format_has_all_fields() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def _finding(file: str, line: int, kind: str = "manual-counter"):  # type: ignore[no-untyped-def]
-    return Finding(file=file, line=line, kind=kind, what="w", replacement="r", confidence="med")
+def _finding(file: str, line: int, kind: str = "manual-counter", what: str = "w"):  # type: ignore[no-untyped-def]
+    return Finding(file=file, line=line, kind=kind, what=what, replacement="r", confidence="med")
 
 
 def test_no_baseline_means_all_new() -> None:
     """Без baseline (None) все находки считаются новыми."""
-    findings = [_finding("a.py", 1), _finding("b.py", 2)]
+    findings = [_finding("a.py", 1, what="x"), _finding("b.py", 2, what="y")]
     new = detect_reinvented.new_findings(findings, None)
     assert len(new) == 2
 
 
 def test_new_findings_diffs_against_baseline() -> None:
-    """В baseline зафиксирован один ключ; новой считается только отсутствующая находка."""
-    known = _finding("a.py", 1)
-    fresh = _finding("b.py", 2)
-    baseline_keys = {known.key()}
-    new = detect_reinvented.new_findings([known, fresh], baseline_keys)
-    assert [f.key() for f in new] == [fresh.key()]
+    """В baseline зафиксирован один identity; новой считается только отсутствующая находка."""
+    known = _finding("a.py", 1, what="known")
+    fresh = _finding("b.py", 2, what="fresh")
+    baseline_ids = {known.identity()}
+    new = detect_reinvented.new_findings([known, fresh], baseline_ids)
+    assert [f.identity() for f in new] == [fresh.identity()]
+
+
+def test_new_findings_stable_across_line_shift() -> None:
+    """Регресс (Codex #1110): сдвиг строки НЕ делает неизменную находку «новой».
+
+    Baseline зафиксирован по identity (file/kind/what). Та же находка, всплывшая
+    на другой строке после вставки кода выше, не считается новым велосипедом —
+    иначе --fail-on-new шумел бы после любого рефакторинга.
+    """
+    original = _finding("a.py", line=10, what="самописный счётчик в f()")
+    shifted = _finding("a.py", line=42, what="самописный счётчик в f()")  # та же находка, +строки выше
+    baseline_ids = {original.identity()}
+    assert detect_reinvented.new_findings([shifted], baseline_ids) == []
 
 
 def test_baseline_roundtrip(tmp_path: Path) -> None:
-    """write_baseline → load_baseline восстанавливает множество ключей находок."""
-    findings = [_finding("a.py", 1, "manual-counter"), _finding("b.py", 9, "handrolled-retry-loop")]
+    """write_baseline → load_baseline восстанавливает множество identity-отпечатков."""
+    findings = [
+        _finding("a.py", 1, "manual-counter", what="счётчик в a()"),
+        _finding("b.py", 9, "handrolled-retry-loop", what="retry в b()"),
+    ]
     snapshot = tmp_path / "baseline.json"
     detect_reinvented.write_baseline(snapshot, findings)
-    keys = detect_reinvented.load_baseline(snapshot)
-    assert keys == {f.key() for f in findings}
+    ids = detect_reinvented.load_baseline(snapshot)
+    assert ids == {f.identity() for f in findings}
 
 
 def test_load_baseline_missing_returns_none(tmp_path: Path) -> None:
