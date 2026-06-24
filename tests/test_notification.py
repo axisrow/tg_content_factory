@@ -199,6 +199,55 @@ async def test_create_bot_token_miss_warns_about_orphan(caplog):
     assert "mybot_orphan_bot" in combined
 
 
+async def test_create_bot_token_miss_redacts_token_from_logs_and_error(caplog):
+    """RED→GREEN (#1041 review): orphan branch must not LEAK a token.
+
+    The orphan branch fires exactly when the token regex drifts — which means a
+    valid token may still be present in the reply (e.g. BotFather changed the
+    delimiter). Logging/raising the raw response would then write the bot
+    credential to logs. The response must be redacted before it is logged or
+    embedded in the raised error.
+    """
+    import logging
+
+    # A real-shaped token but with a SPACE delimiter, so _TOKEN_RE (which wants
+    # a colon) misses it — the exact format-drift the orphan branch handles.
+    leaked = "123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
+    mock_conv = _make_conv(
+        MagicMock(text="Alright, send me the name."),
+        MagicMock(text="Good. Now choose a username."),
+        MagicMock(text=f"Here is your bot! Token: {leaked}"),
+    )
+    mock_client = MagicMock()
+    mock_client.conversation.return_value = mock_conv
+
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(RuntimeError) as exc_info:
+            await botfather.create_bot(mock_client, "MyBot", "mybot_leak_bot")
+
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    message = str(exc_info.value)
+    # The token-like substring must NOT appear in either surface.
+    assert leaked not in logged
+    assert leaked not in message
+    assert "<redacted-token>" in logged
+    assert "<redacted-token>" in message
+
+
+def test_redact_tokens_scrubs_token_variants():
+    """_redact_tokens scrubs colon/space/dash-delimited token-like runs (#1041)."""
+    assert "<redacted-token>" == botfather._redact_tokens(
+        "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
+    )
+    assert "<redacted-token>" == botfather._redact_tokens(
+        "123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi"
+    )
+    # Plain prose without a token run is left untouched.
+    assert botfather._redact_tokens("Sorry, that username is taken.") == (
+        "Sorry, that username is taken."
+    )
+
+
 def test_is_error_does_not_false_positive_on_token_reply():
     """A successful token reply must not be misread as an error (#1041).
 
