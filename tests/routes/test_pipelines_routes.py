@@ -395,6 +395,42 @@ async def test_generate_stream_pipeline_not_found(client):
 
 
 @pytest.mark.anyio
+async def test_generate_stream_scope_error_fails_closed(client):
+    """Fail-closed (#1077): a source-scope resolution failure must abort the run
+    with a clean error redirect — NOT a 500 and NOT a stream that silently runs
+    unscoped (cross-channel) retrieval. A transient source-lookup blip must never
+    widen a single-source pipeline to all channels."""
+    from unittest.mock import patch
+
+    from src.services.pipeline_service import PipelineScopeError
+
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    mock_provider_instance = MagicMock()
+    mock_provider_instance.has_providers = MagicMock(return_value=True)
+    mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
+    app = client._transport.app  # type: ignore
+    app.state.llm_provider_service = mock_provider_instance
+    db = app.state.db
+
+    async def boom(_pipeline):
+        raise PipelineScopeError("source lookup failed")
+
+    with patch(
+        "src.services.pipeline_service.PipelineService.get_retrieval_scope",
+        side_effect=boom,
+    ):
+        resp = await client.get("/pipelines/1/generate-stream", follow_redirects=False)
+
+    # Clean fail-closed redirect, not a 200 stream and not a 500.
+    assert resp.status_code == 303
+    assert "error=" in resp.headers["location"]
+    # No run should have been created — the abort happens before persistence.
+    runs = await db.repos.generation_runs.list_by_pipeline(1)
+    assert runs == []
+
+
+@pytest.mark.anyio
 async def test_generate_pipeline_success(client):
     """Test non-streaming generation success."""
     from unittest.mock import patch

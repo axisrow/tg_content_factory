@@ -1162,6 +1162,43 @@ async def test_add_edge_no_graph(svc, pipeline_id):
 
 
 @pytest.mark.anyio
+async def test_add_edge_rejecting_back_edge_that_closes_cycle(svc, graph_pipeline_id):
+    """#1077 (fail-closed, defence in depth): the fixture graph is src->fetch->gen.
+    Adding gen->src would close a cycle (src reachable from gen), so add_edge must
+    reject it with PipelineValidationError and NOT persist the edge."""
+    from src.services.pipeline_service import PipelineValidationError
+
+    with pytest.raises(PipelineValidationError):
+        await svc.add_edge(graph_pipeline_id, "gen", "src")
+    # The graph must be unchanged: no gen->src edge was written.
+    graph = await svc.get_graph(graph_pipeline_id)
+    assert not any(e.from_node == "gen" and e.to_node == "src" for e in graph.edges)
+    assert len(graph.edges) == 2  # only the original src->fetch, fetch->gen
+
+
+@pytest.mark.anyio
+async def test_add_edge_rejects_self_loop(svc, graph_pipeline_id):
+    """A self-loop (node -> itself) is the minimal cycle and is rejected too."""
+    from src.services.pipeline_service import PipelineValidationError
+
+    with pytest.raises(PipelineValidationError):
+        await svc.add_edge(graph_pipeline_id, "gen", "gen")
+    graph = await svc.get_graph(graph_pipeline_id)
+    assert not any(e.from_node == "gen" and e.to_node == "gen" for e in graph.edges)
+
+
+@pytest.mark.anyio
+async def test_add_edge_allows_forward_edge_no_cycle(svc, graph_pipeline_id):
+    """Guard: a forward edge that does NOT close a cycle (src->gen, a shortcut
+    across the existing chain) must still be accepted — the cycle check must not
+    reject legitimate DAG edges."""
+    ok = await svc.add_edge(graph_pipeline_id, "src", "gen")
+    assert ok is True
+    graph = await svc.get_graph(graph_pipeline_id)
+    assert any(e.from_node == "src" and e.to_node == "gen" for e in graph.edges)
+
+
+@pytest.mark.anyio
 async def test_remove_edge(svc, graph_pipeline_id):
     ok = await svc.remove_edge(graph_pipeline_id, "src", "fetch")
     assert ok is True
@@ -1176,11 +1213,15 @@ async def test_remove_edge_not_found(svc, graph_pipeline_id):
 
 
 # ---------------------------------------------------------------------------
-# resolve_retrieval_scope — channel scoping graceful fallback (#1037, epic #1024).
+# resolve_retrieval_scope — channel scoping fail-closed (#1077, epic #1025).
 #
 # get_retrieval_scope's happy paths (single / multi source) are covered above;
-# the issue calls out the *error* path — a failing source lookup must degrade to
-# an unscoped retrieval, never crash the pipeline run.
+# the *error* path is the security-relevant one. A channel_id of None means
+# UNSCOPED retrieval across ALL channels, so a failed source lookup must NOT
+# silently fall back to None (which would widen a single-source pipeline into a
+# cross-channel search — a trust-boundary breach). #1077 changes the old
+# swallow-and-widen behaviour to a typed PipelineScopeError. The legitimate
+# unscoped paths (no lister / zero / multiple sources) still return None.
 # ---------------------------------------------------------------------------
 
 
@@ -1196,27 +1237,48 @@ async def test_resolve_scope_no_lister_returns_unscoped():
 
 
 @pytest.mark.anyio
-async def test_resolve_scope_source_lookup_error_falls_back_gracefully():
-    """A scoping error (source lister raises) is swallowed: retrieval continues
-    unscoped instead of propagating the exception into the run — this pins the
-    *current* graceful-fallback contract that issue #1037 asks to cover.
+async def test_resolve_scope_source_lookup_error_fails_closed():
+    """A scoping error (source lister raises) must FAIL CLOSED: #1077 changes the
+    old swallow-and-widen contract to a typed PipelineScopeError.
 
-    NOTE (design fork, raised on #1037 from cycle-review/Codex): `channel_id is
-    None` means UNSCOPED retrieval, so this fallback widens a single-source
-    pipeline to a cross-channel search on a transient lookup failure. Whether
-    that should instead fail closed (block/empty scope) is a content-isolation
-    decision for the owner and a behaviour change beyond this test-only PR. This
-    test documents today's behaviour; it does not endorse it as safe."""
-    from src.services.pipeline_service import resolve_retrieval_scope
+    SECURITY (content isolation, #1077): `channel_id is None` means UNSCOPED
+    retrieval across ALL channels. The old code swallowed a transient source
+    lookup failure and returned channel_id=None, silently widening a
+    single-source pipeline into a cross-channel search — content could be
+    generated/published from channels outside the configured sources (a
+    trust-boundary breach). Fail-closed means the pipeline run aborts instead
+    of leaking: no scope is ever widened by a failed lookup."""
+    from src.services.pipeline_service import PipelineScopeError, resolve_retrieval_scope
 
     pipeline = ContentPipeline(id=7, name="Boom", prompt_template="t")
 
     async def exploding_lister(_pid):
         raise RuntimeError("DB unavailable")
 
-    scope = await resolve_retrieval_scope(pipeline, list_sources=exploding_lister)
-    assert scope.query == "Boom"
-    assert scope.channel_id is None  # graceful fallback, no raise
+    with pytest.raises(PipelineScopeError):
+        await resolve_retrieval_scope(pipeline, list_sources=exploding_lister)
+
+
+@pytest.mark.anyio
+async def test_resolve_scope_error_does_not_widen_to_unscoped():
+    """Mutation-guard for the fail-closed fix: prove the failed-lookup path never
+    yields an unscoped (channel_id=None) result. If the fix regresses to
+    swallowing the error, this test sees a returned scope instead of the raise."""
+    from src.services.pipeline_service import PipelineScopeError, resolve_retrieval_scope
+
+    pipeline = ContentPipeline(id=8, name="Leak", prompt_template="t")
+
+    async def exploding_lister(_pid):
+        raise RuntimeError("transient DB blip")
+
+    returned_scope = None
+    try:
+        returned_scope = await resolve_retrieval_scope(pipeline, list_sources=exploding_lister)
+    except PipelineScopeError:
+        pass
+    # The ONLY acceptable outcome is the raise above; a returned scope (of any
+    # channel_id, especially None) means the leak path is back.
+    assert returned_scope is None
 
 
 @pytest.mark.anyio

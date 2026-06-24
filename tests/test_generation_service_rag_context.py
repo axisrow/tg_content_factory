@@ -5,13 +5,16 @@ Tier-2 bug-hunt, retrieval side:
     duplicate citation entries (bug, fixed here);
   * null ``Message`` fields (``channel_title=None``/``channel_username=None``)
     must degrade gracefully — regression guard, proven by mutation;
-  * ``resolve_retrieval_scope`` must fail closed: a scope lookup error and a
-    multi-source pipeline must both leave ``channel_id=None`` so retrieval never
-    leaks across channels — regression guards (cf. #1037/#1077 fail-closed).
+  * ``resolve_retrieval_scope`` must fail closed (#1077): a scope lookup error
+    raises ``PipelineScopeError`` (never silently widens to all channels), and a
+    multi-source pipeline legitimately leaves ``channel_id=None`` — regression
+    guards (cf. #1037/#1077 fail-closed).
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
+
+import pytest
 
 from src.models import (
     ContentPipeline,
@@ -169,16 +172,18 @@ class _Source:
         self.channel_id = channel_id
 
 
-async def test_scope_lookup_error_falls_back_without_channel():
-    """A failing list_sources must not raise — scope degrades to channel_id=None."""
+async def test_scope_lookup_error_fails_closed():
+    """A failing list_sources must FAIL CLOSED with PipelineScopeError — never
+    degrade to channel_id=None (which is unscoped retrieval across ALL channels,
+    a content-isolation breach). #1077 changes the old swallow-and-widen
+    behaviour this test previously documented."""
+    from src.services.pipeline_service import PipelineScopeError
 
     async def failing_list_sources(pipeline_id: int):
         raise RuntimeError("DB scope lookup failed")
 
-    scope = await resolve_retrieval_scope(_pipeline(), failing_list_sources)
-
-    assert scope.query == "MyPipe"
-    assert scope.channel_id is None
+    with pytest.raises(PipelineScopeError):
+        await resolve_retrieval_scope(_pipeline(), failing_list_sources)
 
 
 async def test_scope_single_source_sets_channel():
