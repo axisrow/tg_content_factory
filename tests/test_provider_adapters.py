@@ -412,6 +412,80 @@ async def test_generic_http_adapter_error(monkeypatch):
     assert "502" in str(exc_info.value)
 
 
+# === 200-with-unexpected-content-type guard (issue #1034) ===
+#
+# A provider can answer 200 OK but with a non-JSON body (an HTML error page, an
+# SSE stream, a captcha). ``resp.json()`` then raises ``aiohttp.ContentTypeError``,
+# which used to escape the adapter raw — leaking aiohttp internals to callers and
+# carrying no provider context. The adapter must wrap it in a RuntimeError that
+# names the unexpected content-type and includes a body preview, matching how the
+# non-200 path already surfaces ``RuntimeError(f"Provider error {status}: ...")``.
+
+
+class _NonJSONResp:
+    """200 OK whose ``.json()`` raises ContentTypeError (non-JSON body)."""
+
+    def __init__(self, body: str, content_type: str = "text/html"):
+        self.status = 200
+        self.content_type = content_type
+        self._body = body
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def text(self):
+        return self._body
+
+    async def json(self):
+        from multidict import CIMultiDict, CIMultiDictProxy
+        from yarl import URL
+
+        request_info = aiohttp.RequestInfo(
+            url=URL("https://api.example.com/generate"),
+            method="POST",
+            headers=CIMultiDictProxy(CIMultiDict()),
+            real_url=URL("https://api.example.com/generate"),
+        )
+        raise aiohttp.ContentTypeError(
+            request_info=request_info,
+            history=(),
+            message=f"Attempt to decode JSON with unexpected mimetype: {self.content_type}",
+        )
+
+
+@pytest.mark.anyio
+async def test_generic_http_adapter_200_non_json_content_type(monkeypatch):
+    """200 OK with a non-JSON body surfaces a RuntimeError, not a raw ContentTypeError."""
+    resp = _NonJSONResp("<html><body>error page</body></html>", content_type="text/html")
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_generic_http_adapter("https://api.example.com/generate")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await adapter("prompt")
+
+    # Must NOT be the raw aiohttp error; must carry provider context.
+    assert not isinstance(exc_info.value, aiohttp.ContentTypeError)
+    msg = str(exc_info.value)
+    assert "text/html" in msg, "the unexpected content-type should be reported"
+
+
+@pytest.mark.anyio
+async def test_generic_http_adapter_200_sse_content_type(monkeypatch):
+    """An SSE 200 body (text/event-stream) is also wrapped cleanly."""
+    resp = _NonJSONResp("data: chunk\n\n", content_type="text/event-stream")
+    monkeypatch.setattr("aiohttp.ClientSession", fake_client_session_factory(resp))
+    adapter = make_generic_http_adapter("https://api.example.com/generate")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await adapter("prompt")
+
+    assert not isinstance(exc_info.value, aiohttp.ContentTypeError)
+    assert "text/event-stream" in str(exc_info.value)
+
+
 # === Retry/billing regression guards: raw-HTTP adapters issue exactly one POST ===
 #
 # The image/LLM POST is non-idempotent and billed per request, so a transient
