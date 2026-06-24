@@ -394,6 +394,7 @@ async def test_generate_stream_pipeline_not_found(client):
     assert "error=pipeline_invalid" in resp.headers["location"]
 
 
+@pytest.mark.slow  # real provider-retry backoff on the failure path (~8s)
 @pytest.mark.anyio
 async def test_generate_pipeline_success(client):
     """Test non-streaming generation success."""
@@ -422,6 +423,7 @@ async def test_generate_pipeline_success(client):
         assert resp.status_code == 200
 
 
+@pytest.mark.slow  # real provider-retry backoff on the failure path (~9s)
 @pytest.mark.anyio
 async def test_generate_pipeline_failure(client):
     """Test non-streaming generation failure."""

@@ -246,6 +246,7 @@ async def test_generation_service_sync_iterator_provider():
     assert chunks[-1]["generated_text"] == "chunk1chunk2chunk3"
 
 
+@pytest.mark.slow  # real provider-retry backoff on the exception path (~8s)
 async def test_generation_service_provider_exception():
     """Test generation handles provider exception."""
 

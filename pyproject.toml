@@ -171,6 +171,7 @@ markers = [
     "codex_image_live: opt-in live Codex SDK image generation test; gate: RUN_CODEX_IMAGE_LIVE=1",
     "codex_cli_live: opt-in live Codex CLI smoke (image + agent backend via real MCP); gate: RUN_CODEX_CLI_LIVE=1",
     "e2e: end-to-end browser test using Playwright",
+    "slow: test is intrinsically slow (real timers/sleeps that can't be scaled away); excluded from the fast feedback loop with `-m 'not slow'`",
 ]
 
 [tool.coverage.run]
