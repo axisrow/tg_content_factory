@@ -197,7 +197,8 @@ class TestVerifyCode:
             "needs 2FA password" in r.getMessage() and r.levelno == logging.INFO
             for r in caplog.records
         )
-        # needs_2fa keeps the pending client alive for the follow-up password step.
+        # TwoFactorRequiredError re-raises before the post-try cleanup, so the
+        # pending client stays alive for the follow-up password step.
         assert "+1234567890" in auth._pending
 
     @pytest.mark.anyio

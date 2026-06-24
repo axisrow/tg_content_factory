@@ -77,6 +77,24 @@ async def test_account_service_toggle_add_client_error(mock_bundle, mock_pool):
 
 
 @pytest.mark.anyio
+async def test_account_service_toggle_deactivate_remove_client_error(mock_bundle, mock_pool):
+    """#1029: deactivating an account already wrote set_active to the DB, so a
+    pool.remove_client failure must NOT propagate — otherwise the DB says the
+    account is inactive while the in-memory client lingers AND the caller sees an
+    error. Mirror the activate branch (and delete()): log, don't raise."""
+    acc = Account(id=1, phone="+7999", session_string="sess", is_active=True)
+    mock_bundle.list_accounts.return_value = [acc]
+    mock_pool.remove_client.side_effect = Exception("pool removal failed")
+    svc = AccountService(mock_bundle, mock_pool)
+
+    # Must not raise — the pool error is logged, not propagated.
+    await svc.toggle(1)
+
+    mock_bundle.set_active.assert_called_once_with(1, False)
+    mock_pool.remove_client.assert_called_once_with("+7999")
+
+
+@pytest.mark.anyio
 async def test_account_service_toggle_not_found(mock_bundle):
     mock_bundle.list_accounts.return_value = []
     svc = AccountService(mock_bundle)
