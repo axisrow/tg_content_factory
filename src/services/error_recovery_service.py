@@ -309,6 +309,23 @@ class ErrorRecoveryService:
 
         raise last_error or RuntimeError("Unknown error")
 
+    async def execute_provider_call(
+        self,
+        func: Callable[[], Awaitable[T]],
+        fallback: Callable[[], T | Awaitable[T]] | None = None,
+    ) -> T:
+        """Run an *idempotent* LLM/embedding provider call with recovery.
+
+        Thin alias of :meth:`execute_with_recovery` that names the intended use:
+        wrapping idempotent provider calls (LLM text, embeddings, quality
+        scoring). It exists to make the call sites read self-documentingly and to
+        give a single seam that the image guard (:func:`guard_not_image`) is
+        enforced against — image generation is billed-per-POST and must NEVER be
+        retried (would double-bill, #958/#1003), so it is intentionally excluded
+        from this path.
+        """
+        return await self.execute_with_recovery(func, fallback=fallback)
+
     def get_error_stats(self) -> dict:
         """Get error statistics."""
         if not self._error_history:
@@ -335,3 +352,89 @@ class ErrorRecoveryService:
             "recent": recent,
             "circuit_breaker": self._circuit_breaker.get_state(),
         }
+
+
+# ---------------------------------------------------------------------------
+# Pre-configured factories for the two idempotent provider classes.
+#
+# These are the *only* sanctioned ways to obtain a recovery service for
+# provider calls. Keeping the policy here (not duplicated at every call site)
+# guarantees the LLM/embedding retry budgets stay consistent and that the image
+# path never accidentally inherits a retrying service (see ``guard_not_image``).
+# ---------------------------------------------------------------------------
+
+# LLM text generation (generation, refinement, quality scoring, A/B variants):
+# idempotent, so a transient failure is safe to replay. 3 retries + a circuit
+# breaker that trips after 5 consecutive provider failures.
+LLM_RETRY_POLICY = RetryPolicy(max_retries=3)
+LLM_CIRCUIT_CONFIG = CircuitBreakerConfig(failure_threshold=5, recovery_timeout=60.0)
+
+# Embeddings: cheaper and less critical than text generation, so a smaller
+# retry budget (2) is enough to ride out a transient blip without amplifying
+# load on the embedding endpoint.
+EMBEDDING_RETRY_POLICY = RetryPolicy(max_retries=2)
+EMBEDDING_CIRCUIT_CONFIG = CircuitBreakerConfig(failure_threshold=5, recovery_timeout=60.0)
+
+
+def for_llm() -> ErrorRecoveryService:
+    """Recovery service tuned for idempotent LLM-text provider calls."""
+    return ErrorRecoveryService(
+        retry_policy=LLM_RETRY_POLICY,
+        circuit_config=LLM_CIRCUIT_CONFIG,
+    )
+
+
+def for_embeddings() -> ErrorRecoveryService:
+    """Recovery service tuned for idempotent embedding provider calls."""
+    return ErrorRecoveryService(
+        retry_policy=EMBEDDING_RETRY_POLICY,
+        circuit_config=EMBEDDING_CIRCUIT_CONFIG,
+    )
+
+
+class ImageAdapterRetryError(RuntimeError):
+    """Raised when an image-generation adapter is routed through recovery.
+
+    Image generation is a *billed, non-idempotent* POST. Retrying it would
+    re-charge the user for a request that may already have produced an image
+    (#958, #1003 — every image client is pinned to ``max_retries=0`` for exactly
+    this reason). ``ErrorRecoveryService`` retries by design, so wrapping an
+    image adapter is always a bug. :func:`guard_not_image` raises this to fail
+    loudly at the call site instead of silently double-billing in production.
+    """
+
+
+# Heuristic markers that identify an image-generation callable. Image adapters
+# carry the ``(prompt, model) -> url`` shape and live in ``provider_adapters`` /
+# ``image_generation_service``; their factory/closure names contain "image".
+_IMAGE_CALLABLE_MARKERS = ("image", "img")
+
+
+def guard_not_image(func: Callable[..., object]) -> None:
+    """Assert *func* is not an image-generation adapter; raise otherwise.
+
+    Defence-in-depth so a future refactor cannot accidentally feed a billed
+    image adapter into the retrying recovery path. Inspection-only: it never
+    calls *func*. The check is deliberately conservative — it matches on the
+    callable's own name and its defining module/qualname so it catches both the
+    ``make_*_image_adapter`` factories and the inner ``adapter`` closures they
+    return, without flagging ordinary LLM providers.
+    """
+    name = (getattr(func, "__name__", "") or "").lower()
+    qualname = (getattr(func, "__qualname__", "") or "").lower()
+    module = (getattr(func, "__module__", "") or "").lower()
+
+    # The inner image closures are literally named ``adapter`` and are defined in
+    # the image modules, so the module/qualname carries the signal even when the
+    # bare ``__name__`` does not.
+    haystacks = (name, qualname, module)
+    is_image_module = "image_generation_service" in module or (
+        "provider_adapters" in module and "image" in qualname
+    )
+    has_image_marker = any(marker in h for h in haystacks for marker in _IMAGE_CALLABLE_MARKERS)
+
+    if is_image_module or has_image_marker:
+        raise ImageAdapterRetryError(
+            f"Refusing to wrap image adapter {qualname or name!r} in ErrorRecoveryService: "
+            "image generation is billed per request and must never be retried (#958)."
+        )

@@ -6,6 +6,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional
 from src.agent.prompt_template import DEFAULT_AGENT_PROMPT_TEMPLATE, render_prompt_template
 from src.models import Message, SearchResult
 from src.search.engine import SearchEngine
+from src.services.error_recovery_service import ErrorRecoveryService, for_llm
 
 
 class GenerationService:
@@ -21,10 +22,15 @@ class GenerationService:
         search_engine: SearchEngine,
         provider_callable: Optional[Callable[..., Awaitable[str]]] = None,
         default_prompt_template: str = DEFAULT_AGENT_PROMPT_TEMPLATE,
+        error_recovery: ErrorRecoveryService | None = None,
     ) -> None:
         self._search = search_engine
         self._provider = provider_callable
         self._default_prompt = default_prompt_template
+        # RAG text generation is an idempotent LLM call — safe to retry on
+        # transient provider failures (#1069). Only the non-streaming scalar path
+        # is recovered; a true streaming response is never replayed mid-flight.
+        self._error_recovery = error_recovery or for_llm()
         # Resolve the index-aware semantic gate once; None for search backends that don't expose it
         # (e.g. test doubles) so _collect_context falls back to the legacy semantic_available check.
         self._search_has_semantic_index: Callable[[], Awaitable[bool]] | None = getattr(
@@ -263,12 +269,16 @@ class GenerationService:
             raise RuntimeError("No provider callable configured for generation")
 
         # Provider contract: await provider(prompt=..., model=..., max_tokens=..., temperature=...)
-        generated_text = await provider(
-            prompt=rendered_prompt,
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            stream=False,
+        # Wrapped in recovery: this non-streaming call returns a scalar string and
+        # is idempotent, so a transient failure is safe to replay (#1069).
+        generated_text = await self._error_recovery.execute_provider_call(
+            lambda: provider(
+                prompt=rendered_prompt,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=False,
+            )
         )
 
         citations = [
