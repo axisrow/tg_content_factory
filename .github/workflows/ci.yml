@@ -178,15 +178,16 @@ jobs:
   #
   #   pull_request → `pytest --testmon`: testmon tracks each test's source
   #     dependencies in `.testmondata` and re-runs only the tests a change
-  #     touches. The baseline `.testmondata` is restored from the cache main
-  #     populates; on a cache miss testmon safely re-runs everything (no false
-  #     green). This is the fast PR gate that cuts CI time 50-70%.
+  #     touches. The baseline `.testmondata` is cached PER-PR (see the cache
+  #     step below): the first push in a PR builds it, later pushes select
+  #     against it. On a cache miss testmon safely re-runs everything (no false
+  #     green). This is the fast PR gate that cuts CI time.
   #
   #   push (main) → the full smoke + parallel + serial suite with coverage, the
-  #     same blocking gate as before. testmon NEVER replaces it: a regression in
-  #     a test testmon couldn't link to the PR diff is still caught here before a
-  #     release. Conservative by design (#1090). main also REBUILDS the
-  #     `.testmondata` baseline and saves it so the next PRs select against it.
+  #     same blocking gate as before. testmon is NOT used on main at all (it
+  #     would crash under xdist+coverage), so the full run is never weakened: a
+  #     regression a PR's selective run couldn't link to the diff is still caught
+  #     here before a release. Conservative by design (#1090).
   tests:
     runs-on: ubuntu-latest
     # smoke + (selective | full) pytest with coverage. The full suite runs in a
@@ -209,16 +210,26 @@ jobs:
         run: pip install -e ".[dev]"
 
       # Restore the testmon dependency DB so a PR can select only the tests its
-      # diff affects (#1090). The cache is keyed PER-PR-BRANCH (head_ref): the
-      # first push in a PR builds the baseline (testmon runs everything once),
-      # and every later push to the SAME PR restores it and re-runs only the
-      # affected tests. `key` includes run_id so each run writes a fresh entry;
-      # `restore-keys` falls back to the newest entry for this branch. A cache
-      # miss just means testmon rebuilds the baseline that run (safe — no false
-      # green). main does NOT use testmon (see below), so this step is PR-only.
+      # diff affects (#1090). The cache is keyed PER-PR by the PR *number* (a
+      # stable, repo-unique identity — NOT the branch name, which collides:
+      # different PRs, especially from forks, routinely share `patch-1` /
+      # `feature` and the restore-keys wildcard would otherwise reuse an
+      # unrelated PR's baseline → wrong-baseline selection / possible false
+      # green). The first push in a PR builds the baseline (testmon runs
+      # everything once); later pushes to the SAME PR restore it and re-run only
+      # the affected tests. `key` includes run_id so each run writes a fresh
+      # entry; `restore-keys` falls back to the newest entry FOR THIS PR only.
+      # A cache miss just means testmon rebuilds the baseline that run (safe —
+      # no false green). main does NOT use testmon (see below), so PR-only.
       #
-      # Why per-branch and not a shared main baseline: testmon only deselects in
-      # a single process, and testmon-collection is incompatible with
+      # Defence-in-depth: even a stale/wrong restored baseline cannot cause a
+      # false green — testmon content-hashes each source file, so any drift
+      # re-runs the affected test (verified against pytest-testmon 2.2.0). The
+      # PR-number key removes the wrong-baseline class entirely; the content
+      # hash is the backstop.
+      #
+      # Why per-PR and not a shared main baseline: testmon only deselects in a
+      # single process, and testmon-collection is incompatible with
       # xdist+coverage (it INTERNALERRORs). main keeps its `-n auto --cov` full
       # run untouched and can't cheaply produce a single-process baseline, so
       # each PR self-bootstraps its own. See CLAUDE.md "Selective test run".
@@ -227,9 +238,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .testmondata
-          key: testmon-${{ runner.os }}-py311-${{ github.head_ref }}-${{ github.run_id }}
+          key: testmon-${{ runner.os }}-py311-pr${{ github.event.pull_request.number }}-${{ github.run_id }}
           restore-keys: |
-            testmon-${{ runner.os }}-py311-${{ github.head_ref }}-
+            testmon-${{ runner.os }}-py311-pr${{ github.event.pull_request.number }}-
 
       # Fast offline preflight: a sub-second-ish sanity gate over real critical
       # paths (package import, CLI parser, DB schema, web /health). Runs first

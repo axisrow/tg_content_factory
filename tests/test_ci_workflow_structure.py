@@ -120,13 +120,37 @@ def test_selective_testmon_runs_single_process(ci_config: dict) -> None:
         )
 
 
+def test_testmon_cache_keyed_by_pr_number_not_branch(ci_config: dict) -> None:
+    """The `.testmondata` cache must be keyed by PR number, not branch name.
+
+    Branch names (`head_ref`) collide across unrelated PRs (`patch-1`,
+    `feature`, …), so a name-keyed cache + restore-keys wildcard could reuse an
+    unrelated PR's baseline and select against the wrong code line — a possible
+    false green. Keying by `github.event.pull_request.number` (repo-unique,
+    stable) removes that class. Regression guard for a review finding (#1090).
+    """
+    steps = ci_config["jobs"]["tests"]["steps"]
+    cache_steps = [s for s in steps if (s.get("uses") or "").startswith("actions/cache")]
+    assert cache_steps, "tests job must have an actions/cache step for the testmon baseline"
+    for step in cache_steps:
+        with_block = step.get("with", {})
+        key = with_block.get("key", "")
+        restore = with_block.get("restore-keys", "")
+        assert "pull_request.number" in key, (
+            f"testmon cache key must include the PR number (repo-unique identity); got key={key!r}"
+        )
+        assert "head_ref" not in key and "head_ref" not in restore, (
+            "testmon cache key/restore must NOT use head_ref (branch names collide across PRs)"
+        )
+
+
 def test_main_runs_full_suite_blocking(ci_config: dict) -> None:
     """Conservative gate: on `main`/push the FULL suite still runs (no selection).
 
-    On push the run uses ``--testmon-noselect`` (updates the baseline DB but
-    deselects nothing → every test runs). Those steps must be guarded to the
-    push event and must NOT carry continue-on-error (they stay the blocking
-    gate).
+    On push the run uses the plain `-n auto --cov` full suite with NO testmon
+    flag at all (testmon-collection is incompatible with xdist+coverage). Those
+    steps must be guarded to the push event and must NOT carry continue-on-error
+    (they stay the blocking gate).
     """
     steps = ci_config["jobs"]["tests"]["steps"]
     full_steps = [
