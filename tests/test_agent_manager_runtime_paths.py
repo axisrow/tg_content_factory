@@ -680,7 +680,7 @@ class TestClaudeSdkBackendChatStreamErrors:
             async for chunk in mgr.chat_stream(thread_id, "test"):
                 chunks.append(chunk)
 
-        assert call_count >= 2, f"Expected retry, got {call_count} calls"
+        assert call_count == 2, f"Expected exactly 1 retry (2 total calls), got {call_count}"
 
     @pytest.mark.anyio
     async def test_generic_exception_no_retry(self, db):

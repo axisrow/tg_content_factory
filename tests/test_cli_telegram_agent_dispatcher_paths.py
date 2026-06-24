@@ -166,7 +166,7 @@ class TestRunBenchmarkStep:
 
         step = BenchmarkStep("test", (sys.executable, "-c", "pass"))
         elapsed = _run_benchmark_step(step)
-        assert elapsed >= 0
+        assert elapsed > 0
 
     def test_failure_exits(self):
         import sys
