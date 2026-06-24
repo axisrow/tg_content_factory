@@ -202,7 +202,11 @@ def run(args: argparse.Namespace) -> None:
                         f"Hard-delete {len(pks)} channel(s) from DB? "
                         "This is irreversible. Type YES to confirm: "
                     )
-                    if confirm.strip() != "YES":
+                    # The "YES" word is a deliberate stronger barrier than purge's
+                    # "y" for this irreversible op, but the comparison is
+                    # case-insensitive to match the rest of the confirm gates
+                    # (#1039) — "yes"/"Yes"/"YES" all confirm; "y" alone does not.
+                    if confirm.strip().lower() != "yes":
                         print("Aborted.")
                         return
                 result = await svc.hard_delete_channels_by_pks(pks)

@@ -1171,6 +1171,17 @@ class MessagesRepository:
                 "(SELECT id FROM messages WHERE channel_id = ?)",
                 (channel_id,),
             )
+            # Message-keyed sidecars that have no FK back to `messages` and so
+            # would otherwise be left orphaned once the messages vanish (#1039).
+            # `message_reactions` is NOT listed: its composite FK on
+            # messages(channel_id, message_id) is ON DELETE CASCADE, so SQLite
+            # (foreign_keys=ON) removes it automatically with the message.
+            await conn.execute(
+                "DELETE FROM notified_messages WHERE channel_id = ?", (channel_id,)
+            )
+            await conn.execute(
+                "DELETE FROM pipeline_action_log WHERE channel_id = ?", (channel_id,)
+            )
             cur = await conn.execute(
                 "DELETE FROM messages WHERE channel_id = ?", (channel_id,)
             )
