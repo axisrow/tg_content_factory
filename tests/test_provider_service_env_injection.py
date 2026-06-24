@@ -90,13 +90,17 @@ async def test_build_provider_service_explicit_env_overrides_process(monkeypatch
 
 
 def test_registry_body_has_no_os_environ_reads():
-    """Guard: the registry source must not read os.environ in its body.
+    """Guard: the registry source must not read the process env in its body.
 
     Reading the process environment inside the registry is exactly the global
     state coupling that caused the #1050 flake. This static guard parses the
-    registry's AST and fails if any ``os.environ`` *access* (attribute, call, or
-    subscript) is reintroduced — comments/docstrings that merely mention the name
-    are ignored.
+    registry's AST and fails if any process-env *access* is reintroduced —
+    comments/docstrings that merely mention the name are ignored. It covers all
+    spellings:
+
+    * ``os.environ`` (attribute/subscript, any nesting depth),
+    * ``os.getenv(...)``,
+    * the ``from os import environ, getenv`` bare forms (``environ`` / ``getenv``).
     """
     import ast
     import inspect
@@ -105,16 +109,19 @@ def test_registry_body_has_no_os_environ_reads():
     tree = ast.parse(textwrap.dedent(inspect.getsource(RuntimeProviderRegistry)))
     offenders: list[int] = []
     for node in ast.walk(tree):
-        # match `os.environ` attribute access regardless of how it's used
+        # `os.environ` / `os.getenv` attribute access regardless of how it's used
         if (
             isinstance(node, ast.Attribute)
-            and node.attr == "environ"
+            and node.attr in ("environ", "getenv")
             and isinstance(node.value, ast.Name)
             and node.value.id == "os"
         ):
             offenders.append(node.lineno)
+        # bare `environ` / `getenv` from a `from os import ...` form
+        elif isinstance(node, ast.Name) and node.id in ("environ", "getenv"):
+            offenders.append(node.lineno)
     assert not offenders, (
-        "RuntimeProviderRegistry must not access os.environ directly "
+        "RuntimeProviderRegistry must not access the process env directly "
         f"(found at relative lines {offenders}); inject env explicitly (see #1050)."
     )
 
