@@ -147,10 +147,16 @@ def _build_real_generation_service(
     )
 
 
-def _make_context(db, pool, notifier=None) -> TaskHandlerContext:
+def _make_context(db, pool) -> TaskHandlerContext:
     """A TaskHandlerContext wired to the real db, a real PipelineBundle, and the
     fake client pool. build_content_generation_service is overridden on the
     handler module so generation runs through our real-but-provider-faked service.
+
+    Note: the draft notifier is NOT passed via the context here — the production
+    handler never reads ``context.notifier`` directly, it reaches the notifier
+    only through ``build_content_generation_service`` (base.py), which this test
+    patches. So the notifier is injected at that patched seam (``_patch_generation``)
+    rather than on the context, where it would be dead.
     """
     tasks = MagicMock()
     tasks.update_collection_task = AsyncMock()
@@ -163,7 +169,6 @@ def _make_context(db, pool, notifier=None) -> TaskHandlerContext:
         pipeline_bundle=PipelineBundle.from_database(db),
         db=db,
         client_pool=pool,
-        notifier=notifier,
     )
 
 
@@ -256,7 +261,7 @@ async def test_moderated_full_cycle_generate_approve_publish(db, monkeypatch):
         db, publish_mode=PipelinePublishMode.MODERATED, targets=[_target()]
     )
     _patch_generation(monkeypatch, db, notifier=notifier)
-    handler = ContentTaskHandler(_make_context(db, pool, notifier=notifier))
+    handler = ContentTaskHandler(_make_context(db, pool))
 
     # --- Step 1: enqueue + run CONTENT_GENERATE -----------------------------
     gen_task_id = await db.repos.tasks.create_generic_task(
@@ -399,7 +404,7 @@ async def test_auto_branch_publishes_without_moderation(db, monkeypatch):
         db, publish_mode=PipelinePublishMode.AUTO, targets=[_target()]
     )
     _patch_generation(monkeypatch, db, notifier=notifier)
-    handler = ContentTaskHandler(_make_context(db, pool, notifier=notifier))
+    handler = ContentTaskHandler(_make_context(db, pool))
 
     gen_task_id = await db.repos.tasks.create_generic_task(
         CollectionTaskType.CONTENT_GENERATE,
@@ -572,6 +577,96 @@ async def test_failed_run_is_not_publishable_even_if_approved(db):
     assert pool._clients == {}, "a failed run must never reach Telegram"
     after = await db.repos.generation_runs.get(run_id)
     assert after is not None and after.published_at is None
+
+
+# ===========================================================================
+# 5b. MODERATED cycle through the REAL production approve + publish entrypoints
+# ===========================================================================
+
+
+@pytest.mark.anyio
+async def test_moderated_cycle_via_real_web_approve_and_publish_command(
+    db, real_pool_harness_factory, tmp_path
+):
+    """The headline cycle again, but approval and publish are driven through the
+    *production* moderation entrypoints rather than a direct repository write:
+
+      * approve via the real web route POST /moderation/{run_id}/approve
+        (exercises its 404 guard, the 'approved' status literal, and the redirect);
+      * publish via the real TelegramCommandDispatcher._handle_moderation_publish_run
+        — the exact command the web "Publish" button enqueues (moderation.publish_run).
+
+    This closes the review gap that a `set_moderation_status(...,'approved')` setup
+    shortcut leaves open: a regression in the approve route (wrong status, missing
+    404 check) or in the publish command handler would now fail the test, not slip
+    through. Only the LLM provider and Telegram delivery stay faked.
+    """
+    from src.services.telegram_command_dispatcher import TelegramCommandDispatcher
+    from tests.helpers import build_web_app, make_auth_client, make_test_config
+
+    # A real web app over the SAME :memory: db the harness uses (CLAUDE.md: the app
+    # and harness must share one Database instance, so pass `db` through).
+    harness = real_pool_harness_factory()
+    config = make_test_config(tmp_path)
+    app, _ = await build_web_app(config, harness, db=db)
+
+    await _seed_source_channel(db)
+    pool = FakeClientPool(should_succeed=True)
+    pipeline_id = await _seed_pipeline(
+        db, publish_mode=PipelinePublishMode.MODERATED, targets=[_target()]
+    )
+
+    # --- generate a real MODERATED draft (handler path, provider faked) --------
+    import pytest as _pytest
+
+    mp = _pytest.MonkeyPatch()
+    try:
+        _patch_generation(mp, db)
+        handler = ContentTaskHandler(_make_context(db, pool))
+        gen_task_id = await db.repos.tasks.create_generic_task(
+            CollectionTaskType.CONTENT_GENERATE,
+            title="gen",
+            payload=ContentGenerateTaskPayload(pipeline_id=pipeline_id),
+        )
+        await handler.handle_content_generate(_generate_task(gen_task_id, pipeline_id))
+    finally:
+        mp.undo()
+
+    run = (await db.repos.generation_runs.list_by_pipeline(pipeline_id))[0]
+    assert run.moderation_status == "pending"
+
+    async with make_auth_client(app) as client:
+        # A non-existent run id is rejected by the route's own 404 guard …
+        missing = await client.post("/moderation/999999/approve", follow_redirects=False)
+        assert missing.status_code == 303
+        assert "run_not_found" in missing.headers["location"]
+
+        # … and approving the real run flips it to 'approved' through the route.
+        approve = await client.post(
+            f"/moderation/{run.id}/approve", follow_redirects=False
+        )
+        assert approve.status_code == 303
+        assert "run_approved" in approve.headers["location"]
+
+    approved = await db.repos.generation_runs.get(run.id)
+    assert approved is not None and approved.moderation_status == "approved"
+
+    # --- publish via the REAL command handler the web button enqueues ----------
+    dispatcher = TelegramCommandDispatcher(db, pool)
+    result = await dispatcher._handle_moderation_publish_run(
+        {"run_id": run.id, "pipeline_id": pipeline_id}
+    )
+    assert result == {"run_id": run.id, "published": 1}
+
+    published = await db.repos.generation_runs.get(run.id)
+    assert published is not None
+    assert published.moderation_status == "published"
+    assert published.published_at is not None
+    # delivered exactly once through the production publish command
+    client_obj = pool._clients.get("+100")
+    assert client_obj is not None and len(client_obj.sent_messages) == 1
+
+    await app.state.collection_queue.shutdown()
 
 
 # ===========================================================================
