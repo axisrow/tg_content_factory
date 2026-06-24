@@ -15,8 +15,13 @@ battle-tested стандартная замена (stdlib или уже-уста
   * ручная HMAC/JWT-подпись токенов (есть `itsdangerous`/`hmac`);
   * ручной base64-паддинг (есть `base64.urlsafe_b64decode` без ручной добивки `=`);
   * самописный retry/backoff-цикл (есть `tenacity`/`aiolimiter`);
-  * ручной парсинг URL/email строками (есть `urllib.parse`/`email.utils`);
+  * ручной разбор email через `split('@')` (есть `email.utils.parseaddr`);
   * самописный счётчик/частотный словарь (есть `collections.Counter`).
+
+Разбор URL строками (`split('/')`/`'?'`/`'#'`) намеренно НЕ ловится: эти
+разделители встречаются повсеместно вне URL-контекста, и эвристика на них
+завалила бы отчёт false-positive'ами — против философии «лучше пропуск, чем
+ложная находка». Для URL остаётся `urllib.parse`, но детектор его не флагует.
 
 Эвристики намеренно консервативны: лучше пропустить сомнительный кейс, чем
 завалить отчёт false-positive'ами (см. отрицательные фикстуры в тестах).
@@ -104,8 +109,24 @@ class Finding:
     confidence: Confidence
 
     def key(self) -> tuple[str, str, int]:
-        """Стабильный ключ для дедупа и baseline-диффа: (файл, тип, строка)."""
+        """Ключ дедупа В РАМКАХ ОДНОГО прогона: (файл, тип, строка).
+
+        Включает строку намеренно — две разные находки одного типа в одном файле
+        (на разных строках) должны остаться обе. Для диффа МЕЖДУ прогонами строка
+        не годится (см. identity): вставка строки выше сдвинула бы номер.
+        """
         return (self.file, self.kind, self.line)
+
+    def identity(self) -> tuple[str, str, str]:
+        """Стабильный отпечаток для baseline-диффа: (файл, тип, что).
+
+        НЕ зависит от номера строки — `what` содержит имя функции (например
+        «…цикл в collect_all_channels()»), что переживает вставку/удаление строк
+        выше находки и при этом различает разные функции одного типа в файле.
+        Без этого `--fail-on-new` перепомечал бы неизменный код как «новый» после
+        любого рефакторинга, сдвигающего строки (находка ревью Codex на #1110).
+        """
+        return (self.file, self.kind, self.what)
 
     def human(self) -> str:
         """Строка отчёта: `файл:строка — что — замена — уверенность`."""
@@ -194,8 +215,11 @@ def _detect_manual_b64_padding(tree: ast.AST, filename: str) -> list[Finding]:
     Паттерн `s += "=" * (...)` / `padding = 4 - len(s) % 4` ради ручного
     выравнивания длины — частый спутник самописных токенов. `base64` умеет
     декодировать без ручной добивки, если использовать `b64decode(..., validate)`
-    с уже выровненной строкой, а для urlsafe есть готовые рецепты. Low/med —
-    сигнал слабый сам по себе, поэтому уверенность med только рядом с b64-вызовом.
+    с уже выровненной строкой, а для urlsafe есть готовые рецепты.
+
+    Флагим `"=" * n` ТОЛЬКО рядом (в пределах нескольких строк) с b64-вызовом:
+    без этого `print("=" * 80)` и прочие разделители давали бы сплошной low-шум
+    (находка ревью на #1110). Раз b64-контекст обязателен — уверенность med.
     """
     findings: list[Finding] = []
     b64_lines = {
@@ -203,16 +227,19 @@ def _detect_manual_b64_padding(tree: ast.AST, filename: str) -> list[Finding]:
         for c in _calls_in(tree)
         if "b64" in _called_name(c) or "base64" in _called_name(c)
     }
+    if not b64_lines:  # нет ни одного base64-вызова — '=' * n заведомо не паддинг
+        return findings
     for node in ast.walk(tree):
-        # `"=" * expr` — умножение строки из одного `=` на число: ручной паддинг.
+        # `"=" * expr` — умножение строки из одного `=` на число: кандидат в паддинг.
         if (
             isinstance(node, ast.BinOp)
             and isinstance(node.op, ast.Mult)
             and isinstance(node.left, ast.Constant)
             and node.left.value == "="
         ):
-            # Уверенность выше, если рядом (в пределах нескольких строк) есть b64-вызов.
-            near_b64 = any(abs(node.lineno - bl) <= 8 for bl in b64_lines)
+            # Только рядом с b64-вызовом — иначе это разделитель, а не паддинг.
+            if not any(abs(node.lineno - bl) <= 8 for bl in b64_lines):
+                continue
             findings.append(
                 Finding(
                     file=filename,
@@ -220,7 +247,7 @@ def _detect_manual_b64_padding(tree: ast.AST, filename: str) -> list[Finding]:
                     kind="manual-base64-padding",
                     what="ручная добивка base64-паддинга '='",
                     replacement="base64.urlsafe_b64decode с корректным выравниванием",
-                    confidence="med" if near_b64 else "low",
+                    confidence="med",
                 )
             )
     return findings
@@ -257,13 +284,13 @@ def _detect_retry_loop(
     return None
 
 
-def _detect_manual_url_email_parse(tree: ast.AST, filename: str) -> list[Finding]:
-    """Ручной парсинг email/URL через `.split('@')` / `.split('/')`.
+def _detect_manual_email_parse(tree: ast.AST, filename: str) -> list[Finding]:
+    """Ручной разбор email через `addr.split('@')` → `email.utils.parseaddr`.
 
-    `addr.split("@")` для разбора email → `email.utils.parseaddr`; ручная нарезка
-    URL по `/`/`?`/`#` → `urllib.parse.urlparse`. Low-confidence: split('@')
-    встречается и вне email-контекста, поэтому помечаем как слабый сигнал и не
-    шумим без явной строки-разделителя.
+    Low-confidence: `split('@')` встречается и вне email-контекста, поэтому это
+    слабый сигнал. Разбор URL по `/`/`?`/`#` сознательно НЕ ловим — эти
+    разделители слишком частые вне URL, эвристика на них была бы сплошным
+    false-positive (см. модульный docstring).
     """
     findings: list[Finding] = []
     for node in ast.walk(tree):
@@ -348,7 +375,7 @@ def detect_in_source(source: str, filename: str) -> list[Finding]:
             findings.append(counter)
 
     findings.extend(_detect_manual_b64_padding(tree, filename))
-    findings.extend(_detect_manual_url_email_parse(tree, filename))
+    findings.extend(_detect_manual_email_parse(tree, filename))
 
     # Дедуп по (файл, тип, строка): вложенная функция и её внешняя обёртка обе
     # видят один и тот же цикл через ast.walk → одна находка, не две с разными
@@ -379,20 +406,30 @@ def findings_to_baseline(findings: list[Finding]) -> list[dict]:
     return [asdict(f) for f in sorted(findings, key=lambda f: f.key())]
 
 
-def load_baseline(path: Path) -> set[tuple[str, str, int]] | None:
-    """Прочитать снимок и вернуть множество ключей находок. None — снимка нет."""
+def load_baseline(path: Path) -> set[tuple[str, str, str]] | None:
+    """Прочитать снимок и вернуть множество identity-отпечатков. None — снимка нет.
+
+    Отпечаток — `(file, kind, what)` (см. Finding.identity), а НЕ номер строки:
+    дифф должен переживать сдвиг строк после рефакторингов.
+    """
     if not path.exists():
         return None
     raw = json.loads(path.read_text(encoding="utf-8"))
     items = raw.get("findings", []) if isinstance(raw, dict) else raw
-    return {(item["file"], item["kind"], int(item["line"])) for item in items}
+    return {(item["file"], item["kind"], item["what"]) for item in items}
 
 
-def new_findings(findings: list[Finding], baseline_keys: set[tuple[str, str, int]] | None) -> list[Finding]:
-    """Находки, которых нет в baseline. Если baseline отсутствует — все новые."""
-    if baseline_keys is None:
+def new_findings(
+    findings: list[Finding], baseline_ids: set[tuple[str, str, str]] | None
+) -> list[Finding]:
+    """Находки, которых нет в baseline (по identity). Без baseline — все новые.
+
+    Сравнение по identity (file/kind/what), не по строке: неизменный код,
+    сдвинутый вставкой строк выше, не считается новым велосипедом.
+    """
+    if baseline_ids is None:
         return list(findings)
-    return [f for f in findings if f.key() not in baseline_keys]
+    return [f for f in findings if f.identity() not in baseline_ids]
 
 
 # --------------------------------------------------------------------------- #
