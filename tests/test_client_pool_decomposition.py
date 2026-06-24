@@ -34,6 +34,7 @@ PUBLIC_CONTRACT: frozenset[str] = frozenset(
         # channel ↔ phone routing map
         "is_dialogs_fetched",
         "mark_dialogs_fetched",
+        "reset_dialogs_warm",
         "connected_phones",
         "get_phone_for_channel",
         "register_channel_phone",

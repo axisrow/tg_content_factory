@@ -27,6 +27,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -94,6 +95,9 @@ class DialogsMixin:
     _db: Database
     _channel_phone_map: dict[int, str]
     _dialogs_fetched: set[str]
+    _dialogs_fetched_at_monotonic: dict[str, float]
+    _dialogs_warm_ttl_sec: float
+    _monotonic: Callable[[], float]
     _dialogs_cache: dict[tuple[str, str], DialogCacheEntry]
     _dialogs_cache_ttl_sec: float
     _dialogs_db_cache_ttl_sec: float
@@ -122,13 +126,59 @@ class DialogsMixin:
     # ------------------------------------------------------------------ #
     # channel ↔ phone routing
     # ------------------------------------------------------------------ #
+    def _warm_timestamps(self) -> dict[str, float]:
+        """The phone → monotonic-warm-time map, lazily created.
+
+        getattr-tolerant so test doubles that build the pool via ``__new__``
+        (and set only ``_dialogs_fetched``) still work — mirrors the
+        ``getattr(self, "_mtproto_watchdog", None)`` pattern used elsewhere.
+        """
+        stamps = getattr(self, "_dialogs_fetched_at_monotonic", None)
+        if stamps is None:
+            stamps = {}
+            self._dialogs_fetched_at_monotonic = stamps
+        return stamps
+
     def is_dialogs_fetched(self, phone: str) -> bool:
-        """Return True if get_dialogs() was already called for this phone in this process."""
-        return phone in self._dialogs_fetched
+        """Return True if the entity cache for this phone is warm and still fresh.
+
+        The warm flag carries a TTL (``_dialogs_warm_ttl_sec``): once it expires
+        the flag is treated as cold (and self-cleared) so the next collection
+        pass re-warms a long-lived worker's stale entity cache (#1043). Within
+        the TTL the answer stays True, so the hot path still warms at most once
+        per phone per window — no perf regression. A flag set without a
+        timestamp (legacy / direct ``_dialogs_fetched`` mutation) never expires.
+        """
+        if phone not in self._dialogs_fetched:
+            return False
+        warmed_at = self._warm_timestamps().get(phone)
+        ttl = getattr(self, "_dialogs_warm_ttl_sec", None)
+        clock = getattr(self, "_monotonic", time.monotonic)
+        if warmed_at is not None and ttl is not None and (clock() - warmed_at) > ttl:
+            self.reset_dialogs_warm(phone)
+            return False
+        return True
 
     def mark_dialogs_fetched(self, phone: str) -> None:
-        """Mark that get_dialogs() has been called for this phone."""
+        """Mark that get_dialogs() has been called for this phone, stamping the
+        warm time so the TTL in :meth:`is_dialogs_fetched` can age it out."""
         self._dialogs_fetched.add(phone)
+        clock = getattr(self, "_monotonic", time.monotonic)
+        self._warm_timestamps()[phone] = clock()
+
+    def reset_dialogs_warm(self, phone: str) -> None:
+        """Invalidate the per-phone entity-cache warm flag.
+
+        Called on live re-auth (``add_client`` swaps in a *new* StringSession,
+        whose in-memory entity cache is empty) and on teardown
+        (``remove_client`` / ``disconnect_all``). A bare reconnect of the same
+        session object does NOT call this: the StringSession entity cache
+        (``session._entities``, the fallback that resolves numeric
+        ``PeerChannel``) survives ``disconnect()`` + ``connect()``, so re-warming
+        there would be a needless round-trip and a FloodWait risk (#1043).
+        """
+        self._dialogs_fetched.discard(phone)
+        self._warm_timestamps().pop(phone, None)
 
     def connected_phones(self) -> set[str]:
         """Return the set of currently connected phone numbers."""

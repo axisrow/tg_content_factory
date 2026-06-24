@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
@@ -142,6 +143,19 @@ class ClientPool(
             native=self._native_backend,
         )
         self._dialogs_fetched: set[str] = set()
+        # phone → monotonic timestamp of its last warm; gives the warm flag a
+        # TTL so a long-lived worker re-warms a stale entity cache instead of
+        # treating it as "warm forever" (#1043). Membership in
+        # ``_dialogs_fetched`` stays the source of truth for "was warmed";
+        # this map only carries the age.
+        self._dialogs_fetched_at_monotonic: dict[str, float] = {}
+        # Warm-flag TTL. Distinct from ``_dialogs_cache_ttl_sec`` (60s, for the
+        # in-process list-of-dialogs cache below): the warm flag only gates the
+        # one-shot entity-cache prefetch, so it tolerates a much longer window
+        # before a defensive re-warm.
+        self._dialogs_warm_ttl_sec = 1800.0  # 30 min
+        # Injectable monotonic clock (tests advance it without sleeping).
+        self._monotonic = time.monotonic
         self._channel_phone_map: dict[int, str] = {}
         # channel_id (positive MTProto) → phone that has it in dialogs
         self._warming_task: asyncio.Task | None = None
