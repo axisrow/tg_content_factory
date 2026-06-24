@@ -214,6 +214,73 @@ async def test_pool_skips_flooded_returns_next(real_pool_harness_factory):
 
 
 @pytest.mark.anyio
+async def test_get_available_client_bounded_rotations_returns_none(real_pool_harness_factory):
+    """#1029: get_available_client rotates at most len(clients) times before
+    giving up. If backend acquisition fails on every rotation, the loop must NOT
+    spin forever — it returns None after exactly one attempt per connected client.
+
+    Without the ``for _ in range(max(1, len(self.clients)))`` bound this would
+    loop indefinitely (each acquire_available keeps returning a lease that
+    _acquire_from_lease then fails to honour)."""
+    harness = real_pool_harness_factory()
+    for phone in ("+70010000001", "+70010000002", "+70010000003"):
+        harness.queue_cli_client(phone=phone, client=FakeCliTelethonClient())
+        await harness.add_account(phone, session_string=f"s-{phone}")
+    await harness.initialize_connected_accounts()
+    assert len(harness.pool.clients) == 3
+
+    # Every backend acquisition fails — simulates e.g. all sessions bricked.
+    calls = {"n": 0}
+
+    async def _always_fail(account_lease, **kwargs):
+        calls["n"] += 1
+        # Release the lease the way the real _acquire_from_lease does on failure,
+        # so the next rotation can re-select an account instead of starving.
+        if not account_lease.shared:
+            await harness.pool._lease_pool.release(account_lease.account.phone)
+        return None
+
+    harness.pool._acquire_from_lease = _always_fail  # type: ignore[method-assign]
+
+    result = await harness.pool.get_available_client()
+
+    assert result is None
+    # Bounded: one acquisition attempt per connected client, never more.
+    assert calls["n"] == 3
+
+
+@pytest.mark.anyio
+async def test_get_available_client_recovers_on_later_rotation(real_pool_harness_factory):
+    """#1029: a transient backend failure on the first rotation must not abort
+    the whole call — get_available_client retries the next account and succeeds,
+    proving the rotation loop is a real fallback, not a single shot."""
+    harness = real_pool_harness_factory()
+    for phone in ("+70011000001", "+70011000002"):
+        harness.queue_cli_client(phone=phone, client=FakeCliTelethonClient())
+        await harness.add_account(phone, session_string=f"s-{phone}")
+    await harness.initialize_connected_accounts()
+
+    real_acquire = harness.pool._acquire_from_lease
+    calls = {"n": 0}
+
+    async def _fail_first_then_real(account_lease, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            if not account_lease.shared:
+                await harness.pool._lease_pool.release(account_lease.account.phone)
+            return None
+        return await real_acquire(account_lease, **kwargs)
+
+    harness.pool._acquire_from_lease = _fail_first_then_real  # type: ignore[method-assign]
+
+    result = await harness.pool.get_available_client()
+
+    assert result is not None
+    # Recovered on the second rotation.
+    assert calls["n"] == 2
+
+
+@pytest.mark.anyio
 async def test_resolve_channel_returns_raw_id(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     client = harness.queue_cli_client(

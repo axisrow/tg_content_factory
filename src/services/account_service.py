@@ -39,6 +39,14 @@ class AccountService:
             accounts = await self._accounts.list_accounts()
             for acc in accounts:
                 if acc.id == account_id:
-                    await self._pool.remove_client(acc.phone)
+                    # The DB is the source of truth: the pool is rebuilt from it on
+                    # restart. A pool.remove_client failure must NOT abort the DB
+                    # delete (#1029) — otherwise the account stays in the DB (a
+                    # "ghost" the operator thinks is gone) while its client lingers.
+                    # Mirror toggle()'s add_client handling: log, don't propagate.
+                    try:
+                        await self._pool.remove_client(acc.phone)
+                    except Exception as e:
+                        logger.warning("Failed to remove client for %s: %s", acc.phone, e)
                     break
         await self._accounts.delete_account(account_id)
