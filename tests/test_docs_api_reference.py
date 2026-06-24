@@ -38,12 +38,15 @@ _EXPECTED_PAGES = {
     "cli-internals.md": ["src.cli.runtime", "src.cli.commands.channel"],
 }
 
-# Символы, которые должны попасть в собранный HTML (доказывает, что griffe
-# действительно прошёл модули, а не просто срендерил пустой заголовок).
+# Anchor-id отрендеренных символов, которые griffe обязан вытащить из каждой из
+# трёх поверхностей (сервисы + agent-tools). Проверяем именно `id="..."` heading,
+# а не просто вхождение имени: имя могло бы случайно встретиться в подсвеченном
+# исходнике (напр. строка-ключ словаря), что доказывало бы не то. Эти три —
+# настоящие documented-символы (класс / module-level переменная).
 _EXPECTED_RENDERED_SYMBOLS = [
-    "CollectionService",
-    "PipelineService",
-    "list_channels",
+    'id="src.services.collection_service.CollectionService"',
+    'id="src.services.pipeline_service.PipelineService"',
+    'id="src.agent.tools.channels.TOOL_GROUPS"',
 ]
 
 

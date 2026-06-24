@@ -125,6 +125,16 @@ jobs:
         continue-on-error: true
         run: python scripts/doc_coverage.py --path src
 
+      # Гейт строгой сборки доков (#1071). Тестовые job'ы ставят только [dev],
+      # где нет mkdocs/mkdocstrings, поэтому build-тест в test_docs_api_reference.py
+      # там пропускается — strict-сборка не была бы PR-гейтом, а ловилась бы лишь
+      # post-merge в docs.yml. Ставим [docs] здесь и гоняем `mkdocs build --strict`
+      # напрямую, чтобы битые ссылки / нерезолвленные autoref'ы валили PR заранее.
+      - name: Docs build (strict)
+        run: |
+          pip install -e ".[docs]"
+          mkdocs build --strict
+
       - name: Enforce pytest warnings as errors
         run: |
           python - <<'PY'
