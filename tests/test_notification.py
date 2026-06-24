@@ -331,6 +331,34 @@ async def test_delete_bot_missing_from_mybots_raises_bot_not_found():
         await botfather.delete_bot(mock_client, "@leadhunter_gone_bot")
 
 
+async def test_delete_bot_keyboardless_reply_is_generic_error_not_bot_not_found():
+    """RED→GREEN (#1085, Codex finding): an error/keyboard-less reply is NOT "bot gone".
+
+    ``BotNotFoundError`` is the *recoverable* signal that lets ``teardown_bot``
+    skip the Telegram step and delete the DB row. It must therefore mean "the bot
+    is genuinely absent from a valid /mybots listing" — NOT "BotFather replied
+    with something we didn't expect". If ``/mybots`` returns an error, a
+    rate-limit, or any reply WITHOUT an inline keyboard (so we never saw a bot
+    list at all), the live bot may still exist. Mapping that to
+    ``BotNotFoundError`` would let teardown wipe the DB row while the bot is
+    alive — a data-loss orphan flip. Such a reply must raise a *generic*
+    RuntimeError (which ``teardown_bot`` does NOT forgive), leaving the row
+    intact.
+    """
+    # A plain text BotFather reply (rate-limit / transient error) — no keyboard.
+    err_msg = MagicMock()
+    err_msg.text = "Sorry, too many requests. Please try again later."
+    err_msg.reply_markup = None
+    mock_conv = _make_conv(err_msg)
+    mock_client = MagicMock()
+    mock_client.conversation.return_value = mock_conv
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await botfather.delete_bot(mock_client, "@leadhunter_alive_bot")
+    # Must NOT be the recoverable subclass — the bot might still be live.
+    assert not isinstance(exc_info.value, botfather.BotNotFoundError)
+
+
 @pytest.mark.anyio
 async def test_setup_bot_success(db, real_pool_harness_factory):
     harness = real_pool_harness_factory()
