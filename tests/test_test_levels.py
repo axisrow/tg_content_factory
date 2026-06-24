@@ -159,6 +159,7 @@ def test_ast_scan_flags_only_db_building_tests(tmp_path) -> None:
 # --- structural invariants over the real collection ------------------------
 
 
+@pytest.mark.slow  # forks a full pytest collection in a subprocess (~14s)
 @pytest.mark.integration  # forks a full pytest collection in a subprocess
 def test_collection_invariants_hold_over_real_suite() -> None:
     """End-to-end gate: every collected test gets exactly one level.

@@ -5,6 +5,7 @@ from src.config import SchedulerConfig
 from src.live_runtime_pause import LiveRuntimePauseGate
 from src.scheduler.service import SchedulerManager
 from src.services.telegram_command_dispatcher import TelegramCommandDispatcher
+from tests.helpers import drain_loop
 
 
 def test_live_runtime_pause_gate_waits_until_all_agent_requests_release():
@@ -16,7 +17,7 @@ def test_live_runtime_pause_gate_waits_until_all_agent_requests_release():
             assert gate.active_agent_requests == 1
 
             waiter = asyncio.create_task(gate.wait_if_paused())
-            await asyncio.sleep(0)
+            await drain_loop()
             assert not waiter.done()
 
             async with gate.agent_request():
@@ -58,7 +59,7 @@ def test_scheduler_waits_to_run_background_collection_while_agent_uses_live_runt
 
         async with gate.agent_request():
             background_task = asyncio.create_task(manager._run_collection())
-            await asyncio.sleep(0)
+            await drain_loop()
             assert enqueuer.calls == 0
             manual_result = await manager.trigger_now()
         background_result = await asyncio.wait_for(background_task, timeout=0.5)
@@ -96,7 +97,7 @@ def test_scheduler_stop_interrupts_paused_background_collection_wait():
 
         async with gate.agent_request():
             background_task = asyncio.create_task(manager._run_collection())
-            await asyncio.sleep(0)
+            await drain_loop()
             assert enqueuer.calls == 0
             await manager.stop()
             background_result = await asyncio.wait_for(background_task, timeout=0.5)
@@ -132,7 +133,7 @@ def test_telegram_command_dispatcher_does_not_claim_while_agent_uses_live_runtim
         async with gate.agent_request():
             dispatcher._stop_event.clear()
             task = asyncio.create_task(dispatcher._run_loop())
-            await asyncio.sleep(0)
+            await drain_loop()
             assert db.repos.telegram_commands.claims == 0
             dispatcher._stop_event.set()
             await asyncio.wait_for(task, timeout=1.5)

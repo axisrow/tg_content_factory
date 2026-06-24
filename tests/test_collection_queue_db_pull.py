@@ -20,6 +20,7 @@ from src.telegram.collector import (
     UsernameResolveFloodWaitDeferredError,
     UsernameResolveRateLimitedError,
 )
+from tests.helpers import wait_until
 
 
 class _FakeCollector:
@@ -413,7 +414,9 @@ async def test_delayed_requeue_queue_full_releases_known_task_id(tmp_path, monke
             full=True,
             run_after=datetime.fromtimestamp(0, tz=timezone.utc),
         )
-        await asyncio.sleep(0)
+        # The requeue task runs immediately (run_after in the past), finds the
+        # queue full, and drops the task id so it can be re-ingested later.
+        await wait_until(lambda: task_id not in queue._known_task_ids)
 
         assert task_id not in queue._known_task_ids
         queue._queue.get_nowait()
