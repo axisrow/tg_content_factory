@@ -536,6 +536,20 @@ def run(args: argparse.Namespace) -> None:
                             ),
                             flush=True,
                         )
+                    # A mid-stream provider failure ends the generator gracefully
+                    # (partial text printed) but flags stream_error — it is NOT a
+                    # successful run. Persist it as failed with the error recorded
+                    # instead of saving truncated text as completed (issue #1034,
+                    # cycle-review).
+                    if last and last.get("stream_error"):
+                        await db.repos.generation_runs.set_status(
+                            run_id, "failed", metadata={"stream_error": last["stream_error"]}
+                        )
+                        print(
+                            safe_json_dumps({"event": "error", "error": last["stream_error"]}),
+                            flush=True,
+                        )
+                        return
                     final_text = last.get("generated_text") if last else ""
                     metadata = {"citations": last.get("citations", []) if last else []}
                     await db.repos.generation_runs.save_result(run_id, final_text, metadata)

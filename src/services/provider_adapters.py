@@ -228,7 +228,18 @@ def make_generic_http_adapter(
                     if resp.status != 200:
                         text = await resp.text()
                         raise RuntimeError(f"Provider error {resp.status}: {text}")
-                    data = await resp.json()
+                    try:
+                        data = await resp.json()
+                    except aiohttp.ContentTypeError as exc:
+                        # 200 OK but a non-JSON body (HTML error page, SSE stream,
+                        # captcha). Surface a provider-context RuntimeError instead
+                        # of leaking the raw aiohttp error to callers (issue #1034).
+                        content_type = getattr(resp, "content_type", "") or "unknown"
+                        body_preview = (await resp.text())[:200]
+                        raise RuntimeError(
+                            f"Provider returned 200 with unexpected content-type "
+                            f"{content_type}: {body_preview}"
+                        ) from exc
                     return await _parse_json_for_text(data)
         except Exception:
             raise
