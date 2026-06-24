@@ -930,6 +930,93 @@ async def test_local_path_uploaded_via_upload_file():
     s3.upload_file.assert_awaited_once()
 
 
+@pytest.mark.anyio
+async def test_generate_skips_mirror_for_already_owned_s3_url():
+    """A result URL already pointing at our S3 (owns_url=True) is NOT re-mirrored.
+
+    Without this guard a presigned S3 URL would be downloaded and re-uploaded on
+    every generation that returned it, churning storage and rotating the key
+    (#836/4). The URL must pass through untouched and upload_url must not run.
+    """
+    svc = _make_clean_service()
+
+    owned = "https://s3.example.com/bucket/images/abc.png?sig=x"
+
+    async def s3_url_adapter(prompt: str, model: str) -> str:
+        return owned
+
+    svc.register_adapter("replicate", s3_url_adapter)
+    s3 = MagicMock()
+    s3.owns_url = MagicMock(return_value=True)
+    s3.upload_url = AsyncMock(return_value="https://s3.example.com/bucket/SHOULD-NOT-BE-USED")
+    svc._s3 = s3
+
+    result = await svc.generate("replicate:m", "x")
+    assert result == owned  # returned unchanged
+    s3.owns_url.assert_called_once_with(owned)
+    s3.upload_url.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_generate_http_mirror_failure_falls_back_to_provider_url():
+    """When mirroring an ephemeral URL into S3 fails (upload_url → None), generate
+    falls back to the original provider URL instead of dropping the result.
+
+    Symmetric to the local-path fallback (test_generate_s3_upload_fails_returns_local_path)
+    — a transient S3 outage must not turn a successful (billed) generation into None.
+    """
+    svc = _make_clean_service()
+
+    provider_url = "https://replicate.delivery/ephemeral.png"
+
+    async def replicate_adapter(prompt: str, model: str) -> str:
+        return provider_url
+
+    svc.register_adapter("replicate", replicate_adapter)
+    s3 = MagicMock()
+    s3.owns_url = MagicMock(return_value=False)
+    s3.upload_url = AsyncMock(return_value=None)  # mirror failed
+    svc._s3 = s3
+
+    result = await svc.generate("replicate:m", "x")
+    assert result == provider_url  # graceful fallback, not None
+    s3.upload_url.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_generate_returns_result_unchanged_when_s3_not_configured():
+    """With no S3 store the adapter result (local path) is returned verbatim —
+    no S3 attribute access, no upload, behaving exactly as a no-S3 deploy."""
+    svc = _make_clean_service()
+    # _make_clean_service uses __new__, so _s3 is absent → getattr(...) is None.
+    assert getattr(svc, "_s3", None) is None
+
+    async def local_adapter(prompt: str, model: str) -> str:
+        return "/data/image/local.png"
+
+    svc.register_adapter("hf", local_adapter)
+    result = await svc.generate("hf:m", "x")
+    assert result == "/data/image/local.png"
+
+
+@pytest.mark.anyio
+async def test_generate_invokes_adapter_exactly_once():
+    """The paid adapter is invoked exactly once per generate() — the service adds
+    no auto-retry around the non-idempotent billed call (#958 double-billing class).
+    """
+    svc = _make_clean_service()
+    calls = {"n": 0}
+
+    async def counting_adapter(prompt: str, model: str) -> str:
+        calls["n"] += 1
+        return "https://img.example.com/x.png"
+
+    svc.register_adapter("fake", counting_adapter)
+    result = await svc.generate("fake:m", "a cat")
+    assert result == "https://img.example.com/x.png"
+    assert calls["n"] == 1
+
+
 # ── production limits enforcement (#814) ──
 
 
@@ -996,3 +1083,36 @@ async def test_generate_records_cost_when_allowed():
     result = await svc.generate("together:flux", "a cat")
     assert result == "http://img/result.png"
     assert limits._cost_tracker.get_daily_cost() == pytest.approx(1.0)
+
+
+@pytest.mark.anyio
+async def test_generate_invokes_adapter_once_with_limits_configured():
+    """Even on the limits-enabled path (acquire → adapter → record_cost), the paid
+    adapter is invoked exactly once — the cost-cap wiring adds no retry around the
+    non-idempotent billed call (#958 class, limits branch of generate())."""
+    from src.services.production_limits_service import (
+        CostConfig,
+        ProductionLimitsService,
+        RateLimitConfig,
+    )
+
+    db = MagicMock()
+    db.get_setting = AsyncMock(return_value=None)
+    limits = ProductionLimitsService(
+        db, RateLimitConfig(), CostConfig(cost_per_image=1.0, daily_cost_cap=100.0)
+    )
+    calls = {"n": 0}
+
+    async def counting(text, model_id):
+        calls["n"] += 1
+        return "http://img/result.png"
+
+    svc = ImageGenerationService.__new__(ImageGenerationService)
+    svc._adapters = {"together": counting}
+    svc._s3 = None
+    svc._last_failure = None
+    svc._limits = limits
+
+    result = await svc.generate("together:flux", "a cat")
+    assert result == "http://img/result.png"
+    assert calls["n"] == 1
