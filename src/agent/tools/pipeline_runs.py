@@ -7,11 +7,14 @@ from claude_agent_sdk import tool
 from src.agent.tools._pipeline_runtime import build_image_service
 from src.agent.tools._registry import _text_response, require_confirmation
 from src.agent.tools.pipeline_schemas import (
+    AUTO_SELECT_BEST_SCHEMA,
     GENERATE_DRAFT_SCHEMA,
+    GET_AB_VARIANTS_SCHEMA,
     GET_PIPELINE_RUN_SCHEMA,
     LIST_PIPELINE_RUNS_SCHEMA,
     PUBLISH_PIPELINE_RUN_SCHEMA,
     RUN_PIPELINE_SCHEMA,
+    SELECT_VARIANT_SCHEMA,
 )
 
 
@@ -246,4 +249,94 @@ def register_pipeline_run_tools(db: Any, client_pool: Any, config: Any, ctx: Any
             return _text_response(f"Ошибка публикации: {exc}")
 
     tools.append(publish_pipeline_run)
+
+    @tool(
+        "get_ab_variants",
+        "List the A/B variants of a generation run (issue #1068). "
+        "Shows each variant's index/text and which one is currently selected. "
+        "Use select_variant or auto_select_best to choose one.",
+        GET_AB_VARIANTS_SCHEMA,
+    )
+    async def get_ab_variants(args):
+        run_id = args.get("run_id")
+        if run_id is None:
+            return _text_response("Ошибка: run_id обязателен.")
+        try:
+            from src.services.ab_testing_service import ABTestingService
+
+            ab_service = ABTestingService(db, config=config)
+            result = await ab_service.get_variants(int(run_id))
+            if result is None:
+                return _text_response(f"Run id={run_id} не найден.")
+            lines = [f"Варианты run id={result.run_id} ({len(result.variants)} шт.):"]
+            for variant in result.variants:
+                marker = " *выбран*" if result.selected_index == variant.index else ""
+                lines.append(f"[{variant.index}]{marker} {variant.text[:200]}")
+            return _text_response("\n".join(lines))
+        except Exception as exc:
+            return _text_response(f"Ошибка получения вариантов: {exc}")
+
+    tools.append(get_ab_variants)
+
+    @tool(
+        "select_variant",
+        "Select a specific A/B variant as a run's final content (issue #1068). "
+        "Updates generated_text to the chosen variant. Requires confirm=true.",
+        SELECT_VARIANT_SCHEMA,
+    )
+    async def select_variant(args):
+        gate = require_confirmation("выберет A/B-вариант как финальный контент", args)
+        if gate:
+            return gate
+        run_id = args.get("run_id")
+        variant_index = args.get("variant_index")
+        if run_id is None or variant_index is None:
+            return _text_response("Ошибка: run_id и variant_index обязательны.")
+        try:
+            from src.services.ab_testing_service import ABTestingService
+
+            ab_service = ABTestingService(db, config=config)
+            await ab_service.select_variant(int(run_id), int(variant_index))
+            return _text_response(
+                f"Вариант {variant_index} выбран для run id={run_id}."
+            )
+        except ValueError as exc:
+            return _text_response(f"Ошибка: {exc}")
+        except Exception as exc:
+            return _text_response(f"Ошибка выбора варианта: {exc}")
+
+    tools.append(select_variant)
+
+    @tool(
+        "auto_select_best",
+        "Auto-select the best A/B variant of a run by quality score (issue #1068). "
+        "Scores every variant and sets the highest-scoring one as the final content. "
+        "Requires confirm=true (uses the LLM provider for scoring).",
+        AUTO_SELECT_BEST_SCHEMA,
+    )
+    async def auto_select_best(args):
+        gate = require_confirmation("оценит все варианты и выберет лучший (расход провайдера)", args)
+        if gate:
+            return gate
+        run_id = args.get("run_id")
+        if run_id is None:
+            return _text_response("Ошибка: run_id обязателен.")
+        try:
+            from src.services.ab_testing_service import ABTestingService
+            from src.services.provider_service import build_provider_service
+            from src.services.quality_scoring_service import QualityScoringService
+
+            provider_service = await build_provider_service(db, config)
+            quality_service = QualityScoringService(db, provider_service=provider_service)
+            ab_service = ABTestingService(db, provider_service=provider_service, config=config)
+            best_index = await ab_service.auto_select_best(
+                int(run_id), scoring_service=quality_service
+            )
+            return _text_response(
+                f"Авто-выбран вариант {best_index} для run id={run_id}."
+            )
+        except Exception as exc:
+            return _text_response(f"Ошибка авто-выбора варианта: {exc}")
+
+    tools.append(auto_select_best)
     return tools

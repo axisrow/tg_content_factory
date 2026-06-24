@@ -59,6 +59,19 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     )
     pipeline_add.add_argument("--inactive", action="store_true", help="Create pipeline disabled")
     pipeline_add.add_argument(
+        "--ab-variants",
+        type=int,
+        default=1,
+        dest="ab_variants",
+        help="Number of A/B content variants to generate (>1 enables A/B testing)",
+    )
+    pipeline_add.add_argument(
+        "--ab-auto-select",
+        action="store_true",
+        dest="ab_auto_select",
+        help="Auto-select the best A/B variant by quality score",
+    )
+    pipeline_add.add_argument(
         "--node",
         action="append",
         default=None,
@@ -157,6 +170,28 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         const=False,
         help="Disable pipeline",
     )
+    pipeline_edit.add_argument(
+        "--ab-variants",
+        type=int,
+        default=None,
+        dest="ab_variants",
+        help="Number of A/B content variants to generate (>1 enables A/B testing)",
+    )
+    pipeline_edit.add_argument(
+        "--ab-auto-select",
+        dest="ab_auto_select",
+        action="store_const",
+        const=True,
+        default=None,
+        help="Auto-select the best A/B variant by quality score",
+    )
+    pipeline_edit.add_argument(
+        "--no-ab-auto-select",
+        dest="ab_auto_select",
+        action="store_const",
+        const=False,
+        help="Disable A/B auto-select",
+    )
 
     pipeline_delete = pipeline_sub.add_parser("delete", help="Delete pipeline")
     pipeline_delete.add_argument("id", type=int, help="Pipeline id")
@@ -201,6 +236,20 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
     pipeline_generate.add_argument(
         "--preview", action="store_true", default=False, help="Print generated text to stdout"
     )
+    pipeline_generate.add_argument(
+        "--ab-variants",
+        type=int,
+        default=None,
+        dest="ab_variants",
+        help="Override pipeline A/B variant count for this run (>1 enables A/B testing)",
+    )
+    pipeline_generate.add_argument(
+        "--auto-select",
+        action="store_true",
+        default=False,
+        dest="auto_select",
+        help="Auto-select the best A/B variant by quality score for this run",
+    )
 
     pipeline_gen_stream = pipeline_sub.add_parser(
         "generate-stream",
@@ -225,6 +274,22 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
 
     pipeline_run_show = pipeline_sub.add_parser("run-show", help="Show generation run details")
     pipeline_run_show.add_argument("run_id", type=int, help="Run id")
+
+    pipeline_variants = pipeline_sub.add_parser(
+        "variants", help="List A/B variants of a generation run"
+    )
+    pipeline_variants.add_argument("run_id", type=int, help="Run id")
+
+    pipeline_select_variant = pipeline_sub.add_parser(
+        "select-variant", help="Select an A/B variant as the run's final content"
+    )
+    pipeline_select_variant.add_argument("run_id", type=int, help="Run id")
+    pipeline_select_variant.add_argument("index", type=int, help="Variant index (0-based)")
+
+    pipeline_auto_select = pipeline_sub.add_parser(
+        "auto-select", help="Auto-select the best A/B variant of a run by quality score"
+    )
+    pipeline_auto_select.add_argument("run_id", type=int, help="Run id")
 
     pipeline_queue = pipeline_sub.add_parser("queue", help="Show moderation queue")
     pipeline_queue.add_argument("id", type=int, help="Pipeline id")

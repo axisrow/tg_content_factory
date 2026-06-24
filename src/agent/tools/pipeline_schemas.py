@@ -12,6 +12,11 @@ GET_PIPELINE_DETAIL_SCHEMA = {"pipeline_id": PIPELINE_ID_ARG}
 GET_PIPELINE_QUEUE_SCHEMA = {"pipeline_id": PIPELINE_ID_ARG, "limit": LIMIT_ARG}
 GET_REFINEMENT_STEPS_SCHEMA = {"pipeline_id": PIPELINE_ID_ARG}
 
+AB_NUM_VARIANTS_ARG = Annotated[
+    int, "Число A/B-вариантов контента (>1 включает A/B-тест, ×N расход токенов)"
+]
+AB_AUTO_SELECT_ARG = Annotated[bool, "Авто-выбор лучшего A/B-варианта по quality score"]
+
 ADD_PIPELINE_SCHEMA = {
     "name": Annotated[str, "Название пайплайна"],
     "prompt_template": Annotated[str, "Шаблон промпта для генерации контента"],
@@ -19,6 +24,8 @@ ADD_PIPELINE_SCHEMA = {
     "target_refs": Annotated[str, "Цели публикации через запятую в формате phone|dialog_id"],
     "llm_model": Annotated[str, "Модель LLM для генерации (например claude-sonnet-4-20250514)"],
     "publish_mode": Annotated[str, "Режим публикации: auto или moderated"],
+    "ab_num_variants": AB_NUM_VARIANTS_ARG,
+    "ab_auto_select": AB_AUTO_SELECT_ARG,
     "confirm": CONFIRM_ARG,
 }
 
@@ -30,8 +37,18 @@ EDIT_PIPELINE_SCHEMA = {
     "target_refs": Annotated[str, "Цели публикации через запятую в формате phone|dialog_id"],
     "llm_model": Annotated[str, "Модель LLM для генерации (например claude-sonnet-4-20250514)"],
     "publish_mode": Annotated[str, "Режим публикации: auto или moderated"],
+    "ab_num_variants": AB_NUM_VARIANTS_ARG,
+    "ab_auto_select": AB_AUTO_SELECT_ARG,
     "confirm": CONFIRM_ARG,
 }
+
+GET_AB_VARIANTS_SCHEMA = {"run_id": RUN_ID_ARG}
+SELECT_VARIANT_SCHEMA = {
+    "run_id": RUN_ID_ARG,
+    "variant_index": Annotated[int, "Индекс выбираемого варианта (0-based)"],
+    "confirm": CONFIRM_ARG,
+}
+AUTO_SELECT_BEST_SCHEMA = {"run_id": RUN_ID_ARG, "confirm": CONFIRM_ARG}
 
 TOGGLE_PIPELINE_SCHEMA = {"pipeline_id": PIPELINE_ID_ARG}
 DELETE_PIPELINE_SCHEMA = {"pipeline_id": PIPELINE_ID_ARG, "confirm": CONFIRM_ARG}

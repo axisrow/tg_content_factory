@@ -745,3 +745,148 @@ def test_target_refs_success():
     assert refs[0].dialog_id == 100
     assert refs[1].phone == "+0987654321"
     assert refs[1].dialog_id == 200
+
+
+# ---------------------------------------------------------------------------
+# A/B testing web parity (issue #1068)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_add_pipeline_persists_ab_fields(client):
+    """POST /pipelines/add must persist ab_num_variants/ab_auto_select."""
+    await client.post(
+        "/pipelines/add",
+        data={**_ADD_DATA, "name": "AB", "ab_num_variants": "3", "ab_auto_select": "true"},
+    )
+    db = client._transport.app.state.db  # type: ignore
+    pipeline = await db.repos.content_pipelines.get_by_id(1)
+    assert pipeline is not None
+    assert pipeline.ab_num_variants == 3
+    assert pipeline.ab_auto_select is True
+
+
+@pytest.mark.anyio
+async def test_edit_pipeline_persists_ab_fields(client):
+    """POST /pipelines/1/edit must persist updated A/B config."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    resp = await client.post(
+        "/pipelines/1/edit",
+        data={**_ADD_DATA, "name": "Edited", "ab_num_variants": "5", "ab_auto_select": "true"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    db = client._transport.app.state.db  # type: ignore
+    pipeline = await db.repos.content_pipelines.get_by_id(1)
+    assert pipeline.ab_num_variants == 5
+    assert pipeline.ab_auto_select is True
+
+
+@pytest.mark.anyio
+async def test_get_pipeline_variants_returns_json(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    db = client._transport.app.state.db  # type: ignore
+    run_id = await db.repos.generation_runs.create_run(1, "prompt")
+    await db.repos.generation_runs.save_result(run_id, "base")
+    await db.repos.generation_runs.set_variants(run_id, ["base", "alt one", "alt two"])
+
+    resp = await client.get(f"/pipelines/1/variants/{run_id}")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["run_id"] == run_id
+    assert [v["text"] for v in payload["variants"]] == ["base", "alt one", "alt two"]
+
+
+@pytest.mark.anyio
+async def test_get_pipeline_variants_wrong_pipeline_404(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    db = client._transport.app.state.db  # type: ignore
+    run_id = await db.repos.generation_runs.create_run(1, "prompt")
+    await db.repos.generation_runs.save_result(run_id, "base")
+
+    resp = await client.get(f"/pipelines/999999/variants/{run_id}")
+    assert resp.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_select_pipeline_variant_updates_text(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    db = client._transport.app.state.db  # type: ignore
+    run_id = await db.repos.generation_runs.create_run(1, "prompt")
+    await db.repos.generation_runs.save_result(run_id, "base")
+    await db.repos.generation_runs.set_variants(run_id, ["base", "winner"])
+    # Stale score from the base text — must be cleared on selection (Codex #1068).
+    await db.repos.generation_runs.set_quality_score(run_id, 0.9, ["base note"])
+
+    resp = await client.post(
+        "/pipelines/1/select-variant",
+        data={"run_id": str(run_id), "variant_index": "1"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=variant_selected" in resp.headers["location"]
+    run = await db.repos.generation_runs.get(run_id)
+    assert run.generated_text == "winner"
+    assert run.selected_variant == 1
+    assert run.quality_score is None
+
+
+@pytest.mark.anyio
+async def test_select_pipeline_variant_invalid_index(client):
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    db = client._transport.app.state.db  # type: ignore
+    run_id = await db.repos.generation_runs.create_run(1, "prompt")
+    await db.repos.generation_runs.save_result(run_id, "base")
+    await db.repos.generation_runs.set_variants(run_id, ["base", "alt"])
+
+    resp = await client.post(
+        "/pipelines/1/select-variant",
+        data={"run_id": str(run_id), "variant_index": "9"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "error=pipeline_invalid" in resp.headers["location"]
+    # generated_text untouched.
+    run = await db.repos.generation_runs.get(run_id)
+    assert run.generated_text == "base"
+
+
+@pytest.mark.anyio
+async def test_auto_select_pipeline_variant_uses_quality_score(client):
+    """POST /auto-select-best selects the highest-scoring variant and redirects."""
+    await client.post("/pipelines/add", data=_ADD_DATA)
+    db = client._transport.app.state.db  # type: ignore
+    run_id = await db.repos.generation_runs.create_run(1, "prompt")
+    await db.repos.generation_runs.save_result(run_id, "base")
+    await db.repos.generation_runs.set_variants(run_id, ["base", "winner", "mid"])
+
+    from src.services.quality_scoring_service import QualityScore
+
+    def _score_for(text):
+        value = {"base": 0.2, "winner": 0.95, "mid": 0.5}.get(text, 0.0)
+        return (
+            QualityScore(
+                relevance=value,
+                language_quality=value,
+                informativeness=value,
+                structure=value,
+                overall=value,
+                issues=[],
+            ),
+            value >= 0.7,
+        )
+
+    with patch(
+        "src.services.quality_scoring_service.QualityScoringService.score_and_check",
+        new=AsyncMock(side_effect=lambda text, *a, **k: _score_for(text)),
+    ):
+        resp = await client.post(
+            "/pipelines/1/auto-select-best",
+            data={"run_id": str(run_id)},
+            follow_redirects=False,
+        )
+    assert resp.status_code == 303
+    assert "msg=variant_auto_selected" in resp.headers["location"]
+    run = await db.repos.generation_runs.get(run_id)
+    assert run.selected_variant == 1
+    assert run.generated_text == "winner"

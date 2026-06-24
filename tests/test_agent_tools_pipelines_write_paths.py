@@ -37,6 +37,8 @@ def _make_pipeline(
     generate_interval_minutes=60,
     prompt_template="Generate content about {topic}",
     refinement_steps=None,
+    ab_num_variants=1,
+    ab_auto_select=False,
 ):
     return SimpleNamespace(
         id=id,
@@ -49,6 +51,8 @@ def _make_pipeline(
         generate_interval_minutes=generate_interval_minutes,
         prompt_template=prompt_template,
         refinement_steps=refinement_steps or [],
+        ab_num_variants=ab_num_variants,
+        ab_auto_select=ab_auto_select,
     )
 
 
@@ -215,6 +219,27 @@ class TestAddPipelineErrors:
         text = _text(result)
         assert "создан" in text
         assert "42" in text
+
+    @pytest.mark.anyio
+    async def test_add_forwards_ab_fields(self, mock_db):
+        """add_pipeline must forward ab_num_variants/ab_auto_select to svc.add (#1068)."""
+        with patch("src.services.pipeline_service.PipelineService") as mock_svc:
+            add_mock = AsyncMock(return_value=7)
+            mock_svc.return_value.add = add_mock
+            handlers = _get_tool_handlers(mock_db)
+            await handlers["add_pipeline"]({
+                "name": "AB Pipeline",
+                "prompt_template": "Generate {topic}",
+                "source_channel_ids": "100",
+                "target_refs": "+7900|300",
+                "ab_num_variants": 3,
+                "ab_auto_select": True,
+                "confirm": True,
+            })
+
+        kwargs = add_mock.await_args.kwargs
+        assert kwargs["ab_num_variants"] == 3
+        assert kwargs["ab_auto_select"] is True
 
 
 # ---------------------------------------------------------------------------

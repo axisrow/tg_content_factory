@@ -494,6 +494,11 @@ class ContentPipeline(BaseModel):
     publish_times: str | None = None  # JSON array of "HH:MM" times, e.g. '["09:00", "18:00"]'
     refinement_steps: list[dict] = []  # list of {name, prompt} dicts; {text} in prompt is replaced
     pipeline_json: PipelineGraph | None = None  # node-based DAG config (issue #343)
+    # A/B testing (issue #1068): generate N stylistic variants of the base text
+    # and optionally auto-select the best. ab_num_variants <= 1 disables it
+    # (default off — variant generation multiplies token cost ×N).
+    ab_num_variants: int = Field(1, ge=1)
+    ab_auto_select: bool = False
     created_at: datetime | None = None
 
 

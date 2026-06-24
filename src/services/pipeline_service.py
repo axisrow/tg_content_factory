@@ -146,6 +146,8 @@ class PipelineService:
         generation_backend: PipelineGenerationBackend | str = PipelineGenerationBackend.CHAIN,
         generate_interval_minutes: int = 60,
         is_active: bool = True,
+        ab_num_variants: int = 1,
+        ab_auto_select: bool = False,
     ) -> int:
         pipeline = await self._build_pipeline(
             name=name,
@@ -156,6 +158,8 @@ class PipelineService:
             generation_backend=generation_backend,
             generate_interval_minutes=generate_interval_minutes,
             is_active=is_active,
+            ab_num_variants=ab_num_variants,
+            ab_auto_select=ab_auto_select,
         )
         sources = await self._normalize_sources(source_channel_ids)
         targets = await self._normalize_targets(target_refs)
@@ -179,6 +183,8 @@ class PipelineService:
         filter_config: dict | None = None,
         dag_source_channel_ids: list[int] | None = None,
         account_phone: str | None = None,
+        ab_num_variants: int = 1,
+        ab_auto_select: bool = False,
     ) -> bool:
         existing = await self.get(pipeline_id)
         existing_pipeline_json = existing.pipeline_json if existing else None
@@ -189,6 +195,7 @@ class PipelineService:
             name="x",
             generation_backend=generation_backend,
             pipeline_json=existing_pipeline_json,
+            ab_num_variants=ab_num_variants,
         )
         skip_llm_validation = not pipeline_needs_llm(probe)
         pipeline = await self._build_pipeline(
@@ -202,6 +209,8 @@ class PipelineService:
             is_active=is_active,
             skip_llm_validation=skip_llm_validation,
             account_phone=account_phone,
+            ab_num_variants=ab_num_variants,
+            ab_auto_select=ab_auto_select,
         )
 
         # Preserve existing pipeline_json and apply node-level config updates
@@ -374,6 +383,8 @@ class PipelineService:
         last_generated_id: int = 0,
         skip_llm_validation: bool = False,
         account_phone: str | None = None,
+        ab_num_variants: int = 1,
+        ab_auto_select: bool = False,
     ) -> ContentPipeline:
         cleaned_name = name.strip()
         if not cleaned_name:
@@ -393,6 +404,8 @@ class PipelineService:
             raise PipelineValidationError("Указан неизвестный режим pipeline.") from exc
         if generate_interval_minutes < 1:
             raise PipelineValidationError("Интервал генерации должен быть не меньше 1 минуты.")
+        if ab_num_variants < 1:
+            raise PipelineValidationError("Число A/B-вариантов должно быть не меньше 1.")
         return ContentPipeline(
             name=cleaned_name,
             prompt_template=cleaned_template,
@@ -404,6 +417,8 @@ class PipelineService:
             last_generated_id=last_generated_id,
             generate_interval_minutes=generate_interval_minutes,
             account_phone=account_phone or None,
+            ab_num_variants=ab_num_variants,
+            ab_auto_select=ab_auto_select,
         )
 
     @staticmethod

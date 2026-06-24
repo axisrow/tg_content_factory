@@ -109,6 +109,9 @@
 | Детали запуска | `pipeline run-show` | `GET /pipelines/{id}/runs/{run_id}` | `get_pipeline_run` |
 | Очередь модерации | `pipeline queue` | `GET /pipelines/{id}/queue` | `get_pipeline_queue` |
 | Опубликовать | `pipeline publish` | `POST /pipelines/{id}/publish` | `publish_pipeline_run` |
+| A/B варианты: список | `pipeline variants` | `GET /pipelines/{id}/variants/{run_id}` | `get_ab_variants` |
+| A/B варианты: выбрать | `pipeline select-variant` | `POST /pipelines/{id}/select-variant` | `select_variant` |
+| A/B варианты: авто-выбор | `pipeline auto-select` | `POST /pipelines/{id}/auto-select-best` | `auto_select_best` |
 | Одобрить | `pipeline approve` | `POST /moderation/{id}/approve` | `approve_run` |
 | Отклонить | `pipeline reject` | `POST /moderation/{id}/reject` | `reject_run` |
 | Одобрить (bulk) | `pipeline bulk-approve` | `POST /moderation/bulk-approve` | `bulk_approve_runs` |
