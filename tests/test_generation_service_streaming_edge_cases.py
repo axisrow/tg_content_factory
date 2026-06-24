@@ -115,6 +115,45 @@ async def test_midstream_break_first_chunk_yields_error_marker():
     assert updates[0]["stream_error"]
 
 
+async def test_generate_stream_true_raises_on_midstream_break():
+    """``generate(stream=True)`` must NOT report a truncated run as success.
+
+    ``generate_stream`` surfaces partial text gracefully for interactive consumers,
+    but the aggregating ``generate(stream=True)`` API is consumed by
+    ``ContentGenerationService`` which persists its return value as a completed run.
+    A mid-stream failure there must raise so the run is marked failed, not saved as
+    a completed generation with truncated text (issue #1034, cycle-review).
+    """
+
+    async def provider(prompt: str = "", **kwargs):
+        async def _gen():
+            yield "partial "
+            raise ConnectionError("dropped mid-stream")
+
+        return _gen()
+
+    svc = GenerationService(DummySearchEngine([_msg()]), provider_callable=provider)
+
+    with pytest.raises(RuntimeError, match="Streaming generation failed"):
+        await svc.generate(query="q", prompt_template="Use {source_messages}", stream=True)
+
+
+async def test_generate_stream_true_succeeds_without_break():
+    """Regression guard: a clean stream still returns the aggregated text."""
+
+    async def provider(prompt: str = "", **kwargs):
+        async def _gen():
+            yield "all "
+            yield "good"
+
+        return _gen()
+
+    svc = GenerationService(DummySearchEngine([_msg()]), provider_callable=provider)
+
+    out = await svc.generate(query="q", prompt_template="Use {source_messages}", stream=True)
+    assert out["generated_text"] == "all good"
+
+
 async def test_successful_stream_has_no_partial_flag():
     """Regression guard: a clean stream must NOT be flagged partial.
 

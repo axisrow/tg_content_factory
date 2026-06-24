@@ -529,6 +529,17 @@ async def generate_stream(
                 }
                 yield f"data: {safe_json_dumps(data)}\n\n"
 
+            # A mid-stream provider failure ends the generator gracefully (partial
+            # text preserved for the UI) but flags partial/stream_error — it is NOT
+            # a successful run. Persist it as failed with the error recorded instead
+            # of saving truncated text as completed (issue #1034, cycle-review).
+            if last and last.get("stream_error"):
+                await db.repos.generation_runs.set_status(
+                    run_id, "failed", metadata={"stream_error": last["stream_error"]}
+                )
+                yield f"event: error\ndata: {safe_json_dumps({'error': 'Generation interrupted'})}\n\n"
+                return
+
             # finished successfully
             final_text = last.get("generated_text") if last else ""
             metadata = {"citations": last.get("citations", []) if last else []}

@@ -346,6 +346,47 @@ async def test_generate_stream_success(client):
 
 
 @pytest.mark.anyio
+async def test_generate_stream_midstream_break_marks_run_failed(client):
+    """A provider that drops mid-stream must NOT persist a 'completed' run.
+
+    Regression for issue #1034 (cycle-review): generate_stream now returns partial
+    text gracefully (partial/stream_error flags) instead of raising. The SSE handler
+    must honor those flags and persist the run as 'failed' with the error recorded —
+    otherwise a truncated generation is silently saved as a successful completed run.
+    Exercises the REAL GenerationService (provider fails after one chunk), not a mock.
+    """
+    await client.post("/pipelines/add", data=_ADD_DATA)
+
+    async def failing_provider(prompt="", **kwargs):
+        async def _gen():
+            yield "partial text "
+            raise ConnectionError("provider dropped mid-stream")
+
+        return _gen()
+
+    mock_provider_instance = MagicMock()
+    mock_provider_instance.has_providers = MagicMock(return_value=True)
+    mock_provider_instance.get_provider_callable = MagicMock(return_value=failing_provider)
+
+    app = client._transport.app  # type: ignore
+    app.state.llm_provider_service = mock_provider_instance
+    db = app.state.db
+
+    resp = await client.get("/pipelines/1/generate-stream")
+    assert resp.status_code == 200
+    # The interrupted stream surfaces an error event, not a done event.
+    assert "event: error" in resp.text
+    assert "event: done" not in resp.text
+
+    # The run must be persisted as failed, not completed (the core regression).
+    runs = await db.repos.generation_runs.list_by_pipeline(1)
+    assert runs, "a generation run should have been created"
+    latest = runs[0]
+    assert latest.status == "failed"
+    assert latest.status != "completed"
+
+
+@pytest.mark.anyio
 async def test_generate_stream_pipeline_not_found(client):
     """Test SSE streaming with invalid pipeline."""
     resp = await client.get("/pipelines/999999/generate-stream", follow_redirects=False)

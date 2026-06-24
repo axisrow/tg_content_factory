@@ -996,6 +996,61 @@ class TestPipelineGenerateStream:
         assert status == "completed"
         assert generated == "Hello world"
 
+    def test_midstream_break_marks_run_failed_not_completed(self, tmp_path, cli_init_patch, capsys):
+        """A graceful mid-stream break (partial/stream_error final update) must
+        persist the run as 'failed', not 'completed' (issue #1034, cycle-review).
+
+        The real generate_stream no longer raises on a provider drop — it yields a
+        final update flagged stream_error. The CLI handler must honor that flag and
+        flip the run to failed, otherwise truncated text is saved as a completed run.
+        The fake mirrors that exact output shape.
+        """
+
+        class _BreakingGenerationService:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def generate_stream(self, *args, **kwargs):
+                yield {"delta": "partial", "generated_text": "partial", "citations": []}
+                yield {
+                    "delta": "",
+                    "generated_text": "partial",
+                    "citations": [],
+                    "partial": True,
+                    "stream_error": "provider dropped mid-stream",
+                }
+
+        db_path = _empty_db_path(tmp_path, "pipeline_gen_stream_break.db")
+        pid = _seed_pipeline_with_graph(db_path, name="BreakDAG")
+
+        provider = MagicMock()
+        provider.load_db_providers = AsyncMock()
+        provider.has_providers = MagicMock(return_value=True)
+        provider.get_provider_callable = MagicMock(return_value=AsyncMock())
+
+        db = _open_db(db_path)
+        try:
+            with cli_init_patch(db, _PIPELINE_INIT_DB_TARGET, fresh_database=True), patch(
+                "src.services.provider_service.RuntimeProviderRegistry",
+                return_value=provider,
+            ), patch(
+                "src.services.generation_service.GenerationService",
+                _BreakingGenerationService,
+            ):
+                run(_gen_stream_ns(id=pid))
+        finally:
+            _close_db(db)
+
+        out = capsys.readouterr().out
+        lines = [json.loads(ln) for ln in out.strip().splitlines() if ln.strip()]
+        assert lines[-1]["event"] == "error"
+        assert "done" not in {ln.get("event") for ln in lines}
+
+        run_id = _max_run_id(db_path)
+        assert run_id is not None
+        status, _ = _read_run_status(db_path, run_id)
+        assert status == "failed"
+
     def test_cancellation_marks_run_failed(self, tmp_path, cli_init_patch, capsys):
         """Ctrl+C raises CancelledError (a BaseException, not Exception). The run
         must be flipped to "failed" and the exception re-raised, not left dangling

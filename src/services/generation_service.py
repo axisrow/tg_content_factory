@@ -288,6 +288,14 @@ class GenerationService:
                     "generated_text": "",
                     "citations": [],
                 }
+            if last.get("stream_error"):
+                # The stream ended on a mid-stream provider failure. generate_stream
+                # surfaces partial text gracefully for interactive consumers, but this
+                # aggregating API must NOT report a truncated run as success — raise so
+                # callers (e.g. ContentGenerationService) mark the run failed rather
+                # than persisting partial text as a completed generation (issue #1034,
+                # cycle-review).
+                raise RuntimeError(f"Streaming generation failed: {last['stream_error']}")
             return {
                 "prompt": last["prompt"],
                 "generated_text": last["generated_text"],
