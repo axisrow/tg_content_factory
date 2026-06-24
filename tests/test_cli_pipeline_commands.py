@@ -543,6 +543,9 @@ def _pipeline_ns(action, **overrides):
         "run_after": False,
         "since_value": 24,
         "since_unit": "h",
+        # `add`/`edit` A/B testing defaults (issue #1068)
+        "ab_variants": None,
+        "ab_auto_select": None,
         "edge": None,
         "node_configs": None,
         # `edit` defaults (id resolved per test)
@@ -1173,3 +1176,174 @@ class TestPipelineGenerateStream:
         assert "LLM provider is not configured" in capsys.readouterr().out
         # No run should have been created.
         assert _max_run_id(db_path) is None
+
+
+# ---------------------------------------------------------------------------
+# A/B testing CLI parity (issue #1068)
+# ---------------------------------------------------------------------------
+
+
+def _read_run_variants(db_path: str, run_id: int) -> tuple[str | None, int | None]:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.execute(
+            "SELECT variants, selected_variant FROM generation_runs WHERE id = ?",
+            (run_id,),
+        )
+        row = cur.fetchone()
+        return (row[0], row[1]) if row else (None, None)
+    finally:
+        conn.close()
+
+
+def _seed_run_with_variants(db_path: str, pipeline_id: int, variants: list[str]) -> int:
+    db = _open_db(db_path)
+    try:
+        run_id = asyncio.run(db.repos.generation_runs.create_run(pipeline_id, "p"))
+        asyncio.run(db.repos.generation_runs.save_result(run_id, variants[0]))
+        asyncio.run(db.repos.generation_runs.set_variants(run_id, variants))
+        return run_id
+    finally:
+        _close_db(db)
+
+
+def _seed_channel_account_dialog(db_path: str) -> None:
+    """Seed a channel + account + cached dialog so legacy `pipeline add`
+    (which validates sources against channels and targets against
+    accounts/dialog_cache) succeeds without a live Telegram client."""
+    from src.models import Account, Channel
+
+    db = _open_db(db_path)
+    try:
+        asyncio.run(
+            db.repos.channels.add_channel(
+                Channel(channel_id=100_001, title="Src", channel_type="channel")
+            )
+        )
+        asyncio.run(
+            db.repos.accounts.add_account(
+                Account(phone="+70000000001", session_string="x")
+            )
+        )
+        asyncio.run(
+            db.repos.dialog_cache.replace_dialogs(
+                "+70000000001",
+                [{"channel_id": 1, "title": "Target", "channel_type": "channel"}],
+            )
+        )
+    finally:
+        _close_db(db)
+
+
+class TestPipelineAbAddRW:
+    def test_add_persists_ab_fields(self, tmp_path, cli_init_patch, capsys):
+        """Legacy `pipeline add --ab-variants N --ab-auto-select` persists A/B config."""
+        db_path = _empty_db_path(tmp_path, "pipeline_ab_add.db")
+        _seed_channel_account_dialog(db_path)
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns("add", name="ABAdd", ab_variants=3, ab_auto_select=True),
+        )
+
+        # The freshly-added pipeline is the only row.
+        conn = sqlite3.connect(db_path)
+        try:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT ab_num_variants, ab_auto_select FROM content_pipelines "
+                "WHERE name = 'ABAdd'"
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row is not None
+        assert row["ab_num_variants"] == 3
+        assert row["ab_auto_select"] == 1
+        assert "Added pipeline" in capsys.readouterr().out
+
+
+class TestPipelineAbEditRW:
+    def test_edit_sets_ab_fields(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_ab_edit.db")
+        pid = _seed_minimal_pipeline(db_path, name="AB")
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns("edit", id=pid, ab_variants=4, ab_auto_select=True),
+        )
+
+        row = _read_pipeline_row(db_path, pid)
+        assert row is not None
+        assert row["ab_num_variants"] == 4
+        assert row["ab_auto_select"] == 1
+        assert "Updated pipeline" in capsys.readouterr().out
+
+    def test_edit_preserves_ab_fields_when_flags_omitted(self, tmp_path, cli_init_patch):
+        db_path = _empty_db_path(tmp_path, "pipeline_ab_keep.db")
+        pid = _seed_minimal_pipeline(db_path, name="AB")
+        # First set them.
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns("edit", id=pid, ab_variants=3, ab_auto_select=True),
+        )
+        # Then a rename-only edit must NOT reset them to defaults.
+        _pipeline_cli_run(
+            db_path, cli_init_patch, _pipeline_ns("edit", id=pid, name="Renamed")
+        )
+
+        row = _read_pipeline_row(db_path, pid)
+        assert row["name"] == "Renamed"
+        assert row["ab_num_variants"] == 3
+        assert row["ab_auto_select"] == 1
+
+
+class TestPipelineVariantsCommands:
+    def test_variants_lists_entries(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_variants_list.db")
+        pid = _seed_minimal_pipeline(db_path)
+        run_id = _seed_run_with_variants(db_path, pid, ["base", "alt one", "alt two"])
+
+        _pipeline_cli_run(
+            db_path, cli_init_patch, _ns(pipeline_action="variants", run_id=run_id)
+        )
+
+        out = capsys.readouterr().out
+        assert "3 variant(s)" in out
+        assert "[0]" in out and "[2]" in out
+
+    def test_select_variant_updates_generated_text(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_variants_select.db")
+        pid = _seed_minimal_pipeline(db_path)
+        run_id = _seed_run_with_variants(db_path, pid, ["base", "the winner"])
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _ns(pipeline_action="select-variant", run_id=run_id, index=1),
+        )
+
+        status, generated = _read_run_status(db_path, run_id)
+        _, selected = _read_run_variants(db_path, run_id)
+        assert generated == "the winner"
+        assert selected == 1
+        assert "Selected variant 1" in capsys.readouterr().out
+
+    def test_select_variant_invalid_index_reports_error(self, tmp_path, cli_init_patch, capsys):
+        db_path = _empty_db_path(tmp_path, "pipeline_variants_bad.db")
+        pid = _seed_minimal_pipeline(db_path)
+        run_id = _seed_run_with_variants(db_path, pid, ["base", "alt"])
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _ns(pipeline_action="select-variant", run_id=run_id, index=9),
+        )
+
+        out = capsys.readouterr().out
+        assert "Error" in out and "Invalid variant index" in out
+        # generated_text untouched by the failed selection.
+        _, generated = _read_run_status(db_path, run_id)
+        assert generated == "base"

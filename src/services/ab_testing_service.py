@@ -194,6 +194,7 @@ class ABTestingService:
         if result is None or len(result.variants) <= 1:
             return 0
 
+        best_quality = None
         if scoring_service is None:
             best_index = 0
             best_len = len(result.variants[0].text)
@@ -209,6 +210,18 @@ class ABTestingService:
                 if score.overall > best_score:
                     best_score = score.overall
                     best_index = i
+                    best_quality = score
 
+        # select_variant clears any stale quality_score from the previous text.
         await self.select_variant(run_id, best_index)
+        # When scoring drove the choice, persist the SELECTED variant's score so
+        # the run is not left unscored after a standalone auto-select (CLI/web/
+        # agent) — keeps quality metadata consistent with the final text
+        # (review: Codex, #1068).
+        if best_quality is not None:
+            await self._db.repos.generation_runs.set_quality_score(
+                run_id,
+                best_quality.overall,
+                getattr(best_quality, "issues", None),
+            )
         return best_index

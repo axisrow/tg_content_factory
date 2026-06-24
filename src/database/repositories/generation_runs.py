@@ -163,8 +163,16 @@ class GenerationRunsRepository:
         )
 
     async def select_variant(self, run_id: int, variant_index: int, generated_text: str) -> None:
+        # Selecting a variant changes generated_text, so any existing
+        # quality_score/quality_issues belong to the PREVIOUS text and would be
+        # stale — a low-quality selected variant could otherwise hide behind a
+        # passing score from the base text (review: Codex, #1068). Clear them on
+        # every selection; ContentGenerationService re-scores the selected text
+        # in its auto-select path, and a manual selection leaves the run
+        # honestly unscored until re-evaluated.
         await self._database.execute_write(
             ("UPDATE generation_runs SET generated_text = ?, selected_variant = ?, "
+             "quality_score = NULL, quality_issues = NULL, "
              "updated_at = datetime('now') WHERE id = ?"),
             (generated_text, variant_index, run_id),
         )

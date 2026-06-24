@@ -90,3 +90,21 @@ class PipelineTemplateItem(BaseModel):
         default_factory=dict,
         description="Serialized PipelineGraph (nodes/edges).",
     )
+
+
+class PipelineVariantItem(BaseModel):
+    """One A/B variant of a generation run (#1068)."""
+
+    index: int = Field(..., description="0-based variant index.")
+    text: str
+    score: float | None = Field(None, description="Quality score, when computed.")
+
+
+class PipelineVariantsResponse(BaseModel):
+    """A/B variants of a run (``GET /pipelines/{id}/variants/{run_id}``, #1068)."""
+
+    run_id: int
+    selected_index: int | None = Field(
+        None, description="Index of the currently selected variant, if any."
+    )
+    variants: list[PipelineVariantItem] = Field(default_factory=list)

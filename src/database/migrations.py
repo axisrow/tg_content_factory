@@ -102,6 +102,8 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "refinement_steps": "refinement_steps TEXT",
         "pipeline_json": "pipeline_json TEXT",
         "account_phone": "account_phone TEXT",
+        "ab_num_variants": "ab_num_variants INTEGER NOT NULL DEFAULT 1",
+        "ab_auto_select": "ab_auto_select INTEGER NOT NULL DEFAULT 0",
     },
     "pipeline_targets": {
         "target_title": "target_title TEXT",

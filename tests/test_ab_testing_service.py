@@ -111,6 +111,52 @@ async def test_ab_testing_service_generate_variants_includes_base_text(db, monke
 
 
 @pytest.mark.anyio
+async def test_select_variant_clears_stale_quality_score(db):
+    """Selecting a variant changes generated_text, so the prior text's
+    quality_score/issues must be cleared — a low-quality variant can't hide
+    behind a passing score from the base text (review: Codex, #1068)."""
+    repo = db.repos.generation_runs
+    service = ABTestingService(db)
+    run_id = await repo.create_run(42, "prompt")
+    await repo.save_result(run_id, "base")
+    await repo.set_variants(run_id, ["base", "variant"])
+    # Score belongs to the base text.
+    await repo.set_quality_score(run_id, 0.95, ["looks good"])
+
+    await service.select_variant(run_id, 1)
+
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.generated_text == "variant"
+    assert run.quality_score is None
+    assert run.quality_issues is None
+
+
+@pytest.mark.anyio
+async def test_auto_select_best_persists_selected_variant_score(db):
+    """auto_select_best with a scoring service records the SELECTED variant's
+    score, so a standalone auto-select leaves the run scored consistently with
+    its final text (review: Codex, #1068)."""
+    repo = db.repos.generation_runs
+    service = ABTestingService(db)
+    run_id = await repo.create_run(42, "prompt")
+    await repo.save_result(run_id, "base")
+    await service.save_variants(run_id, ["short", "best", "mid"])
+
+    best_index = await service.auto_select_best(
+        run_id,
+        scoring_service=FakeQualityScoringService([0.2, 0.95, 0.5]),
+    )
+
+    run = await repo.get(run_id)
+    assert best_index == 1
+    assert run is not None
+    assert run.generated_text == "best"
+    # Score is the selected variant's score, not None and not the base's.
+    assert run.quality_score == 0.95
+
+
+@pytest.mark.anyio
 async def test_ab_testing_service_select_variant_invalid_index(db):
     """Invalid index raises ValueError."""
     repo = db.repos.generation_runs

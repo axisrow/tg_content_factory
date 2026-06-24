@@ -25,12 +25,14 @@ from src.utils.json import safe_json_dumps
 from src.web import deps
 from src.web.pipelines.forms import (
     CreateWizardForm,
+    PipelineAutoSelectVariantForm,
     PipelineCreateForm,
     PipelineEditForm,
     PipelineGenerateForm,
     PipelineImportForm,
     PipelinePublishForm,
     PipelineRunForm,
+    PipelineSelectVariantForm,
     PipelineTemplateCreateForm,
     build_filter_config_from_form,
     get_filter_config,
@@ -279,6 +281,8 @@ async def add_pipeline(
             generation_backend=form.generation_backend,
             generate_interval_minutes=form.generate_interval_minutes,
             is_active=form.is_active,
+            ab_num_variants=form.ab_num_variants,
+            ab_auto_select=form.ab_auto_select,
         )
     except PipelineValidationError:
         return _pipeline_redirect("pipeline_invalid", error=True)
@@ -345,6 +349,8 @@ async def edit_pipeline(
             ),
             dag_source_channel_ids=form.dag_source_channel_ids,
             account_phone=form.account_phone,
+            ab_num_variants=form.ab_num_variants,
+            ab_auto_select=form.ab_auto_select,
         )
     except PipelineValidationError as exc:
         return _pipeline_redirect(str(exc), error=True, phone=phone)
@@ -637,6 +643,76 @@ async def publish_pipeline(request: Request, pipeline_id: int, form: PipelinePub
     await db.repos.generation_runs.save_result(form.run_id, run.generated_text or "", metadata)
     await db.repos.generation_runs.set_status(form.run_id, "published")
     return _pipeline_redirect("pipeline_published")
+
+
+def _ab_testing_service(request: Request):
+    """Build an ABTestingService bound to the request's DB + provider service."""
+    from src.services.ab_testing_service import ABTestingService
+
+    return ABTestingService(
+        deps.get_db(request),
+        provider_service=deps.get_llm_provider_service(request),
+        config=request.app.state.config,
+    )
+
+
+async def get_pipeline_variants(request: Request, pipeline_id: int, run_id: int):
+    """Return the A/B variants of a run as JSON (issue #1068)."""
+    db = deps.get_db(request)
+    run = await db.repos.generation_runs.get(run_id)
+    if run is None or run.pipeline_id != pipeline_id:
+        return PipelineJson({"error": "run_not_found"}, status_code=404)
+    result = await _ab_testing_service(request).get_variants(run_id)
+    if result is None:
+        return PipelineJson({"error": "run_not_found"}, status_code=404)
+    return PipelineJson(
+        {
+            "run_id": result.run_id,
+            "selected_index": result.selected_index,
+            "variants": [
+                {"index": variant.index, "text": variant.text, "score": variant.score}
+                for variant in result.variants
+            ],
+        }
+    )
+
+
+async def select_pipeline_variant(
+    request: Request, pipeline_id: int, form: PipelineSelectVariantForm
+):
+    """Select an A/B variant as the run's final content (issue #1068)."""
+    if form.run_id is None or form.variant_index is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    run = await db.repos.generation_runs.get(form.run_id)
+    if run is None or run.pipeline_id != pipeline_id:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    try:
+        await _ab_testing_service(request).select_variant(form.run_id, form.variant_index)
+    except ValueError:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    return _pipeline_redirect("variant_selected")
+
+
+async def auto_select_pipeline_variant(
+    request: Request, pipeline_id: int, form: PipelineAutoSelectVariantForm
+):
+    """Auto-select the best A/B variant by quality score (issue #1068)."""
+    if form.run_id is None:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    db = deps.get_db(request)
+    run = await db.repos.generation_runs.get(form.run_id)
+    if run is None or run.pipeline_id != pipeline_id:
+        return _pipeline_redirect("pipeline_invalid", error=True)
+    from src.services.quality_scoring_service import QualityScoringService
+
+    quality_service = QualityScoringService(
+        db, provider_service=deps.get_llm_provider_service(request)
+    )
+    await _ab_testing_service(request).auto_select_best(
+        form.run_id, scoring_service=quality_service
+    )
+    return _pipeline_redirect("variant_auto_selected")
 
 
 async def get_refinement_steps(request: Request, pipeline_id: int):

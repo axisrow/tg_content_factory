@@ -68,6 +68,16 @@ class ContentPipelinesRepository:
             ),
             pipeline_json=pipeline_graph,
             account_phone=row["account_phone"] if "account_phone" in keys else None,
+            ab_num_variants=(
+                row["ab_num_variants"]
+                if "ab_num_variants" in keys and row["ab_num_variants"] is not None
+                else 1
+            ),
+            ab_auto_select=(
+                bool(row["ab_auto_select"])
+                if "ab_auto_select" in keys and row["ab_auto_select"] is not None
+                else False
+            ),
             created_at=parse_datetime(row["created_at"]),
         )
 
@@ -108,8 +118,8 @@ class ContentPipelinesRepository:
                 INSERT INTO content_pipelines (
                     name, prompt_template, llm_model, image_model, publish_mode,
                     generation_backend, is_active, last_generated_id, generate_interval_minutes,
-                    publish_times, pipeline_json, account_phone
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    publish_times, pipeline_json, account_phone, ab_num_variants, ab_auto_select
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     pipeline.name,
@@ -124,6 +134,8 @@ class ContentPipelinesRepository:
                     pipeline.publish_times,
                     pipeline_json_str,
                     pipeline.account_phone,
+                    pipeline.ab_num_variants,
+                    int(pipeline.ab_auto_select),
                 ),
             )
             pipeline_id = cur.lastrowid or 0
@@ -177,7 +189,7 @@ class ContentPipelinesRepository:
                     SET name = ?, prompt_template = ?, llm_model = ?, image_model = ?,
                         publish_mode = ?, generation_backend = ?, is_active = ?,
                         generate_interval_minutes = ?, publish_times = ?, pipeline_json = ?,
-                        account_phone = ?
+                        account_phone = ?, ab_num_variants = ?, ab_auto_select = ?
                     WHERE id = ?
                     """,
                     (
@@ -192,6 +204,8 @@ class ContentPipelinesRepository:
                         pipeline.publish_times,
                         pipeline_json_str,
                         pipeline.account_phone,
+                        pipeline.ab_num_variants,
+                        int(pipeline.ab_auto_select),
                         pipeline_id,
                     ),
                 )
