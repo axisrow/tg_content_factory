@@ -535,9 +535,9 @@ async def test_warm_stagger_between_phones(real_pool_harness_factory, monkeypatc
     """Phones are staggered with a small delay between them."""
     import time
 
-    # 0.1s stagger (was 0.3s, #1091): still comfortably above the ±0.05s
-    # measurement tolerance below, but a third of the wall-clock.
-    stagger = 0.1
+    # 0.15s stagger (was 0.3s, #1091): 3× tolerance floor (0.05s) keeps
+    # margin at 33% — robust on loaded CI runners without adding wall-clock.
+    stagger = 0.15
     monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", stagger)
     monkeypatch.setattr("src.telegram.pool_dialogs.WARM_SINGLE_PHONE_TIMEOUT_SEC", 5.0)
 
