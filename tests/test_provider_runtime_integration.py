@@ -407,9 +407,11 @@ async def test_deepagents_chat_runs_real_init_chat_model_and_create_deep_agent(
     reason="Set RUN_REAL_PROVIDER_SMOKE=1 and ZAI_API_KEY to run live provider smoke.",
 )
 @pytest.mark.anyio
-async def test_live_zai_default_adapter_smoke(monkeypatch):
-    monkeypatch.setenv("ZAI_API_KEY", os.environ["ZAI_API_KEY"])
-    service = RuntimeProviderService()
+async def test_live_zai_default_adapter_smoke():
+    # Live smoke: inject the real key explicitly. The registry no longer reads
+    # os.environ itself (#1050), so the env arrives as an explicit mapping here
+    # — the gate above guarantees ZAI_API_KEY is present.
+    service = RuntimeProviderService(env={"ZAI_API_KEY": os.environ["ZAI_API_KEY"]})
     provider = service.get_provider_callable("zai")
 
     response = await provider(

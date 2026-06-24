@@ -313,11 +313,12 @@ def run(args: argparse.Namespace) -> None:
                 # branch above only lists existing verdicts; this is the single
                 # entry point that invokes ChannelAnalysisService.classify_channel.
                 from src.services.channel_analysis_service import ChannelAnalysisService
-                from src.services.provider_service import RuntimeProviderRegistry
+                from src.services.provider_service import build_provider_service
 
                 channel_id = args.channel_id
-                provider_service = RuntimeProviderRegistry(db, config)
-                await provider_service.load_db_providers()
+                # build_provider_service snapshots os.environ once and loads DB
+                # providers; the registry no longer reads env itself (#1050).
+                provider_service = await build_provider_service(db, config)
                 if not provider_service.has_providers():
                     print(
                         "LLM provider is not configured. Add one with `provider add`, in the web "

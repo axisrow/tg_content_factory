@@ -387,11 +387,12 @@ def run(args: argparse.Namespace) -> None:
                     return
                 engine = SearchEngine(db)
 
-                from src.services.provider_service import RuntimeProviderRegistry
+                from src.services.provider_service import build_provider_service
                 from src.services.quality_scoring_service import QualityScoringService
 
-                provider_service = RuntimeProviderRegistry(db, config)
-                await provider_service.load_db_providers()
+                # build_provider_service snapshots os.environ once and loads DB
+                # providers; the registry no longer reads env itself (#1050).
+                provider_service = await build_provider_service(db, config)
                 if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
                     print(
                         "LLM provider is not configured. Add one in /settings or set an API key "
@@ -439,11 +440,12 @@ def run(args: argparse.Namespace) -> None:
                     print(f"Pipeline id={args.id} not found")
                     return
                 engine = SearchEngine(db)
-                from src.services.provider_service import RuntimeProviderRegistry
+                from src.services.provider_service import build_provider_service
                 from src.services.quality_scoring_service import QualityScoringService
 
-                provider_svc = RuntimeProviderRegistry(db, config)
-                await provider_svc.load_db_providers()
+                # build_provider_service snapshots os.environ once and loads DB
+                # providers; the registry no longer reads env itself (#1050).
+                provider_svc = await build_provider_service(db, config)
                 if pipeline_needs_llm(pipeline) and not provider_svc.has_providers():
                     print(
                         "LLM provider is not configured. Add one in /settings or set an API key "
@@ -487,11 +489,12 @@ def run(args: argparse.Namespace) -> None:
                     return
 
                 from src.services.generation_service import GenerationService
-                from src.services.provider_service import RuntimeProviderRegistry
+                from src.services.provider_service import build_provider_service
                 from src.utils.json import safe_json_dumps
 
-                provider_service = RuntimeProviderRegistry(db, config)
-                await provider_service.load_db_providers()
+                # build_provider_service snapshots os.environ once and loads DB
+                # providers; the registry no longer reads env itself (#1050).
+                provider_service = await build_provider_service(db, config)
                 if pipeline_needs_llm(pipeline) and not provider_service.has_providers():
                     print(
                         "LLM provider is not configured. Add one in /settings or set an API key "

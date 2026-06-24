@@ -282,7 +282,9 @@ async def build_container_with_templates(
 
     from src.services.provider_service import RuntimeProviderRegistry
 
-    llm_provider_service = RuntimeProviderRegistry(db, config)
+    # Snapshot the process env once here and inject it: the registry no longer
+    # reads os.environ itself (root-cause fix for the #1050 parallel flake).
+    llm_provider_service = RuntimeProviderRegistry(db, config, env=dict(os.environ))
     await llm_provider_service.load_db_providers()
 
     if runtime_mode == "worker":

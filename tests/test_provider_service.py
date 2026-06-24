@@ -3,42 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.services.provider_service import RuntimeProviderRegistry
-
-
-@pytest.fixture(autouse=True)
-def clean_env():
-    """Clean environment variables before each test."""
-    # Save original values
-    saved = {}
-    env_vars = [
-        "OPENAI_API_KEY", "COHERE_API_KEY", "OLLAMA_BASE", "OLLAMA_URL",
-        "HUGGINGFACE_API_KEY", "HUGGINGFACE_TOKEN", "FIREWORKS_BASE",
-        "FIREWORKS_API_BASE", "FIREWORKS_API_KEY", "DEEPSEEK_BASE",
-        "DEEPSEEK_API_BASE", "DEEPSEEK_API_KEY", "TOGETHER_BASE",
-        "TOGETHER_API_BASE", "TOGETHER_API_KEY", "CONTEXT7_API_KEY",
-        "CTX7_API_KEY",
-    ]
-    for var in env_vars:
-        saved[var] = os.environ.get(var)
-        if var in os.environ:
-            del os.environ[var]
-
-    yield
-
-    # Restore original values
-    for var, val in saved.items():
-        if val is None:
-            os.environ.pop(var, None)
-        else:
-            os.environ[var] = val
-
 
 # === Default provider tests ===
 
@@ -137,15 +107,14 @@ def test_resolve_provider_callable_no_name_uses_first_real():
 # === OpenAI provider tests ===
 
 
-def test_openai_provider_registered_with_api_key(clean_env):
+def test_openai_provider_registered_with_api_key():
     """OpenAI provider registered when API key present."""
-    os.environ["OPENAI_API_KEY"] = "test_key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"OPENAI_API_KEY": "test_key"})
     provider = svc.get_provider_callable("openai")
     assert provider is not None
 
 
-def test_openai_provider_not_registered_without_key(clean_env):
+def test_openai_provider_not_registered_without_key():
     """OpenAI provider not registered without API key."""
     svc = RuntimeProviderRegistry()
     # openai shouldn't be in registry
@@ -153,9 +122,8 @@ def test_openai_provider_not_registered_without_key(clean_env):
 
 
 @pytest.mark.anyio
-async def test_openai_provider_calls_api(clean_env):
+async def test_openai_provider_calls_api():
     """OpenAI provider calls LangChain chat runtime with expected options."""
-    os.environ["OPENAI_API_KEY"] = "test_key"
     captured = {}
 
     class FakeChatModel:
@@ -168,7 +136,7 @@ async def test_openai_provider_calls_api(clean_env):
         return FakeChatModel()
 
     with patch("langchain.chat_models.init_chat_model", fake_init_chat_model):
-        svc = RuntimeProviderRegistry()
+        svc = RuntimeProviderRegistry(env={"OPENAI_API_KEY": "test_key"})
         provider = svc.get_provider_callable("openai")
         result = await provider(prompt="hi")
 
@@ -180,12 +148,10 @@ async def test_openai_provider_calls_api(clean_env):
 
 
 @pytest.mark.anyio
-async def test_openai_provider_error_status(clean_env):
+async def test_openai_provider_error_status():
     """OpenAI provider propagates LangChain runtime errors."""
-    os.environ["OPENAI_API_KEY"] = "test_key"
-
     with patch("langchain.chat_models.init_chat_model", side_effect=RuntimeError("OpenAI error 401")):
-        svc = RuntimeProviderRegistry()
+        svc = RuntimeProviderRegistry(env={"OPENAI_API_KEY": "test_key"})
         provider = svc.get_provider_callable("openai")
 
         with pytest.raises(RuntimeError) as exc_info:
@@ -196,17 +162,16 @@ async def test_openai_provider_error_status(clean_env):
 # === GPT model routing tests ===
 
 
-def test_gpt_model_routes_to_openai(clean_env):
+def test_gpt_model_routes_to_openai():
     """GPT model names route to OpenAI provider."""
-    os.environ["OPENAI_API_KEY"] = "test_key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"OPENAI_API_KEY": "test_key"})
 
     # gpt-4 should create a wrapper that uses openai provider
     provider = svc.get_provider_callable("gpt-4")
     assert provider is not None
 
 
-def test_gpt_model_without_openai_key_falls_back(clean_env):
+def test_gpt_model_without_openai_key_falls_back():
     """GPT model without OpenAI key falls back to default."""
     svc = RuntimeProviderRegistry()
     provider = svc.get_provider_callable("gpt-4-turbo")
@@ -219,76 +184,69 @@ def test_gpt_model_without_openai_key_falls_back(clean_env):
 # === Other provider registration tests ===
 
 
-def test_cohere_registered_with_api_key(clean_env):
+def test_cohere_registered_with_api_key():
     """Cohere provider registered when API key present."""
-    os.environ["COHERE_API_KEY"] = "cohere_key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"COHERE_API_KEY": "cohere_key"})
     assert "cohere" in svc._registry
 
 
-def test_ollama_registered_with_base_url(clean_env):
+def test_ollama_registered_with_base_url():
     """Ollama provider registered when base URL present."""
-    os.environ["OLLAMA_BASE"] = "http://localhost:11434"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"OLLAMA_BASE": "http://localhost:11434"})
     assert "ollama" in svc._registry
 
 
-def test_ollama_registered_with_ollama_url(clean_env):
+def test_ollama_registered_with_ollama_url():
     """Ollama provider registered with OLLAMA_URL fallback."""
-    os.environ["OLLAMA_URL"] = "http://ollama.local"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"OLLAMA_URL": "http://ollama.local"})
     assert "ollama" in svc._registry
 
 
-def test_huggingface_registered_with_api_key(clean_env):
+def test_huggingface_registered_with_api_key():
     """HuggingFace provider registered when API key present."""
-    os.environ["HUGGINGFACE_API_KEY"] = "hf_key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"HUGGINGFACE_API_KEY": "hf_key"})
     assert "huggingface" in svc._registry
 
 
-def test_huggingface_registered_with_token(clean_env):
+def test_huggingface_registered_with_token():
     """HuggingFace provider registered with HUGGINGFACE_TOKEN fallback."""
-    os.environ["HUGGINGFACE_TOKEN"] = "hf_token"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"HUGGINGFACE_TOKEN": "hf_token"})
     assert "huggingface" in svc._registry
 
 
-def test_fireworks_registered(clean_env):
+def test_fireworks_registered():
     """Fireworks provider registered with base URL and key."""
-    os.environ["FIREWORKS_BASE"] = "https://fireworks.api"
-    os.environ["FIREWORKS_API_KEY"] = "fw_key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(
+        env={"FIREWORKS_BASE": "https://fireworks.api", "FIREWORKS_API_KEY": "fw_key"}
+    )
     assert "fireworks" in svc._registry
 
 
-def test_deepseek_registered(clean_env):
+def test_deepseek_registered():
     """DeepSeek provider registered with base URL and key."""
-    os.environ["DEEPSEEK_BASE"] = "https://deepseek.api"
-    os.environ["DEEPSEEK_API_KEY"] = "ds_key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(
+        env={"DEEPSEEK_BASE": "https://deepseek.api", "DEEPSEEK_API_KEY": "ds_key"}
+    )
     assert "deepseek" in svc._registry
 
 
-def test_together_registered(clean_env):
+def test_together_registered():
     """Together provider registered with base URL and key."""
-    os.environ["TOGETHER_BASE"] = "https://together.api"
-    os.environ["TOGETHER_API_KEY"] = "tg_key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(
+        env={"TOGETHER_BASE": "https://together.api", "TOGETHER_API_KEY": "tg_key"}
+    )
     assert "together" in svc._registry
 
 
-def test_context7_registered_with_api_key(clean_env):
+def test_context7_registered_with_api_key():
     """Context7 provider registered when API key present."""
-    os.environ["CONTEXT7_API_KEY"] = "c7_key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"CONTEXT7_API_KEY": "c7_key"})
     assert "context7" in svc._registry
 
 
-def test_context7_registered_with_ctx7_fallback(clean_env):
+def test_context7_registered_with_ctx7_fallback():
     """Context7 provider registered with CTX7_API_KEY fallback."""
-    os.environ["CTX7_API_KEY"] = "ctx7_key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"CTX7_API_KEY": "ctx7_key"})
     assert "context7" in svc._registry
 
 
@@ -303,7 +261,7 @@ def test_provider_service_with_db():
     assert svc.db is mock_db
 
 
-def test_multiple_providers_same_type(clean_env):
+def test_multiple_providers_same_type():
     """Can register multiple providers of same type with different names."""
     svc = RuntimeProviderRegistry()
 
@@ -323,7 +281,7 @@ def test_multiple_providers_same_type(clean_env):
     assert result2 == "Provider 2"
 
 
-def test_provider_override(clean_env):
+def test_provider_override():
     """Can override existing provider."""
     svc = RuntimeProviderRegistry()
 
@@ -336,19 +294,17 @@ def test_provider_override(clean_env):
     assert result == "New default"
 
 
-def test_gpt_lowercase_routing(clean_env):
+def test_gpt_lowercase_routing():
     """Lowercase gpt model names route to OpenAI."""
-    os.environ["OPENAI_API_KEY"] = "test_key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"OPENAI_API_KEY": "test_key"})
 
     provider = svc.get_provider_callable("gpt-3.5-turbo")
     assert provider is not None
 
 
-def test_gpt_uppercase_routing(clean_env):
+def test_gpt_uppercase_routing():
     """Uppercase GPT model names route to OpenAI."""
-    os.environ["OPENAI_API_KEY"] = "test_key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"OPENAI_API_KEY": "test_key"})
 
     provider = svc.get_provider_callable("GPT-4")
     assert provider is not None

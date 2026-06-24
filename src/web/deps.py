@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TypeVar
@@ -312,7 +313,7 @@ def get_llm_provider_service(request: Request) -> RuntimeProviderRegistry:
     svc = getattr(request.app.state, "llm_provider_service", None)
     if svc is not None:
         return svc
-    return get_container(request).llm_provider_service or RuntimeProviderRegistry()
+    return get_container(request).llm_provider_service or RuntimeProviderRegistry(env=dict(os.environ))
 
 
 def channel_service(request: Request) -> ChannelService:
