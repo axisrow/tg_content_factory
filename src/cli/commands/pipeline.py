@@ -77,6 +77,20 @@ def _format_filter_config(config: dict) -> list[str]:
     ]
 
 
+async def _safe_add_edge(svc: PipelineService, pipeline_id: int, from_node: str, to_node: str) -> bool:
+    """Add a rewiring edge, skipping it if it would create a cycle (#1077).
+
+    The filter-node splice/unsplice helpers reconnect edges around a node; that
+    rewiring must never silently build a cyclic graph, but a cycle-creating edge
+    here also must not crash the whole ``pipeline filter`` command with an
+    uncaught ``PipelineValidationError``. Skip the offending edge instead — the
+    rest of the rewire stays intact and the graph remains acyclic."""
+    try:
+        return await svc.add_edge(pipeline_id, from_node, to_node)
+    except PipelineValidationError:
+        return False
+
+
 async def _upsert_filter_node(svc: PipelineService, pipeline_id: int, config: dict) -> bool:
     graph = await svc.get_graph(pipeline_id)
     if graph is None:
@@ -113,10 +127,10 @@ async def _upsert_filter_node(svc: PipelineService, pipeline_id: int, config: di
     for downstream_id in downstream_ids:
         await svc.remove_edge(pipeline_id, upstream_id, downstream_id)
     if upstream_id:
-        await svc.add_edge(pipeline_id, upstream_id, "filter_1")
+        await _safe_add_edge(svc, pipeline_id, upstream_id, "filter_1")
     for downstream_id in downstream_ids:
         if downstream_id != "filter_1":
-            await svc.add_edge(pipeline_id, "filter_1", downstream_id)
+            await _safe_add_edge(svc, pipeline_id, "filter_1", downstream_id)
     return True
 
 
@@ -134,7 +148,7 @@ async def _clear_filter_node(svc: PipelineService, pipeline_id: int) -> bool:
         return False
     for source in incoming:
         for target in outgoing:
-            await svc.add_edge(pipeline_id, source, target)
+            await _safe_add_edge(svc, pipeline_id, source, target)
     return True
 
 
