@@ -101,7 +101,8 @@ class QualityScoringService:
             prompt = f"{QUALITY_RUBRIC}\n\nКонтент для оценки:\n{text}"
 
             result = await self._error_recovery.execute_provider_call(
-                lambda: provider_callable(prompt=prompt, max_tokens=500, temperature=0.3)
+                lambda: provider_callable(prompt=prompt, max_tokens=500, temperature=0.3),
+                provider=provider_callable,
             )
 
             response_text = result if isinstance(result, str) else str(result)

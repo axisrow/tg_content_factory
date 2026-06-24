@@ -87,19 +87,26 @@ class ErrorClassifier:
 
     @classmethod
     def classify(cls, error: Exception) -> ErrorCategory:
-        """Classify an error into a category."""
+        """Classify an error into a category.
+
+        FATAL patterns are checked FIRST so a non-retryable error that also
+        happens to mention a transient phrase still classifies as FATAL. This
+        matters for billing-adjacent LLM calls: a genuine quota-exhaustion error
+        worded like ``"rate limit / quota exceeded"`` must NOT be retried (it
+        would burn the remaining quota), even though it contains ``"rate limit"``.
+        """
         error_str = str(error).lower()
         error_type = type(error).__name__.lower()
+
+        for pattern in cls.FATAL_ERRORS:
+            if pattern in error_str or pattern in error_type:
+                return ErrorCategory.FATAL
 
         for pattern in cls.TRANSIENT_ERRORS:
             if pattern in error_str or pattern in error_type:
                 if "rate" in pattern or "429" in pattern:
                     return ErrorCategory.RATE_LIMIT
                 return ErrorCategory.TRANSIENT
-
-        for pattern in cls.FATAL_ERRORS:
-            if pattern in error_str or pattern in error_type:
-                return ErrorCategory.FATAL
 
         return ErrorCategory.UNKNOWN
 
@@ -313,17 +320,28 @@ class ErrorRecoveryService:
         self,
         func: Callable[[], Awaitable[T]],
         fallback: Callable[[], T | Awaitable[T]] | None = None,
+        *,
+        provider: Callable[..., object] | None = None,
     ) -> T:
         """Run an *idempotent* LLM/embedding provider call with recovery.
 
-        Thin alias of :meth:`execute_with_recovery` that names the intended use:
-        wrapping idempotent provider calls (LLM text, embeddings, quality
-        scoring). It exists to make the call sites read self-documentingly and to
-        give a single seam that the image guard (:func:`guard_not_image`) is
-        enforced against — image generation is billed-per-POST and must NEVER be
-        retried (would double-bill, #958/#1003), so it is intentionally excluded
-        from this path.
+        Names the intended use of :meth:`execute_with_recovery`: wrapping
+        idempotent provider calls (LLM text, embeddings, quality scoring) so a
+        transient failure is retried while a FATAL one is not.
+
+        ``provider`` is the *actual* provider callable being invoked inside
+        ``func``. It is screened by :func:`guard_not_image` BEFORE any retry can
+        happen, so a billed, non-idempotent image adapter can never be replayed
+        through this path (would double-bill, #958/#1003). Call sites build a
+        zero-arg ``func`` closure around the provider (to bind prompt/kwargs), and
+        that closure hides the underlying callable from inspection — passing the
+        provider explicitly is what keeps the guard effective at every wired site,
+        not only at :meth:`RuntimeProviderRegistry.get_recovered_provider_callable`.
+        Omitting ``provider`` is allowed only when the wrapped callable provably
+        cannot be an image adapter (e.g. embeddings, which never produce images).
         """
+        if provider is not None:
+            guard_not_image(provider)
         return await self.execute_with_recovery(func, fallback=fallback)
 
     def get_error_stats(self) -> dict:

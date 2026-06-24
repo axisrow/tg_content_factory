@@ -18,6 +18,8 @@ from src.services.error_recovery_service import (
     EMBEDDING_RETRY_POLICY,
     LLM_CIRCUIT_CONFIG,
     LLM_RETRY_POLICY,
+    ErrorCategory,
+    ErrorClassifier,
     ErrorRecoveryService,
     ImageAdapterRetryError,
     RetryPolicy,
@@ -124,6 +126,56 @@ def test_guard_allows_llm_provider_callable():
 
     # Must NOT raise for an ordinary LLM provider.
     guard_not_image(openai_provider)
+
+
+@pytest.mark.anyio
+async def test_execute_provider_call_guards_image_before_any_invocation():
+    """REGRESSION (cycle-review #1088 / Codex): the per-call seam guards too.
+
+    The guard must screen the *actual* provider callable passed via ``provider=``,
+    not just the closure — so an image adapter routed through any wired site
+    (which all call ``execute_provider_call`` directly) is refused BEFORE it is
+    ever invoked, closing the bypass Codex flagged.
+    """
+    calls = 0
+
+    async def together_image_adapter(prompt: str = "", **kwargs: object) -> str:
+        nonlocal calls
+        calls += 1
+        return "url"
+
+    svc = _fast_recovery()
+    with pytest.raises(ImageAdapterRetryError):
+        await svc.execute_provider_call(
+            lambda: together_image_adapter(prompt="x"),
+            provider=together_image_adapter,
+        )
+    # Guard fired before the adapter was ever called — zero billed POSTs.
+    assert calls == 0
+
+
+@pytest.mark.anyio
+async def test_execute_provider_call_allows_llm_provider():
+    """The per-call guard must NOT block ordinary LLM providers."""
+    async def openai_provider(prompt: str = "", **kwargs: object) -> str:
+        return "text"
+
+    svc = _fast_recovery()
+    out = await svc.execute_provider_call(
+        lambda: openai_provider(prompt="x"), provider=openai_provider
+    )
+    assert out == "text"
+
+
+def test_classifier_fatal_takes_precedence_over_transient_wording():
+    """REGRESSION (cycle-review #1088 / Claude): quota error with 'rate limit'
+    wording must classify FATAL (not retried), not RATE_LIMIT."""
+    err = RuntimeError("429 rate limit reached: quota exceeded for this key")
+    assert ErrorClassifier.classify(err) == ErrorCategory.FATAL
+
+    # A pure transient rate-limit (no fatal marker) stays RATE_LIMIT.
+    pure = RuntimeError("HTTP 429 rate limit exceeded, slow down")
+    assert ErrorClassifier.classify(pure) == ErrorCategory.RATE_LIMIT
 
 
 @pytest.mark.anyio

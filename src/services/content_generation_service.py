@@ -378,7 +378,9 @@ class ContentGenerationService:
                         temperature=temperature,
                     )
 
-                result = await self._error_recovery.execute_provider_call(_call)
+                result = await self._error_recovery.execute_provider_call(
+                    _call, provider=provider_callable
+                )
                 refined = (
                     result if isinstance(result, str)
                     else (result.get("text") or result.get("generated_text") or "")
