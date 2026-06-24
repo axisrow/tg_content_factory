@@ -8,7 +8,7 @@ from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
 from src.agent.tools._categories import ToolCategory, ToolMeta
-from src.agent.tools._registry import _text_response, require_confirmation
+from src.agent.tools._registry import _text_response, arg_bool, is_affirmative, require_confirmation
 
 # Permission metadata for this module's tools (#245). Single source of
 # truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
@@ -45,7 +45,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.services.search_query_service import SearchQueryService
 
             svc = SearchQueryService(db)
-            active_only = bool(args.get("active_only", False))
+            active_only = arg_bool(args, "active_only", False)
             queries = await svc.list(active_only=active_only)
             if not queries:
                 return _text_response("Поисковые запросы не найдены.")
@@ -140,10 +140,12 @@ def register(db, client_pool, embedding_service, **kwargs):
 
             svc = SearchQueryService(db)
             interval = int(args.get("interval_minutes", 60))
-            is_regex = bool(args.get("is_regex", False))
-            is_fts = bool(args.get("is_fts", False))
-            notify = bool(args.get("notify_on_collect", False))
-            track_stats = bool(args.get("track_stats", True))
+            # bool("false") is True — coerce bool flags via is_affirmative so a model
+            # emitting JSON-string "false" disables instead of enabling them (#1115).
+            is_regex = arg_bool(args, "is_regex", False)
+            is_fts = arg_bool(args, "is_fts", False)
+            notify = arg_bool(args, "notify_on_collect", False)
+            track_stats = arg_bool(args, "track_stats", True)
             exclude_patterns = args.get("exclude_patterns", "")
             max_length = args.get("max_length")
             chat_filter = args.get("chat_filter", args.get("chats", ""))
@@ -201,10 +203,20 @@ def register(db, client_pool, embedding_service, **kwargs):
                 return _text_response(f"Поисковый запрос id={sq_id} не найден.")
             query = args.get("query", existing.query)
             interval = int(args.get("interval_minutes", existing.interval_minutes))
-            is_regex = bool(args.get("is_regex", existing.is_regex))
-            is_fts = bool(args.get("is_fts", existing.is_fts))
-            notify = bool(args.get("notify_on_collect", existing.notify_on_collect))
-            track_stats = bool(args.get("track_stats", getattr(existing, "track_stats", True)))
+            # Only coerce when the flag is supplied; an absent flag keeps the existing
+            # value. is_affirmative maps the JSON-string "false" to False (#1115).
+            is_regex = is_affirmative(args["is_regex"]) if args.get("is_regex") is not None else existing.is_regex
+            is_fts = is_affirmative(args["is_fts"]) if args.get("is_fts") is not None else existing.is_fts
+            notify = (
+                is_affirmative(args["notify_on_collect"])
+                if args.get("notify_on_collect") is not None
+                else existing.notify_on_collect
+            )
+            track_stats = (
+                is_affirmative(args["track_stats"])
+                if args.get("track_stats") is not None
+                else getattr(existing, "track_stats", True)
+            )
             exclude_patterns = args.get("exclude_patterns", getattr(existing, "exclude_patterns", ""))
             max_length_raw = args.get("max_length", getattr(existing, "max_length", None))
             chat_filter = args.get("chat_filter", args.get("chats", getattr(existing, "chat_filter", "")))
