@@ -4,6 +4,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from src.services.error_recovery_service import ErrorRecoveryService, for_llm
+
 if TYPE_CHECKING:
     from src.database import Database
     from src.models import ContentPipeline
@@ -37,11 +39,15 @@ class ABTestingService:
         default_variants: int = 3,
         provider_service=None,
         config=None,
+        error_recovery: ErrorRecoveryService | None = None,
     ):
         self._db = db
         self._default_variants = default_variants
         self._provider_service = provider_service
         self._config = config
+        # Variant generation is an idempotent LLM rewrite — safe to retry on
+        # transient provider failures (#1069).
+        self._error_recovery = error_recovery or for_llm()
 
     async def generate_variants(
         self,
@@ -78,11 +84,17 @@ class ABTestingService:
                 )
 
                 provider_callable = provider_service.get_provider_callable(pipeline.llm_model)
-                result = await provider_callable(
-                    prompt=prompt,
-                    max_tokens=1000,
-                    temperature=0.8,
-                )
+
+                # Bind the loop-local prompt into the recovered call. A def (not a
+                # lambda with a default arg) keeps mypy's lambda inference happy.
+                async def _call(prompt: str = prompt) -> str:
+                    return await provider_callable(
+                        prompt=prompt,
+                        max_tokens=1000,
+                        temperature=0.8,
+                    )
+
+                result = await self._error_recovery.execute_provider_call(_call)
 
                 variant_text = result if isinstance(result, str) else str(result)
                 variants.append(variant_text)

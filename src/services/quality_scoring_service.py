@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from src.services.error_recovery_service import ErrorRecoveryService, for_llm
+
 if TYPE_CHECKING:
     from src.database import Database
 
@@ -54,11 +56,15 @@ class QualityScoringService:
         default_threshold: float = 0.7,
         provider_service=None,
         config=None,
+        error_recovery: ErrorRecoveryService | None = None,
     ):
         self._db = db
         self._default_threshold = default_threshold
         self._provider_service = provider_service
         self._config = config
+        # Quality scoring is an idempotent LLM read — safe to retry on transient
+        # provider failures (#1069). FATAL (401/quota) errors are not retried.
+        self._error_recovery = error_recovery or for_llm()
 
     async def score_content(
         self,
@@ -94,7 +100,9 @@ class QualityScoringService:
 
             prompt = f"{QUALITY_RUBRIC}\n\nКонтент для оценки:\n{text}"
 
-            result = await provider_callable(prompt=prompt, max_tokens=500, temperature=0.3)
+            result = await self._error_recovery.execute_provider_call(
+                lambda: provider_callable(prompt=prompt, max_tokens=500, temperature=0.3)
+            )
 
             response_text = result if isinstance(result, str) else str(result)
 
