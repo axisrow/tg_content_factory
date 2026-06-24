@@ -63,16 +63,16 @@ class FakeGenerationRunsRepo:
             self._runs[run_id].image_url = image_url
 
     async def find_orphan_image_url(self, pipeline_id, exclude_run_id=None):
-        # Mirror the production contract (#1117): the most recent unpublished
-        # run of this pipeline that already paid for an image, newest first.
+        # Mirror the production contract (#1117): the most recent FAILED run of
+        # this pipeline that already paid for an image, newest first.
         for run in sorted(self._runs.values(), key=lambda r: r.id, reverse=True):
             if run.id == exclude_run_id:
                 continue
             if run.pipeline_id != pipeline_id:
                 continue
-            if not run.image_url:
+            if run.status != "failed":
                 continue
-            if run.moderation_status == "published":
+            if not run.image_url:
                 continue
             return run.image_url
         return None

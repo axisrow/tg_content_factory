@@ -141,18 +141,25 @@ class GenerationRunsRepository:
         ``run_id``, so an in-run ``image_url`` check cannot dedupe it. Without a
         cross-run guard the retry would generate (and pay for) the image again.
 
-        This finds the most recent run of the same pipeline that already persisted
-        an ``image_url`` but was never published (``moderation_status !=
-        'published'``), so its image is paid for yet unused. The caller reuses that
-        URL instead of issuing a second billed POST. Published runs are excluded:
-        their image was already delivered, so a fresh run is a fresh post and must
-        render its own image. ``exclude_run_id`` skips the in-flight run itself.
+        This finds the most recent **failed** run of the same pipeline that already
+        persisted an ``image_url``, so its image is paid for yet stranded. The caller
+        reuses that URL instead of issuing a second billed POST.
+
+        The ``status = 'failed'`` filter is deliberate and load-bearing. A run only
+        leaves a paid-but-orphaned image behind when it failed *after* the image POST
+        (the bug window #1117 closes). A run that is ``completed`` — even one still
+        awaiting moderation/publish (``moderation_status`` of ``pending``/``approved``,
+        not yet ``published``) — is a legitimate post in flight; its image belongs to
+        *that* post. Reusing it for the next scheduled run would make every fresh post
+        silently inherit the previous post's picture. Filtering on ``failed`` (not
+        merely "not published") scopes reuse to exactly the stranded-after-billing
+        case. ``exclude_run_id`` skips the in-flight run itself.
         """
         cur = await self._db.execute(
             (
                 "SELECT image_url FROM generation_runs "
-                "WHERE pipeline_id = ? AND image_url IS NOT NULL AND image_url != '' "
-                "AND COALESCE(moderation_status, '') != 'published' "
+                "WHERE pipeline_id = ? AND status = 'failed' "
+                "AND image_url IS NOT NULL AND image_url != '' "
                 "AND id != ? "
                 "ORDER BY id DESC LIMIT 1"
             ),

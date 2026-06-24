@@ -197,13 +197,37 @@ async def test_find_orphan_image_url_ignores_published_image(db):
     """A published run's image was already delivered, so it is NOT reusable (#1117).
 
     A fresh scheduled run is a fresh post and must render its own image; reusing
-    a published image would silently repeat the previous post's picture.
+    a published image would silently repeat the previous post's picture. (A
+    published run is 'completed', not 'failed', so the status filter already
+    excludes it — this guards that invariant explicitly.)
     """
     repo = db.repos.generation_runs
     run_id = await repo.create_run(42, "prompt")
     await repo.set_image_url(run_id, "https://img.example/published.png")
     await repo.set_moderation_status(run_id, "approved")
     await repo.set_published_at(run_id)  # -> moderation_status='published'
+
+    found = await repo.find_orphan_image_url(42)
+    assert found is None
+
+
+@pytest.mark.anyio
+async def test_find_orphan_image_url_ignores_completed_unpublished_image(db):
+    """A completed-but-unpublished run's image belongs to THAT post (#1117).
+
+    This is the load-bearing edge case: a run can finish generation
+    successfully (status='completed') with an image, then sit awaiting
+    moderation/publish (moderation_status 'pending'/'approved', not yet
+    'published'). That image is a legitimate in-flight post's picture — the next
+    scheduled run must NOT reuse it (that would make every fresh post inherit the
+    previous post's image). Only 'failed' runs leak a stranded-after-billing
+    image, so reuse is scoped to status='failed', not merely "not published".
+    """
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt")
+    await repo.save_result(run_id, "text", {})  # -> status='completed'
+    await repo.set_image_url(run_id, "https://img.example/inflight.png")
+    await repo.set_moderation_status(run_id, "pending")
 
     found = await repo.find_orphan_image_url(42)
     assert found is None
