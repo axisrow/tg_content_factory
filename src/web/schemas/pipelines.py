@@ -37,10 +37,14 @@ class PipelineDetailResponse(BaseModel):
 
 
 class PipelineRunSummary(BaseModel):
-    """Compact run row used in run-history and queue listings."""
+    """Compact run row used in run-history and queue listings.
 
-    id: int
-    pipeline_id: int
+    ``id``/``pipeline_id`` mirror ``GenerationRun`` (``int | None``); both are
+    always set for a persisted run but kept optional to match the source model.
+    """
+
+    id: int | None = None
+    pipeline_id: int | None = None
     status: str
     moderation_status: str
     created_at: str | None = None

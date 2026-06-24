@@ -5,7 +5,7 @@ from fastapi.responses import HTMLResponse
 
 from src.web.dialogs import handlers
 from src.web.dialogs.responses import dialog_response
-from src.web.schemas.common import QueuedCommandResponse
+from src.web.schemas.common import ErrorResponse, QueuedCommandResponse
 from src.web.schemas.dialogs import BroadcastStatsResponse, ParticipantsResponse
 
 router = APIRouter()
@@ -130,7 +130,10 @@ async def download_media(request: Request):
     status_code=200,
     tags=["dialogs"],
     summary="List chat participants",
-    responses={202: {"model": QueuedCommandResponse, "description": "Fetch enqueued for the worker"}},
+    responses={
+        202: {"model": QueuedCommandResponse, "description": "Fetch enqueued for the worker"},
+        400: {"model": ErrorResponse, "description": "Missing phone or chat_id"},
+    },
 )
 async def get_participants(request: Request):
     """Chat participants from the cached worker snapshot (parity with CLI `dialogs participants`).
@@ -163,7 +166,10 @@ async def kick_participant(request: Request):
     status_code=200,
     tags=["dialogs"],
     summary="Channel broadcast statistics",
-    responses={202: {"model": QueuedCommandResponse, "description": "Fetch enqueued for the worker"}},
+    responses={
+        202: {"model": QueuedCommandResponse, "description": "Fetch enqueued for the worker"},
+        400: {"model": ErrorResponse, "description": "Missing phone or chat_id"},
+    },
 )
 async def broadcast_stats(request: Request):
     """Channel broadcast stats from the cached worker snapshot (parity with CLI `dialogs broadcast-stats`).
