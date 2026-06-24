@@ -35,6 +35,14 @@ from src.cli.parser import build_parser
 from src.cli.runtime import ensure_data_dirs, setup_logging
 
 
+# Migration note (epic #959, Wave 0 — issue #1120): the Typer scaffold lives in
+# ``src/cli/typer_app.py`` (``app`` + ``@app.callback()`` global options +
+# ``run_async`` async-bridge). Wave 0 ships the scaffold only — no commands are
+# migrated yet, so this argparse dispatcher stays the single entry point and the
+# ``build_parser()`` leaf-coverage audit remains the source of truth. Waves 1–4
+# register their migrated commands on ``app`` and route them here (the dispatcher
+# delegates not-yet-migrated commands to ``commands.X.run``); the Final wave
+# (#1125) removes this argparse path entirely.
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
