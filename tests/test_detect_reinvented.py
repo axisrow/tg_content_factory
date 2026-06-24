@@ -19,6 +19,7 @@ interrogate на фейках формы, а не на реальном инст
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import textwrap
 from pathlib import Path
@@ -422,3 +423,168 @@ def test_real_session_py_not_flagged_as_handrolled() -> None:
         pytest.skip("src/web/session.py отсутствует")
     findings = detect_in_source(session_py.read_text(encoding="utf-8"), "src/web/session.py")
     assert "handrolled-token-signing" not in {f.kind for f in findings}
+
+
+# --------------------------------------------------------------------------- #
+# Формат журнала #782: дозапись находок строками таблицы реестра (#1109)
+#
+# Реальная шапка журнала в issue #782:
+#   | Дата | Находка (файл) | Стандартная замена | Решение | PR/issue |
+# Детектор готовит строки в ровно этом формате (Решение = _ожидает решения_,
+# PR/issue = —), владелец механически вставляет их в журнал. Детектор НЕ пишет
+# в #782 сам — только формирует строки.
+# --------------------------------------------------------------------------- #
+
+
+def test_journal_row_matches_782_columns() -> None:
+    """Строка журнала #782: 5 колонок, дата, находка(файл:строка), замена, заглушки."""
+    f = _finding(
+        "src/web/session.py", line=12, kind="handrolled-token-signing",
+        what="ручная HMAC/JWT-подпись токена в create_session_token()",
+    )
+    row = detect_reinvented.journal_row(f, date="2026-06-24")
+    # Ровно 5 значимых ячеек между ведущим и хвостовым '|'.
+    cells = [c.strip() for c in row.strip().strip("|").split("|")]
+    assert len(cells) == 5
+    date, finding_cell, replacement_cell, decision_cell, pr_cell = cells
+    assert date == "2026-06-24"
+    assert "create_session_token" in finding_cell
+    assert "src/web/session.py:12" in finding_cell  # файл:строка внутри находки
+    assert replacement_cell == "r"
+    assert decision_cell == "_ожидает решения_"
+    assert pr_cell == "—"
+
+
+def test_journal_rows_one_per_finding_and_deterministic() -> None:
+    """findings_to_journal_rows: по строке на находку, порядок стабилен."""
+    findings = [
+        _finding("a.py", 1, what="счётчик в a()"),
+        _finding("b.py", 2, what="retry в b()"),
+    ]
+    rows = detect_reinvented.findings_to_journal_rows(findings, date="2026-06-24")
+    assert len(rows) == 2
+    assert rows == detect_reinvented.findings_to_journal_rows(findings, date="2026-06-24")
+
+
+def test_journal_row_escapes_pipe_in_text() -> None:
+    """Вертикальная черта в тексте находки экранируется, чтобы не ломать таблицу."""
+    f = _finding("a.py", 1, what="разбор a|b через split")
+    row = detect_reinvented.journal_row(f, date="2026-06-24")
+    # Сырой '|' внутри ячейки экранирован (\|), поэтому не плодит колонку.
+    assert "a\\|b" in row
+    # Сплит по НЕэкранированному разделителю даёт ровно 5 значимых ячеек.
+    cells = [c.strip() for c in re.split(r"(?<!\\)\|", row.strip().strip("|"))]
+    assert len(cells) == 5
+
+
+# --------------------------------------------------------------------------- #
+# Тело и заголовок авто-создаваемого GitHub issue с находками (#1109)
+# --------------------------------------------------------------------------- #
+
+
+def test_issue_body_contains_findings_table_and_journal_rows() -> None:
+    """Тело issue: человекочитаемая таблица находок + готовые строки журнала #782."""
+    findings = [
+        _finding("src/x.py", 10, kind="manual-counter", what="самописный счётчик в f()"),
+    ]
+    body = detect_reinvented.build_issue_body(findings, date="2026-06-24")
+    # Человекочитаемая таблица находок (5 колонок отчёта).
+    assert "Уверенность" in body
+    assert "src/x.py:10" in body
+    assert "самописный счётчик в f()" in body
+    # Готовая строка для дозаписи в журнал #782.
+    assert "_ожидает решения_" in body
+
+
+def test_issue_body_mentions_parent_epics() -> None:
+    """Тело issue упоминает зонтичный эпик #1083 и журнал-реестр #782 (связь)."""
+    body = detect_reinvented.build_issue_body([_finding("a.py", 1)], date="2026-06-24")
+    assert "#1083" in body
+    assert "#782" in body
+
+
+def test_issue_title_summarizes_count_and_date() -> None:
+    """Заголовок issue содержит число новых находок и дату прогона."""
+    title = detect_reinvented.build_issue_title([_finding("a.py", 1), _finding("b.py", 2)], date="2026-06-24")
+    assert "2" in title
+    assert "2026-06-24" in title
+
+
+def test_issue_body_tables_have_no_blank_rows() -> None:
+    """Регресс-гард: внутри markdown-таблиц нет пустых строк (иначе GitHub их рвёт).
+
+    Пустая строка между рядами таблицы прерывает её рендеринг в GitHub. Каждый
+    непустой ряд таблицы (строка, начинающаяся с '|') должен соседствовать с
+    другим рядом без разрыва — проверяем, что между двумя соседними '|'-рядами
+    одной таблицы нет пустой строки.
+    """
+    findings = [_finding("a.py", 1, what="f1"), _finding("b.py", 2, what="f2")]
+    body = detect_reinvented.build_issue_body(findings, date="2026-06-24")
+    lines = body.split("\n")
+    for i in range(1, len(lines)):
+        prev, cur = lines[i - 1], lines[i]
+        # Если предыдущая и следующая непустые строки обе ряды таблицы — между
+        # ними не должно быть пустой строки (тут они соседи, проверяем оба ряда).
+        if prev.startswith("|") and cur.strip() == "":
+            nxt = lines[i + 1] if i + 1 < len(lines) else ""
+            assert not nxt.startswith("|"), f"пустая строка внутри таблицы у ряда: {prev!r}"
+
+
+# --------------------------------------------------------------------------- #
+# Создание issue через gh — раннер инъектируется, реальные issue в тестах НЕ
+# плодятся (gh мокается фейковым раннером, как сетевые вызовы в проекте).
+# --------------------------------------------------------------------------- #
+
+
+def test_create_github_issue_invokes_gh_and_returns_url() -> None:
+    """create_github_issue вызывает `gh issue create` и возвращает URL из stdout."""
+    calls: list[list[str]] = []
+
+    class _Result:
+        returncode = 0
+        stdout = "https://github.com/axisrow/tg_content_factory/issues/1234\n"
+        stderr = ""
+
+    def fake_runner(cmd: list[str], **_kwargs: object) -> "_Result":
+        calls.append(cmd)
+        return _Result()
+
+    url = detect_reinvented.create_github_issue(
+        title="t", body="b", labels=["priority/medium"], runner=fake_runner
+    )
+    assert url == "https://github.com/axisrow/tg_content_factory/issues/1234"
+    assert len(calls) == 1
+    cmd = calls[0]
+    assert cmd[:3] == ["gh", "issue", "create"]
+    assert "--title" in cmd and "t" in cmd
+    assert "--body" in cmd and "b" in cmd
+    assert "--label" in cmd and "priority/medium" in cmd
+
+
+def test_create_github_issue_raises_on_failure() -> None:
+    """Ненулевой код gh → RuntimeError со stderr (не молчаливое проглатывание)."""
+
+    class _Result:
+        returncode = 1
+        stdout = ""
+        stderr = "could not resolve host"
+
+    def failing_runner(_cmd: list[str], **_kwargs: object) -> "_Result":
+        return _Result()
+
+    with pytest.raises(RuntimeError, match="could not resolve host"):
+        detect_reinvented.create_github_issue(title="t", body="b", runner=failing_runner)
+
+
+def test_create_github_issue_no_findings_returns_none() -> None:
+    """maybe_create_issue_for_new: нет новых находок → issue не создаётся (None)."""
+    called = False
+
+    def runner(_cmd: list[str], **_kwargs: object) -> object:  # pragma: no cover - не вызывается
+        nonlocal called
+        called = True
+        raise AssertionError("раннер не должен вызываться без новых находок")
+
+    result = detect_reinvented.maybe_create_issue_for_new([], date="2026-06-24", runner=runner)
+    assert result is None
+    assert called is False
