@@ -12,8 +12,22 @@ from src.services.pipeline_result import get_action_counts, summarize_result
 logger = logging.getLogger(__name__)
 
 
+class PipelineCycleError(ValueError):
+    """Raised when a pipeline graph contains a cycle and cannot be scheduled.
+
+    A cyclic graph has unsatisfiable dependencies: for side-effecting nodes
+    (publish/delete/react) running them in authoring order could fire an action
+    before its prerequisite. We therefore reject cycles fail-closed (#1077)
+    instead of falling back to authoring order and executing them anyway.
+    """
+
+
 def _topological_sort(graph: PipelineGraph) -> list[PipelineNode]:
-    """Return nodes in topological order (Kahn's algorithm)."""
+    """Return nodes in topological order (Kahn's algorithm).
+
+    Raises :class:`PipelineCycleError` if the graph contains a cycle — there is
+    no safe authoring-order fallback for a cyclic DAG (#1077, fail-closed).
+    """
     nodes_by_id = {n.id: n for n in graph.nodes}
     in_degree: dict[str, int] = {n.id: 0 for n in graph.nodes}
     adj: dict[str, list[str]] = defaultdict(list)
@@ -35,8 +49,15 @@ def _topological_sort(graph: PipelineGraph) -> list[PipelineNode]:
                 queue.append(neighbor)
 
     if len(order) != len(graph.nodes):
-        logger.warning("Pipeline graph has a cycle; using original node order as fallback")
-        return list(graph.nodes)
+        # Every node that never reached in_degree 0 is part of (or fed by) the
+        # cycle; report them so an operator can locate the unschedulable region.
+        ordered_ids = {n.id for n in order}
+        cyclic = [n.id for n in graph.nodes if n.id not in ordered_ids]
+        logger.error("Pipeline graph has a cycle involving nodes %s; rejecting run", cyclic)
+        raise PipelineCycleError(
+            f"Pipeline graph contains a cycle and cannot be executed; "
+            f"nodes still in the cycle: {cyclic}"
+        )
 
     return order
 

@@ -931,6 +931,61 @@ class TestPipelineEdgeRW:
         assert ("llm_generate_0", new_node["id"]) not in _edge_pairs(graph3)
         assert "Removed edge" in capsys.readouterr().out
 
+    def test_edge_add_rejecting_cycle_fails_closed(self, tmp_path, cli_init_patch, capsys):
+        """Fail-closed (#1077): the seeded graph is source_0 -> llm_generate_0 ->
+        publish_0. Adding publish_0 -> source_0 would close a cycle, so the CLI
+        must reject it with an Error message and NOT persist the back-edge."""
+        db_path = _empty_db_path(tmp_path, "pipeline_edge_cycle.db")
+        pid = _seed_pipeline_with_graph(db_path)
+
+        _pipeline_cli_run(
+            db_path,
+            cli_init_patch,
+            _pipeline_ns(
+                "edge",
+                pipeline_id=pid,
+                edge_action="add",
+                from_node="publish_0",
+                to_node="source_0",
+            ),
+        )
+
+        out = capsys.readouterr().out
+        assert "Error" in out
+        assert "Added edge" not in out
+        # The back-edge must NOT be persisted — the graph stays acyclic.
+        row = _read_pipeline_row(db_path, pid)
+        graph = json.loads(row["pipeline_json"])
+        assert ("publish_0", "source_0") not in _edge_pairs(graph)
+
+    def test_safe_add_edge_skips_cycle_without_raising(self, tmp_path):
+        """The filter-rewiring helper (#1077): _safe_add_edge must NOT crash the
+        `pipeline filter` command when a reconnection would close a cycle — it
+        skips the offending edge (returns False) instead of propagating
+        PipelineValidationError, while a legitimate edge is still added."""
+        from src.cli.commands.pipeline import _safe_add_edge
+        from src.services.pipeline_service import PipelineService
+
+        db_path = _empty_db_path(tmp_path, "pipeline_safe_edge.db")
+        pid = _seed_pipeline_with_graph(db_path)  # source_0 -> llm_generate_0 -> publish_0
+        db = _open_db(db_path)
+        try:
+            svc = PipelineService(db)
+            # A cycle-closing edge is skipped gracefully (no raise, returns False).
+            skipped = asyncio.run(_safe_add_edge(svc, pid, "publish_0", "source_0"))
+            assert skipped is False
+            # A legitimate forward shortcut is still added (returns True).
+            added = asyncio.run(_safe_add_edge(svc, pid, "source_0", "publish_0"))
+            assert added is True
+        finally:
+            _close_db(db)
+
+        row = _read_pipeline_row(db_path, pid)
+        graph = json.loads(row["pipeline_json"])
+        pairs = _edge_pairs(graph)
+        assert ("publish_0", "source_0") not in pairs  # cycle skipped
+        assert ("source_0", "publish_0") in pairs       # valid edge persisted
+
 
 class TestPipelineExportRW:
     def test_export_writes_new_file(self, tmp_path, cli_init_patch, capsys):

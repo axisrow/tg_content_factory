@@ -15,6 +15,7 @@ from src.services.pipeline_llm_requirements import (
     pipeline_needs_publish_mode,
 )
 from src.services.pipeline_service import (
+    PipelineScopeError,
     PipelineService,
     PipelineValidationError,
 )
@@ -507,7 +508,12 @@ async def generate_stream(
     from src.services.generation_service import GenerationService
 
     gen = GenerationService(engine, provider_callable=provider_callable)
-    scope = await svc.get_retrieval_scope(pipeline)
+    # Fail-closed (#1077): a source-scope resolution failure must not silently
+    # widen the retrieval to all channels. Abort the run cleanly instead.
+    try:
+        scope = await svc.get_retrieval_scope(pipeline)
+    except PipelineScopeError as exc:
+        return _pipeline_redirect(str(exc), error=True)
 
     # persist run
     run_id = await db.repos.generation_runs.create_run(pipeline_id, pipeline.prompt_template)

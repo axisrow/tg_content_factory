@@ -13,7 +13,11 @@ from src.models import (
     PipelineNodeType,
     PipelinePublishMode,
 )
-from src.services.pipeline_executor import PipelineExecutor, _topological_sort
+from src.services.pipeline_executor import (
+    PipelineCycleError,
+    PipelineExecutor,
+    _topological_sort,
+)
 from src.services.pipeline_nodes.base import NodeContext
 
 # ---------------------------------------------------------------------------
@@ -81,19 +85,52 @@ class TestTopologicalSortDiamond:
 
 
 # ---------------------------------------------------------------------------
-# 3. _topological_sort — cycle falls back to original order
+# 3. _topological_sort — a cycle is rejected fail-closed (#1077)
+#
+# Previously (#1075) a cycle silently fell back to authoring order and the
+# executor ran every node anyway — for side-effecting nodes (publish/delete/
+# react) that means an action can fire before its prerequisite. #1077 changes
+# the contract: a cyclic graph has unsatisfiable dependencies, so it must be
+# rejected up front with a typed error, never executed.
 # ---------------------------------------------------------------------------
 
 class TestTopologicalSortCycle:
-    def test_cycle_returns_original_order(self):
+    def test_cycle_raises_pipeline_cycle_error(self):
+        """A cyclic graph cannot be ordered → PipelineCycleError, not a silent
+        fallback to authoring order (#1077, fail-closed)."""
         graph = PipelineGraph(
             nodes=[_node("x"), _node("y"), _node("z")],
             edges=[_edge("x", "y"), _edge("y", "z"), _edge("z", "x")],
         )
-        order = _topological_sort(graph)
-        ids = [n.id for n in order]
-        # Should fall back to the original node list
-        assert ids == ["x", "y", "z"]
+        with pytest.raises(PipelineCycleError):
+            _topological_sort(graph)
+
+    def test_self_loop_raises_pipeline_cycle_error(self):
+        """A single node pointing at itself is the minimal cycle — also rejected."""
+        graph = PipelineGraph(nodes=[_node("solo")], edges=[_edge("solo", "solo")])
+        with pytest.raises(PipelineCycleError):
+            _topological_sort(graph)
+
+    def test_cycle_error_names_offending_nodes(self):
+        """The error must identify the nodes still trapped in the cycle so an
+        operator can see WHICH part of the graph is unschedulable. Uses
+        distinctive node ids (not bare single letters that collide with the
+        surrounding prose) so the assertion is about the reported cycle list."""
+        graph = PipelineGraph(
+            nodes=[_node("root_clean"), _node("loop_lhs"), _node("loop_rhs")],
+            # root_clean is an acyclic root; loop_lhs<->loop_rhs form the cycle.
+            edges=[
+                _edge("root_clean", "loop_lhs"),
+                _edge("loop_lhs", "loop_rhs"),
+                _edge("loop_rhs", "loop_lhs"),
+            ],
+        )
+        with pytest.raises(PipelineCycleError) as excinfo:
+            _topological_sort(graph)
+        message = str(excinfo.value)
+        assert "loop_lhs" in message and "loop_rhs" in message
+        # The acyclic root must NOT be reported as part of the cycle.
+        assert "root_clean" not in message
 
 
 # ---------------------------------------------------------------------------
@@ -596,21 +633,16 @@ class TestExecuteDiamondRunsMergeOnce:
         assert call_log[-1] == "d"
 
 
-class TestExecuteCycleRunsAllNodes:
+class TestExecuteCycleRejectedFailClosed:
     @pytest.mark.anyio
-    async def test_cycle_fallback_still_runs_every_node_once(self):
-        """A cyclic graph (x->y->z->x) can't be topo-sorted; the executor falls
-        back to original node order and must still run each node exactly once
-        (no infinite loop, no dropped node) — issue #1037 names the cycle
-        fallback's *end-to-end* behaviour as uncovered.
+    async def test_cycle_raises_before_any_node_runs(self):
+        """A cyclic graph (x->y->z->x) has unsatisfiable dependencies. #1077
+        changes the old fallback-and-run contract: execute() must reject it with
+        PipelineCycleError BEFORE invoking a single handler.
 
-        This pins the *current* fallback contract (run-in-authoring-order), NOT
-        an endorsement that running a cyclic graph is safe: for side-effecting
-        nodes (publish/delete/react) a cycle means unsatisfiable dependencies,
-        so authoring order can run an action before its prerequisite. Whether to
-        reject cycles up front (at add_edge / before execute) instead of falling
-        back is a behaviour change beyond this test-only PR's scope — raised as
-        a design fork on #1037 for the owner (cycle-review, Codex)."""
+        This is the security-relevant assertion — for side-effecting nodes
+        (publish/delete/react) the old fallback could fire an action before its
+        prerequisite. Fail-closed means ZERO handlers run on a cyclic graph."""
         graph = PipelineGraph(
             nodes=[_node("x"), _node("y"), _node("z")],
             edges=[_edge("x", "y"), _edge("y", "z"), _edge("z", "x")],
@@ -622,10 +654,54 @@ class TestExecuteCycleRunsAllNodes:
             "src.services.pipeline_executor.get_handler",
             side_effect=_counting_handler_factory(call_log),
         ):
+            with pytest.raises(PipelineCycleError):
+                await PipelineExecutor().execute(pipeline, graph, {})
+
+        # No node executed — the cycle is rejected before the run loop.
+        assert call_log == []
+
+    @pytest.mark.anyio
+    async def test_cycle_with_side_effecting_publish_node_runs_nothing(self):
+        """Concrete trust-boundary scenario from #1077: a cycle that includes a
+        side-effecting PUBLISH node must not fire that publish. The whole graph
+        is blocked, so the publish handler is never invoked."""
+        graph = PipelineGraph(
+            nodes=[
+                _node("gen", PipelineNodeType.LLM_GENERATE),
+                _node("pub", PipelineNodeType.PUBLISH),
+            ],
+            edges=[_edge("gen", "pub"), _edge("pub", "gen")],
+        )
+        pipeline = _pipeline()
+        call_log: list[str] = []
+
+        with patch(
+            "src.services.pipeline_executor.get_handler",
+            side_effect=_counting_handler_factory(call_log),
+        ):
+            with pytest.raises(PipelineCycleError):
+                await PipelineExecutor().execute(pipeline, graph, {})
+
+        assert "pub" not in call_log
+        assert call_log == []
+
+    @pytest.mark.anyio
+    async def test_acyclic_graph_still_executes_normally(self):
+        """Guard: the fail-closed change must NOT break valid acyclic graphs —
+        a clean chain still runs every node in dependency order."""
+        graph = PipelineGraph(
+            nodes=[_node("x"), _node("y"), _node("z")],
+            edges=[_edge("x", "y"), _edge("y", "z")],
+        )
+        pipeline = _pipeline()
+        call_log: list[str] = []
+
+        with patch(
+            "src.services.pipeline_executor.get_handler",
+            side_effect=_counting_handler_factory(call_log),
+        ):
             result = await PipelineExecutor().execute(pipeline, graph, {})
 
-        # Original order, each once. NOTE: in the cycle fallback every node has a
-        # live predecessor that already ran, so none are suppressed.
         assert call_log == ["x", "y", "z"]
         assert isinstance(result["context"], NodeContext)
 
