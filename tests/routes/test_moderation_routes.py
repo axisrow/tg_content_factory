@@ -234,6 +234,46 @@ async def test_bulk_reject(client):
 
 
 @pytest.mark.anyio
+async def test_bulk_approve_is_atomic_on_midbatch_failure(client):
+    """RED→GREEN (#1041): web bulk-approve must be all-or-nothing.
+
+    Like the agent tool, the route used to loop one autocommit
+    set_moderation_status per id. A crash partway through left earlier runs
+    approved with no rollback. The route now routes survivors through the
+    atomic set_moderation_status_bulk; if that raises mid-batch, NO run flips.
+    """
+    db = client._transport_app.state.db
+    _, run_id_1 = await _create_pipeline_and_run(db)
+    _, run_id_2 = await _create_pipeline_and_run(db)
+
+    # Make the underlying executemany apply the first row, then explode.
+    conn = db.db
+    real_executemany = conn.executemany
+
+    async def exploding_executemany(sql, seq):
+        seq = list(seq)
+        await real_executemany(sql, seq[:1])
+        raise RuntimeError("simulated mid-batch crash")
+
+    conn.executemany = exploding_executemany
+    try:
+        with pytest.raises(RuntimeError, match="mid-batch"):
+            await client.post(
+                "/moderation/bulk-approve",
+                data={"run_ids": [str(run_id_1), str(run_id_2)]},
+                follow_redirects=False,
+            )
+    finally:
+        conn.executemany = real_executemany
+
+    # Neither run may have been left approved.
+    run_1 = await db.repos.generation_runs.get(run_id_1)
+    run_2 = await db.repos.generation_runs.get(run_id_2)
+    assert run_1.moderation_status == "pending"
+    assert run_2.moderation_status == "pending"
+
+
+@pytest.mark.anyio
 async def test_bulk_approve_empty(client):
     """Test bulk approve with no IDs doesn't crash."""
     resp = await client.post("/moderation/bulk-approve", follow_redirects=False)
