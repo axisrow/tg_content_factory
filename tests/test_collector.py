@@ -1639,6 +1639,70 @@ async def test_flush_verifies_persisted_ids_in_chunks(db, monkeypatch):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("batch_size", [500, 1000])
+async def test_collect_correct_across_flush_boundaries_for_batch_size(db, monkeypatch, batch_size):
+    """Persist correctness must hold at the chosen MESSAGE_FLUSH_BATCH_SIZE (#1042).
+
+    The #1042 benchmark proved raising the batch size does not help throughput
+    (the INSERT itself is 98% of persist time and is work-bound, not partition-
+    bound) while it lengthens write-lock hold (#569) and peak memory — so the
+    default stays 500. This locks that decision in: whichever value the constant
+    holds, collecting N > batch_size messages must dedup and advance
+    last_collected_id correctly across *every* flush boundary, not just the
+    single-batch case. Runs the real ``_collect_channel`` persist path against a
+    real in-memory DB (no insert mock), parameterised on both the current default
+    and the rejected 1000 hypothesis.
+    """
+    monkeypatch.setattr("src.telegram.collector.MESSAGE_FLUSH_BATCH_SIZE", batch_size)
+
+    # N straddles 2.4 flush partitions at batch=500 and 1.2 at batch=1000, so a
+    # boundary-off-by-one in either dedup or last_id advancement would show up.
+    total_msgs = 1200
+    ch = Channel(channel_id=-100142, title="Boundary", username="bnd142", last_collected_id=0)
+    ch_id = await db.add_channel(ch)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    def _msgs(*_args, **kwargs):
+        # Honour min_id like real Telethon so the second (incremental) pass yields
+        # nothing once last_collected_id has advanced past the channel — this is
+        # what makes the dedup/incrementality assertion below meaningful.
+        min_id = kwargs.get("min_id", 0) or 0
+        return _AsyncIterMessages(
+            [_make_mock_message(i, text=f"m{i}") for i in range(1, total_msgs + 1) if i > min_id]
+        )
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(side_effect=_msgs)
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+
+    collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
+
+    # First pass: persist everything across flush boundaries.
+    count = await collector._collect_channel(stored)
+    assert count == total_msgs
+    updated = await db.get_channel_by_pk(ch_id)
+    assert updated is not None
+    assert updated.last_collected_id == total_msgs
+
+    # Exactly N unique rows persisted — no batch-boundary gaps, no duplicates.
+    page = await db.search_messages(channel_id=-100142, limit=total_msgs + 10)
+    assert len(page.messages) == total_msgs
+    assert {m.message_id for m in page.messages} == set(range(1, total_msgs + 1))
+
+    # Second pass over the same source: incremental min_id (= last_collected_id)
+    # means nothing new is collected and INSERT OR IGNORE keeps the row count at N
+    # — dedup is intact regardless of batch size.
+    stored_again = await db.get_channel_by_pk(ch_id)
+    assert stored_again is not None
+    recount = await collector._collect_channel(stored_again)
+    assert recount == 0
+    page2 = await db.search_messages(channel_id=-100142, limit=total_msgs + 10)
+    assert len(page2.messages) == total_msgs
+
+
+@pytest.mark.anyio
 async def test_collect_channel_does_not_advance_last_id_when_flush_fails(db):
     ch = Channel(channel_id=-100126, title="Test", username="test", last_collected_id=5)
     await db.add_channel(ch)
