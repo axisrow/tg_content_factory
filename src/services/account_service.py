@@ -31,7 +31,13 @@ class AccountService:
                         except Exception as e:
                             logger.warning("Failed to add client for %s: %s", acc.phone, e)
                     else:
-                        await self._pool.remove_client(acc.phone)
+                        # set_active already updated the DB (source of truth), so a
+                        # pool.remove_client failure must not propagate (#1029) —
+                        # symmetric with the add_client branch above and delete().
+                        try:
+                            await self._pool.remove_client(acc.phone)
+                        except Exception as e:
+                            logger.warning("Failed to remove client for %s: %s", acc.phone, e)
                 return
 
     async def delete(self, account_id: int) -> None:
