@@ -165,8 +165,14 @@ class ContentTaskHandler:
 
             filter_sql = "AND pipeline_id = ?" if pipeline_id is not None else ""
             params: tuple = (pipeline_id,) if pipeline_id is not None else ()
+            # Require status='completed' as well as moderation_status='approved'
+            # (defense-in-depth, issue #1036 review). A run is only ever marked
+            # 'approved' after generation fully succeeds, but gating publish on
+            # the execution status too guarantees a failed/running run can never
+            # be delivered to Telegram even if some path left it 'approved'.
             cur = await db.execute(
-                f"SELECT * FROM generation_runs WHERE moderation_status = 'approved' {filter_sql} ORDER BY id ASC",
+                "SELECT * FROM generation_runs WHERE moderation_status = 'approved' "
+                f"AND status = 'completed' {filter_sql} ORDER BY id ASC",
                 params,
             )
             rows = await cur.fetchall()
