@@ -41,6 +41,10 @@ class FakeGenerationRunsRepo:
         if run_id in self._runs:
             self._runs[run_id].status = status
 
+    async def set_moderation_status(self, run_id, status):
+        if run_id in self._runs:
+            self._runs[run_id].moderation_status = status
+
     async def save_result(self, run_id, generated_text, metadata=None):
         if run_id in self._runs:
             self._runs[run_id].generated_text = generated_text
