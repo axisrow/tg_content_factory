@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 from src.database import Database
 from src.models import ContentPipeline, GenerationRun, PipelineGenerationBackend, PipelinePublishMode
 from src.search.engine import SearchEngine
+from src.services.error_recovery_service import ErrorRecoveryService, for_llm
 from src.services.generation_service import GenerationService
 
 if TYPE_CHECKING:
@@ -37,6 +38,7 @@ class ContentGenerationService:
         quality_service: "QualityScoringService | None" = None,
         client_pool: Any | None = None,
         provider_service: Any | None = None,
+        error_recovery: ErrorRecoveryService | None = None,
     ) -> None:
         self._db = db
         self._search = search_engine
@@ -47,6 +49,9 @@ class ContentGenerationService:
         self._quality_service = quality_service
         self._client_pool = client_pool
         self._provider_service = provider_service
+        # Refinement steps are idempotent LLM rewrites — safe to retry on
+        # transient provider failures (#1069).
+        self._error_recovery = error_recovery or for_llm()
 
     @staticmethod
     def _build_metadata(result: dict, *, dry_run: bool) -> dict[str, Any]:
@@ -385,11 +390,18 @@ class ContentGenerationService:
                 continue
             rendered = step_prompt.replace("{text}", text)
             try:
-                result = await provider_callable(
-                    rendered,
-                    model=model or pipeline.llm_model or "",
-                    max_tokens=max_tokens,
-                    temperature=temperature,
+                # Bind the loop-local rendered prompt into the recovered call.
+                # A def (not a lambda with a default arg) keeps mypy happy.
+                async def _call(rendered: str = rendered) -> Any:
+                    return await provider_callable(
+                        rendered,
+                        model=model or pipeline.llm_model or "",
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
+
+                result = await self._error_recovery.execute_provider_call(
+                    _call, provider=provider_callable
                 )
                 refined = (
                     result if isinstance(result, str)

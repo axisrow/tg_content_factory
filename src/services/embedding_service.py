@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from src.config import AppConfig
 from src.database import Database
 from src.database.bundles import SearchBundle
+from src.services.error_recovery_service import ErrorRecoveryService, for_embeddings
 from src.settings_utils import parse_int_setting
 
 logger = logging.getLogger(__name__)
@@ -38,13 +39,21 @@ class EmbeddingRuntimeConfig:
 
 
 class EmbeddingService:
-    def __init__(self, search: SearchBundle | Database, config: AppConfig | None = None):
+    def __init__(
+        self,
+        search: SearchBundle | Database,
+        config: AppConfig | None = None,
+        error_recovery: ErrorRecoveryService | None = None,
+    ):
         if isinstance(search, Database):
             search = SearchBundle.from_database(search)
         self._search = search
         self._config = config
         self._embeddings = None
         self._embeddings_key: tuple[str, str, str, str] | None = None
+        # Embedding calls are idempotent reads — safe to retry on transient
+        # failures. A smaller retry budget than LLM text (#1069).
+        self._error_recovery = error_recovery or for_embeddings()
 
     async def _runtime_config(self) -> EmbeddingRuntimeConfig:
         provider = (
@@ -110,15 +119,23 @@ class EmbeddingService:
 
     async def _embed_documents(self, texts: list[str]) -> list[list[float]]:
         embeddings = await self._get_embeddings()
-        if hasattr(embeddings, "aembed_documents"):
-            return await embeddings.aembed_documents(texts)
-        return await asyncio.to_thread(embeddings.embed_documents, texts)
+
+        async def _call() -> list[list[float]]:
+            if hasattr(embeddings, "aembed_documents"):
+                return await embeddings.aembed_documents(texts)
+            return await asyncio.to_thread(embeddings.embed_documents, texts)
+
+        return await self._error_recovery.execute_provider_call(_call)
 
     async def embed_query(self, query: str) -> list[float]:
         embeddings = await self._get_embeddings()
-        if hasattr(embeddings, "aembed_query"):
-            return await embeddings.aembed_query(query)
-        return await asyncio.to_thread(embeddings.embed_query, query)
+
+        async def _call() -> list[float]:
+            if hasattr(embeddings, "aembed_query"):
+                return await embeddings.aembed_query(query)
+            return await asyncio.to_thread(embeddings.embed_query, query)
+
+        return await self._error_recovery.execute_provider_call(_call)
 
     async def index_pending_messages(
         self,
