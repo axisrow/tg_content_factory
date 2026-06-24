@@ -602,7 +602,15 @@ class TestExecuteCycleRunsAllNodes:
         """A cyclic graph (x->y->z->x) can't be topo-sorted; the executor falls
         back to original node order and must still run each node exactly once
         (no infinite loop, no dropped node) — issue #1037 names the cycle
-        fallback's *end-to-end* behaviour as uncovered."""
+        fallback's *end-to-end* behaviour as uncovered.
+
+        This pins the *current* fallback contract (run-in-authoring-order), NOT
+        an endorsement that running a cyclic graph is safe: for side-effecting
+        nodes (publish/delete/react) a cycle means unsatisfiable dependencies,
+        so authoring order can run an action before its prerequisite. Whether to
+        reject cycles up front (at add_edge / before execute) instead of falling
+        back is a behaviour change beyond this test-only PR's scope — raised as
+        a design fork on #1037 for the owner (cycle-review, Codex)."""
         graph = PipelineGraph(
             nodes=[_node("x"), _node("y"), _node("z")],
             edges=[_edge("x", "y"), _edge("y", "z"), _edge("z", "x")],

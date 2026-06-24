@@ -1197,8 +1197,16 @@ async def test_resolve_scope_no_lister_returns_unscoped():
 
 @pytest.mark.anyio
 async def test_resolve_scope_source_lookup_error_falls_back_gracefully():
-    """A scoping error (source lister raises) must be swallowed: retrieval
-    continues unscoped instead of propagating the exception into the run."""
+    """A scoping error (source lister raises) is swallowed: retrieval continues
+    unscoped instead of propagating the exception into the run — this pins the
+    *current* graceful-fallback contract that issue #1037 asks to cover.
+
+    NOTE (design fork, raised on #1037 from cycle-review/Codex): `channel_id is
+    None` means UNSCOPED retrieval, so this fallback widens a single-source
+    pipeline to a cross-channel search on a transient lookup failure. Whether
+    that should instead fail closed (block/empty scope) is a content-isolation
+    decision for the owner and a behaviour change beyond this test-only PR. This
+    test documents today's behaviour; it does not endorse it as safe."""
     from src.services.pipeline_service import resolve_retrieval_scope
 
     pipeline = ContentPipeline(id=7, name="Boom", prompt_template="t")
