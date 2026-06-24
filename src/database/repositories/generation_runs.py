@@ -128,6 +128,41 @@ class GenerationRunsRepository:
             (image_url, run_id),
         )
 
+    async def find_orphan_image_url(
+        self, pipeline_id: int, exclude_run_id: int | None = None
+    ) -> str | None:
+        """Return an already-paid-for image URL that a retry can safely reuse (#1117).
+
+        Image generation is billed per request (#958). The paid POST happens
+        before the fallible post-image steps (quality scoring, moderation-status
+        alignment) in :meth:`ContentGenerationService.generate`. If one of those
+        raises, the run is marked ``failed`` and the periodic ``content_generate``
+        scheduler job creates a *brand-new* run on its next tick — a different
+        ``run_id``, so an in-run ``image_url`` check cannot dedupe it. Without a
+        cross-run guard the retry would generate (and pay for) the image again.
+
+        This finds the most recent run of the same pipeline that already persisted
+        an ``image_url`` but was never published (``moderation_status !=
+        'published'``), so its image is paid for yet unused. The caller reuses that
+        URL instead of issuing a second billed POST. Published runs are excluded:
+        their image was already delivered, so a fresh run is a fresh post and must
+        render its own image. ``exclude_run_id`` skips the in-flight run itself.
+        """
+        cur = await self._db.execute(
+            (
+                "SELECT image_url FROM generation_runs "
+                "WHERE pipeline_id = ? AND image_url IS NOT NULL AND image_url != '' "
+                "AND COALESCE(moderation_status, '') != 'published' "
+                "AND id != ? "
+                "ORDER BY id DESC LIMIT 1"
+            ),
+            (pipeline_id, exclude_run_id if exclude_run_id is not None else -1),
+        )
+        row = await cur.fetchone()
+        if not row:
+            return None
+        return row["image_url"]
+
     async def set_published_at(self, run_id: int) -> None:
         await self._database.execute_write(
             ("UPDATE generation_runs SET published_at = datetime('now'), "

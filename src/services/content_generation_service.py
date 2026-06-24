@@ -177,9 +177,33 @@ class ContentGenerationService:
                     if not image_model:
                         image_model = await self._db.get_setting("default_image_model") or ""
                     if image_model and pipeline.pipeline_json is None:
-                        image_url = await self._generate_image(pipeline, generated_text, model=image_model)
-                        if image_url:
-                            await self._db.repos.generation_runs.set_image_url(run_id, image_url)
+                        # Idempotency guard against double-billing on retry (#1117).
+                        # The paid image POST happens before the fallible post-image
+                        # steps below (quality scoring, AUTO moderation alignment). If
+                        # one of those raised, the run was marked 'failed' and the
+                        # periodic content_generate job creates a fresh run on its next
+                        # tick — a new run_id that an in-run image_url check can't
+                        # dedupe. So before issuing a new billed POST, reuse any image
+                        # an earlier unpublished run of this pipeline already paid for.
+                        # Same category as #958, different call site (the generation
+                        # service, not the adapter).
+                        reusable = None
+                        if pipeline.id is not None:
+                            reusable = await self._db.repos.generation_runs.find_orphan_image_url(
+                                pipeline.id, exclude_run_id=run_id
+                            )
+                        if reusable:
+                            logger.info(
+                                "Reusing already-paid image for pipeline_id=%s run_id=%s "
+                                "instead of re-billing the provider (#1117)",
+                                pipeline.id,
+                                run_id,
+                            )
+                            await self._db.repos.generation_runs.set_image_url(run_id, reusable)
+                        else:
+                            image_url = await self._generate_image(pipeline, generated_text, model=image_model)
+                            if image_url:
+                                await self._db.repos.generation_runs.set_image_url(run_id, image_url)
 
             if self._quality_service and generated_text:
                 quality = await self._quality_service.score_content(

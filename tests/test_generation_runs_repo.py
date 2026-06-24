@@ -176,6 +176,87 @@ async def test_generation_runs_repo_hydrates_quality_fields(db):
 
 
 @pytest.mark.anyio
+async def test_find_orphan_image_url_reuses_unpublished_paid_image(db):
+    """A failed run that already paid for an image exposes it for reuse (#1117).
+
+    The paid image POST happens before the fallible post-image steps, so a run
+    can fail with a persisted (already-billed) image_url. A retry must reuse it
+    instead of re-billing the provider.
+    """
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt")
+    await repo.set_image_url(run_id, "https://img.example/paid.png")
+    await repo.set_status(run_id, "failed")
+
+    found = await repo.find_orphan_image_url(42)
+    assert found == "https://img.example/paid.png"
+
+
+@pytest.mark.anyio
+async def test_find_orphan_image_url_ignores_published_image(db):
+    """A published run's image was already delivered, so it is NOT reusable (#1117).
+
+    A fresh scheduled run is a fresh post and must render its own image; reusing
+    a published image would silently repeat the previous post's picture.
+    """
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt")
+    await repo.set_image_url(run_id, "https://img.example/published.png")
+    await repo.set_moderation_status(run_id, "approved")
+    await repo.set_published_at(run_id)  # -> moderation_status='published'
+
+    found = await repo.find_orphan_image_url(42)
+    assert found is None
+
+
+@pytest.mark.anyio
+async def test_find_orphan_image_url_excludes_self_and_prefers_latest(db):
+    """exclude_run_id skips the in-flight run; newest reusable image wins (#1117)."""
+    repo = db.repos.generation_runs
+
+    old_id = await repo.create_run(42, "old")
+    await repo.set_image_url(old_id, "https://img.example/old.png")
+    await repo.set_status(old_id, "failed")
+
+    newer_id = await repo.create_run(42, "newer")
+    await repo.set_image_url(newer_id, "https://img.example/newer.png")
+    await repo.set_status(newer_id, "failed")
+
+    # The in-flight retry run, which has no image yet.
+    current_id = await repo.create_run(42, "current")
+
+    found = await repo.find_orphan_image_url(42, exclude_run_id=current_id)
+    assert found == "https://img.example/newer.png"
+
+    # Excluding the newest reusable run falls back to the older one.
+    found_old = await repo.find_orphan_image_url(42, exclude_run_id=newer_id)
+    assert found_old == "https://img.example/old.png"
+
+
+@pytest.mark.anyio
+async def test_find_orphan_image_url_scoped_to_pipeline(db):
+    """A paid image from another pipeline must never be reused (#1117)."""
+    repo = db.repos.generation_runs
+    other_id = await repo.create_run(99, "other-pipeline")
+    await repo.set_image_url(other_id, "https://img.example/other.png")
+    await repo.set_status(other_id, "failed")
+
+    found = await repo.find_orphan_image_url(42)
+    assert found is None
+
+
+@pytest.mark.anyio
+async def test_find_orphan_image_url_none_without_image(db):
+    """A failed run without any image yields nothing to reuse (#1117)."""
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "no-image")
+    await repo.set_status(run_id, "failed")
+
+    found = await repo.find_orphan_image_url(42)
+    assert found is None
+
+
+@pytest.mark.anyio
 async def test_generation_runs_repo_hydrates_variant_fields(db):
     repo = db.repos.generation_runs
     run_id = await repo.create_run(42, "variant-prompt")
