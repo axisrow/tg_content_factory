@@ -2410,8 +2410,9 @@ async def test_run_loop_sleeps_on_no_command():
 
     with patch("src.services.telegram_command_dispatcher.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
         await d._run_loop()
-    # asyncio.sleep should have been called (once for each None command)
-    assert mock_sleep.await_count >= 1
+    # The loop runs twice (claim_count hits 2 and sets _stop_event); each None
+    # claim triggers a sleep, so exactly 2 sleeps occur.
+    assert mock_sleep.await_count == 2
 
 
 # --- _handle_dialogs_leave: empty dialogs list ---

@@ -119,7 +119,7 @@ class TestChannelBundle:
         pk = await b.add_channel(_channel(channel_id=601))
         await b.set_filtered_bulk([(pk, "spam")])
         count = await b.reset_all_filters()
-        assert count >= 1
+        assert count == 1
         ch = await b.get_by_pk(pk)
         assert ch is not None and ch.is_filtered is False
 
@@ -393,13 +393,13 @@ class TestChannelBundle:
         b = ChannelBundle.from_database(db)
         await b.create_collection_task(903, "ch903")
         tasks = await b.get_collection_tasks()
-        assert len(tasks) >= 1
+        assert len(tasks) == 1
 
     async def test_get_active_collection_tasks_for_channel(self, db):
         b = ChannelBundle.from_database(db)
         await b.create_collection_task(904, "ch904")
         tasks = await b.get_active_collection_tasks_for_channel(904)
-        assert len(tasks) >= 1
+        assert len(tasks) == 1
 
     async def test_get_channel_ids_with_active_tasks(self, db):
         b = ChannelBundle.from_database(db)
@@ -426,7 +426,7 @@ class TestChannelBundle:
         tid = await b.create_collection_task(908, "ch908")
         await b.update_collection_task(tid, CollectionTaskStatus.RUNNING)
         count = await b.fail_running_collection_tasks_on_startup()
-        assert count >= 1
+        assert count == 1
         task = await b.get_collection_task(tid)
         assert task is not None and task.status == CollectionTaskStatus.FAILED
 
@@ -460,7 +460,7 @@ class TestChannelBundle:
         count = await b.tasks.requeue_running_generic_tasks_on_startup(
             NOW, [CollectionTaskType.STATS_ALL.value]
         )
-        assert count >= 0
+        assert count == 0  # no STATS_ALL tasks in RUNNING state
 
 
 # ---------------------------------------------------------------------------
@@ -581,7 +581,7 @@ class TestSearchBundle:
         b = SearchBundle.from_database(db)
         await b.log_search("+70001112233", "test query", 5)
         recent = await b.get_recent_searches()
-        assert len(recent) >= 1
+        assert len(recent) == 1
 
 
 # ---------------------------------------------------------------------------
