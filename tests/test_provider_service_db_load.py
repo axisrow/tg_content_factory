@@ -1,7 +1,6 @@
 """Tests for RuntimeProviderRegistry.load_db_providers (env-only service)."""
 from __future__ import annotations
 
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -432,13 +431,9 @@ async def test_get_provider_status_list_no_db():
 def test_env_provider_makes_has_providers_true():
     """When env provider exists, has_providers() is True even if DB load fails."""
     env_key = "OPENAI_API_KEY"
-    original = os.environ.get(env_key)
-    try:
-        os.environ[env_key] = "test-key-for-banner-test"
-        svc = RuntimeProviderRegistry(db=MagicMock(), config=MagicMock())
-        assert svc.has_providers()
-    finally:
-        if original is None:
-            os.environ.pop(env_key, None)
-        else:
-            os.environ[env_key] = original
+    svc = RuntimeProviderRegistry(
+        db=MagicMock(),
+        config=MagicMock(),
+        env={env_key: "test-key-for-banner-test"},
+    )
+    assert svc.has_providers()

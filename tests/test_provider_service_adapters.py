@@ -1,7 +1,6 @@
 """Tests for provider service adapter registration and failure paths."""
 from __future__ import annotations
 
-import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,81 +8,56 @@ import pytest
 
 from src.services.provider_service import RuntimeProviderRegistry
 
-
-@pytest.fixture(autouse=True)
-def clean_env():
-    saved = {}
-    for var in [
-        "OPENAI_API_KEY", "COHERE_API_KEY", "OLLAMA_BASE", "OLLAMA_URL",
-        "HUGGINGFACE_API_KEY", "HUGGINGFACE_TOKEN", "FIREWORKS_BASE",
-        "FIREWORKS_API_BASE", "FIREWORKS_API_KEY", "DEEPSEEK_BASE",
-        "DEEPSEEK_API_BASE", "DEEPSEEK_API_KEY", "TOGETHER_BASE",
-        "TOGETHER_API_BASE", "TOGETHER_API_KEY", "CONTEXT7_API_KEY",
-        "CTX7_API_KEY", "ZAI_API_KEY", "ZAI_BASE_URL",
-    ]:
-        saved[var] = os.environ.get(var)
-        if var in os.environ:
-            del os.environ[var]
-    yield
-    for var, val in saved.items():
-        if val is None:
-            os.environ.pop(var, None)
-        else:
-            os.environ[var] = val
-
-
 # === Z.AI registration failure ===
 
 
-def test_zai_registration_failure_path(clean_env):
+def test_zai_registration_failure_path():
     """Z.AI adapter registration failure is caught gracefully."""
-    os.environ["ZAI_API_KEY"] = "zai-test-key"
-    os.environ["ZAI_BASE_URL"] = "https://api.z.ai/api/coding/paas/v4"
     with patch.object(
         RuntimeProviderRegistry,
         "_make_openai_compat_provider",
         side_effect=RuntimeError("no openai"),
     ):
-        svc = RuntimeProviderRegistry()
+        svc = RuntimeProviderRegistry(
+            env={
+                "ZAI_API_KEY": "zai-test-key",
+                "ZAI_BASE_URL": "https://api.z.ai/api/coding/paas/v4",
+            }
+        )
     assert "zai" not in svc._registry
 
 
-def test_zai_env_registration_defaults_without_base_url(clean_env):
+def test_zai_env_registration_defaults_without_base_url():
     """ZAI_API_KEY without ZAI_BASE_URL uses the subscription endpoint."""
-    os.environ["ZAI_API_KEY"] = "zai-test-key"
-    svc = RuntimeProviderRegistry()
+    svc = RuntimeProviderRegistry(env={"ZAI_API_KEY": "zai-test-key"})
     assert "zai" in svc._registry
 
 
 # === Context7 registration failure ===
 
 
-def test_context7_registration_failure_path(clean_env):
+def test_context7_registration_failure_path():
     """Context7 adapter registration failure is caught gracefully."""
-    os.environ["CONTEXT7_API_KEY"] = "ctx7-test-key"
     with patch("src.services.provider_adapters.make_context7_adapter", side_effect=ImportError("no ctx7")):
-        svc = RuntimeProviderRegistry()
+        svc = RuntimeProviderRegistry(env={"CONTEXT7_API_KEY": "ctx7-test-key"})
     assert "context7" not in svc._registry
 
 
 # === Env LangChain adapters ===
 
 
-def test_env_langchain_adapter_registration_does_not_depend_on_provider_adapters(clean_env):
+def test_env_langchain_adapter_registration_does_not_depend_on_provider_adapters():
     """LLM env adapters no longer depend on custom provider_adapters."""
-    os.environ["COHERE_API_KEY"] = "cohere-test"
     with patch.dict("sys.modules", {"src.services.provider_adapters": None}):
-        svc = RuntimeProviderRegistry()
+        svc = RuntimeProviderRegistry(env={"COHERE_API_KEY": "cohere-test"})
     assert "cohere" in svc._registry
 
 
 # === Exception during individual env adapter registration ===
 
 
-def test_env_adapter_registration_exception(clean_env):
+def test_env_adapter_registration_exception():
     """Single adapter failure doesn't prevent others from registering."""
-    os.environ["COHERE_API_KEY"] = "cohere-key"
-    os.environ["OLLAMA_BASE"] = "http://localhost:11434"
 
     async def fallback_provider(**kwargs):
         return "ok"
@@ -93,7 +67,12 @@ def test_env_adapter_registration_exception(clean_env):
         "_make_provider_for_runtime_config",
         side_effect=[ValueError("bad adapter"), fallback_provider],
     ):
-        svc = RuntimeProviderRegistry()
+        svc = RuntimeProviderRegistry(
+            env={
+                "COHERE_API_KEY": "cohere-key",
+                "OLLAMA_BASE": "http://localhost:11434",
+            }
+        )
 
     assert "cohere" not in svc._registry
     assert "ollama" in svc._registry
@@ -182,9 +161,8 @@ async def test_openai_compat_provider_extracts_langchain_content_blocks():
 
 
 @pytest.mark.anyio
-async def test_openai_provider_unknown_response_fallback(clean_env):
+async def test_openai_provider_unknown_response_fallback():
     """OpenAI provider returns stringified response when no text/content is exposed."""
-    os.environ["OPENAI_API_KEY"] = "test-key"
 
     class WeirdResponse:
         def __str__(self):
@@ -195,7 +173,7 @@ async def test_openai_provider_unknown_response_fallback(clean_env):
             return WeirdResponse()
 
     with patch("langchain.chat_models.init_chat_model", return_value=FakeChatModel()):
-        svc = RuntimeProviderRegistry()
+        svc = RuntimeProviderRegistry(env={"OPENAI_API_KEY": "test-key"})
         provider = svc.get_provider_callable("openai")
         result = await provider(prompt="test")
     assert "unexpected" in result
