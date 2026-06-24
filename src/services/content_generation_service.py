@@ -95,7 +95,8 @@ class ContentGenerationService:
         3. Render prompt template with source messages
         4. Call backend (GenerationService RAG or AgentManager)
         5. Handle image generation if image_model is set (skipped for dry_run)
-        6. Save result with moderation_status='pending'
+        6. Save result, then align moderation_status with the effective publish
+           mode: AUTO → 'approved' (skips 'pending'); MODERATED → 'pending' (#1036)
         7. Return the GenerationRun
 
         If dry_run=True: skips image generation and draft notifications; marks
@@ -149,6 +150,7 @@ class ContentGenerationService:
                             await self._db.repos.generation_runs.set_image_url(run_id, image_url)
 
             await self._db.repos.generation_runs.save_result(run_id, generated_text, metadata)
+
             if self._quality_service and generated_text:
                 quality = await self._quality_service.score_content(
                     generated_text,
@@ -159,6 +161,26 @@ class ContentGenerationService:
                     quality.overall,
                     quality.issues,
                 )
+
+            # Single point that aligns moderation_status with the effective
+            # publish mode (issue #1036). AUTO content has no human review, so it
+            # must skip 'pending' the instant generation completes: a 'pending'
+            # AUTO run would surface in the moderation queue and, if the later
+            # publish fails, stay stranded there forever. 'approved' is the
+            # publish-eligible state PublishService expects; a successful delivery
+            # then advances it to 'published'. MODERATED stays 'pending' (the
+            # create_run / DB default) until a human approves it. dry_run never
+            # publishes, so its status is left untouched.
+            #
+            # This runs only AFTER every fallible post-save step above (quality
+            # scoring / set_quality_score) has succeeded. If any of them raises,
+            # the except below sets status='failed' and the run keeps its
+            # non-publishable 'pending' moderation_status — so the background
+            # CONTENT_PUBLISH handler (which selects moderation_status='approved')
+            # can never deliver a failed generation to Telegram (review: Codex).
+            if not dry_run and effective_publish_mode == PipelinePublishMode.AUTO.value:
+                await self._db.repos.generation_runs.set_moderation_status(run_id, "approved")
+
             run = await self._db.repos.generation_runs.get(run_id)
             if run is None:
                 raise RuntimeError(f"Generation run {run_id} not found after save")

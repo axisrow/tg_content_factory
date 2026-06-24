@@ -71,6 +71,10 @@ class FakeGenerationRunsRepo:
         if run_id in self._runs:
             self._runs[run_id].status = status
 
+    async def set_moderation_status(self, run_id, status):
+        if run_id in self._runs:
+            self._runs[run_id].moderation_status = status
+
     async def save_result(self, run_id, generated_text, metadata=None):
         if run_id in self._runs:
             self._runs[run_id].generated_text = generated_text
@@ -860,6 +864,64 @@ async def test_generate_exception_sets_failed():
         _restore_provider(orig)
 
 
+@pytest.mark.anyio
+async def test_auto_not_approved_when_post_save_step_fails():
+    """A fallible post-save step (set_quality_score) that raises after the text
+    is saved must NOT leave an AUTO run publish-eligible (issue #1036 review,
+    Codex finding). Otherwise the background CONTENT_PUBLISH handler — which
+    selects moderation_status='approved' without checking status — could later
+    deliver a failed generation to Telegram. The run must end 'failed' and keep
+    its non-publishable 'pending' moderation_status."""
+    engine = DummySearchEngine([_make_msg()])
+    db = FakeDB()
+
+    # set_quality_score blows up (e.g. a transient DB write error) AFTER
+    # save_result has persisted generated_text.
+    async def boom_quality(run_id, score, issues=None):
+        raise RuntimeError("DB locked writing quality score")
+
+    db.repos.generation_runs.set_quality_score = boom_quality
+
+    class _Quality:
+        async def score_content(self, text, model=None):
+            from src.services.quality_scoring_service import QualityScore
+
+            return QualityScore(
+                relevance=0.9,
+                language_quality=0.9,
+                informativeness=0.9,
+                structure=0.9,
+                overall=0.9,
+                issues=[],
+            )
+
+    service = ContentGenerationService(db, engine, quality_service=_Quality())
+    pipeline = ContentPipeline(
+        id=1,
+        name="Test",
+        prompt_template="prompt",
+        llm_model="m",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        publish_mode=PipelinePublishMode.AUTO,
+    )
+
+    orig = _patch_provider(_provider())
+    try:
+        with pytest.raises(RuntimeError, match="DB locked"):
+            await service.generate(pipeline)
+    finally:
+        _restore_provider(orig)
+
+    # The run exists, generated_text was saved, but it must be 'failed' and
+    # NOT publish-eligible: moderation_status stays 'pending', never 'approved'.
+    runs = list(db.repos.generation_runs._runs.values())
+    assert len(runs) == 1
+    run = runs[0]
+    assert run.status == "failed"
+    assert run.moderation_status != "approved"
+    assert run.moderation_status == "pending"
+
+
 # ---------------------------------------------------------------------------
 # Tests: _generate_image edge cases
 # ---------------------------------------------------------------------------
@@ -987,3 +1049,110 @@ async def test_run_generation_selects_deep_agents():
 
     result = await service._run_generation(pipeline, None, 512, 0.7)
     assert result["generated_text"] == "deep output"
+
+
+# ---------------------------------------------------------------------------
+# Tests: moderation_status invariant after generate() (issue #1036)
+#
+# The AUTO/MODERATED split must produce a *consistent* moderation_status the
+# moment generation finishes — before any publish attempt. AUTO content is not
+# subject to human review, so it must skip 'pending' (which would surface it in
+# the moderation queue and, on a publish failure, strand it there forever).
+# MODERATED content must stay 'pending' until a human approves it.
+# ---------------------------------------------------------------------------
+
+
+def _make_auto_moderated_pipeline(publish_mode):
+    return ContentPipeline(
+        id=1,
+        name="Test",
+        prompt_template="prompt",
+        llm_model="m",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        publish_mode=publish_mode,
+    )
+
+
+@pytest.mark.anyio
+async def test_generate_auto_skips_pending_moderation_status():
+    """AUTO generation must return a run that has skipped 'pending'.
+
+    A pending AUTO run is internally contradictory: AUTO has no human review,
+    yet 'pending' marks it as awaiting moderation. The run must come back
+    'approved' (the publish-eligible state) with published_at still unset —
+    actual delivery (and the move to 'published') happens later in the handler.
+    """
+    engine = DummySearchEngine([_make_msg()])
+    db = FakeDB()
+    service = ContentGenerationService(db, engine)
+
+    orig = _patch_provider(_provider())
+    try:
+        run = await service.generate(_make_auto_moderated_pipeline(PipelinePublishMode.AUTO))
+    finally:
+        _restore_provider(orig)
+
+    assert run.moderation_status == "approved"
+    assert run.moderation_status != "pending"
+    # Not yet delivered: publish happens in the task handler, not in generate().
+    assert run.published_at is None
+
+
+@pytest.mark.anyio
+async def test_generate_moderated_stays_pending():
+    """MODERATED generation must stay 'pending' until a human approves it."""
+    engine = DummySearchEngine([_make_msg()])
+    db = FakeDB()
+    service = ContentGenerationService(db, engine)
+
+    orig = _patch_provider(_provider())
+    try:
+        run = await service.generate(_make_auto_moderated_pipeline(PipelinePublishMode.MODERATED))
+    finally:
+        _restore_provider(orig)
+
+    assert run.moderation_status == "pending"
+    assert run.published_at is None
+
+
+@pytest.mark.anyio
+async def test_generate_auto_respects_effective_mode_from_graph():
+    """A graph node that downgrades AUTO→MODERATED must keep the run 'pending'.
+
+    The effective publish mode can be overridden by a publish node inside the
+    DAG (PublishHandler writes publish_mode to the context). The status decision
+    must follow that effective mode, not the pipeline's declared mode.
+    """
+    engine = DummySearchEngine([_make_msg()])
+    db = FakeDB()
+    service = ContentGenerationService(db, engine)
+
+    pipeline = ContentPipeline(
+        id=1,
+        name="Test",
+        prompt_template="prompt",
+        llm_model="m",
+        generation_backend=PipelineGenerationBackend.CHAIN,
+        publish_mode=PipelinePublishMode.AUTO,
+        pipeline_json=PipelineGraph(nodes=[], edges=[]),
+    )
+
+    orig = _patch_provider(_provider())
+    from src.services import pipeline_executor
+
+    original_execute = getattr(pipeline_executor.PipelineExecutor, "execute", None)
+    pipeline_executor.PipelineExecutor.execute = AsyncMock(
+        return_value={
+            "generated_text": "text",
+            # Node overrides the declared AUTO mode down to moderated.
+            "publish_mode": PipelinePublishMode.MODERATED.value,
+        }
+    )
+    try:
+        run = await service.generate(pipeline)
+        assert run.metadata["effective_publish_mode"] == PipelinePublishMode.MODERATED.value
+        assert run.moderation_status == "pending"
+    finally:
+        _restore_provider(orig)
+        if original_execute:
+            pipeline_executor.PipelineExecutor.execute = original_execute

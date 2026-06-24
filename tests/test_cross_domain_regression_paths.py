@@ -4540,6 +4540,7 @@ class TestPublishServiceCoverage:
             pipeline_id=1,
             generated_text="test",
             moderation_status="pending",
+            status="completed",  # completed but unapproved → blocked on eligibility, not status (#1036)
         )
         pipeline = ContentPipeline(
             id=1,

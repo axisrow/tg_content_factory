@@ -80,6 +80,24 @@ class GenerationRunsRepository:
         )
 
     async def set_moderation_status(self, run_id: int, status: str) -> None:
+        """Set the run's moderation lifecycle state (issue #1036).
+
+        Valid values and what they mean for the content cycle:
+
+        - ``pending``   — awaiting a human moderation decision. Only reachable
+          for MODERATED pipelines; it is the create_run / DB default. AUTO
+          content never rests here (it has no human review).
+        - ``approved``  — cleared for publishing. Set by a human approve action
+          (MODERATED) or automatically the moment an AUTO run finishes
+          generating (so AUTO skips ``pending`` entirely).
+        - ``rejected``  — a human declined the draft; it will not be published.
+        - ``published`` — delivered to every target. Set atomically together with
+          ``published_at`` by :meth:`set_published_at`; never set here directly.
+
+        Invariant: a run is never simultaneously ``pending`` and carrying a
+        ``published_at``. ``list_pending_moderation`` surfaces ``pending`` +
+        ``approved`` (drafts and approved-but-not-yet-delivered runs).
+        """
         await self._database.execute_write(
             "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') WHERE id = ?",
             (status, run_id),
