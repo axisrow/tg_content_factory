@@ -304,6 +304,63 @@ async def test_image_generate_exception_no_crash():
     assert ctx.get_global("image_url") is None
 
 
+@pytest.mark.anyio
+async def test_image_generate_reuses_orphan_without_rebilling():
+    """Graph retry must reuse a prior failed run's paid image, not re-bill (#1117).
+
+    ContentGenerationService resolves the orphan into services['reusable_image']
+    as (source_run_id, url). The handler must claim+consume it and skip the paid
+    image_service.generate() call entirely.
+    """
+    ctx = NodeContext()
+    ctx.set_global("generated_text", "a sunset")
+    svc = AsyncMock()
+    svc.generate = AsyncMock(return_value="https://img.example/fresh.png")
+
+    db = MagicMock()
+    db.repos.generation_runs.claim_orphan_image = AsyncMock()
+
+    await ImageGenerateHandler().execute(
+        {"model": "flux"},
+        ctx,
+        {
+            "image_service": svc,
+            "reusable_image": (11, "https://img.example/paid.png"),
+            "run_id": 22,
+            "db": db,
+        },
+    )
+
+    # The paid provider call was NOT made — reuse only.
+    svc.generate.assert_not_awaited()
+    # The orphan was claimed+consumed (source 11 → target 22).
+    db.repos.generation_runs.claim_orphan_image.assert_awaited_once_with(
+        11, 22, "https://img.example/paid.png"
+    )
+    assert ctx.get_global("image_url") == "https://img.example/paid.png"
+
+
+@pytest.mark.anyio
+async def test_image_generate_no_orphan_bills_normally():
+    """With no reusable image, the graph path still generates a fresh one (#1117)."""
+    ctx = NodeContext()
+    ctx.set_global("generated_text", "a sunset")
+    svc = AsyncMock()
+    svc.generate = AsyncMock(return_value="https://img.example/fresh.png")
+    db = MagicMock()
+    db.repos.generation_runs.claim_orphan_image = AsyncMock()
+
+    await ImageGenerateHandler().execute(
+        {"model": "flux"},
+        ctx,
+        {"image_service": svc, "reusable_image": None, "run_id": 22, "db": db},
+    )
+
+    svc.generate.assert_awaited_once()
+    db.repos.generation_runs.claim_orphan_image.assert_not_awaited()
+    assert ctx.get_global("image_url") == "https://img.example/fresh.png"
+
+
 # ── PublishHandler ────────────────────────────────────────────────────────────
 
 
