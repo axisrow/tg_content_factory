@@ -68,4 +68,4 @@ python -m src.main serve
 python -m src.main serve --web-pass mysecret
 ```
 
-Откройте `http://localhost:8000` и войдите через Settings → Auth для добавления Telegram аккаунта.
+Откройте `http://localhost:8080` и войдите через Settings → Auth для добавления Telegram аккаунта.
