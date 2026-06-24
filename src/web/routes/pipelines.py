@@ -20,6 +20,16 @@ from src.web.pipelines.forms import (
     form_model_dependency,
 )
 from src.web.pipelines.responses import pipeline_response
+from src.web.schemas.common import ErrorResponse
+from src.web.schemas.pipelines import (
+    ChannelSearchItem,
+    PipelineDetailResponse,
+    PipelineQueueResponse,
+    PipelineRunDetailResponse,
+    PipelineRunsResponse,
+    PipelineTemplateItem,
+    PipelineVariantsResponse,
+)
 
 router = APIRouter()
 
@@ -44,8 +54,16 @@ PipelineAutoSelectVariantFormDep = Annotated[
 ]
 
 
-@router.get("/api/channels/search", response_class=JSONResponse)
+@router.get(
+    "/api/channels/search",
+    response_class=JSONResponse,
+    response_model=list[ChannelSearchItem],
+    status_code=200,
+    tags=["pipelines"],
+    summary="Searchable channel picker",
+)
 async def api_channels_search(request: Request, q: str = ""):
+    """Return up to 50 channels matching *q* for the pipeline source/target picker."""
     return pipeline_response(request, await handlers.api_channels_search(request, q=q))
 
 
@@ -156,8 +174,17 @@ async def publish_pipeline(request: Request, pipeline_id: int, form: PipelinePub
     return pipeline_response(request, await handlers.publish_pipeline(request, pipeline_id, form))
 
 
-@router.get("/{pipeline_id}/variants/{run_id}", response_class=JSONResponse)
+@router.get(
+    "/{pipeline_id}/variants/{run_id}",
+    response_class=JSONResponse,
+    response_model=PipelineVariantsResponse,
+    status_code=200,
+    tags=["pipelines"],
+    summary="A/B variants of a run",
+    responses={404: {"model": ErrorResponse, "description": "Run not found"}},
+)
 async def get_pipeline_variants(request: Request, pipeline_id: int, run_id: int):
+    """A/B variants of a generation run as JSON (parity with CLI `pipeline variants`)."""
     return pipeline_response(
         request, await handlers.get_pipeline_variants(request, pipeline_id, run_id)
     )
@@ -186,12 +213,32 @@ async def get_refinement_steps(request: Request, pipeline_id: int):
     return pipeline_response(request, await handlers.get_refinement_steps(request, pipeline_id))
 
 
-@router.get("/{pipeline_id}/show", response_class=JSONResponse)
+@router.get(
+    "/{pipeline_id}/show",
+    response_class=JSONResponse,
+    response_model=PipelineDetailResponse,
+    status_code=200,
+    tags=["pipelines"],
+    summary="Pipeline configuration detail",
+    responses={404: {"model": ErrorResponse, "description": "Pipeline not found"}},
+)
 async def show_pipeline(request: Request, pipeline_id: int):
+    """Pipeline details as JSON (parity with CLI `pipeline show`).
+
+    Returns 404 with ``{"error": "pipeline_not_found"}`` for an unknown id.
+    """
     return pipeline_response(request, await handlers.show_pipeline(request, pipeline_id))
 
 
-@router.get("/{pipeline_id}/runs", response_class=JSONResponse)
+@router.get(
+    "/{pipeline_id}/runs",
+    response_class=JSONResponse,
+    response_model=PipelineRunsResponse,
+    status_code=200,
+    tags=["pipelines"],
+    summary="Pipeline run history",
+    responses={404: {"model": ErrorResponse, "description": "Pipeline not found"}},
+)
 async def list_pipeline_runs(
     request: Request,
     pipeline_id: int,
@@ -200,6 +247,10 @@ async def list_pipeline_runs(
     status: str | None = None,
     moderation_status: str | None = None,
 ):
+    """Run history for a pipeline (parity with CLI `pipeline runs`).
+
+    Returns 404 with ``{"error": "pipeline_not_found"}`` for an unknown id.
+    """
     return pipeline_response(
         request,
         await handlers.list_pipeline_runs(
@@ -213,13 +264,38 @@ async def list_pipeline_runs(
     )
 
 
-@router.get("/{pipeline_id}/runs/{run_id}", response_class=JSONResponse)
+@router.get(
+    "/{pipeline_id}/runs/{run_id}",
+    response_class=JSONResponse,
+    response_model=PipelineRunDetailResponse,
+    status_code=200,
+    tags=["pipelines"],
+    summary="Single pipeline run detail",
+    responses={404: {"model": ErrorResponse, "description": "Run not found"}},
+)
 async def show_pipeline_run(request: Request, pipeline_id: int, run_id: int):
+    """Run details incl. generated text and image URL (parity with CLI `pipeline run-show`).
+
+    Returns 404 with ``{"error": "run_not_found"}`` if the run is missing or
+    belongs to another pipeline.
+    """
     return pipeline_response(request, await handlers.show_pipeline_run(request, pipeline_id, run_id))
 
 
-@router.get("/{pipeline_id}/queue", response_class=JSONResponse)
+@router.get(
+    "/{pipeline_id}/queue",
+    response_class=JSONResponse,
+    response_model=PipelineQueueResponse,
+    status_code=200,
+    tags=["pipelines"],
+    summary="Pipeline moderation queue",
+    responses={404: {"model": ErrorResponse, "description": "Pipeline not found"}},
+)
 async def pipeline_queue(request: Request, pipeline_id: int, limit: int = 50):
+    """Runs awaiting moderation for a pipeline (parity with CLI `pipeline queue`).
+
+    Returns 404 with ``{"error": "pipeline_not_found"}`` for an unknown id.
+    """
     return pipeline_response(request, await handlers.pipeline_queue(request, pipeline_id, limit=limit))
 
 
@@ -252,8 +328,16 @@ async def templates_page(request: Request):
     return pipeline_response(request, await handlers.templates_page(request))
 
 
-@router.get("/templates/json", response_class=JSONResponse)
+@router.get(
+    "/templates/json",
+    response_class=JSONResponse,
+    response_model=list[PipelineTemplateItem],
+    status_code=200,
+    tags=["pipelines"],
+    summary="List pipeline templates",
+)
 async def templates_json(request: Request):
+    """List available pipeline templates with their serialized graph as JSON."""
     return pipeline_response(request, await handlers.templates_json(request))
 
 

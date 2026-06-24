@@ -11,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from src.web.container import AppContainer
 from src.web.panel_auth import get_cookie_user, sanitize_next, set_session_cookie
 from src.web.paths import DATA_IMAGE_DIR, STATIC_DIR, TEMPLATES_DIR
+from src.web.schemas.common import HealthResponse
 from src.web.session import COOKIE_NAME
 from src.web.template_globals import configure_template_globals
 
@@ -64,8 +65,19 @@ def configure_app(app: FastAPI, container: AppContainer | None) -> None:
 
 
 def register_builtin_endpoints(app: FastAPI) -> None:
-    @app.get("/health")
+    @app.get(
+        "/health",
+        response_model=HealthResponse,
+        status_code=200,
+        tags=["health"],
+        summary="Liveness/readiness probe",
+    )
     async def health_check(request: Request):
+        """Report process health: DB reachability and number of connected accounts.
+
+        Returns ``status='healthy'`` when the SQLite probe succeeds, else
+        ``'degraded'`` (still HTTP 200 — this is a liveness signal, not a gate).
+        """
         container = getattr(request.app.state, "container", None)
         if container is None:
             from src.web import deps
