@@ -31,6 +31,25 @@ theme:
 
 plugins:
   - search
+  # Авто-генерация API-страниц из Python docstring для не-FastAPI поверхностей
+  # (сервисы, agent-tools, CLI-internals) — закрывает дыру parity-матрицы #1048.
+  # show_if_no_docstring=true: рендерим символы и без docstring, чтобы сборка не
+  # падала на ещё недокументированных модулях (поднятие покрытия — отдельно, #1072).
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            show_source: false
+            show_if_no_docstring: true
+            show_root_heading: true
+            show_root_full_path: true
+            members_order: source
+            separate_signature: true
+            merge_init_into_class: true
+            show_submodules: false
 
 markdown_extensions:
   - tables
@@ -70,6 +89,11 @@ nav:
     - Agent Tools: reference/agent-tools.md
     - RSS / Atom Feeds: reference/rss-feeds.md
     - Doc-coverage: reference/doc-coverage.md
+  - API Reference:
+    - Overview: reference/api/index.md
+    - Services: reference/api/services.md
+    - Agent Tools: reference/api/agent-tools-api.md
+    - CLI Internals: reference/api/cli-internals.md
   - Architecture: architecture.md
   - Service Map: feature-map.md
   - Parity Matrix: parity-matrix.md
