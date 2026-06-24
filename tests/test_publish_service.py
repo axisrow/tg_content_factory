@@ -129,7 +129,10 @@ async def test_publish_service_no_text():
     pool = FakeClientPool()
     service = PublishService(db, pool)
 
-    run = GenerationRun(id=1, pipeline_id=1, generated_text=None, moderation_status="approved")
+    run = GenerationRun(
+        id=1, pipeline_id=1, generated_text=None,
+        moderation_status="approved", status="completed",
+    )
 
     results = await service.publish_run(run, make_pipeline())
 
@@ -144,7 +147,10 @@ async def test_publish_service_blocks_unapproved_run_for_moderated_pipeline():
     pool = FakeClientPool()
     service = PublishService(db, pool)
 
-    run = GenerationRun(id=1, pipeline_id=1, generated_text="Test content", moderation_status="pending")
+    run = GenerationRun(
+        id=1, pipeline_id=1, generated_text="Test content",
+        moderation_status="pending", status="completed",
+    )
 
     results = await service.publish_run(run, make_pipeline())
 
@@ -154,12 +160,49 @@ async def test_publish_service_blocks_unapproved_run_for_moderated_pipeline():
 
 
 @pytest.mark.anyio
+async def test_publish_service_blocks_non_completed_run():
+    """A run whose generation did not complete must never be delivered, even if
+    it carries generated_text and moderation_status='approved' (issue #1036
+    review, Codex). This is the service-level guard that protects EVERY publish
+    entrypoint — web/CLI moderation, the dispatcher, and the agent tool — not
+    just CONTENT_PUBLISH's SQL filter. No target is ever contacted."""
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = FakeClientPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    # A failed generation that nonetheless got generated_text saved (text was
+    # persisted before a later step failed) and was somehow left 'approved'.
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Leaked content from a failed run",
+        moderation_status="approved",
+        status="failed",
+    )
+
+    results = await service.publish_run(run, make_pipeline(publish_mode=PipelinePublishMode.AUTO))
+
+    assert len(results) == 1
+    assert results[0].success is False
+    assert "not completed" in results[0].error
+    # The irreversible send was never attempted, and the run was not marked published.
+    assert pool.released == []
+    assert 1 not in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
 async def test_publish_service_no_targets():
     db = FakeDB()
     pool = FakeClientPool()
     service = PublishService(db, pool)
 
-    run = GenerationRun(id=1, pipeline_id=1, generated_text="Test content", moderation_status="approved")
+    run = GenerationRun(
+        id=1, pipeline_id=1, generated_text="Test content",
+        moderation_status="approved", status="completed",
+    )
 
     results = await service.publish_run(run, make_pipeline())
 
@@ -182,6 +225,7 @@ async def test_publish_service_success():
         pipeline_id=1,
         generated_text="Test content for publishing",
         moderation_status="approved",
+        status="completed",
     )
 
     results = await service.publish_run(run, make_pipeline())
@@ -212,6 +256,7 @@ async def test_publish_service_partial_failure_records_delivered():
         pipeline_id=1,
         generated_text="Test content",
         moderation_status="approved",
+        status="completed",
     )
 
     results = await service.publish_run(run, make_pipeline())
@@ -243,6 +288,7 @@ async def test_publish_service_retry_skips_delivered_targets():
         pipeline_id=1,
         generated_text="Test content",
         moderation_status="approved",
+        status="completed",
         metadata={"published_targets": ["+1111111111:-1001"]},
     )
 
@@ -281,6 +327,7 @@ async def test_publish_service_all_targets_already_delivered():
         pipeline_id=1,
         generated_text="Test content",
         moderation_status="approved",
+        status="completed",
         metadata={"published_targets": ["+1111111111:-1001", "+2222222222:-1002"]},
     )
 
@@ -310,6 +357,7 @@ async def test_publish_service_allows_auto_pipeline_without_approval():
         pipeline_id=1,
         generated_text="Auto-publish content",
         moderation_status="pending",
+        status="completed",
     )
 
     results = await service.publish_run(
@@ -331,7 +379,10 @@ async def test_publish_service_client_unavailable():
     pool = FakeClientPool(should_succeed=False)
     service = PublishService(db, pool)
 
-    run = GenerationRun(id=1, pipeline_id=1, generated_text="Test content", moderation_status="approved")
+    run = GenerationRun(
+        id=1, pipeline_id=1, generated_text="Test content",
+        moderation_status="approved", status="completed",
+    )
 
     results = await service.publish_run(run, make_pipeline())
 
@@ -360,6 +411,7 @@ async def test_publish_service_with_image_url():
         generated_text="Content with image",
         image_url="https://example.com/image.jpg",
         moderation_status="approved",
+        status="completed",
     )
 
     results = await service.publish_run(run, make_pipeline())
@@ -395,6 +447,7 @@ async def test_publish_service_whitespace_text():
         pipeline_id=1,
         generated_text="   \n\t  ",  # Whitespace only
         moderation_status="approved",
+        status="completed",
     )
 
     results = await service.publish_run(run, make_pipeline())
@@ -424,6 +477,7 @@ async def test_publish_service_entity_resolution_fail():
         pipeline_id=1,
         generated_text="Test content",
         moderation_status="approved",
+        status="completed",
     )
 
     results = await service.publish_run(run, make_pipeline())
@@ -455,6 +509,7 @@ async def test_publish_service_timeout():
         pipeline_id=1,
         generated_text="Test content",
         moderation_status="approved",
+        status="completed",
     )
 
     results = await service.publish_run(run, make_pipeline())
@@ -471,7 +526,7 @@ async def test_publish_service_missing_run_id():
     pool = FakeClientPool()
     service = PublishService(db, pool)
 
-    run = GenerationRun(id=None, pipeline_id=1, generated_text="text", moderation_status="approved")
+    run = GenerationRun(id=None, pipeline_id=1, generated_text="text", moderation_status="approved", status="completed")
     results = await service.publish_run(run, make_pipeline())
 
     assert len(results) == 1
@@ -486,7 +541,7 @@ async def test_publish_service_missing_pipeline_id():
     pool = FakeClientPool()
     service = PublishService(db, pool)
 
-    run = GenerationRun(id=1, pipeline_id=1, generated_text="text", moderation_status="approved")
+    run = GenerationRun(id=1, pipeline_id=1, generated_text="text", moderation_status="approved", status="completed")
     results = await service.publish_run(run, make_pipeline(id=None))
 
     assert len(results) == 1
@@ -509,6 +564,7 @@ async def test_publish_service_with_reply_to():
         pipeline_id=1,
         generated_text="Reply content",
         moderation_status="approved",
+        status="completed",
         metadata={"publish_reply": True, "reply_to_message_id": 42},
     )
 
@@ -538,6 +594,7 @@ async def test_publish_service_general_exception():
         pipeline_id=1,
         generated_text="Test content",
         moderation_status="approved",
+        status="completed",
     )
 
     results = await service.publish_run(run, make_pipeline())
@@ -588,6 +645,7 @@ async def test_publish_service_resolve_entity_fallback():
     run = GenerationRun(
         id=1, pipeline_id=1, generated_text="Test",
         moderation_status="approved",
+        status="completed",
     )
 
     results = await service.publish_run(run, make_pipeline(publish_mode=PipelinePublishMode.AUTO))
@@ -622,6 +680,7 @@ async def test_publish_service_resolve_entity_no_wait_for():
         run = GenerationRun(
             id=1, pipeline_id=1, generated_text="Test",
             moderation_status="approved",
+            status="completed",
         )
         results = await service.publish_run(run, make_pipeline(publish_mode=PipelinePublishMode.AUTO))
 
