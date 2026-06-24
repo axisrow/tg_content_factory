@@ -11,6 +11,19 @@ logger = logging.getLogger(__name__)
 BOTFATHER = "BotFather"
 _TOKEN_RE = re.compile(r"(\d{8,}:[A-Za-z0-9_\-]{35,})")
 
+# Redaction is intentionally BROADER than _TOKEN_RE: the orphan branch fires
+# precisely when BotFather's reply drifted from the expected token format, so a
+# valid token may still be present in the text yet not match the strict regex.
+# We scrub any "<8+ digits><sep><20+ token-ish chars>" run — colon OR space/
+# dash/equals separators — before that text is logged or raised, so a format
+# change can never leak the bot credential into logs (#1041 review follow-up).
+_TOKEN_REDACT_RE = re.compile(r"\d{8,}[\s:=\-][A-Za-z0-9_\-]{20,}")
+
+
+def _redact_tokens(text: str) -> str:
+    """Replace any bot-token-like substring with a placeholder for safe logging."""
+    return _TOKEN_REDACT_RE.sub("<redacted-token>", text)
+
 
 async def create_bot(client: TelegramClient, name: str, username: str) -> str:
     """Create a bot via BotFather. Returns the bot token."""
@@ -39,16 +52,17 @@ async def create_bot(client: TelegramClient, name: str, username: str) -> str:
             # reply format) means we have a live orphan bot we can't record or
             # use — flag it loudly with the username so it can be deleted by
             # hand (issue #1041).
+            safe_response = _redact_tokens(resp.text)
             logger.error(
                 "Orphan bot @%s: BotFather created it but the token could not be "
                 "parsed from the response; delete it manually. Response: %s",
                 username,
-                resp.text,
+                safe_response,
             )
             raise RuntimeError(
                 f"Could not extract token from BotFather response — orphan bot "
                 f"@{username} was created in Telegram but has no token and must "
-                f"be deleted manually. Response: {resp.text}"
+                f"be deleted manually. Response: {safe_response}"
             )
 
         logger.info("Bot @%s created successfully", username)
