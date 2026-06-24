@@ -4,7 +4,7 @@ from typing import Any
 
 from claude_agent_sdk import tool
 
-from src.agent.tools._registry import _text_response, require_confirmation
+from src.agent.tools._registry import _text_response, arg_bool, require_confirmation
 from src.agent.tools.messaging_schemas import DOWNLOAD_MEDIA_SCHEMA, PIN_MESSAGE_SCHEMA, UNPIN_MESSAGE_SCHEMA
 from src.services.telegram_actions import (
     TelegramActionClientUnavailableError,
@@ -37,7 +37,9 @@ def register_pin_media_tools(ctx: Any, client_pool: Any) -> list[Any]:
             return perm_gate
         chat_id = args.get("chat_id", "")
         message_id = args.get("message_id")
-        notify = args.get("notify", False)
+        # bool("false") is True, so a JSON-string notify="false" would ping every
+        # member; coerce explicitly so only an affirmative value notifies (#1115).
+        notify = arg_bool(args, "notify", False)
         if not chat_id or not message_id:
             return _text_response("Ошибка: chat_id и message_id обязательны.")
         gate = require_confirmation(f"закрепит сообщение #{message_id} в чате {chat_id}", args)

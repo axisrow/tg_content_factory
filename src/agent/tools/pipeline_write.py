@@ -10,9 +10,11 @@ from src.agent.tools._pipeline_runtime import parse_agent_target_refs
 from src.agent.tools._registry import (
     ToolInputError,
     _text_response,
+    arg_bool,
     arg_csv_ints,
     arg_int,
     arg_str,
+    is_affirmative,
     require_confirmation,
 )
 from src.agent.tools.pipeline_schemas import (
@@ -59,7 +61,9 @@ def register_pipeline_write_tools(db: Any, ctx: Any) -> list[Any]:
                 llm_model=args.get("llm_model"),
                 publish_mode=args.get("publish_mode", "moderated"),
                 ab_num_variants=int(args.get("ab_num_variants") or 1),
-                ab_auto_select=bool(args.get("ab_auto_select", False)),
+                # bool("false") is True — coerce so a JSON-string disables A/B
+                # auto-select instead of silently enabling it (#1115).
+                ab_auto_select=arg_bool(args, "ab_auto_select", False),
             )
             return _text_response(f"Пайплайн '{name}' создан (id={pipeline_id}).")
         except ToolInputError as exc:
@@ -119,7 +123,7 @@ def register_pipeline_write_tools(db: Any, ctx: Any) -> list[Any]:
                 else pipeline.ab_num_variants
             )
             ab_auto_select = (
-                bool(args["ab_auto_select"])
+                is_affirmative(args["ab_auto_select"])
                 if args.get("ab_auto_select") is not None
                 else pipeline.ab_auto_select
             )

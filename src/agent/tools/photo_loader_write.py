@@ -13,6 +13,8 @@ from src.agent.tools._photo_loader_runtime import (
 )
 from src.agent.tools._registry import (
     _text_response,
+    arg_bool,
+    is_affirmative,
     require_confirmation,
 )
 from src.agent.tools.photo_loader_schemas import (
@@ -207,7 +209,9 @@ def register_batch_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]
         pool_gate = ctx.require_pool("Обработка фото")
         if pool_gate:
             return pool_gate
-        dry_run = bool(args.get("dry_run"))
+        # bool("false") is True — a JSON-string dry_run="false" would silently force
+        # preview-only and never actually send; coerce via is_affirmative (#1115).
+        dry_run = arg_bool(args, "dry_run", False)
         if dry_run:
             # Preview only — no send, no mark, no state change. Skip the confirmation
             # gate (nothing happens) and the photo-item path (it has no dry-run).
@@ -350,15 +354,23 @@ def register_auto_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
         job_id = args.get("job_id")
         if job_id is None:
             return _text_response("Ошибка: job_id обязателен.")
+        # Three-state: None leaves is_active unchanged; only coerce when present, so a
+        # JSON-string is_active="false" deactivates instead of staying truthy (#1115).
+        raw_is_active = args.get("is_active")
+        is_active = is_affirmative(raw_is_active) if raw_is_active is not None else None
+        # int-coerce the interval the same way create_auto_upload does, so a string
+        # "60" cannot reach the int|None DB column as raw text.
+        raw_interval = args.get("interval_minutes")
+        interval_minutes = int(raw_interval) if raw_interval is not None else None
         changes = []
         if args.get("folder_path"):
             changes.append(f"folder={args['folder_path']}")
         if args.get("mode"):
             changes.append(f"mode={args['mode']}")
-        if args.get("interval_minutes") is not None:
-            changes.append(f"interval={args['interval_minutes']}m")
-        if args.get("is_active") is not None:
-            changes.append(f"active={args['is_active']}")
+        if interval_minutes is not None:
+            changes.append(f"interval={interval_minutes}m")
+        if is_active is not None:
+            changes.append(f"active={is_active}")
         desc = f"обновит автозагрузку id={job_id}"
         if changes:
             desc += f" ({', '.join(changes)})"
@@ -376,8 +388,8 @@ def register_auto_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
                 folder_path=args.get("folder_path"),
                 send_mode=PhotoSendMode(mode_str) if mode_str else None,
                 caption=args.get("caption"),
-                interval_minutes=args.get("interval_minutes"),
-                is_active=args.get("is_active"),
+                interval_minutes=interval_minutes,
+                is_active=is_active,
             )
             return _text_response(f"Автозагрузка id={job_id} обновлена.")
         except Exception as exc:

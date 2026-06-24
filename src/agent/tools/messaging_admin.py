@@ -5,7 +5,7 @@ from typing import Any
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
 
-from src.agent.tools._registry import _text_response, arg_str, require_confirmation
+from src.agent.tools._registry import _text_response, arg_bool, arg_str, is_affirmative, require_confirmation
 from src.agent.tools._telegram_runtime import prepare_telegram_tool
 from src.agent.tools.messaging_schemas import (
     EDIT_ADMIN_SCHEMA,
@@ -90,7 +90,9 @@ def register_admin_moderation_tools(ctx: Any, client_pool: Any) -> list[Any]:
             return err
         chat_id = arg_str(args, "chat_id")
         user_id = arg_str(args, "user_id")
-        is_admin = args.get("is_admin", True)
+        # Coerce explicitly: a model emitting the JSON string "false" must demote,
+        # not promote — bool("false") is True would silently invert the action (#1115).
+        is_admin = arg_bool(args, "is_admin", True)
         title = args.get("title") or None
         if not chat_id or not user_id:
             return _text_response("Ошибка: chat_id и user_id обязательны.")
@@ -133,8 +135,13 @@ def register_admin_moderation_tools(ctx: Any, client_pool: Any) -> list[Any]:
         chat_id = arg_str(args, "chat_id")
         user_id = arg_str(args, "user_id")
         until_date_str = args.get("until_date") or None
-        send_messages = args.get("send_messages")
-        send_media = args.get("send_media")
+        # Preserve the three-state (None=unchanged / True / False): only coerce when
+        # the flag is present, so a JSON string "false" restricts instead of being
+        # treated as truthy and silently allowing the action (#1115).
+        raw_send_messages = args.get("send_messages")
+        raw_send_media = args.get("send_media")
+        send_messages = is_affirmative(raw_send_messages) if raw_send_messages is not None else None
+        send_media = is_affirmative(raw_send_media) if raw_send_media is not None else None
         if not chat_id or not user_id:
             return _text_response("Ошибка: chat_id и user_id обязательны.")
         if send_messages is None and send_media is None:
