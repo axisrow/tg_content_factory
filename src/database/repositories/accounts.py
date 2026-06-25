@@ -336,6 +336,33 @@ class AccountsRepository:
 
         return accounts
 
+    async def get_decrypted_session(
+        self, *, account_id: int | None = None, phone: str | None = None
+    ) -> str | None:
+        """Decrypt and return ONE account's session string, or ``None`` if no such account.
+
+        Unlike :meth:`get_accounts`, this reads and decrypts only the single selected
+        row, so a broken/undecryptable *sibling* account cannot abort the lookup — the
+        exact recovery path SSO export needs (#828). Exactly one of ``account_id`` /
+        ``phone`` must be given. A decrypt failure on the *target* still raises
+        :class:`AccountSessionDecryptError` (the caller wants to know).
+        """
+        if (account_id is None) == (phone is None):
+            raise ValueError("provide exactly one of account_id / phone")
+        if account_id is not None:
+            cur = await self._db.execute(
+                "SELECT phone, session_string FROM accounts WHERE id = ?", (account_id,)
+            )
+        else:
+            cur = await self._db.execute(
+                "SELECT phone, session_string FROM accounts WHERE phone = ?", (phone,)
+            )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        raw_session = str(row["session_string"] or "")
+        return self._decrypt_session_for_live_use(raw_session, str(row["phone"]))
+
     async def get_live_usable_accounts(self, active_only: bool = False) -> list[Account]:
         """Return accounts whose sessions can be decrypted for live Telegram use."""
         sql = "SELECT * FROM accounts"
