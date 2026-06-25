@@ -945,3 +945,279 @@ def test_pipeline_bare_shows_help_exit0():
     with pytest.raises(SystemExit) as exc:
         _delegate(["pipeline"])
     assert exc.value.code == 0
+
+
+# --------------------------------------------------------------------------- #
+# argv-builder branch coverage (``_argv_from_namespace``)
+#
+# Every Wave-4 group routes through a per-action argv builder (``_pa_*`` /
+# ``_da_*`` / ``_analytics_argv`` / ``_channel_argv`` and the depth-2 nested
+# builders). Those builders re-emit each *non-default* flag / positional so the
+# Typer leaf re-parses to the same Namespace. The CliRunner/round-trip tests
+# above exercise the *default* paths; the cases below drive each builder with
+# its full set of non-default flags so the conditional arms (``if getattr(...)``)
+# are all hit. Asserting the rebuilt argv tail makes this a real regression
+# guard on the argparse→Typer token mapping, not just a line-coverage filler.
+#
+# Driven through the production ``build_parser() → _argv_from_namespace`` path
+# (the first half of ``dispatch_via_typer``) so the Namespace the builder sees
+# is the real parsed one, never a hand-rolled stub.
+# --------------------------------------------------------------------------- #
+
+
+def _tail(argv_in: list[str]) -> list[str]:
+    """Parse ``argv_in`` and return the rebuilt argv *after* the group token.
+
+    ``_argv_from_namespace`` prefixes ``["--config", "config.yaml", <group>]``;
+    the slice drops that shared head so a case asserts only on the action +
+    flags its builder emits.
+    """
+    from src.cli.typer_commands import _argv_from_namespace
+
+    ns = build_parser().parse_args(argv_in)
+    return _argv_from_namespace(ns)[3:]
+
+
+# --- pipeline builders (``_pa_*`` + nested filter/node/edge) --------------- #
+
+
+@pytest.mark.parametrize(
+    ("argv_in", "expected"),
+    [
+        (
+            ["pipeline", "add", "P", "--prompt-template", "t", "--json-file", "f.json",
+             "--source", "9", "--target", "+1|7", "--llm-model", "m", "--image-model", "im",
+             "--publish-mode", "auto", "--generation-backend", "agent", "--interval", "30",
+             "--inactive", "--ab-variants", "2", "--ab-auto-select", "--node", "fetch:x",
+             "--edge", "a:b", "--node-config", "k=v", "--run-after",
+             "--since-value", "5", "--since-unit", "d"],
+            ["add", "--prompt-template", "t", "--json-file", "f.json", "--source", "9",
+             "--target", "+1|7", "--llm-model", "m", "--image-model", "im",
+             "--publish-mode", "auto", "--generation-backend", "agent", "--interval", "30",
+             "--inactive", "--ab-variants", "2", "--ab-auto-select", "--node", "fetch:x",
+             "--edge", "a:b", "--node-config", "k=v", "--run-after",
+             "--since-value", "5", "--since-unit", "d", "--", "P"],
+        ),
+        (
+            ["pipeline", "edit", "5", "--name", "N", "--prompt-template", "t",
+             "--source", "9", "--target", "+1|7", "--llm-model", "m", "--image-model", "im",
+             "--publish-mode", "auto", "--generation-backend", "agent", "--interval", "30",
+             "--active", "--ab-variants", "2", "--ab-auto-select"],
+            ["edit", "--name", "N", "--prompt-template", "t", "--source", "9",
+             "--target", "+1|7", "--llm-model", "m", "--image-model", "im",
+             "--publish-mode", "auto", "--generation-backend", "agent", "--interval", "30",
+             "--active", "--ab-variants", "2", "--ab-auto-select", "--", "5"],
+        ),
+        # edit's other tri-state arm: --inactive / --no-ab-auto-select
+        (
+            ["pipeline", "edit", "5", "--inactive", "--no-ab-auto-select"],
+            ["edit", "--inactive", "--no-ab-auto-select", "--", "5"],
+        ),
+        (
+            ["pipeline", "run", "5", "--preview", "--publish", "--limit", "3",
+             "--max-tokens", "100", "--temperature", "0.5"],
+            ["run", "--preview", "--publish", "--limit", "3", "--max-tokens", "100",
+             "--temperature", "0.5", "--", "5"],
+        ),
+        (
+            ["pipeline", "generate", "5", "--max-tokens", "99", "--temperature", "0.3",
+             "--model", "gpt", "--preview", "--ab-variants", "3", "--auto-select"],
+            ["generate", "--max-tokens", "99", "--temperature", "0.3", "--model", "gpt",
+             "--preview", "--ab-variants", "3", "--auto-select", "--", "5"],
+        ),
+        (
+            ["pipeline", "generate-stream", "5", "--model", "gpt", "--max-tokens", "99",
+             "--temperature", "0.3", "--limit", "3"],
+            ["generate-stream", "--model", "gpt", "--max-tokens", "99",
+             "--temperature", "0.3", "--limit", "3", "--", "5"],
+        ),
+        (
+            ["pipeline", "runs", "5", "--limit", "3", "--status", "completed"],
+            ["runs", "--limit", "3", "--status", "completed", "--", "5"],
+        ),
+        (
+            ["pipeline", "select-variant", "7", "2"],
+            ["select-variant", "--", "7", "2"],
+        ),
+        (
+            ["pipeline", "queue", "5", "--limit", "3"],
+            ["queue", "--limit", "3", "--", "5"],
+        ),
+        (
+            ["pipeline", "moderation-list", "--pipeline-id", "2", "--limit", "5"],
+            ["moderation-list", "--pipeline-id", "2", "--limit", "5"],
+        ),
+        (
+            ["pipeline", "refinement-steps", "5", "--set", "[]"],
+            ["refinement-steps", "--set", "[]", "--", "5"],
+        ),
+        (
+            ["pipeline", "import", "f.json", "--name", "N"],
+            ["import", "--name", "N", "--", "f.json"],
+        ),
+        (
+            ["pipeline", "templates", "--category", "news"],
+            ["templates", "--category", "news"],
+        ),
+        (
+            ["pipeline", "from-template", "3", "N", "--source-ids", "1,2", "--target-refs", "+1|9"],
+            ["from-template", "--source-ids", "1,2", "--target-refs", "+1|9", "--", "3", "N"],
+        ),
+        (
+            ["pipeline", "ai-edit", "5", "do it", "--show"],
+            ["ai-edit", "--show", "--", "5", "do it"],
+        ),
+        (
+            ["pipeline", "dry-run-count", "--source", "9", "--since-value", "5", "--since-unit", "d"],
+            ["dry-run-count", "--source", "9", "--since-value", "5", "--since-unit", "d"],
+        ),
+        # nested filter set — every optional arm of _pipeline_filter_argv
+        (
+            ["pipeline", "filter", "set", "3", "--message-kind", "text",
+             "--service-action", "join", "--media-type", "photo", "--sender-kind", "user",
+             "--keyword", "x", "--regex", "rx", "--forwarded", "true", "--has-text", "true"],
+            ["filter", "set", "--message-kind", "text", "--service-action", "join",
+             "--media-type", "photo", "--sender-kind", "user", "--keyword", "x",
+             "--regex", "rx", "--forwarded", "true", "--has-text", "true", "--", "3"],
+        ),
+        (
+            ["pipeline", "filter", "clear", "3"],
+            ["filter", "clear", "--", "3"],
+        ),
+        # nested node — replace (3 positionals) + remove (2 positionals)
+        (
+            ["pipeline", "node", "replace", "5", "n1", "llm:model=gpt"],
+            ["node", "replace", "--", "5", "n1", "llm:model=gpt"],
+        ),
+        (
+            ["pipeline", "node", "remove", "5", "n1"],
+            ["node", "remove", "--", "5", "n1"],
+        ),
+    ],
+)
+def test_pipeline_argv_builder_branches(argv_in, expected):
+    assert _tail(argv_in) == expected
+
+
+# --- dialogs builders (``_da_*`` + nested queue) -------------------------- #
+
+
+@pytest.mark.parametrize(
+    ("argv_in", "expected"),
+    [
+        (["dialogs", "resolve", "@x", "--phone", "+1"],
+         ["resolve", "--phone", "+1", "--", "@x"]),
+        (["dialogs", "leave", "100", "200", "--phone", "+1", "--yes"],
+         ["leave", "--phone", "+1", "--yes", "--", "100", "200"]),
+        (["dialogs", "join", "@x", "--phone", "+1", "--yes"],
+         ["join", "--phone", "+1", "--yes", "--", "@x"]),
+        (["dialogs", "topics", "--channel-id", "5", "--phone", "+1"],
+         ["topics", "--channel-id", "5", "--phone", "+1"]),
+        (["dialogs", "cache-clear", "--phone", "+1"],
+         ["cache-clear", "--phone", "+1"]),
+        (["dialogs", "send", "@u", "hi", "--phone", "+1", "--yes"],
+         ["send", "--phone", "+1", "--yes", "--", "@u", "hi"]),
+        (["dialogs", "forward", "a", "b", "1", "2", "--phone", "+1", "--yes"],
+         ["forward", "--phone", "+1", "--yes", "--", "a", "b", "1", "2"]),
+        (["dialogs", "edit-message", "c", "9", "txt", "--phone", "+1", "--yes"],
+         ["edit-message", "--phone", "+1", "--yes", "--", "c", "9", "txt"]),
+        (["dialogs", "delete-message", "c", "9", "10", "--phone", "+1", "--yes"],
+         ["delete-message", "--phone", "+1", "--yes", "--", "c", "9", "10"]),
+        (["dialogs", "create-channel", "--title", "T", "--phone", "+1",
+          "--about", "A", "--username", "U"],
+         ["create-channel", "--title", "T", "--phone", "+1", "--about", "A", "--username", "U"]),
+        (["dialogs", "create-group", "--title", "T", "--phone", "+1", "--about", "A"],
+         ["create-group", "--title", "T", "--phone", "+1", "--about", "A"]),
+        (["dialogs", "pin-message", "c", "9", "--phone", "+1", "--notify", "--yes"],
+         ["pin-message", "--phone", "+1", "--notify", "--yes", "--", "c", "9"]),
+        # react: --clear arm + emoji omitted
+        (["dialogs", "react", "c", "9", "--clear", "--phone", "+1", "--yes"],
+         ["react", "--clear", "--phone", "+1", "--yes", "--", "c", "9"]),
+        # react: explicit emoji positional (the trailing-append arm)
+        (["dialogs", "react", "c", "9", "👍", "--phone", "+1"],
+         ["react", "--phone", "+1", "--", "c", "9", "👍"]),
+        (["dialogs", "unpin-message", "c", "--message-id", "9", "--phone", "+1", "--yes"],
+         ["unpin-message", "--message-id", "9", "--phone", "+1", "--yes", "--", "c"]),
+        (["dialogs", "download-media", "c", "9", "--phone", "+1", "--output-dir", "/tmp/x"],
+         ["download-media", "--phone", "+1", "--output-dir", "/tmp/x", "--", "c", "9"]),
+        (["dialogs", "participants", "c", "--phone", "+1", "--limit", "10", "--search", "s"],
+         ["participants", "--phone", "+1", "--limit", "10", "--search", "s", "--", "c"]),
+        (["dialogs", "edit-admin", "c", "u", "--phone", "+1", "--title", "T", "--no-admin", "--yes"],
+         ["edit-admin", "--phone", "+1", "--title", "T", "--no-admin", "--yes", "--", "c", "u"]),
+        (["dialogs", "edit-permissions", "c", "u", "--phone", "+1", "--until-date", "2025-01-01",
+          "--send-messages", "false", "--send-media", "true", "--yes"],
+         ["edit-permissions", "--phone", "+1", "--until-date", "2025-01-01",
+          "--send-messages", "false", "--send-media", "true", "--yes", "--", "c", "u"]),
+        (["dialogs", "kick", "c", "u", "--phone", "+1", "--yes"],
+         ["kick", "--phone", "+1", "--yes", "--", "c", "u"]),
+        (["dialogs", "broadcast-stats", "c", "--phone", "+1"],
+         ["broadcast-stats", "--phone", "+1", "--", "c"]),
+        (["dialogs", "archive", "c", "--phone", "+1"],
+         ["archive", "--phone", "+1", "--", "c"]),
+        (["dialogs", "mark-read", "c", "--phone", "+1", "--max-id", "99"],
+         ["mark-read", "--phone", "+1", "--max-id", "99", "--", "c"]),
+        # nested queue — status (all opts) + clear-pending (all opts)
+        (["dialogs", "queue", "status", "--command-type", "t", "--phone", "+1", "--limit", "3"],
+         ["queue", "status", "--command-type", "t", "--phone", "+1", "--limit", "3"]),
+        (["dialogs", "queue", "clear-pending", "--command-type", "t", "--phone", "+1", "--yes"],
+         ["queue", "clear-pending", "--command-type", "t", "--phone", "+1", "--yes"]),
+    ],
+)
+def test_dialogs_argv_builder_branches(argv_in, expected):
+    assert _tail(argv_in) == expected
+
+
+# --- analytics builder (``_analytics_argv``) ------------------------------ #
+
+
+@pytest.mark.parametrize(
+    ("argv_in", "expected"),
+    [
+        (["analytics", "top", "--limit", "5", "--date-from", "2024-01-01", "--date-to", "2024-02-01"],
+         ["top", "--limit", "5", "--date-from", "2024-01-01", "--date-to", "2024-02-01"]),
+        (["analytics", "content-types", "--date-from", "2024-01-01", "--date-to", "2024-02-01"],
+         ["content-types", "--date-from", "2024-01-01", "--date-to", "2024-02-01"]),
+        (["analytics", "hourly", "--date-from", "2024-01-01", "--date-to", "2024-02-01"],
+         ["hourly", "--date-from", "2024-01-01", "--date-to", "2024-02-01"]),
+        (["analytics", "daily", "--days", "5", "--pipeline-id", "2"],
+         ["daily", "--days", "5", "--pipeline-id", "2"]),
+        (["analytics", "pipeline-stats", "--pipeline-id", "2"],
+         ["pipeline-stats", "--pipeline-id", "2"]),
+        (["analytics", "trending-channels", "--days", "3", "--limit", "9"],
+         ["trending-channels", "--days", "3", "--limit", "9"]),
+        (["analytics", "velocity", "--days", "5"],
+         ["velocity", "--days", "5"]),
+        (["analytics", "calendar", "--limit", "9", "--pipeline-id", "2"],
+         ["calendar", "--limit", "9", "--pipeline-id", "2"]),
+        (["analytics", "channel", "555", "--days", "5"],
+         ["channel", "--days", "5", "--", "555"]),
+        (["analytics", "channel-rating", "--useful", "useful", "--genre", "ad", "--limit", "10"],
+         ["channel-rating", "--useful", "useful", "--genre", "ad", "--limit", "10"]),
+        (["analytics", "channel-rate", "555", "--model", "gpt", "--sample-size", "20"],
+         ["channel-rate", "--model", "gpt", "--sample-size", "20", "--", "555"]),
+    ],
+)
+def test_analytics_argv_builder_branches(argv_in, expected):
+    assert _tail(argv_in) == expected
+
+
+# --- channel builder (``_channel_argv`` + nested tag) --------------------- #
+
+
+@pytest.mark.parametrize(
+    ("argv_in", "expected"),
+    [
+        (["channel", "collect", "@c", "--full"], ["collect", "--full", "--", "@c"]),
+        (["channel", "stats", "--all", "--max-channels", "5"], ["stats", "--all", "--max-channels", "5"]),
+        (["channel", "stats", "@c"], ["stats", "--", "@c"]),
+        (["channel", "refresh-meta", "--all"], ["refresh-meta", "--all"]),
+        (["channel", "refresh-meta", "@c"], ["refresh-meta", "--", "@c"]),
+        (["channel", "list-for-import", "--json"], ["list-for-import", "--json"]),
+        (["channel", "import", "src.txt"], ["import", "--", "src.txt"]),
+        (["channel", "tag", "set", "7", "a,b"], ["tag", "set", "--", "7", "a,b"]),
+        (["channel", "tag", "get", "3"], ["tag", "get", "--", "3"]),
+        (["channel", "tag", "delete", "news"], ["tag", "delete", "--", "news"]),
+    ],
+)
+def test_channel_argv_builder_branches(argv_in, expected):
+    assert _tail(argv_in) == expected
