@@ -174,7 +174,7 @@
 | Инфо | `account info` | `GET /settings/{id}/info` | `get_account_info` |
 | Доступность | `account list` | `GET /settings/` | `get_account_availability` |
 | Диагностика рантайма | `scheduler status` | `GET /settings/` | `get_runtime_diagnostics` |
-| Экспорт session (SSO) | `account export-session` | *исключение: REST в #1145* | `export_session` |
+| Экспорт session (SSO) | `account export-session` | `POST /settings/{id}/export-session` | `export_session` |
 | Импорт session (SSO) | `account import` | `POST /auth/import-session` | `import_session` |
 | Добавить аккаунт | `account add` | `POST /auth/send-code`, `POST /auth/verify-code` | *исключение: интерактивный 2FA-flow* |
 | Отправить код авторизации | `account send-code` | `POST /auth/send-code` | *исключение: интерактивный 2FA-flow* |

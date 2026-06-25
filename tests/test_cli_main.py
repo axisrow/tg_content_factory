@@ -321,21 +321,22 @@ class TestMainDispatch:
     def test_main_dispatches_to_handler(self, mock_build, mock_dirs, mock_log, mock_dotenv):
         """main() calls the correct argparse handler for a not-yet-migrated command.
 
-        ``scheduler`` still routes through the argparse ``commands.X.run`` path
-        (Wave 4 migrated analytics/channel/dialogs/pipeline to Typer, but the
-        Wave-3 mid groups remain on argparse here), so this asserts the legacy
-        dispatch + the argparse-path startup side effects still fire.
+        ``test`` is the only command still routed through the argparse
+        ``commands.X.run`` path — Waves 1-4 migrated every other group to Typer
+        (analytics/channel/dialogs/pipeline in Wave 4; the mid groups including
+        scheduler in Wave 3), so this asserts the legacy dispatch + the
+        argparse-path startup side effects still fire for the remaining command.
         """
         parser = MagicMock()
         args = MagicMock()
-        args.command = "scheduler"
-        args.scheduler_action = "status"
+        args.command = "test"
+        args.test_action = "all"
         args.config = "custom-config.yaml"
         parser.parse_args.return_value = args
         mock_build.return_value = parser
 
         mock_handler = MagicMock()
-        with patch("src.cli.main.scheduler") as mock_mod:
+        with patch("src.cli.main.test_cmd") as mock_mod:
             mock_mod.run = mock_handler
             main()
 

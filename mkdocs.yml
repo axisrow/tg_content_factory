@@ -94,6 +94,9 @@ nav:
     - Services: reference/api/services.md
     - Agent Tools: reference/api/agent-tools-api.md
     - CLI Internals: reference/api/cli-internals.md
+  - Operators:
+    - SSO Session Transfer: operators/sso-session-transfer.md
+    - Scheduler: operators/scheduler.md
   - Architecture: architecture.md
   - Service Map: feature-map.md
   - Parity Matrix: parity-matrix.md
