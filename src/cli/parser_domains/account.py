@@ -59,8 +59,9 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         "export-session",
         help="Print the decrypted StringSession for SSO (⚠️ full account access — keep secret)",
     )
-    acc_export.add_argument("--id", type=int, default=None, help="Account id")
-    acc_export.add_argument("--phone", default=None, help="Account phone number")
+    acc_export_sel = acc_export.add_mutually_exclusive_group(required=True)
+    acc_export_sel.add_argument("--id", type=int, default=None, help="Account id")
+    acc_export_sel.add_argument("--phone", default=None, help="Account phone number")
     acc_export.add_argument("--json", action="store_true", help="Emit {phone, session_string} JSON")
 
     acc_import = acc_sub.add_parser(
@@ -68,7 +69,16 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
         help="Add an account from a ready StringSession (SSO import, skips login)",
     )
     acc_import.add_argument("--phone", required=True, help="Phone number with country code")
+    acc_import_src = acc_import.add_mutually_exclusive_group(required=True)
+    acc_import_src.add_argument(
+        "--session-string", dest="session_string", default=None,
+        help="Telegram StringSession to import (⚠️ appears in shell history — prefer --session-string-stdin)",
+    )
+    acc_import_src.add_argument(
+        "--session-string-stdin", dest="session_string_stdin", action="store_true",
+        help="Read the StringSession from stdin (keeps the secret out of argv / shell history)",
+    )
     acc_import.add_argument(
-        "--session-string", required=True, dest="session_string",
-        help="Telegram StringSession to import (⚠️ full account access — keep secret)",
+        "--force", action="store_true",
+        help="Overwrite the session of an account that already exists for this phone",
     )

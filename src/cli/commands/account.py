@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.tools.accounts import get_live_account_info_text
 from src.cli import runtime
+from src.database.repositories.accounts import AccountSessionDecryptError
 from src.models import Account
 from src.services.notification_target_service import NotificationTargetService
 from src.settings_utils import parse_int_setting
@@ -54,27 +55,43 @@ async def _run_export_session(args: argparse.Namespace, db: Database) -> None:
     """Print the decrypted plaintext StringSession for an account (SSO export, #828).
 
     The session string grants full access to the account — it is printed to stdout
-    ONLY on this explicit request and is NEVER logged. Selects by ``--id`` or ``--phone``.
+    ONLY on this explicit request and is NEVER logged. Selects by ``--id`` or ``--phone``
+    (exactly one). Decrypts only the chosen account, so a broken sibling session can't
+    abort the lookup — this is the recovery path operators reach for.
     """
     account_id = getattr(args, "id", None)
     phone = getattr(args, "phone", None)
-    accounts = await db.get_accounts(active_only=False)
-    if account_id is not None:
-        acc = next((a for a in accounts if a.id == account_id), None)
-    elif phone:
-        acc = next((a for a in accounts if a.phone == phone), None)
-    else:
-        print("ERROR: provide --id or --phone")
+    if (account_id is None) == (phone is None):
+        print("ERROR: provide exactly one of --id or --phone")
         return
-    if not acc:
-        target = f"id={account_id}" if account_id is not None else phone
+
+    # Resolve identity without decrypting the whole DB (a broken sibling session
+    # must not crash export of a healthy account, #1143 review).
+    summaries = await db.get_account_summaries(active_only=False)
+    if account_id is not None:
+        match = next((s for s in summaries if s.id == account_id), None)
+        target = f"id={account_id}"
+    else:
+        match = next((s for s in summaries if s.phone == phone), None)
+        target = phone
+    if match is None:
         print(f"Account {target} not found")
         return
 
+    try:
+        session_string = await db.get_decrypted_session(account_id=match.id, phone=None)
+    except AccountSessionDecryptError as exc:
+        print(f"ERROR: cannot decrypt session for {match.phone} ({exc.status})")
+        return
+    if not session_string:
+        print(f"ERROR: account {match.phone} has no session string to export")
+        return
+
+    print("WARNING: this session string grants full access to the account.", file=sys.stderr)
     if getattr(args, "json", False):
-        print(json.dumps({"phone": acc.phone, "session_string": acc.session_string}))
+        print(json.dumps({"phone": match.phone, "session_string": session_string}))
     else:
-        print(acc.session_string)
+        print(session_string)
 
 
 async def _run_import(args: argparse.Namespace, db: Database) -> None:
@@ -85,9 +102,9 @@ async def _run_import(args: argparse.Namespace, db: Database) -> None:
     The raw session string is never echoed back or logged.
     """
     phone = getattr(args, "phone", None)
-    session_string = getattr(args, "session_string", None)
+    session_string = _read_session_arg(args)
     if not phone or not session_string:
-        print("ERROR: provide --phone and --session-string")
+        print("ERROR: provide --phone and a session string (--session-string or --session-string-stdin)")
         return
 
     if not validate_session_string(session_string):
@@ -95,6 +112,18 @@ async def _run_import(args: argparse.Namespace, db: Database) -> None:
         return
 
     existing = await db.get_account_summaries(active_only=False)
+    # add_account is an ON CONFLICT(phone) UPSERT: importing onto an existing phone
+    # would silently overwrite its session and reset is_active/is_premium. Refuse
+    # unless --force is given, so an import can't clobber a working account (#1143 review).
+    if any(s.phone == phone for s in existing):
+        if not getattr(args, "force", False):
+            print(
+                f"Account {phone} already exists; import would overwrite its session. "
+                f"Delete it first, or re-run with --force to replace."
+            )
+            return
+        print(f"WARNING: overwriting existing session for {phone} (--force).", file=sys.stderr)
+
     is_primary = len(existing) == 0
     account = Account(
         phone=phone,
@@ -104,6 +133,17 @@ async def _run_import(args: argparse.Namespace, db: Database) -> None:
     )
     await db.add_account(account)
     print(f"Account {phone} imported successfully (primary={is_primary}).")
+
+
+def _read_session_arg(args: argparse.Namespace) -> str | None:
+    """Resolve the session string from --session-string-stdin (preferred) or --session-string.
+
+    Reading from stdin keeps the secret out of argv / shell history / ``/proc`` (#1143 review).
+    """
+    if getattr(args, "session_string_stdin", False):
+        return sys.stdin.read().strip() or None
+    value = getattr(args, "session_string", None)
+    return value.strip() if value else None
 
 
 def run(args: argparse.Namespace) -> None:
