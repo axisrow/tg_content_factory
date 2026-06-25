@@ -155,3 +155,87 @@ async def test_get_session_export_never_mixes_across_reused_rowid(tmp_path):
         assert await db.repos.accounts.get_session_export(account_id=999999) is None
     finally:
         await db.close()
+
+
+@pytest.mark.anyio
+async def test_export_route_never_mixes_when_race_lands_mid_request(route_client, base_app):
+    """Regression guard for the #1145 HIGH at the LIVE ROUTE surface.
+
+    The sibling tests above either reconstruct the old pattern by hand at the DB
+    level (never touching the route) or stage the delete+reinsert *before* the
+    accessor runs — so a regressed two-read route would still pass them. This
+    test instead exercises the REAL endpoint over HTTP and injects the race
+    *between* identity-resolution and session-fetch, at the dependency boundary
+    the old route used for the second read (`get_decrypted_session`).
+
+    The pre-fix route did: phone from `get_account_summaries`, then session from
+    a separate `get_decrypted_session` await. We monkeypatch that session-fetch
+    boundary so that just before it runs, the targeted row is deleted and a
+    DIFFERENT account is reinserted onto the SAME reused rowid. A two-read route
+    would then return stale_phone + fresh_session (the poisoned pairing). The
+    fixed route never calls `get_decrypted_session` (it reads both fields from
+    one row via `get_session_export`), so the injected race cannot split the
+    pair: the response is always a consistent (phone, session) couple or 404 —
+    never the mix. Revert the prod accessor to two reads and THIS test must fail.
+
+    Scope: this guards the specific two-read regression (identity then a separate
+    `get_decrypted_session`). The DB cross-check at the end also asserts the more
+    general invariant — the returned phone must currently own the returned session
+    — so a differently-shaped split would still trip that assertion at the route.
+    """
+    app, db, pool = base_app
+    accounts_repo = db.repos.accounts
+
+    # Seed a target row, capture its rowid, then free it so the reinsert below
+    # lands on the SAME id the request will resolve.
+    first_id = await db.add_account(Account(phone="+15551110001", session_string="sess_one"))
+    await db.delete_account(first_id)
+    reused_id = await db.add_account(Account(phone="+15552220002", session_string="sess_two"))
+    assert reused_id == first_id  # rowid genuinely reused — the hazard's premise
+
+    # Reset to the FIRST account so the request starts by resolving its identity,
+    # then have the race swap the row to the SECOND account mid-request.
+    await db.delete_account(reused_id)
+    target_id = await db.add_account(Account(phone="+15551110001", session_string="sess_one"))
+    assert target_id == first_id
+
+    real_get_decrypted_session = accounts_repo.get_decrypted_session
+    race_fired = {"count": 0}
+
+    async def racing_get_decrypted_session(*args, **kwargs):
+        # The OLD route reaches here AFTER reading the stale phone from summaries.
+        # Land the delete+reinsert now, onto the reused rowid, so the session this
+        # returns belongs to a DIFFERENT account than the phone already resolved.
+        if race_fired["count"] == 0:
+            race_fired["count"] += 1
+            await db.delete_account(target_id)
+            swapped_id = await db.add_account(
+                Account(phone="+15552220002", session_string="sess_two")
+            )
+            assert swapped_id == target_id  # still the reused rowid
+        return await real_get_decrypted_session(*args, **kwargs)
+
+    accounts_repo.get_decrypted_session = racing_get_decrypted_session
+    try:
+        resp = await route_client.post(f"/settings/{target_id}/export-session")
+    finally:
+        accounts_repo.get_decrypted_session = real_get_decrypted_session
+
+    # Consistency invariant: the response is NEVER a stale_phone + fresh_session
+    # mix. The fixed route returns the single current row's pair; a regressed
+    # two-read route would return ("+15551110001", "sess_two") — caught here.
+    if resp.status_code == 200:
+        body = resp.json()
+        assert (body["phone"], body["session_string"]) != (
+            "+15551110001",
+            "sess_two",
+        ), "two-read regression: stale phone paired with a fresh session"
+        # Whatever pair is returned, it must be internally consistent: this phone
+        # must currently own this session in the DB.
+        export = await accounts_repo.get_session_export(phone=body["phone"])
+        assert export is not None
+        assert export[1] == body["session_string"]
+    else:
+        # Or the row was absent at read time → 404, never a poisoned pairing.
+        assert resp.status_code == 404
+        assert resp.json()["error"] == "account_not_found"
