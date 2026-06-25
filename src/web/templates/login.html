@@ -87,6 +87,33 @@
     </div>
 </div>
 
+<div class="card mb-4">
+    <div class="card-body">
+        <button class="btn btn-link p-0 text-decoration-none" type="button"
+                data-bs-toggle="collapse" data-bs-target="#importSessionPanel">
+            У меня уже есть session string (SSO без входа)
+        </button>
+        <div class="collapse mt-3" id="importSessionPanel">
+            <p class="text-muted small mb-3">
+                ⚠️ Session string даёт <strong>полный доступ</strong> к аккаунту — обращайтесь с ним как с паролем.
+                Импорт добавляет аккаунт без повторного входа (например, из tg_messenger).
+            </p>
+            <form method="post" action="/auth/import-session" data-busy>
+                <div class="mb-3">
+                    <label for="import_phone" class="form-label">Номер телефона</label>
+                    <input type="tel" class="form-control" id="import_phone" name="phone" placeholder="+1234567890" value="{{ phone or '' }}" required>
+                </div>
+                <div class="mb-3">
+                    <label for="session_string" class="form-label">Session string</label>
+                    <textarea class="form-control" id="session_string" name="session_string" rows="2" placeholder="StringSession..." required
+                              autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+                </div>
+                <button type="submit" class="btn btn-outline-primary">Импортировать аккаунт</button>
+            </form>
+        </div>
+    </div>
+</div>
+
 {% elif step == 'code' %}
 <div class="card mb-4">
     <div class="card-body">

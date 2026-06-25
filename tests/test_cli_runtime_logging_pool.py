@@ -34,6 +34,33 @@ class TestSetupLogging:
             root.handlers = original_handlers
             root.setLevel(original_level)
 
+    def test_setup_logging_silences_aiosqlite_debug(self, tmp_path):
+        """The aiosqlite driver echoes executed SQL *with bound params* at DEBUG —
+        that includes the encrypted session blob on an account insert. setup_logging
+        must pin that logger to INFO so a session secret can't leak even when the
+        root logger is raised to DEBUG for diagnostics (#1146 review)."""
+        root = logging.getLogger()
+        aiosqlite_logger = logging.getLogger("aiosqlite")
+        original_handlers = root.handlers[:]
+        original_root_level = root.level
+        original_aiosqlite_level = aiosqlite_logger.level
+        root.handlers.clear()
+        # Simulate an operator turning the whole app up to DEBUG.
+        aiosqlite_logger.setLevel(logging.DEBUG)
+
+        try:
+            setup_logging(log_path=tmp_path / "app.log")
+            # DEBUG statements (which carry SQL params) are below the effective level.
+            assert aiosqlite_logger.level == logging.INFO
+            assert not aiosqlite_logger.isEnabledFor(logging.DEBUG)
+        finally:
+            for h in root.handlers[:]:
+                if h not in original_handlers:
+                    h.close()
+            root.handlers = original_handlers
+            root.setLevel(original_root_level)
+            aiosqlite_logger.setLevel(original_aiosqlite_level)
+
 
 class TestEnsureDataDirs:
     def test_ensure_data_dirs_creates_subdirs(self, tmp_path, monkeypatch):

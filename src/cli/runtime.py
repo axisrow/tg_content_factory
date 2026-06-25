@@ -43,6 +43,12 @@ def setup_logging(log_path: Path | None = None) -> None:
         format=_LOG_FORMAT,
         datefmt=_LOG_DATEFMT,
     )
+    # aiosqlite echoes every executed statement WITH its bound params at DEBUG —
+    # that includes the encrypted session blob on account inserts. The redaction
+    # filter masks phones/queries, not arbitrary SQL params, so pin the driver to
+    # INFO so a session secret can't leak even if the root logger is raised to
+    # DEBUG for diagnostics (#1146 review).
+    logging.getLogger("aiosqlite").setLevel(logging.INFO)
     root = logging.getLogger()
     for h in root.handlers:
         install_log_redaction(h)
