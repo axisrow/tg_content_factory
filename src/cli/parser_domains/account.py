@@ -54,3 +54,21 @@ def register(subparsers: argparse._SubParsersAction) -> argparse.ArgumentParser 
 
     acc_flood_clear = acc_sub.add_parser("flood-clear", help="Clear flood wait for an account")
     acc_flood_clear.add_argument("--phone", required=True, help="Account phone number")
+
+    acc_export = acc_sub.add_parser(
+        "export-session",
+        help="Print the decrypted StringSession for SSO (⚠️ full account access — keep secret)",
+    )
+    acc_export.add_argument("--id", type=int, default=None, help="Account id")
+    acc_export.add_argument("--phone", default=None, help="Account phone number")
+    acc_export.add_argument("--json", action="store_true", help="Emit {phone, session_string} JSON")
+
+    acc_import = acc_sub.add_parser(
+        "import",
+        help="Add an account from a ready StringSession (SSO import, skips login)",
+    )
+    acc_import.add_argument("--phone", required=True, help="Phone number with country code")
+    acc_import.add_argument(
+        "--session-string", required=True, dest="session_string",
+        help="Telegram StringSession to import (⚠️ full account access — keep secret)",
+    )

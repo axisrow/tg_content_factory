@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.tools.accounts import get_live_account_info_text
@@ -13,7 +14,10 @@ from src.cli import runtime
 from src.models import Account
 from src.services.notification_target_service import NotificationTargetService
 from src.settings_utils import parse_int_setting
-from src.telegram.auth import TelegramAuth
+from src.telegram.auth import TelegramAuth, validate_session_string
+
+if TYPE_CHECKING:
+    from src.database import Database
 
 
 def _pending_key(phone: str) -> str:
@@ -46,6 +50,62 @@ async def _resolve_credentials(args: argparse.Namespace, config, db) -> tuple[in
     return api_id, api_hash
 
 
+async def _run_export_session(args: argparse.Namespace, db: Database) -> None:
+    """Print the decrypted plaintext StringSession for an account (SSO export, #828).
+
+    The session string grants full access to the account — it is printed to stdout
+    ONLY on this explicit request and is NEVER logged. Selects by ``--id`` or ``--phone``.
+    """
+    account_id = getattr(args, "id", None)
+    phone = getattr(args, "phone", None)
+    accounts = await db.get_accounts(active_only=False)
+    if account_id is not None:
+        acc = next((a for a in accounts if a.id == account_id), None)
+    elif phone:
+        acc = next((a for a in accounts if a.phone == phone), None)
+    else:
+        print("ERROR: provide --id or --phone")
+        return
+    if not acc:
+        target = f"id={account_id}" if account_id is not None else phone
+        print(f"Account {target} not found")
+        return
+
+    if getattr(args, "json", False):
+        print(json.dumps({"phone": acc.phone, "session_string": acc.session_string}))
+    else:
+        print(acc.session_string)
+
+
+async def _run_import(args: argparse.Namespace, db: Database) -> None:
+    """Add an account from a ready StringSession instead of the login flow (SSO import, #828).
+
+    Validates the session via the telegram layer (CLI must not import telethon directly),
+    then takes the normal ``add_account`` path — the repository encrypts at rest as usual.
+    The raw session string is never echoed back or logged.
+    """
+    phone = getattr(args, "phone", None)
+    session_string = getattr(args, "session_string", None)
+    if not phone or not session_string:
+        print("ERROR: provide --phone and --session-string")
+        return
+
+    if not validate_session_string(session_string):
+        print(f"ERROR: invalid Telegram session string for {phone}")
+        return
+
+    existing = await db.get_account_summaries(active_only=False)
+    is_primary = len(existing) == 0
+    account = Account(
+        phone=phone,
+        session_string=session_string,
+        is_primary=is_primary,
+        is_premium=False,
+    )
+    await db.add_account(account)
+    print(f"Account {phone} imported successfully (primary={is_primary}).")
+
+
 def run(args: argparse.Namespace) -> None:
     async def _run() -> None:
         config, db = await runtime.init_db(args.config)
@@ -53,6 +113,14 @@ def run(args: argparse.Namespace) -> None:
         try:
             if args.account_action == "add":
                 args.account_action = "verify-code" if getattr(args, "code", None) else "send-code"
+
+            if args.account_action == "export-session":
+                await _run_export_session(args, db)
+                return
+
+            if args.account_action == "import":
+                await _run_import(args, db)
+                return
 
             if args.account_action == "send-code":
                 phone = args.phone
