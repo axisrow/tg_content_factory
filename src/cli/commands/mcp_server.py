@@ -17,11 +17,11 @@ to stderr so the protocol stream stays clean.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 import sys
 
 from src.cli.runtime import init_db, init_pool
+from src.cli.typer_app import run_async
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +67,22 @@ async def _serve(config_path: str, *, with_pool: bool) -> None:
         await db.close()
 
 
-def run(args: argparse.Namespace) -> None:
+def serve_mcp(config_path: str, *, no_pool: bool = False) -> None:
+    """Run the stdio MCP server until interrupted.
+
+    Shared body for both CLI entry points — the argparse ``run`` wrapper below
+    and the Typer ``mcp-server`` command (``src/cli/typer_commands.py``). Routes
+    logging off stdout (the JSON-RPC channel) first, then drives the long-lived
+    ``_serve`` coroutine through the single async-bridge ``run_async`` (replacing
+    the former local ``asyncio.run``). ``KeyboardInterrupt`` exits quietly.
+    """
     _route_logging_to_stderr()
-    with_pool = not getattr(args, "no_pool", False)
+    with_pool = not no_pool
     try:
-        asyncio.run(_serve(args.config, with_pool=with_pool))
+        run_async(_serve(config_path, with_pool=with_pool))
     except KeyboardInterrupt:
         pass
+
+
+def run(args: argparse.Namespace) -> None:
+    serve_mcp(args.config, no_pool=getattr(args, "no_pool", False))
