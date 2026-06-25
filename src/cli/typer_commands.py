@@ -68,6 +68,7 @@ from src.cli.commands import image as image_cmd
 from src.cli.commands import mcp_server as mcp_server_cmd
 from src.cli.commands import messages as messages_cmd
 from src.cli.commands import notification as notification_cmd
+from src.cli.commands import photo_loader as photo_loader_cmd
 from src.cli.commands import provider as provider_cmd
 from src.cli.commands import scheduler as scheduler_cmd
 from src.cli.commands import search as search_cmd
@@ -118,6 +119,7 @@ MIGRATED_COMMANDS: frozenset[str] = frozenset(
         "debug", "export", "translate", "image", "provider", "notification",
         # Wave 3 (#1123) — medium groups
         "search-query", "filter", "settings", "scheduler", "account", "agent",
+        "photo-loader",
     }
 )
 
@@ -128,6 +130,17 @@ class ExportFormat(str, Enum):
     json = "json"
     html = "html"
     both = "both"
+
+
+class PhotoMode(str, Enum):
+    """``photo-loader … --mode`` choices — mirrors the argparse ``choices=[…]``.
+
+    Subclasses ``str`` so the command body receives a plain ``"album"``/``"separate"``
+    and ``.value`` round-trips cleanly into the *_impl bodies.
+    """
+
+    album = "album"
+    separate = "separate"
 
 
 # --------------------------------------------------------------------------- #
@@ -1484,6 +1497,218 @@ def agent_test_tools(ctx: typer.Context) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# photo-loader → dialogs / refresh / send / schedule-send / batch-create /
+#                batch-list / items / batch-cancel / auto-create / auto-list /
+#                auto-update / auto-toggle / auto-delete / run-due
+# --------------------------------------------------------------------------- #
+
+photo_loader_app = typer.Typer(no_args_is_help=True, help="Photo upload automation")
+app.add_typer(photo_loader_app, name="photo-loader")
+
+
+@photo_loader_app.command("dialogs")
+def photo_loader_dialogs(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+) -> None:
+    """List dialogs for an account."""
+    apply_startup(ctx)
+    run_async(photo_loader_cmd.dialogs_impl(ctx.obj.config, phone=phone))
+
+
+@photo_loader_app.command("refresh")
+def photo_loader_refresh(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+) -> None:
+    """Refresh dialog cache for photo loader."""
+    apply_startup(ctx)
+    run_async(photo_loader_cmd.refresh_impl(ctx.obj.config, phone=phone))
+
+
+@photo_loader_app.command("send")
+def photo_loader_send(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+    target: str = typer.Option(..., "--target", help="Dialog id"),
+    files: list[str] = typer.Option(..., "--files", help="Photo file paths"),
+    mode: PhotoMode = typer.Option(PhotoMode.album, "--mode"),
+    caption: str | None = typer.Option(None, "--caption", help="Caption"),
+) -> None:
+    """Send photos now."""
+    apply_startup(ctx)
+    run_async(
+        photo_loader_cmd.send_impl(
+            ctx.obj.config, phone=phone, target=target, files=files, mode=mode.value, caption=caption
+        )
+    )
+
+
+@photo_loader_app.command("schedule-send")
+def photo_loader_schedule_send(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+    target: str = typer.Option(..., "--target", help="Dialog id"),
+    files: list[str] = typer.Option(..., "--files", help="Photo file paths"),
+    at: str = typer.Option(..., "--at", help="ISO datetime"),
+    mode: PhotoMode = typer.Option(PhotoMode.album, "--mode"),
+    caption: str | None = typer.Option(None, "--caption", help="Caption"),
+) -> None:
+    """Schedule photo send via Telegram."""
+    apply_startup(ctx)
+    run_async(
+        photo_loader_cmd.schedule_send_impl(
+            ctx.obj.config,
+            phone=phone,
+            target=target,
+            files=files,
+            at=at,
+            mode=mode.value,
+            caption=caption,
+        )
+    )
+
+
+@photo_loader_app.command("batch-create")
+def photo_loader_batch_create(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+    target: str = typer.Option(..., "--target", help="Dialog id"),
+    manifest: str = typer.Option(..., "--manifest", help="JSON/YAML manifest path"),
+    caption: str | None = typer.Option(None, "--caption", help="Default caption"),
+) -> None:
+    """Create delayed batch from manifest."""
+    apply_startup(ctx)
+    run_async(
+        photo_loader_cmd.batch_create_impl(
+            ctx.obj.config, phone=phone, target=target, manifest=manifest, caption=caption
+        )
+    )
+
+
+@photo_loader_app.command("batch-list")
+def photo_loader_batch_list(ctx: typer.Context) -> None:
+    """List photo batches."""
+    apply_startup(ctx)
+    run_async(photo_loader_cmd.batch_list_impl(ctx.obj.config))
+
+
+@photo_loader_app.command("items")
+def photo_loader_items(
+    ctx: typer.Context,
+    batch_id: int | None = typer.Option(None, "--batch-id", help="Filter by batch id"),
+    limit: int = typer.Option(100, "--limit", help="Max items to show"),
+) -> None:
+    """List photo batch items."""
+    apply_startup(ctx)
+    run_async(photo_loader_cmd.items_impl(ctx.obj.config, batch_id=batch_id, limit=limit))
+
+
+@photo_loader_app.command("batch-cancel")
+def photo_loader_batch_cancel(
+    ctx: typer.Context,
+    item_id: int = typer.Argument(..., metavar="id", help="Photo item id"),
+) -> None:
+    """Cancel a photo batch item."""
+    apply_startup(ctx)
+    run_async(photo_loader_cmd.batch_cancel_impl(ctx.obj.config, item_id=item_id))
+
+
+@photo_loader_app.command("auto-create")
+def photo_loader_auto_create(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+    target: str = typer.Option(..., "--target", help="Dialog id"),
+    folder: str = typer.Option(..., "--folder", help="Folder path"),
+    interval: int = typer.Option(..., "--interval", help="Interval in minutes"),
+    mode: PhotoMode = typer.Option(PhotoMode.album, "--mode"),
+    caption: str | None = typer.Option(None, "--caption", help="Caption"),
+) -> None:
+    """Create auto-upload job."""
+    apply_startup(ctx)
+    run_async(
+        photo_loader_cmd.auto_create_impl(
+            ctx.obj.config,
+            phone=phone,
+            target=target,
+            folder=folder,
+            interval=interval,
+            mode=mode.value,
+            caption=caption,
+        )
+    )
+
+
+@photo_loader_app.command("auto-list")
+def photo_loader_auto_list(ctx: typer.Context) -> None:
+    """List auto-upload jobs."""
+    apply_startup(ctx)
+    run_async(photo_loader_cmd.auto_list_impl(ctx.obj.config))
+
+
+@photo_loader_app.command("auto-update")
+def photo_loader_auto_update(
+    ctx: typer.Context,
+    job_id: int = typer.Argument(..., metavar="id", help="Job id"),
+    folder: str | None = typer.Option(None, "--folder", help="Folder path"),
+    interval: int | None = typer.Option(None, "--interval", help="Interval in minutes"),
+    mode: PhotoMode | None = typer.Option(None, "--mode"),
+    caption: str | None = typer.Option(None, "--caption", help="Caption"),
+    active: bool = typer.Option(False, "--active", help="Enable job"),
+    paused: bool = typer.Option(False, "--paused", help="Pause job"),
+) -> None:
+    """Update auto-upload job."""
+    apply_startup(ctx)
+    run_async(
+        photo_loader_cmd.auto_update_impl(
+            ctx.obj.config,
+            job_id=job_id,
+            folder=folder,
+            interval=interval,
+            mode=mode.value if mode else None,
+            caption=caption,
+            active=active,
+            paused=paused,
+        )
+    )
+
+
+@photo_loader_app.command("auto-toggle")
+def photo_loader_auto_toggle(
+    ctx: typer.Context,
+    job_id: int = typer.Argument(..., metavar="id", help="Job id"),
+) -> None:
+    """Toggle auto-upload job."""
+    apply_startup(ctx)
+    run_async(photo_loader_cmd.auto_toggle_impl(ctx.obj.config, job_id=job_id))
+
+
+@photo_loader_app.command("auto-delete")
+def photo_loader_auto_delete(
+    ctx: typer.Context,
+    job_id: int = typer.Argument(..., metavar="id", help="Job id"),
+) -> None:
+    """Delete auto-upload job."""
+    apply_startup(ctx)
+    run_async(photo_loader_cmd.auto_delete_impl(ctx.obj.config, job_id=job_id))
+
+
+@photo_loader_app.command("run-due")
+def photo_loader_run_due(
+    ctx: typer.Context,
+    item_id: int | None = typer.Option(None, "--item-id", help="Run only one due photo item"),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview which auto-job files would be posted (where/when) without sending or marking",
+    ),
+) -> None:
+    """Run due photo items and auto jobs now."""
+    apply_startup(ctx)
+    run_async(photo_loader_cmd.run_due_impl(ctx.obj.config, item_id=item_id, dry_run=dry_run))
+
+
+# --------------------------------------------------------------------------- #
 # argparse → Typer delegation
 # --------------------------------------------------------------------------- #
 
@@ -1577,6 +1802,9 @@ def _argv_from_namespace(args: argparse.Namespace) -> list[str]:
     elif command == "agent":
         argv.append("agent")
         argv += _agent_argv(args)
+    elif command == "photo-loader":
+        argv.append("photo-loader")
+        argv += _photo_loader_argv(args)
     return argv
 
 
@@ -1706,6 +1934,81 @@ def _notification_argv(args: argparse.Namespace) -> list[str]:
             tail += ["--message", args.message]
     elif action == "set-account":
         tail += ["--phone", args.phone]
+    return tail
+
+
+def _photo_loader_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``photo-loader`` — the action plus its flags / positionals.
+
+    ``--files`` is a repeated option (one ``--files <path>`` per file). ``--mode``
+    carries the album/separate choice. batch-cancel / auto-* take a positional id
+    emitted after ``--``.
+    """
+    action = getattr(args, "photo_loader_action", None)
+    if action is None:
+        return []
+    tail = [action]
+
+    def _emit_files() -> None:
+        for f in args.files:
+            tail.extend(["--files", f])
+
+    if action in ("dialogs", "refresh"):
+        tail += ["--phone", args.phone]
+    elif action == "send":
+        tail += ["--phone", args.phone, "--target", args.target]
+        _emit_files()
+        if getattr(args, "mode", "album") != "album":
+            tail += ["--mode", args.mode]
+        if getattr(args, "caption", None):
+            tail += ["--caption", args.caption]
+    elif action == "schedule-send":
+        tail += ["--phone", args.phone, "--target", args.target]
+        _emit_files()
+        tail += ["--at", args.at]
+        if getattr(args, "mode", "album") != "album":
+            tail += ["--mode", args.mode]
+        if getattr(args, "caption", None):
+            tail += ["--caption", args.caption]
+    elif action == "batch-create":
+        tail += ["--phone", args.phone, "--target", args.target, "--manifest", args.manifest]
+        if getattr(args, "caption", None):
+            tail += ["--caption", args.caption]
+    elif action == "items":
+        if getattr(args, "batch_id", None) is not None:
+            tail += ["--batch-id", str(args.batch_id)]
+        if getattr(args, "limit", 100) != 100:
+            tail += ["--limit", str(args.limit)]
+    elif action in ("batch-cancel", "auto-toggle", "auto-delete"):
+        tail += ["--", str(args.id)]
+    elif action == "auto-create":
+        tail += [
+            "--phone", args.phone, "--target", args.target,
+            "--folder", args.folder, "--interval", str(args.interval),
+        ]
+        if getattr(args, "mode", "album") != "album":
+            tail += ["--mode", args.mode]
+        if getattr(args, "caption", None):
+            tail += ["--caption", args.caption]
+    elif action == "auto-update":
+        if getattr(args, "folder", None):
+            tail += ["--folder", args.folder]
+        if getattr(args, "interval", None) is not None:
+            tail += ["--interval", str(args.interval)]
+        if getattr(args, "mode", None):
+            tail += ["--mode", args.mode]
+        if getattr(args, "caption", None):
+            tail += ["--caption", args.caption]
+        if getattr(args, "active", False):
+            tail.append("--active")
+        if getattr(args, "paused", False):
+            tail.append("--paused")
+        tail += ["--", str(args.id)]
+    elif action == "run-due":
+        if getattr(args, "item_id", None) is not None:
+            tail += ["--item-id", str(args.item_id)]
+        if getattr(args, "dry_run", False):
+            tail.append("--dry-run")
     return tail
 
 

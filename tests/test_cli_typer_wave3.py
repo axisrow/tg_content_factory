@@ -992,3 +992,237 @@ def test_agent_bare_group_shows_help_exit_0():
     with pytest.raises(SystemExit) as exc_info:
         dispatch_via_typer(args)
     assert exc_info.value.code == 0
+
+
+# --------------------------------------------------------------------------- #
+# photo-loader → dialogs / refresh / send / schedule-send / batch-create /
+#                batch-list / items / batch-cancel / auto-create / auto-list /
+#                auto-update / auto-toggle / auto-delete / run-due
+# --------------------------------------------------------------------------- #
+
+
+def test_photo_loader_dialogs_refresh_require_phone():
+    for sub, impl_name in [("dialogs", "dialogs_impl"), ("refresh", "refresh_impl")]:
+        mock_impl = MagicMock()
+        with (
+            patch(f"src.cli.typer_commands.photo_loader_cmd.{impl_name}", mock_impl),
+            patch("src.cli.typer_commands.run_async"),
+        ):
+            result = runner.invoke(app, ["photo-loader", sub, "--phone", "+1"])
+        assert result.exit_code == 0, (sub, result.output)
+        mock_impl.assert_called_once_with("config.yaml", phone="+1")
+
+
+def test_photo_loader_send_files_list_and_mode():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.send_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "photo-loader", "send",
+                "--phone", "+1", "--target", "me",
+                "--files", "a.jpg", "--files", "b.jpg",
+                "--mode", "separate", "--caption", "hi",
+            ],
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml", phone="+1", target="me", files=["a.jpg", "b.jpg"], mode="separate", caption="hi"
+    )
+
+
+def test_photo_loader_send_mode_defaults_album():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.send_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app, ["photo-loader", "send", "--phone", "+1", "--target", "me", "--files", "a.jpg"]
+        )
+    assert result.exit_code == 0
+    _, kwargs = mock_impl.call_args
+    assert kwargs["mode"] == "album"
+    assert kwargs["caption"] is None
+
+
+def test_photo_loader_send_rejects_bad_mode():
+    """``--mode`` is constrained to album/separate (the argparse choices, as an Enum)."""
+    result = runner.invoke(
+        app, ["photo-loader", "send", "--phone", "+1", "--target", "me", "--files", "a", "--mode", "bogus"]
+    )
+    assert result.exit_code != 0
+
+
+def test_photo_loader_schedule_send_requires_at():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.schedule_send_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "photo-loader", "schedule-send",
+                "--phone", "+1", "--target", "me", "--files", "a.jpg",
+                "--at", "2026-07-01T10:00:00",
+            ],
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml",
+        phone="+1",
+        target="me",
+        files=["a.jpg"],
+        at="2026-07-01T10:00:00",
+        mode="album",
+        caption=None,
+    )
+
+
+def test_photo_loader_batch_list_auto_list_no_args():
+    for sub, impl_name in [("batch-list", "batch_list_impl"), ("auto-list", "auto_list_impl")]:
+        mock_impl = MagicMock()
+        with (
+            patch(f"src.cli.typer_commands.photo_loader_cmd.{impl_name}", mock_impl),
+            patch("src.cli.typer_commands.run_async"),
+        ):
+            result = runner.invoke(app, ["photo-loader", sub])
+        assert result.exit_code == 0, (sub, result.output)
+        mock_impl.assert_called_once_with("config.yaml")
+
+
+def test_photo_loader_items_optional_flags():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.items_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        runner.invoke(app, ["photo-loader", "items"])
+        runner.invoke(app, ["photo-loader", "items", "--batch-id", "5", "--limit", "20"])
+    assert mock_impl.call_args_list[0].kwargs == {"batch_id": None, "limit": 100}
+    assert mock_impl.call_args_list[1].kwargs == {"batch_id": 5, "limit": 20}
+
+
+def test_photo_loader_id_positional_subcommands():
+    for sub, impl_name in [
+        ("batch-cancel", "batch_cancel_impl"),
+        ("auto-toggle", "auto_toggle_impl"),
+        ("auto-delete", "auto_delete_impl"),
+    ]:
+        mock_impl = MagicMock()
+        with (
+            patch(f"src.cli.typer_commands.photo_loader_cmd.{impl_name}", mock_impl),
+            patch("src.cli.typer_commands.run_async"),
+        ):
+            result = runner.invoke(app, ["photo-loader", sub, "9"])
+        assert result.exit_code == 0, (sub, result.output)
+        kwargs = mock_impl.call_args.kwargs
+        # batch-cancel uses item_id; auto-* use job_id
+        assert kwargs in ({"item_id": 9}, {"job_id": 9})
+
+
+def test_photo_loader_auto_create_required_flags():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.auto_create_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "photo-loader", "auto-create",
+                "--phone", "+1", "--target", "me",
+                "--folder", "/pics", "--interval", "60",
+            ],
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml",
+        phone="+1",
+        target="me",
+        folder="/pics",
+        interval=60,
+        mode="album",
+        caption=None,
+    )
+
+
+def test_photo_loader_auto_update_active_paused():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.auto_update_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app, ["photo-loader", "auto-update", "4", "--interval", "30", "--active"]
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml",
+        job_id=4,
+        folder=None,
+        interval=30,
+        mode=None,
+        caption=None,
+        active=True,
+        paused=False,
+    )
+
+
+def test_photo_loader_run_due_flags():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.run_due_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        runner.invoke(app, ["photo-loader", "run-due"])
+        runner.invoke(app, ["photo-loader", "run-due", "--item-id", "7", "--dry-run"])
+    assert mock_impl.call_args_list[0].kwargs == {"item_id": None, "dry_run": False}
+    assert mock_impl.call_args_list[1].kwargs == {"item_id": 7, "dry_run": True}
+
+
+def test_photo_loader_send_delegates_via_argparse():
+    """argparse --files nargs='+' (a b) round-trips to Typer's repeated --files."""
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.send_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(
+            ["photo-loader", "send", "--phone", "+1", "--target", "me", "--files", "a.jpg", "b.jpg"]
+        )
+    mock_impl.assert_called_once_with(
+        "config.yaml", phone="+1", target="me", files=["a.jpg", "b.jpg"], mode="album", caption=None
+    )
+
+
+def test_photo_loader_auto_update_delegates_via_argparse():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.auto_update_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["photo-loader", "auto-update", "2", "--mode", "separate", "--paused"])
+    mock_impl.assert_called_once_with(
+        "config.yaml",
+        job_id=2,
+        folder=None,
+        interval=None,
+        mode="separate",
+        caption=None,
+        active=False,
+        paused=True,
+    )
+
+
+def test_photo_loader_bare_group_shows_help_exit_0():
+    import pytest
+
+    args = build_parser().parse_args(["photo-loader"])
+    with pytest.raises(SystemExit) as exc_info:
+        dispatch_via_typer(args)
+    assert exc_info.value.code == 0
