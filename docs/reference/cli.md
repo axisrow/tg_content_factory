@@ -135,7 +135,16 @@ python -m src.main account add --phone PHONE [--api-id ID] [--api-hash HASH]
 python -m src.main account add --phone PHONE --code CODE [--password PASSWORD]
 python -m src.main account flood-status
 python -m src.main account flood-clear --phone PHONE
+
+# SSO: перенос аккаунта между инстансами (session string = полный доступ!)
+python -m src.main account export-session (--id ID | --phone PHONE) [--json]
+python -m src.main account import --phone PHONE (--session-string STR | --session-string-stdin) [--force]
 ```
+
+!!! danger "export-session / import раскрывают session string"
+    Session string эквивалентна паролю аккаунта. Перенос и правила безопасности
+    (HTTPS, audit, защита от перезаписи) — в гайде
+    [Operators → SSO Session Transfer](../operators/sso-session-transfer.md).
 
 ## scheduler
 
