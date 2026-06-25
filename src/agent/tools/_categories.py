@@ -18,6 +18,15 @@ class ToolCategory(str, Enum):
     DELETE = "delete"
 
 
+# Tools whose result payload IS a secret (e.g. a Telegram StringSession granting
+# full account access, #828). Generic backend loggers must redact these results
+# instead of previewing them — the tool body itself never logs, but the framework
+# around it (ReAct fallback, streaming summaries) must not leak the value either.
+# Kept here in the dependency-free module so loggers can consult it without
+# importing the heavy tool/SDK modules.
+SECRET_RESULT_TOOLS: frozenset[str] = frozenset({"export_session"})
+
+
 class ToolAccessState(str, Enum):
     ALLOWED = "allowed"
     REQUESTABLE = "requestable"
