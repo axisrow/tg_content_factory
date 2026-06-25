@@ -1,9 +1,23 @@
+"""Shared async bodies for the ``photo-loader`` CLI group (epic #959, Wave 3 — #1123).
+
+Migrated off the argparse dispatcher onto the Typer ``app`` (see
+``src/cli/typer_commands.py``). Each leaf sub-command is a plain ``async def
+*_impl`` here — no local ``asyncio.run`` and no ``argparse.Namespace``. A thin
+``run(args)`` adapter is kept for the argparse leaf audit and existing tests.
+
+Every sub-command needs the photo-loader service stack (pool + publish + task +
+auto services); :func:`_run_with_services` builds it once, runs the body, and
+tears the pool down — so the per-command bodies stay focused on their own logic.
+"""
+
 from __future__ import annotations
 
 import argparse
 import asyncio
 import sys
+from collections.abc import Awaitable, Callable
 from datetime import datetime
+from typing import TypeVar
 
 from src.cli import runtime
 from src.database.bundles import PhotoLoaderBundle
@@ -12,12 +26,52 @@ from src.services.channel_service import ChannelService
 from src.services.photo_auto_upload_service import PhotoAutoUploadService
 from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import PhotoTarget, PhotoTaskService
-from src.telegram.backends import adapt_transport_session
-from src.utils.datetime import parse_required_schedule_datetime
+
+T = TypeVar("T")
+
+
+class _Services:
+    """The photo-loader service bundle a sub-command operates on."""
+
+    def __init__(self, db, pool, bundle, publish, tasks, auto, channel_service) -> None:
+        self.db = db
+        self.pool = pool
+        self.bundle = bundle
+        self.publish = publish
+        self.tasks = tasks
+        self.auto = auto
+        self.channel_service = channel_service
+
+
+async def _run_with_services(config_path: str, body: Callable[[_Services], Awaitable[T]]) -> T | None:
+    """Build the photo-loader service stack, run ``body``, then tear the pool down.
+
+    A ``ValueError`` from an unresolvable target (bad username, "me" without a
+    connected account, …) is reported cleanly and exits 1 — matching the pre-Typer
+    behaviour, not a raw traceback.
+    """
+    config, db = await runtime.init_db(config_path)
+    _, pool = await runtime.init_pool(config, db)
+    bundle = PhotoLoaderBundle.from_database(db)
+    publish = PhotoPublishService(pool)
+    tasks = PhotoTaskService(bundle, publish)
+    auto = PhotoAutoUploadService(bundle, publish)
+    channel_service = ChannelService(db, pool, None)  # type: ignore[arg-type]
+    services = _Services(db, pool, bundle, publish, tasks, auto, channel_service)
+    try:
+        return await body(services)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+    finally:
+        await pool.disconnect_all()
+        await db.close()
 
 
 async def _resolve_self_target(pool, phone: str | None) -> PhotoTarget:
     """Resolve "me"/"self" to the account's own Saved Messages dialog id."""
+    from src.telegram.backends import adapt_transport_session
+
     if phone:
         # A specific account was requested. Its Saved Messages id is account-specific,
         # and deferred paths (schedule-send/batch-create/auto-create) persist `phone`
@@ -39,7 +93,7 @@ async def _resolve_self_target(pool, phone: str | None) -> PhotoTarget:
         me = await session.fetch_me()
     finally:
         # Release the lease promptly (mirrors channel.py); the subsequent send/
-        # schedule call re-acquires it. disconnect_all() in run()'s finally is the
+        # schedule call re-acquires it. disconnect_all() in the finally is the
         # backstop, but explicit release keeps the pool tidy for other callers.
         await pool.release_client(acquired_phone)
     self_id = getattr(me, "id", None)
@@ -71,184 +125,333 @@ async def _resolve_target(raw: str, pool, phone: str | None = None) -> PhotoTarg
 
 
 def _parse_schedule_at(value: str) -> datetime:
+    from src.utils.datetime import parse_required_schedule_datetime
+
     return parse_required_schedule_datetime(value)
 
 
+async def dialogs_impl(config_path: str, *, phone: str) -> None:
+    """List dialogs for an account."""
+    async def _body(s: _Services) -> None:
+        dialogs = await s.channel_service.get_my_dialogs(phone)
+        for dialog in dialogs:
+            print(
+                f"{dialog['channel_id']:>14}  {dialog['channel_type']:<12} {dialog['title']}"
+            )
+    await _run_with_services(config_path, _body)
+
+
+async def refresh_impl(config_path: str, *, phone: str) -> None:
+    """Refresh the dialog cache for the photo loader."""
+    async def _body(s: _Services) -> None:
+        dialogs = await s.channel_service.get_my_dialogs(phone, refresh=True)
+        print(f"Dialogs refreshed: {len(dialogs)} total.")
+    await _run_with_services(config_path, _body)
+
+
+async def send_impl(
+    config_path: str, *, phone: str, target: str, files: list[str], mode: str = "album", caption: str | None = None
+) -> None:
+    """Send photos now."""
+    async def _body(s: _Services) -> None:
+        item = await s.tasks.send_now(
+            phone=phone,
+            target=await _resolve_target(target, s.pool, phone=phone),
+            file_paths=files,
+            mode=mode,
+            caption=caption,
+        )
+        print(f"Sent photo item #{item.id} status={item.status}")
+    await _run_with_services(config_path, _body)
+
+
+async def schedule_send_impl(
+    config_path: str,
+    *,
+    phone: str,
+    target: str,
+    files: list[str],
+    at: str,
+    mode: str = "album",
+    caption: str | None = None,
+) -> None:
+    """Schedule a photo send via Telegram."""
+    async def _body(s: _Services) -> None:
+        item = await s.tasks.schedule_send(
+            phone=phone,
+            target=await _resolve_target(target, s.pool, phone=phone),
+            file_paths=files,
+            mode=mode,
+            schedule_at=_parse_schedule_at(at),
+            caption=caption,
+        )
+        print(f"Scheduled photo item #{item.id} status={item.status}")
+    await _run_with_services(config_path, _body)
+
+
+async def batch_create_impl(
+    config_path: str, *, phone: str, target: str, manifest: str, caption: str | None = None
+) -> None:
+    """Create a delayed batch from a manifest."""
+    async def _body(s: _Services) -> None:
+        entries = s.tasks.load_manifest(manifest)
+        batch_id = await s.tasks.create_batch(
+            phone=phone,
+            target=await _resolve_target(target, s.pool, phone=phone),
+            entries=entries,
+            caption=caption,
+        )
+        print(f"Created photo batch #{batch_id}")
+    await _run_with_services(config_path, _body)
+
+
+async def batch_list_impl(config_path: str) -> None:
+    """List photo batches."""
+    async def _body(s: _Services) -> None:
+        batches = await s.tasks.list_batches()
+        for batch in batches:
+            print(
+                f"#{batch.id} phone={batch.phone} target={batch.target_dialog_id} "
+                f"status={batch.status}"
+            )
+    await _run_with_services(config_path, _body)
+
+
+async def items_impl(config_path: str, *, batch_id: int | None = None, limit: int = 100) -> None:
+    """List photo batch items."""
+    async def _body(s: _Services) -> None:
+        if batch_id is not None:
+            items = await s.bundle.list_items_for_batch(batch_id, limit=limit)
+        else:
+            items = await s.tasks.list_items(limit=limit)
+        for item in items:
+            print(
+                f"#{item.id} batch={item.batch_id or '-'} phone={item.phone} "
+                f"target={item.target_dialog_id} status={item.status}"
+            )
+    await _run_with_services(config_path, _body)
+
+
+async def batch_cancel_impl(config_path: str, *, item_id: int) -> None:
+    """Cancel a photo batch item."""
+    async def _body(s: _Services) -> None:
+        ok = await s.tasks.cancel_item(item_id)
+        print("Cancelled" if ok else "Not cancelled")
+    await _run_with_services(config_path, _body)
+
+
+async def auto_create_impl(
+    config_path: str,
+    *,
+    phone: str,
+    target: str,
+    folder: str,
+    interval: int,
+    mode: str = "album",
+    caption: str | None = None,
+) -> None:
+    """Create an auto-upload job."""
+    async def _body(s: _Services) -> None:
+        resolved = await _resolve_target(target, s.pool, phone=phone)
+        job_id = await s.auto.create_job(
+            PhotoAutoUploadJob(
+                phone=phone,
+                target_dialog_id=resolved.dialog_id,
+                target_title=resolved.title,
+                target_type=resolved.target_type,
+                folder_path=folder,
+                send_mode=PhotoSendMode(mode),
+                caption=caption,
+                interval_minutes=interval,
+            )
+        )
+        print(f"Created auto job #{job_id}")
+    await _run_with_services(config_path, _body)
+
+
+async def auto_list_impl(config_path: str) -> None:
+    """List auto-upload jobs."""
+    async def _body(s: _Services) -> None:
+        jobs = await s.auto.list_jobs()
+        for job in jobs:
+            print(
+                f"#{job.id} target={job.target_dialog_id} folder={job.folder_path} "
+                f"interval={job.interval_minutes} active={job.is_active}"
+            )
+    await _run_with_services(config_path, _body)
+
+
+async def auto_update_impl(
+    config_path: str,
+    *,
+    job_id: int,
+    folder: str | None = None,
+    interval: int | None = None,
+    mode: str | None = None,
+    caption: str | None = None,
+    active: bool = False,
+    paused: bool = False,
+) -> None:
+    """Update an auto-upload job."""
+    async def _body(s: _Services) -> None:
+        kwargs = {
+            "folder_path": folder,
+            "send_mode": PhotoSendMode(mode) if mode else None,
+            "caption": caption,
+            "interval_minutes": interval,
+            "is_active": None,
+        }
+        if active:
+            kwargs["is_active"] = True
+        if paused:
+            kwargs["is_active"] = False
+        await s.auto.update_job(job_id, **kwargs)
+        print(f"Updated auto job #{job_id}")
+    await _run_with_services(config_path, _body)
+
+
+async def auto_toggle_impl(config_path: str, *, job_id: int) -> None:
+    """Toggle an auto-upload job's active state."""
+    async def _body(s: _Services) -> None:
+        job = await s.auto.get_job(job_id)
+        if not job:
+            print("Auto job not found")
+            return
+        await s.auto.update_job(job_id, is_active=not job.is_active)
+        print(f"Toggled auto job #{job_id} to {not job.is_active}")
+    await _run_with_services(config_path, _body)
+
+
+async def auto_delete_impl(config_path: str, *, job_id: int) -> None:
+    """Delete an auto-upload job."""
+    async def _body(s: _Services) -> None:
+        await s.auto.delete_job(job_id)
+        print(f"Deleted auto job #{job_id}")
+    await _run_with_services(config_path, _body)
+
+
+async def run_due_impl(config_path: str, *, item_id: int | None = None, dry_run: bool = False) -> None:
+    """Run due photo items and auto jobs now (or preview them with --dry-run)."""
+    async def _body(s: _Services) -> None:
+        if dry_run:
+            # Preview only: never touch scheduled photo items (the task path has no
+            # dry-run); show the auto-job plan and exit before any send/mark.
+            previews = await s.auto.run_due(dry_run=True)
+            assert isinstance(previews, list)  # narrow run_due's int|list return
+            print(f"[dry-run] Would process {len(previews)} due auto job(s); nothing sent.")
+            for preview in previews:
+                title = preview.target_title or preview.target_dialog_id
+                print(
+                    f"  job #{preview.job_id} → {title} "
+                    f"(dialog_id={preview.target_dialog_id}, mode={preview.send_mode.value}): "
+                    f"{len(preview.files)} file(s)"
+                )
+                for file_path in preview.files:
+                    print(f"    - {file_path}")
+            return
+        items = await s.tasks.run_due(item_id=item_id)
+        jobs = 0
+        if item_id is None:
+            processed = await s.auto.run_due()
+            assert isinstance(processed, int)  # non-dry-run returns a count
+            jobs = processed
+        print(f"Processed due photo items={items} auto_jobs={jobs}")
+    await _run_with_services(config_path, _body)
+
+
 def run(args: argparse.Namespace) -> None:
-    async def _run() -> None:
-        config, db = await runtime.init_db(args.config)
-        _, pool = await runtime.init_pool(config, db)
-        bundle = PhotoLoaderBundle.from_database(db)
-        publish = PhotoPublishService(pool)
-        tasks = PhotoTaskService(bundle, publish)
-        auto = PhotoAutoUploadService(bundle, publish)
-        channel_service = ChannelService(db, pool, None)  # type: ignore[arg-type]
-        try:
-            action = args.photo_loader_action
-            if action == "dialogs":
-                dialogs = await channel_service.get_my_dialogs(args.phone)
-                for dialog in dialogs:
-                    print(
-                        f"{dialog['channel_id']:>14}  {dialog['channel_type']:<12} "
-                        f"{dialog['title']}"
-                    )
-                return
+    """Thin argparse adapter over the ``*_impl`` bodies (legacy dispatch path).
 
-            if action == "refresh":
-                dialogs = await channel_service.get_my_dialogs(args.phone, refresh=True)
-                print(f"Dialogs refreshed: {len(dialogs)} total.")
-                return
-
-            if action == "send":
-                item = await tasks.send_now(
-                    phone=args.phone,
-                    target=await _resolve_target(args.target, pool, phone=args.phone),
-                    file_paths=args.files,
-                    mode=args.mode,
-                    caption=args.caption,
-                )
-                print(f"Sent photo item #{item.id} status={item.status}")
-                return
-
-            if action == "schedule-send":
-                item = await tasks.schedule_send(
-                    phone=args.phone,
-                    target=await _resolve_target(args.target, pool, phone=args.phone),
-                    file_paths=args.files,
-                    mode=args.mode,
-                    schedule_at=_parse_schedule_at(args.at),
-                    caption=args.caption,
-                )
-                print(f"Scheduled photo item #{item.id} status={item.status}")
-                return
-
-            if action == "batch-create":
-                manifest = tasks.load_manifest(args.manifest)
-                batch_id = await tasks.create_batch(
-                    phone=args.phone,
-                    target=await _resolve_target(args.target, pool, phone=args.phone),
-                    entries=manifest,
-                    caption=args.caption,
-                )
-                print(f"Created photo batch #{batch_id}")
-                return
-
-            if action == "batch-list":
-                batches = await tasks.list_batches()
-                for batch in batches:
-                    print(
-                        f"#{batch.id} phone={batch.phone} target={batch.target_dialog_id} "
-                        f"status={batch.status}"
-                    )
-                return
-
-            if action == "items":
-                if args.batch_id is not None:
-                    items = await bundle.list_items_for_batch(args.batch_id, limit=args.limit)
-                else:
-                    items = await tasks.list_items(limit=args.limit)
-                for item in items:
-                    print(
-                        f"#{item.id} batch={item.batch_id or '-'} phone={item.phone} "
-                        f"target={item.target_dialog_id} status={item.status}"
-                    )
-                return
-
-            if action == "batch-cancel":
-                ok = await tasks.cancel_item(args.id)
-                print("Cancelled" if ok else "Not cancelled")
-                return
-
-            if action == "auto-create":
-                target = await _resolve_target(args.target, pool, phone=args.phone)
-                job_id = await auto.create_job(
-                    PhotoAutoUploadJob(
-                        phone=args.phone,
-                        target_dialog_id=target.dialog_id,
-                        target_title=target.title,
-                        target_type=target.target_type,
-                        folder_path=args.folder,
-                        send_mode=PhotoSendMode(args.mode),
-                        caption=args.caption,
-                        interval_minutes=args.interval,
-                    )
-                )
-                print(f"Created auto job #{job_id}")
-                return
-
-            if action == "auto-list":
-                jobs = await auto.list_jobs()
-                for job in jobs:
-                    print(
-                        f"#{job.id} target={job.target_dialog_id} folder={job.folder_path} "
-                        f"interval={job.interval_minutes} active={job.is_active}"
-                    )
-                return
-
-            if action == "auto-update":
-                kwargs = {
-                    "folder_path": args.folder,
-                    "send_mode": PhotoSendMode(args.mode) if args.mode else None,
-                    "caption": args.caption,
-                    "interval_minutes": args.interval,
-                    "is_active": None,
-                }
-                if args.active:
-                    kwargs["is_active"] = True
-                if args.paused:
-                    kwargs["is_active"] = False
-                await auto.update_job(args.id, **kwargs)
-                print(f"Updated auto job #{args.id}")
-                return
-
-            if action == "auto-toggle":
-                job = await auto.get_job(args.id)
-                if not job:
-                    print("Auto job not found")
-                    return
-                await auto.update_job(args.id, is_active=not job.is_active)
-                print(f"Toggled auto job #{args.id} to {not job.is_active}")
-                return
-
-            if action == "auto-delete":
-                await auto.delete_job(args.id)
-                print(f"Deleted auto job #{args.id}")
-                return
-
-            if action == "run-due":
-                item_id = getattr(args, "item_id", None)
-                dry_run = getattr(args, "dry_run", False)
-                if dry_run:
-                    # Preview only: never touch scheduled photo items (the task path has no
-                    # dry-run); show the auto-job plan and exit before any send/mark.
-                    previews = await auto.run_due(dry_run=True)
-                    assert isinstance(previews, list)  # narrow run_due's int|list return
-                    print(f"[dry-run] Would process {len(previews)} due auto job(s); nothing sent.")
-                    for preview in previews:
-                        title = preview.target_title or preview.target_dialog_id
-                        print(
-                            f"  job #{preview.job_id} → {title} "
-                            f"(dialog_id={preview.target_dialog_id}, mode={preview.send_mode.value}): "
-                            f"{len(preview.files)} file(s)"
-                        )
-                        for file_path in preview.files:
-                            print(f"    - {file_path}")
-                    return
-                items = await tasks.run_due(item_id=item_id)
-                jobs = 0
-                if item_id is None:
-                    processed = await auto.run_due()
-                    assert isinstance(processed, int)  # non-dry-run returns a count
-                    jobs = processed
-                print(f"Processed due photo items={items} auto_jobs={jobs}")
-                return
-        except ValueError as exc:
-            # Unresolvable target (bad username, "me" without a connected account,
-            # etc.) — fail with a clear message instead of a raw traceback.
-            print(f"Error: {exc}", file=sys.stderr)
-            sys.exit(1)
-        finally:
-            await pool.disconnect_all()
-            await db.close()
-
-    asyncio.run(_run())
+    The production CLI routes ``photo-loader`` through the Typer ``app`` (#1123);
+    this wrapper keeps the argparse leaf audit and command-level tests working. Args
+    are read via ``getattr`` defaults so partial test Namespaces stay usable (#1117).
+    """
+    action = getattr(args, "photo_loader_action", None)
+    if action == "dialogs":
+        asyncio.run(dialogs_impl(args.config, phone=args.phone))
+    elif action == "refresh":
+        asyncio.run(refresh_impl(args.config, phone=args.phone))
+    elif action == "send":
+        asyncio.run(
+            send_impl(
+                args.config,
+                phone=args.phone,
+                target=args.target,
+                files=args.files,
+                mode=getattr(args, "mode", "album"),
+                caption=getattr(args, "caption", None),
+            )
+        )
+    elif action == "schedule-send":
+        asyncio.run(
+            schedule_send_impl(
+                args.config,
+                phone=args.phone,
+                target=args.target,
+                files=args.files,
+                at=args.at,
+                mode=getattr(args, "mode", "album"),
+                caption=getattr(args, "caption", None),
+            )
+        )
+    elif action == "batch-create":
+        asyncio.run(
+            batch_create_impl(
+                args.config,
+                phone=args.phone,
+                target=args.target,
+                manifest=args.manifest,
+                caption=getattr(args, "caption", None),
+            )
+        )
+    elif action == "batch-list":
+        asyncio.run(batch_list_impl(args.config))
+    elif action == "items":
+        asyncio.run(
+            items_impl(
+                args.config,
+                batch_id=getattr(args, "batch_id", None),
+                limit=getattr(args, "limit", 100),
+            )
+        )
+    elif action == "batch-cancel":
+        asyncio.run(batch_cancel_impl(args.config, item_id=args.id))
+    elif action == "auto-create":
+        asyncio.run(
+            auto_create_impl(
+                args.config,
+                phone=args.phone,
+                target=args.target,
+                folder=args.folder,
+                interval=args.interval,
+                mode=getattr(args, "mode", "album"),
+                caption=getattr(args, "caption", None),
+            )
+        )
+    elif action == "auto-list":
+        asyncio.run(auto_list_impl(args.config))
+    elif action == "auto-update":
+        asyncio.run(
+            auto_update_impl(
+                args.config,
+                job_id=args.id,
+                folder=getattr(args, "folder", None),
+                interval=getattr(args, "interval", None),
+                mode=getattr(args, "mode", None),
+                caption=getattr(args, "caption", None),
+                active=getattr(args, "active", False),
+                paused=getattr(args, "paused", False),
+            )
+        )
+    elif action == "auto-toggle":
+        asyncio.run(auto_toggle_impl(args.config, job_id=args.id))
+    elif action == "auto-delete":
+        asyncio.run(auto_delete_impl(args.config, job_id=args.id))
+    elif action == "run-due":
+        asyncio.run(
+            run_due_impl(
+                args.config,
+                item_id=getattr(args, "item_id", None),
+                dry_run=getattr(args, "dry_run", False),
+            )
+        )
