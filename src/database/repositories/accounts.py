@@ -112,6 +112,41 @@ class AccountsRepository:
         )
         return cur.lastrowid or 0
 
+    async def add_account_if_absent(self, account: Account) -> int | None:
+        """Insert an account ONLY if its phone is not already present; never overwrite.
+
+        Returns the new row id, or ``None`` if a row for this phone already exists.
+        Unlike :meth:`add_account` (an ``ON CONFLICT DO UPDATE`` upsert), this is
+        ``ON CONFLICT(phone) DO NOTHING``, so a concurrent duplicate import can't
+        clobber a working session via a check-then-act TOCTOU — the DB is the single
+        source of truth for "already exists" (#1146 review). Session is encrypted as
+        usual; is_primary is still derived atomically (#733).
+        """
+        session_string = account.session_string
+        if self._session_cipher:
+            session_string = self._session_cipher.encrypt(session_string)
+
+        want_primary = int(account.is_primary)
+        cur = await self._database.execute_write(
+            """INSERT INTO accounts (phone, session_string, is_primary, is_active, is_premium)
+               VALUES (
+                   ?, ?,
+                   CASE WHEN ? = 1 AND NOT EXISTS (SELECT 1 FROM accounts WHERE is_primary = 1)
+                        THEN 1 ELSE 0 END,
+                   ?, ?
+               )
+               ON CONFLICT(phone) DO NOTHING""",
+            (
+                account.phone,
+                session_string,
+                want_primary,
+                int(account.is_active),
+                int(account.is_premium),
+            ),
+        )
+        # rowcount is 1 on insert, 0 when the conflict was ignored.
+        return cur.lastrowid if cur.rowcount else None
+
     async def migrate_sessions(self) -> int:
         """Re-encrypt plaintext sessions to the current (enc:v2) format.
 
