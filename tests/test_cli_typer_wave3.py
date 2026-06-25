@@ -588,3 +588,260 @@ def test_scheduler_bare_group_shows_help_exit_0():
     with pytest.raises(SystemExit) as exc_info:
         dispatch_via_typer(args)
     assert exc_info.value.code == 0
+
+
+# --------------------------------------------------------------------------- #
+# account → list / info / toggle / set-primary / delete / send-code /
+#           verify-code / add / flood-status / flood-clear / export-session /
+#           import   (export-session & import are the #828 SSO secret-handling ops)
+# --------------------------------------------------------------------------- #
+
+
+def test_account_list_and_flood_status_delegate():
+    for sub, impl_name in [("list", "list_impl"), ("flood-status", "flood_status_impl")]:
+        mock_impl = MagicMock()
+        with (
+            patch(f"src.cli.typer_commands.account_cmd.{impl_name}", mock_impl),
+            patch("src.cli.typer_commands.run_async"),
+        ):
+            result = runner.invoke(app, ["account", sub])
+        assert result.exit_code == 0, (sub, result.output)
+        mock_impl.assert_called_once_with("config.yaml")
+
+
+def test_account_info_phone_optional():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.info_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        runner.invoke(app, ["account", "info"])
+        runner.invoke(app, ["account", "info", "--phone", "+1234567890"])
+    assert mock_impl.call_args_list[0].kwargs == {"phone": None}
+    assert mock_impl.call_args_list[1].kwargs == {"phone": "+1234567890"}
+
+
+def test_account_toggle_set_primary_pass_id():
+    for sub, impl_name in [("toggle", "toggle_impl"), ("set-primary", "set_primary_impl")]:
+        mock_impl = MagicMock()
+        with (
+            patch(f"src.cli.typer_commands.account_cmd.{impl_name}", mock_impl),
+            patch("src.cli.typer_commands.run_async"),
+        ):
+            result = runner.invoke(app, ["account", sub, "7"])
+        assert result.exit_code == 0, (sub, result.output)
+        mock_impl.assert_called_once_with("config.yaml", account_id=7)
+
+
+def test_account_delete_notify_to():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.delete_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["account", "delete", "3", "--notify-to", "+19998887766"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", account_id=3, notify_to="+19998887766")
+
+
+def test_account_send_code_flags():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.send_code_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app, ["account", "send-code", "--phone", "+1", "--api-id", "42", "--api-hash", "h"]
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", phone="+1", api_id=42, api_hash="h")
+
+
+def test_account_verify_code_flags():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.verify_code_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app, ["account", "verify-code", "--phone", "+1", "--code", "123", "--password", "pw"]
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml", phone="+1", code="123", password="pw", api_id=None, api_hash=None
+    )
+
+
+def test_account_add_alias_sends_without_code():
+    """`account add --phone` with no --code resolves to send-code (argparse parity)."""
+    mock_send = MagicMock()
+    mock_verify = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.send_code_impl", mock_send),
+        patch("src.cli.typer_commands.account_cmd.verify_code_impl", mock_verify),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["account", "add", "--phone", "+1"])
+    assert result.exit_code == 0
+    mock_send.assert_called_once_with("config.yaml", phone="+1", api_id=None, api_hash=None)
+    mock_verify.assert_not_called()
+
+
+def test_account_add_alias_verifies_with_code():
+    """`account add --phone --code` resolves to verify-code."""
+    mock_send = MagicMock()
+    mock_verify = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.send_code_impl", mock_send),
+        patch("src.cli.typer_commands.account_cmd.verify_code_impl", mock_verify),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["account", "add", "--phone", "+1", "--code", "999"])
+    assert result.exit_code == 0
+    mock_verify.assert_called_once_with(
+        "config.yaml", phone="+1", code="999", password=None, api_id=None, api_hash=None
+    )
+    mock_send.assert_not_called()
+
+
+def test_account_flood_clear_phone():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.flood_clear_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["account", "flood-clear", "--phone", "+1"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", phone="+1")
+
+
+# --- #828 export-session / import: the secret-handling SSO ops --------------- #
+
+
+def test_account_export_session_by_id():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.export_session_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["account", "export-session", "--id", "5", "--json"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", account_id=5, phone=None, as_json=True)
+
+
+def test_account_export_session_by_phone():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.export_session_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["account", "export-session", "--phone", "+1234567890"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml", account_id=None, phone="+1234567890", as_json=False
+    )
+
+
+def test_account_export_session_mutex_rejects_both_and_neither():
+    """Exactly one of --id/--phone — the #828 mutually-exclusive group (kept)."""
+    # neither
+    assert runner.invoke(app, ["account", "export-session"]).exit_code != 0
+    # both
+    assert runner.invoke(
+        app, ["account", "export-session", "--id", "1", "--phone", "+1"]
+    ).exit_code != 0
+
+
+def test_account_import_session_string():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.import_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app, ["account", "import", "--phone", "+1", "--session-string", "SESS", "--force"]
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml",
+        phone="+1",
+        session_string="SESS",
+        session_string_stdin=False,
+        force=True,
+    )
+
+
+def test_account_import_stdin_source():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.import_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["account", "import", "--phone", "+1", "--session-string-stdin"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml",
+        phone="+1",
+        session_string=None,
+        session_string_stdin=True,
+        force=False,
+    )
+
+
+def test_account_import_mutex_rejects_both_and_neither():
+    """Exactly one session source — the #828 mutually-exclusive group (kept)."""
+    assert runner.invoke(app, ["account", "import", "--phone", "+1"]).exit_code != 0
+    assert runner.invoke(
+        app,
+        ["account", "import", "--phone", "+1", "--session-string", "X", "--session-string-stdin"],
+    ).exit_code != 0
+
+
+def test_account_export_session_delegates_via_argparse():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.export_session_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["account", "export-session", "--id", "9", "--json"])
+    mock_impl.assert_called_once_with("config.yaml", account_id=9, phone=None, as_json=True)
+
+
+def test_account_import_delegates_via_argparse():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.account_cmd.import_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["account", "import", "--phone", "+1", "--session-string", "SECRET", "--force"])
+    mock_impl.assert_called_once_with(
+        "config.yaml",
+        phone="+1",
+        session_string="SECRET",
+        session_string_stdin=False,
+        force=True,
+    )
+
+
+def test_account_export_session_value_not_logged(caplog):
+    """The export path must never log the session value (caplog guard, #828)."""
+    import logging
+
+    from src.cli.typer_commands import _account_argv
+
+    # The argv reconstruction for export-session carries only id/phone/json — never
+    # a session value (the secret is produced inside the impl and printed, not logged).
+    args = build_parser().parse_args(["account", "export-session", "--id", "3", "--json"])
+    with caplog.at_level(logging.DEBUG):
+        tail = _account_argv(args)
+    assert tail == ["export-session", "--id", "3", "--json"]
+    assert "session" not in caplog.text.lower() or "session_string" not in caplog.text
+
+
+def test_account_bare_group_shows_help_exit_0():
+    import pytest
+
+    args = build_parser().parse_args(["account"])
+    with pytest.raises(SystemExit) as exc_info:
+        dispatch_via_typer(args)
+    assert exc_info.value.code == 0

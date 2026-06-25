@@ -58,6 +58,7 @@ except ImportError:  # pragma: no cover - defensive fallback
     _CLICK_EXCEPTIONS = (click.exceptions.ClickException,)
     _NO_ARGS_HELP_EXCEPTIONS = (click.exceptions.NoArgsIsHelpError,)
 
+from src.cli.commands import account as account_cmd
 from src.cli.commands import collect as collect_cmd
 from src.cli.commands import debug as debug_cmd
 from src.cli.commands import export as export_cmd
@@ -115,7 +116,7 @@ MIGRATED_COMMANDS: frozenset[str] = frozenset(
         # Wave 2 (#1122) — flat simple groups
         "debug", "export", "translate", "image", "provider", "notification",
         # Wave 3 (#1123) — medium groups
-        "search-query", "filter", "settings", "scheduler",
+        "search-query", "filter", "settings", "scheduler", "account",
     }
 )
 
@@ -1149,6 +1150,222 @@ def scheduler_queue_resume(ctx: typer.Context) -> None:
 
 
 # --------------------------------------------------------------------------- #
+# account → list / info / toggle / set-primary / delete / send-code /
+#           verify-code / add / flood-status / flood-clear / export-session /
+#           import  (export-session & import are the SSO secret-handling ops, #828)
+# --------------------------------------------------------------------------- #
+
+account_app = typer.Typer(no_args_is_help=True, help="Account management")
+app.add_typer(account_app, name="account")
+
+
+@account_app.command("list")
+def account_list(ctx: typer.Context) -> None:
+    """List accounts."""
+    apply_startup(ctx)
+    run_async(account_cmd.list_impl(ctx.obj.config))
+
+
+@account_app.command("info")
+def account_info(
+    ctx: typer.Context,
+    phone: str | None = typer.Option(None, "--phone", help="Filter by phone number"),
+) -> None:
+    """Show profile info for connected accounts."""
+    apply_startup(ctx)
+    run_async(account_cmd.info_impl(ctx.obj.config, phone=phone))
+
+
+@account_app.command("toggle")
+def account_toggle(
+    ctx: typer.Context,
+    account_id: int = typer.Argument(..., metavar="id", help="Account id"),
+) -> None:
+    """Toggle account active state."""
+    apply_startup(ctx)
+    run_async(account_cmd.toggle_impl(ctx.obj.config, account_id=account_id))
+
+
+@account_app.command("set-primary")
+def account_set_primary(
+    ctx: typer.Context,
+    account_id: int = typer.Argument(..., metavar="id", help="Account id"),
+) -> None:
+    """Make account the primary one."""
+    apply_startup(ctx)
+    run_async(account_cmd.set_primary_impl(ctx.obj.config, account_id=account_id))
+
+
+@account_app.command("delete")
+def account_delete(
+    ctx: typer.Context,
+    account_id: int = typer.Argument(..., metavar="id", help="Account id"),
+    notify_to: str | None = typer.Option(
+        None,
+        "--notify-to",
+        help="Phone to reassign notifications to if deleting the notification account",
+    ),
+) -> None:
+    """Delete account."""
+    apply_startup(ctx)
+    run_async(account_cmd.delete_impl(ctx.obj.config, account_id=account_id, notify_to=notify_to))
+
+
+@account_app.command("send-code")
+def account_send_code(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Phone number with country code"),
+    api_id: int | None = typer.Option(
+        None, "--api-id", help="Telegram API ID (uses stored if omitted)"
+    ),
+    api_hash: str | None = typer.Option(
+        None, "--api-hash", help="Telegram API hash (uses stored if omitted)"
+    ),
+) -> None:
+    """Send Telegram auth code to phone."""
+    apply_startup(ctx)
+    run_async(account_cmd.send_code_impl(ctx.obj.config, phone=phone, api_id=api_id, api_hash=api_hash))
+
+
+@account_app.command("verify-code")
+def account_verify_code(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Phone number with country code"),
+    code: str = typer.Option(..., "--code", help="Auth code received in Telegram"),
+    password: str | None = typer.Option(None, "--password", help="2FA password (if required)"),
+    api_id: int | None = typer.Option(
+        None, "--api-id", help="Telegram API ID (uses stored if omitted)"
+    ),
+    api_hash: str | None = typer.Option(
+        None, "--api-hash", help="Telegram API hash (uses stored if omitted)"
+    ),
+) -> None:
+    """Verify Telegram auth code and add account."""
+    apply_startup(ctx)
+    run_async(
+        account_cmd.verify_code_impl(
+            ctx.obj.config, phone=phone, code=code, password=password, api_id=api_id, api_hash=api_hash
+        )
+    )
+
+
+@account_app.command("add")
+def account_add(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Phone number with country code"),
+    code: str | None = typer.Option(None, "--code", help="Auth code received in Telegram"),
+    password: str | None = typer.Option(None, "--password", help="2FA password (if required)"),
+    api_id: int | None = typer.Option(
+        None, "--api-id", help="Telegram API ID (uses stored if omitted)"
+    ),
+    api_hash: str | None = typer.Option(
+        None, "--api-hash", help="Telegram API hash (uses stored if omitted)"
+    ),
+) -> None:
+    """Compatibility alias for send-code / verify-code account onboarding."""
+    apply_startup(ctx)
+    # ``add`` resolves to verify-code when a --code is supplied, else send-code —
+    # exactly as the old argparse run() adapter did.
+    if code:
+        run_async(
+            account_cmd.verify_code_impl(
+                ctx.obj.config,
+                phone=phone,
+                code=code,
+                password=password,
+                api_id=api_id,
+                api_hash=api_hash,
+            )
+        )
+    else:
+        run_async(
+            account_cmd.send_code_impl(ctx.obj.config, phone=phone, api_id=api_id, api_hash=api_hash)
+        )
+
+
+@account_app.command("flood-status")
+def account_flood_status(ctx: typer.Context) -> None:
+    """Show flood wait timers for all accounts."""
+    apply_startup(ctx)
+    run_async(account_cmd.flood_status_impl(ctx.obj.config))
+
+
+@account_app.command("flood-clear")
+def account_flood_clear(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone number"),
+) -> None:
+    """Clear flood wait for an account."""
+    apply_startup(ctx)
+    run_async(account_cmd.flood_clear_impl(ctx.obj.config, phone=phone))
+
+
+@account_app.command("export-session")
+def account_export_session(
+    ctx: typer.Context,
+    account_id: int | None = typer.Option(None, "--id", help="Account id"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone number"),
+    as_json: bool = typer.Option(False, "--json", help="Emit {phone, session_string} JSON"),
+) -> None:
+    """Print the decrypted StringSession for SSO (⚠️ full account access — keep secret).
+
+    Exactly one of --id / --phone is required (the argparse mutually-exclusive
+    group is enforced here in the body — Typer has no native mutex group). The
+    session string is NEVER logged.
+    """
+    apply_startup(ctx)
+    if (account_id is None) == (phone is None):
+        # Mirror argparse's "exactly one required" mutually-exclusive group.
+        raise typer.BadParameter("provide exactly one of --id or --phone")
+    run_async(
+        account_cmd.export_session_impl(
+            ctx.obj.config, account_id=account_id, phone=phone, as_json=as_json
+        )
+    )
+
+
+@account_app.command("import")
+def account_import(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Phone number with country code"),
+    session_string: str | None = typer.Option(
+        None,
+        "--session-string",
+        help="Telegram StringSession to import (⚠️ appears in shell history — prefer --session-string-stdin)",
+    ),
+    session_string_stdin: bool = typer.Option(
+        False,
+        "--session-string-stdin",
+        help="Read the StringSession from stdin (keeps the secret out of argv / shell history)",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite the session of an account that already exists for this phone"
+    ),
+) -> None:
+    """Add an account from a ready StringSession (SSO import, skips login).
+
+    Exactly one of --session-string / --session-string-stdin is required (the
+    argparse mutually-exclusive group is enforced here in the body). The raw
+    session string is never echoed back or logged.
+    """
+    apply_startup(ctx)
+    if (session_string is None) == (not session_string_stdin):
+        # Mirror argparse's required mutually-exclusive group: exactly one source.
+        raise typer.BadParameter(
+            "provide exactly one of --session-string or --session-string-stdin"
+        )
+    run_async(
+        account_cmd.import_impl(
+            ctx.obj.config,
+            phone=phone,
+            session_string=session_string,
+            session_string_stdin=session_string_stdin,
+            force=force,
+        )
+    )
+
+
+# --------------------------------------------------------------------------- #
 # argparse → Typer delegation
 # --------------------------------------------------------------------------- #
 
@@ -1236,6 +1453,9 @@ def _argv_from_namespace(args: argparse.Namespace) -> list[str]:
     elif command == "scheduler":
         argv.append("scheduler")
         argv += _scheduler_argv(args)
+    elif command == "account":
+        argv.append("account")
+        argv += _account_argv(args)
     return argv
 
 
@@ -1365,6 +1585,72 @@ def _notification_argv(args: argparse.Namespace) -> list[str]:
             tail += ["--message", args.message]
     elif action == "set-account":
         tail += ["--phone", args.phone]
+    return tail
+
+
+def _account_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``account`` — the action plus its flags / positionals.
+
+    All option-bearing sub-commands here use ``--``-flags only (no leading-dash
+    positionals), so no ``--`` separator is needed. ``export-session`` / ``import``
+    carry the SSO mutually-exclusive groups; we emit whichever side argparse
+    resolved. The session string itself is forwarded verbatim — it is a secret and
+    is never logged at this layer.
+    """
+    action = getattr(args, "account_action", None)
+    if action is None:
+        return []
+    tail = [action]
+    if action == "info":
+        if getattr(args, "phone", None):
+            tail += ["--phone", args.phone]
+    elif action in ("toggle", "set-primary"):
+        tail += ["--", str(args.id)]
+    elif action == "delete":
+        if getattr(args, "notify_to", None):
+            tail += ["--notify-to", args.notify_to]
+        tail += ["--", str(args.id)]
+    elif action == "send-code":
+        tail += ["--phone", args.phone]
+        if getattr(args, "api_id", None) is not None:
+            tail += ["--api-id", str(args.api_id)]
+        if getattr(args, "api_hash", None):
+            tail += ["--api-hash", args.api_hash]
+    elif action == "verify-code":
+        tail += ["--phone", args.phone, "--code", args.code]
+        if getattr(args, "password", None):
+            tail += ["--password", args.password]
+        if getattr(args, "api_id", None) is not None:
+            tail += ["--api-id", str(args.api_id)]
+        if getattr(args, "api_hash", None):
+            tail += ["--api-hash", args.api_hash]
+    elif action == "add":
+        tail += ["--phone", args.phone]
+        if getattr(args, "code", None):
+            tail += ["--code", args.code]
+        if getattr(args, "password", None):
+            tail += ["--password", args.password]
+        if getattr(args, "api_id", None) is not None:
+            tail += ["--api-id", str(args.api_id)]
+        if getattr(args, "api_hash", None):
+            tail += ["--api-hash", args.api_hash]
+    elif action == "flood-clear":
+        tail += ["--phone", args.phone]
+    elif action == "export-session":
+        if getattr(args, "id", None) is not None:
+            tail += ["--id", str(args.id)]
+        elif getattr(args, "phone", None):
+            tail += ["--phone", args.phone]
+        if getattr(args, "json", False):
+            tail.append("--json")
+    elif action == "import":
+        tail += ["--phone", args.phone]
+        if getattr(args, "session_string_stdin", False):
+            tail.append("--session-string-stdin")
+        elif getattr(args, "session_string", None) is not None:
+            tail += ["--session-string", args.session_string]
+        if getattr(args, "force", False):
+            tail.append("--force")
     return tail
 
 
