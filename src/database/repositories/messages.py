@@ -1,3 +1,18 @@
+"""Репозиторий сообщений: вставка, поиск (FTS/семантика/гибрид) и аналитика.
+
+Доступ через `db.repos.messages`. Самый горячий репозиторий проекта: пакетная
+вставка с дедупликацией по ``UNIQUE(channel_id, message_id)``, обновление
+изменяемых полей (реакции/просмотры) уже известных сообщений, три режима поиска
+(полнотекстовый FTS5 с LIKE-фолбэком, семантический по эмбеддингам, гибридный
+RRF) и агрегаты для аналитики по нормализованной таблице ``message_reactions``.
+
+Замечания по производительности: поиск отдаёт страницу с нижней оценкой total
+вместо точного ``COUNT(*)`` (см.
+[`MessageSearchPage`][src.database.repositories.messages.MessageSearchPage], #766);
+фильтр отсекает отфильтрованные каналы JOIN-ом на ``channels`` по ``channel_id``
+(конвенция ключей, CLAUDE.md).
+"""
+
 from __future__ import annotations
 
 import json
@@ -65,6 +80,8 @@ def _normalize_username(username: str | None) -> str | None:
 
 
 class MessagesRepository:
+    """Вставка, поиск и аналитика сообщений (`messages` + сайдкары реакций/эмбеддингов)."""
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -124,6 +141,7 @@ class MessagesRepository:
         )
 
     async def get_embedding_dimensions(self) -> int | None:
+        """Размерность векторов индекса эмбеддингов (из настроек), либо ``None`` если индекс ещё не создан."""
         raw_value = await self._get_setting(_EMBEDDING_DIMENSIONS_SETTING)
         if raw_value in (None, ""):
             return None
@@ -134,6 +152,7 @@ class MessagesRepository:
             return None
 
     async def count_embeddings(self) -> int:
+        """Число сохранённых эмбеддингов (0, если таблицы ещё нет)."""
         try:
             cur = await self._db.execute("SELECT COUNT(*) AS cnt FROM message_embeddings")
         except Exception:
@@ -142,6 +161,7 @@ class MessagesRepository:
         return int(row["cnt"]) if row else 0
 
     async def reset_embeddings_index(self) -> None:
+        """Полностью сбросить семантический индекс: оба стора эмбеддингов и их настройки (одной транзакцией с DDL)."""
         assert self._database is not None, (
             "MessagesRepository.reset_embeddings_index requires a Database reference"
         )
@@ -158,6 +178,12 @@ class MessagesRepository:
             )
 
     async def insert_message(self, msg: Message) -> bool:
+        """Вставить одно сообщение (дубликат по ключу обновляет изменяемые поля); вернуть ``True``, если строка новая.
+
+        Реакции апсёртятся в нормализованную таблицу. Транзиентную блокировку БД
+        пробрасывает наружу (не маскирует под «не сохранилось»), чтобы вызывающий
+        пересобрал заново.
+        """
         # Local import — see insert_messages_batch for the partial-init rationale.
         from src.database import DatabaseBusyError
 
@@ -253,6 +279,13 @@ class MessagesRepository:
     async def insert_messages_batch(
         self, messages: list[Message], premium_search_query: str | None = None
     ) -> int:
+        """Пакетно вставить сообщения (INSERT OR IGNORE), обновив уже известные и их реакции; вернуть число новых строк.
+
+        Дубликаты по ``UNIQUE(channel_id, message_id)`` пропускаются вставкой и
+        затем обновляются (просмотры/реакции/язык). ``premium_search_query`` тегирует
+        строки, добытые Premium-поиском (для последующей очистки). Транзиентная
+        блокировка пробрасывается наружу, как и в :meth:`insert_message`.
+        """
         if not messages:
             return 0
         data = [
@@ -425,6 +458,7 @@ class MessagesRepository:
             logger.error("Failed to refresh %d existing messages: %s", len(messages), exc)
 
     async def ensure_embeddings_table(self, dimensions: int) -> None:
+        """Зафиксировать размерность индекса эмбеддингов при первом вызове; несовпадение с существующей — ошибка."""
         if dimensions < 1:
             raise ValueError("Embedding dimensions must be positive.")
         existing_dimensions = await self.get_embedding_dimensions()
@@ -442,6 +476,7 @@ class MessagesRepository:
         after_id: int = 0,
         limit: int = 100,
     ) -> list[tuple[int, str]]:
+        """Страница ``(id, text)`` непустых сообщений после ``after_id`` для построения эмбеддингов (курсор по id)."""
         cur = await self._db.execute(
             """
             SELECT id, text
@@ -457,6 +492,10 @@ class MessagesRepository:
         return [(int(row["id"]), str(row["text"])) for row in rows]
 
     async def upsert_message_embeddings(self, embeddings: list[tuple[int, list[float]]]) -> int:
+        """Сохранить эмбеддинги ``(message_id, vector)`` в бинарный BLOB-индекс; вернуть число записей.
+
+        Все векторы должны быть одной размерности (она фиксируется индексом).
+        """
         if not embeddings:
             return 0
         dimensions = len(embeddings[0][1])
@@ -633,6 +672,12 @@ class MessagesRepository:
         return [int(row["id"]) for row in rows]
 
     async def search_messages(self, params: SearchParams) -> MessageSearchPage:
+        """Полнотекстовый поиск (FTS5, при недоступности — LIKE) по фильтрам [`SearchParams`][src.models.SearchParams].
+
+        Возвращает [`MessageSearchPage`][src.database.repositories.messages.MessageSearchPage]
+        с нижней оценкой total (limit+1-проба вместо точного COUNT, #766), новые
+        первыми. Отфильтрованные каналы исключаются, если не задан ``include_filtered``.
+        """
         query = params.query
         limit = params.limit
         offset = params.offset
@@ -819,6 +864,11 @@ class MessagesRepository:
         candidate_limit: int | None = None,
         include_filtered: bool = False,
     ) -> tuple[list[Message], int]:
+        """Семантический поиск по эмбеддингу запроса (косинусная близость); вернуть ``(страница, всего кандидатов)``.
+
+        ``candidate_limit`` ограничивает размер пула кандидатов до ранжирования;
+        страница вырезается ``offset``/``limit`` уже из отсортированного списка.
+        """
         fetch_limit = candidate_limit or max(offset + limit, 50)
         candidates = await self._search_semantic_candidates(
             query_embedding,
@@ -853,6 +903,11 @@ class MessagesRepository:
         rrf_k: int = 60,
         include_filtered: bool = False,
     ) -> tuple[list[Message], int]:
+        """Гибридный поиск: объединяет текстовых и семантических кандидатов через Reciprocal Rank Fusion.
+
+        ``rrf_k`` — сглаживающая константа RRF (вклад позиции = 1/(rrf_k+rank)).
+        Возвращает ``(страница сообщений, число уникальных кандидатов)``.
+        """
         fetch_limit = candidate_limit or max(offset + limit, 50)
         text_ids = await self._search_text_candidate_ids(
             query,
@@ -1080,6 +1135,7 @@ class MessagesRepository:
         return messages, total
 
     async def count_fts_matches_for_query(self, sq: SearchQuery) -> int:
+        """Точное число FTS-совпадений сохранённого запроса ``sq`` (учитывает его фильтры/исключения)."""
         self._require_fts()
         fts_query, extra_conds, extra_params = self._build_sq_parts(sq)
         where_parts = [self._BASE_FILTER, *extra_conds]
@@ -1094,6 +1150,7 @@ class MessagesRepository:
         return row["cnt"] if row else 0
 
     async def get_fts_daily_stats_for_query(self, sq: SearchQuery, days: int = 30) -> list:
+        """Ряд «день → число совпадений» сохранённого запроса за последние ``days`` дней (по дате сообщений)."""
         self._require_fts()
         from src.models import SearchQueryDailyStat
 
@@ -1120,6 +1177,11 @@ class MessagesRepository:
     async def get_fts_daily_stats_batch(
         self, queries: list[SearchQuery], days: int = 30
     ) -> dict[int, list]:
+        """Дневная статистика сразу для многих запросов: карта ``sq_id → [SearchQueryDailyStat]`` за ``days`` дней.
+
+        Считает UNION ALL чанками (≤100 запросов на чанк, лимит SQLite), чтобы не
+        делать по запросу на каждый ``sq``.
+        """
         self._require_fts()
         from src.models import SearchQueryDailyStat
 
@@ -1162,6 +1224,13 @@ class MessagesRepository:
         return result
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
+        """Мягко удалить (purge) сообщения канала и их эмбеддинги; вернуть число удалённых строк.
+
+        Это soft-delete: канал остаётся отслеживаемым, а леджеры дедупликации
+        (`notified_messages`, `pipeline_action_log`) сознательно НЕ трогаются —
+        иначе после повторного сбора задвоились бы уведомления и внешние
+        Telegram-действия (#1039). Реакции уходят каскадом по FK.
+        """
         assert self._database is not None, (
             "MessagesRepository.delete_messages_for_channel requires a Database reference"
         )
@@ -1234,6 +1303,7 @@ class MessagesRepository:
         return rowcount
 
     async def get_stats(self) -> dict:
+        """Сводные счётчики для дашборда: аккаунты, каналы (всего/фильтр/трекинг), сообщения, запросы."""
         cur = await self._db.execute(
             "SELECT"
             " (SELECT COUNT(*) FROM accounts) AS accounts,"

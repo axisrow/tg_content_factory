@@ -1,3 +1,5 @@
+"""Репозиторий истории метрик каналов (подписчики, средние просмотры/реакции)."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -12,6 +14,13 @@ if TYPE_CHECKING:
 
 
 class ChannelStatsRepository:
+    """История метрик каналов: подписчики, средние просмотры/реакции/репосты.
+
+    Каждое измерение — отдельная строка с `collected_at` (append-only history),
+    поэтому возможны выборки последней записи, предыдущей и временных рядов для
+    оценки динамики роста канала.
+    """
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -22,6 +31,7 @@ class ChannelStatsRepository:
         self._database = database
 
     async def save_channel_stats(self, stats: ChannelStats) -> int:
+        """Добавить новое измерение метрик канала. Возвращает id новой строки."""
         cur = await self._database.execute_write(
             """INSERT INTO channel_stats
                (channel_id, subscriber_count, avg_views, avg_reactions, avg_forwards)
@@ -37,6 +47,7 @@ class ChannelStatsRepository:
         return cur.lastrowid or 0
 
     async def get_channel_stats(self, channel_id: int, limit: int = 1) -> list[ChannelStats]:
+        """Последние `limit` измерений метрик канала (новые сверху)."""
         cur = await self._db.execute(
             "SELECT * FROM channel_stats WHERE channel_id = ? "
             "ORDER BY collected_at DESC LIMIT ?",
@@ -57,6 +68,7 @@ class ChannelStatsRepository:
         ]
 
     async def get_latest_stats_for_all(self) -> dict[int, ChannelStats]:
+        """Карта `channel_id → самое свежее измерение метрик` по всем каналам."""
         cur = await self._db.execute("""WITH ranked AS (
                    SELECT *, ROW_NUMBER() OVER (
                        PARTITION BY channel_id ORDER BY collected_at DESC, id DESC

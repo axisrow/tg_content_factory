@@ -1,3 +1,11 @@
+"""Конфигурация приложения: Pydantic-модели секций + загрузчик из YAML.
+
+[`AppConfig`][src.config.AppConfig] — корень дерева настроек; каждая вложенная
+секция — отдельная `*Config`-модель с дефолтами, так что приложение запускается
+и без `config.yaml`. `load_config` читает YAML, подставляет `${ENV_VAR}` и
+добирает критичные значения (Telegram-креды, agent-модель) прямо из окружения.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -12,17 +20,37 @@ logger = logging.getLogger(__name__)
 
 
 class TelegramConfig(BaseModel):
+    """Учётные данные приложения Telegram (`api_id`/`api_hash`) для MTProto.
+
+    Дефолты-пустышки заполняются из `TG_API_ID`/`TG_API_HASH`, если в YAML их нет.
+    """
+
     api_id: int = 0
     api_hash: str = ""
 
 
 class WebConfig(BaseModel):
+    """Настройки веб-панели: адрес/порт прослушивания и пароль входа.
+
+    Вход — по паролю; имя пользователя задаётся переменной `WEB_USER`
+    (по умолчанию `admin`), а не захардкожено — см. `src/web/panel_auth.py`.
+    """
+
     host: str = "0.0.0.0"
     port: int = 8080
     password: str = ""
 
 
 class SchedulerConfig(BaseModel):
+    """Параметры планировщика сбора: периодичность, задержки и таймауты.
+
+    Управляет интервалом периодического сбора и паузами между каналами/запросами
+    (троттлинг против FLOOD_WAIT), таймаутами потокового сбора и фоновых задач, а
+    также числом параллельных воркеров сбора/статистики (0 = авто — по одному на
+    подключённый аккаунт). Семантика «0/отрицательное» у таймаутов разнится —
+    см. комментарии у полей.
+    """
+
     collect_interval_minutes: int = 60
     delay_between_channels_sec: int = 2
     delay_between_requests_sec: int = 1
@@ -47,12 +75,25 @@ class SchedulerConfig(BaseModel):
 
 
 class NotificationsConfig(BaseModel):
+    """Настройки уведомлений: чат администратора для алертов (`admin_chat_id`) и
+    префиксы имени/username при автосоздании бота уведомлений через BotFather."""
+
     admin_chat_id: int | None = None
     bot_name_prefix: str = "LeadHunter"
     bot_username_prefix: str = "leadhunter_"
 
 
 class DatabaseConfig(BaseModel):
+    """Путь к файлу SQLite и тюнинг производительности соединений (#760).
+
+    `read_pool_size` — число read-соединений (читают параллельно, медленный
+    SELECT не блокирует навигацию). `cache_size_kb` — кэш страниц на соединение
+    (суммарная RAM ≈ `cache_size_kb * (read_pool_size + 1)`). `mmap_size_mb` —
+    окно memory-mapped I/O (адресное пространство, не RAM; 0 отключает). Для
+    `:memory:` read-пул не разворачивается (одно соединение); per-connection
+    PRAGMA-тюнинг (кэш/mmap) применяется как обычно.
+    """
+
     path: str = "data/tg_search.db"
     # Number of read connections in the pool (#760). Reads run concurrently across
     # these, so a slow SELECT never blocks navigation. Ignored for :memory:.
@@ -70,6 +111,12 @@ class DatabaseConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
+    """Базовые LLM-настройки из конфига: провайдер, модель и ключ.
+
+    `enabled` включает LLM-функции; на практике провайдеры чаще авторегистрируются
+    из переменных окружения (`ProviderService`), а это — fallback из YAML.
+    """
+
     enabled: bool = False
     provider: str = "openai"
     model: str = "gpt-4o-mini"
@@ -77,6 +124,14 @@ class LLMConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
+    """Настройки агент-бэкенда: модель, deepagents-fallback и таймауты стрима.
+
+    `model` — основная модель агента, `fallback_model`/`fallback_api_key` —
+    запасной провайдер (формат `provider:model`). Группа `*_timeout` ограничивает
+    стадии стримингового вызова (закрытие стрима, первое событие, простой,
+    подтверждение, общий потолок) — защита от зависаний.
+    """
+
     model: str = ""
     fallback_model: str = ""
     fallback_api_key: str = ""
@@ -88,10 +143,20 @@ class AgentConfig(BaseModel):
 
 
 class SecurityConfig(BaseModel):
+    """Параметры безопасности: ключ шифрования StringSession аккаунтов.
+
+    Непустой `session_encryption_key` включает хранение сессий как `enc:v2:*`;
+    см. [`resolve_session_encryption_secret`][src.config.resolve_session_encryption_secret].
+    """
+
     session_encryption_key: str = ""
 
 
 class TelegramRuntimeConfig(BaseModel):
+    """Выбор Telegram-рантайма: режим бэкенда (`backend_mode`), транспорт CLI
+    (`cli_transport`) и каталог кэша сессий (`session_cache_dir`). Все три можно
+    переопределить переменными `TG_*` при загрузке."""
+
     backend_mode: str = "auto"
     cli_transport: str = "hybrid"
     session_cache_dir: str = "data/telegram_sessions"
@@ -114,6 +179,13 @@ class ProductionLimitsConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
+    """Корень конфигурации приложения: агрегирует все секции `*Config`.
+
+    Каждая секция со своими дефолтами, поэтому валидный `AppConfig()` собирается
+    без файла. Загружается и валидируется через
+    [`load_config`][src.config.load_config].
+    """
+
     telegram: TelegramConfig = TelegramConfig()
     telegram_runtime: TelegramRuntimeConfig = TelegramRuntimeConfig()
     web: WebConfig = WebConfig()
@@ -130,6 +202,11 @@ _ENV_PATTERN = re.compile(r"\$\{(\w+)\}")
 
 
 def is_provider_model_ref(value: str) -> bool:
+    """True, если строка имеет вид `provider:model` с непустыми частями.
+
+    Используется для валидации ссылок на модель (например, agent-fallback), где
+    обязателен префикс провайдера.
+    """
     provider, separator, model = value.partition(":")
     return bool(separator and provider.strip() and model.strip())
 

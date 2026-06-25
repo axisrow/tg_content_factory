@@ -1,3 +1,18 @@
+"""Репозиторий Telegram-аккаунтов пула (таблица ``accounts``).
+
+Доступ через `db.repos.accounts`. Поверх обычного CRUD держит один инвариант и
+один слой безопасности:
+
+* «не более одного primary» (#733) — атомарно при вставке/активации/удалении,
+  с partial-unique-индексом как жёстким бэкстопом. 0 primary допустимо: первая
+  вставка с ``is_primary=False`` и деактивация/удаление последнего primary
+  оставляют пул без primary-аккаунта;
+* шифрование StringSession — `session_string` хранится как `enc:v2:*`, когда
+  задан `SESSION_ENCRYPTION_KEY`; чтение разделено на «для UI» (статус сессии без
+  расшифровки) и «для живого использования» (расшифровка, иначе аккаунт
+  пропускается).
+"""
+
 from __future__ import annotations
 
 import logging
@@ -19,6 +34,13 @@ _RESTORE_ACCOUNT_ACTION = "restore_key_or_relogin"
 
 
 class AccountSessionDecryptError(RuntimeError):
+    """Расшифровать StringSession аккаунта не удалось (нет ключа, чужая версия, повреждение).
+
+    Несёт ``resource``/``identifier``/``status``/``action`` для единообразного
+    отчёта; поднимается на пути «живого» использования, где аккаунт без
+    читаемой сессии работать не может.
+    """
+
     def __init__(self, *, phone: str, status: str):
         super().__init__(
             "Failed to decrypt Telegram account session "
@@ -32,6 +54,8 @@ class AccountSessionDecryptError(RuntimeError):
 
 
 class AccountsRepository:
+    """CRUD Telegram-аккаунтов с инвариантом single-primary и шифрованием сессий."""
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -44,6 +68,17 @@ class AccountsRepository:
         self._database = database
 
     async def add_account(self, account: Account) -> int:
+        """Добавить аккаунт (или обновить существующий по телефону через UPSERT); вернуть id.
+
+        Возвращает `cur.lastrowid`: это надёжный id только на ветке вставки; при
+        конфликте-обновлении SQLite оставляет lastrowid от последней вставки в
+        соединении, поэтому для гарантированного id обновлённой строки читайте её
+        отдельно по `phone`.
+
+        Сессия шифруется при наличии cipher. Флаг primary назначается атомарно —
+        запрошенный ``is_primary`` срабатывает, только если primary-аккаунта ещё
+        нет (#733), иначе сохраняется 0.
+        """
         session_string = account.session_string
         if self._session_cipher:
             session_string = self._session_cipher.encrypt(session_string)
@@ -242,6 +277,12 @@ class AccountsRepository:
             raise AccountSessionDecryptError(phone=phone, status=status) from exc
 
     async def get_account_summaries(self, active_only: bool = False) -> list[AccountSummary]:
+        """Список аккаунтов как безопасные [`AccountSummary`][src.models.AccountSummary] (без секрета сессии).
+
+        Сессия не расшифровывается — вместо этого классифицируется её статус
+        (`session_status`), так что нечитаемый аккаунт всё равно отображается.
+        Порядок: primary первым, затем по id. С ``active_only`` — только активные.
+        """
         sql = "SELECT * FROM accounts"
         if active_only:
             sql += " WHERE is_active = 1"
@@ -260,6 +301,14 @@ class AccountsRepository:
         ]
 
     async def get_accounts(self, active_only: bool = False) -> list[Account]:
+        """Полные [`Account`][src.models.Account] с расшифрованными сессиями для живого использования.
+
+        В отличие от :meth:`get_account_summaries`, расшифровывает каждую сессию —
+        нечитаемая сессия поднимает
+        [`AccountSessionDecryptError`][src.database.repositories.accounts.AccountSessionDecryptError]
+        (если нужен отказоустойчивый вариант, фильтрующий битые аккаунты, см.
+        :meth:`get_live_usable_accounts`). Порядок: primary первым, затем по id.
+        """
         sql = "SELECT * FROM accounts"
         if active_only:
             sql += " WHERE is_active = 1"
@@ -326,12 +375,17 @@ class AccountsRepository:
         return accounts
 
     async def update_account_flood(self, phone: str, until: datetime | None) -> None:
+        """Записать (или снять через ``None``) момент окончания Telegram FLOOD_WAIT для аккаунта.
+
+        `ClientPool` пропускает аккаунты, у которых ``flood_wait_until`` ещё в будущем.
+        """
         await self._database.execute_write(
             "UPDATE accounts SET flood_wait_until = ? WHERE phone = ?",
             (until.isoformat() if until else None, phone),
         )
 
     async def update_account_premium(self, phone: str, is_premium: bool) -> None:
+        """Обновить флаг Telegram Premium у аккаунта (нужен для premium-only операций)."""
         await self._database.execute_write(
             "UPDATE accounts SET is_premium = ? WHERE phone = ?",
             (int(is_premium), phone),
@@ -359,6 +413,12 @@ class AccountsRepository:
         )
 
     async def set_account_active(self, account_id: int, active: bool) -> None:
+        """Включить/выключить аккаунт, поддерживая инвариант single-primary (#733).
+
+        При активации — назначает primary, если ни одного нет. При деактивации
+        текущего primary — снимает флаг и продвигает на роль primary самый ранний
+        оставшийся активный аккаунт (если активных не осталось, primary временно нет).
+        """
         assert self._database is not None, (
             "AccountsRepository.set_account_active requires a Database reference"
         )
@@ -411,6 +471,7 @@ class AccountsRepository:
         return True
 
     async def delete_account(self, account_id: int) -> None:
+        """Удалить аккаунт; если удалён был primary — продвинуть на его роль самый ранний оставшийся (#733)."""
         assert self._database is not None, (
             "AccountsRepository.delete_account requires a Database reference"
         )

@@ -14,6 +14,15 @@ if TYPE_CHECKING:
 
 
 class ChannelRatingsRepository:
+    """Двухосевые вердикты о каналах (полезность × жанр), один на канал (#966).
+
+    Хранит результат [`ChannelRating`][src.models.ChannelRating]: машинная
+    классификация (useful/genre/confidence/reason + emoji-trash) плюс
+    человеческий сигнал `flag_count`. Запись — upsert по `channel_id`, при этом
+    `flag_count` намеренно НЕ затирается машинной переклассификацией (она строит
+    строку с flag_count=0) — ручной аудит важнее.
+    """
+
     def __init__(self, db: aiosqlite.Connection, *, database: "Database | None" = None):
         self._db = db
         self._database = database
@@ -39,6 +48,11 @@ class ChannelRatingsRepository:
         )
 
     async def upsert(self, rating: ChannelRating) -> None:
+        """Сохранить/обновить вердикт по каналу (по `channel_id`).
+
+        `flag_count` сохраняется из существующей строки, а не из переданного
+        рейтинга — машинная переклассификация не должна сбрасывать ручные флаги.
+        """
         now = (rating.updated_at or datetime.now(tz=timezone.utc)).isoformat()
         await self._database.execute_write(
             "INSERT INTO channel_ratings "
@@ -70,6 +84,7 @@ class ChannelRatingsRepository:
         )
 
     async def get(self, channel_id: int) -> ChannelRating | None:
+        """Вердикт по каналу, либо None если канал ещё не классифицирован."""
         cur = await self._db.execute(
             "SELECT * FROM channel_ratings WHERE channel_id = ?", (channel_id,)
         )
@@ -84,6 +99,7 @@ class ChannelRatingsRepository:
         limit: int = 100,
         offset: int = 0,
     ) -> list[ChannelRating]:
+        """Список вердиктов с опциональным фильтром по useful/genre, по убыванию confidence."""
         where: list[str] = []
         params: list[object] = []
         if useful is not None:
@@ -102,6 +118,7 @@ class ChannelRatingsRepository:
         return [self._to_rating(r) for r in await cur.fetchall()]
 
     async def count(self) -> int:
+        """Сколько каналов уже имеют вердикт."""
         cur = await self._db.execute("SELECT COUNT(*) AS c FROM channel_ratings")
         row = await cur.fetchone()
         return row["c"] if row else 0

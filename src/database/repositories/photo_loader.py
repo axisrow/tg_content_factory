@@ -1,3 +1,13 @@
+"""Репозиторий загрузчика фото: ручные батчи и авто-загрузка из папки.
+
+Доступ через `db.repos.photo_loader`. Обслуживает три таблицы:
+`photo_batches` (батч — общая цель/режим отправки), `photo_batch_items`
+(конкретные отправки с расписанием и статусом) и `photo_auto_upload_jobs`
+(периодическая авто-отправка новых файлов из папки, с леджером уже отправленных
+в `photo_auto_upload_files`). Захват готового item на отправку — атомарный
+(UPDATE…RETURNING), чтобы две корутины не отправили одно фото дважды.
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -25,6 +35,8 @@ if TYPE_CHECKING:
 
 
 class PhotoLoaderRepository:
+    """CRUD фото-батчей, их элементов и заданий авто-загрузки из папки."""
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -91,6 +103,7 @@ class PhotoLoaderRepository:
         )
 
     async def create_batch(self, batch: PhotoBatch) -> int:
+        """Создать фото-батч (общая цель/режим отправки); вернуть его id."""
         cur = await self._database.execute_write(
             """
             INSERT INTO photo_batches (
@@ -119,6 +132,7 @@ class PhotoLoaderRepository:
         error: str | None = None,
         last_run_at: datetime | None = None,
     ) -> None:
+        """Частично обновить батч (статус/ошибку/время запуска); ни одного поля — no-op."""
         sets: list[str] = []
         params: list[object] = []
         if status is not None:
@@ -139,11 +153,13 @@ class PhotoLoaderRepository:
         )
 
     async def get_batch(self, batch_id: int) -> PhotoBatch | None:
+        """Один батч по id, либо ``None``."""
         cur = await self._db.execute("SELECT * FROM photo_batches WHERE id = ?", (batch_id,))
         row = await cur.fetchone()
         return self._to_batch(row) if row else None
 
     async def list_batches(self, limit: int = 50) -> list[PhotoBatch]:
+        """Последние ``limit`` батчей, новые первыми."""
         cur = await self._db.execute(
             "SELECT * FROM photo_batches ORDER BY id DESC LIMIT ?",
             (limit,),
@@ -151,6 +167,7 @@ class PhotoLoaderRepository:
         return [self._to_batch(row) for row in await cur.fetchall()]
 
     async def create_item(self, item: PhotoBatchItem) -> int:
+        """Создать элемент батча (одна отправка с файлами и опциональным расписанием); вернуть id."""
         cur = await self._database.execute_write(
             """
             INSERT INTO photo_batch_items (
@@ -176,11 +193,13 @@ class PhotoLoaderRepository:
         return cur.lastrowid or 0
 
     async def get_item(self, item_id: int) -> PhotoBatchItem | None:
+        """Один элемент батча по id, либо ``None``."""
         cur = await self._db.execute("SELECT * FROM photo_batch_items WHERE id = ?", (item_id,))
         row = await cur.fetchone()
         return self._to_item(row) if row else None
 
     async def list_items(self, limit: int = 100) -> list[PhotoBatchItem]:
+        """Последние ``limit`` элементов по всем батчам, новые первыми."""
         cur = await self._db.execute(
             "SELECT * FROM photo_batch_items ORDER BY id DESC LIMIT ?",
             (limit,),
@@ -188,6 +207,7 @@ class PhotoLoaderRepository:
         return [self._to_item(row) for row in await cur.fetchall()]
 
     async def list_items_for_batch(self, batch_id: int, limit: int | None = None) -> list[PhotoBatchItem]:
+        """Элементы одного батча по возрастанию id (порядок отправки); ``limit`` ограничивает выборку."""
         sql = "SELECT * FROM photo_batch_items WHERE batch_id = ? ORDER BY id ASC"
         params: tuple[object, ...] = (batch_id,)
         if limit is not None:
@@ -206,6 +226,7 @@ class PhotoLoaderRepository:
         started_at: datetime | None = None,
         completed_at: datetime | None = None,
     ) -> None:
+        """Частично обновить элемент батча (статус, ошибка, id отправленных сообщений, тайминги); пусто — no-op."""
         sets: list[str] = []
         params: list[object] = []
         if status is not None:
@@ -232,6 +253,7 @@ class PhotoLoaderRepository:
         )
 
     async def cancel_item(self, item_id: int) -> bool:
+        """Отменить ещё не завершённый элемент (pending/scheduled/running); вернуть ``True``, если отменили."""
         cur = await self._database.execute_write(
             """
             UPDATE photo_batch_items
@@ -299,6 +321,7 @@ class PhotoLoaderRepository:
         return self._to_item(claimed) if claimed else None
 
     async def requeue_running_items_on_startup(self, now: datetime) -> int:
+        """На старте вернуть зависшие RUNNING-элементы в PENDING (авто-восстановление после сбоя); вернуть число."""
         cur = await self._database.execute_write(
             """
             UPDATE photo_batch_items
@@ -314,6 +337,7 @@ class PhotoLoaderRepository:
         return cur.rowcount or 0
 
     async def create_auto_job(self, job: PhotoAutoUploadJob) -> int:
+        """Создать задание авто-загрузки новых файлов из папки по интервалу; вернуть id."""
         cur = await self._database.execute_write(
             """
             INSERT INTO photo_auto_upload_jobs (
@@ -352,6 +376,7 @@ class PhotoLoaderRepository:
         last_run_at: datetime | None = None,
         last_seen_marker: str | None = None,
     ) -> None:
+        """Частично обновить задание авто-загрузки (папка, режим, интервал, активность, маркер…); пусто — no-op."""
         sets: list[str] = []
         params: list[object] = []
         if folder_path is not None:
@@ -387,11 +412,13 @@ class PhotoLoaderRepository:
         )
 
     async def get_auto_job(self, job_id: int) -> PhotoAutoUploadJob | None:
+        """Одно задание авто-загрузки по id, либо ``None``."""
         cur = await self._db.execute("SELECT * FROM photo_auto_upload_jobs WHERE id = ?", (job_id,))
         row = await cur.fetchone()
         return self._to_auto_job(row) if row else None
 
     async def list_auto_jobs(self, active_only: bool = False) -> list[PhotoAutoUploadJob]:
+        """Задания авто-загрузки, новые первыми; с ``active_only`` — только активные."""
         sql = "SELECT * FROM photo_auto_upload_jobs"
         params: tuple[object, ...] = ()
         if active_only:
@@ -401,14 +428,22 @@ class PhotoLoaderRepository:
         return [self._to_auto_job(row) for row in await cur.fetchall()]
 
     async def delete_auto_job(self, job_id: int) -> None:
+        """Удалить задание авто-загрузки вместе с его леджером отправленных файлов (одной транзакцией).
+
+        Леджер `photo_auto_upload_files` ссылается на задание внешним ключом без
+        ON DELETE CASCADE, а соединение работает с `PRAGMA foreign_keys=ON` —
+        поэтому child-строки удаляются ПЕРВЫМИ, иначе DELETE родителя падает с
+        «FOREIGN KEY constraint failed» (#1134).
+        """
         assert self._database is not None, (
             "PhotoLoaderRepository.delete_auto_job requires a Database reference"
         )
         async with self._database.transaction() as conn:
-            await conn.execute("DELETE FROM photo_auto_upload_jobs WHERE id = ?", (job_id,))
             await conn.execute("DELETE FROM photo_auto_upload_files WHERE job_id = ?", (job_id,))
+            await conn.execute("DELETE FROM photo_auto_upload_jobs WHERE id = ?", (job_id,))
 
     async def has_sent_auto_file(self, job_id: int, file_path: str) -> bool:
+        """Был ли файл уже отправлен этим заданием (проверка леджера перед отправкой)."""
         cur = await self._db.execute(
             "SELECT 1 FROM photo_auto_upload_files WHERE job_id = ? AND file_path = ?",
             (job_id, file_path),
@@ -416,6 +451,7 @@ class PhotoLoaderRepository:
         return bool(await cur.fetchone())
 
     async def mark_auto_file_sent(self, job_id: int, file_path: str) -> None:
+        """Отметить файл отправленным в леджере задания (идемпотентно, INSERT OR IGNORE)."""
         await self._database.execute_write(
             """
             INSERT OR IGNORE INTO photo_auto_upload_files (job_id, file_path, sent_at)
