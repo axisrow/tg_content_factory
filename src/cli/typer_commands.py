@@ -59,6 +59,7 @@ except ImportError:  # pragma: no cover - defensive fallback
     _NO_ARGS_HELP_EXCEPTIONS = (click.exceptions.NoArgsIsHelpError,)
 
 from src.cli.commands import account as account_cmd
+from src.cli.commands import agent as agent_cmd
 from src.cli.commands import collect as collect_cmd
 from src.cli.commands import debug as debug_cmd
 from src.cli.commands import export as export_cmd
@@ -116,7 +117,7 @@ MIGRATED_COMMANDS: frozenset[str] = frozenset(
         # Wave 2 (#1122) — flat simple groups
         "debug", "export", "translate", "image", "provider", "notification",
         # Wave 3 (#1123) — medium groups
-        "search-query", "filter", "settings", "scheduler", "account",
+        "search-query", "filter", "settings", "scheduler", "account", "agent",
     }
 )
 
@@ -1366,6 +1367,123 @@ def account_import(
 
 
 # --------------------------------------------------------------------------- #
+# agent → threads / thread-create / thread-delete / chat / thread-rename /
+#         thread-stop / messages / context / test-escaping / test-tools
+# --------------------------------------------------------------------------- #
+
+agent_app = typer.Typer(no_args_is_help=True, help="Agent chat management")
+app.add_typer(agent_app, name="agent")
+
+
+@agent_app.command("threads")
+def agent_threads(ctx: typer.Context) -> None:
+    """List agent threads."""
+    apply_startup(ctx)
+    run_async(agent_cmd.threads_impl(ctx.obj.config))
+
+
+@agent_app.command("thread-create")
+def agent_thread_create(
+    ctx: typer.Context,
+    title: str | None = typer.Option(None, "--title", help="Thread title"),
+) -> None:
+    """Create new thread."""
+    apply_startup(ctx)
+    run_async(agent_cmd.thread_create_impl(ctx.obj.config, title=title))
+
+
+@agent_app.command("thread-delete")
+def agent_thread_delete(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., help="Thread ID"),
+) -> None:
+    """Delete thread."""
+    apply_startup(ctx)
+    run_async(agent_cmd.thread_delete_impl(ctx.obj.config, thread_id=thread_id))
+
+
+@agent_app.command("chat")
+def agent_chat(
+    ctx: typer.Context,
+    prompt: str | None = typer.Option(
+        None, "-p", "--prompt", help="Message text (non-interactive mode)"
+    ),
+    thread_id: int | None = typer.Option(None, "--thread-id"),
+    model: str | None = typer.Option(None, "--model", help="Model name"),
+) -> None:
+    """Interactive TUI chat or one-shot message (with -p)."""
+    apply_startup(ctx)
+    run_async(agent_cmd.chat_impl(ctx.obj.config, prompt=prompt, thread_id=thread_id, model=model))
+
+
+@agent_app.command("thread-rename")
+def agent_thread_rename(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., help="Thread ID"),
+    title: str = typer.Argument(..., help="New title"),
+) -> None:
+    """Rename thread."""
+    apply_startup(ctx)
+    run_async(agent_cmd.thread_rename_impl(ctx.obj.config, thread_id=thread_id, title=title))
+
+
+@agent_app.command("thread-stop")
+def agent_thread_stop(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., help="Thread ID"),
+) -> None:
+    """Stop/cancel an ongoing agent response for a thread."""
+    apply_startup(ctx)
+    run_async(agent_cmd.thread_stop_impl(ctx.obj.config, thread_id=thread_id))
+
+
+@agent_app.command("messages")
+def agent_messages(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., help="Thread ID"),
+    limit: int | None = typer.Option(None, "--limit", help="Last N messages"),
+) -> None:
+    """Show thread messages."""
+    apply_startup(ctx)
+    run_async(agent_cmd.messages_impl(ctx.obj.config, thread_id=thread_id, limit=limit))
+
+
+@agent_app.command("context")
+def agent_context(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., help="Thread ID"),
+    channel_id: int = typer.Option(..., "--channel-id"),
+    limit: int = typer.Option(100000, "--limit", help="Max messages"),
+    topic_id: int | None = typer.Option(None, "--topic-id"),
+) -> None:
+    """Inject channel context into thread."""
+    apply_startup(ctx)
+    run_async(
+        agent_cmd.context_impl(
+            ctx.obj.config,
+            thread_id=thread_id,
+            channel_id=channel_id,
+            limit=limit,
+            topic_id=topic_id,
+        )
+    )
+
+
+@agent_app.command("test-escaping")
+def agent_test_escaping(ctx: typer.Context) -> None:
+    """Test agent with special characters."""
+    apply_startup(ctx)
+    run_async(agent_cmd.test_escaping_impl(ctx.obj.config))
+
+
+@agent_app.command("test-tools")
+def agent_test_tools(ctx: typer.Context) -> None:
+    """Test that agent tool calls produce tool_start/tool_end events."""
+    apply_startup(ctx)
+    run_async(agent_cmd.test_tools_impl(ctx.obj.config))
+
+
+# --------------------------------------------------------------------------- #
 # argparse → Typer delegation
 # --------------------------------------------------------------------------- #
 
@@ -1456,6 +1574,9 @@ def _argv_from_namespace(args: argparse.Namespace) -> list[str]:
     elif command == "account":
         argv.append("account")
         argv += _account_argv(args)
+    elif command == "agent":
+        argv.append("agent")
+        argv += _agent_argv(args)
     return argv
 
 
@@ -1585,6 +1706,46 @@ def _notification_argv(args: argparse.Namespace) -> list[str]:
             tail += ["--message", args.message]
     elif action == "set-account":
         tail += ["--phone", args.phone]
+    return tail
+
+
+def _agent_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``agent`` — the action plus its flags / positionals.
+
+    Positionals (thread ids, the rename title) and the free-text chat ``--prompt``
+    go after ``--`` so values that look option-like survive Click's parser.
+    """
+    action = getattr(args, "agent_action", None)
+    if action is None:
+        return []
+    tail = [action]
+    if action == "thread-create":
+        if getattr(args, "title", None):
+            tail += ["--title", args.title]
+    elif action in ("thread-delete", "thread-stop"):
+        tail += ["--", str(args.thread_id)]
+    elif action == "chat":
+        if getattr(args, "thread_id", None) is not None:
+            tail += ["--thread-id", str(args.thread_id)]
+        if getattr(args, "model", None):
+            tail += ["--model", args.model]
+        if getattr(args, "prompt", None) is not None:
+            # ``--prompt=<text>`` (attached form) so a value with a leading ``-``
+            # is not mistaken for another option by Click.
+            tail.append(f"--prompt={args.prompt}")
+    elif action == "thread-rename":
+        tail += ["--", str(args.thread_id), args.title]
+    elif action == "messages":
+        if getattr(args, "limit", None) is not None:
+            tail += ["--limit", str(args.limit)]
+        tail += ["--", str(args.thread_id)]
+    elif action == "context":
+        tail += ["--channel-id", str(args.channel_id)]
+        if getattr(args, "limit", 100000) != 100000:
+            tail += ["--limit", str(args.limit)]
+        if getattr(args, "topic_id", None) is not None:
+            tail += ["--topic-id", str(args.topic_id)]
+        tail += ["--", str(args.thread_id)]
     return tail
 
 
