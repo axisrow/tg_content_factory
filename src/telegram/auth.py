@@ -37,6 +37,26 @@ AUTH_RPC_TIMEOUT_SECONDS = 60
 _T = TypeVar("_T")
 
 
+def validate_session_string(session_string: str) -> bool:
+    """Return True iff ``session_string`` is a structurally usable Telegram StringSession.
+
+    A usable session must parse AND carry the four fields a live client needs:
+    ``auth_key``, ``server_address``, ``port`` and ``dc_id`` (mirrors the check in
+    :meth:`SessionMaterializer.materialize`). This lives in the telegram layer on
+    purpose: the CLI / web / agent entrypoints are forbidden from importing
+    ``telethon`` directly (import-linter), so they call this helper instead.
+
+    The value is a secret (full account access) — never log it here.
+    """
+    if not session_string:
+        return False
+    try:
+        source = StringSession(session_string)
+    except Exception:  # noqa: BLE001 - malformed input must never raise, just fail validation
+        return False
+    return bool(source.auth_key and source.server_address and source.port and source.dc_id)
+
+
 class TelegramAuthTimeoutError(TimeoutError):
     """Raised when a Telegram auth operation exceeds its explicit timeout."""
 

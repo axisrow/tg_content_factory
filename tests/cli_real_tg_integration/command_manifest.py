@@ -152,7 +152,15 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ),
     ("account", "add"): "manual account onboarding/session import",
     ("account", "delete"): "dangerous live account deletion; intentionally blocked from live testing",
+    ("account", "export-session"): (
+        "exports a decrypted StringSession (full account access); DB+crypto only, no live "
+        "Telegram, covered by unit tests — kept out of live suite as a secret-handling op (#828)"
+    ),
     ("account", "flood-clear"): "local flood state mutation",
+    ("account", "import"): (
+        "imports an account from a ready StringSession (full account access); DB+crypto only, "
+        "no live Telegram, covered by unit tests — secret-handling op kept out of live suite (#828)"
+    ),
     ("account", "send-code"): "Telegram auth flow",
     ("account", "set-primary"): "local account state mutation",
     ("account", "toggle"): "local account state mutation",
