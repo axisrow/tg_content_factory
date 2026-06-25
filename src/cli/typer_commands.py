@@ -3152,6 +3152,294 @@ def _append_opt(tail: list[str], flag: str, values) -> None:
         tail += [flag, str(value)]
 
 
+def _pa_show_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    # single positional id / run_id
+    ident = getattr(args, "run_id", None)
+    if ident is None:
+        ident = args.id
+    tail += ["--", str(ident)]
+    return tail
+
+
+def _pa_list_argv(args: argparse.Namespace) -> list[str]:
+    return []
+
+
+def _pa_add_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "prompt_template", None):
+        tail += ["--prompt-template", args.prompt_template]
+    if getattr(args, "json_file", None):
+        tail += ["--json-file", args.json_file]
+    _append_opt(tail, "--source", getattr(args, "source", None))
+    _append_opt(tail, "--target", getattr(args, "target", None))
+    if getattr(args, "llm_model", None):
+        tail += ["--llm-model", args.llm_model]
+    if getattr(args, "image_model", None):
+        tail += ["--image-model", args.image_model]
+    if getattr(args, "publish_mode", "moderated") != "moderated":
+        tail += ["--publish-mode", args.publish_mode]
+    if getattr(args, "generation_backend", "chain") != "chain":
+        tail += ["--generation-backend", args.generation_backend]
+    if getattr(args, "interval", 60) != 60:
+        tail += ["--interval", str(args.interval)]
+    if getattr(args, "inactive", False):
+        tail.append("--inactive")
+    if (getattr(args, "ab_variants", 1) or 1) != 1:
+        tail += ["--ab-variants", str(args.ab_variants)]
+    if getattr(args, "ab_auto_select", False):
+        tail.append("--ab-auto-select")
+    _append_opt(tail, "--node", getattr(args, "node_specs", None))
+    _append_opt(tail, "--edge", getattr(args, "edge", None))
+    _append_opt(tail, "--node-config", getattr(args, "node_configs", None))
+    if getattr(args, "run_after", False):
+        tail.append("--run-after")
+    if getattr(args, "since_value", 24) != 24:
+        tail += ["--since-value", str(args.since_value)]
+    if getattr(args, "since_unit", "h") != "h":
+        tail += ["--since-unit", args.since_unit]
+    tail += ["--", args.name]
+    return tail
+
+
+def _pa_dry_run_count_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    _append_opt(tail, "--source", getattr(args, "source", None))
+    if getattr(args, "since_value", 24) != 24:
+        tail += ["--since-value", str(args.since_value)]
+    if getattr(args, "since_unit", "h") != "h":
+        tail += ["--since-unit", args.since_unit]
+    return tail
+
+
+def _pa_edit_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "name", None):
+        tail += ["--name", args.name]
+    if getattr(args, "prompt_template", None):
+        tail += ["--prompt-template", args.prompt_template]
+    _append_opt(tail, "--source", getattr(args, "source", None))
+    _append_opt(tail, "--target", getattr(args, "target", None))
+    if getattr(args, "llm_model", None) is not None:
+        tail += ["--llm-model", args.llm_model]
+    if getattr(args, "image_model", None) is not None:
+        tail += ["--image-model", args.image_model]
+    if getattr(args, "publish_mode", None):
+        tail += ["--publish-mode", args.publish_mode]
+    if getattr(args, "generation_backend", None):
+        tail += ["--generation-backend", args.generation_backend]
+    if getattr(args, "interval", None) is not None:
+        tail += ["--interval", str(args.interval)]
+    active = getattr(args, "active", None)
+    if active is True:
+        tail.append("--active")
+    elif active is False:
+        tail.append("--inactive")
+    if getattr(args, "ab_variants", None) is not None:
+        tail += ["--ab-variants", str(args.ab_variants)]
+    ab_auto = getattr(args, "ab_auto_select", None)
+    if ab_auto is True:
+        tail.append("--ab-auto-select")
+    elif ab_auto is False:
+        tail.append("--no-ab-auto-select")
+    tail += ["--", str(args.id)]
+    return tail
+
+
+def _pa_run_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "preview", False):
+        tail.append("--preview")
+    if getattr(args, "publish", False):
+        tail.append("--publish")
+    if getattr(args, "limit", 8) != 8:
+        tail += ["--limit", str(args.limit)]
+    if getattr(args, "max_tokens", 256) != 256:
+        tail += ["--max-tokens", str(args.max_tokens)]
+    if getattr(args, "temperature", 0.0) != 0.0:
+        tail += ["--temperature", str(args.temperature)]
+    tail += ["--", str(args.id)]
+    return tail
+
+
+def _pa_generate_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "max_tokens", 512) != 512:
+        tail += ["--max-tokens", str(args.max_tokens)]
+    if getattr(args, "temperature", 0.7) != 0.7:
+        tail += ["--temperature", str(args.temperature)]
+    if getattr(args, "model", None):
+        tail += ["--model", args.model]
+    if getattr(args, "preview", False):
+        tail.append("--preview")
+    if getattr(args, "ab_variants", None) is not None:
+        tail += ["--ab-variants", str(args.ab_variants)]
+    if getattr(args, "auto_select", False):
+        tail.append("--auto-select")
+    tail += ["--", str(args.id)]
+    return tail
+
+
+def _pa_generate_stream_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "model", None):
+        tail += ["--model", args.model]
+    if getattr(args, "max_tokens", 256) != 256:
+        tail += ["--max-tokens", str(args.max_tokens)]
+    if getattr(args, "temperature", 0.0) != 0.0:
+        tail += ["--temperature", str(args.temperature)]
+    if getattr(args, "limit", 8) != 8:
+        tail += ["--limit", str(args.limit)]
+    tail += ["--", str(args.id)]
+    return tail
+
+
+def _pa_runs_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "limit", 20) != 20:
+        tail += ["--limit", str(args.limit)]
+    if getattr(args, "status", None):
+        tail += ["--status", args.status]
+    tail += ["--", str(args.id)]
+    return tail
+
+
+def _pa_select_variant_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    tail += ["--", str(args.run_id), str(args.index)]
+    return tail
+
+
+def _pa_queue_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "limit", 20) != 20:
+        tail += ["--limit", str(args.limit)]
+    tail += ["--", str(args.id)]
+    return tail
+
+
+def _pa_moderation_list_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "pipeline_id", None) is not None:
+        tail += ["--pipeline-id", str(args.pipeline_id)]
+    if getattr(args, "limit", 20) != 20:
+        tail += ["--limit", str(args.limit)]
+    return tail
+
+
+def _pa_bulk_approve_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    tail += ["--", *(str(r) for r in args.run_ids)]
+    return tail
+
+
+def _pa_refinement_steps_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "steps_json", None):
+        tail += ["--set", args.steps_json]
+    tail += ["--", str(args.id)]
+    return tail
+
+
+def _pa_export_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "output", None):
+        tail += ["--output", args.output]
+    if getattr(args, "force", False):
+        tail.append("--force")
+    tail += ["--", str(args.id)]
+    return tail
+
+
+def _pa_import_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "name", None):
+        tail += ["--name", args.name]
+    tail += ["--", args.file]
+    return tail
+
+
+def _pa_templates_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "category", None):
+        tail += ["--category", args.category]
+    return tail
+
+
+def _pa_from_template_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "source_ids", ""):
+        tail += ["--source-ids", args.source_ids]
+    if getattr(args, "target_refs", ""):
+        tail += ["--target-refs", args.target_refs]
+    tail += ["--", str(args.template_id), args.name]
+    return tail
+
+
+def _pa_ai_edit_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "show", False):
+        tail.append("--show")
+    tail += ["--", str(args.id), args.instruction]
+    return tail
+
+
+def _pa_filter_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    tail += _pipeline_filter_argv(args)
+    return tail
+
+
+def _pa_node_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    tail += _pipeline_node_argv(args)
+    return tail
+
+
+def _pa_edge_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    tail += _pipeline_edge_argv(args)
+    return tail
+
+
+_PIPELINE_ARGV_BUILDERS = {
+    "show": _pa_show_argv,
+    "delete": _pa_show_argv,
+    "toggle": _pa_show_argv,
+    "run-show": _pa_show_argv,
+    "variants": _pa_show_argv,
+    "auto-select": _pa_show_argv,
+    "moderation-view": _pa_show_argv,
+    "publish": _pa_show_argv,
+    "approve": _pa_show_argv,
+    "reject": _pa_show_argv,
+    "graph": _pa_show_argv,
+    "list": _pa_list_argv,
+    "add": _pa_add_argv,
+    "dry-run-count": _pa_dry_run_count_argv,
+    "edit": _pa_edit_argv,
+    "run": _pa_run_argv,
+    "generate": _pa_generate_argv,
+    "generate-stream": _pa_generate_stream_argv,
+    "runs": _pa_runs_argv,
+    "select-variant": _pa_select_variant_argv,
+    "queue": _pa_queue_argv,
+    "moderation-list": _pa_moderation_list_argv,
+    "bulk-approve": _pa_bulk_approve_argv,
+    "bulk-reject": _pa_bulk_approve_argv,
+    "refinement-steps": _pa_refinement_steps_argv,
+    "export": _pa_export_argv,
+    "import": _pa_import_argv,
+    "templates": _pa_templates_argv,
+    "from-template": _pa_from_template_argv,
+    "ai-edit": _pa_ai_edit_argv,
+    "filter": _pa_filter_argv,
+    "node": _pa_node_argv,
+    "edge": _pa_edge_argv,
+}
+
+
 def _pipeline_argv(args: argparse.Namespace) -> list[str]:
     """argv tail for ``pipeline`` — the action plus its flags / positionals.
 
@@ -3166,176 +3454,12 @@ def _pipeline_argv(args: argparse.Namespace) -> list[str]:
     if action is None:
         return []
     tail = [action]
-
-    if action in (
-        "show", "delete", "toggle", "run-show", "variants", "auto-select",
-        "moderation-view", "publish", "approve", "reject", "graph",
-    ):
-        # single positional id / run_id
-        ident = getattr(args, "run_id", None)
-        if ident is None:
-            ident = args.id
-        tail += ["--", str(ident)]
-    elif action == "list":
-        pass
-    elif action == "add":
-        if getattr(args, "prompt_template", None):
-            tail += ["--prompt-template", args.prompt_template]
-        if getattr(args, "json_file", None):
-            tail += ["--json-file", args.json_file]
-        _append_opt(tail, "--source", getattr(args, "source", None))
-        _append_opt(tail, "--target", getattr(args, "target", None))
-        if getattr(args, "llm_model", None):
-            tail += ["--llm-model", args.llm_model]
-        if getattr(args, "image_model", None):
-            tail += ["--image-model", args.image_model]
-        if getattr(args, "publish_mode", "moderated") != "moderated":
-            tail += ["--publish-mode", args.publish_mode]
-        if getattr(args, "generation_backend", "chain") != "chain":
-            tail += ["--generation-backend", args.generation_backend]
-        if getattr(args, "interval", 60) != 60:
-            tail += ["--interval", str(args.interval)]
-        if getattr(args, "inactive", False):
-            tail.append("--inactive")
-        if (getattr(args, "ab_variants", 1) or 1) != 1:
-            tail += ["--ab-variants", str(args.ab_variants)]
-        if getattr(args, "ab_auto_select", False):
-            tail.append("--ab-auto-select")
-        _append_opt(tail, "--node", getattr(args, "node_specs", None))
-        _append_opt(tail, "--edge", getattr(args, "edge", None))
-        _append_opt(tail, "--node-config", getattr(args, "node_configs", None))
-        if getattr(args, "run_after", False):
-            tail.append("--run-after")
-        if getattr(args, "since_value", 24) != 24:
-            tail += ["--since-value", str(args.since_value)]
-        if getattr(args, "since_unit", "h") != "h":
-            tail += ["--since-unit", args.since_unit]
-        tail += ["--", args.name]
-    elif action == "dry-run-count":
-        _append_opt(tail, "--source", getattr(args, "source", None))
-        if getattr(args, "since_value", 24) != 24:
-            tail += ["--since-value", str(args.since_value)]
-        if getattr(args, "since_unit", "h") != "h":
-            tail += ["--since-unit", args.since_unit]
-    elif action == "edit":
-        if getattr(args, "name", None):
-            tail += ["--name", args.name]
-        if getattr(args, "prompt_template", None):
-            tail += ["--prompt-template", args.prompt_template]
-        _append_opt(tail, "--source", getattr(args, "source", None))
-        _append_opt(tail, "--target", getattr(args, "target", None))
-        if getattr(args, "llm_model", None) is not None:
-            tail += ["--llm-model", args.llm_model]
-        if getattr(args, "image_model", None) is not None:
-            tail += ["--image-model", args.image_model]
-        if getattr(args, "publish_mode", None):
-            tail += ["--publish-mode", args.publish_mode]
-        if getattr(args, "generation_backend", None):
-            tail += ["--generation-backend", args.generation_backend]
-        if getattr(args, "interval", None) is not None:
-            tail += ["--interval", str(args.interval)]
-        active = getattr(args, "active", None)
-        if active is True:
-            tail.append("--active")
-        elif active is False:
-            tail.append("--inactive")
-        if getattr(args, "ab_variants", None) is not None:
-            tail += ["--ab-variants", str(args.ab_variants)]
-        ab_auto = getattr(args, "ab_auto_select", None)
-        if ab_auto is True:
-            tail.append("--ab-auto-select")
-        elif ab_auto is False:
-            tail.append("--no-ab-auto-select")
-        tail += ["--", str(args.id)]
-    elif action == "run":
-        if getattr(args, "preview", False):
-            tail.append("--preview")
-        if getattr(args, "publish", False):
-            tail.append("--publish")
-        if getattr(args, "limit", 8) != 8:
-            tail += ["--limit", str(args.limit)]
-        if getattr(args, "max_tokens", 256) != 256:
-            tail += ["--max-tokens", str(args.max_tokens)]
-        if getattr(args, "temperature", 0.0) != 0.0:
-            tail += ["--temperature", str(args.temperature)]
-        tail += ["--", str(args.id)]
-    elif action == "generate":
-        if getattr(args, "max_tokens", 512) != 512:
-            tail += ["--max-tokens", str(args.max_tokens)]
-        if getattr(args, "temperature", 0.7) != 0.7:
-            tail += ["--temperature", str(args.temperature)]
-        if getattr(args, "model", None):
-            tail += ["--model", args.model]
-        if getattr(args, "preview", False):
-            tail.append("--preview")
-        if getattr(args, "ab_variants", None) is not None:
-            tail += ["--ab-variants", str(args.ab_variants)]
-        if getattr(args, "auto_select", False):
-            tail.append("--auto-select")
-        tail += ["--", str(args.id)]
-    elif action == "generate-stream":
-        if getattr(args, "model", None):
-            tail += ["--model", args.model]
-        if getattr(args, "max_tokens", 256) != 256:
-            tail += ["--max-tokens", str(args.max_tokens)]
-        if getattr(args, "temperature", 0.0) != 0.0:
-            tail += ["--temperature", str(args.temperature)]
-        if getattr(args, "limit", 8) != 8:
-            tail += ["--limit", str(args.limit)]
-        tail += ["--", str(args.id)]
-    elif action == "runs":
-        if getattr(args, "limit", 20) != 20:
-            tail += ["--limit", str(args.limit)]
-        if getattr(args, "status", None):
-            tail += ["--status", args.status]
-        tail += ["--", str(args.id)]
-    elif action == "select-variant":
-        tail += ["--", str(args.run_id), str(args.index)]
-    elif action == "queue":
-        if getattr(args, "limit", 20) != 20:
-            tail += ["--limit", str(args.limit)]
-        tail += ["--", str(args.id)]
-    elif action == "moderation-list":
-        if getattr(args, "pipeline_id", None) is not None:
-            tail += ["--pipeline-id", str(args.pipeline_id)]
-        if getattr(args, "limit", 20) != 20:
-            tail += ["--limit", str(args.limit)]
-    elif action in ("bulk-approve", "bulk-reject"):
-        tail += ["--", *(str(r) for r in args.run_ids)]
-    elif action == "refinement-steps":
-        if getattr(args, "steps_json", None):
-            tail += ["--set", args.steps_json]
-        tail += ["--", str(args.id)]
-    elif action == "export":
-        if getattr(args, "output", None):
-            tail += ["--output", args.output]
-        if getattr(args, "force", False):
-            tail.append("--force")
-        tail += ["--", str(args.id)]
-    elif action == "import":
-        if getattr(args, "name", None):
-            tail += ["--name", args.name]
-        tail += ["--", args.file]
-    elif action == "templates":
-        if getattr(args, "category", None):
-            tail += ["--category", args.category]
-    elif action == "from-template":
-        if getattr(args, "source_ids", ""):
-            tail += ["--source-ids", args.source_ids]
-        if getattr(args, "target_refs", ""):
-            tail += ["--target-refs", args.target_refs]
-        tail += ["--", str(args.template_id), args.name]
-    elif action == "ai-edit":
-        if getattr(args, "show", False):
-            tail.append("--show")
-        tail += ["--", str(args.id), args.instruction]
-    elif action == "filter":
-        tail += _pipeline_filter_argv(args)
-    elif action == "node":
-        tail += _pipeline_node_argv(args)
-    elif action == "edge":
-        tail += _pipeline_edge_argv(args)
+    builder = _PIPELINE_ARGV_BUILDERS.get(action)
+    if builder is not None:
+        tail += builder(args)
     return tail
+
+
 
 
 def _pipeline_filter_argv(args: argparse.Namespace) -> list[str]:
@@ -3386,6 +3510,286 @@ def _pipeline_edge_argv(args: argparse.Namespace) -> list[str]:
     return tail
 
 
+def _da_list_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    return tail
+
+
+def _da_resolve_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    tail += ["--", args.identifier]
+    return tail
+
+
+def _da_leave_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", *args.dialog_ids]
+    return tail
+
+
+def _da_join_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", args.target]
+    return tail
+
+
+def _da_topics_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    tail += ["--channel-id", str(args.channel_id)]
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    return tail
+
+
+def _da_cache_clear_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    return tail
+
+
+def _da_cache_status_argv(args: argparse.Namespace) -> list[str]:
+    return []
+
+
+def _da_send_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", args.recipient, args.text]
+    return tail
+
+
+def _da_forward_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", args.from_chat, args.to_chat, *args.message_ids]
+    return tail
+
+
+def _da_edit_message_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", args.chat_id, str(args.message_id), args.text]
+    return tail
+
+
+def _da_delete_message_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", args.chat_id, *args.message_ids]
+    return tail
+
+
+def _da_create_channel_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    tail += ["--title", args.title]
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "about", ""):
+        tail += ["--about", args.about]
+    if getattr(args, "username", ""):
+        tail += ["--username", args.username]
+    return tail
+
+
+def _da_create_group_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    tail += ["--title", args.title]
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "about", ""):
+        tail += ["--about", args.about]
+    return tail
+
+
+def _da_pin_message_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "notify", False):
+        tail.append("--notify")
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", args.chat_id, str(args.message_id)]
+    return tail
+
+
+def _da_react_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "clear", False):
+        tail.append("--clear")
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", args.chat_id, str(args.message_id)]
+    if getattr(args, "emoji", None):
+        tail.append(args.emoji)
+    return tail
+
+
+def _da_unpin_message_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "message_id", None) is not None:
+        tail += ["--message-id", str(args.message_id)]
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", args.chat_id]
+    return tail
+
+
+def _da_download_media_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "output_dir", ".") != ".":
+        tail += ["--output-dir", args.output_dir]
+    tail += ["--", args.chat_id, str(args.message_id)]
+    return tail
+
+
+def _da_participants_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "limit", 200) != 200:
+        tail += ["--limit", str(args.limit)]
+    if getattr(args, "search", ""):
+        tail += ["--search", args.search]
+    tail += ["--", args.chat_id]
+    return tail
+
+
+def _da_edit_admin_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "title", None):
+        tail += ["--title", args.title]
+    # tri-state via --is-admin/--no-admin (argparse default True)
+    if not getattr(args, "is_admin", True):
+        tail.append("--no-admin")
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", args.chat_id, args.user_id]
+    return tail
+
+
+def _da_edit_permissions_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "until_date", None):
+        tail += ["--until-date", args.until_date]
+    if getattr(args, "send_messages", None) is not None:
+        tail += ["--send-messages", args.send_messages]
+    if getattr(args, "send_media", None) is not None:
+        tail += ["--send-media", args.send_media]
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", args.chat_id, args.user_id]
+    return tail
+
+
+def _da_kick_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "yes", False):
+        tail.append("--yes")
+    tail += ["--", args.chat_id, args.user_id]
+    return tail
+
+
+def _da_broadcast_stats_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    tail += ["--", args.chat_id]
+    return tail
+
+
+def _da_archive_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    tail += ["--", args.chat_id]
+    return tail
+
+
+def _da_mark_read_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    if getattr(args, "phone", None):
+        tail += ["--phone", args.phone]
+    if getattr(args, "max_id", None) is not None:
+        tail += ["--max-id", str(args.max_id)]
+    tail += ["--", args.chat_id]
+    return tail
+
+
+def _da_queue_argv(args: argparse.Namespace) -> list[str]:
+    tail: list[str] = []
+    tail += _dialogs_queue_argv(args)
+    return tail
+
+
+_DIALOGS_ARGV_BUILDERS = {
+    "list": _da_list_argv,
+    "refresh": _da_list_argv,
+    "resolve": _da_resolve_argv,
+    "leave": _da_leave_argv,
+    "join": _da_join_argv,
+    "topics": _da_topics_argv,
+    "cache-clear": _da_cache_clear_argv,
+    "cache-status": _da_cache_status_argv,
+    "send": _da_send_argv,
+    "forward": _da_forward_argv,
+    "edit-message": _da_edit_message_argv,
+    "delete-message": _da_delete_message_argv,
+    "create-channel": _da_create_channel_argv,
+    "create-group": _da_create_group_argv,
+    "pin-message": _da_pin_message_argv,
+    "react": _da_react_argv,
+    "unpin-message": _da_unpin_message_argv,
+    "download-media": _da_download_media_argv,
+    "participants": _da_participants_argv,
+    "edit-admin": _da_edit_admin_argv,
+    "edit-permissions": _da_edit_permissions_argv,
+    "kick": _da_kick_argv,
+    "broadcast-stats": _da_broadcast_stats_argv,
+    "archive": _da_archive_argv,
+    "unarchive": _da_archive_argv,
+    "mark-read": _da_mark_read_argv,
+    "queue": _da_queue_argv,
+}
+
+
 def _dialogs_argv(args: argparse.Namespace) -> list[str]:
     """argv tail for ``dialogs`` — the action plus its flags / positionals.
 
@@ -3399,159 +3803,12 @@ def _dialogs_argv(args: argparse.Namespace) -> list[str]:
     if action is None:
         return []
     tail = [action]
-
-    if action in ("list", "refresh"):
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-    elif action == "resolve":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        tail += ["--", args.identifier]
-    elif action == "leave":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", *args.dialog_ids]
-    elif action == "join":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", args.target]
-    elif action == "topics":
-        tail += ["--channel-id", str(args.channel_id)]
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-    elif action == "cache-clear":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-    elif action == "cache-status":
-        pass
-    elif action == "send":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", args.recipient, args.text]
-    elif action == "forward":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", args.from_chat, args.to_chat, *args.message_ids]
-    elif action == "edit-message":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", args.chat_id, str(args.message_id), args.text]
-    elif action == "delete-message":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", args.chat_id, *args.message_ids]
-    elif action == "create-channel":
-        tail += ["--title", args.title]
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "about", ""):
-            tail += ["--about", args.about]
-        if getattr(args, "username", ""):
-            tail += ["--username", args.username]
-    elif action == "create-group":
-        tail += ["--title", args.title]
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "about", ""):
-            tail += ["--about", args.about]
-    elif action == "pin-message":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "notify", False):
-            tail.append("--notify")
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", args.chat_id, str(args.message_id)]
-    elif action == "react":
-        if getattr(args, "clear", False):
-            tail.append("--clear")
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", args.chat_id, str(args.message_id)]
-        if getattr(args, "emoji", None):
-            tail.append(args.emoji)
-    elif action == "unpin-message":
-        if getattr(args, "message_id", None) is not None:
-            tail += ["--message-id", str(args.message_id)]
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", args.chat_id]
-    elif action == "download-media":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "output_dir", ".") != ".":
-            tail += ["--output-dir", args.output_dir]
-        tail += ["--", args.chat_id, str(args.message_id)]
-    elif action == "participants":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "limit", 200) != 200:
-            tail += ["--limit", str(args.limit)]
-        if getattr(args, "search", ""):
-            tail += ["--search", args.search]
-        tail += ["--", args.chat_id]
-    elif action == "edit-admin":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "title", None):
-            tail += ["--title", args.title]
-        # tri-state via --is-admin/--no-admin (argparse default True)
-        if not getattr(args, "is_admin", True):
-            tail.append("--no-admin")
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", args.chat_id, args.user_id]
-    elif action == "edit-permissions":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "until_date", None):
-            tail += ["--until-date", args.until_date]
-        if getattr(args, "send_messages", None) is not None:
-            tail += ["--send-messages", args.send_messages]
-        if getattr(args, "send_media", None) is not None:
-            tail += ["--send-media", args.send_media]
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", args.chat_id, args.user_id]
-    elif action == "kick":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "yes", False):
-            tail.append("--yes")
-        tail += ["--", args.chat_id, args.user_id]
-    elif action == "broadcast-stats":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        tail += ["--", args.chat_id]
-    elif action in ("archive", "unarchive"):
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        tail += ["--", args.chat_id]
-    elif action == "mark-read":
-        if getattr(args, "phone", None):
-            tail += ["--phone", args.phone]
-        if getattr(args, "max_id", None) is not None:
-            tail += ["--max-id", str(args.max_id)]
-        tail += ["--", args.chat_id]
-    elif action == "queue":
-        tail += _dialogs_queue_argv(args)
+    builder = _DIALOGS_ARGV_BUILDERS.get(action)
+    if builder is not None:
+        tail += builder(args)
     return tail
+
+
 
 
 def _dialogs_queue_argv(args: argparse.Namespace) -> list[str]:
