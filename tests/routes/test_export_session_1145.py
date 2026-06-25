@@ -89,8 +89,40 @@ async def test_export_session_roundtrip_with_encryption(tmp_path):
         assert row is not None
         assert str(row["session_string"]).startswith("enc:v2:")
 
-        # the exact accessor the endpoint uses returns plaintext
-        decrypted = await db.repos.accounts.get_decrypted_session(account_id=acc.id)
-        assert decrypted == "plain_sess_xyz"
+        # the exact accessor the endpoint uses returns (phone, plaintext)
+        export = await db.repos.accounts.get_session_export(account_id=acc.id)
+        assert export == ("+15550009999", "plain_sess_xyz")
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_get_session_export_binds_phone_and_session_to_one_row(tmp_path):
+    """Regression for the #1145 review HIGH: phone and session must come from the
+    SAME row, never a stale phone paired with a fresh session after delete+reinsert.
+
+    The endpoint previously read identity (summaries) and the session in two
+    separate awaits; if a row is deleted and a different account reinserted onto
+    the reused id between them, the response would mix the old phone with the new
+    session. `get_session_export` reads both from one row, so the pairing is
+    always consistent — or None if the row is gone.
+    """
+    db = Database(str(tmp_path / "consistency.db"))
+    await db.initialize()
+    try:
+        first_id = await db.add_account(Account(phone="+15551110001", session_string="sess_one"))
+
+        # Simulate the hazard: delete the row, reinsert a DIFFERENT account.
+        await db.delete_account(first_id)
+        reused_id = await db.add_account(Account(phone="+15552220002", session_string="sess_two"))
+
+        export = await db.repos.accounts.get_session_export(account_id=reused_id)
+        assert export is not None
+        phone, session = export
+        # phone and session are from the SAME (current) row — never mixed.
+        assert (phone, session) == ("+15552220002", "sess_two")
+
+        # A genuinely absent id yields None (→ 404 at the route), not a stale pairing.
+        assert await db.repos.accounts.get_session_export(account_id=999999) is None
     finally:
         await db.close()

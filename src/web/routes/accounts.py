@@ -186,24 +186,23 @@ async def export_session(request: Request, account_id: int):
     Returns 404 ``{"error": "account_not_found"}`` for an unknown id.
     """
     db = deps.get_db(request)
-    # Resolve identity via summaries (no decrypt) so a broken sibling session
-    # can't abort the lookup (#1143); decrypt only the chosen account.
-    summaries = await db.get_account_summaries(active_only=False)
-    acc = next((a for a in summaries if a.id == account_id), None)
-    if acc is None:
-        return JSONResponse({"error": "account_not_found"}, status_code=404)
-
+    # Read phone + session from a SINGLE row so a concurrent delete+reinsert can't
+    # pair a fresh session with a stale phone (SQLite reuses rowids) — #1145 review.
+    # A broken sibling session still can't abort this (only the target row is read).
     try:
-        session_string = await db.repos.accounts.get_decrypted_session(account_id=account_id)
+        export = await db.repos.accounts.get_session_export(account_id=account_id)
     except AccountSessionDecryptError as exc:
-        # status carries only the failure kind (phone+status), never the secret.
+        # status carries only the failure kind, never the secret.
         return JSONResponse(
             {"error": "session_decrypt_failed", "status": exc.status}, status_code=409
         )
+    if export is None:
+        return JSONResponse({"error": "account_not_found"}, status_code=404)
+    phone, session_string = export
     if not session_string:
         return JSONResponse({"error": "no_session"}, status_code=409)
 
     # Audit the export WITHOUT the value (account_id + actor only) — session_string
     # is a secret and must never be logged.
     logger.info("account.export_session account_id=%s by=web", account_id)
-    return JSONResponse({"phone": acc.phone, "session_string": session_string})
+    return JSONResponse({"phone": phone, "session_string": session_string})
