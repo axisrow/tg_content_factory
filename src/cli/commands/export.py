@@ -21,101 +21,135 @@ def _rfc822(dt: datetime | None) -> str:
     return format_datetime(dt)
 
 
-def run(args: argparse.Namespace) -> None:
-    async def _run() -> None:
-        _, db = await runtime.init_db(args.config)
-        try:
-            if args.export_action == "telegram":
-                await _run_telegram(db, args)
-                return
+async def export_impl(
+    config_path: str,
+    *,
+    fmt: str,
+    channel_id: int | None = None,
+    limit: int = 200,
+    output: str | None = None,
+) -> None:
+    """Export messages from the local DB as ``fmt`` (json/csv/rss)."""
+    _, db = await runtime.init_db(config_path)
+    try:
+        capped_limit = max(1, min(limit, 10000))
 
-            channel_id = getattr(args, "channel_id", None)
-            limit = max(1, min(args.limit, 10000))
+        messages, _ = await db.search_messages(
+            channel_id=channel_id,
+            limit=capped_limit,
+        )
+        if not messages:
+            print("No messages found.", file=sys.stderr)
+            return
 
-            messages, _ = await db.search_messages(
-                channel_id=channel_id,
-                limit=limit,
-            )
-            if not messages:
-                print("No messages found.", file=sys.stderr)
-                return
+        if fmt == "json":
+            content = _export_json(messages)
+        elif fmt == "csv":
+            content = _export_csv(messages)
+        elif fmt == "rss":
+            content = _export_rss(messages)
+        else:
+            print(f"Unknown format: {fmt}", file=sys.stderr)
+            return
 
-            output_file = getattr(args, "output", None)
-            fmt = args.export_action
-
-            if fmt == "json":
-                content = _export_json(messages)
-            elif fmt == "csv":
-                content = _export_csv(messages)
-            elif fmt == "rss":
-                content = _export_rss(messages)
-            else:
-                print(f"Unknown format: {fmt}", file=sys.stderr)
-                return
-
-            if output_file:
-                with open(output_file, "w", encoding="utf-8") as f:
-                    f.write(content)
-                print(f"Exported {len(messages)} messages to {output_file}", file=sys.stderr)
-            else:
-                print(content, end="")
-        finally:
-            await db.close()
-
-    asyncio.run(_run())
+        if output:
+            with open(output, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"Exported {len(messages)} messages to {output}", file=sys.stderr)
+        else:
+            print(content, end="")
+    finally:
+        await db.close()
 
 
-async def _run_telegram(db, args: argparse.Namespace) -> None:
+async def telegram_impl(
+    config_path: str,
+    *,
+    channel_id: int | None = None,
+    export_format: str = "json",
+    with_media: bool = False,
+    wait: bool = False,
+    max_file_size: int | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 5000,
+    output: str | None = None,
+) -> None:
+    """Export a channel in Telegram-Desktop-compatible JSON/HTML tree form."""
     from src.services.export_service import run_offline_export
 
-    channel_id = getattr(args, "channel_id", None)
-    if not channel_id:
-        print("Error: --channel-id is required for telegram export.", file=sys.stderr)
-        return
+    _, db = await runtime.init_db(config_path)
+    try:
+        if not channel_id:
+            print("Error: --channel-id is required for telegram export.", file=sys.stderr)
+            return
 
-    if args.with_media:
-        # Media download needs the live worker (owns the ClientPool); enqueue an
-        # EXPORT task and optionally wait for it.
-        await _enqueue_media_export(db, args, int(channel_id))
-        return
+        if with_media:
+            # Media download needs the live worker (owns the ClientPool); enqueue an
+            # EXPORT task and optionally wait for it.
+            await _enqueue_media_export(
+                db,
+                channel_id=int(channel_id),
+                export_format=export_format,
+                max_file_size=max_file_size,
+                date_from=date_from,
+                date_to=date_to,
+                limit=limit,
+                output=output,
+                wait=wait,
+            )
+            return
 
-    summary = await run_offline_export(
-        db,
-        int(channel_id),
-        fmt=args.export_format,
-        date_from=args.date_from,
-        date_to=args.date_to,
-        limit=int(args.limit),
-        out_dir=args.output,
-    )
-    if summary is None:
-        print(f"No messages found for channel {channel_id}.", file=sys.stderr)
-        return
-    print(
-        f"Exported {summary.message_count} messages to {summary.out_dir} "
-        f"(files: {', '.join(summary.files)}; media skipped: {summary.media_skipped})",
-        file=sys.stderr,
-    )
-    if summary.truncated:
+        summary = await run_offline_export(
+            db,
+            int(channel_id),
+            fmt=export_format,
+            date_from=date_from,
+            date_to=date_to,
+            limit=int(limit),
+            out_dir=output,
+        )
+        if summary is None:
+            print(f"No messages found for channel {channel_id}.", file=sys.stderr)
+            return
         print(
-            f"Warning: channel has more than {args.limit} messages; exported the oldest "
-            f"{summary.message_count} (raise --limit to include more).",
+            f"Exported {summary.message_count} messages to {summary.out_dir} "
+            f"(files: {', '.join(summary.files)}; media skipped: {summary.media_skipped})",
             file=sys.stderr,
         )
+        if summary.truncated:
+            print(
+                f"Warning: channel has more than {limit} messages; exported the oldest "
+                f"{summary.message_count} (raise --limit to include more).",
+                file=sys.stderr,
+            )
+    finally:
+        await db.close()
 
 
-async def _enqueue_media_export(db, args: argparse.Namespace, channel_id: int) -> None:
+async def _enqueue_media_export(
+    db,
+    *,
+    channel_id: int,
+    export_format: str,
+    max_file_size: int | None,
+    date_from: str | None,
+    date_to: str | None,
+    limit: int,
+    output: str | None,
+    wait: bool,
+) -> None:
     from src.models import CollectionTaskType, ExportTaskPayload
 
     payload = ExportTaskPayload(
         channel_id=channel_id,
-        fmt=args.export_format,
+        fmt=export_format,
         with_media=True,
-        max_file_size_mb=args.max_file_size,
-        date_from=args.date_from,
-        date_to=args.date_to,
-        limit=int(args.limit),
-        out_dir=args.output,
+        max_file_size_mb=max_file_size,
+        date_from=date_from,
+        date_to=date_to,
+        limit=int(limit),
+        out_dir=output,
         requested_by="cli",
     )
     task_id = await db.repos.tasks.create_generic_task(
@@ -125,7 +159,7 @@ async def _enqueue_media_export(db, args: argparse.Namespace, channel_id: int) -
         f"Enqueued media export task #{task_id}; the worker will download media and build the tree.",
         file=sys.stderr,
     )
-    if args.wait:
+    if wait:
         await _poll_export_task(db, task_id)
 
 
@@ -214,3 +248,37 @@ def _export_rss(messages) -> str:
         + "\n".join(items)
         + "\n  </channel>\n</rss>"
     )
+
+
+def run(args: argparse.Namespace) -> None:
+    """Thin argparse adapter over the ``*_impl`` bodies (legacy dispatch path).
+
+    The production CLI routes ``export`` through the Typer ``app`` (#1122); this
+    wrapper keeps the argparse leaf audit and command-level tests working.
+    """
+    action = args.export_action
+    if action == "telegram":
+        asyncio.run(
+            telegram_impl(
+                args.config,
+                channel_id=getattr(args, "channel_id", None),
+                export_format=getattr(args, "export_format", "json"),
+                with_media=getattr(args, "with_media", False),
+                wait=getattr(args, "wait", False),
+                max_file_size=getattr(args, "max_file_size", None),
+                date_from=getattr(args, "date_from", None),
+                date_to=getattr(args, "date_to", None),
+                limit=getattr(args, "limit", 5000),
+                output=getattr(args, "output", None),
+            )
+        )
+    else:
+        asyncio.run(
+            export_impl(
+                args.config,
+                fmt=action,
+                channel_id=getattr(args, "channel_id", None),
+                limit=getattr(args, "limit", 200),
+                output=getattr(args, "output", None),
+            )
+        )

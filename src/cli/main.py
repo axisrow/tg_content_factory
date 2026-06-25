@@ -7,13 +7,9 @@ from src.cli.commands import (
     account,
     channel,
     collect,
-    export,
-    image,
     mcp_server,
     messages,
-    notification,
     photo_loader,
-    provider,
     scheduler,
     search,
     search_query,
@@ -23,13 +19,11 @@ from src.cli.commands import (
 )
 from src.cli.commands import agent as agent_cmd
 from src.cli.commands import analytics as analytics_cmd
-from src.cli.commands import debug as debug_cmd
 from src.cli.commands import dialogs as dialogs_cmd
 from src.cli.commands import filter as filter_cmd
 from src.cli.commands import pipeline as pipeline_cmd
 from src.cli.commands import settings as settings_cmd
 from src.cli.commands import test as test_cmd
-from src.cli.commands import translate as translate_cmd
 from src.cli.dotenv import load_cli_dotenv
 from src.cli.parser import build_parser
 from src.cli.runtime import ensure_data_dirs, setup_logging
@@ -93,18 +87,12 @@ def main() -> None:
         "pipeline": pipeline_cmd.run,
         "account": account.run,
         "scheduler": scheduler.run,
-        "notification": notification.run,
         "photo-loader": photo_loader.run,
         "dialogs": dialogs_cmd.run,
         "test": test_cmd.run,
         "agent": agent_cmd.run,
         "analytics": analytics_cmd.run,
-        "image": image.run,
         "settings": settings_cmd.run,
-        "translate": translate_cmd.run,
-        "provider": provider.run,
-        "export": export.run,
-        "debug": debug_cmd.run,
     }
 
     handler = commands.get(args.command)
@@ -117,17 +105,12 @@ def main() -> None:
             "pipeline": "pipeline_action",
             "account": "account_action",
             "scheduler": "scheduler_action",
-            "notification": "notification_action",
             "photo-loader": "photo_loader_action",
             "dialogs": "dialogs_action",
             "test": "test_action",
             "agent": "agent_action",
             "analytics": "analytics_action",
-            "image": "image_action",
             "settings": "settings_action",
-            "provider": "provider_action",
-            "export": "export_action",
-            "debug": "debug_action",
         }
         if args.command in sub_attr and not getattr(args, sub_attr[args.command], None):
             parser.parse_args([args.command, "--help"])
