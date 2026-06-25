@@ -79,7 +79,7 @@ async def _run_export_session(args: argparse.Namespace, db: Database) -> None:
         return
 
     try:
-        session_string = await db.get_decrypted_session(account_id=match.id, phone=None)
+        session_string = await db.repos.accounts.get_decrypted_session(account_id=match.id, phone=None)
     except AccountSessionDecryptError as exc:
         print(f"ERROR: cannot decrypt session for {match.phone} ({exc.status})")
         return

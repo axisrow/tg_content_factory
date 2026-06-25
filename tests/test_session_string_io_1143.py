@@ -222,7 +222,7 @@ async def test_cli_import_refuses_overwrite_without_force(tmp_path, capsys):
         out = capsys.readouterr().out.lower()
         assert "already exists" in out
         # session unchanged
-        assert await db.get_decrypted_session(phone="+15551230020") == original
+        assert await db.repos.accounts.get_decrypted_session(phone="+15551230020") == original
     finally:
         await db.close()
 
@@ -243,7 +243,7 @@ async def test_cli_import_force_overwrites(tmp_path):
         new_session = s.save()
 
         await account_cmd._run_import(_import_ns("+15551230021", new_session, force=True), db)
-        assert await db.get_decrypted_session(phone="+15551230021") == new_session
+        assert await db.repos.accounts.get_decrypted_session(phone="+15551230021") == new_session
     finally:
         await db.close()
 
@@ -259,7 +259,7 @@ async def test_cli_import_from_stdin(tmp_path, monkeypatch):
         session = _make_valid_session_string()
         monkeypatch.setattr("sys.stdin", io.StringIO(session + "\n"))
         await account_cmd._run_import(_import_ns("+15551230022", None, stdin=True), db)
-        assert await db.get_decrypted_session(phone="+15551230022") == session
+        assert await db.repos.accounts.get_decrypted_session(phone="+15551230022") == session
     finally:
         await db.close()
 

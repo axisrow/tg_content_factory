@@ -388,12 +388,6 @@ class Database:
         self._require()
         return await self._accounts.get_account_summaries(active_only)
 
-    async def get_decrypted_session(
-        self, *, account_id: int | None = None, phone: str | None = None
-    ) -> str | None:
-        self._require()
-        return await self._accounts.get_decrypted_session(account_id=account_id, phone=phone)
-
     async def update_account_flood(self, phone: str, until) -> None:
         self._require()
         await self._accounts.update_account_flood(phone, until)
