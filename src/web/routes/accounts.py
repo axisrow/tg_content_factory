@@ -1,5 +1,6 @@
 """Account management routes — split from settings.py for clarity."""
 
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
@@ -7,9 +8,12 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.tools.accounts import get_live_account_info_text
+from src.database.repositories.accounts import AccountSessionDecryptError
 from src.web import deps
 from src.web.schemas.accounts import AccountInfoResponse, FloodStatusItem
 from src.web.schemas.common import ErrorResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -164,3 +168,42 @@ async def flood_clear(request: Request, account_id: int):
         return RedirectResponse(url="/settings?error=account_not_found", status_code=303)
     await db.update_account_flood(acc.phone, None)
     return RedirectResponse(url="/settings?msg=flood_cleared", status_code=303)
+
+
+@router.post(
+    "/{account_id}/export-session",
+    tags=["accounts"],
+    summary="Export the decrypted StringSession for SSO",
+    responses={404: {"model": ErrorResponse, "description": "Account not found"}},
+)
+async def export_session(request: Request, account_id: int):
+    """Return the decrypted plaintext StringSession for SSO (parity with CLI/agent, #828).
+
+    POST (not GET) so the secret never lands in a URL/access log. Guarded by the
+    panel's existing WEB_PASS auth (BasicAuthMiddleware → 401 for API clients
+    without credentials). The session string grants FULL account access — it is
+    returned in the JSON body ONLY on this explicit request and is NEVER logged.
+    Returns 404 ``{"error": "account_not_found"}`` for an unknown id.
+    """
+    db = deps.get_db(request)
+    # Resolve identity via summaries (no decrypt) so a broken sibling session
+    # can't abort the lookup (#1143); decrypt only the chosen account.
+    summaries = await db.get_account_summaries(active_only=False)
+    acc = next((a for a in summaries if a.id == account_id), None)
+    if acc is None:
+        return JSONResponse({"error": "account_not_found"}, status_code=404)
+
+    try:
+        session_string = await db.repos.accounts.get_decrypted_session(account_id=account_id)
+    except AccountSessionDecryptError as exc:
+        # status carries only the failure kind (phone+status), never the secret.
+        return JSONResponse(
+            {"error": "session_decrypt_failed", "status": exc.status}, status_code=409
+        )
+    if not session_string:
+        return JSONResponse({"error": "no_session"}, status_code=409)
+
+    # Audit the export WITHOUT the value (account_id + actor only) — session_string
+    # is a secret and must never be logged.
+    logger.info("account.export_session account_id=%s by=web", account_id)
+    return JSONResponse({"phone": acc.phone, "session_string": session_string})
