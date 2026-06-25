@@ -22,9 +22,11 @@ from src.agent.tools._registry import (
     normalize_phone,
     require_confirmation,
 )
+from src.models import Account
 from src.services.account_availability import compute_account_availability
 from src.services.notification_target_service import NotificationTargetService
 from src.services.runtime_diagnostics import evaluate_worker_heartbeat
+from src.telegram.auth import validate_session_string
 
 _NO_LIVE_RUNTIME = "live Telegram runtime unavailable"
 
@@ -167,6 +169,8 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
         "list_accounts": ToolMeta(ToolCategory.READ),
         "toggle_account": ToolMeta(ToolCategory.WRITE),
         "delete_account": ToolMeta(ToolCategory.DELETE),
+        "export_session": ToolMeta(ToolCategory.WRITE),
+        "import_session": ToolMeta(ToolCategory.WRITE),
         "get_flood_status": ToolMeta(ToolCategory.READ),
         "get_account_availability": ToolMeta(ToolCategory.READ),
         "get_runtime_diagnostics": ToolMeta(ToolCategory.READ),
@@ -279,6 +283,80 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка удаления аккаунта: {e}")
 
     tools.append(delete_account)
+
+    @tool(
+        "export_session",
+        "⚠️ SENSITIVE: Return the decrypted Telegram StringSession for an account so it can be "
+        "reused elsewhere (SSO with tg_messenger). The session string grants FULL access to the "
+        "account — only export when the user explicitly asks. account_id = id from list_accounts. "
+        "Requires confirm=true.",
+        {
+            "account_id": Annotated[int, "ID аккаунта из list_accounts"],
+            "confirm": Annotated[bool, "Установите true для подтверждения экспорта секрета"],
+        },
+        annotations=ToolAnnotations(destructiveHint=True),
+    )
+    async def export_session(args):
+        account_id = args.get("account_id")
+        if account_id is None:
+            return _text_response("Ошибка: account_id обязателен.")
+        try:
+            accounts = await _get_accounts(db)
+            acc = next((a for a in accounts if a.id == int(account_id)), None)
+            name = acc.phone if acc else f"id={account_id}"
+            gate = require_confirmation(
+                f"экспортирует session string аккаунта '{name}' (полный доступ к аккаунту)", args
+            )
+            if gate:
+                return gate
+            session_string = await db.repos.accounts.get_decrypted_session(account_id=int(account_id))
+            if not session_string:
+                return _text_response(f"Аккаунт id={account_id} не найден или без сессии.")
+            # The session string is the secret being requested; return it in the tool
+            # response but never log it.
+            return _text_response(
+                f"Session string для {name} (⚠️ полный доступ — храните как пароль):\n{session_string}"
+            )
+        except Exception as e:
+            return _text_response(f"Ошибка экспорта сессии: {e}")
+
+    tools.append(export_session)
+
+    @tool(
+        "import_session",
+        "Add a Telegram account from a ready StringSession instead of an interactive login "
+        "(SSO with tg_messenger). Validates the session, then stores it (encrypted at rest). "
+        "Refuses to overwrite an existing phone unless force=true.",
+        {
+            "phone": Annotated[str, "Телефон аккаунта с кодом страны"],
+            "session_string": Annotated[str, "Telegram StringSession (⚠️ полный доступ к аккаунту)"],
+            "force": Annotated[bool, "true чтобы перезаписать сессию уже существующего аккаунта"],
+        },
+    )
+    async def import_session(args):
+        phone = normalize_phone(args.get("phone") or "")
+        session_string = (args.get("session_string") or "").strip()
+        if not phone or not session_string:
+            return _text_response("Ошибка: phone и session_string обязательны.")
+        if not validate_session_string(session_string):
+            return _text_response(f"Ошибка: невалидная Telegram session string для {phone}.")
+        try:
+            existing = await db.get_account_summaries(active_only=False)
+            if any(s.phone == phone for s in existing):
+                if not args.get("force"):
+                    return _text_response(
+                        f"Аккаунт {phone} уже существует (already exists); импорт перезапишет его "
+                        f"сессию. Удалите его или повторите с force=true."
+                    )
+            is_primary = len(existing) == 0
+            await db.add_account(
+                Account(phone=phone, session_string=session_string, is_primary=is_primary, is_premium=False)
+            )
+            return _text_response(f"Аккаунт {phone} импортирован (primary={is_primary}).")
+        except Exception as e:
+            return _text_response(f"Ошибка импорта сессии: {e}")
+
+    tools.append(import_session)
 
     @tool("get_flood_status", "Get database flood-wait status for all accounts; this is not live connection state.", {})
     async def get_flood_status(args):
