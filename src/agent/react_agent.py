@@ -17,6 +17,8 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
+from src.agent.tools._categories import SECRET_RESULT_TOOLS
+
 logger = logging.getLogger(__name__)
 
 _TOOL_CALL_RE = re.compile(
@@ -119,7 +121,10 @@ class OllamaReActAgent:
                 return {"messages": [_MockMessage(response)]}
 
             tool_result = _try_call_tool(tool_name, tool_args, self._tool_map)
-            logger.debug("ReAct tool %r → %r", tool_name, tool_result[:100])
+            # Never preview a tool whose result IS a secret (e.g. export_session
+            # returns a StringSession = full account access, #828).
+            preview = "<redacted>" if tool_name in SECRET_RESULT_TOOLS else tool_result[:100]
+            logger.debug("ReAct tool %r → %r", tool_name, preview)
 
             messages.append({"role": "assistant", "content": response})
             messages.append({

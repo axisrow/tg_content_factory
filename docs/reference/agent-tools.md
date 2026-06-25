@@ -108,6 +108,8 @@
 | `list_accounts` | READ | Список аккаунтов |
 | `toggle_account` | WRITE | Вкл/выкл |
 | `delete_account` | DELETE | Удалить |
+| `export_session` | WRITE | ⚠️ Экспорт расшифрованной StringSession (SSO; полный доступ к аккаунту, требует confirm=true) |
+| `import_session` | WRITE | Импорт аккаунта по готовой StringSession (SSO; отказ без force при существующем phone) |
 | `get_flood_status` | READ | Статус flood wait |
 | `get_account_availability` | READ | Доступность аккаунта (как в Settings UI): available/flood/disconnected/inactive/session_unavailable |
 | `get_runtime_diagnostics` | READ | Диагностика рантайма: runtime_kind (live/snapshot/none), live-пул отдельно от DB-флагов, свежесть снапшота воркера |
