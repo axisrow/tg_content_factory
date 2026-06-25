@@ -1,3 +1,5 @@
+"""Леджер уже отправленных уведомлений (дедуп доставки)."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -57,6 +59,11 @@ class NotifiedMessagesRepository:
         return await cur.fetchone() is not None
 
     async def record(self, query_id: int, channel_id: int, message_ids: list[int]) -> None:
+        """Отметить сообщения как уведомлённые для (query_id, channel_id).
+
+        Append-only вставка `INSERT OR IGNORE` — повторная запись тех же id не
+        дублируется и не падает. Пустой список — no-op.
+        """
         if not message_ids:
             return
         assert self._database is not None, "NotifiedMessagesRepository.record requires a Database"

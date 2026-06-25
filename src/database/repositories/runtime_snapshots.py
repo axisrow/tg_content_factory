@@ -1,3 +1,5 @@
+"""Снимки состояния воркера для чтения web-стороной (канал worker → web)."""
+
 from __future__ import annotations
 
 import json
@@ -25,6 +27,14 @@ if TYPE_CHECKING:
 
 
 class RuntimeSnapshotsRepository:
+    """Снимки живого состояния воркера, публикуемые для web-стороны.
+
+    Воркер пишет (`upsert_snapshot`) heartbeat, статусы аккаунтов/планировщика и
+    т.п., а web-контейнер (который не держит Telegram-соединений) читает их
+    (`get_snapshot`), чтобы отрисовать статус. Идентичность снимка —
+    `(snapshot_type, scope)`; запись — upsert по этой паре.
+    """
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -44,6 +54,10 @@ class RuntimeSnapshotsRepository:
         )
 
     async def upsert_snapshot(self, snapshot: RuntimeSnapshot) -> None:
+        """Записать/обновить снимок по паре (snapshot_type, scope).
+
+        `updated_at` берётся из снимка либо проставляется текущим временем БД.
+        """
         await self._database.execute_write(
             """
             INSERT INTO runtime_snapshots (snapshot_type, scope, payload, updated_at)
@@ -61,6 +75,7 @@ class RuntimeSnapshotsRepository:
         )
 
     async def get_snapshot(self, snapshot_type: str, scope: str = "global") -> RuntimeSnapshot | None:
+        """Снимок по типу и области (по умолчанию глобальной), либо None."""
         cur = await self._db.execute(
             """
             SELECT * FROM runtime_snapshots

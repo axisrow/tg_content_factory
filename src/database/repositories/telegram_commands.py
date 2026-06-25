@@ -1,3 +1,5 @@
+"""Репозиторий очереди команд Telegram-воркеру (постановка, claim, обновление статуса)."""
+
 from __future__ import annotations
 
 import json
@@ -26,6 +28,14 @@ if TYPE_CHECKING:
 
 
 class TelegramCommandsRepository:
+    """Очередь команд Telegram-воркеру (BotFather, отправка, auth и т.п.).
+
+    Web/CLI ставят команды в очередь (`create_command`), воркер атомарно
+    забирает их (`claim_next_command`: PENDING → RUNNING под транзакцией) и
+    обновляет статус/результат (`update_command`). Поддерживает фильтрацию по
+    типу/статусу/телефону и счётчики для панели мониторинга.
+    """
+
     def __init__(
         self,
         db: aiosqlite.Connection,
@@ -52,6 +62,7 @@ class TelegramCommandsRepository:
         )
 
     async def create_command(self, command: TelegramCommand) -> int:
+        """Поставить команду в очередь воркеру. Возвращает id новой строки."""
         cur = await self._database.execute_write(
             """
             INSERT INTO telegram_commands (
@@ -72,6 +83,7 @@ class TelegramCommandsRepository:
         return cur.lastrowid or 0
 
     async def get_command(self, command_id: int) -> TelegramCommand | None:
+        """Прочитать команду по id, либо None если её нет."""
         cur = await self._db.execute(
             "SELECT * FROM telegram_commands WHERE id = ?",
             (command_id,),
@@ -108,6 +120,7 @@ class TelegramCommandsRepository:
         status: TelegramCommandStatus | None = None,
         phone: str | None = None,
     ) -> list[TelegramCommand]:
+        """Список команд (новые сверху) с опциональным фильтром по типу/статусу/телефону."""
         where, params = self._filtered_query(command_type=command_type, status=status, phone=phone)
         cur = await self._db.execute(
             f"SELECT * FROM telegram_commands {where} ORDER BY id DESC LIMIT ?",
@@ -123,6 +136,7 @@ class TelegramCommandsRepository:
         status: TelegramCommandStatus | None = None,
         phone: str | None = None,
     ) -> dict[TelegramCommandStatus, int]:
+        """Сколько команд в каждом статусе (под фильтр). Все статусы присутствуют, нулевые — с 0."""
         where, params = self._filtered_query(command_type=command_type, status=status, phone=phone)
         cur = await self._db.execute(
             f"""
@@ -146,6 +160,10 @@ class TelegramCommandsRepository:
         status: TelegramCommandStatus | None = None,
         phone: str | None = None,
     ) -> dict[str, int]:
+        """Распределение по `result_payload.$.state` (под фильтр) — детализация исходов команд.
+
+        Пустые состояния опускаются; ключ — значение `$.state` из JSON-результата.
+        """
         where, params = self._filtered_query(command_type=command_type, status=status, phone=phone)
         cur = await self._db.execute(
             f"""
@@ -260,6 +278,13 @@ class TelegramCommandsRepository:
         return cur.rowcount or 0
 
     async def claim_next_command(self) -> TelegramCommand | None:
+        """Атомарно забрать следующую готовую команду: PENDING → RUNNING.
+
+        Под транзакцией выбирает старейшую PENDING-строку, у которой `run_after`
+        не в будущем, и помечает её RUNNING со `started_at`, чтобы два воркера не
+        взяли одну команду. Возвращает обновлённую команду либо None, если очередь
+        пуста.
+        """
         assert self._database is not None, (
             "TelegramCommandsRepository.claim_next_command requires a Database reference"
         )
@@ -305,6 +330,14 @@ class TelegramCommandsRepository:
         payload: dict[str, Any] | None = None,
         run_after: datetime | None = None,
     ) -> None:
+        """Обновить статус команды и сопутствующие поля.
+
+        Терминальные статусы (SUCCEEDED/FAILED/CANCELLED) проставляют `finished_at`.
+        Возврат в PENDING (повторная постановка) сбрасывает started_at/finished_at,
+        чтобы ретрай показывал свежий запуск, а не прерванную попытку. `result_payload`
+        и `finished_at` пишутся через COALESCE — терминальный апдейт без свежего payload
+        сохраняет прежнюю диагностику, а не затирает её в NULL (audit #835/15).
+        """
         finished_at = None
         if status in {
             TelegramCommandStatus.SUCCEEDED,

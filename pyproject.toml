@@ -207,12 +207,17 @@ exclude_lines = [
 exclude_dirs = ["tests"]
 
 # Doc-coverage (interrogate, #1072). scripts/doc_coverage.py and the advisory
-# CI step read this. `fail_under` is a SOFT baseline — the project is at ~24%
-# today; 23 is a ratchet floor that surfaces regressions without forcing a
-# docstring-everything sprint. Raise it as coverage climbs. interrogate ignores
-# things that don't need a docstring (magic/init/nested/private, overloads).
+# CI step read this. `fail_under` is a SOFT baseline — a ratchet floor that
+# surfaces regressions without forcing a docstring-everything sprint. Raise it
+# as coverage climbs. interrogate ignores things that don't need a docstring
+# (magic/init/nested/private, overloads).
+# Ratchet history: 23 (#1072 floor) → 35 (#1134: documented the public-API
+# facade — src/models.py Pydantic models, db.repos bundles, repository CRUD —
+# lifting coverage 27% → 40.6%; floor set to 35 to lock in the win with a
+# margin below the measured 40.6% so a stray docstring loss doesn't trip the
+# gate). Doc-coverage is NOT a CI gate (#1097) — stays a local script.
 [tool.interrogate]
-fail_under = 23
+fail_under = 35
 ignore_init_method = true
 ignore_init_module = true
 ignore_magic = true
