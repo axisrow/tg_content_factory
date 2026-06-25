@@ -422,3 +422,233 @@ def test_channel_tag_bare_shows_help_exit0():
     with pytest.raises(SystemExit) as exc:
         _delegate(["channel", "tag"])
     assert exc.value.code == 0
+
+
+# --------------------------------------------------------------------------- #
+# dialogs — leaves + nested depth-2 ``dialogs queue`` group
+#
+# Every dialogs leaf builds an argparse Namespace and runs the shared
+# ``_dispatch`` body, so the tests patch ``_dispatch`` and assert the Namespace
+# attributes it received (the CLI-token → Namespace wiring is what is verified).
+# --------------------------------------------------------------------------- #
+
+
+def _dialogs_ns_of(mock_dispatch):
+    """Return the argparse Namespace passed to the patched ``_dispatch``."""
+    return mock_dispatch.call_args[0][0]
+
+
+def test_dialogs_list():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["dialogs", "list", "--phone", "+1"])
+    assert result.exit_code == 0
+    ns = _dialogs_ns_of(mock)
+    assert ns.dialogs_action == "list"
+    assert ns.phone == "+1"
+    assert ns.config == "config.yaml"
+
+
+def test_dialogs_send_with_yes():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["dialogs", "send", "@user", "hello", "--yes"])
+    assert result.exit_code == 0
+    ns = _dialogs_ns_of(mock)
+    assert (ns.dialogs_action, ns.recipient, ns.text, ns.yes) == ("send", "@user", "hello", True)
+
+
+def test_dialogs_leave_variadic():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["dialogs", "leave", "100", "200", "300"])
+    assert result.exit_code == 0
+    ns = _dialogs_ns_of(mock)
+    assert ns.dialogs_action == "leave"
+    assert ns.dialog_ids == ["100", "200", "300"]
+
+
+def test_dialogs_topics_required_channel_id():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["dialogs", "topics", "--channel-id", "555"])
+    assert result.exit_code == 0
+    assert _dialogs_ns_of(mock).channel_id == 555
+
+
+def test_dialogs_topics_missing_channel_id_rejected():
+    """--channel-id is required (argparse required=True parity)."""
+    with patch("src.cli.typer_commands.run_async"):
+        result = runner.invoke(app, ["dialogs", "topics"])
+    assert result.exit_code != 0
+
+
+def test_dialogs_react_optional_emoji():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["dialogs", "react", "123", "99", "👍"])
+    assert result.exit_code == 0
+    ns = _dialogs_ns_of(mock)
+    assert (ns.chat_id, ns.message_id, ns.emoji, ns.clear) == ("123", 99, "👍", False)
+
+
+def test_dialogs_react_clear_no_emoji():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["dialogs", "react", "123", "99", "--clear"])
+    assert result.exit_code == 0
+    ns = _dialogs_ns_of(mock)
+    assert ns.emoji is None and ns.clear is True
+
+
+def test_dialogs_edit_admin_no_admin_flag():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["dialogs", "edit-admin", "chat", "user", "--no-admin"])
+    assert result.exit_code == 0
+    assert _dialogs_ns_of(mock).is_admin is False
+
+
+def test_dialogs_create_channel_required_title():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["dialogs", "create-channel", "--title", "My Chan"])
+    assert result.exit_code == 0
+    ns = _dialogs_ns_of(mock)
+    assert (ns.dialogs_action, ns.title) == ("create-channel", "My Chan")
+
+
+# --- nested: dialogs queue <action> (depth-2) ------------------------------ #
+
+
+def test_dialogs_queue_status_nested():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["dialogs", "queue", "status", "--limit", "5"])
+    assert result.exit_code == 0
+    ns = _dialogs_ns_of(mock)
+    assert (ns.dialogs_action, ns.queue_action, ns.limit) == ("queue", "status", 5)
+
+
+def test_dialogs_queue_cancel_nested():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["dialogs", "queue", "cancel", "42", "--yes"])
+    assert result.exit_code == 0
+    ns = _dialogs_ns_of(mock)
+    assert (ns.dialogs_action, ns.queue_action, ns.command_id, ns.yes) == ("queue", "cancel", 42, True)
+
+
+def test_dialogs_queue_clear_pending_nested():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app, ["dialogs", "queue", "clear-pending", "--command-type", "dialogs.react"]
+        )
+    assert result.exit_code == 0
+    ns = _dialogs_ns_of(mock)
+    assert (ns.dialogs_action, ns.queue_action, ns.command_type) == (
+        "queue", "clear-pending", "dialogs.react",
+    )
+
+
+# --- dialogs prod round-trip (incl. nested + negative chat id) ------------- #
+
+
+def test_dialogs_send_negative_chatid_roundtrip():
+    """Negative chat id + dashy text survive the argparse→Typer round-trip."""
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["dialogs", "send", "-100500", "hi", "--phone", "+1", "--yes"])
+    ns = _dialogs_ns_of(mock)
+    assert (ns.dialogs_action, ns.recipient, ns.text, ns.phone, ns.yes) == (
+        "send", "-100500", "hi", "+1", True,
+    )
+
+
+def test_dialogs_forward_variadic_roundtrip():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["dialogs", "forward", "src", "dst", "1", "2", "3"])
+    ns = _dialogs_ns_of(mock)
+    assert ns.from_chat == "src" and ns.to_chat == "dst" and ns.message_ids == ["1", "2", "3"]
+
+
+def test_dialogs_queue_cancel_roundtrip_nested():
+    """The depth-2 ``dialogs queue cancel`` path survives the round-trip."""
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["dialogs", "queue", "cancel", "7", "--yes"])
+    ns = _dialogs_ns_of(mock)
+    assert (ns.dialogs_action, ns.queue_action, ns.command_id, ns.yes) == ("queue", "cancel", 7, True)
+
+
+def test_dialogs_queue_status_roundtrip_nested():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["dialogs", "queue", "status", "--phone", "+1", "--limit", "3"])
+    ns = _dialogs_ns_of(mock)
+    assert (ns.queue_action, ns.phone, ns.limit) == ("status", "+1", 3)
+
+
+def test_dialogs_react_clear_roundtrip():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["dialogs", "react", "123", "99", "--clear"])
+    ns = _dialogs_ns_of(mock)
+    assert ns.clear is True and ns.emoji is None
+
+
+def test_dialogs_bare_shows_help_exit0():
+    """Bare ``dialogs`` (no action) shows help and exits 0 (argparse parity)."""
+    with pytest.raises(SystemExit) as exc:
+        _delegate(["dialogs"])
+    assert exc.value.code == 0
