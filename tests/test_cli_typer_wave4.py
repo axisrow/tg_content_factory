@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from typer.testing import CliRunner
 
 from src.cli.parser import build_parser
@@ -217,3 +218,207 @@ def test_analytics_channel_rate_roundtrip():
     ):
         _delegate(["analytics", "channel-rate", "555", "--sample-size", "20"])
     mock_impl.assert_called_once_with("config.yaml", channel_id=555, model=None, sample_size=20)
+
+
+# --------------------------------------------------------------------------- #
+# channel — flat leaves + nested depth-2 ``channel tag`` group
+# --------------------------------------------------------------------------- #
+
+
+def test_channel_list():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd.list_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "list"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml")
+
+
+def test_channel_add():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd.add_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "add", "@somechan"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", identifier="@somechan")
+
+
+def test_channel_collect_full():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd.collect_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "collect", "5", "--full"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", identifier="5", full=True)
+
+
+def test_channel_stats_all():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd.stats_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "stats", "--all", "--max-channels", "10"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml", all_channels=True, identifier=None, max_channels=10
+    )
+
+
+def test_channel_refresh_meta_single():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd.refresh_meta_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "refresh-meta", "@chan"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", all_channels=False, identifier="@chan")
+
+
+def test_channel_add_bulk():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd.add_bulk_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app, ["channel", "add-bulk", "--phone", "+123", "--dialog-ids", "1,2,3"]
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", phone="+123", dialog_ids="1,2,3")
+
+
+def test_channel_list_for_import_json():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd.list_for_import_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "list-for-import", "--json"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", as_json=True)
+
+
+# --- nested: channel tag <action> (depth-2) -------------------------------- #
+
+
+def test_channel_tag_list_nested():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd._tag_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "tag", "list"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", "list")
+
+
+def test_channel_tag_add_nested():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd._tag_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "tag", "add", "sports"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", "add", name="sports")
+
+
+def test_channel_tag_set_two_positionals_nested():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd._tag_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "tag", "set", "5", "a,b,c"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", "set", pk=5, tags="a,b,c")
+
+
+def test_channel_tag_get_nested():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd._tag_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["channel", "tag", "get", "10"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", "get", pk=10)
+
+
+# --- channel prod round-trip (incl. nested depth-2 paths) ------------------ #
+
+
+def test_channel_add_roundtrip():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd.add_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["channel", "add", "@chan"])
+    mock_impl.assert_called_once_with("config.yaml", identifier="@chan")
+
+
+def test_channel_stats_single_roundtrip():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd.stats_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["channel", "stats", "@chan"])
+    mock_impl.assert_called_once_with(
+        "config.yaml", all_channels=False, identifier="@chan", max_channels=None
+    )
+
+
+def test_channel_tag_add_roundtrip_nested():
+    """The depth-2 ``channel tag add`` path survives argparse→Typer round-trip."""
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd._tag_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["channel", "tag", "add", "news"])
+    mock_impl.assert_called_once_with("config.yaml", "add", name="news")
+
+
+def test_channel_tag_set_roundtrip_nested():
+    """The depth-2 ``channel tag set`` (two positionals) round-trips correctly."""
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd._tag_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["channel", "tag", "set", "7", "x,y,z"])
+    mock_impl.assert_called_once_with("config.yaml", "set", pk=7, tags="x,y,z")
+
+
+def test_channel_tag_get_roundtrip_nested():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.channel_cmd._tag_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["channel", "tag", "get", "3"])
+    mock_impl.assert_called_once_with("config.yaml", "get", pk=3)
+
+
+def test_channel_bare_shows_help_exit0():
+    """Bare ``channel`` (no action) shows help and exits 0 (argparse parity)."""
+    with pytest.raises(SystemExit) as exc:
+        _delegate(["channel"])  # NoArgsIsHelpError → help, SystemExit(0)
+    assert exc.value.code == 0
+
+
+def test_channel_tag_bare_shows_help_exit0():
+    """Bare ``channel tag`` (no nested action) shows help and exits 0."""
+    with pytest.raises(SystemExit) as exc:
+        _delegate(["channel", "tag"])
+    assert exc.value.code == 0
