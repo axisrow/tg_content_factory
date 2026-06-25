@@ -2606,12 +2606,19 @@ def _analytics_argv(args: argparse.Namespace) -> list[str]:
     """argv tail for ``analytics`` — the action plus its flags / positional.
 
     ``analytics`` has no nested sub-groups; each action maps to a flat Typer
-    leaf. Mirrors the argparse default (``analytics`` with no action runs
-    ``top``) so a bare ``analytics`` invocation routes to ``top`` on the prod
-    path too. The two channel actions take a positional ``channel_id`` int,
-    emitted after ``--`` so a negative ``analytics channel`` id survives Click.
+    leaf. A bare ``analytics`` (no action) returns an empty tail so the Typer
+    ``analytics_app`` (``no_args_is_help=True``) raises ``NoArgsIsHelpError``
+    and ``dispatch_via_typer`` renders help / exits 0 — matching the argparse
+    prod path (``main.py`` reparses ``analytics --help`` when the action is
+    missing). It must NOT default to ``top``: argparse never ran ``top`` for a
+    bare ``analytics``, so doing so would open the DB and emit a top-messages
+    report instead of usage (a visible parity regression). The two channel
+    actions take a positional ``channel_id`` int, emitted after ``--`` so a
+    negative ``analytics channel`` id survives Click.
     """
-    action = getattr(args, "analytics_action", None) or "top"
+    action = getattr(args, "analytics_action", None)
+    if action is None:
+        return []
     tail = [action]
     if action == "top":
         if getattr(args, "limit", 20) != 20:

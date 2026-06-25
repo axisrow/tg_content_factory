@@ -188,15 +188,24 @@ def test_analytics_top_roundtrip():
     mock_impl.assert_called_once_with("config.yaml", limit=7, date_from=None, date_to=None)
 
 
-def test_analytics_bare_defaults_to_top_roundtrip():
-    """Bare ``analytics`` (no action) routes to ``top`` — argparse parity."""
+def test_analytics_bare_shows_help_exit0():
+    """Bare ``analytics`` (no action) shows help and exits 0 — argparse parity.
+
+    Argparse never ran ``top`` for a bare ``analytics``: ``main.py`` reparses
+    ``analytics --help`` when the sub-action is missing. The Typer round-trip
+    must do the same (``NoArgsIsHelpError`` → help, exit 0), NOT fall through to
+    ``top`` and open the DB. ``top_impl`` is patched so any accidental
+    invocation of the body would be caught by ``assert_not_called``.
+    """
     mock_impl = MagicMock()
     with (
         patch("src.cli.typer_commands.analytics_cmd.top_impl", mock_impl),
         patch("src.cli.typer_commands.run_async"),
+        pytest.raises(SystemExit) as exc,
     ):
-        _delegate(["analytics"])
-    mock_impl.assert_called_once_with("config.yaml", limit=20, date_from=None, date_to=None)
+        _delegate(["analytics"])  # NoArgsIsHelpError → help, SystemExit(0)
+    assert exc.value.code == 0
+    mock_impl.assert_not_called()
 
 
 def test_analytics_channel_negative_id_roundtrip():
