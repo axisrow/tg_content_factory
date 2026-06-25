@@ -68,6 +68,7 @@ from src.cli.commands import image as image_cmd
 from src.cli.commands import mcp_server as mcp_server_cmd
 from src.cli.commands import messages as messages_cmd
 from src.cli.commands import notification as notification_cmd
+from src.cli.commands import pipeline as pipeline_cmd
 from src.cli.commands import provider as provider_cmd
 from src.cli.commands import search as search_cmd
 from src.cli.commands import serve as serve_cmd
@@ -114,7 +115,7 @@ MIGRATED_COMMANDS: frozenset[str] = frozenset(
         # Wave 2 (#1122) — flat simple groups
         "debug", "export", "translate", "image", "provider", "notification",
         # Wave 4 (#1124) — complex nested groups (incl. depth-2 subparsers)
-        "analytics", "channel", "dialogs",
+        "analytics", "channel", "dialogs", "pipeline",
     }
 )
 
@@ -142,6 +143,36 @@ class AnalyticsGenre(str, Enum):
     aggregator = "aggregator"
     copy = "copy"
     original = "original"
+
+
+class PublishMode(str, Enum):
+    """``pipeline add/edit --publish-mode`` choices."""
+
+    auto = "auto"
+    moderated = "moderated"
+
+
+class GenerationBackend(str, Enum):
+    """``pipeline add/edit --generation-backend`` choices."""
+
+    chain = "chain"
+    agent = "agent"
+    deep_agents = "deep_agents"
+
+
+class SinceUnit(str, Enum):
+    """``pipeline add/dry-run-count --since-unit`` choices."""
+
+    m = "m"
+    h = "h"
+    d = "d"
+
+
+class TriBool(str, Enum):
+    """``pipeline filter set --forwarded/--has-text`` choices (true/false)."""
+
+    true = "true"
+    false = "false"
 
 
 # --------------------------------------------------------------------------- #
@@ -1507,6 +1538,470 @@ def dialogs_queue_clear_pending(
 
 
 # --------------------------------------------------------------------------- #
+# pipeline → list / show / add / dry-run-count / edit / delete / toggle / run /
+#   generate / generate-stream / runs / run-show / variants / select-variant /
+#   auto-select / queue / moderation-list / moderation-view / publish / approve /
+#   reject / bulk-approve / bulk-reject / refinement-steps / export / import /
+#   templates / from-template / ai-edit / graph
+#   + NESTED depth-2: filter (set/show/clear), node (add/replace/remove),
+#     edge (add/remove)
+#
+# Every pipeline leaf builds the argparse Namespace ``pipeline_cmd._dispatch``
+# reads and runs it via ``run_async`` — so the Typer path executes the exact
+# same logic, including the ``generate-stream`` JSON-Lines streaming and the
+# pool lifecycle. The argparse ``append`` (variadic) options are expressed as
+# repeated Typer options (``--source 1 --source 2``); see the known-drift note
+# on ``_pipeline_argv``.
+# --------------------------------------------------------------------------- #
+
+pipeline_app = typer.Typer(no_args_is_help=True, help="Content pipelines")
+app.add_typer(pipeline_app, name="pipeline")
+
+# Three nested depth-2 groups mounted via add_typer; the frozen
+# ``pipeline filter|node|edge <action>`` paths are the fragile Wave-4 invariant.
+pipeline_filter_app = typer.Typer(no_args_is_help=True, help="Manage a pipeline's message filter")
+pipeline_app.add_typer(pipeline_filter_app, name="filter")
+pipeline_node_app = typer.Typer(no_args_is_help=True, help="Manage pipeline graph nodes")
+pipeline_app.add_typer(pipeline_node_app, name="node")
+pipeline_edge_app = typer.Typer(no_args_is_help=True, help="Manage pipeline graph edges")
+pipeline_app.add_typer(pipeline_edge_app, name="edge")
+
+
+def _run_pipeline(ctx: typer.Context, pipeline_action: str, **ns_kwargs) -> None:
+    """Build the Namespace a pipeline action dispatches on, then run it."""
+    apply_startup(ctx)
+    ns = argparse.Namespace(
+        config=ctx.obj.config, pipeline_action=pipeline_action, **ns_kwargs
+    )
+    run_async(pipeline_cmd._dispatch(ns))
+
+
+@pipeline_app.command("list")
+def pipeline_list(ctx: typer.Context) -> None:
+    """List pipelines."""
+    _run_pipeline(ctx, "list")
+
+
+@pipeline_app.command("show")
+def pipeline_show(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
+    """Show pipeline details."""
+    _run_pipeline(ctx, "show", id=id)
+
+
+@pipeline_app.command("add")
+def pipeline_add(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Pipeline name"),
+    prompt_template: str | None = typer.Option(
+        None, "--prompt-template", help="Prompt template (required unless --json-file/--node is used)"
+    ),
+    json_file: str | None = typer.Option(None, "--json-file"),
+    source: list[int] = typer.Option([], "--source", help="Source channel id (repeat for multiple)"),
+    target: list[str] = typer.Option([], "--target", help="Target PHONE|DIALOG_ID (repeat for multiple)"),
+    llm_model: str | None = typer.Option(None, "--llm-model"),
+    image_model: str | None = typer.Option(None, "--image-model"),
+    publish_mode: PublishMode = typer.Option(PublishMode.moderated, "--publish-mode"),
+    generation_backend: GenerationBackend = typer.Option(GenerationBackend.chain, "--generation-backend"),
+    interval: int = typer.Option(60, "--interval"),
+    inactive: bool = typer.Option(False, "--inactive"),
+    ab_variants: int = typer.Option(1, "--ab-variants"),
+    ab_auto_select: bool = typer.Option(False, "--ab-auto-select"),
+    node_specs: list[str] = typer.Option([], "--node", help="Node spec (repeat for multiple)"),
+    edge: list[str] = typer.Option([], "--edge", help="Explicit edge FROM->TO (repeat)"),
+    node_configs: list[str] = typer.Option([], "--node-config", help="Node config NODE=JSON (repeat)"),
+    run_after: bool = typer.Option(False, "--run-after"),
+    since_value: int = typer.Option(24, "--since-value"),
+    since_unit: SinceUnit = typer.Option(SinceUnit.h, "--since-unit"),
+) -> None:
+    """Add a pipeline."""
+    _run_pipeline(
+        ctx, "add", name=name, prompt_template=prompt_template, json_file=json_file,
+        source=list(source) or None, target=list(target) or None, llm_model=llm_model,
+        image_model=image_model, publish_mode=publish_mode.value,
+        generation_backend=generation_backend.value, interval=interval, inactive=inactive,
+        ab_variants=ab_variants, ab_auto_select=ab_auto_select,
+        node_specs=list(node_specs) or None, edge=list(edge) or None,
+        node_configs=list(node_configs) or None, run_after=run_after,
+        since_value=since_value, since_unit=since_unit.value,
+    )
+
+
+@pipeline_app.command("dry-run-count")
+def pipeline_dry_run_count(
+    ctx: typer.Context,
+    source: list[int] = typer.Option(..., "--source", help="Source channel id (repeat for multiple)"),
+    since_value: int = typer.Option(24, "--since-value"),
+    since_unit: SinceUnit = typer.Option(SinceUnit.h, "--since-unit"),
+) -> None:
+    """Count messages for given sources."""
+    _run_pipeline(ctx, "dry-run-count", source=list(source), since_value=since_value, since_unit=since_unit.value)
+
+
+@pipeline_app.command("edit")
+def pipeline_edit(
+    ctx: typer.Context,
+    id: int = typer.Argument(..., help="Pipeline id"),
+    name: str | None = typer.Option(None, "--name"),
+    prompt_template: str | None = typer.Option(None, "--prompt-template"),
+    source: list[int] = typer.Option([], "--source"),
+    target: list[str] = typer.Option([], "--target"),
+    llm_model: str | None = typer.Option(None, "--llm-model"),
+    image_model: str | None = typer.Option(None, "--image-model"),
+    publish_mode: PublishMode | None = typer.Option(None, "--publish-mode"),
+    generation_backend: GenerationBackend | None = typer.Option(None, "--generation-backend"),
+    interval: int | None = typer.Option(None, "--interval"),
+    active: bool | None = typer.Option(
+        None, "--active/--inactive", help="Set active (--active) or inactive (--inactive)"
+    ),
+    ab_variants: int | None = typer.Option(None, "--ab-variants"),
+    ab_auto_select: bool | None = typer.Option(None, "--ab-auto-select/--no-ab-auto-select"),
+) -> None:
+    """Edit a pipeline."""
+    _run_pipeline(
+        ctx, "edit", id=id, name=name, prompt_template=prompt_template,
+        source=list(source) or None, target=list(target) or None, llm_model=llm_model,
+        image_model=image_model,
+        publish_mode=publish_mode.value if publish_mode else None,
+        generation_backend=generation_backend.value if generation_backend else None,
+        interval=interval, active=active, ab_variants=ab_variants, ab_auto_select=ab_auto_select,
+    )
+
+
+@pipeline_app.command("delete")
+def pipeline_delete(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
+    """Delete a pipeline."""
+    _run_pipeline(ctx, "delete", id=id)
+
+
+@pipeline_app.command("toggle")
+def pipeline_toggle(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
+    """Toggle pipeline active state."""
+    _run_pipeline(ctx, "toggle", id=id)
+
+
+@pipeline_app.command("run")
+def pipeline_run(
+    ctx: typer.Context,
+    id: int = typer.Argument(..., help="Pipeline id"),
+    preview: bool = typer.Option(False, "--preview"),
+    publish: bool = typer.Option(False, "--publish"),
+    limit: int = typer.Option(8, "--limit"),
+    max_tokens: int = typer.Option(256, "--max-tokens"),
+    temperature: float = typer.Option(0.0, "--temperature"),
+) -> None:
+    """Run pipeline generation (preview/publish)."""
+    _run_pipeline(
+        ctx, "run", id=id, preview=preview, publish=publish, limit=limit,
+        max_tokens=max_tokens, temperature=temperature,
+    )
+
+
+@pipeline_app.command("generate")
+def pipeline_generate(
+    ctx: typer.Context,
+    id: int = typer.Argument(..., help="Pipeline id"),
+    max_tokens: int = typer.Option(512, "--max-tokens"),
+    temperature: float = typer.Option(0.7, "--temperature"),
+    model: str | None = typer.Option(None, "--model"),
+    preview: bool = typer.Option(False, "--preview"),
+    ab_variants: int | None = typer.Option(None, "--ab-variants"),
+    auto_select: bool = typer.Option(False, "--auto-select"),
+) -> None:
+    """Generate content for a pipeline."""
+    _run_pipeline(
+        ctx, "generate", id=id, max_tokens=max_tokens, temperature=temperature, model=model,
+        preview=preview, ab_variants=ab_variants, auto_select=auto_select,
+    )
+
+
+@pipeline_app.command("generate-stream")
+def pipeline_generate_stream(
+    ctx: typer.Context,
+    id: int = typer.Argument(..., help="Pipeline id"),
+    model: str | None = typer.Option(None, "--model"),
+    max_tokens: int = typer.Option(256, "--max-tokens"),
+    temperature: float = typer.Option(0.0, "--temperature"),
+    limit: int = typer.Option(8, "--limit"),
+) -> None:
+    """Generate content for a pipeline, streaming JSON-Lines updates."""
+    _run_pipeline(
+        ctx, "generate-stream", id=id, model=model, max_tokens=max_tokens,
+        temperature=temperature, limit=limit,
+    )
+
+
+@pipeline_app.command("runs")
+def pipeline_runs(
+    ctx: typer.Context,
+    id: int = typer.Argument(..., help="Pipeline id"),
+    limit: int = typer.Option(20, "--limit"),
+    status: str | None = typer.Option(None, "--status"),
+) -> None:
+    """List generation runs."""
+    _run_pipeline(ctx, "runs", id=id, limit=limit, status=status)
+
+
+@pipeline_app.command("run-show")
+def pipeline_run_show(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
+    """Show generation run details."""
+    _run_pipeline(ctx, "run-show", run_id=run_id)
+
+
+@pipeline_app.command("variants")
+def pipeline_variants(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
+    """List A/B variants."""
+    _run_pipeline(ctx, "variants", run_id=run_id)
+
+
+@pipeline_app.command("select-variant")
+def pipeline_select_variant(
+    ctx: typer.Context,
+    run_id: int = typer.Argument(..., help="Run id"),
+    index: int = typer.Argument(..., help="Variant index"),
+) -> None:
+    """Select an A/B variant."""
+    _run_pipeline(ctx, "select-variant", run_id=run_id, index=index)
+
+
+@pipeline_app.command("auto-select")
+def pipeline_auto_select(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
+    """Auto-select the best A/B variant."""
+    _run_pipeline(ctx, "auto-select", run_id=run_id)
+
+
+@pipeline_app.command("queue")
+def pipeline_queue(
+    ctx: typer.Context,
+    id: int = typer.Argument(..., help="Pipeline id"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """Show pending moderation queue for a pipeline."""
+    _run_pipeline(ctx, "queue", id=id, limit=limit)
+
+
+@pipeline_app.command("moderation-list")
+def pipeline_moderation_list(
+    ctx: typer.Context,
+    pipeline_id: int | None = typer.Option(None, "--pipeline-id"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """List pending moderation runs."""
+    _run_pipeline(ctx, "moderation-list", pipeline_id=pipeline_id, limit=limit)
+
+
+@pipeline_app.command("moderation-view")
+def pipeline_moderation_view(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
+    """Show a moderation run's details."""
+    _run_pipeline(ctx, "moderation-view", run_id=run_id)
+
+
+@pipeline_app.command("publish")
+def pipeline_publish(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
+    """Publish a generation run."""
+    _run_pipeline(ctx, "publish", run_id=run_id)
+
+
+@pipeline_app.command("approve")
+def pipeline_approve(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
+    """Approve a generation run."""
+    _run_pipeline(ctx, "approve", run_id=run_id)
+
+
+@pipeline_app.command("reject")
+def pipeline_reject(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
+    """Reject a generation run."""
+    _run_pipeline(ctx, "reject", run_id=run_id)
+
+
+@pipeline_app.command("bulk-approve")
+def pipeline_bulk_approve(
+    ctx: typer.Context,
+    run_ids: list[int] = typer.Argument(..., help="Run ids"),
+) -> None:
+    """Approve multiple generation runs."""
+    _run_pipeline(ctx, "bulk-approve", run_ids=list(run_ids))
+
+
+@pipeline_app.command("bulk-reject")
+def pipeline_bulk_reject(
+    ctx: typer.Context,
+    run_ids: list[int] = typer.Argument(..., help="Run ids"),
+) -> None:
+    """Reject multiple generation runs."""
+    _run_pipeline(ctx, "bulk-reject", run_ids=list(run_ids))
+
+
+@pipeline_app.command("refinement-steps")
+def pipeline_refinement_steps(
+    ctx: typer.Context,
+    id: int = typer.Argument(..., help="Pipeline id"),
+    steps_json: str | None = typer.Option(None, "--set", help="Set refinement steps (JSON array)"),
+) -> None:
+    """View or set refinement steps."""
+    _run_pipeline(ctx, "refinement-steps", id=id, steps_json=steps_json)
+
+
+@pipeline_app.command("export")
+def pipeline_export(
+    ctx: typer.Context,
+    id: int = typer.Argument(..., help="Pipeline id"),
+    output: str | None = typer.Option(None, "--output", "-o"),
+    force: bool = typer.Option(False, "--force", "-f"),
+) -> None:
+    """Export a pipeline as JSON."""
+    _run_pipeline(ctx, "export", id=id, output=output, force=force)
+
+
+@pipeline_app.command("import")
+def pipeline_import(
+    ctx: typer.Context,
+    file: str = typer.Argument(..., help="Path to JSON file"),
+    name: str | None = typer.Option(None, "--name"),
+) -> None:
+    """Import a pipeline from a JSON file."""
+    _run_pipeline(ctx, "import", file=file, name=name)
+
+
+@pipeline_app.command("templates")
+def pipeline_templates(
+    ctx: typer.Context,
+    category: str | None = typer.Option(None, "--category"),
+) -> None:
+    """List available pipeline templates."""
+    _run_pipeline(ctx, "templates", category=category)
+
+
+@pipeline_app.command("from-template")
+def pipeline_from_template(
+    ctx: typer.Context,
+    template_id: int = typer.Argument(..., help="Template id"),
+    name: str = typer.Argument(..., help="Pipeline name"),
+    source_ids: str = typer.Option("", "--source-ids"),
+    target_refs: str = typer.Option("", "--target-refs"),
+) -> None:
+    """Create a pipeline from a template."""
+    _run_pipeline(
+        ctx, "from-template", template_id=template_id, name=name,
+        source_ids=source_ids, target_refs=target_refs,
+    )
+
+
+@pipeline_app.command("ai-edit")
+def pipeline_ai_edit(
+    ctx: typer.Context,
+    id: int = typer.Argument(..., help="Pipeline id"),
+    instruction: str = typer.Argument(..., help="Instruction for the LLM"),
+    show: bool = typer.Option(False, "--show"),
+) -> None:
+    """Edit a pipeline's JSON via an LLM instruction."""
+    _run_pipeline(ctx, "ai-edit", id=id, instruction=instruction, show=show)
+
+
+@pipeline_app.command("graph")
+def pipeline_graph(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
+    """Show a pipeline's graph (ASCII)."""
+    _run_pipeline(ctx, "graph", id=id)
+
+
+# ---- nested: pipeline filter <action> ------------------------------------- #
+
+
+@pipeline_filter_app.command("set")
+def pipeline_filter_set(
+    ctx: typer.Context,
+    id: int = typer.Argument(..., help="Pipeline id"),
+    message_kinds: list[str] = typer.Option([], "--message-kind"),
+    service_actions: list[str] = typer.Option([], "--service-action"),
+    media_types: list[str] = typer.Option([], "--media-type"),
+    sender_kinds: list[str] = typer.Option([], "--sender-kind"),
+    keywords: list[str] = typer.Option([], "--keyword"),
+    regex: str | None = typer.Option(None, "--regex"),
+    forwarded: TriBool | None = typer.Option(None, "--forwarded"),
+    has_text: TriBool | None = typer.Option(None, "--has-text"),
+) -> None:
+    """Set a pipeline's message filter."""
+    _run_pipeline(
+        ctx, "filter", filter_action="set", id=id,
+        message_kinds=list(message_kinds) or None, service_actions=list(service_actions) or None,
+        media_types=list(media_types) or None, sender_kinds=list(sender_kinds) or None,
+        keywords=list(keywords) or None, regex=regex,
+        forwarded=forwarded.value if forwarded else None,
+        has_text=has_text.value if has_text else None,
+    )
+
+
+@pipeline_filter_app.command("show")
+def pipeline_filter_show(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
+    """Show a pipeline's message filter."""
+    _run_pipeline(ctx, "filter", filter_action="show", id=id)
+
+
+@pipeline_filter_app.command("clear")
+def pipeline_filter_clear(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
+    """Clear a pipeline's message filter."""
+    _run_pipeline(ctx, "filter", filter_action="clear", id=id)
+
+
+# ---- nested: pipeline node <action> --------------------------------------- #
+
+
+@pipeline_node_app.command("add")
+def pipeline_node_add(
+    ctx: typer.Context,
+    pipeline_id: int = typer.Argument(..., help="Pipeline id"),
+    node_spec: str = typer.Argument(..., help="Node spec: type:key=value,..."),
+) -> None:
+    """Add a node to a pipeline graph."""
+    _run_pipeline(ctx, "node", node_action="add", pipeline_id=pipeline_id, node_spec=node_spec)
+
+
+@pipeline_node_app.command("replace")
+def pipeline_node_replace(
+    ctx: typer.Context,
+    pipeline_id: int = typer.Argument(..., help="Pipeline id"),
+    node_id: str = typer.Argument(..., help="Node ID to replace"),
+    node_spec: str = typer.Argument(..., help="New node spec: type:key=value,..."),
+) -> None:
+    """Replace a node in a pipeline graph."""
+    _run_pipeline(ctx, "node", node_action="replace", pipeline_id=pipeline_id, node_id=node_id, node_spec=node_spec)
+
+
+@pipeline_node_app.command("remove")
+def pipeline_node_remove(
+    ctx: typer.Context,
+    pipeline_id: int = typer.Argument(..., help="Pipeline id"),
+    node_id: str = typer.Argument(..., help="Node ID to remove"),
+) -> None:
+    """Remove a node from a pipeline graph."""
+    _run_pipeline(ctx, "node", node_action="remove", pipeline_id=pipeline_id, node_id=node_id)
+
+
+# ---- nested: pipeline edge <action> --------------------------------------- #
+
+
+@pipeline_edge_app.command("add")
+def pipeline_edge_add(
+    ctx: typer.Context,
+    pipeline_id: int = typer.Argument(..., help="Pipeline id"),
+    from_node: str = typer.Argument(..., help="Source node ID"),
+    to_node: str = typer.Argument(..., help="Target node ID"),
+) -> None:
+    """Add an edge to a pipeline graph."""
+    _run_pipeline(ctx, "edge", edge_action="add", pipeline_id=pipeline_id, from_node=from_node, to_node=to_node)
+
+
+@pipeline_edge_app.command("remove")
+def pipeline_edge_remove(
+    ctx: typer.Context,
+    pipeline_id: int = typer.Argument(..., help="Pipeline id"),
+    from_node: str = typer.Argument(..., help="Source node ID"),
+    to_node: str = typer.Argument(..., help="Target node ID"),
+) -> None:
+    """Remove an edge from a pipeline graph."""
+    _run_pipeline(ctx, "edge", edge_action="remove", pipeline_id=pipeline_id, from_node=from_node, to_node=to_node)
+
+
+# --------------------------------------------------------------------------- #
 # argparse → Typer delegation
 # --------------------------------------------------------------------------- #
 
@@ -1591,7 +2086,256 @@ def _argv_from_namespace(args: argparse.Namespace) -> list[str]:
     elif command == "dialogs":
         argv.append("dialogs")
         argv += _dialogs_argv(args)
+    elif command == "pipeline":
+        argv.append("pipeline")
+        argv += _pipeline_argv(args)
     return argv
+
+
+def _append_opt(tail: list[str], flag: str, values) -> None:
+    """Emit an argparse ``append`` option as repeated Typer flags.
+
+    argparse ``action="append"`` accumulates ``--source 1 --source 2`` into a
+    list; Click options can't be variadic (no ``nargs="+"`` on options), so the
+    Typer leaf models the same flag as a repeatable option. On the prod
+    round-trip we re-emit each list element as its own ``--flag value`` pair.
+    """
+    for value in values or []:
+        tail += [flag, str(value)]
+
+
+def _pipeline_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``pipeline`` — the action plus its flags / positionals.
+
+    Handles the three depth-2 nested groups (``filter`` / ``node`` / ``edge``)
+    and the flat ``graph``. Free-text positionals (pipeline name, node specs,
+    node/edge ids, ai-edit instruction, import file) are emitted after a ``--``
+    separator. argparse ``append`` options re-emit as repeated flags via
+    :func:`_append_opt` (the Click variadic-option known-drift, same class as
+    Wave 3 ``--files``).
+    """
+    action = getattr(args, "pipeline_action", None)
+    if action is None:
+        return []
+    tail = [action]
+
+    if action in (
+        "show", "delete", "toggle", "run-show", "variants", "auto-select",
+        "moderation-view", "publish", "approve", "reject", "graph",
+    ):
+        # single positional id / run_id
+        ident = getattr(args, "run_id", None)
+        if ident is None:
+            ident = args.id
+        tail += ["--", str(ident)]
+    elif action == "list":
+        pass
+    elif action == "add":
+        if getattr(args, "prompt_template", None):
+            tail += ["--prompt-template", args.prompt_template]
+        if getattr(args, "json_file", None):
+            tail += ["--json-file", args.json_file]
+        _append_opt(tail, "--source", getattr(args, "source", None))
+        _append_opt(tail, "--target", getattr(args, "target", None))
+        if getattr(args, "llm_model", None):
+            tail += ["--llm-model", args.llm_model]
+        if getattr(args, "image_model", None):
+            tail += ["--image-model", args.image_model]
+        if getattr(args, "publish_mode", "moderated") != "moderated":
+            tail += ["--publish-mode", args.publish_mode]
+        if getattr(args, "generation_backend", "chain") != "chain":
+            tail += ["--generation-backend", args.generation_backend]
+        if getattr(args, "interval", 60) != 60:
+            tail += ["--interval", str(args.interval)]
+        if getattr(args, "inactive", False):
+            tail.append("--inactive")
+        if (getattr(args, "ab_variants", 1) or 1) != 1:
+            tail += ["--ab-variants", str(args.ab_variants)]
+        if getattr(args, "ab_auto_select", False):
+            tail.append("--ab-auto-select")
+        _append_opt(tail, "--node", getattr(args, "node_specs", None))
+        _append_opt(tail, "--edge", getattr(args, "edge", None))
+        _append_opt(tail, "--node-config", getattr(args, "node_configs", None))
+        if getattr(args, "run_after", False):
+            tail.append("--run-after")
+        if getattr(args, "since_value", 24) != 24:
+            tail += ["--since-value", str(args.since_value)]
+        if getattr(args, "since_unit", "h") != "h":
+            tail += ["--since-unit", args.since_unit]
+        tail += ["--", args.name]
+    elif action == "dry-run-count":
+        _append_opt(tail, "--source", getattr(args, "source", None))
+        if getattr(args, "since_value", 24) != 24:
+            tail += ["--since-value", str(args.since_value)]
+        if getattr(args, "since_unit", "h") != "h":
+            tail += ["--since-unit", args.since_unit]
+    elif action == "edit":
+        if getattr(args, "name", None):
+            tail += ["--name", args.name]
+        if getattr(args, "prompt_template", None):
+            tail += ["--prompt-template", args.prompt_template]
+        _append_opt(tail, "--source", getattr(args, "source", None))
+        _append_opt(tail, "--target", getattr(args, "target", None))
+        if getattr(args, "llm_model", None) is not None:
+            tail += ["--llm-model", args.llm_model]
+        if getattr(args, "image_model", None) is not None:
+            tail += ["--image-model", args.image_model]
+        if getattr(args, "publish_mode", None):
+            tail += ["--publish-mode", args.publish_mode]
+        if getattr(args, "generation_backend", None):
+            tail += ["--generation-backend", args.generation_backend]
+        if getattr(args, "interval", None) is not None:
+            tail += ["--interval", str(args.interval)]
+        active = getattr(args, "active", None)
+        if active is True:
+            tail.append("--active")
+        elif active is False:
+            tail.append("--inactive")
+        if getattr(args, "ab_variants", None) is not None:
+            tail += ["--ab-variants", str(args.ab_variants)]
+        ab_auto = getattr(args, "ab_auto_select", None)
+        if ab_auto is True:
+            tail.append("--ab-auto-select")
+        elif ab_auto is False:
+            tail.append("--no-ab-auto-select")
+        tail += ["--", str(args.id)]
+    elif action == "run":
+        if getattr(args, "preview", False):
+            tail.append("--preview")
+        if getattr(args, "publish", False):
+            tail.append("--publish")
+        if getattr(args, "limit", 8) != 8:
+            tail += ["--limit", str(args.limit)]
+        if getattr(args, "max_tokens", 256) != 256:
+            tail += ["--max-tokens", str(args.max_tokens)]
+        if getattr(args, "temperature", 0.0) != 0.0:
+            tail += ["--temperature", str(args.temperature)]
+        tail += ["--", str(args.id)]
+    elif action == "generate":
+        if getattr(args, "max_tokens", 512) != 512:
+            tail += ["--max-tokens", str(args.max_tokens)]
+        if getattr(args, "temperature", 0.7) != 0.7:
+            tail += ["--temperature", str(args.temperature)]
+        if getattr(args, "model", None):
+            tail += ["--model", args.model]
+        if getattr(args, "preview", False):
+            tail.append("--preview")
+        if getattr(args, "ab_variants", None) is not None:
+            tail += ["--ab-variants", str(args.ab_variants)]
+        if getattr(args, "auto_select", False):
+            tail.append("--auto-select")
+        tail += ["--", str(args.id)]
+    elif action == "generate-stream":
+        if getattr(args, "model", None):
+            tail += ["--model", args.model]
+        if getattr(args, "max_tokens", 256) != 256:
+            tail += ["--max-tokens", str(args.max_tokens)]
+        if getattr(args, "temperature", 0.0) != 0.0:
+            tail += ["--temperature", str(args.temperature)]
+        if getattr(args, "limit", 8) != 8:
+            tail += ["--limit", str(args.limit)]
+        tail += ["--", str(args.id)]
+    elif action == "runs":
+        if getattr(args, "limit", 20) != 20:
+            tail += ["--limit", str(args.limit)]
+        if getattr(args, "status", None):
+            tail += ["--status", args.status]
+        tail += ["--", str(args.id)]
+    elif action == "select-variant":
+        tail += ["--", str(args.run_id), str(args.index)]
+    elif action == "queue":
+        if getattr(args, "limit", 20) != 20:
+            tail += ["--limit", str(args.limit)]
+        tail += ["--", str(args.id)]
+    elif action == "moderation-list":
+        if getattr(args, "pipeline_id", None) is not None:
+            tail += ["--pipeline-id", str(args.pipeline_id)]
+        if getattr(args, "limit", 20) != 20:
+            tail += ["--limit", str(args.limit)]
+    elif action in ("bulk-approve", "bulk-reject"):
+        tail += ["--", *(str(r) for r in args.run_ids)]
+    elif action == "refinement-steps":
+        if getattr(args, "steps_json", None):
+            tail += ["--set", args.steps_json]
+        tail += ["--", str(args.id)]
+    elif action == "export":
+        if getattr(args, "output", None):
+            tail += ["--output", args.output]
+        if getattr(args, "force", False):
+            tail.append("--force")
+        tail += ["--", str(args.id)]
+    elif action == "import":
+        if getattr(args, "name", None):
+            tail += ["--name", args.name]
+        tail += ["--", args.file]
+    elif action == "templates":
+        if getattr(args, "category", None):
+            tail += ["--category", args.category]
+    elif action == "from-template":
+        if getattr(args, "source_ids", ""):
+            tail += ["--source-ids", args.source_ids]
+        if getattr(args, "target_refs", ""):
+            tail += ["--target-refs", args.target_refs]
+        tail += ["--", str(args.template_id), args.name]
+    elif action == "ai-edit":
+        if getattr(args, "show", False):
+            tail.append("--show")
+        tail += ["--", str(args.id), args.instruction]
+    elif action == "filter":
+        tail += _pipeline_filter_argv(args)
+    elif action == "node":
+        tail += _pipeline_node_argv(args)
+    elif action == "edge":
+        tail += _pipeline_edge_argv(args)
+    return tail
+
+
+def _pipeline_filter_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for the nested ``pipeline filter`` group (depth-2)."""
+    filter_action = getattr(args, "filter_action", None)
+    if not filter_action:
+        return []
+    tail = [filter_action]
+    if filter_action == "set":
+        _append_opt(tail, "--message-kind", getattr(args, "message_kinds", None))
+        _append_opt(tail, "--service-action", getattr(args, "service_actions", None))
+        _append_opt(tail, "--media-type", getattr(args, "media_types", None))
+        _append_opt(tail, "--sender-kind", getattr(args, "sender_kinds", None))
+        _append_opt(tail, "--keyword", getattr(args, "keywords", None))
+        if getattr(args, "regex", None):
+            tail += ["--regex", args.regex]
+        if getattr(args, "forwarded", None):
+            tail += ["--forwarded", args.forwarded]
+        if getattr(args, "has_text", None):
+            tail += ["--has-text", args.has_text]
+        tail += ["--", str(args.id)]
+    else:  # show / clear
+        tail += ["--", str(args.id)]
+    return tail
+
+
+def _pipeline_node_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for the nested ``pipeline node`` group (depth-2)."""
+    node_action = getattr(args, "node_action", None)
+    if not node_action:
+        return []
+    tail = [node_action]
+    if node_action == "add":
+        tail += ["--", str(args.pipeline_id), args.node_spec]
+    elif node_action == "replace":
+        tail += ["--", str(args.pipeline_id), args.node_id, args.node_spec]
+    elif node_action == "remove":
+        tail += ["--", str(args.pipeline_id), args.node_id]
+    return tail
+
+
+def _pipeline_edge_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for the nested ``pipeline edge`` group (depth-2)."""
+    edge_action = getattr(args, "edge_action", None)
+    if not edge_action:
+        return []
+    tail = [edge_action, "--", str(args.pipeline_id), args.from_node, args.to_node]
+    return tail
 
 
 def _dialogs_argv(args: argparse.Namespace) -> list[str]:

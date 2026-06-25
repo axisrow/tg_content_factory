@@ -652,3 +652,287 @@ def test_dialogs_bare_shows_help_exit0():
     with pytest.raises(SystemExit) as exc:
         _delegate(["dialogs"])
     assert exc.value.code == 0
+
+
+# --------------------------------------------------------------------------- #
+# pipeline — leaves + three depth-2 nested groups (filter / node / edge)
+#
+# Each pipeline leaf builds an argparse Namespace and runs the shared
+# ``_dispatch`` body, so the tests patch ``_dispatch`` and assert the Namespace
+# it received (the CLI-token → Namespace wiring under test).
+# --------------------------------------------------------------------------- #
+
+
+def _pipeline_ns_of(mock_dispatch):
+    return mock_dispatch.call_args[0][0]
+
+
+def test_pipeline_list():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["pipeline", "list"])
+    assert result.exit_code == 0
+    assert _pipeline_ns_of(mock).pipeline_action == "list"
+
+
+def test_pipeline_show():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["pipeline", "show", "5"])
+    assert result.exit_code == 0
+    ns = _pipeline_ns_of(mock)
+    assert (ns.pipeline_action, ns.id) == ("show", 5)
+
+
+def test_pipeline_add_variadic_source():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app,
+            ["pipeline", "add", "MyPipe", "--prompt-template", "tpl",
+             "--source", "100", "--source", "200", "--target", "+1|99"],
+        )
+    assert result.exit_code == 0
+    ns = _pipeline_ns_of(mock)
+    assert ns.name == "MyPipe" and ns.source == [100, 200] and ns.target == ["+1|99"]
+    assert ns.publish_mode == "moderated"  # enum → plain str
+
+
+def test_pipeline_add_bad_publish_mode_rejected():
+    """Unknown --publish-mode choice rejected (str-Enum closed set)."""
+    with patch("src.cli.typer_commands.run_async"):
+        result = runner.invoke(app, ["pipeline", "add", "P", "--publish-mode", "bogus"])
+    assert result.exit_code != 0
+
+
+def test_pipeline_edit_active_tristate():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["pipeline", "edit", "5", "--inactive"])
+    assert result.exit_code == 0
+    assert _pipeline_ns_of(mock).active is False
+
+
+def test_pipeline_generate_stream():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["pipeline", "generate-stream", "7", "--model", "gpt-4"])
+    assert result.exit_code == 0
+    ns = _pipeline_ns_of(mock)
+    assert (ns.pipeline_action, ns.id, ns.model) == ("generate-stream", 7, "gpt-4")
+
+
+def test_pipeline_bulk_approve_variadic_positional():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["pipeline", "bulk-approve", "1", "2", "3"])
+    assert result.exit_code == 0
+    assert _pipeline_ns_of(mock).run_ids == [1, 2, 3]
+
+
+def test_pipeline_export_force():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["pipeline", "export", "5", "--force", "-o", "out.json"])
+    assert result.exit_code == 0
+    ns = _pipeline_ns_of(mock)
+    assert ns.force is True and ns.output == "out.json"
+
+
+# --- nested: pipeline filter / node / edge (depth-2) ----------------------- #
+
+
+def test_pipeline_filter_set_nested():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app, ["pipeline", "filter", "set", "3", "--keyword", "a", "--keyword", "b", "--forwarded", "true"]
+        )
+    assert result.exit_code == 0
+    ns = _pipeline_ns_of(mock)
+    assert (ns.pipeline_action, ns.filter_action, ns.id) == ("filter", "set", 3)
+    assert ns.keywords == ["a", "b"] and ns.forwarded == "true"
+
+
+def test_pipeline_filter_show_nested():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["pipeline", "filter", "show", "3"])
+    assert result.exit_code == 0
+    ns = _pipeline_ns_of(mock)
+    assert (ns.filter_action, ns.id) == ("show", 3)
+
+
+def test_pipeline_node_add_nested():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["pipeline", "node", "add", "5", "fetch:limit=10"])
+    assert result.exit_code == 0
+    ns = _pipeline_ns_of(mock)
+    assert (ns.pipeline_action, ns.node_action, ns.pipeline_id, ns.node_spec) == (
+        "node", "add", 5, "fetch:limit=10",
+    )
+
+
+def test_pipeline_node_replace_three_positionals_nested():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["pipeline", "node", "replace", "5", "n1", "llm:model=gpt"])
+    assert result.exit_code == 0
+    ns = _pipeline_ns_of(mock)
+    assert (ns.node_action, ns.pipeline_id, ns.node_id, ns.node_spec) == (
+        "replace", 5, "n1", "llm:model=gpt",
+    )
+
+
+def test_pipeline_edge_add_nested():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["pipeline", "edge", "add", "5", "n1", "n2"])
+    assert result.exit_code == 0
+    ns = _pipeline_ns_of(mock)
+    assert (ns.pipeline_action, ns.edge_action, ns.pipeline_id, ns.from_node, ns.to_node) == (
+        "edge", "add", 5, "n1", "n2",
+    )
+
+
+def test_pipeline_graph_flat():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["pipeline", "graph", "5"])
+    assert result.exit_code == 0
+    ns = _pipeline_ns_of(mock)
+    assert (ns.pipeline_action, ns.id) == ("graph", 5)
+
+
+# --- pipeline prod round-trip (incl. all three nested depth-2 paths) ------- #
+
+
+def test_pipeline_node_add_roundtrip_nested():
+    """The depth-2 ``pipeline node add`` path survives the argparse→Typer round-trip."""
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["pipeline", "node", "add", "5", "fetch:limit=10"])
+    ns = _pipeline_ns_of(mock)
+    assert (ns.node_action, ns.pipeline_id, ns.node_spec) == ("add", 5, "fetch:limit=10")
+
+
+def test_pipeline_node_replace_roundtrip_nested():
+    """The depth-2 ``pipeline node replace`` (three positionals) round-trips in order."""
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["pipeline", "node", "replace", "5", "n1", "llm:model=gpt"])
+    ns = _pipeline_ns_of(mock)
+    assert (ns.node_action, ns.pipeline_id, ns.node_id, ns.node_spec) == (
+        "replace", 5, "n1", "llm:model=gpt",
+    )
+
+
+def test_pipeline_edge_remove_roundtrip_nested():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["pipeline", "edge", "remove", "5", "n1", "n2"])
+    ns = _pipeline_ns_of(mock)
+    assert (ns.edge_action, ns.pipeline_id, ns.from_node, ns.to_node) == ("remove", 5, "n1", "n2")
+
+
+def test_pipeline_filter_set_roundtrip_nested():
+    """Variadic --keyword re-emits as repeated flags across the round-trip."""
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["pipeline", "filter", "set", "3", "--keyword", "x", "--keyword", "y"])
+    ns = _pipeline_ns_of(mock)
+    assert (ns.filter_action, ns.id, ns.keywords) == ("set", 3, ["x", "y"])
+
+
+def test_pipeline_add_variadic_source_roundtrip():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(
+            ["pipeline", "add", "P", "--prompt-template", "t",
+             "--source", "1", "--source", "2", "--target", "+1|9"]
+        )
+    ns = _pipeline_ns_of(mock)
+    assert ns.name == "P" and ns.source == [1, 2] and ns.target == ["+1|9"]
+
+
+def test_pipeline_generate_stream_roundtrip():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["pipeline", "generate-stream", "7", "--limit", "12"])
+    ns = _pipeline_ns_of(mock)
+    assert (ns.pipeline_action, ns.id, ns.limit) == ("generate-stream", 7, 12)
+
+
+def test_pipeline_bulk_reject_roundtrip():
+    mock = MagicMock()
+    with (
+        patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["pipeline", "bulk-reject", "10", "20"])
+    assert _pipeline_ns_of(mock).run_ids == [10, 20]
+
+
+def test_pipeline_bare_shows_help_exit0():
+    """Bare ``pipeline`` (no action) shows help and exits 0 (argparse parity)."""
+    with pytest.raises(SystemExit) as exc:
+        _delegate(["pipeline"])
+    assert exc.value.code == 0
