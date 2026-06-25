@@ -67,6 +67,7 @@ from src.cli.commands import messages as messages_cmd
 from src.cli.commands import notification as notification_cmd
 from src.cli.commands import provider as provider_cmd
 from src.cli.commands import search as search_cmd
+from src.cli.commands import search_query as search_query_cmd
 from src.cli.commands import serve as serve_cmd
 from src.cli.commands import server_control as server_control_cmd
 from src.cli.commands import translate as translate_cmd
@@ -110,6 +111,8 @@ MIGRATED_COMMANDS: frozenset[str] = frozenset(
         "serve", "worker", "stop", "restart", "mcp-server", "collect", "search", "messages",
         # Wave 2 (#1122) — flat simple groups
         "debug", "export", "translate", "image", "provider", "notification",
+        # Wave 3 (#1123) — medium groups
+        "search-query",
     }
 )
 
@@ -706,6 +709,154 @@ def notification_set_account(
 
 
 # --------------------------------------------------------------------------- #
+# search-query → list / get / add / edit / delete / toggle / run / stats
+# --------------------------------------------------------------------------- #
+
+search_query_app = typer.Typer(no_args_is_help=True, help="Search query management")
+app.add_typer(search_query_app, name="search-query")
+
+
+@search_query_app.command("list")
+def search_query_list(ctx: typer.Context) -> None:
+    """List search queries."""
+    apply_startup(ctx)
+    run_async(search_query_cmd.list_impl(ctx.obj.config))
+
+
+@search_query_app.command("get")
+def search_query_get(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+) -> None:
+    """Show search query details."""
+    apply_startup(ctx)
+    run_async(search_query_cmd.get_impl(ctx.obj.config, query_id=query_id))
+
+
+@search_query_app.command("add")
+def search_query_add(
+    ctx: typer.Context,
+    query: str = typer.Argument(..., help="FTS5 search query text"),
+    interval: int = typer.Option(60, "--interval", help="Run interval in minutes"),
+    regex: bool = typer.Option(False, "--regex", help="Use regex matching"),
+    fts: bool = typer.Option(False, "--fts", help="Use FTS5 boolean syntax (no quoting)"),
+    notify: bool = typer.Option(False, "--notify", help="Notify on collect"),
+    track_stats: bool = typer.Option(
+        True, "--track-stats/--no-track-stats", help="Track stats (default: on)"
+    ),
+    exclude_patterns: str = typer.Option(
+        "", "--exclude-patterns", help="Exclude patterns, one per line (use \\n)"
+    ),
+    max_length: int | None = typer.Option(None, "--max-length", help="Max message text length"),
+    chats: str = typer.Option("", "--chats", help="Chat filter: IDs, usernames or t.me links"),
+) -> None:
+    """Add search query."""
+    apply_startup(ctx)
+    run_async(
+        search_query_cmd.add_impl(
+            ctx.obj.config,
+            query=query,
+            interval=interval,
+            is_regex=regex,
+            is_fts=fts,
+            notify=notify,
+            track_stats=track_stats,
+            exclude_patterns=exclude_patterns,
+            max_length=max_length,
+            chats=chats,
+        )
+    )
+
+
+@search_query_app.command("edit")
+def search_query_edit(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+    query: str | None = typer.Option(None, "--query", help="New query text"),
+    interval: int | None = typer.Option(None, "--interval", help="New interval in minutes"),
+    regex: bool | None = typer.Option(None, "--regex/--no-regex", help="Toggle regex matching"),
+    fts: bool | None = typer.Option(None, "--fts/--no-fts", help="Toggle FTS5 syntax"),
+    notify: bool | None = typer.Option(None, "--notify/--no-notify", help="Toggle notify on collect"),
+    track_stats: bool | None = typer.Option(
+        None, "--track-stats/--no-track-stats", help="Toggle stat tracking"
+    ),
+    exclude_patterns: str | None = typer.Option(
+        None, "--exclude-patterns", help="Exclude patterns (use \\n)"
+    ),
+    max_length: int | None = typer.Option(None, "--max-length", help="Max message text length"),
+    clear_max_length: bool = typer.Option(
+        False, "--no-max-length", help="Clear the max-length limit"
+    ),
+    chats: str | None = typer.Option(
+        None, "--chats", help="Chat filter: IDs, usernames or t.me links"
+    ),
+    clear_chats: bool = typer.Option(False, "--clear-chats", help="Clear the chat filter"),
+) -> None:
+    """Edit search query; unset flags keep their current value."""
+    apply_startup(ctx)
+    # ``--no-max-length`` maps to the sentinel -1 the impl treats as "clear";
+    # ``--clear-chats`` maps to "" — mirrors the argparse store_const declarations.
+    resolved_max_length = -1 if clear_max_length else max_length
+    resolved_chats = "" if clear_chats else chats
+    run_async(
+        search_query_cmd.edit_impl(
+            ctx.obj.config,
+            query_id=query_id,
+            query=query,
+            interval=interval,
+            is_regex=regex,
+            is_fts=fts,
+            notify=notify,
+            track_stats=track_stats,
+            exclude_patterns=exclude_patterns,
+            max_length=resolved_max_length,
+            chats=resolved_chats,
+        )
+    )
+
+
+@search_query_app.command("delete")
+def search_query_delete(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+) -> None:
+    """Delete search query."""
+    apply_startup(ctx)
+    run_async(search_query_cmd.delete_impl(ctx.obj.config, query_id=query_id))
+
+
+@search_query_app.command("toggle")
+def search_query_toggle(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+) -> None:
+    """Toggle search query active state."""
+    apply_startup(ctx)
+    run_async(search_query_cmd.toggle_impl(ctx.obj.config, query_id=query_id))
+
+
+@search_query_app.command("run")
+def search_query_run(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+) -> None:
+    """Run a search query once and show matches."""
+    apply_startup(ctx)
+    run_async(search_query_cmd.run_impl(ctx.obj.config, query_id=query_id))
+
+
+@search_query_app.command("stats")
+def search_query_stats(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+    days: int = typer.Option(30, "--days", help="Number of days"),
+) -> None:
+    """Show daily stats for a search query."""
+    apply_startup(ctx)
+    run_async(search_query_cmd.stats_impl(ctx.obj.config, query_id=query_id, days=days))
+
+
+# --------------------------------------------------------------------------- #
 # argparse → Typer delegation
 # --------------------------------------------------------------------------- #
 
@@ -781,6 +932,9 @@ def _argv_from_namespace(args: argparse.Namespace) -> list[str]:
     elif command == "notification":
         argv.append("notification")
         argv += _notification_argv(args)
+    elif command == "search-query":
+        argv.append("search-query")
+        argv += _search_query_argv(args)
     return argv
 
 
@@ -910,6 +1064,90 @@ def _notification_argv(args: argparse.Namespace) -> list[str]:
             tail += ["--message", args.message]
     elif action == "set-account":
         tail += ["--phone", args.phone]
+    return tail
+
+
+def _search_query_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``search-query`` — the action plus its flags / positionals.
+
+    ``add`` and ``edit`` share many flags but with different defaults: ``add`` has
+    store_true flags (absent unless set) and a positional query; ``edit`` uses
+    tri-state flags (``--x`` / ``--no-x``, default ``None`` = leave unchanged) plus
+    the ``--no-max-length`` / ``--clear-chats`` sentinels. We emit each flag only
+    when it diverges from its default so the Typer command sees the same resolved
+    state argparse produced.
+    """
+    action = getattr(args, "search_query_action", None)
+    if action is None:
+        return []
+    tail = [action]
+    if action == "get":
+        tail += ["--", str(args.id)]
+    elif action in ("delete", "toggle", "run"):
+        tail += ["--", str(args.id)]
+    elif action == "stats":
+        if getattr(args, "days", 30) != 30:
+            tail += ["--days", str(args.days)]
+        tail += ["--", str(args.id)]
+    elif action == "add":
+        if getattr(args, "interval", 60) != 60:
+            tail += ["--interval", str(args.interval)]
+        if getattr(args, "regex", False):
+            tail.append("--regex")
+        if getattr(args, "fts", False):
+            tail.append("--fts")
+        if getattr(args, "notify", False):
+            tail.append("--notify")
+        if getattr(args, "track_stats", True) is False:
+            tail.append("--no-track-stats")
+        if getattr(args, "exclude_patterns", ""):
+            tail += ["--exclude-patterns", args.exclude_patterns]
+        if getattr(args, "max_length", None) is not None:
+            tail += ["--max-length", str(args.max_length)]
+        if getattr(args, "chats", ""):
+            tail += ["--chats", args.chats]
+        # Positional query after ``--`` so a leading ``-`` survives Click parsing.
+        tail += ["--", args.query]
+    elif action == "edit":
+        if getattr(args, "query", None):
+            tail += ["--query", args.query]
+        if getattr(args, "interval", None) is not None:
+            tail += ["--interval", str(args.interval)]
+        regex = getattr(args, "regex", None)
+        if regex is True:
+            tail.append("--regex")
+        elif regex is False:
+            tail.append("--no-regex")
+        fts = getattr(args, "fts", None)
+        if fts is True:
+            tail.append("--fts")
+        elif fts is False:
+            tail.append("--no-fts")
+        notify = getattr(args, "notify", None)
+        if notify is True:
+            tail.append("--notify")
+        elif notify is False:
+            tail.append("--no-notify")
+        track_stats = getattr(args, "track_stats", None)
+        if track_stats is True:
+            tail.append("--track-stats")
+        elif track_stats is False:
+            tail.append("--no-track-stats")
+        if getattr(args, "exclude_patterns", None) is not None:
+            tail += ["--exclude-patterns", args.exclude_patterns]
+        max_length = getattr(args, "max_length", None)
+        # argparse maps --no-max-length onto the -1 store_const sentinel.
+        if max_length == -1:
+            tail.append("--no-max-length")
+        elif max_length is not None:
+            tail += ["--max-length", str(max_length)]
+        chats = getattr(args, "chats", None)
+        # --clear-chats is the "" store_const; --chats carries any other value.
+        if chats == "":
+            tail.append("--clear-chats")
+        elif chats is not None:
+            tail += ["--chats", chats]
+        tail += ["--", str(args.id)]
     return tail
 
 
