@@ -97,32 +97,61 @@ async def test_export_session_roundtrip_with_encryption(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_get_session_export_binds_phone_and_session_to_one_row(tmp_path):
-    """Regression for the #1145 review HIGH: phone and session must come from the
-    SAME row, never a stale phone paired with a fresh session after delete+reinsert.
+async def test_old_two_read_pattern_would_mix_phone_and_session(tmp_path):
+    """Proves the #1145 HIGH was real: the OLD two-await pattern (identity from one
+    read, session from a second) pairs a STALE phone with a FRESH session when a
+    delete+reinsert lands between the two reads on a reused rowid.
 
-    The endpoint previously read identity (summaries) and the session in two
-    separate awaits; if a row is deleted and a different account reinserted onto
-    the reused id between them, the response would mix the old phone with the new
-    session. `get_session_export` reads both from one row, so the pairing is
-    always consistent — or None if the row is gone.
+    This reconstructs the pre-fix route logic locally and forces the race BETWEEN
+    the two reads. It must observe the mix — establishing the hazard the fixed
+    code (next test) prevents. If this ever stops mixing, the race model is wrong
+    and the guard below would prove nothing.
     """
-    db = Database(str(tmp_path / "consistency.db"))
+    db = Database(str(tmp_path / "old.db"))
+    await db.initialize()
+    try:
+        # Step 1 of the OLD pattern: read identity (summaries) for the FIRST account.
+        first_id = await db.add_account(Account(phone="+15551110001", session_string="sess_one"))
+        summaries = await db.get_account_summaries(active_only=False)
+        stale_phone = next(s.phone for s in summaries if s.id == first_id)
+
+        # The race lands BETWEEN the two reads: row deleted, a DIFFERENT account
+        # reinserted onto the reused id.
+        await db.delete_account(first_id)
+        reused_id = await db.add_account(Account(phone="+15552220002", session_string="sess_two"))
+        assert reused_id == first_id  # rowid genuinely reused
+
+        # Step 2 of the OLD pattern: decrypt by id only → gets the NEW session.
+        fresh_session = await db.repos.accounts.get_decrypted_session(account_id=first_id)
+
+        # The old route returned stale_phone + fresh_session → a poisoned pairing.
+        assert (stale_phone, fresh_session) == ("+15551110001", "sess_two")
+        assert stale_phone != "+15552220002"  # phone does NOT own the live session
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_get_session_export_never_mixes_across_reused_rowid(tmp_path):
+    """The fix: `get_session_export` reads phone AND session from ONE row, so under
+    the same delete+reinsert race it returns a CONSISTENT pair (or None) — never the
+    stale_phone+fresh_session mix the sibling test above demonstrates for the old code.
+    """
+    db = Database(str(tmp_path / "fixed.db"))
     await db.initialize()
     try:
         first_id = await db.add_account(Account(phone="+15551110001", session_string="sess_one"))
-
-        # Simulate the hazard: delete the row, reinsert a DIFFERENT account.
         await db.delete_account(first_id)
         reused_id = await db.add_account(Account(phone="+15552220002", session_string="sess_two"))
+        assert reused_id == first_id  # same rowid the export targets
 
         export = await db.repos.accounts.get_session_export(account_id=reused_id)
         assert export is not None
         phone, session = export
-        # phone and session are from the SAME (current) row — never mixed.
+        # Both fields come from the SAME current row — the stale phone is impossible.
         assert (phone, session) == ("+15552220002", "sess_two")
 
-        # A genuinely absent id yields None (→ 404 at the route), not a stale pairing.
+        # A genuinely absent id yields None (→ 404 at the route), never a stale pairing.
         assert await db.repos.accounts.get_session_export(account_id=999999) is None
     finally:
         await db.close()
