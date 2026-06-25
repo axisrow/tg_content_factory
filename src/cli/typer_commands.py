@@ -67,6 +67,7 @@ from src.cli.commands import mcp_server as mcp_server_cmd
 from src.cli.commands import messages as messages_cmd
 from src.cli.commands import notification as notification_cmd
 from src.cli.commands import provider as provider_cmd
+from src.cli.commands import scheduler as scheduler_cmd
 from src.cli.commands import search as search_cmd
 from src.cli.commands import search_query as search_query_cmd
 from src.cli.commands import serve as serve_cmd
@@ -114,7 +115,7 @@ MIGRATED_COMMANDS: frozenset[str] = frozenset(
         # Wave 2 (#1122) — flat simple groups
         "debug", "export", "translate", "image", "provider", "notification",
         # Wave 3 (#1123) — medium groups
-        "search-query", "filter", "settings",
+        "search-query", "filter", "settings", "scheduler",
     }
 )
 
@@ -1059,6 +1060,95 @@ def settings_semantic(
 
 
 # --------------------------------------------------------------------------- #
+# scheduler → start / trigger / status / stop / job-toggle / set-interval
+#             / task-cancel / clear-pending / queue-pause / queue-resume
+# --------------------------------------------------------------------------- #
+
+scheduler_app = typer.Typer(no_args_is_help=True, help="Scheduler control")
+app.add_typer(scheduler_app, name="scheduler")
+
+
+@scheduler_app.command("start")
+def scheduler_start(ctx: typer.Context) -> None:
+    """Start scheduler (foreground)."""
+    apply_startup(ctx)
+    run_async(scheduler_cmd.start_impl(ctx.obj.config))
+
+
+@scheduler_app.command("trigger")
+def scheduler_trigger(ctx: typer.Context) -> None:
+    """Trigger one-shot collection."""
+    apply_startup(ctx)
+    run_async(scheduler_cmd.trigger_impl(ctx.obj.config))
+
+
+@scheduler_app.command("status")
+def scheduler_status(ctx: typer.Context) -> None:
+    """Show scheduler configuration and status."""
+    apply_startup(ctx)
+    run_async(scheduler_cmd.status_impl(ctx.obj.config))
+
+
+@scheduler_app.command("stop")
+def scheduler_stop(ctx: typer.Context) -> None:
+    """Disable scheduler autostart."""
+    apply_startup(ctx)
+    run_async(scheduler_cmd.stop_impl(ctx.obj.config))
+
+
+@scheduler_app.command("job-toggle")
+def scheduler_job_toggle(
+    ctx: typer.Context,
+    job_id: str = typer.Argument(..., help="Job identifier (e.g. collect_all, sq_1)"),
+) -> None:
+    """Toggle scheduler job enabled/disabled."""
+    apply_startup(ctx)
+    run_async(scheduler_cmd.job_toggle_impl(ctx.obj.config, job_id=job_id))
+
+
+@scheduler_app.command("set-interval")
+def scheduler_set_interval(
+    ctx: typer.Context,
+    job_id: str = typer.Argument(..., help="Job identifier"),
+    minutes: int = typer.Argument(..., help="Interval in minutes (1-1440)"),
+) -> None:
+    """Set scheduler job interval."""
+    apply_startup(ctx)
+    run_async(scheduler_cmd.set_interval_impl(ctx.obj.config, job_id=job_id, minutes=minutes))
+
+
+@scheduler_app.command("task-cancel")
+def scheduler_task_cancel(
+    ctx: typer.Context,
+    task_id: int = typer.Argument(..., help="Task ID to cancel"),
+) -> None:
+    """Cancel a collection task."""
+    apply_startup(ctx)
+    run_async(scheduler_cmd.task_cancel_impl(ctx.obj.config, task_id=task_id))
+
+
+@scheduler_app.command("clear-pending")
+def scheduler_clear_pending(ctx: typer.Context) -> None:
+    """Clear all pending collection tasks."""
+    apply_startup(ctx)
+    run_async(scheduler_cmd.clear_pending_impl(ctx.obj.config))
+
+
+@scheduler_app.command("queue-pause")
+def scheduler_queue_pause(ctx: typer.Context) -> None:
+    """Pause the collection queue (queued tasks stay pending)."""
+    apply_startup(ctx)
+    run_async(scheduler_cmd.queue_pause_impl(ctx.obj.config))
+
+
+@scheduler_app.command("queue-resume")
+def scheduler_queue_resume(ctx: typer.Context) -> None:
+    """Resume the collection queue."""
+    apply_startup(ctx)
+    run_async(scheduler_cmd.queue_resume_impl(ctx.obj.config))
+
+
+# --------------------------------------------------------------------------- #
 # argparse → Typer delegation
 # --------------------------------------------------------------------------- #
 
@@ -1143,6 +1233,9 @@ def _argv_from_namespace(args: argparse.Namespace) -> list[str]:
     elif command == "settings":
         argv.append("settings")
         argv += _settings_argv(args)
+    elif command == "scheduler":
+        argv.append("scheduler")
+        argv += _scheduler_argv(args)
     return argv
 
 
@@ -1272,6 +1365,25 @@ def _notification_argv(args: argparse.Namespace) -> list[str]:
             tail += ["--message", args.message]
     elif action == "set-account":
         tail += ["--phone", args.phone]
+    return tail
+
+
+def _scheduler_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``scheduler`` — the action plus its positional args.
+
+    job-toggle/set-interval/task-cancel carry positionals; they are emitted after
+    ``--`` so a value that looks option-like survives Click's parser.
+    """
+    action = getattr(args, "scheduler_action", None)
+    if action is None:
+        return []
+    tail = [action]
+    if action == "job-toggle":
+        tail += ["--", args.job_id]
+    elif action == "set-interval":
+        tail += ["--", args.job_id, str(args.minutes)]
+    elif action == "task-cancel":
+        tail += ["--", str(args.task_id)]
     return tail
 
 

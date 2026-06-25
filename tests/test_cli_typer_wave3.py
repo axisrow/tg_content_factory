@@ -508,3 +508,83 @@ def test_settings_bare_maps_to_get_via_argparse():
     ):
         _delegate(["settings"])
     mock_impl.assert_called_once_with("config.yaml", key=None)
+
+
+# --------------------------------------------------------------------------- #
+# scheduler → start / trigger / status / stop / job-toggle / set-interval
+#             / task-cancel / clear-pending / queue-pause / queue-resume
+# --------------------------------------------------------------------------- #
+
+
+def test_scheduler_no_arg_subcommands_delegate():
+    for sub, impl_name in [
+        ("start", "start_impl"),
+        ("trigger", "trigger_impl"),
+        ("status", "status_impl"),
+        ("stop", "stop_impl"),
+        ("clear-pending", "clear_pending_impl"),
+        ("queue-pause", "queue_pause_impl"),
+        ("queue-resume", "queue_resume_impl"),
+    ]:
+        mock_impl = MagicMock()
+        with (
+            patch(f"src.cli.typer_commands.scheduler_cmd.{impl_name}", mock_impl),
+            patch("src.cli.typer_commands.run_async"),
+        ):
+            result = runner.invoke(app, ["scheduler", sub])
+        assert result.exit_code == 0, (sub, result.output)
+        mock_impl.assert_called_once_with("config.yaml")
+
+
+def test_scheduler_job_toggle_passes_job_id():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.scheduler_cmd.job_toggle_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["scheduler", "job-toggle", "collect_all"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", job_id="collect_all")
+
+
+def test_scheduler_set_interval_two_positionals():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.scheduler_cmd.set_interval_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["scheduler", "set-interval", "sq_3", "120"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", job_id="sq_3", minutes=120)
+
+
+def test_scheduler_task_cancel_int_id():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.scheduler_cmd.task_cancel_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["scheduler", "task-cancel", "55"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", task_id=55)
+
+
+def test_scheduler_set_interval_delegates_via_argparse():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.scheduler_cmd.set_interval_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["scheduler", "set-interval", "content_generate_2", "30"])
+    mock_impl.assert_called_once_with(
+        "config.yaml", job_id="content_generate_2", minutes=30
+    )
+
+
+def test_scheduler_bare_group_shows_help_exit_0():
+    import pytest
+
+    args = build_parser().parse_args(["scheduler"])
+    with pytest.raises(SystemExit) as exc_info:
+        dispatch_via_typer(args)
+    assert exc_info.value.code == 0
