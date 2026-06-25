@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from src.models import TelegramCommandStatus
+from src.models import Account, TelegramCommandStatus
+from src.telegram.auth import validate_session_string
 from src.web import deps
 
 logger = logging.getLogger(__name__)
@@ -209,3 +210,44 @@ async def verify_code(
         requested_by="web:auth.verify_code",
     )
     return _auth_redirect(request, command_id, phone=phone)
+
+
+@router.post("/import-session")
+async def import_session(
+    request: Request,
+    phone: str = Form(""),
+    session_string: str = Form(""),
+):
+    """Add an account from a ready StringSession (SSO import, #828) — no login flow.
+
+    A pure DB op (validate → add_account, encrypted at rest): unlike send-code /
+    verify-code it needs no worker or live Telegram, so it runs synchronously here.
+    Refuses to overwrite an existing phone. The session string is a secret (full
+    account access) — it arrives in the POST body (never a URL) and is never logged.
+    """
+    phone = phone.strip()
+    session_string = session_string.strip()
+
+    def _error(message: str):
+        return _render(
+            request, "login.html",
+            {"step": "phone", "error": message, "phone": phone,
+             "api_configured": _is_api_configured(request)},
+        )
+
+    if not phone or not session_string:
+        return _error("Укажите номер телефона и session string.")
+    if not validate_session_string(session_string):
+        return _error(f"Невалидная Telegram session string для {phone}.")
+
+    db = request.app.state.db
+    existing = await db.get_account_summaries(active_only=False)
+    if any(s.phone == phone for s in existing):
+        return _error(f"Аккаунт {phone} уже существует. Удалите его перед импортом.")
+
+    is_primary = len(existing) == 0
+    await db.add_account(
+        Account(phone=phone, session_string=session_string, is_primary=is_primary, is_premium=False)
+    )
+    logger.info("account.import_session phone-added by=web")  # no session value
+    return RedirectResponse(url="/settings?msg=account_connected", status_code=303)
