@@ -71,6 +71,7 @@ from src.cli.commands import search as search_cmd
 from src.cli.commands import search_query as search_query_cmd
 from src.cli.commands import serve as serve_cmd
 from src.cli.commands import server_control as server_control_cmd
+from src.cli.commands import settings as settings_cmd
 from src.cli.commands import translate as translate_cmd
 from src.cli.commands import worker as worker_cmd
 from src.cli.typer_app import app, apply_startup, run_async
@@ -113,7 +114,7 @@ MIGRATED_COMMANDS: frozenset[str] = frozenset(
         # Wave 2 (#1122) — flat simple groups
         "debug", "export", "translate", "image", "provider", "notification",
         # Wave 3 (#1123) — medium groups
-        "search-query", "filter",
+        "search-query", "filter", "settings",
     }
 )
 
@@ -946,6 +947,118 @@ def filter_hard_delete(
 
 
 # --------------------------------------------------------------------------- #
+# settings → get / set / info / server-time / agent / filter-criteria
+#            / reactions / semantic
+# --------------------------------------------------------------------------- #
+
+settings_app = typer.Typer(no_args_is_help=True, help="System settings management")
+app.add_typer(settings_app, name="settings")
+
+
+@settings_app.command("get")
+def settings_get(
+    ctx: typer.Context,
+    key: str | None = typer.Option(None, "--key", help="Specific setting key (default: show all)"),
+) -> None:
+    """Show settings."""
+    apply_startup(ctx)
+    run_async(settings_cmd.get_impl(ctx.obj.config, key=key))
+
+
+@settings_app.command("set")
+def settings_set(
+    ctx: typer.Context,
+    key: str = typer.Argument(..., help="Setting key"),
+    value: str = typer.Argument(..., help="Setting value"),
+) -> None:
+    """Set a setting value."""
+    apply_startup(ctx)
+    run_async(settings_cmd.set_impl(ctx.obj.config, key=key, value=value))
+
+
+@settings_app.command("info")
+def settings_info(ctx: typer.Context) -> None:
+    """Show system diagnostics."""
+    apply_startup(ctx)
+    run_async(settings_cmd.info_impl(ctx.obj.config))
+
+
+@settings_app.command("server-time")
+def settings_server_time(ctx: typer.Context) -> None:
+    """Show current server time (UTC)."""
+    apply_startup(ctx)
+    run_async(settings_cmd.server_time_impl(ctx.obj.config))
+
+
+@settings_app.command("agent")
+def settings_agent(
+    ctx: typer.Context,
+    backend: str | None = typer.Option(
+        None, "--backend", help="Agent backend override (auto, claude, deepagents, codex, adk)"
+    ),
+    prompt_template: str | None = typer.Option(
+        None, "--prompt-template", help="Default prompt template"
+    ),
+) -> None:
+    """Configure agent backend and defaults."""
+    apply_startup(ctx)
+    run_async(
+        settings_cmd.agent_impl(ctx.obj.config, backend=backend, prompt_template=prompt_template)
+    )
+
+
+@settings_app.command("filter-criteria")
+def settings_filter_criteria(
+    ctx: typer.Context,
+    min_uniqueness: float | None = typer.Option(None, "--min-uniqueness"),
+    min_sub_ratio: float | None = typer.Option(None, "--min-sub-ratio"),
+    max_cross_dupe: float | None = typer.Option(None, "--max-cross-dupe"),
+    min_cyrillic: float | None = typer.Option(None, "--min-cyrillic"),
+) -> None:
+    """Configure filter thresholds."""
+    apply_startup(ctx)
+    run_async(
+        settings_cmd.filter_criteria_impl(
+            ctx.obj.config,
+            min_uniqueness=min_uniqueness,
+            min_sub_ratio=min_sub_ratio,
+            max_cross_dupe=max_cross_dupe,
+            min_cyrillic=min_cyrillic,
+        )
+    )
+
+
+@settings_app.command("reactions")
+def settings_reactions(
+    ctx: typer.Context,
+    min_interval: int | None = typer.Option(
+        None,
+        "--min-interval",
+        help="Minimum seconds between reactions per account (clamped to 1–300; default 30)",
+    ),
+) -> None:
+    """Configure reaction sending cadence."""
+    apply_startup(ctx)
+    run_async(settings_cmd.reactions_impl(ctx.obj.config, min_interval=min_interval))
+
+
+@settings_app.command("semantic")
+def settings_semantic(
+    ctx: typer.Context,
+    provider: str | None = typer.Option(None, "--provider", help="Embedding provider"),
+    model: str | None = typer.Option(None, "--model", help="Embedding model"),
+    api_key: str | None = typer.Option(None, "--api-key", help="Embedding API key"),
+) -> None:
+    """Configure semantic search."""
+    apply_startup(ctx)
+    run_async(
+        settings_cmd.semantic_impl(
+            ctx.obj.config, provider=provider, model=model, api_key=api_key
+        )
+    )
+
+
+# --------------------------------------------------------------------------- #
 # argparse → Typer delegation
 # --------------------------------------------------------------------------- #
 
@@ -1027,6 +1140,9 @@ def _argv_from_namespace(args: argparse.Namespace) -> list[str]:
     elif command == "filter":
         argv.append("filter")
         argv += _filter_argv(args)
+    elif command == "settings":
+        argv.append("settings")
+        argv += _settings_argv(args)
     return argv
 
 
@@ -1156,6 +1272,48 @@ def _notification_argv(args: argparse.Namespace) -> list[str]:
             tail += ["--message", args.message]
     elif action == "set-account":
         tail += ["--phone", args.phone]
+    return tail
+
+
+def _settings_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``settings`` — the action plus its flags / positionals.
+
+    Default-less to the original argparse: ``settings`` with no action ran ``get``;
+    the get-or-set sub-commands emit only the flags that were actually provided.
+    """
+    action = getattr(args, "settings_action", None) or "get"
+    tail = [action]
+    if action == "get":
+        if getattr(args, "key", None):
+            tail += ["--key", args.key]
+    elif action == "set":
+        # key and value are positionals; emit after ``--`` so a value with a
+        # leading ``-`` survives Click's option parsing.
+        tail += ["--", args.key, args.value]
+    elif action == "agent":
+        if getattr(args, "backend", None):
+            tail += ["--backend", args.backend]
+        if getattr(args, "prompt_template", None):
+            tail += ["--prompt-template", args.prompt_template]
+    elif action == "filter-criteria":
+        if getattr(args, "min_uniqueness", None) is not None:
+            tail += ["--min-uniqueness", str(args.min_uniqueness)]
+        if getattr(args, "min_sub_ratio", None) is not None:
+            tail += ["--min-sub-ratio", str(args.min_sub_ratio)]
+        if getattr(args, "max_cross_dupe", None) is not None:
+            tail += ["--max-cross-dupe", str(args.max_cross_dupe)]
+        if getattr(args, "min_cyrillic", None) is not None:
+            tail += ["--min-cyrillic", str(args.min_cyrillic)]
+    elif action == "reactions":
+        if getattr(args, "min_interval", None) is not None:
+            tail += ["--min-interval", str(args.min_interval)]
+    elif action == "semantic":
+        if getattr(args, "provider", None) is not None:
+            tail += ["--provider", args.provider]
+        if getattr(args, "model", None) is not None:
+            tail += ["--model", args.model]
+        if getattr(args, "api_key", None) is not None:
+            tail += ["--api-key", args.api_key]
     return tail
 
 

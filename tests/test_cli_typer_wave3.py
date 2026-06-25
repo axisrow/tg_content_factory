@@ -375,3 +375,136 @@ def test_filter_bare_group_shows_help_exit_0():
     with pytest.raises(SystemExit) as exc_info:
         dispatch_via_typer(args)
     assert exc_info.value.code == 0
+
+
+# --------------------------------------------------------------------------- #
+# settings → get / set / info / server-time / agent / filter-criteria
+#            / reactions / semantic
+# --------------------------------------------------------------------------- #
+
+
+def test_settings_get_all_and_key():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.settings_cmd.get_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        runner.invoke(app, ["settings", "get"])
+        runner.invoke(app, ["settings", "get", "--key", "tg_api_id"])
+    assert mock_impl.call_args_list[0].kwargs == {"key": None}
+    assert mock_impl.call_args_list[1].kwargs == {"key": "tg_api_id"}
+
+
+def test_settings_set_two_positionals():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.settings_cmd.set_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["settings", "set", "mykey", "myvalue"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", key="mykey", value="myvalue")
+
+
+def test_settings_info_and_server_time_delegate():
+    for sub, impl_name in [("info", "info_impl"), ("server-time", "server_time_impl")]:
+        mock_impl = MagicMock()
+        with (
+            patch(f"src.cli.typer_commands.settings_cmd.{impl_name}", mock_impl),
+            patch("src.cli.typer_commands.run_async"),
+        ):
+            result = runner.invoke(app, ["settings", sub])
+        assert result.exit_code == 0, (sub, result.output)
+        mock_impl.assert_called_once_with("config.yaml")
+
+
+def test_settings_agent_flags_optional():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.settings_cmd.agent_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        runner.invoke(app, ["settings", "agent"])
+        runner.invoke(
+            app, ["settings", "agent", "--backend", "codex", "--prompt-template", "tmpl"]
+        )
+    assert mock_impl.call_args_list[0].kwargs == {"backend": None, "prompt_template": None}
+    assert mock_impl.call_args_list[1].kwargs == {"backend": "codex", "prompt_template": "tmpl"}
+
+
+def test_settings_filter_criteria_floats():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.settings_cmd.filter_criteria_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app,
+            [
+                "settings", "filter-criteria",
+                "--min-uniqueness", "0.5",
+                "--min-sub-ratio", "0.1",
+                "--max-cross-dupe", "30",
+                "--min-cyrillic", "0.7",
+            ],
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml",
+        min_uniqueness=0.5,
+        min_sub_ratio=0.1,
+        max_cross_dupe=30.0,
+        min_cyrillic=0.7,
+    )
+
+
+def test_settings_reactions_min_interval():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.settings_cmd.reactions_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        runner.invoke(app, ["settings", "reactions"])
+        runner.invoke(app, ["settings", "reactions", "--min-interval", "45"])
+    assert mock_impl.call_args_list[0].kwargs == {"min_interval": None}
+    assert mock_impl.call_args_list[1].kwargs == {"min_interval": 45}
+
+
+def test_settings_semantic_flags():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.settings_cmd.semantic_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(
+            app,
+            ["settings", "semantic", "--provider", "openai", "--model", "te-3", "--api-key", "sk-x"],
+        )
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with(
+        "config.yaml", provider="openai", model="te-3", api_key="sk-x"
+    )
+
+
+def test_settings_set_delegates_via_argparse():
+    """key/value positionals survive the ``--`` separator end to end."""
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.settings_cmd.set_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["settings", "set", "translation_provider", "openai"])
+    mock_impl.assert_called_once_with(
+        "config.yaml", key="translation_provider", value="openai"
+    )
+
+
+def test_settings_bare_maps_to_get_via_argparse():
+    """A bare ``settings`` ran ``get`` under argparse; the round-trip preserves that."""
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.settings_cmd.get_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["settings"])
+    mock_impl.assert_called_once_with("config.yaml", key=None)
