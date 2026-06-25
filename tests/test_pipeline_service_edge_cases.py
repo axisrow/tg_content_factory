@@ -1282,6 +1282,39 @@ async def test_resolve_scope_error_does_not_widen_to_unscoped():
 
 
 @pytest.mark.anyio
+async def test_get_retrieval_scope_method_source_lookup_error_fails_closed(svc):
+    """Instance-method regression guard (#1118, dup of #1077).
+
+    ``resolve_retrieval_scope`` (the free function) is already covered above,
+    but the public surface every caller actually uses is the
+    ``PipelineService.get_retrieval_scope`` *method*, which wires the bundle's
+    ``list_sources`` into the function. #1118 re-reported the original
+    fail-OPEN (a failed source lookup widened scope to channel_id=None → an
+    all-channels retrieval → cross-channel content leak) against this method's
+    surface. We assert end-to-end through the method that a source-lookup
+    failure FAILS CLOSED with ``PipelineScopeError`` instead of returning an
+    unscoped scope — closing the dup at the layer the issue named."""
+    from src.services.pipeline_service import PipelineScopeError
+
+    pipeline = ContentPipeline(id=4242, name="MethodBoom", prompt_template="t")
+
+    async def exploding_lister(_pid):
+        raise RuntimeError("transient DB blip")
+
+    # PipelineBundle is a frozen dataclass, so patch the underlying repository
+    # method the bundle delegates to (bundle.list_sources → repo.list_sources).
+    svc._bundle.content_pipelines.list_sources = exploding_lister
+
+    returned_scope = None
+    with pytest.raises(PipelineScopeError):
+        returned_scope = await svc.get_retrieval_scope(pipeline)
+    # Mutation-guard: drop the raise in resolve_retrieval_scope and this method
+    # would hand back an unscoped (channel_id=None) result — caught here because
+    # the only acceptable outcome is the raise above, never an assigned scope.
+    assert returned_scope is None
+
+
+@pytest.mark.anyio
 async def test_resolve_scope_multi_source_is_unscoped():
     """More than one source → no single-channel scope (retrieve across all)."""
     from src.services.pipeline_service import resolve_retrieval_scope
