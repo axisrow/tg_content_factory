@@ -363,6 +363,35 @@ class AccountsRepository:
         raw_session = str(row["session_string"] or "")
         return self._decrypt_session_for_live_use(raw_session, str(row["phone"]))
 
+    async def get_session_export(
+        self, *, account_id: int | None = None, phone: str | None = None
+    ) -> tuple[str, str] | None:
+        """Return ``(phone, decrypted_session)`` from a SINGLE row, or ``None`` if absent.
+
+        Unlike resolving identity and decrypting in two separate awaits, this binds
+        the phone and the session to the SAME row read, so a concurrent delete+reinsert
+        between the two steps can't pair a fresh session with a stale phone (SQLite
+        reuses rowids) — a session-export consistency hazard (#1145 review). Exactly
+        one of ``account_id`` / ``phone`` must be given. Decrypt failure on the target
+        still raises :class:`AccountSessionDecryptError`.
+        """
+        if (account_id is None) == (phone is None):
+            raise ValueError("provide exactly one of account_id / phone")
+        if account_id is not None:
+            cur = await self._db.execute(
+                "SELECT phone, session_string FROM accounts WHERE id = ?", (account_id,)
+            )
+        else:
+            cur = await self._db.execute(
+                "SELECT phone, session_string FROM accounts WHERE phone = ?", (phone,)
+            )
+        row = await cur.fetchone()
+        if row is None:
+            return None
+        row_phone = str(row["phone"])
+        raw_session = str(row["session_string"] or "")
+        return row_phone, self._decrypt_session_for_live_use(raw_session, row_phone)
+
     async def get_live_usable_accounts(self, active_only: bool = False) -> list[Account]:
         """Return accounts whose sessions can be decrypted for live Telegram use."""
         sql = "SELECT * FROM accounts"
