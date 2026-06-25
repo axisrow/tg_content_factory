@@ -33,6 +33,7 @@ from src.cli.commands import translate as translate_cmd
 from src.cli.dotenv import load_cli_dotenv
 from src.cli.parser import build_parser
 from src.cli.runtime import ensure_data_dirs, setup_logging
+from src.cli.typer_commands import MIGRATED_COMMANDS, dispatch_via_typer
 
 
 # Migration note (epic #959, Wave 0 — issue #1120): the Typer scaffold lives in
@@ -50,6 +51,19 @@ from src.cli.runtime import ensure_data_dirs, setup_logging
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+
+    # Wave 1 (epic #959, issue #1121): the super-simple commands now live as
+    # Typer commands on ``src/cli/typer_app.py::app``. Route them through the
+    # Typer app *before* the argparse-path startup side effects below: the Typer
+    # commands run those exact side effects themselves via ``apply_startup`` (the
+    # 1:1 port), so doing them here too would double-fire logging setup / dotenv.
+    # Every other command keeps the argparse ``commands.X.run`` path (and the
+    # side effects below) until its own wave lands. The argparse ``register()``
+    # declarations stay so ``build_parser()`` remains the leaf-coverage source of
+    # truth (test_real_telegram_policy manifest sweep).
+    if args.command in MIGRATED_COMMANDS:
+        dispatch_via_typer(args)
+        return
 
     # Export the resolved config path so subprocess-spawning backends inherit it.
     # CodexSdkBackend spawns `python -m src.main --config <path> mcp-server`; it

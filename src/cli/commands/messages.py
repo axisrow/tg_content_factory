@@ -93,126 +93,165 @@ def _print_live_messages(collected: list, reaction_users_by_message_id: dict[int
         print()
 
 
-def run(args: argparse.Namespace) -> None:
-    async def _run() -> None:
-        config, db = await runtime.init_db(args.config)
-        pool = None
-        try:
-            if args.messages_action == "read":
-                identifier = args.identifier
-                include_reaction_users = bool(getattr(args, "include_reaction_users", False))
-                reaction_users_limit = normalize_reaction_users_limit(getattr(args, "reaction_users_limit", None))
+async def messages_read_impl(
+    config_path: str,
+    *,
+    identifier: str,
+    limit: int = 50,
+    live: bool = False,
+    phone: str | None = None,
+    query: str = "",
+    date_from: str | None = None,
+    date_to: str | None = None,
+    topic_id: int | None = None,
+    offset_id: int | None = None,
+    include_reaction_users: bool = False,
+    reaction_users_limit: int | None = None,
+    output_format: str = "text",
+) -> None:
+    """Read messages from a channel/dialog — live Telegram (``--live``) or the DB.
 
-                if args.live:
-                    # Live mode: read from Telegram
-                    _, pool = await runtime.init_pool(config, db)
-                    if not pool.clients:
-                        print("No connected accounts.")
-                        return
-                    accounts = sorted(pool.clients.keys())
-                    phone = args.phone or accounts[0]
-                    if phone not in pool.clients:
-                        print(f"Account {phone} not connected.")
-                        return
-                    result = await pool.get_native_client_by_phone(phone)
-                    if result is None:
-                        print(f"Client for {phone} unavailable (flood-wait or not connected).")
-                        return
-                    client, _ = result
-                    try:
-                        # Try numeric ID first; a freshly created chat may not be in
-                        # the cold entity cache yet, so warm dialogs once and retry
-                        # via the centralized resolver.
-                        try:
-                            entity_id = int(identifier)
-                        except ValueError:
-                            entity_id = None
-                        resolve_target = entity_id if entity_id is not None else identifier
-                        entity = await pool.resolve_entity_with_warm(
-                            client, phone, resolve_target, operation="cli_messages_read_resolve"
-                        )
-                        kwargs = {"limit": args.limit}
-                        if args.offset_id:
-                            kwargs["offset_id"] = args.offset_id
-                        if args.topic_id:
-                            kwargs["reply_to"] = args.topic_id
-                        collected: list = []
+    Shared async body for both CLI entry points — the argparse ``run`` wrapper
+    below and the Typer ``messages read`` command (``src/cli/typer_commands.py``).
+    Driven through the single async-bridge ``run_async`` by its callers, so
+    there is no local ``asyncio.run`` in the migrated path.
+    """
+    config, db = await runtime.init_db(config_path)
+    pool = None
+    try:
+        include_reaction_users = bool(include_reaction_users)
+        reaction_users_limit = normalize_reaction_users_limit(reaction_users_limit)
 
-                        async def _read_messages() -> None:
-                            async for msg in client.iter_messages(entity, **kwargs):
-                                collected.append(msg)
+        if live:
+            # Live mode: read from Telegram
+            _, pool = await runtime.init_pool(config, db)
+            if not pool.clients:
+                print("No connected accounts.")
+                return
+            accounts = sorted(pool.clients.keys())
+            phone = phone or accounts[0]
+            if phone not in pool.clients:
+                print(f"Account {phone} not connected.")
+                return
+            result = await pool.get_native_client_by_phone(phone)
+            if result is None:
+                print(f"Client for {phone} unavailable (flood-wait or not connected).")
+                return
+            client, _ = result
+            try:
+                # Try numeric ID first; a freshly created chat may not be in
+                # the cold entity cache yet, so warm dialogs once and retry
+                # via the centralized resolver.
+                try:
+                    entity_id = int(identifier)
+                except ValueError:
+                    entity_id = None
+                resolve_target = entity_id if entity_id is not None else identifier
+                entity = await pool.resolve_entity_with_warm(
+                    client, phone, resolve_target, operation="cli_messages_read_resolve"
+                )
+                kwargs = {"limit": limit}
+                if offset_id:
+                    kwargs["offset_id"] = offset_id
+                if topic_id:
+                    kwargs["reply_to"] = topic_id
+                collected: list = []
 
-                        try:
-                            await run_with_flood_wait(
-                                _read_messages(),
-                                operation="cli_messages_read",
-                                phone=phone,
-                                pool=pool,
-                            )
-                        except HandledFloodWaitError as exc:
-                            print(f"Flood wait: {exc.info.detail}")
-                            return
-                        if not collected:
-                            print("No messages found.")
-                            return
-                        reaction_users_by_message_id: dict[int, str] = {}
-                        if include_reaction_users:
-                            async def _read_reaction_users() -> None:
-                                for msg in collected:
-                                    if not format_message_reactions(msg):
-                                        continue
-                                    result = await fetch_message_reaction_users(
-                                        client,
-                                        entity,
-                                        msg.id,
-                                        limit=reaction_users_limit,
-                                    )
-                                    formatted = format_reaction_users_result(result)
-                                    if formatted:
-                                        reaction_users_by_message_id[msg.id] = formatted
+                async def _read_messages() -> None:
+                    async for msg in client.iter_messages(entity, **kwargs):
+                        collected.append(msg)
 
-                            try:
-                                await run_with_flood_wait(
-                                    _read_reaction_users(),
-                                    operation="cli_messages_reaction_users",
-                                    phone=phone,
-                                    pool=pool,
-                                )
-                            except HandledFloodWaitError as exc:
-                                print(f"Flood wait: {exc.info.detail}")
-                                return
-                        _print_live_messages(collected, reaction_users_by_message_id)
-                    except Exception as exc:
-                        print(f"Error reading messages: {exc}")
-                else:
-                    if include_reaction_users:
-                        print("--include-reaction-users works only with --live.")
-                        return
-                    # DB mode: read collected messages
-                    channels = await db.get_channels()
-                    ch = resolve_channel(channels, identifier)
-                    if not ch:
-                        print(
-                            f"Channel '{identifier}' not found in DB. "
-                            "Use --live to read directly from Telegram."
-                        )
-                        return
-                    page = await db.search_messages(
-                        query=args.query,
-                        channel_id=ch.channel_id,
-                        date_from=args.date_from,
-                        date_to=args.date_to,
-                        limit=args.limit,
-                        topic_id=args.topic_id,
+                try:
+                    await run_with_flood_wait(
+                        _read_messages(),
+                        operation="cli_messages_read",
+                        phone=phone,
+                        pool=pool,
                     )
-                    messages = page.messages
-                    if not messages:
-                        print("No messages found.")
-                        return
-                    _print_messages(messages, args.output_format, page.total, has_more=page.has_more)
-        finally:
-            if pool:
-                await pool.disconnect_all()
-            await db.close()
+                except HandledFloodWaitError as exc:
+                    print(f"Flood wait: {exc.info.detail}")
+                    return
+                if not collected:
+                    print("No messages found.")
+                    return
+                reaction_users_by_message_id: dict[int, str] = {}
+                if include_reaction_users:
+                    async def _read_reaction_users() -> None:
+                        for msg in collected:
+                            if not format_message_reactions(msg):
+                                continue
+                            result = await fetch_message_reaction_users(
+                                client,
+                                entity,
+                                msg.id,
+                                limit=reaction_users_limit,
+                            )
+                            formatted = format_reaction_users_result(result)
+                            if formatted:
+                                reaction_users_by_message_id[msg.id] = formatted
 
-    asyncio.run(_run())
+                    try:
+                        await run_with_flood_wait(
+                            _read_reaction_users(),
+                            operation="cli_messages_reaction_users",
+                            phone=phone,
+                            pool=pool,
+                        )
+                    except HandledFloodWaitError as exc:
+                        print(f"Flood wait: {exc.info.detail}")
+                        return
+                _print_live_messages(collected, reaction_users_by_message_id)
+            except Exception as exc:
+                print(f"Error reading messages: {exc}")
+        else:
+            if include_reaction_users:
+                print("--include-reaction-users works only with --live.")
+                return
+            # DB mode: read collected messages
+            channels = await db.get_channels()
+            ch = resolve_channel(channels, identifier)
+            if not ch:
+                print(
+                    f"Channel '{identifier}' not found in DB. "
+                    "Use --live to read directly from Telegram."
+                )
+                return
+            page = await db.search_messages(
+                query=query,
+                channel_id=ch.channel_id,
+                date_from=date_from,
+                date_to=date_to,
+                limit=limit,
+                topic_id=topic_id,
+            )
+            messages = page.messages
+            if not messages:
+                print("No messages found.")
+                return
+            _print_messages(messages, output_format, page.total, has_more=page.has_more)
+    finally:
+        if pool:
+            await pool.disconnect_all()
+        await db.close()
+
+
+def run(args: argparse.Namespace) -> None:
+    if getattr(args, "messages_action", None) != "read":
+        return
+    asyncio.run(
+        messages_read_impl(
+            args.config,
+            identifier=args.identifier,
+            limit=getattr(args, "limit", 50),
+            live=getattr(args, "live", False),
+            phone=getattr(args, "phone", None),
+            query=getattr(args, "query", ""),
+            date_from=getattr(args, "date_from", None),
+            date_to=getattr(args, "date_to", None),
+            topic_id=getattr(args, "topic_id", None),
+            offset_id=getattr(args, "offset_id", None),
+            include_reaction_users=getattr(args, "include_reaction_users", False),
+            reaction_users_limit=getattr(args, "reaction_users_limit", None),
+            output_format=getattr(args, "output_format", "text"),
+        )
+    )

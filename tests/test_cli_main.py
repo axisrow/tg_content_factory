@@ -319,17 +319,23 @@ class TestMainDispatch:
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
     def test_main_dispatches_to_handler(self, mock_build, mock_dirs, mock_log, mock_dotenv):
-        """main() calls the correct handler for a known command."""
+        """main() calls the correct argparse handler for a not-yet-migrated command.
+
+        ``channel`` still routes through the argparse ``commands.X.run`` path
+        (only Wave 1's super-simple commands moved to Typer), so this asserts the
+        legacy dispatch + the argparse-path startup side effects still fire.
+        """
         parser = MagicMock()
         args = MagicMock()
-        args.command = "stop"
+        args.command = "channel"
+        args.channel_action = "list"
         args.config = "custom-config.yaml"
         parser.parse_args.return_value = args
         mock_build.return_value = parser
 
         mock_handler = MagicMock()
-        with patch("src.cli.main.server_control") as mock_mod:
-            mock_mod.run_stop = mock_handler
+        with patch("src.cli.main.channel") as mock_mod:
+            mock_mod.run = mock_handler
             main()
 
         mock_handler.assert_called_once_with(args)
@@ -386,24 +392,34 @@ class TestMainDispatch:
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
     def test_main_serve_dispatch(self, mock_build, mock_dirs, mock_log, mock_dotenv):
-        """main() dispatches 'serve' command."""
+        """main() routes the migrated 'serve' command through the Typer app.
+
+        Wave 1 moved ``serve`` to Typer, so ``main()`` delegates via
+        ``dispatch_via_typer`` instead of calling ``commands.serve.run`` — and it
+        does so *before* the argparse-path startup side effects (those run inside
+        the Typer command's ``apply_startup`` to avoid double-firing).
+        """
         parser = MagicMock()
         args = MagicMock()
         args.command = "serve"
         parser.parse_args.return_value = args
         mock_build.return_value = parser
 
-        with patch("src.cli.main.serve") as mock_mod:
-            mock_mod.run = MagicMock()
+        with patch("src.cli.main.dispatch_via_typer") as mock_dispatch:
             main()
-            mock_mod.run.assert_called_once_with(args)
+
+        mock_dispatch.assert_called_once_with(args)
+        # The argparse-path side effects are NOT run here for a migrated command.
+        mock_log.assert_not_called()
+        mock_dotenv.assert_not_called()
+        mock_dirs.assert_not_called()
 
     @patch("src.cli.main.load_cli_dotenv")
     @patch("src.cli.main.setup_logging")
     @patch("src.cli.main.ensure_data_dirs")
     @patch("src.cli.main.build_parser")
     def test_main_collect_dispatch(self, mock_build, mock_dirs, mock_log, mock_dotenv):
-        """main() dispatches 'collect' command."""
+        """main() routes the migrated 'collect' command through the Typer app."""
         parser = MagicMock()
         args = MagicMock()
         args.command = "collect"
@@ -412,10 +428,10 @@ class TestMainDispatch:
         parser.parse_args.return_value = args
         mock_build.return_value = parser
 
-        with patch("src.cli.main.collect") as mock_mod:
-            mock_mod.run = MagicMock()
+        with patch("src.cli.main.dispatch_via_typer") as mock_dispatch:
             main()
-            mock_mod.run.assert_called_once_with(args)
+
+        mock_dispatch.assert_called_once_with(args)
 
     @patch("src.cli.main.load_cli_dotenv")
     @patch("src.cli.main.setup_logging")
