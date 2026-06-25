@@ -58,6 +58,7 @@ except ImportError:  # pragma: no cover - defensive fallback
     _CLICK_EXCEPTIONS = (click.exceptions.ClickException,)
     _NO_ARGS_HELP_EXCEPTIONS = (click.exceptions.NoArgsIsHelpError,)
 
+from src.cli.commands import analytics as analytics_cmd
 from src.cli.commands import collect as collect_cmd
 from src.cli.commands import debug as debug_cmd
 from src.cli.commands import export as export_cmd
@@ -110,6 +111,8 @@ MIGRATED_COMMANDS: frozenset[str] = frozenset(
         "serve", "worker", "stop", "restart", "mcp-server", "collect", "search", "messages",
         # Wave 2 (#1122) — flat simple groups
         "debug", "export", "translate", "image", "provider", "notification",
+        # Wave 4 (#1124) — complex nested groups
+        "analytics",
     }
 )
 
@@ -120,6 +123,23 @@ class ExportFormat(str, Enum):
     json = "json"
     html = "html"
     both = "both"
+
+
+class AnalyticsUseful(str, Enum):
+    """``analytics channel-rating --useful`` choices — mirrors the argparse set."""
+
+    useful = "useful"
+    useless = "useless"
+
+
+class AnalyticsGenre(str, Enum):
+    """``analytics channel-rating --genre`` choices — mirrors the argparse set."""
+
+    ad = "ad"
+    infobiz = "infobiz"
+    aggregator = "aggregator"
+    copy = "copy"
+    original = "original"
 
 
 # --------------------------------------------------------------------------- #
@@ -706,6 +726,187 @@ def notification_set_account(
 
 
 # --------------------------------------------------------------------------- #
+# analytics → top / content-types / hourly / summary / daily / pipeline-stats /
+#   trending-topics / trending-channels / velocity / peak-hours / calendar /
+#   trending-emojis / channel / channel-rating / channel-rate
+# --------------------------------------------------------------------------- #
+
+analytics_app = typer.Typer(no_args_is_help=True, help="Message analytics")
+app.add_typer(analytics_app, name="analytics")
+
+
+@analytics_app.command("top")
+def analytics_top(
+    ctx: typer.Context,
+    limit: int = typer.Option(20, "--limit", help="Number of results (default: 20)"),
+    date_from: str | None = typer.Option(None, "--date-from", help="Start date (YYYY-MM-DD)"),
+    date_to: str | None = typer.Option(None, "--date-to", help="End date (YYYY-MM-DD)"),
+) -> None:
+    """Top messages by reactions."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.top_impl(ctx.obj.config, limit=limit, date_from=date_from, date_to=date_to))
+
+
+@analytics_app.command("content-types")
+def analytics_content_types(
+    ctx: typer.Context,
+    date_from: str | None = typer.Option(None, "--date-from", help="Start date (YYYY-MM-DD)"),
+    date_to: str | None = typer.Option(None, "--date-to", help="End date (YYYY-MM-DD)"),
+) -> None:
+    """Engagement by content type."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.content_types_impl(ctx.obj.config, date_from=date_from, date_to=date_to))
+
+
+@analytics_app.command("hourly")
+def analytics_hourly(
+    ctx: typer.Context,
+    date_from: str | None = typer.Option(None, "--date-from", help="Start date (YYYY-MM-DD)"),
+    date_to: str | None = typer.Option(None, "--date-to", help="End date (YYYY-MM-DD)"),
+) -> None:
+    """Hourly activity patterns."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.hourly_impl(ctx.obj.config, date_from=date_from, date_to=date_to))
+
+
+@analytics_app.command("summary")
+def analytics_summary(ctx: typer.Context) -> None:
+    """Content generation summary."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.summary_impl(ctx.obj.config))
+
+
+@analytics_app.command("daily")
+def analytics_daily(
+    ctx: typer.Context,
+    days: int = typer.Option(30, "--days", help="Number of days (default: 30)"),
+    pipeline_id: int | None = typer.Option(None, "--pipeline-id"),
+) -> None:
+    """Daily generation stats."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.daily_impl(ctx.obj.config, days=days, pipeline_id=pipeline_id))
+
+
+@analytics_app.command("pipeline-stats")
+def analytics_pipeline_stats(
+    ctx: typer.Context,
+    pipeline_id: int | None = typer.Option(None, "--pipeline-id"),
+) -> None:
+    """Per-pipeline statistics."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.pipeline_stats_impl(ctx.obj.config, pipeline_id=pipeline_id))
+
+
+@analytics_app.command("trending-topics")
+def analytics_trending_topics(
+    ctx: typer.Context,
+    days: int = typer.Option(7, "--days", help="Number of days (default: 7)"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """Trending topics/keywords."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.trending_topics_impl(ctx.obj.config, days=days, limit=limit))
+
+
+@analytics_app.command("trending-channels")
+def analytics_trending_channels(
+    ctx: typer.Context,
+    days: int = typer.Option(7, "--days", help="Number of days (default: 7)"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """Top channels by activity."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.trending_channels_impl(ctx.obj.config, days=days, limit=limit))
+
+
+@analytics_app.command("velocity")
+def analytics_velocity(
+    ctx: typer.Context,
+    days: int = typer.Option(30, "--days", help="Number of days (default: 30)"),
+) -> None:
+    """Message volume per day."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.velocity_impl(ctx.obj.config, days=days))
+
+
+@analytics_app.command("peak-hours")
+def analytics_peak_hours(ctx: typer.Context) -> None:
+    """Peak activity hours."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.peak_hours_impl(ctx.obj.config))
+
+
+@analytics_app.command("calendar")
+def analytics_calendar(
+    ctx: typer.Context,
+    limit: int = typer.Option(20, "--limit"),
+    pipeline_id: int | None = typer.Option(None, "--pipeline-id"),
+) -> None:
+    """Upcoming scheduled publications."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.calendar_impl(ctx.obj.config, limit=limit, pipeline_id=pipeline_id))
+
+
+@analytics_app.command("trending-emojis")
+def analytics_trending_emojis(
+    ctx: typer.Context,
+    days: int = typer.Option(7, "--days", help="Number of days (default: 7)"),
+    limit: int = typer.Option(20, "--limit"),
+) -> None:
+    """Trending emojis in messages."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.trending_emojis_impl(ctx.obj.config, days=days, limit=limit))
+
+
+@analytics_app.command("channel")
+def analytics_channel(
+    ctx: typer.Context,
+    channel_id: int = typer.Argument(..., help="Telegram channel_id (negative int)"),
+    days: int = typer.Option(30, "--days", help="Time window in days (default: 30)"),
+) -> None:
+    """Per-channel statistics overview."""
+    apply_startup(ctx)
+    run_async(analytics_cmd.channel_impl(ctx.obj.config, channel_id=channel_id, days=days))
+
+
+@analytics_app.command("channel-rating")
+def analytics_channel_rating(
+    ctx: typer.Context,
+    useful: AnalyticsUseful | None = typer.Option(None, "--useful", help="Filter by usefulness axis"),
+    genre: AnalyticsGenre | None = typer.Option(None, "--genre", help="Filter by genre axis"),
+    limit: int = typer.Option(50, "--limit", help="Max rows (default: 50)"),
+) -> None:
+    """Channel ratings (usefulness × genre)."""
+    apply_startup(ctx)
+    run_async(
+        analytics_cmd.channel_rating_impl(
+            ctx.obj.config,
+            useful=useful.value if useful else None,
+            genre=genre.value if genre else None,
+            limit=limit,
+        )
+    )
+
+
+@analytics_app.command("channel-rate")
+def analytics_channel_rate(
+    ctx: typer.Context,
+    channel_id: int = typer.Argument(..., help="Telegram channel_id (bare positive int)"),
+    model: str | None = typer.Option(None, "--model", help="LLM model/provider name"),
+    sample_size: int = typer.Option(
+        40, "--sample-size", help="Number of recent posts to sample for the judge (default: 40)"
+    ),
+) -> None:
+    """Run the LLM judge on a channel and upsert its rating (usefulness × genre)."""
+    apply_startup(ctx)
+    run_async(
+        analytics_cmd.channel_rate_impl(
+            ctx.obj.config, channel_id=channel_id, model=model, sample_size=sample_size
+        )
+    )
+
+
+# --------------------------------------------------------------------------- #
 # argparse → Typer delegation
 # --------------------------------------------------------------------------- #
 
@@ -781,7 +982,74 @@ def _argv_from_namespace(args: argparse.Namespace) -> list[str]:
     elif command == "notification":
         argv.append("notification")
         argv += _notification_argv(args)
+    elif command == "analytics":
+        argv.append("analytics")
+        argv += _analytics_argv(args)
     return argv
+
+
+def _analytics_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``analytics`` — the action plus its flags / positional.
+
+    ``analytics`` has no nested sub-groups; each action maps to a flat Typer
+    leaf. Mirrors the argparse default (``analytics`` with no action runs
+    ``top``) so a bare ``analytics`` invocation routes to ``top`` on the prod
+    path too. The two channel actions take a positional ``channel_id`` int,
+    emitted after ``--`` so a negative ``analytics channel`` id survives Click.
+    """
+    action = getattr(args, "analytics_action", None) or "top"
+    tail = [action]
+    if action == "top":
+        if getattr(args, "limit", 20) != 20:
+            tail += ["--limit", str(args.limit)]
+        if getattr(args, "date_from", None):
+            tail += ["--date-from", args.date_from]
+        if getattr(args, "date_to", None):
+            tail += ["--date-to", args.date_to]
+    elif action in ("content-types", "hourly"):
+        if getattr(args, "date_from", None):
+            tail += ["--date-from", args.date_from]
+        if getattr(args, "date_to", None):
+            tail += ["--date-to", args.date_to]
+    elif action == "daily":
+        if getattr(args, "days", 30) != 30:
+            tail += ["--days", str(args.days)]
+        if getattr(args, "pipeline_id", None) is not None:
+            tail += ["--pipeline-id", str(args.pipeline_id)]
+    elif action == "pipeline-stats":
+        if getattr(args, "pipeline_id", None) is not None:
+            tail += ["--pipeline-id", str(args.pipeline_id)]
+    elif action in ("trending-topics", "trending-channels", "trending-emojis"):
+        if getattr(args, "days", 7) != 7:
+            tail += ["--days", str(args.days)]
+        if getattr(args, "limit", 20) != 20:
+            tail += ["--limit", str(args.limit)]
+    elif action == "velocity":
+        if getattr(args, "days", 30) != 30:
+            tail += ["--days", str(args.days)]
+    elif action == "calendar":
+        if getattr(args, "limit", 20) != 20:
+            tail += ["--limit", str(args.limit)]
+        if getattr(args, "pipeline_id", None) is not None:
+            tail += ["--pipeline-id", str(args.pipeline_id)]
+    elif action == "channel":
+        if getattr(args, "days", 30) != 30:
+            tail += ["--days", str(args.days)]
+        tail += ["--", str(args.channel_id)]
+    elif action == "channel-rating":
+        if getattr(args, "useful", None):
+            tail += ["--useful", args.useful]
+        if getattr(args, "genre", None):
+            tail += ["--genre", args.genre]
+        if getattr(args, "limit", 50) != 50:
+            tail += ["--limit", str(args.limit)]
+    elif action == "channel-rate":
+        if getattr(args, "model", None):
+            tail += ["--model", args.model]
+        if getattr(args, "sample_size", 40) != 40:
+            tail += ["--sample-size", str(args.sample_size)]
+        tail += ["--", str(args.channel_id)]
+    return tail
 
 
 def _debug_argv(args: argparse.Namespace) -> list[str]:
