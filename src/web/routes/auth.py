@@ -227,6 +227,10 @@ async def import_session(
     """
     phone = phone.strip()
     session_string = session_string.strip()
+    # Normalize to the stored canonical form (leading '+') so "7999…" and "+7999…"
+    # can't bypass the duplicate guard with two representations (#1146 review).
+    if phone and not phone.startswith("+"):
+        phone = "+" + phone
 
     def _error(message: str):
         return _render(
@@ -241,13 +245,15 @@ async def import_session(
         return _error(f"Невалидная Telegram session string для {phone}.")
 
     db = request.app.state.db
-    existing = await db.get_account_summaries(active_only=False)
-    if any(s.phone == phone for s in existing):
-        return _error(f"Аккаунт {phone} уже существует. Удалите его перед импортом.")
-
-    is_primary = len(existing) == 0
-    await db.add_account(
-        Account(phone=phone, session_string=session_string, is_primary=is_primary, is_premium=False)
+    # Atomic insert-only (ON CONFLICT DO NOTHING): the DB — not a stale pre-read —
+    # is the source of truth for "already exists", so two concurrent imports for the
+    # same phone can't both pass a check-then-act guard and clobber a session (#1146
+    # review TOCTOU). is_primary is requested True; the SQL only honors it when no
+    # primary exists yet (#733).
+    new_id = await db.repos.accounts.add_account_if_absent(
+        Account(phone=phone, session_string=session_string, is_primary=True, is_premium=False)
     )
+    if new_id is None:
+        return _error(f"Аккаунт {phone} уже существует. Удалите его перед импортом.")
     logger.info("account.import_session phone-added by=web")  # no session value
     return RedirectResponse(url="/settings?msg=account_connected", status_code=303)

@@ -123,3 +123,50 @@ async def test_import_session_encrypts_at_rest(tmp_path):
         assert str(row["session_string"]).startswith("enc:v2:")
     finally:
         await db.close()
+
+
+@pytest.mark.anyio
+async def test_add_account_if_absent_never_overwrites(tmp_path):
+    """The atomic insert-only path the route uses: a second import for the same
+    phone returns None (→ duplicate error) and CANNOT clobber the first session.
+
+    Regression for the #1146 review HIGH: the old check-then-act guard (read
+    summaries, then add_account UPSERT) let two concurrent imports both pass the
+    read and the second overwrite the first. `add_account_if_absent` makes the DB
+    the source of truth (ON CONFLICT DO NOTHING), so the window is closed.
+    """
+    db = Database(str(tmp_path / "atomic.db"))
+    await db.initialize()
+    try:
+        first_id = await db.repos.accounts.add_account_if_absent(
+            Account(phone="+15551230099", session_string="winner_session")
+        )
+        assert first_id is not None
+
+        # Second import for the same phone with a DIFFERENT session must be refused.
+        second_id = await db.repos.accounts.add_account_if_absent(
+            Account(phone="+15551230099", session_string="loser_session")
+        )
+        assert second_id is None
+
+        # The first (winning) session survives — never clobbered.
+        assert await db.repos.accounts.get_decrypted_session(phone="+15551230099") == "winner_session"
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_import_session_normalizes_phone(route_client, base_app):
+    """A phone without '+' is normalized so it can't bypass the duplicate guard."""
+    app, db, pool = base_app
+    # base_app seeds +1234567890; importing the same number without '+' must be refused.
+    resp = await route_client.post(
+        "/auth/import-session",
+        data={"phone": "1234567890", "session_string": _valid_session()},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 200  # duplicate → form with error, not created twice
+    accounts = await db.get_account_summaries(active_only=False)
+    assert sum(1 for a in accounts if a.phone == "+1234567890") == 1
+    # original session preserved
+    assert await db.repos.accounts.get_decrypted_session(phone="+1234567890") == "test_session"
