@@ -1549,6 +1549,12 @@ def photo_loader_send(
     ctx: typer.Context,
     phone: str = typer.Option(..., "--phone", help="Account phone"),
     target: str = typer.Option(..., "--target", help="Dialog id"),
+    # argparse uses ``--files a b c`` (nargs='+'). Click options can't be variadic
+    # (``nargs=-1`` is arguments-only), so the Typer leaf takes the repeated form
+    # ``--files a --files b``. The production path is unaffected: main.py parses with
+    # argparse first and ``_photo_loader_argv`` rewrites ``--files a b`` into the
+    # repeated form before invoking Typer. The single-flag form is restored when the
+    # argparse layer is removed in the final wave (#1125, #1123 review).
     files: list[str] = typer.Option(..., "--files", help="Photo file paths"),
     mode: PhotoMode = typer.Option(PhotoMode.album, "--mode"),
     caption: str | None = typer.Option(None, "--caption", help="Caption"),
