@@ -59,11 +59,17 @@ except ImportError:  # pragma: no cover - defensive fallback
     _NO_ARGS_HELP_EXCEPTIONS = (click.exceptions.NoArgsIsHelpError,)
 
 from src.cli.commands import collect as collect_cmd
+from src.cli.commands import debug as debug_cmd
+from src.cli.commands import export as export_cmd
+from src.cli.commands import image as image_cmd
 from src.cli.commands import mcp_server as mcp_server_cmd
 from src.cli.commands import messages as messages_cmd
+from src.cli.commands import notification as notification_cmd
+from src.cli.commands import provider as provider_cmd
 from src.cli.commands import search as search_cmd
 from src.cli.commands import serve as serve_cmd
 from src.cli.commands import server_control as server_control_cmd
+from src.cli.commands import translate as translate_cmd
 from src.cli.commands import worker as worker_cmd
 from src.cli.typer_app import app, apply_startup, run_async
 
@@ -99,8 +105,21 @@ class OutputFormat(str, Enum):
 #: handler; :func:`_argv_from_namespace` rebuilds the Typer argv from the parsed
 #: Namespace so the two entry points stay equivalent on the resolved flags.
 MIGRATED_COMMANDS: frozenset[str] = frozenset(
-    {"serve", "worker", "stop", "restart", "mcp-server", "collect", "search", "messages"}
+    {
+        # Wave 1 (#1121)
+        "serve", "worker", "stop", "restart", "mcp-server", "collect", "search", "messages",
+        # Wave 2 (#1122) — flat simple groups
+        "debug", "export", "translate", "image", "provider", "notification",
+    }
 )
+
+
+class ExportFormat(str, Enum):
+    """``export telegram --format`` choices — mirrors the argparse ``choices=[…]``."""
+
+    json = "json"
+    html = "html"
+    both = "both"
 
 
 # --------------------------------------------------------------------------- #
@@ -329,6 +348,364 @@ def messages_read(
 
 
 # --------------------------------------------------------------------------- #
+# debug → logs / memory / timing
+# --------------------------------------------------------------------------- #
+
+debug_app = typer.Typer(no_args_is_help=True, help="Diagnostic tools")
+app.add_typer(debug_app, name="debug")
+
+
+@debug_app.command("logs")
+def debug_logs(
+    ctx: typer.Context,
+    limit: int = typer.Option(50, "--limit", help="Number of log lines (default: 50)"),
+) -> None:
+    """Show recent log entries."""
+    apply_startup(ctx)
+    run_async(debug_cmd.logs_impl(ctx.obj.config, limit=limit))
+
+
+@debug_app.command("memory")
+def debug_memory(ctx: typer.Context) -> None:
+    """Show memory usage statistics."""
+    apply_startup(ctx)
+    run_async(debug_cmd.memory_impl(ctx.obj.config))
+
+
+@debug_app.command("timing")
+def debug_timing(ctx: typer.Context) -> None:
+    """Show operation timing stats."""
+    apply_startup(ctx)
+    run_async(debug_cmd.timing_impl(ctx.obj.config))
+
+
+# --------------------------------------------------------------------------- #
+# export → json / csv / rss / telegram
+# --------------------------------------------------------------------------- #
+
+export_app = typer.Typer(no_args_is_help=True, help="Export collected messages")
+app.add_typer(export_app, name="export")
+
+
+def _export_flat(
+    ctx: typer.Context,
+    fmt: str,
+    channel_id: int | None,
+    limit: int,
+    output: str | None,
+) -> None:
+    """Shared body for the flat json/csv/rss export sub-commands."""
+    apply_startup(ctx)
+    run_async(
+        export_cmd.export_impl(
+            ctx.obj.config,
+            fmt=fmt,
+            channel_id=channel_id,
+            limit=limit,
+            output=output,
+        )
+    )
+
+
+@export_app.command("json")
+def export_json(
+    ctx: typer.Context,
+    channel_id: int | None = typer.Option(None, "--channel-id", help="Filter by channel ID"),
+    limit: int = typer.Option(200, "--limit", help="Max messages (default: 200)"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
+) -> None:
+    """Export as JSON."""
+    _export_flat(ctx, "json", channel_id, limit, output)
+
+
+@export_app.command("csv")
+def export_csv(
+    ctx: typer.Context,
+    channel_id: int | None = typer.Option(None, "--channel-id", help="Filter by channel ID"),
+    limit: int = typer.Option(200, "--limit", help="Max messages (default: 200)"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
+) -> None:
+    """Export as CSV."""
+    _export_flat(ctx, "csv", channel_id, limit, output)
+
+
+@export_app.command("rss")
+def export_rss(
+    ctx: typer.Context,
+    channel_id: int | None = typer.Option(None, "--channel-id", help="Filter by channel ID"),
+    limit: int = typer.Option(200, "--limit", help="Max messages (default: 200)"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
+) -> None:
+    """Export as RSS."""
+    _export_flat(ctx, "rss", channel_id, limit, output)
+
+
+@export_app.command("telegram")
+def export_telegram(
+    ctx: typer.Context,
+    channel_id: int | None = typer.Option(None, "--channel-id", help="Telegram channel ID to export (required)"),
+    export_format: ExportFormat = typer.Option(ExportFormat.json, "--format", help="Output format (default: json)"),
+    with_media: bool = typer.Option(
+        False, "--with-media", help="Download media artifacts (enqueues a worker task)"
+    ),
+    wait: bool = typer.Option(
+        False, "--wait", help="With --with-media: poll the enqueued task until it finishes"
+    ),
+    max_file_size: int | None = typer.Option(
+        None, "--max-file-size", help="Skip files larger than N MB (default: from settings or 3)"
+    ),
+    date_from: str | None = typer.Option(None, "--date-from", help="Start date YYYY-MM-DD"),
+    date_to: str | None = typer.Option(None, "--date-to", help="End date YYYY-MM-DD"),
+    limit: int = typer.Option(5000, "--limit", help="Max messages (default: 5000)"),
+    output: str | None = typer.Option(
+        None, "--output", "-o",
+        help="Output directory (default: data/exports/ChatExport_<date>_<channel>)",
+    ),
+) -> None:
+    """Export as Telegram-Desktop JSON/HTML."""
+    apply_startup(ctx)
+    run_async(
+        export_cmd.telegram_impl(
+            ctx.obj.config,
+            channel_id=channel_id,
+            export_format=export_format.value,
+            with_media=with_media,
+            wait=wait,
+            max_file_size=max_file_size,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            output=output,
+        )
+    )
+
+
+# --------------------------------------------------------------------------- #
+# translate → stats / detect / run / message
+# --------------------------------------------------------------------------- #
+
+translate_app = typer.Typer(no_args_is_help=True, help="Language detection and translation")
+app.add_typer(translate_app, name="translate")
+
+
+@translate_app.command("stats")
+def translate_stats(ctx: typer.Context) -> None:
+    """Show language distribution."""
+    apply_startup(ctx)
+    run_async(translate_cmd.stats_impl(ctx.obj.config))
+
+
+@translate_app.command("detect")
+def translate_detect(
+    ctx: typer.Context,
+    batch_size: int = typer.Option(5000, "--batch-size"),
+) -> None:
+    """Backfill language detection."""
+    apply_startup(ctx)
+    run_async(translate_cmd.detect_impl(ctx.obj.config, batch_size=batch_size))
+
+
+@translate_app.command("run")
+def translate_run(
+    ctx: typer.Context,
+    target: str = typer.Option("en", "--target", help="Target language code"),
+    source_filter: str = typer.Option("", "--source-filter", help="Comma-separated source languages"),
+    limit: int = typer.Option(100, "--limit", help="Max messages to translate"),
+) -> None:
+    """Run translation batch."""
+    apply_startup(ctx)
+    run_async(
+        translate_cmd.run_impl(
+            ctx.obj.config,
+            target=target,
+            source_filter=source_filter,
+            limit=limit,
+        )
+    )
+
+
+@translate_app.command("message")
+def translate_message(
+    ctx: typer.Context,
+    message_id: int = typer.Argument(..., help="Message DB id"),
+    target: str = typer.Option("en", "--target", help="Target language code"),
+) -> None:
+    """Translate a single message."""
+    apply_startup(ctx)
+    run_async(translate_cmd.message_impl(ctx.obj.config, message_id=message_id, target=target))
+
+
+# --------------------------------------------------------------------------- #
+# image → generate / models / providers / generated
+# --------------------------------------------------------------------------- #
+
+image_app = typer.Typer(no_args_is_help=True, help="Image generation")
+app.add_typer(image_app, name="image")
+
+
+@image_app.command("generate")
+def image_generate(
+    ctx: typer.Context,
+    prompt: str = typer.Argument(..., help="Text prompt for image generation"),
+    model: str | None = typer.Option(None, "--model", help="Model string (e.g. replicate:flux-schnell)"),
+) -> None:
+    """Generate an image from prompt."""
+    apply_startup(ctx)
+    run_async(image_cmd.generate_impl(ctx.obj.config, prompt=prompt, model=model))
+
+
+@image_app.command("models")
+def image_models(
+    ctx: typer.Context,
+    provider: str = typer.Option(..., "--provider", help="Provider name (replicate, together, openai)"),
+    query: str = typer.Option("", "--query", help="Search query"),
+    refresh: bool = typer.Option(
+        False, "--refresh", help="Fetch the live model list from the provider (OpenAI: /v1/models)"
+    ),
+) -> None:
+    """Search available models."""
+    apply_startup(ctx)
+    run_async(image_cmd.models_impl(ctx.obj.config, provider=provider, query=query, refresh=refresh))
+
+
+@image_app.command("providers")
+def image_providers(ctx: typer.Context) -> None:
+    """List configured image providers."""
+    apply_startup(ctx)
+    run_async(image_cmd.providers_impl(ctx.obj.config))
+
+
+@image_app.command("generated")
+def image_generated(
+    ctx: typer.Context,
+    limit: int = typer.Option(20, "--limit", help="Max images to show"),
+) -> None:
+    """List generated images."""
+    apply_startup(ctx)
+    run_async(image_cmd.generated_impl(ctx.obj.config, limit=limit))
+
+
+# --------------------------------------------------------------------------- #
+# provider → list / add / delete / probe / refresh / test-all
+# --------------------------------------------------------------------------- #
+
+provider_app = typer.Typer(no_args_is_help=True, help="LLM provider management")
+app.add_typer(provider_app, name="provider")
+
+
+@provider_app.command("list")
+def provider_list(ctx: typer.Context) -> None:
+    """List configured providers with models and status."""
+    apply_startup(ctx)
+    run_async(provider_cmd.list_impl(ctx.obj.config))
+
+
+@provider_app.command("add")
+def provider_add(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Provider name (e.g. openai, groq, anthropic)"),
+    api_key: str = typer.Option(..., "--api-key", help="API key"),
+    base_url: str | None = typer.Option(None, "--base-url", help="Custom base URL"),
+) -> None:
+    """Add or update a provider."""
+    apply_startup(ctx)
+    run_async(provider_cmd.add_impl(ctx.obj.config, name=name, api_key=api_key, base_url=base_url))
+
+
+@provider_app.command("delete")
+def provider_delete(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Provider name"),
+) -> None:
+    """Delete a provider."""
+    apply_startup(ctx)
+    run_async(provider_cmd.delete_impl(ctx.obj.config, name=name))
+
+
+@provider_app.command("probe")
+def provider_probe(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Provider name"),
+) -> None:
+    """Test provider connection."""
+    apply_startup(ctx)
+    run_async(provider_cmd.probe_impl(ctx.obj.config, name=name))
+
+
+@provider_app.command("refresh")
+def provider_refresh(
+    ctx: typer.Context,
+    name: str | None = typer.Argument(None, help="Provider name (default: all)"),
+) -> None:
+    """Refresh provider models."""
+    apply_startup(ctx)
+    run_async(provider_cmd.refresh_impl(ctx.obj.config, name=name))
+
+
+@provider_app.command("test-all")
+def provider_test_all(ctx: typer.Context) -> None:
+    """Test all configured providers."""
+    apply_startup(ctx)
+    run_async(provider_cmd.test_all_impl(ctx.obj.config))
+
+
+# --------------------------------------------------------------------------- #
+# notification → setup / status / delete / test / dry-run / set-account
+# --------------------------------------------------------------------------- #
+
+notification_app = typer.Typer(no_args_is_help=True, help="Personal notification bot management")
+app.add_typer(notification_app, name="notification")
+
+
+@notification_app.command("setup")
+def notification_setup(ctx: typer.Context) -> None:
+    """Create personal notification bot via BotFather."""
+    apply_startup(ctx)
+    run_async(notification_cmd.setup_impl(ctx.obj.config))
+
+
+@notification_app.command("status")
+def notification_status(ctx: typer.Context) -> None:
+    """Show notification bot status."""
+    apply_startup(ctx)
+    run_async(notification_cmd.status_impl(ctx.obj.config))
+
+
+@notification_app.command("delete")
+def notification_delete(ctx: typer.Context) -> None:
+    """Delete notification bot via BotFather."""
+    apply_startup(ctx)
+    run_async(notification_cmd.delete_impl(ctx.obj.config))
+
+
+@notification_app.command("test")
+def notification_test(
+    ctx: typer.Context,
+    message: str = typer.Option("Тестовое уведомление", "--message", help="Message text"),
+) -> None:
+    """Send a test notification message."""
+    apply_startup(ctx)
+    run_async(notification_cmd.test_impl(ctx.obj.config, message=message))
+
+
+@notification_app.command("dry-run")
+def notification_dry_run(ctx: typer.Context) -> None:
+    """Preview notification matches without sending."""
+    apply_startup(ctx)
+    run_async(notification_cmd.dry_run_impl(ctx.obj.config))
+
+
+@notification_app.command("set-account")
+def notification_set_account(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone number"),
+) -> None:
+    """Set account for notification bot."""
+    apply_startup(ctx)
+    run_async(notification_cmd.set_account_impl(ctx.obj.config, phone=phone))
+
+
+# --------------------------------------------------------------------------- #
 # argparse → Typer delegation
 # --------------------------------------------------------------------------- #
 
@@ -386,7 +763,154 @@ def _argv_from_namespace(args: argparse.Namespace) -> list[str]:
         argv.append("messages")
         if getattr(args, "messages_action", None) == "read":
             argv += _messages_read_argv(args)
+    elif command == "debug":
+        argv.append("debug")
+        argv += _debug_argv(args)
+    elif command == "export":
+        argv.append("export")
+        argv += _export_argv(args)
+    elif command == "translate":
+        argv.append("translate")
+        argv += _translate_argv(args)
+    elif command == "image":
+        argv.append("image")
+        argv += _image_argv(args)
+    elif command == "provider":
+        argv.append("provider")
+        argv += _provider_argv(args)
+    elif command == "notification":
+        argv.append("notification")
+        argv += _notification_argv(args)
     return argv
+
+
+def _debug_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``debug`` — the action plus its only flag (``logs --limit``)."""
+    action = getattr(args, "debug_action", None)
+    if action is None:
+        return []
+    tail = [action]
+    if action == "logs" and getattr(args, "limit", 50) != 50:
+        tail += ["--limit", str(args.limit)]
+    return tail
+
+
+def _export_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``export`` — the action plus its flags.
+
+    The flat json/csv/rss commands share one flag set; ``telegram`` has its own.
+    """
+    action = getattr(args, "export_action", None)
+    if action is None:
+        return []
+    tail = [action]
+    if action in ("json", "csv", "rss"):
+        if getattr(args, "channel_id", None) is not None:
+            tail += ["--channel-id", str(args.channel_id)]
+        if getattr(args, "limit", 200) != 200:
+            tail += ["--limit", str(args.limit)]
+        if getattr(args, "output", None):
+            tail += ["--output", args.output]
+    elif action == "telegram":
+        if getattr(args, "channel_id", None) is not None:
+            tail += ["--channel-id", str(args.channel_id)]
+        if getattr(args, "export_format", "json") != "json":
+            tail += ["--format", args.export_format]
+        if getattr(args, "with_media", False):
+            tail.append("--with-media")
+        if getattr(args, "wait", False):
+            tail.append("--wait")
+        if getattr(args, "max_file_size", None) is not None:
+            tail += ["--max-file-size", str(args.max_file_size)]
+        if getattr(args, "date_from", None):
+            tail += ["--date-from", args.date_from]
+        if getattr(args, "date_to", None):
+            tail += ["--date-to", args.date_to]
+        if getattr(args, "limit", 5000) != 5000:
+            tail += ["--limit", str(args.limit)]
+        if getattr(args, "output", None):
+            tail += ["--output", args.output]
+    return tail
+
+
+def _translate_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``translate`` — the action plus its flags / positional."""
+    action = getattr(args, "translate_action", None)
+    if action is None:
+        return []
+    tail = [action]
+    if action == "detect":
+        if getattr(args, "batch_size", 5000) != 5000:
+            tail += ["--batch-size", str(args.batch_size)]
+    elif action == "run":
+        if getattr(args, "target", "en") != "en":
+            tail += ["--target", args.target]
+        if getattr(args, "source_filter", ""):
+            tail += ["--source-filter", args.source_filter]
+        if getattr(args, "limit", 100) != 100:
+            tail += ["--limit", str(args.limit)]
+    elif action == "message":
+        if getattr(args, "target", "en") != "en":
+            tail += ["--target", args.target]
+        # Positional message_id after ``--`` (defensive, though it is always positive).
+        tail += ["--", str(args.message_id)]
+    return tail
+
+
+def _image_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``image`` — the action plus its flags / positional prompt."""
+    action = getattr(args, "image_action", None)
+    if action is None:
+        return []
+    tail = [action]
+    if action == "generate":
+        if getattr(args, "model", None):
+            tail += ["--model", args.model]
+        # Prompt is free text; emit after ``--`` so a leading ``-`` survives.
+        tail += ["--", args.prompt]
+    elif action == "models":
+        tail += ["--provider", args.provider]
+        if getattr(args, "query", ""):
+            tail += ["--query", args.query]
+        if getattr(args, "refresh", False):
+            tail.append("--refresh")
+    elif action == "generated":
+        if getattr(args, "limit", 20) != 20:
+            tail += ["--limit", str(args.limit)]
+    return tail
+
+
+def _provider_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``provider`` — the action plus its flags / positional name."""
+    action = getattr(args, "provider_action", None)
+    if action is None:
+        return []
+    tail = [action]
+    if action == "add":
+        tail += ["--api-key", args.api_key]
+        if getattr(args, "base_url", None):
+            tail += ["--base-url", args.base_url]
+        tail += ["--", args.name]
+    elif action in ("delete", "probe"):
+        tail += ["--", args.name]
+    elif action == "refresh":
+        if getattr(args, "name", None):
+            tail += ["--", args.name]
+    return tail
+
+
+def _notification_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``notification`` — the action plus its flags."""
+    action = getattr(args, "notification_action", None)
+    if action is None:
+        return []
+    tail = [action]
+    if action == "test":
+        if getattr(args, "message", "Тестовое уведомление") != "Тестовое уведомление":
+            tail += ["--message", args.message]
+    elif action == "set-account":
+        tail += ["--phone", args.phone]
+    return tail
 
 
 def _search_argv(args: argparse.Namespace) -> list[str]:
