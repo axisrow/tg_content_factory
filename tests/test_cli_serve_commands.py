@@ -160,8 +160,10 @@ def test_restart_success(capsys):
     with patch("src.cli.commands.server_control.load_config", return_value=cfg), \
          patch("src.cli.commands.server_control.stop_server", return_value=outcome), \
          patch("src.cli.commands.server_control.pid_file_path", return_value="/tmp/test.pid"), \
-         patch("src.cli.commands.serve.run") as mock_serve:
+         patch("src.cli.commands.serve.serve_web") as mock_serve:
         run_restart(_args())
     out = capsys.readouterr().out
     assert "подожду завершения активной задачи" in out
+    # restart stops the running server, then starts a fresh `serve` via the
+    # shared serve_web body (no more Namespace hand-off).
     mock_serve.assert_called_once()
