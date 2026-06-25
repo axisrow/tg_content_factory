@@ -265,3 +265,113 @@ def test_search_query_stats_negative_id_via_argparse():
     ):
         _delegate(["search-query", "stats", "8", "--days", "14"])
     mock_impl.assert_called_once_with("config.yaml", query_id=8, days=14)
+
+
+# --------------------------------------------------------------------------- #
+# filter → analyze / apply / reset / precheck / toggle / purge / purge-messages
+#          / hard-delete
+# --------------------------------------------------------------------------- #
+
+
+def test_filter_analyze_default_and_quick():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.analyze_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        runner.invoke(app, ["filter", "analyze"])
+        runner.invoke(app, ["filter", "analyze", "--quick"])
+    assert mock_impl.call_args_list[0].kwargs == {"quick": False}
+    assert mock_impl.call_args_list[1].kwargs == {"quick": True}
+
+
+def test_filter_apply_precheck_delegate():
+    for sub, impl_name in [("apply", "apply_impl"), ("precheck", "precheck_impl")]:
+        mock_impl = MagicMock()
+        with (
+            patch(f"src.cli.typer_commands.filter_cmd.{impl_name}", mock_impl),
+            patch("src.cli.typer_commands.run_async"),
+        ):
+            result = runner.invoke(app, ["filter", sub])
+        assert result.exit_code == 0, (sub, result.output)
+        mock_impl.assert_called_once_with("config.yaml")
+
+
+def test_filter_toggle_passes_pk():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.toggle_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["filter", "toggle", "42"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", pk=42)
+
+
+def test_filter_reset_pks_optional():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.reset_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        runner.invoke(app, ["filter", "reset"])
+        runner.invoke(app, ["filter", "reset", "--pks", "1,2,3"])
+    assert mock_impl.call_args_list[0].kwargs == {"pks": None}
+    assert mock_impl.call_args_list[1].kwargs == {"pks": "1,2,3"}
+
+
+def test_filter_purge_yes_short_alias():
+    """``-y`` is the short alias for ``--yes`` on purge (argparse parity)."""
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.purge_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["filter", "purge", "--pks", "5", "-y"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", pks="5", yes=True)
+
+
+def test_filter_purge_messages_requires_channel_id():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.purge_messages_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["filter", "purge-messages", "--channel-id", "-1001", "--yes"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", channel_id=-1001, yes=True)
+
+
+def test_filter_hard_delete_yes_no_short_alias():
+    """hard-delete exposes ``--yes`` only (no ``-y``), matching argparse."""
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.hard_delete_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["filter", "hard-delete", "--yes"])
+        # -y must NOT be accepted on hard-delete
+        result_short = runner.invoke(app, ["filter", "hard-delete", "-y"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", pks=None, yes=True)
+    assert result_short.exit_code != 0
+
+
+def test_filter_purge_messages_delegates_via_argparse():
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.purge_messages_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["filter", "purge-messages", "--channel-id", "-1002", "-y"])
+    mock_impl.assert_called_once_with("config.yaml", channel_id=-1002, yes=True)
+
+
+def test_filter_bare_group_shows_help_exit_0():
+    import pytest
+
+    args = build_parser().parse_args(["filter"])
+    with pytest.raises(SystemExit) as exc_info:
+        dispatch_via_typer(args)
+    assert exc_info.value.code == 0

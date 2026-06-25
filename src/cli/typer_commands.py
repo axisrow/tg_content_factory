@@ -61,6 +61,7 @@ except ImportError:  # pragma: no cover - defensive fallback
 from src.cli.commands import collect as collect_cmd
 from src.cli.commands import debug as debug_cmd
 from src.cli.commands import export as export_cmd
+from src.cli.commands import filter as filter_cmd
 from src.cli.commands import image as image_cmd
 from src.cli.commands import mcp_server as mcp_server_cmd
 from src.cli.commands import messages as messages_cmd
@@ -112,7 +113,7 @@ MIGRATED_COMMANDS: frozenset[str] = frozenset(
         # Wave 2 (#1122) — flat simple groups
         "debug", "export", "translate", "image", "provider", "notification",
         # Wave 3 (#1123) — medium groups
-        "search-query",
+        "search-query", "filter",
     }
 )
 
@@ -857,6 +858,94 @@ def search_query_stats(
 
 
 # --------------------------------------------------------------------------- #
+# filter → analyze / apply / reset / precheck / toggle / purge / purge-messages
+#          / hard-delete
+# --------------------------------------------------------------------------- #
+
+filter_app = typer.Typer(no_args_is_help=True, help="Channel content filter")
+app.add_typer(filter_app, name="filter")
+
+
+@filter_app.command("analyze")
+def filter_analyze(
+    ctx: typer.Context,
+    quick: bool = typer.Option(
+        False, "--quick", help="Skip cross-channel duplicate analysis (fast on large DBs)"
+    ),
+) -> None:
+    """Analyze channels and show report."""
+    apply_startup(ctx)
+    run_async(filter_cmd.analyze_impl(ctx.obj.config, quick=quick))
+
+
+@filter_app.command("apply")
+def filter_apply(ctx: typer.Context) -> None:
+    """Analyze and mark filtered channels."""
+    apply_startup(ctx)
+    run_async(filter_cmd.apply_impl(ctx.obj.config))
+
+
+@filter_app.command("reset")
+def filter_reset(
+    ctx: typer.Context,
+    pks: str | None = typer.Option(None, "--pks", help="Comma-separated PKs (default: all)"),
+) -> None:
+    """Reset channel filter flag."""
+    apply_startup(ctx)
+    run_async(filter_cmd.reset_impl(ctx.obj.config, pks=pks))
+
+
+@filter_app.command("precheck")
+def filter_precheck(ctx: typer.Context) -> None:
+    """Apply pre-filter by subscriber ratio (no Telegram needed)."""
+    apply_startup(ctx)
+    run_async(filter_cmd.precheck_impl(ctx.obj.config))
+
+
+@filter_app.command("toggle")
+def filter_toggle(
+    ctx: typer.Context,
+    pk: int = typer.Argument(..., help="Channel primary key"),
+) -> None:
+    """Toggle filter for a single channel."""
+    apply_startup(ctx)
+    run_async(filter_cmd.toggle_impl(ctx.obj.config, pk=pk))
+
+
+@filter_app.command("purge")
+def filter_purge(
+    ctx: typer.Context,
+    pks: str | None = typer.Option(None, "--pks", help="Comma-separated PKs (default: all)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Purge messages from filtered channels."""
+    apply_startup(ctx)
+    run_async(filter_cmd.purge_impl(ctx.obj.config, pks=pks, yes=yes))
+
+
+@filter_app.command("purge-messages")
+def filter_purge_messages(
+    ctx: typer.Context,
+    channel_id: int = typer.Option(..., "--channel-id", help="Channel ID whose messages to delete"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Delete messages for a specific channel from DB."""
+    apply_startup(ctx)
+    run_async(filter_cmd.purge_messages_impl(ctx.obj.config, channel_id=channel_id, yes=yes))
+
+
+@filter_app.command("hard-delete")
+def filter_hard_delete(
+    ctx: typer.Context,
+    pks: str | None = typer.Option(None, "--pks", help="Comma-separated PKs (default: all)"),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
+) -> None:
+    """Hard-delete filtered channels from DB (dev/testing)."""
+    apply_startup(ctx)
+    run_async(filter_cmd.hard_delete_impl(ctx.obj.config, pks=pks, yes=yes))
+
+
+# --------------------------------------------------------------------------- #
 # argparse → Typer delegation
 # --------------------------------------------------------------------------- #
 
@@ -935,6 +1024,9 @@ def _argv_from_namespace(args: argparse.Namespace) -> list[str]:
     elif command == "search-query":
         argv.append("search-query")
         argv += _search_query_argv(args)
+    elif command == "filter":
+        argv.append("filter")
+        argv += _filter_argv(args)
     return argv
 
 
@@ -1064,6 +1156,29 @@ def _notification_argv(args: argparse.Namespace) -> list[str]:
             tail += ["--message", args.message]
     elif action == "set-account":
         tail += ["--phone", args.phone]
+    return tail
+
+
+def _filter_argv(args: argparse.Namespace) -> list[str]:
+    """argv tail for ``filter`` — the action plus its flags / positional pk."""
+    action = getattr(args, "filter_action", None)
+    if action is None:
+        return []
+    tail = [action]
+    if action == "analyze":
+        if getattr(args, "quick", False):
+            tail.append("--quick")
+    elif action == "toggle":
+        tail += ["--", str(args.pk)]
+    elif action in ("reset", "purge", "hard-delete"):
+        if getattr(args, "pks", None):
+            tail += ["--pks", args.pks]
+        if action in ("purge", "hard-delete") and getattr(args, "yes", False):
+            tail.append("--yes")
+    elif action == "purge-messages":
+        tail += ["--channel-id", str(args.channel_id)]
+        if getattr(args, "yes", False):
+            tail.append("--yes")
     return tail
 
 
