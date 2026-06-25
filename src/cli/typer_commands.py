@@ -759,8 +759,8 @@ def search_query_add(
     regex: bool = typer.Option(False, "--regex", help="Use regex matching"),
     fts: bool = typer.Option(False, "--fts", help="Use FTS5 boolean syntax (no quoting)"),
     notify: bool = typer.Option(False, "--notify", help="Notify on collect"),
-    track_stats: bool = typer.Option(
-        True, "--track-stats/--no-track-stats", help="Track stats (default: on)"
+    no_track_stats: bool = typer.Option(
+        False, "--no-track-stats", help="Disable stat tracking (default: tracking on)"
     ),
     exclude_patterns: str = typer.Option(
         "", "--exclude-patterns", help="Exclude patterns, one per line (use \\n)"
@@ -770,6 +770,9 @@ def search_query_add(
 ) -> None:
     """Add search query."""
     apply_startup(ctx)
+    # argparse declares ONLY ``--no-track-stats`` (store_false, default True) on
+    # ``add`` — no ``--track-stats`` flag. Mirror that exactly so the Typer surface
+    # is not one flag wider than argparse (#1123 review).
     run_async(
         search_query_cmd.add_impl(
             ctx.obj.config,
@@ -778,7 +781,7 @@ def search_query_add(
             is_regex=regex,
             is_fts=fts,
             notify=notify,
-            track_stats=track_stats,
+            track_stats=not no_track_stats,
             exclude_patterns=exclude_patterns,
             max_length=max_length,
             chats=chats,
@@ -967,8 +970,23 @@ def filter_hard_delete(
 #            / reactions / semantic
 # --------------------------------------------------------------------------- #
 
-settings_app = typer.Typer(no_args_is_help=True, help="System settings management")
+settings_app = typer.Typer(
+    invoke_without_command=True, help="System settings management"
+)
 app.add_typer(settings_app, name="settings")
+
+
+@settings_app.callback()
+def settings_main(ctx: typer.Context) -> None:
+    """Bare ``settings`` (no sub-command) runs ``get`` — argparse parity (#1123 review).
+
+    The legacy dispatcher defaulted ``settings_action`` to ``get`` and listed all
+    settings; preserve that on the direct Typer surface, not just the argparse
+    bridge. With a sub-command this is a no-op and the sub-command runs normally.
+    """
+    if ctx.invoked_subcommand is None:
+        apply_startup(ctx)
+        run_async(settings_cmd.get_impl(ctx.obj.config, key=None))
 
 
 @settings_app.command("get")
@@ -1997,7 +2015,10 @@ def _photo_loader_argv(args: argparse.Namespace) -> list[str]:
             tail += ["--interval", str(args.interval)]
         if getattr(args, "mode", None):
             tail += ["--mode", args.mode]
-        if getattr(args, "caption", None):
+        # ``--caption ""`` is a deliberate CLEAR (repo writes when caption is not
+        # None); use ``is not None`` so an empty string is not dropped as "unset"
+        # the way truthiness would (#1123 review).
+        if getattr(args, "caption", None) is not None:
             tail += ["--caption", args.caption]
         if getattr(args, "active", False):
             tail.append("--active")

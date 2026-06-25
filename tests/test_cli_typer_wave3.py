@@ -120,6 +120,23 @@ def test_search_query_add_all_flags():
     )
 
 
+def test_search_query_add_rejects_track_stats_flag():
+    """argparse ``add`` declares ONLY ``--no-track-stats`` — ``--track-stats`` must
+    be rejected so the Typer surface is not one flag wider than argparse (#1123
+    review). ``edit`` legitimately has both (argparse declares both there)."""
+    # add: --track-stats is NOT a valid flag
+    assert runner.invoke(app, ["search-query", "add", "q", "--track-stats"]).exit_code != 0
+    # edit: --track-stats IS valid (argparse parser_domains declares both)
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.search_query_cmd.edit_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["search-query", "edit", "1", "--track-stats"])
+    assert result.exit_code == 0
+    assert mock_impl.call_args.kwargs["track_stats"] is True
+
+
 def test_search_query_edit_unset_flags_are_none():
     mock_impl = MagicMock()
     with (
@@ -1217,6 +1234,41 @@ def test_photo_loader_auto_update_delegates_via_argparse():
         active=False,
         paused=True,
     )
+
+
+def test_photo_loader_auto_update_empty_caption_clears_via_argparse():
+    """``auto-update --caption ""`` is a deliberate CLEAR (repo writes when caption
+    is not None); the round-trip must forward the empty string, not drop it as
+    "unset" (#1123 review). caption=None (omitted) stays a no-op."""
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.auto_update_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["photo-loader", "auto-update", "5", "--caption", ""])
+    assert mock_impl.call_args.kwargs["caption"] == ""
+    # omitting --caption keeps it None (no write)
+    mock_impl.reset_mock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.auto_update_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        _delegate(["photo-loader", "auto-update", "5", "--folder", "/x"])
+    assert mock_impl.call_args.kwargs["caption"] is None
+
+
+def test_settings_bare_runs_get_on_direct_typer_surface():
+    """Bare ``settings`` (no sub-command) runs ``get`` on the DIRECT Typer surface,
+    not just the argparse bridge — argparse defaulted settings_action to get (#1123
+    review)."""
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.settings_cmd.get_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["settings"])
+    assert result.exit_code == 0
+    mock_impl.assert_called_once_with("config.yaml", key=None)
 
 
 def test_photo_loader_bare_group_shows_help_exit_0():
