@@ -127,11 +127,13 @@ def test_bare_groups_uniformly_exit_zero(argv):
 class TestNegativeIdPositionalParity:
     """Negative-id positionals work without an explicit ``--`` (argparse parity).
 
-    Telegram channel ids are negative, so ``search -100500`` /
+    Telegram channel/chat ids are negative, so ``search -100500`` /
     ``collect sample -100123`` / ``analytics channel -100123456`` were everyday
-    invocations argparse accepted directly. Click reads ``-100500`` as an unknown
-    option; ``main`` escapes it with an inserted ``--`` so the command still runs
-    (#1162 Codex cycle-review regression).
+    invocations argparse accepted directly. Click would read ``-100500`` as an
+    unknown option; the affected commands carry ``ignore_unknown_options`` (see
+    ``_NEG_ID_POSITIONAL`` in ``typer_commands``) which lets the ``-N`` token fall
+    through to the positional — reproducing argparse's free option/positional
+    interleaving, which a flat ``--`` insertion could not (#1162 cycle-review).
     """
 
     def test_search_negative_query(self):
@@ -159,51 +161,32 @@ class TestNegativeIdPositionalParity:
         assert mock_impl.call_args.kwargs["channel_id"] == -100123456
 
     def test_negative_value_as_option_value_is_untouched(self):
-        """``--channel-id -100123`` — the negative is the *option's* value, not a
-        positional, so it must NOT be escaped (Click consumes it natively)."""
+        """``--channel-id -100123`` — the negative is the *option's* value, parsed
+        natively (collect carries no positional / context override either way)."""
         with patch("src.cli.typer_commands.collect_cmd.collect_impl") as mock_impl:
             code = _run_main(["collect", "--channel-id", "-100123"])
         assert code == 0
         assert mock_impl.call_args.kwargs["channel_id"] == -100123
 
+    def test_negative_id_interleaves_with_flag_after(self):
+        """``analytics channel -100123456 --days 14`` — option AFTER the negative
+        positional (free interleaving, the case a flat ``--`` insertion broke)."""
+        with patch("src.cli.typer_commands.analytics_cmd.channel_impl") as mock_impl:
+            code = _run_main(["analytics", "channel", "-100123456", "--days", "14"])
+        assert code == 0
+        assert mock_impl.call_args.kwargs["channel_id"] == -100123456
+        assert mock_impl.call_args.kwargs["days"] == 14
 
-class TestEscapeNegativePositionals:
-    """Unit coverage for the argv normalizer ``_escape_negative_positionals``."""
+    def test_negative_id_interleaves_with_flag_before(self):
+        """``analytics channel --days 14 -100123456`` — option BEFORE the negative."""
+        with patch("src.cli.typer_commands.analytics_cmd.channel_impl") as mock_impl:
+            code = _run_main(["analytics", "channel", "--days", "14", "-100123456"])
+        assert code == 0
+        assert mock_impl.call_args.kwargs["channel_id"] == -100123456
+        assert mock_impl.call_args.kwargs["days"] == 14
 
-    def test_inserts_separator_before_bare_negative(self):
-        from src.cli.main import _escape_negative_positionals
-
-        assert _escape_negative_positionals(["search", "-100500"]) == [
-            "search",
-            "--",
-            "-100500",
-        ]
-
-    def test_leaves_option_value_negative_alone(self):
-        from src.cli.main import _escape_negative_positionals
-
-        # ``-100`` follows the ``--channel-id`` flag → it's that option's value.
-        assert _escape_negative_positionals(["collect", "--channel-id", "-100"]) == [
-            "collect",
-            "--channel-id",
-            "-100",
-        ]
-
-    def test_idempotent_when_separator_present(self):
-        from src.cli.main import _escape_negative_positionals
-
-        argv = ["search", "--", "-100500"]
-        assert _escape_negative_positionals(argv) == argv
-
-    def test_non_numeric_dash_token_untouched(self):
-        from src.cli.main import _escape_negative_positionals
-
-        # ``--mode`` is a normal flag, ``-x`` is not a negative number → no change.
-        argv = ["search", "q", "--mode", "local"]
-        assert _escape_negative_positionals(argv) == argv
-
-    def test_float_and_no_match(self):
-        from src.cli.main import _escape_negative_positionals
-
-        assert _escape_negative_positionals(["x", "-1.5"]) == ["x", "--", "-1.5"]
-        assert _escape_negative_positionals(["x", "y"]) == ["x", "y"]
+    def test_unknown_option_still_errors_on_neg_id_command(self):
+        """A genuinely unknown ``--option`` (no positional slot to absorb it) still
+        exits non-zero — ``ignore_unknown_options`` does not mask real typos here."""
+        code = _run_main(["analytics", "channel", "--no-such-flag", "-100123456"])
+        assert code not in (0, None)
