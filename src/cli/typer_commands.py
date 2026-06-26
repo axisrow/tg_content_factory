@@ -58,11 +58,20 @@ from src.cli.typer_app import app, apply_startup, run_async
 #: ``search -100500`` / ``dialogs archive -100… --yes`` directly because no option
 #: in this CLI is a negative number, so a ``-N`` token is unambiguously a value.
 #: Click instead reads ``-100500`` as an unknown option and errors. Setting
-#: ``ignore_unknown_options`` restores argparse's behaviour *exactly*: a ``-N``
-#: token falls through to the positional, options and the negative interleave
-#: freely (``-100 --yes`` and ``--yes -100`` both work), yet a genuinely unknown
-#: ``--option`` still errors with exit 2 (it has no positional slot to absorb it).
-#: This replaces the fragile argv-``--``-insertion the #1125 review rejected.
+#: ``ignore_unknown_options`` restores argparse's behaviour for the cases that
+#: matter: a ``-N`` token falls through to the positional, options and the negative
+#: interleave freely (``-100 --yes`` and ``--yes -100`` both work), and a genuinely
+#: unknown ``--option`` with no positional slot to absorb it still errors with
+#: exit 2. This replaces the fragile argv-``--``-insertion the #1125 review rejected
+#: (string-munging could not reproduce argparse's free interleaving).
+#:
+#: Known micro-divergence (accepted, #1162 review): a *single non-numeric* dash
+#: token (``search -foo`` / ``search -l``) is now absorbed as the positional
+#: (exit 0) where argparse rejected it as an unrecognized option (exit 2). argparse
+#: only special-cases *negative numbers* as values; ``ignore_unknown_options`` is
+#: slightly more lenient and also lets a lone non-numeric ``-x`` fill an open
+#: positional slot. Strictly more permissive (no valid invocation breaks), affects
+#: only esoteric literal-dash inputs, so it is left as-is.
 _NEG_ID_POSITIONAL = {"ignore_unknown_options": True}
 
 
