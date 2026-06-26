@@ -26,6 +26,7 @@ CLI_REAL_TG_COMMAND_CASES_BY_CATEGORY: dict[str, set[tuple[str, ...]]] = {
         ("channel", "tag", "get"),
         ("channel", "tag", "list"),
         ("collect", "sample"),
+        ("debug", "errors"),
         ("debug", "logs"),
         ("debug", "memory"),
         ("debug", "timing"),

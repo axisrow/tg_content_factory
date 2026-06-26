@@ -94,3 +94,74 @@ def test_timing(capsys):
         run(_args(debug_action="timing"))
     out = capsys.readouterr().out
     assert "timing" in out.lower() or "benchmark" in out.lower()
+
+
+# ---------------------------------------------------------------------------
+# errors (#1055) — aggregated provider error-recovery stats
+# ---------------------------------------------------------------------------
+
+
+def test_errors_aggregates_live_instances(capsys):
+    import weakref
+
+    from src.services.error_recovery_service import ErrorCategory, ErrorRecoveryService
+
+    fresh: weakref.WeakSet = weakref.WeakSet()
+    a = ErrorRecoveryService()
+    b = ErrorRecoveryService()
+    a._record_error(RuntimeError("boom"), ErrorCategory.TRANSIENT)
+    b._record_error(RuntimeError("boom"), ErrorCategory.RATE_LIMIT)
+    fresh.add(a)
+    fresh.add(b)
+
+    db = make_debug_db()
+    config = make_cli_config()
+    with patch("src.cli.commands.debug.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch.object(ErrorRecoveryService, "_instances", fresh), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(debug_action="errors", json=False))
+    out = capsys.readouterr().out
+    assert "Live recovery instances: 2" in out
+    assert "Total errors recorded:   2" in out
+    del a, b  # keep strong refs alive until here (WeakSet)
+
+
+def test_errors_empty_process(capsys):
+    import weakref
+
+    from src.services.error_recovery_service import ErrorRecoveryService
+
+    fresh: weakref.WeakSet = weakref.WeakSet()
+    db = make_debug_db()
+    config = make_cli_config()
+    with patch("src.cli.commands.debug.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch.object(ErrorRecoveryService, "_instances", fresh), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(debug_action="errors", json=False))
+    out = capsys.readouterr().out
+    assert "Live recovery instances: 0" in out
+    assert "no provider errors recorded" in out
+
+
+def test_errors_json_output(capsys):
+    import json as json_mod
+    import weakref
+
+    from src.services.error_recovery_service import ErrorCategory, ErrorRecoveryService
+
+    fresh: weakref.WeakSet = weakref.WeakSet()
+    a = ErrorRecoveryService()
+    a._record_error(RuntimeError("boom"), ErrorCategory.TRANSIENT)
+    fresh.add(a)
+
+    db = make_debug_db()
+    config = make_cli_config()
+    with patch("src.cli.commands.debug.runtime.init_db", AsyncMock(return_value=(config, db))), \
+         patch.object(ErrorRecoveryService, "_instances", fresh), \
+         patch("asyncio.run", fake_asyncio_run):
+        run(_args(debug_action="errors", json=True))
+    out = capsys.readouterr().out
+    payload = json_mod.loads(out)
+    assert payload["instances"] == 1
+    assert payload["total_errors"] == 1
+    del a  # keep strong refs alive until here (WeakSet)

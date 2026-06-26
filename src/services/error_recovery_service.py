@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import time
+import weakref
 from dataclasses import dataclass
 from enum import Enum
 from typing import Awaitable, Callable, TypeVar
@@ -172,6 +173,22 @@ class CircuitBreaker:
 class ErrorRecoveryService:
     """Service for error recovery with retry policies and circuit breakers."""
 
+    # Process-wide weak registry of every live recovery service. Each instance
+    # keeps its OWN ``_error_history`` (the stats live in the instance), but the
+    # five LLM/embedding services build a *fresh* instance per pipeline-run /
+    # request / task via ``for_llm()`` / ``for_embeddings()`` — there is no
+    # single long-lived instance to query. The registry lets a debug surface
+    # aggregate the histories of all instances that are still alive without
+    # threading a shared instance through every constructor and call site.
+    #
+    # WeakSet => an instance is dropped automatically once its owning service is
+    # garbage-collected, so the registry never keeps an otherwise-dead service
+    # alive and never leaks. The trade-off is that an ephemeral instance's
+    # history is only visible while it (and its owner) are still referenced —
+    # i.e. the aggregate is a live snapshot of in-flight/recent work, not a
+    # durable error log. See ``aggregate_error_stats``.
+    _instances: "weakref.WeakSet[ErrorRecoveryService]" = weakref.WeakSet()
+
     def __init__(
         self,
         retry_policy: RetryPolicy | None = None,
@@ -181,6 +198,8 @@ class ErrorRecoveryService:
         self._circuit_breaker = CircuitBreaker(circuit_config)
         self._error_history: list[ErrorRecord] = []
         self._max_history = 100
+        # Self-register so ``aggregate_error_stats`` can find this instance.
+        ErrorRecoveryService._instances.add(self)
 
     def _calculate_delay(self, attempt: int) -> float:
         """Calculate delay for retry attempt."""
@@ -369,6 +388,64 @@ class ErrorRecoveryService:
             "by_category": by_category,
             "recent": recent,
             "circuit_breaker": self._circuit_breaker.get_state(),
+        }
+
+    @classmethod
+    def aggregate_error_stats(cls) -> dict:
+        """Aggregate error stats across every live recovery instance.
+
+        The five idempotent LLM/embedding services each build their own
+        ``ErrorRecoveryService`` (via ``for_llm()`` / ``for_embeddings()``), and
+        those instances are short-lived (one per pipeline-run / request / task).
+        Querying any single instance would only ever show one service's slice, so
+        this walks the weak registry (``cls._instances``) and folds every live
+        instance's :meth:`get_error_stats` into one process-wide view.
+
+        Returns a dict shaped like :meth:`get_error_stats` plus:
+          - ``instances``: number of live recovery instances folded in;
+          - ``open_circuits``: how many of them have a tripped (open/half_open)
+            circuit breaker right now.
+
+        ``recent`` is the 10 most-recent error records across all instances
+        (sorted by timestamp), so the snapshot reads chronologically regardless
+        of which service produced each error. Because the registry holds only
+        *live* instances, this is a snapshot of in-flight/recent activity — it is
+        intentionally not a durable error log (see the ``_instances`` note).
+        """
+        # Materialize to a list first. WeakSet.__iter__ already guards against
+        # "set changed size during iteration" (it defers referent removal while
+        # iterating), so this is not about avoiding a crash — it pins a stable
+        # set for the whole aggregation: a fixed len() for the ``instances``
+        # count, and strong refs so no instance is collected mid-loop.
+        live = list(cls._instances)
+
+        total = 0
+        by_category: dict[str, int] = {}
+        all_recent: list[dict] = []
+        open_circuits = 0
+
+        for inst in live:
+            stats = inst.get_error_stats()
+            total += stats.get("total_errors", 0)
+            for cat, count in stats.get("by_category", {}).items():
+                by_category[cat] = by_category.get(cat, 0) + count
+            all_recent.extend(stats.get("recent", []))
+            # Read the breaker state straight from the instance: get_error_stats
+            # omits the ``circuit_breaker`` key on an empty history, but a breaker
+            # can be open with no recorded errors (it counts failures, not stored
+            # records), so we must not infer "closed" from a missing key.
+            cb_state = inst._circuit_breaker.get_state().get("state", "closed")
+            if cb_state != "closed":
+                open_circuits += 1
+
+        all_recent.sort(key=lambda r: r.get("timestamp", 0.0), reverse=True)
+
+        return {
+            "instances": len(live),
+            "total_errors": total,
+            "by_category": by_category,
+            "recent": all_recent[:10],
+            "open_circuits": open_circuits,
         }
 
 
