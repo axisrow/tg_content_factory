@@ -59,12 +59,17 @@ def _print_result(result, verb: str = "Purged") -> None:
             print(f"  ✗ {err}")
 
 
-async def analyze_impl(config_path: str, *, quick: bool = False) -> None:
-    """Analyze channels and print the uniqueness / ratio / flags report."""
+async def analyze_impl(config_path: str, *, quick: bool = False, sample_size: int | None = None) -> None:
+    """Analyze channels and print the uniqueness / ratio / flags report.
+
+    quick=True samples the last ``sample_size`` messages per channel (default 300,
+    #1138) and skips the cross-dupe self-join, finishing in seconds; without it the
+    analysis scans the whole message history. ``sample_size`` only applies to quick.
+    """
     _, db = await runtime.init_db(config_path)
     try:
         analyzer = ChannelAnalyzer(db)
-        report = await analyzer.analyze_all(quick=quick)
+        report = await analyzer.analyze_all(quick=quick, sample_size=sample_size)
         if not report.results:
             print("No channels found.")
             return
@@ -260,7 +265,13 @@ def run(args: argparse.Namespace) -> None:
         print("Usage: filter {analyze|apply|reset|purge|hard-delete}")
         return
     if action == "analyze":
-        asyncio.run(analyze_impl(args.config, quick=getattr(args, "quick", False)))
+        asyncio.run(
+            analyze_impl(
+                args.config,
+                quick=getattr(args, "quick", False),
+                sample_size=getattr(args, "sample_size", None),
+            )
+        )
     elif action == "apply":
         asyncio.run(apply_impl(args.config))
     elif action == "precheck":

@@ -200,6 +200,121 @@ class TestAnalyzeAllQuickMode:
             await file_db.close()
 
 
+class TestAnalyzeAllQuickSampling:
+    """quick=True samples the last N messages/channel for text metrics (#1138).
+
+    A full analyze scans the whole history; quick samples only the most recent
+    ``sample_size`` messages. We build channels whose recent slice disagrees with
+    their full history to prove the LIMIT-N sampling is actually applied (not just
+    a cross-dupe skip).
+    """
+
+    async def test_quick_sampling_uses_recent_window_for_uniqueness(self, db, raw_db):
+        # 50 identical spam messages (ids 1..50), then 10 unique recent ones (51..60).
+        # Full history: 10 unique / 60 = 16.7% < 30% -> low_uniqueness.
+        # Sampled last 10: 10 unique / 10 = 100% -> NOT flagged.
+        await _insert_channel(raw_db, 800)
+        spam = ["same spam body"] * 50
+        recent = [f"fresh unique post number {i}" for i in range(10)]
+        await _insert_messages(raw_db, 800, spam + recent)
+        analyzer = ChannelAnalyzer(db)
+
+        full = await analyzer.analyze_all()
+        full_800 = next(r for r in full.results if r.channel_id == 800)
+        assert "low_uniqueness" in full_800.flags
+
+        quick = await analyzer.analyze_all(quick=True, sample_size=10)
+        quick_800 = next(r for r in quick.results if r.channel_id == 800)
+        assert "low_uniqueness" not in quick_800.flags
+        # Sampled total is the window size, not the full history.
+        assert quick_800.uniqueness_pct == 100.0
+
+    async def test_quick_sampling_recent_window_for_cyrillic(self, db, raw_db):
+        # Old history is all English; the recent window is all Russian.
+        # Full: 0% cyrillic -> non_cyrillic. Sampled last 5: 100% -> NOT flagged.
+        await _insert_channel(raw_db, 801)
+        # 50 english + 5 russian -> 5/55 = 9.1% < 10% threshold in the full history.
+        english = [f"english message number {i}" for i in range(50)]
+        russian = [f"русское сообщение номер {i}" for i in range(5)]
+        await _insert_messages(raw_db, 801, english + russian)
+        analyzer = ChannelAnalyzer(db)
+
+        full = await analyzer.analyze_all()
+        full_801 = next(r for r in full.results if r.channel_id == 801)
+        assert "non_cyrillic" in full_801.flags
+
+        quick = await analyzer.analyze_all(quick=True, sample_size=5)
+        quick_801 = next(r for r in quick.results if r.channel_id == 801)
+        assert "non_cyrillic" not in quick_801.flags
+
+    async def test_quick_default_sample_size_is_300(self, db, raw_db):
+        from src.filters.criteria import DEFAULT_QUICK_SAMPLE_SIZE
+
+        assert DEFAULT_QUICK_SAMPLE_SIZE == 300
+        # With <300 messages the default window covers the whole history, so the
+        # quick verdict matches the full one for uniqueness here.
+        await _insert_channel(raw_db, 802)
+        await _insert_messages(raw_db, 802, ["spam"] * 20)
+        analyzer = ChannelAnalyzer(db)
+        quick = await analyzer.analyze_all(quick=True)  # no explicit sample_size
+        quick_802 = next(r for r in quick.results if r.channel_id == 802)
+        assert "low_uniqueness" in quick_802.flags
+
+    async def test_full_analyze_never_samples(self, db, raw_db):
+        # Explicit sample_size is ignored unless quick=True: full path scans all.
+        await _insert_channel(raw_db, 803)
+        spam = ["same spam body"] * 50
+        recent = [f"fresh unique post {i}" for i in range(10)]
+        await _insert_messages(raw_db, 803, spam + recent)
+        analyzer = ChannelAnalyzer(db)
+        # sample_size passed but quick=False -> must scan full history -> flagged.
+        report = await analyzer.analyze_all(quick=False, sample_size=10)
+        ch = next(r for r in report.results if r.channel_id == 803)
+        assert "low_uniqueness" in ch.flags
+
+    async def test_sampled_sql_limit_in_repo_uniqueness_map(self, db, raw_db):
+        # Direct repo-level check that sample_size flips to the LIMIT-N query.
+        await _insert_channel(raw_db, 804)
+        await _insert_messages(raw_db, 804, ["dup"] * 40 + [f"u{i}" for i in range(5)])
+        repo = db.filter_repo
+        full_map = await repo.fetch_uniqueness_map(804)
+        # full: 6 distinct (dup + u0..u4) / 45
+        assert full_map[804] == (45, 6)
+        sampled_map = await repo.fetch_uniqueness_map(804, sample_size=5)
+        # last 5 ids = u0..u4 -> 5 total, 5 unique
+        assert sampled_map[804] == (5, 5)
+
+    async def test_quick_sampling_parallel_path(self, tmp_path):
+        from src.database import Database
+
+        file_db = Database(str(tmp_path / "quick_sample.db"))
+        await file_db.initialize()
+        try:
+            conn = file_db.db
+            await _insert_channel(conn, 810)
+            spam = ["same spam body"] * 50
+            recent = [f"fresh unique post number {i}" for i in range(10)]
+            await _insert_messages(conn, 810, spam + recent)
+
+            repo = file_db.filter_repo
+            assert repo._can_parallel()
+
+            # Parallel sampled uniqueness map must apply the window.
+            # Full: 60 msgs, 11 distinct prefixes (1 spam + 10 recent unique).
+            u_full, *_ = await repo.fetch_maps_parallel(None)
+            assert u_full[810] == (60, 11)
+            # Sampled last 10: the 10 recent unique posts -> 10 total, 10 distinct.
+            u_sampled, *_ = await repo.fetch_maps_parallel(None, sample_size=10)
+            assert u_sampled[810] == (10, 10)
+
+            analyzer = ChannelAnalyzer(file_db)
+            quick = await analyzer.analyze_all(quick=True, sample_size=10)
+            ch = next(r for r in quick.results if r.channel_id == 810)
+            assert "low_uniqueness" not in ch.flags
+        finally:
+            await file_db.close()
+
+
 class TestAnalyzerNonCyrillic:
     async def test_cyrillic_channel(self, db, raw_db):
         await _insert_channel(raw_db, 400)
