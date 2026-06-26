@@ -156,7 +156,7 @@ flood-waited accounts.
 
 ## Coverage Contract
 
-`tests/test_real_telegram_policy.py` introspects `src.cli.parser_domains` through `build_parser()` and requires every parser leaf command to be either:
+`tests/test_real_telegram_policy.py` introspects the Typer application (`src.cli.typer_commands.app`, walked via `typer.main.get_command`) and requires every leaf command to be either:
 
 - covered by a CLI inventory test; or
 - listed in `tests/cli_real_tg_integration/command_manifest.py` as manual/excluded with a reason.
