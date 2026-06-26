@@ -1138,15 +1138,20 @@ async def _cleanup_telegram(pool, copy_db, tmp_path, results) -> None:
 # ---------------------------------------------------------------------------
 
 
-def run(args: argparse.Namespace) -> None:
-    if args.test_action == "benchmark":
+def run_impl(config_path: str, action: str) -> None:
+    """Run a diagnostic ``test`` action against *config_path*.
+
+    Shared body for the Typer ``test`` commands (``all`` / ``read`` / ``write`` /
+    ``telegram`` / ``benchmark``). ``benchmark`` runs the pytest benchmark
+    synchronously; the other actions run their async checks via ``asyncio.run``.
+    """
+    if action == "benchmark":
         _run_pytest_benchmark()
         return
 
     async def _run() -> None:
         results: list[CheckResult] = []
 
-        action = args.test_action  # "all", "read", "write", "telegram"
         run_read = action in ("all", "read")
         run_write = action in ("all", "write")
         run_telegram = action in ("all", "telegram")
@@ -1154,7 +1159,7 @@ def run(args: argparse.Namespace) -> None:
         if run_read:
             print("=== Read Tests ===")
             try:
-                config, db = await runtime.init_db(args.config)
+                config, db = await runtime.init_db(config_path)
             except Exception as exc:
                 check_result = CheckResult("db_init", Status.FAIL, f"Cannot init DB: {exc}")
                 _print_result(check_result)
@@ -1188,14 +1193,14 @@ def run(args: argparse.Namespace) -> None:
 
         if run_write:
             print("\n=== Write Tests (on DB copy) ===")
-            write_results = await _run_write_checks(args.config)
+            write_results = await _run_write_checks(config_path)
             for check_result in write_results:
                 results.append(check_result)
                 _print_result(check_result)
 
         if run_telegram:
             print("\n=== Telegram Live Tests (on DB copy) ===")
-            tg_results = await _run_telegram_live_checks(args.config)
+            tg_results = await _run_telegram_live_checks(config_path)
             for check_result in tg_results:
                 results.append(check_result)
                 _print_result(check_result)
@@ -1212,3 +1217,13 @@ def run(args: argparse.Namespace) -> None:
             sys.exit(1)
 
     asyncio.run(_run())
+
+
+def run(args: argparse.Namespace) -> None:
+    """argparse-Namespace adapter over :func:`run_impl`.
+
+    The Typer ``test`` commands call ``run_impl`` directly; this thin wrapper
+    keeps the legacy ``commands.test.run(Namespace)`` entry point that the CLI
+    unit tests still exercise (the production entry point is the Typer app).
+    """
+    run_impl(args.config, args.test_action)

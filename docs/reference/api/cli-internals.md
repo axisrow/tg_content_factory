@@ -14,9 +14,15 @@
 
 ::: src.cli.runtime
 
-## Разбор аргументов
+## Команды (Typer)
 
-::: src.cli.parser
+Единая точка объявления CLI — приложение Typer (`app`). Каждая команда
+объявляет свои флаги/аргументы как параметры Typer и зовёт общее тело
+`*_impl` из `src/cli/commands/`. argparse-каркас удалён в #1125.
+
+::: src.cli.typer_app
+
+::: src.cli.typer_commands
 
 ## Точка входа
 

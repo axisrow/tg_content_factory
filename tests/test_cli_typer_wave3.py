@@ -15,9 +15,7 @@ assert each sub-command:
 
 The shared bodies are stubbed (and ``run_async`` is patched to capture rather than
 execute the coroutine) so no real DB / Telegram work happens — the wiring from CLI
-tokens to the body is what is under test. The ``*_delegates_via_argparse`` tests
-drive the real prod path (``build_parser`` → ``dispatch_via_typer``) to guard the
-argparse→Typer round-trip end to end, including the tri-state / store_const flags.
+tokens to the body is what is under test.
 """
 
 from __future__ import annotations
@@ -26,17 +24,9 @@ from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
-from src.cli.parser import build_parser
 from src.cli.typer_app import app
-from src.cli.typer_commands import dispatch_via_typer
 
 runner = CliRunner()
-
-
-def _delegate(argv: list[str]) -> None:
-    """Run the real prod path: argparse parse → argparse→Typer delegation."""
-    args = build_parser().parse_args(argv)
-    dispatch_via_typer(args)
 
 
 # --------------------------------------------------------------------------- #
@@ -219,71 +209,6 @@ def test_search_query_stats_defaults_and_days():
     mock_impl.assert_called_once_with("config.yaml", query_id=4, days=7)
 
 
-def test_search_query_bare_group_shows_help_exit_0():
-    """A bare ``search-query`` group renders help and exits 0 via the prod path.
-
-    Argparse's old ``sub_attr`` fallback printed the group help and exited 0;
-    ``dispatch_via_typer`` reproduces that (a direct CliRunner invoke would exit
-    non-zero in standalone mode — that path is covered elsewhere).
-    """
-    import pytest
-
-    args = build_parser().parse_args(["search-query"])
-    with pytest.raises(SystemExit) as exc_info:
-        dispatch_via_typer(args)
-    assert exc_info.value.code == 0
-
-
-# --- real prod path: build_parser → dispatch_via_typer round-trip ----------- #
-
-
-def test_search_query_add_delegates_via_argparse():
-    """End-to-end argparse→Typer round-trip; the query goes after ``--`` so a
-    value that looks option-like survives Click (here a plain FTS query)."""
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.search_query_cmd.add_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["search-query", "add", "kremlin OR putin", "--regex", "--chats", "@c"])
-    mock_impl.assert_called_once_with(
-        "config.yaml",
-        query="kremlin OR putin",
-        interval=60,
-        is_regex=True,
-        is_fts=False,
-        notify=False,
-        track_stats=True,
-        exclude_patterns="",
-        max_length=None,
-        chats="@c",
-    )
-
-
-def test_search_query_edit_clear_sentinels_via_argparse():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.search_query_cmd.edit_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["search-query", "edit", "5", "--no-max-length", "--clear-chats"])
-    _, kwargs = mock_impl.call_args
-    assert kwargs["query_id"] == 5
-    assert kwargs["max_length"] == -1
-    assert kwargs["chats"] == ""
-
-
-def test_search_query_stats_negative_id_via_argparse():
-    """A leading-dash positional id round-trips through the ``--`` separator."""
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.search_query_cmd.stats_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["search-query", "stats", "8", "--days", "14"])
-    mock_impl.assert_called_once_with("config.yaml", query_id=8, days=14)
-
-
 # --------------------------------------------------------------------------- #
 # filter → analyze / apply / reset / precheck / toggle / purge / purge-messages
 #          / hard-delete
@@ -373,25 +298,6 @@ def test_filter_hard_delete_yes_no_short_alias():
     assert result.exit_code == 0
     mock_impl.assert_called_once_with("config.yaml", pks=None, yes=True)
     assert result_short.exit_code != 0
-
-
-def test_filter_purge_messages_delegates_via_argparse():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.filter_cmd.purge_messages_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["filter", "purge-messages", "--channel-id", "-1002", "-y"])
-    mock_impl.assert_called_once_with("config.yaml", channel_id=-1002, yes=True)
-
-
-def test_filter_bare_group_shows_help_exit_0():
-    import pytest
-
-    args = build_parser().parse_args(["filter"])
-    with pytest.raises(SystemExit) as exc_info:
-        dispatch_via_typer(args)
-    assert exc_info.value.code == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -503,30 +409,6 @@ def test_settings_semantic_flags():
     )
 
 
-def test_settings_set_delegates_via_argparse():
-    """key/value positionals survive the ``--`` separator end to end."""
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.settings_cmd.set_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["settings", "set", "translation_provider", "openai"])
-    mock_impl.assert_called_once_with(
-        "config.yaml", key="translation_provider", value="openai"
-    )
-
-
-def test_settings_bare_maps_to_get_via_argparse():
-    """A bare ``settings`` ran ``get`` under argparse; the round-trip preserves that."""
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.settings_cmd.get_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["settings"])
-    mock_impl.assert_called_once_with("config.yaml", key=None)
-
-
 # --------------------------------------------------------------------------- #
 # scheduler → start / trigger / status / stop / job-toggle / set-interval
 #             / task-cancel / clear-pending / queue-pause / queue-resume
@@ -584,27 +466,6 @@ def test_scheduler_task_cancel_int_id():
         result = runner.invoke(app, ["scheduler", "task-cancel", "55"])
     assert result.exit_code == 0
     mock_impl.assert_called_once_with("config.yaml", task_id=55)
-
-
-def test_scheduler_set_interval_delegates_via_argparse():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.scheduler_cmd.set_interval_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["scheduler", "set-interval", "content_generate_2", "30"])
-    mock_impl.assert_called_once_with(
-        "config.yaml", job_id="content_generate_2", minutes=30
-    )
-
-
-def test_scheduler_bare_group_shows_help_exit_0():
-    import pytest
-
-    args = build_parser().parse_args(["scheduler"])
-    with pytest.raises(SystemExit) as exc_info:
-        dispatch_via_typer(args)
-    assert exc_info.value.code == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -769,6 +630,42 @@ def test_account_export_session_mutex_rejects_both_and_neither():
     ).exit_code != 0
 
 
+def test_account_export_session_value_is_printed_not_logged(capsys, caplog):
+    """The SSO export prints the session string to stdout but NEVER logs it (#828).
+
+    Regression guard for the secret-handling invariant: ``_run_export_session``
+    (the real business logic, not the removed argv bridge) emits the decrypted
+    session string on stdout and a warning on stderr, but the secret must not
+    leak into the logging subsystem at any level. Exercises the impl with a
+    stubbed DB so a known sentinel session string flows through.
+    """
+    import argparse
+    import asyncio
+    import logging
+    from unittest.mock import AsyncMock
+
+    from src.cli.commands.account import _run_export_session
+    from src.models import AccountSummary
+
+    secret = "enc-sentinel-SESSION-STRING-do-not-log"
+    summary = AccountSummary(id=3, phone="+1234567890")
+
+    db = MagicMock()
+    db.get_account_summaries = AsyncMock(return_value=[summary])
+    db.repos.accounts.get_decrypted_session = AsyncMock(return_value=secret)
+
+    args = argparse.Namespace(id=3, phone=None, json=False)
+    with caplog.at_level(logging.DEBUG, logger="src.cli.commands.account"):
+        asyncio.run(_run_export_session(args, db))
+
+    out = capsys.readouterr()
+    # Printed to stdout (the operator asked for it), warning to stderr.
+    assert secret in out.out
+    assert "full access" in out.err
+    # …but never written to the logging subsystem.
+    assert secret not in caplog.text
+
+
 def test_account_import_session_string():
     mock_impl = MagicMock()
     with (
@@ -814,54 +711,46 @@ def test_account_import_mutex_rejects_both_and_neither():
     ).exit_code != 0
 
 
-def test_account_export_session_delegates_via_argparse():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.account_cmd.export_session_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
+def test_account_export_session_invalid_mutex_skips_startup():
+    """#1162 drift §3: an invalid --id/--phone mutex is rejected at parse time.
+
+    The check now runs *before* ``apply_startup`` (the env / logging / data-dir
+    side effects), the way argparse rejected the mutex during ``parse_args()``.
+    So neither the startup side effects nor the impl ever fire on a bad mutex —
+    important in a read-only runtime where ``apply_startup`` could raise first.
+    """
+    for argv in (
+        ["account", "export-session"],  # neither
+        ["account", "export-session", "--id", "1", "--phone", "+1"],  # both
     ):
-        _delegate(["account", "export-session", "--id", "9", "--json"])
-    mock_impl.assert_called_once_with("config.yaml", account_id=9, phone=None, as_json=True)
+        with (
+            patch("src.cli.typer_commands.apply_startup") as mock_startup,
+            patch("src.cli.typer_commands.run_async") as mock_run,
+            patch("src.cli.typer_commands.account_cmd.export_session_impl") as mock_impl,
+        ):
+            result = runner.invoke(app, argv)
+        assert result.exit_code != 0
+        mock_startup.assert_not_called()
+        mock_run.assert_not_called()
+        mock_impl.assert_not_called()
 
 
-def test_account_import_delegates_via_argparse():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.account_cmd.import_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
+def test_account_import_invalid_mutex_skips_startup():
+    """#1162 drift §3: a bad session-source mutex is rejected before apply_startup."""
+    for argv in (
+        ["account", "import", "--phone", "+1"],  # neither source
+        ["account", "import", "--phone", "+1", "--session-string", "X", "--session-string-stdin"],
     ):
-        _delegate(["account", "import", "--phone", "+1", "--session-string", "SECRET", "--force"])
-    mock_impl.assert_called_once_with(
-        "config.yaml",
-        phone="+1",
-        session_string="SECRET",
-        session_string_stdin=False,
-        force=True,
-    )
-
-
-def test_account_export_session_value_not_logged(caplog):
-    """The export path must never log the session value (caplog guard, #828)."""
-    import logging
-
-    from src.cli.typer_commands import _account_argv
-
-    # The argv reconstruction for export-session carries only id/phone/json — never
-    # a session value (the secret is produced inside the impl and printed, not logged).
-    args = build_parser().parse_args(["account", "export-session", "--id", "3", "--json"])
-    with caplog.at_level(logging.DEBUG):
-        tail = _account_argv(args)
-    assert tail == ["export-session", "--id", "3", "--json"]
-    assert "session" not in caplog.text.lower() or "session_string" not in caplog.text
-
-
-def test_account_bare_group_shows_help_exit_0():
-    import pytest
-
-    args = build_parser().parse_args(["account"])
-    with pytest.raises(SystemExit) as exc_info:
-        dispatch_via_typer(args)
-    assert exc_info.value.code == 0
+        with (
+            patch("src.cli.typer_commands.apply_startup") as mock_startup,
+            patch("src.cli.typer_commands.run_async") as mock_run,
+            patch("src.cli.typer_commands.account_cmd.import_impl") as mock_impl,
+        ):
+            result = runner.invoke(app, argv)
+        assert result.exit_code != 0
+        mock_startup.assert_not_called()
+        mock_run.assert_not_called()
+        mock_impl.assert_not_called()
 
 
 # --------------------------------------------------------------------------- #
@@ -975,40 +864,6 @@ def test_agent_context_required_channel_id():
     mock_impl.assert_called_once_with(
         "config.yaml", thread_id=3, channel_id=-1001, limit=50, topic_id=7
     )
-
-
-def test_agent_chat_leading_dash_prompt_via_argparse():
-    """A prompt starting with ``-`` survives the ``--prompt=`` attached form."""
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.agent_cmd.chat_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["agent", "chat", "-p", "-x marks the spot"])
-    mock_impl.assert_called_once_with(
-        "config.yaml", prompt="-x marks the spot", thread_id=None, model=None
-    )
-
-
-def test_agent_context_delegates_via_argparse():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.agent_cmd.context_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["agent", "context", "2", "--channel-id", "-1009", "--topic-id", "3"])
-    mock_impl.assert_called_once_with(
-        "config.yaml", thread_id=2, channel_id=-1009, limit=100000, topic_id=3
-    )
-
-
-def test_agent_bare_group_shows_help_exit_0():
-    import pytest
-
-    args = build_parser().parse_args(["agent"])
-    with pytest.raises(SystemExit) as exc_info:
-        dispatch_via_typer(args)
-    assert exc_info.value.code == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -1202,50 +1057,16 @@ def test_photo_loader_run_due_flags():
     assert mock_impl.call_args_list[1].kwargs == {"item_id": 7, "dry_run": True}
 
 
-def test_photo_loader_send_delegates_via_argparse():
-    """argparse --files nargs='+' (a b) round-trips to Typer's repeated --files."""
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.photo_loader_cmd.send_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(
-            ["photo-loader", "send", "--phone", "+1", "--target", "me", "--files", "a.jpg", "b.jpg"]
-        )
-    mock_impl.assert_called_once_with(
-        "config.yaml", phone="+1", target="me", files=["a.jpg", "b.jpg"], mode="album", caption=None
-    )
-
-
-def test_photo_loader_auto_update_delegates_via_argparse():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.photo_loader_cmd.auto_update_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["photo-loader", "auto-update", "2", "--mode", "separate", "--paused"])
-    mock_impl.assert_called_once_with(
-        "config.yaml",
-        job_id=2,
-        folder=None,
-        interval=None,
-        mode="separate",
-        caption=None,
-        active=False,
-        paused=True,
-    )
-
-
-def test_photo_loader_auto_update_empty_caption_clears_via_argparse():
+def test_photo_loader_auto_update_empty_caption_clears():
     """``auto-update --caption ""`` is a deliberate CLEAR (repo writes when caption
-    is not None); the round-trip must forward the empty string, not drop it as
-    "unset" (#1123 review). caption=None (omitted) stays a no-op."""
+    is not None); the empty string must be forwarded, not dropped as "unset"
+    (#1123 review). caption=None (omitted) stays a no-op."""
     mock_impl = MagicMock()
     with (
         patch("src.cli.typer_commands.photo_loader_cmd.auto_update_impl", mock_impl),
         patch("src.cli.typer_commands.run_async"),
     ):
-        _delegate(["photo-loader", "auto-update", "5", "--caption", ""])
+        runner.invoke(app, ["photo-loader", "auto-update", "5", "--caption", ""])
     assert mock_impl.call_args.kwargs["caption"] == ""
     # omitting --caption keeps it None (no write)
     mock_impl.reset_mock()
@@ -1253,7 +1074,7 @@ def test_photo_loader_auto_update_empty_caption_clears_via_argparse():
         patch("src.cli.typer_commands.photo_loader_cmd.auto_update_impl", mock_impl),
         patch("src.cli.typer_commands.run_async"),
     ):
-        _delegate(["photo-loader", "auto-update", "5", "--folder", "/x"])
+        runner.invoke(app, ["photo-loader", "auto-update", "5", "--folder", "/x"])
     assert mock_impl.call_args.kwargs["caption"] is None
 
 
@@ -1269,12 +1090,3 @@ def test_settings_bare_runs_get_on_direct_typer_surface():
         result = runner.invoke(app, ["settings"])
     assert result.exit_code == 0
     mock_impl.assert_called_once_with("config.yaml", key=None)
-
-
-def test_photo_loader_bare_group_shows_help_exit_0():
-    import pytest
-
-    args = build_parser().parse_args(["photo-loader"])
-    with pytest.raises(SystemExit) as exc_info:
-        dispatch_via_typer(args)
-    assert exc_info.value.code == 0
