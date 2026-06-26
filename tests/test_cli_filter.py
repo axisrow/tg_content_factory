@@ -94,7 +94,7 @@ def test_filter_analyze(tmp_path, cli_init_patch, capsys):
 
     out = capsys.readouterr().out
     assert "No channels found" in out
-    mock_instance.analyze_all.assert_awaited_once_with(quick=False)
+    mock_instance.analyze_all.assert_awaited_once_with(quick=False, sample_size=None)
     mock_instance.apply_filters.assert_not_awaited()
 
 
@@ -121,7 +121,30 @@ def test_analyze_quick_skips_cross_dupe(tmp_path, cli_init_patch, capsys):
 
     out = capsys.readouterr().out
     assert "No channels found" in out
-    mock_instance.analyze_all.assert_awaited_once_with(quick=True)
+    mock_instance.analyze_all.assert_awaited_once_with(quick=True, sample_size=None)
+
+
+def test_analyze_quick_sample_size_flows_through(tmp_path, cli_init_patch):
+    """`filter analyze --quick --sample-size N` forwards N to the analyzer (#1138)."""
+    db_path = str(tmp_path / "filter_analyze_sample.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    asyncio.run(db.add_account(Account(phone="+100", session_string="sess")))
+    with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
+        from src.cli.commands.filter import run
+
+        with patch("src.cli.commands.filter.ChannelAnalyzer") as mock_analyzer:
+            mock_instance = MagicMock()
+            mock_report = MagicMock()
+            mock_report.results = []
+            mock_report.total_channels = 0
+            mock_report.filtered_count = 0
+            mock_instance.analyze_all = AsyncMock(return_value=mock_report)
+            mock_analyzer.return_value = mock_instance
+
+            run(_ns(filter_action="analyze", quick=True, sample_size=50))
+
+    mock_instance.analyze_all.assert_awaited_once_with(quick=True, sample_size=50)
 
 
 def test_filter_analyze_parser_accepts_quick_flag():
@@ -149,6 +172,33 @@ def test_filter_analyze_parser_accepts_quick_flag():
         result_default = runner.invoke(app, ["filter", "analyze"])
     assert result_default.exit_code == 0
     assert mock_impl_default.call_args.kwargs["quick"] is False
+
+
+def test_filter_analyze_parser_accepts_sample_size():
+    """CLI exposes --sample-size on `filter analyze` (#1138, default 300)."""
+    from typer.testing import CliRunner
+
+    from src.cli.typer_app import app
+
+    runner = CliRunner()
+
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.analyze_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["filter", "analyze", "--quick", "--sample-size", "100"])
+    assert result.exit_code == 0
+    assert mock_impl.call_args.kwargs["sample_size"] == 100
+
+    mock_impl_default = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.analyze_impl", mock_impl_default),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result_default = runner.invoke(app, ["filter", "analyze"])
+    assert result_default.exit_code == 0
+    assert mock_impl_default.call_args.kwargs["sample_size"] == 300
 
 
 def test_filter_apply(tmp_path, cli_init_patch, capsys):

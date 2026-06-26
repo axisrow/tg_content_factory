@@ -223,8 +223,11 @@ def test_filter_analyze_default_and_quick():
     ):
         runner.invoke(app, ["filter", "analyze"])
         runner.invoke(app, ["filter", "analyze", "--quick"])
-    assert mock_impl.call_args_list[0].kwargs == {"quick": False}
-    assert mock_impl.call_args_list[1].kwargs == {"quick": True}
+        runner.invoke(app, ["filter", "analyze", "--quick", "--sample-size", "50"])
+    # sample_size defaults to the calibrated 300 and is forwarded alongside quick (#1138).
+    assert mock_impl.call_args_list[0].kwargs == {"quick": False, "sample_size": 300}
+    assert mock_impl.call_args_list[1].kwargs == {"quick": True, "sample_size": 300}
+    assert mock_impl.call_args_list[2].kwargs == {"quick": True, "sample_size": 50}
 
 
 def test_filter_apply_precheck_delegate():

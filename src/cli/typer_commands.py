@@ -52,6 +52,7 @@ from src.cli.commands import test as test_cmd
 from src.cli.commands import translate as translate_cmd
 from src.cli.commands import worker as worker_cmd
 from src.cli.typer_app import app, apply_startup, run_async
+from src.filters.criteria import DEFAULT_QUICK_SAMPLE_SIZE
 
 #: Context settings for the commands whose first positional can be a *negative*
 #: identifier — Telegram channel / chat ids (``-100123…``), ``@username`` /
@@ -2166,12 +2167,22 @@ app.add_typer(filter_app, name="filter")
 def filter_analyze(
     ctx: typer.Context,
     quick: bool = typer.Option(
-        False, "--quick", help="Skip cross-channel duplicate analysis (fast on large DBs)"
+        False,
+        "--quick",
+        help="Sample the last N messages/channel + skip cross-dupe analysis (seconds on large DBs)",
+    ),
+    sample_size: int = typer.Option(
+        DEFAULT_QUICK_SAMPLE_SIZE,
+        "--sample-size",
+        help=(
+            f"Messages/channel to sample in --quick mode "
+            f"(default: {DEFAULT_QUICK_SAMPLE_SIZE}; ignored without --quick)"
+        ),
     ),
 ) -> None:
     """Analyze channels and show report."""
     apply_startup(ctx)
-    run_async(filter_cmd.analyze_impl(ctx.obj.config, quick=quick))
+    run_async(filter_cmd.analyze_impl(ctx.obj.config, quick=quick, sample_size=sample_size))
 
 
 @filter_app.command("apply")

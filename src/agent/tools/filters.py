@@ -40,15 +40,28 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "analyze_filters",
         "Analyze all channels and compute filter scores (low_uniqueness, low_subscriber_ratio, "
-        "cross_channel_spam, non_cyrillic, chat_noise). Shows which channels should be filtered.",
-        {},
+        "cross_channel_spam, non_cyrillic, chat_noise). Shows which channels should be filtered. "
+        "Set quick=true for a fast sampled run (last N messages/channel, no cross-dupe) on large DBs.",
+        {
+            "quick": Annotated[
+                bool,
+                "Быстрый режим: семпл последних N сообщений на канал + без cross-dupe (секунды вместо минут)",
+            ],
+            "sample_size": Annotated[
+                int,
+                "Сколько последних сообщений семплировать в quick-режиме (по умолчанию 300; игнорируется без quick)",
+            ],
+        },
     )
     async def analyze_filters(args):
         try:
             from src.filters.analyzer import ChannelAnalyzer
 
+            quick = bool(args.get("quick", False))
+            raw_sample = args.get("sample_size")
+            sample_size = int(raw_sample) if raw_sample not in (None, "") else None
             analyzer = ChannelAnalyzer(db)
-            report = await analyzer.analyze_all()
+            report = await analyzer.analyze_all(quick=quick, sample_size=sample_size)
             return _text_response(format_filter_report(report))
         except Exception as e:
             return _text_response(f"Ошибка анализа фильтров: {e}")
