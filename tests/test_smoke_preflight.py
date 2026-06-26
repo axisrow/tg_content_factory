@@ -33,12 +33,14 @@ def test_package_imports() -> None:
     assert hasattr(src.main, "main")
 
 
-def test_cli_parser_builds() -> None:
-    """The full CLI argument parser assembles without error."""
-    from src.cli.parser import build_parser
+def test_cli_app_builds() -> None:
+    """The full Typer CLI app assembles with its commands registered."""
+    import typer
 
-    parser = build_parser()
-    assert parser.prog
+    from src.cli.typer_commands import app
+
+    cmd = typer.main.get_command(app)
+    assert cmd.commands
 
 
 def test_identifier_parsing_real_function() -> None:

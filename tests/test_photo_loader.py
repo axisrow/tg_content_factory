@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.cli.parser import build_parser
 from src.config import AppConfig
 from src.database import Database
 from src.database.bundles import PhotoLoaderBundle
@@ -776,27 +775,38 @@ async def test_photo_loader_refresh_warms_dialog_cache(
 
 
 def test_photo_loader_cli_parser():
-    parser = build_parser()
-    args = parser.parse_args(
-        [
-            "photo-loader",
-            "schedule-send",
-            "--phone",
-            "+7000",
-            "--target",
-            "-1001",
-            "--files",
-            "/tmp/a.jpg",
-            "/tmp/b.jpg",
-            "--mode",
-            "album",
-            "--at",
-            "2026-03-11T18:30:00+00:00",
-        ]
-    )
-    assert args.command == "photo-loader"
-    assert args.photo_loader_action == "schedule-send"
-    assert args.mode == "album"
+    from typer.testing import CliRunner
+
+    from src.cli.typer_app import app
+
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.photo_loader_cmd.schedule_send_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = CliRunner().invoke(
+            app,
+            [
+                "photo-loader",
+                "schedule-send",
+                "--phone",
+                "+7000",
+                "--target",
+                "-1001",
+                "--files",
+                "/tmp/a.jpg",
+                "--files",
+                "/tmp/b.jpg",
+                "--mode",
+                "album",
+                "--at",
+                "2026-03-11T18:30:00+00:00",
+            ],
+        )
+    assert result.exit_code == 0
+    kwargs = mock_impl.call_args.kwargs
+    assert kwargs["files"] == ["/tmp/a.jpg", "/tmp/b.jpg"]
+    assert kwargs["mode"] == "album"
 
 
 @pytest.mark.aiosqlite_serial

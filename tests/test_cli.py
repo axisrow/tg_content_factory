@@ -1029,16 +1029,23 @@ class TestCLIServerControl:
                 run_restart(_ns(command="restart", web_pass=None))
 
     def test_parser_stop_and_restart(self):
-        from src.cli.parser import build_parser
+        from unittest.mock import patch
 
-        parser = build_parser()
+        from typer.testing import CliRunner
 
-        args = parser.parse_args(["stop"])
-        assert args.command == "stop"
+        from src.cli.typer_app import app
 
-        args = parser.parse_args(["restart", "--web-pass", "secret"])
-        assert args.command == "restart"
-        assert args.web_pass == "secret"
+        runner = CliRunner()
+
+        with patch("src.cli.typer_commands.server_control_cmd.stop_web") as mock_stop:
+            result = runner.invoke(app, ["stop"])
+        assert result.exit_code == 0, result.output
+        mock_stop.assert_called_once()
+
+        with patch("src.cli.typer_commands.server_control_cmd.restart_web") as mock_restart:
+            result = runner.invoke(app, ["restart", "--web-pass", "secret"])
+        assert result.exit_code == 0, result.output
+        assert mock_restart.call_args.kwargs["web_pass"] == "secret"
 
 
 # ---------------------------------------------------------------------------
@@ -1072,21 +1079,20 @@ class TestCLITest:
         assert "Telegram Live Tests" in out
 
     def test_parser_namespace(self):
-        from src.cli.parser import build_parser
+        from unittest.mock import patch
 
-        parser = build_parser()
-        args = parser.parse_args(["test", "read"])
-        assert args.command == "test"
-        assert args.test_action == "read"
+        from typer.testing import CliRunner
 
-        args = parser.parse_args(["test", "all"])
-        assert args.test_action == "all"
+        from src.cli.typer_app import app
 
-        args = parser.parse_args(["test", "telegram"])
-        assert args.test_action == "telegram"
+        runner = CliRunner()
 
-        args = parser.parse_args(["test", "benchmark"])
-        assert args.test_action == "benchmark"
+        for action in ("read", "all", "telegram", "benchmark"):
+            with patch("src.cli.typer_commands.test_cmd.run_impl") as mock_run:
+                result = runner.invoke(app, ["test", action])
+            assert result.exit_code == 0, result.output
+            mock_run.assert_called_once()
+            assert mock_run.call_args.args[1] == action
 
     def test_benchmark(self, capsys, monkeypatch):
         from src.cli.commands import test as test_cmd
@@ -1420,40 +1426,62 @@ class TestCLIAgent:
         assert "Итого: 10 passed, 0 failed" in out
 
     def test_parser_agent_subcommands(self):
-        from src.cli.parser import build_parser
+        from unittest.mock import MagicMock, patch
 
-        parser = build_parser()
+        from typer.testing import CliRunner
 
-        args = parser.parse_args(["agent", "thread-rename", "5", "New Name"])
-        assert args.agent_action == "thread-rename"
-        assert args.thread_id == 5
-        assert args.title == "New Name"
+        from src.cli.typer_app import app
 
-        args = parser.parse_args(["agent", "messages", "3", "--limit", "10"])
-        assert args.agent_action == "messages"
-        assert args.thread_id == 3
-        assert args.limit == 10
+        runner = CliRunner()
 
-        args = parser.parse_args(
-            ["agent", "context", "7", "--channel-id", "100", "--topic-id", "42"]
-        )
-        assert args.agent_action == "context"
-        assert args.thread_id == 7
-        assert args.channel_id == 100
-        assert args.topic_id == 42
+        with (
+            patch("src.cli.typer_commands.agent_cmd.thread_rename_impl", new_callable=MagicMock) as mock_rename,
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(app, ["agent", "thread-rename", "5", "New Name"])
+        assert result.exit_code == 0, result.output
+        assert mock_rename.call_args.kwargs["thread_id"] == 5
+        assert mock_rename.call_args.kwargs["title"] == "New Name"
 
-        args = parser.parse_args(["agent", "chat", "--prompt", "hi", "--model", "claude-haiku-4-5-20251001"])
-        assert args.agent_action == "chat"
-        assert args.prompt == "hi"
-        assert args.model == "claude-haiku-4-5-20251001"
+        with (
+            patch("src.cli.typer_commands.agent_cmd.messages_impl", new_callable=MagicMock) as mock_messages,
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(app, ["agent", "messages", "3", "--limit", "10"])
+        assert result.exit_code == 0, result.output
+        assert mock_messages.call_args.kwargs["thread_id"] == 3
+        assert mock_messages.call_args.kwargs["limit"] == 10
 
-        args = parser.parse_args(["agent", "chat", "-p", "hi"])
-        assert args.agent_action == "chat"
-        assert args.prompt == "hi"
+        with (
+            patch("src.cli.typer_commands.agent_cmd.context_impl", new_callable=MagicMock) as mock_context,
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(
+                app, ["agent", "context", "7", "--channel-id", "100", "--topic-id", "42"]
+            )
+        assert result.exit_code == 0, result.output
+        assert mock_context.call_args.kwargs["thread_id"] == 7
+        assert mock_context.call_args.kwargs["channel_id"] == 100
+        assert mock_context.call_args.kwargs["topic_id"] == 42
 
-        args = parser.parse_args(["agent", "chat"])
-        assert args.agent_action == "chat"
-        assert args.prompt is None
+        for argv, expected_prompt, expected_model in [
+            (
+                ["agent", "chat", "--prompt", "hi", "--model", "claude-haiku-4-5-20251001"],
+                "hi",
+                "claude-haiku-4-5-20251001",
+            ),
+            (["agent", "chat", "-p", "hi"], "hi", None),
+            (["agent", "chat"], None, None),
+        ]:
+            with (
+                patch("src.cli.typer_commands.agent_cmd.chat_impl", new_callable=MagicMock) as mock_chat,
+                patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+            ):
+                result = runner.invoke(app, argv)
+            assert result.exit_code == 0, result.output
+            assert mock_chat.call_args.kwargs["prompt"] == expected_prompt
+            if expected_model is not None:
+                assert mock_chat.call_args.kwargs["model"] == expected_model
 
 
 # ---------------------------------------------------------------------------
@@ -1551,60 +1579,132 @@ class TestCLIDialogsTopics:
         assert "No forum topics" in out
 
     def test_parser_topics_subcommand(self):
-        """Parser correctly handles the dialogs topics subcommand."""
-        from src.cli.parser import build_parser
+        """Typer surface correctly handles the dialogs topics subcommand."""
+        from unittest.mock import MagicMock, patch
 
-        parser = build_parser()
+        from typer.testing import CliRunner
 
-        args = parser.parse_args(["dialogs", "topics", "--channel-id", "123"])
-        assert args.dialogs_action == "topics"
-        assert args.channel_id == 123
-        assert args.phone is None
+        from src.cli.typer_app import app
 
-        args = parser.parse_args(
-            ["dialogs", "topics", "--channel-id", "456", "--phone", "+10001112233"]
-        )
-        assert args.channel_id == 456
-        assert args.phone == "+10001112233"
+        runner = CliRunner()
+
+        mock_dispatch = MagicMock()
+        with (
+            patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock_dispatch),
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(app, ["dialogs", "topics", "--channel-id", "123"])
+        assert result.exit_code == 0, result.output
+        ns = mock_dispatch.call_args.args[0]
+        assert ns.dialogs_action == "topics"
+        assert ns.channel_id == 123
+        assert ns.phone is None
+
+        mock_dispatch = MagicMock()
+        with (
+            patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock_dispatch),
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(
+                app, ["dialogs", "topics", "--channel-id", "456", "--phone", "+10001112233"]
+            )
+        assert result.exit_code == 0, result.output
+        ns = mock_dispatch.call_args.args[0]
+        assert ns.channel_id == 456
+        assert ns.phone == "+10001112233"
 
 
 class TestCLIParityParser:
     def test_new_parity_subcommands_parse(self):
-        from src.cli.parser import build_parser
+        """The #303 parity sub-commands parse on the Typer surface with the right flags."""
+        from unittest.mock import MagicMock, patch
 
-        parser = build_parser()
+        from typer.testing import CliRunner
 
-        args = parser.parse_args(["account", "add", "--phone", "+1000"])
-        assert args.account_action == "add"
-        assert args.phone == "+1000"
-        assert args.code is None
+        from src.cli.typer_app import app
 
-        args = parser.parse_args(["account", "add", "--phone", "+1000", "--code", "12345"])
-        assert args.account_action == "add"
-        assert args.code == "12345"
+        runner = CliRunner()
 
-        args = parser.parse_args(["search-query", "get", "7"])
-        assert args.search_query_action == "get"
-        assert args.id == 7
+        # account add (no --code) → send-code path
+        with (
+            patch("src.cli.typer_commands.account_cmd.send_code_impl", new_callable=MagicMock) as mock_send,
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(app, ["account", "add", "--phone", "+1000"])
+        assert result.exit_code == 0, result.output
+        assert mock_send.call_args.kwargs["phone"] == "+1000"
 
-        args = parser.parse_args(["pipeline", "moderation-list", "--pipeline-id", "3", "--limit", "5"])
-        assert args.pipeline_action == "moderation-list"
-        assert args.pipeline_id == 3
-        assert args.limit == 5
+        # account add (with --code) → verify-code path
+        with (
+            patch("src.cli.typer_commands.account_cmd.verify_code_impl", new_callable=MagicMock) as mock_verify,
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(app, ["account", "add", "--phone", "+1000", "--code", "12345"])
+        assert result.exit_code == 0, result.output
+        assert mock_verify.call_args.kwargs["code"] == "12345"
 
-        args = parser.parse_args(["pipeline", "moderation-view", "9"])
-        assert args.pipeline_action == "moderation-view"
-        assert args.run_id == 9
+        # search-query get <id>
+        with (
+            patch("src.cli.typer_commands.search_query_cmd.get_impl", new_callable=MagicMock) as mock_get,
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(app, ["search-query", "get", "7"])
+        assert result.exit_code == 0, result.output
+        assert mock_get.call_args.kwargs["query_id"] == 7
 
-        args = parser.parse_args(["photo-loader", "items", "--batch-id", "4"])
-        assert args.photo_loader_action == "items"
-        assert args.batch_id == 4
+        # pipeline moderation-list / moderation-view dispatch via Namespace
+        mock_dispatch = MagicMock()
+        with (
+            patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock_dispatch),
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(
+                app, ["pipeline", "moderation-list", "--pipeline-id", "3", "--limit", "5"]
+            )
+        assert result.exit_code == 0, result.output
+        ns = mock_dispatch.call_args.args[0]
+        assert ns.pipeline_action == "moderation-list"
+        assert ns.pipeline_id == 3
+        assert ns.limit == 5
 
-        args = parser.parse_args(["dialogs", "resolve", "@example", "--phone", "+1000"])
-        assert args.dialogs_action == "resolve"
-        assert args.identifier == "@example"
-        assert args.phone == "+1000"
+        mock_dispatch = MagicMock()
+        with (
+            patch("src.cli.typer_commands.pipeline_cmd._dispatch", mock_dispatch),
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(app, ["pipeline", "moderation-view", "9"])
+        assert result.exit_code == 0, result.output
+        ns = mock_dispatch.call_args.args[0]
+        assert ns.pipeline_action == "moderation-view"
+        assert ns.run_id == 9
 
-        args = parser.parse_args(["image", "generated", "--limit", "3"])
-        assert args.image_action == "generated"
-        assert args.limit == 3
+        # photo-loader items --batch-id
+        with (
+            patch("src.cli.typer_commands.photo_loader_cmd.items_impl", new_callable=MagicMock) as mock_items,
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(app, ["photo-loader", "items", "--batch-id", "4"])
+        assert result.exit_code == 0, result.output
+        assert mock_items.call_args.kwargs["batch_id"] == 4
+
+        # dialogs resolve @example --phone dispatches via Namespace
+        mock_dispatch = MagicMock()
+        with (
+            patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock_dispatch),
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(app, ["dialogs", "resolve", "@example", "--phone", "+1000"])
+        assert result.exit_code == 0, result.output
+        ns = mock_dispatch.call_args.args[0]
+        assert ns.dialogs_action == "resolve"
+        assert ns.identifier == "@example"
+        assert ns.phone == "+1000"
+
+        # image generated --limit
+        with (
+            patch("src.cli.typer_commands.image_cmd.generated_impl", new_callable=MagicMock) as mock_generated,
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = runner.invoke(app, ["image", "generated", "--limit", "3"])
+        assert result.exit_code == 0, result.output
+        assert mock_generated.call_args.kwargs["limit"] == 3
