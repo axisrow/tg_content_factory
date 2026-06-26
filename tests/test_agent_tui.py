@@ -722,43 +722,44 @@ async def test_no_race_condition_button_set_before_worker_runs(db, app_factory):
 
 
 class TestAgentChatParser:
-    def test_prompt_flag_long(self):
-        from src.cli.parser import build_parser
+    @staticmethod
+    def _invoke(argv):
+        from unittest.mock import MagicMock, patch
 
-        parser = build_parser()
-        args = parser.parse_args(["agent", "chat", "--prompt", "hello"])
-        assert args.agent_action == "chat"
-        assert args.prompt == "hello"
+        from typer.testing import CliRunner
+
+        from src.cli.typer_app import app
+
+        mock_impl = MagicMock()
+        with (
+            patch("src.cli.typer_commands.agent_cmd.chat_impl", mock_impl),
+            patch("src.cli.typer_commands.run_async", side_effect=lambda coro: coro.close()),
+        ):
+            result = CliRunner().invoke(app, argv)
+        assert result.exit_code == 0, result.output
+        return mock_impl.call_args.kwargs
+
+    def test_prompt_flag_long(self):
+        kwargs = self._invoke(["agent", "chat", "--prompt", "hello"])
+        assert kwargs["prompt"] == "hello"
 
     def test_prompt_flag_short(self):
-        from src.cli.parser import build_parser
-
-        parser = build_parser()
-        args = parser.parse_args(["agent", "chat", "-p", "hello"])
-        assert args.prompt == "hello"
+        kwargs = self._invoke(["agent", "chat", "-p", "hello"])
+        assert kwargs["prompt"] == "hello"
 
     def test_no_prompt_is_none(self):
-        from src.cli.parser import build_parser
-
-        parser = build_parser()
-        args = parser.parse_args(["agent", "chat"])
-        assert args.prompt is None
+        kwargs = self._invoke(["agent", "chat"])
+        assert kwargs["prompt"] is None
 
     def test_prompt_with_model(self):
-        from src.cli.parser import build_parser
-
-        parser = build_parser()
-        args = parser.parse_args(["agent", "chat", "-p", "hi", "--model", "claude-haiku-4-5-20251001"])
-        assert args.prompt == "hi"
-        assert args.model == "claude-haiku-4-5-20251001"
+        kwargs = self._invoke(["agent", "chat", "-p", "hi", "--model", "claude-haiku-4-5-20251001"])
+        assert kwargs["prompt"] == "hi"
+        assert kwargs["model"] == "claude-haiku-4-5-20251001"
 
     def test_prompt_with_thread_id(self):
-        from src.cli.parser import build_parser
-
-        parser = build_parser()
-        args = parser.parse_args(["agent", "chat", "-p", "hi", "--thread-id", "5"])
-        assert args.prompt == "hi"
-        assert args.thread_id == 5
+        kwargs = self._invoke(["agent", "chat", "-p", "hi", "--thread-id", "5"])
+        assert kwargs["prompt"] == "hi"
+        assert kwargs["thread_id"] == 5
 
 
 @pytest.mark.anyio
