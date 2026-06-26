@@ -80,6 +80,25 @@ async def debug_timing_rows(request: Request):
     )
 
 
+@router.get("/errors", response_class=HTMLResponse)
+async def debug_errors(request: Request):
+    """HTMX partial: aggregated provider error-recovery stats (#1055)."""
+    from src.services.error_recovery_service import ErrorRecoveryService
+
+    stats = ErrorRecoveryService.aggregate_error_stats()
+    return deps.get_templates(request).TemplateResponse(
+        request, "_debug_errors.html", {"stats": stats}
+    )
+
+
+@router.get("/errors.json", response_class=JSONResponse)
+async def debug_errors_json(request: Request):
+    """REST JSON: aggregated provider error-recovery stats (#1055)."""
+    from src.services.error_recovery_service import ErrorRecoveryService
+
+    return ErrorRecoveryService.aggregate_error_stats()
+
+
 @router.get("/memory", response_class=JSONResponse)
 async def debug_memory(request: Request):
     gc.collect()

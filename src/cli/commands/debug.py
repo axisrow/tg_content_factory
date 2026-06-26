@@ -66,6 +66,50 @@ async def timing_impl(config_path: str) -> None:
         await db.close()
 
 
+async def errors_impl(config_path: str, *, as_json: bool = False) -> None:
+    """Print aggregated provider error-recovery stats (#1055).
+
+    Folds the error histories of every live ``ErrorRecoveryService`` instance
+    (the per-service LLM/embedding recovery wrappers) into one process-wide
+    view. In a short-lived CLI invocation no provider call has run, so the
+    aggregate is usually empty — the stats are meaningful in a long-running
+    ``serve``/``worker`` process (or the Web debug page) where provider calls
+    have actually happened.
+    """
+    from src.services.error_recovery_service import ErrorRecoveryService
+
+    _, db = await runtime.init_db(config_path)
+    try:
+        stats = ErrorRecoveryService.aggregate_error_stats()
+        if as_json:
+            import json
+
+            print(json.dumps(stats, indent=2, ensure_ascii=False))
+            return
+
+        print("Provider error-recovery stats (aggregated across live instances):")
+        print(f"  Live recovery instances: {stats['instances']}")
+        print(f"  Total errors recorded:   {stats['total_errors']}")
+        print(f"  Open circuit breakers:   {stats['open_circuits']}")
+
+        by_category = stats.get("by_category") or {}
+        if by_category:
+            print("  By category:")
+            for cat, count in sorted(by_category.items()):
+                print(f"    {cat}: {count}")
+
+        recent = stats.get("recent") or []
+        if recent:
+            print("  Recent errors (newest first):")
+            for r in recent:
+                print(f"    [{r.get('category')}] {r.get('type')}: {r.get('message')}")
+
+        if stats["total_errors"] == 0:
+            print("  (no provider errors recorded in this process)")
+    finally:
+        await db.close()
+
+
 def run(args: argparse.Namespace) -> None:
     """Thin argparse-Namespace adapter over the ``*_impl`` bodies.
 
@@ -80,3 +124,5 @@ def run(args: argparse.Namespace) -> None:
         asyncio.run(memory_impl(args.config))
     elif action == "timing":
         asyncio.run(timing_impl(args.config))
+    elif action == "errors":
+        asyncio.run(errors_impl(args.config, as_json=getattr(args, "json", False)))

@@ -5,6 +5,21 @@
   <h1 class="mb-0">Консоль сервера</h1>
   <a href="/debug/timing" class="btn btn-sm btn-outline-secondary">Тайминг запросов →</a>
 </div>
+
+<div class="card mb-4">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <span>Ошибки провайдеров (восстановление)</span>
+    <button class="btn btn-sm btn-outline-secondary"
+            hx-get="/debug/errors" hx-target="#debug-errors" hx-swap="innerHTML">
+      Обновить
+    </button>
+  </div>
+  <div class="card-body" id="debug-errors"
+       hx-get="/debug/errors" hx-trigger="load" hx-swap="innerHTML">
+    <small class="text-muted">Загрузка…</small>
+  </div>
+</div>
+
 <p><small class="text-muted">Последние 500 записей.</small></p>
 <div class="table-responsive" style="font-size:0.85rem">
   <table class="tga-table-striped">

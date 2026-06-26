@@ -435,6 +435,16 @@ def debug_timing(ctx: typer.Context) -> None:
     run_async(debug_cmd.timing_impl(ctx.obj.config))
 
 
+@debug_app.command("errors")
+def debug_errors(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json", help="Emit raw JSON instead of text"),
+) -> None:
+    """Show aggregated provider error-recovery stats (#1055)."""
+    apply_startup(ctx)
+    run_async(debug_cmd.errors_impl(ctx.obj.config, as_json=as_json))
+
+
 # --------------------------------------------------------------------------- #
 # export → json / csv / rss / telegram
 # --------------------------------------------------------------------------- #
