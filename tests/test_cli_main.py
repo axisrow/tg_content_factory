@@ -160,6 +160,21 @@ class TestNegativeIdPositionalParity:
         assert code == 0
         assert mock_impl.call_args.kwargs["channel_id"] == -100123456
 
+    def test_dialogs_leave_negative_dialog_ids(self):
+        """``dialogs leave -100111 --yes`` — the variadic ``dialog_ids`` positional
+        holds negative Telegram ids; it must accept them with the flag in either
+        order (cycle-review caught this command was initially missed)."""
+        for argv in (
+            ["dialogs", "leave", "-100111", "--yes"],
+            ["dialogs", "leave", "--yes", "-100111"],
+        ):
+            with patch("src.cli.typer_commands.dialogs_cmd._dispatch") as mock_dispatch:
+                code = _run_main(argv)
+            assert code == 0, argv
+            ns = mock_dispatch.call_args.args[0]
+            assert ns.dialog_ids == ["-100111"]
+            assert ns.yes is True
+
     def test_negative_value_as_option_value_is_untouched(self):
         """``--channel-id -100123`` — the negative is the *option's* value, parsed
         natively (collect carries no positional / context override either way)."""
@@ -209,18 +224,15 @@ class TestNegIdScopeIsNarrow:
         command absorbed ``--badtypo`` into an open positional. ``pipeline show``
         must NOT carry ``ignore_unknown_options``.
         """
-        code = _run_main(["pipeline", "show", "--badtypo"])
-        assert code not in (0, None)
+        assert _run_main(["pipeline", "show", "--badtypo"]) == 2
 
     def test_positive_pk_multi_positional_rejects_unknown_option(self):
-        """``pipeline node replace 5 --badtypo spec`` → strict error (no masking)."""
-        code = _run_main(["pipeline", "node", "replace", "5", "--badtypo", "spec"])
-        assert code not in (0, None)
+        """``pipeline node replace 5 --badtypo spec`` → strict error, exit 2."""
+        assert _run_main(["pipeline", "node", "replace", "5", "--badtypo", "spec"]) == 2
 
     def test_agent_context_rejects_unknown_option(self):
         """``agent context 5 --badtypo`` (thread_id positive pk) → strict error."""
-        code = _run_main(["agent", "context", "5", "--badtypo"])
-        assert code not in (0, None)
+        assert _run_main(["agent", "context", "5", "--badtypo"]) == 2
 
     def test_neg_capable_command_absorbs_unknown_into_open_slot(self):
         """Accepted trade-off (#1162): on a neg-capable command an unknown dash
