@@ -580,7 +580,7 @@ def translate_run(
     )
 
 
-@translate_app.command("message", context_settings=_NEG_ID_POSITIONAL)
+@translate_app.command("message")
 def translate_message(
     ctx: typer.Context,
     message_id: int = typer.Argument(..., help="Message DB id"),
