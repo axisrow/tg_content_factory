@@ -412,8 +412,11 @@ class ErrorRecoveryService:
         *live* instances, this is a snapshot of in-flight/recent activity — it is
         intentionally not a durable error log (see the ``_instances`` note).
         """
-        # Snapshot to a list first: the WeakSet can mutate mid-iteration as
-        # instances are collected, and we want a stable count.
+        # Materialize to a list first. WeakSet.__iter__ already guards against
+        # "set changed size during iteration" (it defers referent removal while
+        # iterating), so this is not about avoiding a crash — it pins a stable
+        # set for the whole aggregation: a fixed len() for the ``instances``
+        # count, and strong refs so no instance is collected mid-loop.
         live = list(cls._instances)
 
         total = 0

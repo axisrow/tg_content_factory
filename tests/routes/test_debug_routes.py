@@ -350,6 +350,8 @@ async def test_debug_errors_partial(client, monkeypatch):
     assert "transient" in body
     assert "rate_limit" in body
     del a, b  # keep strong refs alive until here (WeakSet)
+
+
 @pytest.mark.anyio
 async def test_debug_errors_json(client, monkeypatch):
     """REST JSON endpoint returns the aggregate payload."""
@@ -370,6 +372,8 @@ async def test_debug_errors_json(client, monkeypatch):
     assert payload["total_errors"] == 1
     assert payload["by_category"] == {"fatal": 1}
     del a  # keep strong refs alive until here (WeakSet)
+
+
 @pytest.mark.anyio
 async def test_debug_errors_json_empty(client, monkeypatch):
     """Empty registry → zeroed payload, not an error."""

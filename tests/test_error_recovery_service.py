@@ -390,6 +390,8 @@ def test_aggregate_sums_across_instances(isolated_registry):
     assert stats["by_category"] == {"transient": 3, "rate_limit": 3}
     # keep strong refs alive past the assertion so the WeakSet doesn't drop them
     del a, b, c  # keep strong refs alive until here (WeakSet)
+
+
 def test_aggregate_empty_registry(isolated_registry):
     stats = ErrorRecoveryService.aggregate_error_stats()
     assert stats == {
@@ -416,6 +418,8 @@ def test_aggregate_recent_is_global_and_capped(isolated_registry):
     timestamps = [r["timestamp"] for r in stats["recent"]]
     assert timestamps == sorted(timestamps, reverse=True)
     del a, b  # keep strong refs alive until here (WeakSet)
+
+
 @pytest.mark.anyio
 async def test_aggregate_counts_open_circuits(isolated_registry):
     a = ErrorRecoveryService(circuit_config=CircuitBreakerConfig(failure_threshold=1))
@@ -427,6 +431,8 @@ async def test_aggregate_counts_open_circuits(isolated_registry):
 
     assert stats["open_circuits"] == 1
     del a, b  # keep strong refs alive until here (WeakSet)
+
+
 def test_new_instance_self_registers(isolated_registry):
     assert len(list(isolated_registry)) == 0
     svc = ErrorRecoveryService()
