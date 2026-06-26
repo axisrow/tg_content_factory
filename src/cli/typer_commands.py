@@ -80,6 +80,7 @@ from src.cli.commands import search_query as search_query_cmd
 from src.cli.commands import serve as serve_cmd
 from src.cli.commands import server_control as server_control_cmd
 from src.cli.commands import settings as settings_cmd
+from src.cli.commands import test as test_cmd
 from src.cli.commands import translate as translate_cmd
 from src.cli.commands import worker as worker_cmd
 from src.cli.typer_app import app, apply_startup, run_async
@@ -126,6 +127,8 @@ MIGRATED_COMMANDS: frozenset[str] = frozenset(
         # Wave 3 (#1123) — medium groups
         "search-query", "filter", "settings", "scheduler", "account", "agent",
         "photo-loader",
+        # Final (#1125) — the last argparse-only group
+        "test",
     }
 )
 class PhotoMode(str, Enum):
@@ -3029,6 +3032,49 @@ def photo_loader_run_due(
 
 
 # --------------------------------------------------------------------------- #
+# test → all / read / write / telegram / benchmark
+# --------------------------------------------------------------------------- #
+
+test_app = typer.Typer(no_args_is_help=True, help="Run diagnostic tests")
+app.add_typer(test_app, name="test")
+
+
+@test_app.command("all")
+def test_all(ctx: typer.Context) -> None:
+    """Run all test sections (read + write + telegram)."""
+    apply_startup(ctx)
+    test_cmd.run_impl(ctx.obj.config, "all")
+
+
+@test_app.command("read")
+def test_read(ctx: typer.Context) -> None:
+    """Read-only DB checks."""
+    apply_startup(ctx)
+    test_cmd.run_impl(ctx.obj.config, "read")
+
+
+@test_app.command("write")
+def test_write(ctx: typer.Context) -> None:
+    """Write DB checks on a temporary DB copy."""
+    apply_startup(ctx)
+    test_cmd.run_impl(ctx.obj.config, "write")
+
+
+@test_app.command("telegram")
+def test_telegram(ctx: typer.Context) -> None:
+    """Live Telegram API tests on a temporary DB copy."""
+    apply_startup(ctx)
+    test_cmd.run_impl(ctx.obj.config, "telegram")
+
+
+@test_app.command("benchmark")
+def test_benchmark(ctx: typer.Context) -> None:
+    """Benchmark serial pytest run against the safe mixed parallel test workflow."""
+    apply_startup(ctx)
+    test_cmd.run_impl(ctx.obj.config, "benchmark")
+
+
+# --------------------------------------------------------------------------- #
 # argparse → Typer delegation
 # --------------------------------------------------------------------------- #
 
@@ -3137,6 +3183,10 @@ def _argv_from_namespace(args: argparse.Namespace) -> list[str]:
     elif command == "photo-loader":
         argv.append("photo-loader")
         argv += _photo_loader_argv(args)
+    elif command == "test":
+        argv.append("test")
+        if getattr(args, "test_action", None):
+            argv.append(args.test_action)
     return argv
 
 
