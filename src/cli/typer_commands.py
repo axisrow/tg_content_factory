@@ -1221,7 +1221,7 @@ def dialogs_resolve(
     _run_dialogs(ctx, "resolve", identifier=identifier, phone=phone)
 
 
-@dialogs_app.command("leave")
+@dialogs_app.command("leave", context_settings=_NEG_ID_POSITIONAL)
 def dialogs_leave(
     ctx: typer.Context,
     dialog_ids: list[str] = typer.Argument(..., help="Dialog IDs to leave (space- or comma-separated)"),
