@@ -69,11 +69,19 @@ class TestMainEntryPoint:
         out = capsys.readouterr()
         assert "src" in (out.out + out.err)
 
-    def test_no_args_shows_help(self):
-        """No command at all → root help (``no_args_is_help`` on the app)."""
-        # The root app raises a usage/help exit; either way it is non-error help,
-        # not a crash. We assert it does not raise an unexpected exception.
-        _run_main([])
+    def test_root_no_args_shows_help_and_exits_one(self, capsys):
+        """No command at all → root help, exit **1** (argparse parity, #1162).
+
+        argparse's old ``main([])`` resolved ``command=None``, printed the root
+        help and called ``sys.exit(1)``. The Typer entry must match: the *root*
+        no-args help error maps to exit 1, distinct from a bare *subgroup* (exit
+        0). A regression here previously slipped because the test did not assert
+        the exit code (Codex cycle-review).
+        """
+        code = _run_main([])
+        assert code == 1
+        combined = "".join(capsys.readouterr())
+        assert "Traceback" not in combined
 
     def test_migrated_command_delegates_to_body(self):
         """A real command runs its shared body — ``serve`` → ``serve_web``.
@@ -114,3 +122,88 @@ def test_bare_groups_uniformly_exit_zero(argv):
     """Every ``no_args_is_help`` group (flat and nested) exits 0 via ``main()``."""
     code = _run_main(argv)
     assert code == 0
+
+
+class TestNegativeIdPositionalParity:
+    """Negative-id positionals work without an explicit ``--`` (argparse parity).
+
+    Telegram channel ids are negative, so ``search -100500`` /
+    ``collect sample -100123`` / ``analytics channel -100123456`` were everyday
+    invocations argparse accepted directly. Click reads ``-100500`` as an unknown
+    option; ``main`` escapes it with an inserted ``--`` so the command still runs
+    (#1162 Codex cycle-review regression).
+    """
+
+    def test_search_negative_query(self):
+        with patch("src.cli.typer_commands.search_cmd.search_impl") as mock_impl:
+            code = _run_main(["search", "-100500"])
+        assert code == 0
+        assert mock_impl.call_args.kwargs["query"] == "-100500"
+
+    def test_collect_sample_negative_channel_id(self):
+        with patch("src.cli.typer_commands.collect_cmd.collect_sample_impl") as mock_impl:
+            code = _run_main(["collect", "sample", "-100123"])
+        assert code == 0
+        assert mock_impl.call_args.kwargs["channel_id"] == -100123
+
+    def test_messages_read_negative_identifier(self):
+        with patch("src.cli.typer_commands.messages_cmd.messages_read_impl") as mock_impl:
+            code = _run_main(["messages", "read", "-100500"])
+        assert code == 0
+        assert mock_impl.call_args.kwargs["identifier"] == "-100500"
+
+    def test_analytics_channel_negative_id(self):
+        with patch("src.cli.typer_commands.analytics_cmd.channel_impl") as mock_impl:
+            code = _run_main(["analytics", "channel", "-100123456"])
+        assert code == 0
+        assert mock_impl.call_args.kwargs["channel_id"] == -100123456
+
+    def test_negative_value_as_option_value_is_untouched(self):
+        """``--channel-id -100123`` — the negative is the *option's* value, not a
+        positional, so it must NOT be escaped (Click consumes it natively)."""
+        with patch("src.cli.typer_commands.collect_cmd.collect_impl") as mock_impl:
+            code = _run_main(["collect", "--channel-id", "-100123"])
+        assert code == 0
+        assert mock_impl.call_args.kwargs["channel_id"] == -100123
+
+
+class TestEscapeNegativePositionals:
+    """Unit coverage for the argv normalizer ``_escape_negative_positionals``."""
+
+    def test_inserts_separator_before_bare_negative(self):
+        from src.cli.main import _escape_negative_positionals
+
+        assert _escape_negative_positionals(["search", "-100500"]) == [
+            "search",
+            "--",
+            "-100500",
+        ]
+
+    def test_leaves_option_value_negative_alone(self):
+        from src.cli.main import _escape_negative_positionals
+
+        # ``-100`` follows the ``--channel-id`` flag → it's that option's value.
+        assert _escape_negative_positionals(["collect", "--channel-id", "-100"]) == [
+            "collect",
+            "--channel-id",
+            "-100",
+        ]
+
+    def test_idempotent_when_separator_present(self):
+        from src.cli.main import _escape_negative_positionals
+
+        argv = ["search", "--", "-100500"]
+        assert _escape_negative_positionals(argv) == argv
+
+    def test_non_numeric_dash_token_untouched(self):
+        from src.cli.main import _escape_negative_positionals
+
+        # ``--mode`` is a normal flag, ``-x`` is not a negative number → no change.
+        argv = ["search", "q", "--mode", "local"]
+        assert _escape_negative_positionals(argv) == argv
+
+    def test_float_and_no_match(self):
+        from src.cli.main import _escape_negative_positionals
+
+        assert _escape_negative_positionals(["x", "-1.5"]) == ["x", "--", "-1.5"]
+        assert _escape_negative_positionals(["x", "y"]) == ["x", "y"]
