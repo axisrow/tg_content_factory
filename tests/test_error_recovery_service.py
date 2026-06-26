@@ -346,3 +346,115 @@ async def test_circuit_breaker_half_open_failure_reopens(monkeypatch):
     allowed, state = await breaker.can_execute()
     assert allowed is False
     assert state == "open"
+
+
+# ---------------------------------------------------------------------------
+# aggregate_error_stats — cross-instance aggregation (#1055)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def isolated_registry(monkeypatch):
+    """Give each test a fresh, empty instance registry.
+
+    ``ErrorRecoveryService._instances`` is a process-wide WeakSet, so without
+    isolation a test would see instances created by other tests / at import
+    time. Swapping in a fresh WeakSet makes the aggregate deterministic.
+    """
+    import weakref
+
+    fresh: weakref.WeakSet = weakref.WeakSet()
+    monkeypatch.setattr(ErrorRecoveryService, "_instances", fresh)
+    return fresh
+
+
+def _seed_errors(service: ErrorRecoveryService, n: int, category: ErrorCategory) -> None:
+    for _ in range(n):
+        service._record_error(RuntimeError("boom"), category)
+
+
+def test_aggregate_sums_across_instances(isolated_registry):
+    # Three independent services, each with its own history — exactly the shape
+    # the five LLM/embedding services produce in production.
+    a = ErrorRecoveryService()
+    b = ErrorRecoveryService()
+    c = ErrorRecoveryService()
+    _seed_errors(a, 2, ErrorCategory.TRANSIENT)
+    _seed_errors(b, 3, ErrorCategory.RATE_LIMIT)
+    _seed_errors(c, 1, ErrorCategory.TRANSIENT)
+
+    stats = ErrorRecoveryService.aggregate_error_stats()
+
+    assert stats["instances"] == 3
+    assert stats["total_errors"] == 6
+    assert stats["by_category"] == {"transient": 3, "rate_limit": 3}
+    # keep strong refs alive past the assertion so the WeakSet doesn't drop them
+    del a, b, c  # keep strong refs alive until here (WeakSet)
+
+
+def test_aggregate_empty_registry(isolated_registry):
+    stats = ErrorRecoveryService.aggregate_error_stats()
+    assert stats == {
+        "instances": 0,
+        "total_errors": 0,
+        "by_category": {},
+        "recent": [],
+        "open_circuits": 0,
+    }
+
+
+def test_aggregate_recent_is_global_and_capped(isolated_registry):
+    a = ErrorRecoveryService()
+    b = ErrorRecoveryService()
+    # 8 errors on each → 16 total, but recent is capped at 10.
+    _seed_errors(a, 8, ErrorCategory.TRANSIENT)
+    _seed_errors(b, 8, ErrorCategory.FATAL)
+
+    stats = ErrorRecoveryService.aggregate_error_stats()
+
+    assert stats["total_errors"] == 16
+    assert len(stats["recent"]) == 10
+    # recent sorted newest-first across BOTH instances
+    timestamps = [r["timestamp"] for r in stats["recent"]]
+    assert timestamps == sorted(timestamps, reverse=True)
+    del a, b  # keep strong refs alive until here (WeakSet)
+
+
+@pytest.mark.anyio
+async def test_aggregate_counts_open_circuits(isolated_registry):
+    a = ErrorRecoveryService(circuit_config=CircuitBreakerConfig(failure_threshold=1))
+    b = ErrorRecoveryService()
+    # Trip a's breaker; b stays closed.
+    await a._circuit_breaker.record_failure()
+
+    stats = ErrorRecoveryService.aggregate_error_stats()
+
+    assert stats["open_circuits"] == 1
+    del a, b  # keep strong refs alive until here (WeakSet)
+
+
+def test_new_instance_self_registers(isolated_registry):
+    assert len(list(isolated_registry)) == 0
+    svc = ErrorRecoveryService()
+    assert svc in isolated_registry
+    assert len(list(isolated_registry)) == 1
+
+
+def test_aggregate_drops_collected_instances(isolated_registry):
+    import gc
+
+    a = ErrorRecoveryService()
+    _seed_errors(a, 5, ErrorCategory.TRANSIENT)
+    # A transient throwaway instance whose only ref we drop.
+    throwaway = ErrorRecoveryService()
+    _seed_errors(throwaway, 99, ErrorCategory.FATAL)
+    assert ErrorRecoveryService.aggregate_error_stats()["instances"] == 2
+
+    del throwaway
+    gc.collect()
+
+    stats = ErrorRecoveryService.aggregate_error_stats()
+    # Only the live instance survives — the weak registry self-prunes.
+    assert stats["instances"] == 1
+    assert stats["total_errors"] == 5
+    del a  # keep strong refs alive until here (WeakSet)

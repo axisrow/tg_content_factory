@@ -1,0 +1,34 @@
+<div class="row g-3 mb-2">
+  <div class="col-auto"><span class="text-muted">Живых инстансов:</span> <strong>{{ stats.instances }}</strong></div>
+  <div class="col-auto"><span class="text-muted">Всего ошибок:</span> <strong>{{ stats.total_errors }}</strong></div>
+  <div class="col-auto"><span class="text-muted">Открытых circuit breaker:</span> <strong>{{ stats.open_circuits }}</strong></div>
+</div>
+
+{% if stats.by_category %}
+<div class="mb-2">
+  {% for cat, count in stats.by_category.items()|sort %}
+  <span class="badge bg-secondary me-1">{{ cat }}: {{ count }}</span>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if stats.recent %}
+<div class="table-responsive" style="font-size:0.85rem">
+  <table class="tga-table-striped">
+    <thead>
+      <tr><th>Категория</th><th>Тип</th><th>Сообщение</th></tr>
+    </thead>
+    <tbody>
+      {% for r in stats.recent %}
+      <tr>
+        <td><span class="badge bg-light text-dark">{{ r.category }}</span></td>
+        <td><code>{{ r.type }}</code></td>
+        <td><code>{{ r.message }}</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="mb-0"><small class="text-muted">Ошибок провайдеров в этом процессе не зафиксировано.</small></p>
+{% endif %}

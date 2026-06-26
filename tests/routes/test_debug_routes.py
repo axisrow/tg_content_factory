@@ -322,3 +322,70 @@ async def test_debug_memory_live_counters_in_worker_mode(client, base_app):
     assert body["runtime_mode"] == "worker"
     assert body["pool"]["source"] == "live"
     assert body["pool"]["dialogs_cache_entries"] == 2
+
+
+# ─── error-recovery stats routes (#1055) ─────────────────────────────
+
+
+@pytest.mark.anyio
+async def test_debug_errors_partial(client, monkeypatch):
+    """HTMX partial renders aggregated stats across live instances."""
+    import weakref
+
+    from src.services.error_recovery_service import ErrorCategory, ErrorRecoveryService
+
+    fresh: weakref.WeakSet = weakref.WeakSet()
+    a = ErrorRecoveryService()
+    b = ErrorRecoveryService()
+    a._record_error(RuntimeError("boom"), ErrorCategory.TRANSIENT)
+    b._record_error(RuntimeError("boom"), ErrorCategory.RATE_LIMIT)
+    fresh.add(a)
+    fresh.add(b)
+    monkeypatch.setattr(ErrorRecoveryService, "_instances", fresh)
+
+    resp = await client.get("/debug/errors")
+    assert resp.status_code == 200
+    body = resp.text
+    assert "2" in body  # 2 live instances / 2 errors
+    assert "transient" in body
+    assert "rate_limit" in body
+    del a, b  # keep strong refs alive until here (WeakSet)
+
+
+@pytest.mark.anyio
+async def test_debug_errors_json(client, monkeypatch):
+    """REST JSON endpoint returns the aggregate payload."""
+    import weakref
+
+    from src.services.error_recovery_service import ErrorCategory, ErrorRecoveryService
+
+    fresh: weakref.WeakSet = weakref.WeakSet()
+    a = ErrorRecoveryService()
+    a._record_error(RuntimeError("boom"), ErrorCategory.FATAL)
+    fresh.add(a)
+    monkeypatch.setattr(ErrorRecoveryService, "_instances", fresh)
+
+    resp = await client.get("/debug/errors.json")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["instances"] == 1
+    assert payload["total_errors"] == 1
+    assert payload["by_category"] == {"fatal": 1}
+    del a  # keep strong refs alive until here (WeakSet)
+
+
+@pytest.mark.anyio
+async def test_debug_errors_json_empty(client, monkeypatch):
+    """Empty registry → zeroed payload, not an error."""
+    import weakref
+
+    from src.services.error_recovery_service import ErrorRecoveryService
+
+    fresh: weakref.WeakSet = weakref.WeakSet()
+    monkeypatch.setattr(ErrorRecoveryService, "_instances", fresh)
+
+    resp = await client.get("/debug/errors.json")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["instances"] == 0
+    assert payload["total_errors"] == 0
