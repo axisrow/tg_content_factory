@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from tests.helpers import cli_ns
 
 ISSUE_303_PARSE_CASES = {
@@ -35,38 +33,64 @@ ISSUE_303_PARSE_CASES = {
 }
 
 
+def _command_path_resolves(argv: list[str]) -> bool:
+    """True if *argv* resolves to a real leaf command on the Typer ``app``.
+
+    Walks the Click command tree the Typer app produces, descending one token at
+    a time and stopping at the first non-group. The remaining tokens are options /
+    positionals for that leaf — they don't need to resolve as sub-commands. This
+    replaces the old ``build_parser().parse_args(argv)`` parse check (#1125 removed
+    argparse) without invoking the command body.
+    """
+    import click
+    import typer
+
+    from src.cli.typer_commands import app
+
+    node: click.BaseCommand = typer.main.get_command(app)
+    for token in argv:
+        if not isinstance(node, click.Group):
+            return True  # reached a leaf; the rest are its args
+        child = node.commands.get(token)
+        if child is None:
+            return False
+        node = child
+    return True
+
+
 def test_issue_303_command_signatures_parse():
-    from src.cli.parser import build_parser
-
-    parser = build_parser()
-
     for label, argv in ISSUE_303_PARSE_CASES.items():
-        parsed = parser.parse_args(argv)
-        assert parsed.command == argv[0], label
+        assert _command_path_resolves(argv), label
 
 
 def test_dialogs_parse():
-    from src.cli.parser import build_parser
+    from typer.testing import CliRunner
 
-    parser = build_parser()
+    from src.cli.typer_app import app
 
-    dialogs_args = parser.parse_args(["dialogs", "topics", "--channel-id", "123"])
+    # Drive the real Typer surface: `dialogs topics --channel-id 123` must parse
+    # and reach the body with the resolved channel_id (argparse-parity flags).
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.dialogs_cmd._dispatch", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = CliRunner().invoke(app, ["dialogs", "topics", "--channel-id", "123"])
+    assert result.exit_code == 0
+    ns = mock_impl.call_args.args[0]
+    assert ns.dialogs_action == "topics"
+    assert ns.channel_id == 123
 
-    assert dialogs_args.command == "dialogs"
-    assert dialogs_args.dialogs_action == "topics"
-    assert dialogs_args.channel_id == 123
 
+def test_dialogs_help_lists_subcommands():
+    from typer.testing import CliRunner
 
-def test_dialogs_help_lists_subcommands(capsys):
-    from src.cli.parser import build_parser
+    from src.cli.typer_app import app
 
-    parser = build_parser()
+    result = CliRunner().invoke(app, ["dialogs", "--help"])
 
-    with pytest.raises(SystemExit):
-        parser.parse_args(["dialogs", "--help"])
-
-    out = capsys.readouterr().out
-    assert "usage:" in out
+    assert result.exit_code == 0
+    out = result.output
     assert "dialogs" in out
     assert "broadcast-stats" in out
     assert "cache-status" in out

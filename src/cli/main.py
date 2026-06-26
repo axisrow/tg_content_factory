@@ -1,121 +1,80 @@
 from __future__ import annotations
 
-import os
-import sys
+from typing import cast
 
-from src.cli.commands import (
-    account,
-    channel,
-    collect,
-    mcp_server,
-    messages,
-    photo_loader,
-    scheduler,
-    search,
-    search_query,
-    serve,
-    server_control,
-    worker,
-)
-from src.cli.commands import agent as agent_cmd
-from src.cli.commands import analytics as analytics_cmd
-from src.cli.commands import dialogs as dialogs_cmd
-from src.cli.commands import filter as filter_cmd
-from src.cli.commands import pipeline as pipeline_cmd
-from src.cli.commands import settings as settings_cmd
-from src.cli.commands import test as test_cmd
-from src.cli.dotenv import load_cli_dotenv
-from src.cli.parser import build_parser
-from src.cli.runtime import ensure_data_dirs, setup_logging
-from src.cli.typer_commands import MIGRATED_COMMANDS, dispatch_via_typer
+import click
+
+# Typer is the single CLI entry point (epic #959, Final — issue #1125). Every
+# command is declared on ``src/cli/typer_app.py::app`` and registered by importing
+# ``src.cli.typer_commands`` (its module body attaches the command groups to
+# ``app``). The previous argparse framework — ``build_parser()`` + the dict
+# dispatcher + the ``dispatch_via_typer`` bridge — was removed in #1125; ``app``
+# now owns global option parsing (``--config`` / ``--version`` via
+# ``main_callback``) and the per-command startup side effects run in
+# ``apply_startup`` (exported ``TG_CONFIG_PATH`` / dotenv / logging / data dirs),
+# which each command calls as its first line so a ``subcommand --help`` stays
+# side-effect-free.
+import src.cli.typer_commands  # noqa: F401  (import attaches commands to ``app``)
+from src.cli.typer_app import app
+
+# Typer vendors its *own* copy of Click under ``typer._click``, so the exception a
+# Typer sub-group raises (``NoArgsIsHelpError`` / ``ClickException``) is NOT the
+# same class as the one in the top-level ``click`` package — an ``except
+# click.exceptions.ClickException`` would silently miss it. ``main`` must catch
+# both. The vendored module is private; fall back gracefully to the public
+# ``click`` types if a future Typer drops it, so the import can never crash the
+# CLI.
+try:  # pragma: no cover - exercised indirectly via main() bare-group tests
+    from typer._click import exceptions as _typer_click_exc
+
+    _CLICK_EXCEPTIONS: tuple[type[BaseException], ...] = (
+        click.exceptions.ClickException,
+        _typer_click_exc.ClickException,
+    )
+    _NO_ARGS_HELP_EXCEPTIONS: tuple[type[BaseException], ...] = (
+        click.exceptions.NoArgsIsHelpError,
+        _typer_click_exc.NoArgsIsHelpError,
+    )
+except ImportError:  # pragma: no cover - defensive fallback
+    _CLICK_EXCEPTIONS = (click.exceptions.ClickException,)
+    _NO_ARGS_HELP_EXCEPTIONS = (click.exceptions.NoArgsIsHelpError,)
 
 
-# Migration note (epic #959, Wave 0 — issue #1120): the Typer scaffold lives in
-# ``src/cli/typer_app.py`` (``app`` + ``@app.callback()`` global options +
-# ``apply_startup`` startup side effects + ``run_async`` async-bridge). The
-# startup side effects below (lines exporting TG_CONFIG_PATH / dotenv / logging /
-# data-dirs) are mirrored 1:1 by ``apply_startup``, which migrated commands call
-# as their first line — keeping them on the command path so a ``subcommand
-# --help`` stays side-effect-free, exactly as argparse short-circuits here.
-# Wave 0 ships the scaffold only — no commands are migrated yet, so this argparse
-# dispatcher stays the single entry point and the ``build_parser()`` leaf-coverage
-# audit remains the source of truth. Waves 1–4 register their migrated commands on
-# ``app`` and route them here (the dispatcher delegates not-yet-migrated commands
-# to ``commands.X.run``); the Final wave (#1125) removes this argparse path.
 def main() -> None:
-    parser = build_parser()
-    args = parser.parse_args()
+    """CLI entry point — run the Typer ``app`` with argparse-identical exit codes.
 
-    # Wave 1 (epic #959, issue #1121): the super-simple commands now live as
-    # Typer commands on ``src/cli/typer_app.py::app``. Route them through the
-    # Typer app *before* the argparse-path startup side effects below: the Typer
-    # commands run those exact side effects themselves via ``apply_startup`` (the
-    # 1:1 port), so doing them here too would double-fire logging setup / dotenv.
-    # Every other command keeps the argparse ``commands.X.run`` path (and the
-    # side effects below) until its own wave lands. The argparse ``register()``
-    # declarations stay so ``build_parser()`` remains the leaf-coverage source of
-    # truth (test_real_telegram_policy manifest sweep).
-    if args.command in MIGRATED_COMMANDS:
-        dispatch_via_typer(args)
-        return
+    The app runs in non-standalone mode so we can reproduce the exact exit-code
+    behaviour the old argparse dispatcher had (the ``dispatch_via_typer`` bridge,
+    removed in #1125, did the same):
 
-    # Export the resolved config path so subprocess-spawning backends inherit it.
-    # CodexSdkBackend spawns `python -m src.main --config <path> mcp-server`; it
-    # learns <path> only via TG_CONFIG_PATH (AppConfig doesn't carry its source).
-    # Without this, a non-default `--config /srv/prod.yaml` would silently spawn
-    # the MCP server against the default config.yaml / data/tg_search.db — the
-    # wrong DB for write-capable tool calls. abspath so a differing subprocess
-    # CWD still resolves it.
-    os.environ["TG_CONFIG_PATH"] = os.path.abspath(args.config)
+    * A bare command group with ``no_args_is_help`` (e.g. ``messages`` with no
+      ``read`` sub-command) raises :class:`click.exceptions.NoArgsIsHelpError`.
+      argparse's old ``sub_attr`` fallback printed that group's ``--help`` and
+      exited **0**; we reproduce that — render the help, exit 0 — so the user sees
+      usage, not a ``NoArgsIsHelpError`` traceback with a non-zero exit.
+    * Any other usage error (unknown option, bad value) renders normally and
+      exits with its own (non-zero) code, matching argparse's exit-2 on misuse.
+    * A clean run / ``Exit(0)`` returns normally (exit 0).
+    """
+    try:
+        app(standalone_mode=False)
+    except _NO_ARGS_HELP_EXCEPTIONS as exc:
+        # Bare group → show help and exit cleanly (argparse parity: exit 0).
+        # Must precede the generic ClickException arm — NoArgsIsHelpError is a
+        # subclass of it but argparse exited 0 here, not 2. ``exc`` is a (vendored
+        # or stdlib) ClickException; both share ``.show()`` — cast for the checker.
+        cast("click.ClickException", exc).show()
+        raise SystemExit(0) from None
+    except _CLICK_EXCEPTIONS as exc:
+        click_exc = cast("click.ClickException", exc)
+        click_exc.show()
+        raise SystemExit(click_exc.exit_code) from None
+    except click.exceptions.Abort:
+        # Ctrl-C / abort — Click prints "Aborted!" in standalone mode; match the
+        # conventional 130 exit so an interrupted CLI run is distinguishable.
+        click.echo("Aborted!", err=True)
+        raise SystemExit(1) from None
 
-    load_cli_dotenv(args.config)
-    setup_logging()
-    ensure_data_dirs()
 
-    commands = {
-        "serve": serve.run,
-        "worker": worker.run,
-        "mcp-server": mcp_server.run,
-        "stop": server_control.run_stop,
-        "restart": server_control.run_restart,
-        "collect": collect.run,
-        "search": search.run,
-        "messages": messages.run,
-        "channel": channel.run,
-        "filter": filter_cmd.run,
-        "search-query": search_query.run,
-        "pipeline": pipeline_cmd.run,
-        "account": account.run,
-        "scheduler": scheduler.run,
-        "photo-loader": photo_loader.run,
-        "dialogs": dialogs_cmd.run,
-        "test": test_cmd.run,
-        "agent": agent_cmd.run,
-        "analytics": analytics_cmd.run,
-        "settings": settings_cmd.run,
-    }
-
-    handler = commands.get(args.command)
-    if handler:
-        sub_attr = {
-            "messages": "messages_action",
-            "channel": "channel_action",
-            "filter": "filter_action",
-            "search-query": "search_query_action",
-            "pipeline": "pipeline_action",
-            "account": "account_action",
-            "scheduler": "scheduler_action",
-            "photo-loader": "photo_loader_action",
-            "dialogs": "dialogs_action",
-            "test": "test_action",
-            "agent": "agent_action",
-            "analytics": "analytics_action",
-            "settings": "settings_action",
-        }
-        if args.command in sub_attr and not getattr(args, sub_attr[args.command], None):
-            parser.parse_args([args.command, "--help"])
-        else:
-            handler(args)
-    else:
-        parser.print_help()
-        sys.exit(1)
+if __name__ == "__main__":
+    main()
