@@ -185,8 +185,52 @@ class TestNegativeIdPositionalParity:
         assert mock_impl.call_args.kwargs["channel_id"] == -100123456
         assert mock_impl.call_args.kwargs["days"] == 14
 
-    def test_unknown_option_still_errors_on_neg_id_command(self):
-        """A genuinely unknown ``--option`` (no positional slot to absorb it) still
-        exits non-zero — ``ignore_unknown_options`` does not mask real typos here."""
-        code = _run_main(["analytics", "channel", "--no-such-flag", "-100123456"])
+    def test_unknown_option_errors_when_positional_slot_is_filled(self):
+        """On a neg-capable command, an unknown ``--option`` still exits non-zero
+        when every positional slot is already filled (no slot to absorb it)."""
+        # channel_id is an int positional — once ``-100123456`` fills it, the
+        # trailing ``--no-such-flag`` has nowhere to go and Click errors.
+        code = _run_main(["analytics", "channel", "-100123456", "--no-such-flag"])
         assert code not in (0, None)
+
+
+class TestNegIdScopeIsNarrow:
+    """``ignore_unknown_options`` is applied only to negative-capable commands.
+
+    Telegram-id / identifier / query positionals need it (their value can start
+    with ``-``); commands keyed on a *positive* DB primary key keep Click's strict
+    option checking so a typo'd ``--option`` still errors (#1162 narrowing).
+    """
+
+    def test_positive_pk_command_rejects_unknown_option(self):
+        """``pipeline show --badtypo`` (id is a positive pk) → strict error, exit 2.
+
+        This is the case the cycle-review flagged: without the narrowing, every
+        command absorbed ``--badtypo`` into an open positional. ``pipeline show``
+        must NOT carry ``ignore_unknown_options``.
+        """
+        code = _run_main(["pipeline", "show", "--badtypo"])
+        assert code not in (0, None)
+
+    def test_positive_pk_multi_positional_rejects_unknown_option(self):
+        """``pipeline node replace 5 --badtypo spec`` → strict error (no masking)."""
+        code = _run_main(["pipeline", "node", "replace", "5", "--badtypo", "spec"])
+        assert code not in (0, None)
+
+    def test_agent_context_rejects_unknown_option(self):
+        """``agent context 5 --badtypo`` (thread_id positive pk) → strict error."""
+        code = _run_main(["agent", "context", "5", "--badtypo"])
+        assert code not in (0, None)
+
+    def test_neg_capable_command_absorbs_unknown_into_open_slot(self):
+        """Accepted trade-off (#1162): on a neg-capable command an unknown dash
+        token in front of an *open* string positional is absorbed as that
+        positional rather than erroring — the cost of ``ignore_unknown_options``.
+
+        This test pins the *known, accepted* behaviour so a reviewer sees it is
+        intentional, not an oversight: ``search --typo`` searches for ``--typo``.
+        """
+        with patch("src.cli.typer_commands.search_cmd.search_impl") as mock_impl:
+            code = _run_main(["search", "--typo"])
+        assert code == 0
+        assert mock_impl.call_args.kwargs["query"] == "--typo"

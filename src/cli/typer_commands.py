@@ -53,25 +53,35 @@ from src.cli.commands import translate as translate_cmd
 from src.cli.commands import worker as worker_cmd
 from src.cli.typer_app import app, apply_startup, run_async
 
-#: Context settings for commands whose first positional can be a *negative number*
-#: (Telegram channel / chat ids are negative, e.g. ``-100123…``). argparse accepted
-#: ``search -100500`` / ``dialogs archive -100… --yes`` directly because no option
-#: in this CLI is a negative number, so a ``-N`` token is unambiguously a value.
-#: Click instead reads ``-100500`` as an unknown option and errors. Setting
-#: ``ignore_unknown_options`` restores argparse's behaviour for the cases that
-#: matter: a ``-N`` token falls through to the positional, options and the negative
-#: interleave freely (``-100 --yes`` and ``--yes -100`` both work), and a genuinely
-#: unknown ``--option`` with no positional slot to absorb it still errors with
-#: exit 2. This replaces the fragile argv-``--``-insertion the #1125 review rejected
-#: (string-munging could not reproduce argparse's free interleaving).
+#: Context settings for the commands whose first positional can be a *negative*
+#: identifier — Telegram channel / chat ids (``-100123…``), ``@username`` /
+#: dialog identifiers, search queries, etc. argparse accepted ``search -100500`` /
+#: ``dialogs archive -100… --yes`` directly because no option in this CLI is a
+#: negative number, so a ``-N`` token was unambiguously a value. Click instead
+#: reads ``-100500`` as an unknown option and errors. ``ignore_unknown_options``
+#: restores argparse's behaviour: a ``-N`` token falls through to the positional,
+#: options and the negative interleave freely (``-100 --yes`` and ``--yes -100``
+#: both work), and a genuinely unknown ``--option`` still errors with exit 2 *when
+#: every positional slot is already filled*. This replaces the fragile
+#: argv-``--``-insertion the #1125 review rejected (string-munging could not
+#: reproduce argparse's free interleaving).
 #:
-#: Known micro-divergence (accepted, #1162 review): a *single non-numeric* dash
-#: token (``search -foo`` / ``search -l``) is now absorbed as the positional
-#: (exit 0) where argparse rejected it as an unrecognized option (exit 2). argparse
-#: only special-cases *negative numbers* as values; ``ignore_unknown_options`` is
-#: slightly more lenient and also lets a lone non-numeric ``-x`` fill an open
-#: positional slot. Strictly more permissive (no valid invocation breaks), affects
-#: only esoteric literal-dash inputs, so it is left as-is.
+#: **Applied narrowly (#1162 review):** only the ~34 commands whose first
+#: positional is a Telegram-id / identifier / query (``channel_id`` / ``chat_id`` /
+#: ``identifier`` / ``recipient`` / ``from_chat`` / ``query`` / ``message_id`` /
+#: ``source`` / ``target``) carry this. Commands keyed on a *positive* DB primary
+#: key (``pipeline <id>``, ``agent context <thread_id>``, ``search-query <id>``, …)
+#: keep Click's strict option checking, so an ``--typo`` on those still errors.
+#:
+#: **Accepted trade-off (#1162 review):** on the negative-capable commands above,
+#: ``ignore_unknown_options`` cannot distinguish a real negative value from an
+#: unknown dash token, so an unknown option (``-x`` *or* ``--xyz``) that lands in
+#: front of an *open* string positional is absorbed as that positional instead of
+#: erroring — e.g. ``search --typo`` searches for the literal ``--typo`` rather
+#: than exiting 2. This is strictly more permissive (no valid invocation breaks)
+#: and the operator's negative-id workflow (Telegram ids are negative everywhere)
+#: is the priority; the loss of strict ``--typo`` detection on this subset is the
+#: accepted cost.
 _NEG_ID_POSITIONAL = {"ignore_unknown_options": True}
 
 
@@ -589,7 +599,7 @@ image_app = typer.Typer(no_args_is_help=True, help="Image generation")
 app.add_typer(image_app, name="image")
 
 
-@image_app.command("generate", context_settings=_NEG_ID_POSITIONAL)
+@image_app.command("generate")
 def image_generate(
     ctx: typer.Context,
     prompt: str = typer.Argument(..., help="Text prompt for image generation"),
@@ -646,7 +656,7 @@ def provider_list(ctx: typer.Context) -> None:
     run_async(provider_cmd.list_impl(ctx.obj.config))
 
 
-@provider_app.command("add", context_settings=_NEG_ID_POSITIONAL)
+@provider_app.command("add")
 def provider_add(
     ctx: typer.Context,
     name: str = typer.Argument(..., help="Provider name (e.g. openai, groq, anthropic)"),
@@ -658,7 +668,7 @@ def provider_add(
     run_async(provider_cmd.add_impl(ctx.obj.config, name=name, api_key=api_key, base_url=base_url))
 
 
-@provider_app.command("delete", context_settings=_NEG_ID_POSITIONAL)
+@provider_app.command("delete")
 def provider_delete(
     ctx: typer.Context,
     name: str = typer.Argument(..., help="Provider name"),
@@ -668,7 +678,7 @@ def provider_delete(
     run_async(provider_cmd.delete_impl(ctx.obj.config, name=name))
 
 
-@provider_app.command("probe", context_settings=_NEG_ID_POSITIONAL)
+@provider_app.command("probe")
 def provider_probe(
     ctx: typer.Context,
     name: str = typer.Argument(..., help="Provider name"),
@@ -678,7 +688,7 @@ def provider_probe(
     run_async(provider_cmd.probe_impl(ctx.obj.config, name=name))
 
 
-@provider_app.command("refresh", context_settings=_NEG_ID_POSITIONAL)
+@provider_app.command("refresh")
 def provider_refresh(
     ctx: typer.Context,
     name: str | None = typer.Argument(None, help="Provider name (default: all)"),
@@ -1102,7 +1112,7 @@ def channel_tag_list(ctx: typer.Context) -> None:
     run_async(channel_cmd._tag_impl(ctx.obj.config, "list"))
 
 
-@channel_tag_app.command("add", context_settings=_NEG_ID_POSITIONAL)
+@channel_tag_app.command("add")
 def channel_tag_add(
     ctx: typer.Context,
     name: str = typer.Argument(..., help="Tag name"),
@@ -1112,7 +1122,7 @@ def channel_tag_add(
     run_async(channel_cmd._tag_impl(ctx.obj.config, "add", name=name))
 
 
-@channel_tag_app.command("delete", context_settings=_NEG_ID_POSITIONAL)
+@channel_tag_app.command("delete")
 def channel_tag_delete(
     ctx: typer.Context,
     name: str = typer.Argument(..., help="Tag name"),
@@ -1122,7 +1132,7 @@ def channel_tag_delete(
     run_async(channel_cmd._tag_impl(ctx.obj.config, "delete", name=name))
 
 
-@channel_tag_app.command("set", context_settings=_NEG_ID_POSITIONAL)
+@channel_tag_app.command("set")
 def channel_tag_set(
     ctx: typer.Context,
     pk: int = typer.Argument(..., help="Channel primary key"),
@@ -1133,7 +1143,7 @@ def channel_tag_set(
     run_async(channel_cmd._tag_impl(ctx.obj.config, "set", pk=pk, tags=tags))
 
 
-@channel_tag_app.command("get", context_settings=_NEG_ID_POSITIONAL)
+@channel_tag_app.command("get")
 def channel_tag_get(
     ctx: typer.Context,
     pk: int = typer.Argument(..., help="Channel primary key"),
@@ -1211,7 +1221,7 @@ def dialogs_resolve(
     _run_dialogs(ctx, "resolve", identifier=identifier, phone=phone)
 
 
-@dialogs_app.command("leave", context_settings=_NEG_ID_POSITIONAL)
+@dialogs_app.command("leave")
 def dialogs_leave(
     ctx: typer.Context,
     dialog_ids: list[str] = typer.Argument(..., help="Dialog IDs to leave (space- or comma-separated)"),
@@ -1509,7 +1519,7 @@ def dialogs_queue_status(
     _run_dialogs_queue(ctx, "status", command_type=command_type, phone=phone, limit=limit)
 
 
-@dialogs_queue_app.command("cancel", context_settings=_NEG_ID_POSITIONAL)
+@dialogs_queue_app.command("cancel")
 def dialogs_queue_cancel(
     ctx: typer.Context,
     command_id: int = typer.Argument(..., help="Command id from queue status"),
@@ -1575,13 +1585,13 @@ def pipeline_list(ctx: typer.Context) -> None:
     _run_pipeline(ctx, "list")
 
 
-@pipeline_app.command("show", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("show")
 def pipeline_show(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
     """Show pipeline details."""
     _run_pipeline(ctx, "show", id=id)
 
 
-@pipeline_app.command("add", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("add")
 def pipeline_add(
     ctx: typer.Context,
     name: str = typer.Argument(..., help="Pipeline name"),
@@ -1630,7 +1640,7 @@ def pipeline_dry_run_count(
     _run_pipeline(ctx, "dry-run-count", source=list(source), since_value=since_value, since_unit=since_unit.value)
 
 
-@pipeline_app.command("edit", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("edit")
 def pipeline_edit(
     ctx: typer.Context,
     id: int = typer.Argument(..., help="Pipeline id"),
@@ -1660,19 +1670,19 @@ def pipeline_edit(
     )
 
 
-@pipeline_app.command("delete", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("delete")
 def pipeline_delete(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
     """Delete a pipeline."""
     _run_pipeline(ctx, "delete", id=id)
 
 
-@pipeline_app.command("toggle", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("toggle")
 def pipeline_toggle(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
     """Toggle pipeline active state."""
     _run_pipeline(ctx, "toggle", id=id)
 
 
-@pipeline_app.command("run", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("run")
 def pipeline_run(
     ctx: typer.Context,
     id: int = typer.Argument(..., help="Pipeline id"),
@@ -1689,7 +1699,7 @@ def pipeline_run(
     )
 
 
-@pipeline_app.command("generate", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("generate")
 def pipeline_generate(
     ctx: typer.Context,
     id: int = typer.Argument(..., help="Pipeline id"),
@@ -1707,7 +1717,7 @@ def pipeline_generate(
     )
 
 
-@pipeline_app.command("generate-stream", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("generate-stream")
 def pipeline_generate_stream(
     ctx: typer.Context,
     id: int = typer.Argument(..., help="Pipeline id"),
@@ -1723,7 +1733,7 @@ def pipeline_generate_stream(
     )
 
 
-@pipeline_app.command("runs", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("runs")
 def pipeline_runs(
     ctx: typer.Context,
     id: int = typer.Argument(..., help="Pipeline id"),
@@ -1734,19 +1744,19 @@ def pipeline_runs(
     _run_pipeline(ctx, "runs", id=id, limit=limit, status=status)
 
 
-@pipeline_app.command("run-show", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("run-show")
 def pipeline_run_show(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
     """Show generation run details."""
     _run_pipeline(ctx, "run-show", run_id=run_id)
 
 
-@pipeline_app.command("variants", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("variants")
 def pipeline_variants(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
     """List A/B variants."""
     _run_pipeline(ctx, "variants", run_id=run_id)
 
 
-@pipeline_app.command("select-variant", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("select-variant")
 def pipeline_select_variant(
     ctx: typer.Context,
     run_id: int = typer.Argument(..., help="Run id"),
@@ -1756,13 +1766,13 @@ def pipeline_select_variant(
     _run_pipeline(ctx, "select-variant", run_id=run_id, index=index)
 
 
-@pipeline_app.command("auto-select", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("auto-select")
 def pipeline_auto_select(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
     """Auto-select the best A/B variant."""
     _run_pipeline(ctx, "auto-select", run_id=run_id)
 
 
-@pipeline_app.command("queue", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("queue")
 def pipeline_queue(
     ctx: typer.Context,
     id: int = typer.Argument(..., help="Pipeline id"),
@@ -1782,31 +1792,31 @@ def pipeline_moderation_list(
     _run_pipeline(ctx, "moderation-list", pipeline_id=pipeline_id, limit=limit)
 
 
-@pipeline_app.command("moderation-view", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("moderation-view")
 def pipeline_moderation_view(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
     """Show a moderation run's details."""
     _run_pipeline(ctx, "moderation-view", run_id=run_id)
 
 
-@pipeline_app.command("publish", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("publish")
 def pipeline_publish(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
     """Publish a generation run."""
     _run_pipeline(ctx, "publish", run_id=run_id)
 
 
-@pipeline_app.command("approve", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("approve")
 def pipeline_approve(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
     """Approve a generation run."""
     _run_pipeline(ctx, "approve", run_id=run_id)
 
 
-@pipeline_app.command("reject", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("reject")
 def pipeline_reject(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
     """Reject a generation run."""
     _run_pipeline(ctx, "reject", run_id=run_id)
 
 
-@pipeline_app.command("bulk-approve", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("bulk-approve")
 def pipeline_bulk_approve(
     ctx: typer.Context,
     run_ids: list[int] = typer.Argument(..., help="Run ids"),
@@ -1815,7 +1825,7 @@ def pipeline_bulk_approve(
     _run_pipeline(ctx, "bulk-approve", run_ids=list(run_ids))
 
 
-@pipeline_app.command("bulk-reject", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("bulk-reject")
 def pipeline_bulk_reject(
     ctx: typer.Context,
     run_ids: list[int] = typer.Argument(..., help="Run ids"),
@@ -1824,7 +1834,7 @@ def pipeline_bulk_reject(
     _run_pipeline(ctx, "bulk-reject", run_ids=list(run_ids))
 
 
-@pipeline_app.command("refinement-steps", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("refinement-steps")
 def pipeline_refinement_steps(
     ctx: typer.Context,
     id: int = typer.Argument(..., help="Pipeline id"),
@@ -1834,7 +1844,7 @@ def pipeline_refinement_steps(
     _run_pipeline(ctx, "refinement-steps", id=id, steps_json=steps_json)
 
 
-@pipeline_app.command("export", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("export")
 def pipeline_export(
     ctx: typer.Context,
     id: int = typer.Argument(..., help="Pipeline id"),
@@ -1845,7 +1855,7 @@ def pipeline_export(
     _run_pipeline(ctx, "export", id=id, output=output, force=force)
 
 
-@pipeline_app.command("import", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("import")
 def pipeline_import(
     ctx: typer.Context,
     file: str = typer.Argument(..., help="Path to JSON file"),
@@ -1864,7 +1874,7 @@ def pipeline_templates(
     _run_pipeline(ctx, "templates", category=category)
 
 
-@pipeline_app.command("from-template", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("from-template")
 def pipeline_from_template(
     ctx: typer.Context,
     template_id: int = typer.Argument(..., help="Template id"),
@@ -1879,7 +1889,7 @@ def pipeline_from_template(
     )
 
 
-@pipeline_app.command("ai-edit", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("ai-edit")
 def pipeline_ai_edit(
     ctx: typer.Context,
     id: int = typer.Argument(..., help="Pipeline id"),
@@ -1890,7 +1900,7 @@ def pipeline_ai_edit(
     _run_pipeline(ctx, "ai-edit", id=id, instruction=instruction, show=show)
 
 
-@pipeline_app.command("graph", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_app.command("graph")
 def pipeline_graph(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
     """Show a pipeline's graph (ASCII)."""
     _run_pipeline(ctx, "graph", id=id)
@@ -1899,7 +1909,7 @@ def pipeline_graph(ctx: typer.Context, id: int = typer.Argument(..., help="Pipel
 # ---- nested: pipeline filter <action> ------------------------------------- #
 
 
-@pipeline_filter_app.command("set", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_filter_app.command("set")
 def pipeline_filter_set(
     ctx: typer.Context,
     id: int = typer.Argument(..., help="Pipeline id"),
@@ -1923,13 +1933,13 @@ def pipeline_filter_set(
     )
 
 
-@pipeline_filter_app.command("show", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_filter_app.command("show")
 def pipeline_filter_show(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
     """Show a pipeline's message filter."""
     _run_pipeline(ctx, "filter", filter_action="show", id=id)
 
 
-@pipeline_filter_app.command("clear", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_filter_app.command("clear")
 def pipeline_filter_clear(ctx: typer.Context, id: int = typer.Argument(..., help="Pipeline id")) -> None:
     """Clear a pipeline's message filter."""
     _run_pipeline(ctx, "filter", filter_action="clear", id=id)
@@ -1938,7 +1948,7 @@ def pipeline_filter_clear(ctx: typer.Context, id: int = typer.Argument(..., help
 # ---- nested: pipeline node <action> --------------------------------------- #
 
 
-@pipeline_node_app.command("add", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_node_app.command("add")
 def pipeline_node_add(
     ctx: typer.Context,
     pipeline_id: int = typer.Argument(..., help="Pipeline id"),
@@ -1948,7 +1958,7 @@ def pipeline_node_add(
     _run_pipeline(ctx, "node", node_action="add", pipeline_id=pipeline_id, node_spec=node_spec)
 
 
-@pipeline_node_app.command("replace", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_node_app.command("replace")
 def pipeline_node_replace(
     ctx: typer.Context,
     pipeline_id: int = typer.Argument(..., help="Pipeline id"),
@@ -1959,7 +1969,7 @@ def pipeline_node_replace(
     _run_pipeline(ctx, "node", node_action="replace", pipeline_id=pipeline_id, node_id=node_id, node_spec=node_spec)
 
 
-@pipeline_node_app.command("remove", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_node_app.command("remove")
 def pipeline_node_remove(
     ctx: typer.Context,
     pipeline_id: int = typer.Argument(..., help="Pipeline id"),
@@ -1972,7 +1982,7 @@ def pipeline_node_remove(
 # ---- nested: pipeline edge <action> --------------------------------------- #
 
 
-@pipeline_edge_app.command("add", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_edge_app.command("add")
 def pipeline_edge_add(
     ctx: typer.Context,
     pipeline_id: int = typer.Argument(..., help="Pipeline id"),
@@ -1983,7 +1993,7 @@ def pipeline_edge_add(
     _run_pipeline(ctx, "edge", edge_action="add", pipeline_id=pipeline_id, from_node=from_node, to_node=to_node)
 
 
-@pipeline_edge_app.command("remove", context_settings=_NEG_ID_POSITIONAL)
+@pipeline_edge_app.command("remove")
 def pipeline_edge_remove(
     ctx: typer.Context,
     pipeline_id: int = typer.Argument(..., help="Pipeline id"),
@@ -2007,7 +2017,7 @@ def search_query_list(ctx: typer.Context) -> None:
     run_async(search_query_cmd.list_impl(ctx.obj.config))
 
 
-@search_query_app.command("get", context_settings=_NEG_ID_POSITIONAL)
+@search_query_app.command("get")
 def search_query_get(
     ctx: typer.Context,
     query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
@@ -2055,7 +2065,7 @@ def search_query_add(
     )
 
 
-@search_query_app.command("edit", context_settings=_NEG_ID_POSITIONAL)
+@search_query_app.command("edit")
 def search_query_edit(
     ctx: typer.Context,
     query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
@@ -2102,7 +2112,7 @@ def search_query_edit(
     )
 
 
-@search_query_app.command("delete", context_settings=_NEG_ID_POSITIONAL)
+@search_query_app.command("delete")
 def search_query_delete(
     ctx: typer.Context,
     query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
@@ -2112,7 +2122,7 @@ def search_query_delete(
     run_async(search_query_cmd.delete_impl(ctx.obj.config, query_id=query_id))
 
 
-@search_query_app.command("toggle", context_settings=_NEG_ID_POSITIONAL)
+@search_query_app.command("toggle")
 def search_query_toggle(
     ctx: typer.Context,
     query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
@@ -2122,7 +2132,7 @@ def search_query_toggle(
     run_async(search_query_cmd.toggle_impl(ctx.obj.config, query_id=query_id))
 
 
-@search_query_app.command("run", context_settings=_NEG_ID_POSITIONAL)
+@search_query_app.command("run")
 def search_query_run(
     ctx: typer.Context,
     query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
@@ -2132,7 +2142,7 @@ def search_query_run(
     run_async(search_query_cmd.run_impl(ctx.obj.config, query_id=query_id))
 
 
-@search_query_app.command("stats", context_settings=_NEG_ID_POSITIONAL)
+@search_query_app.command("stats")
 def search_query_stats(
     ctx: typer.Context,
     query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
@@ -2188,7 +2198,7 @@ def filter_precheck(ctx: typer.Context) -> None:
     run_async(filter_cmd.precheck_impl(ctx.obj.config))
 
 
-@filter_app.command("toggle", context_settings=_NEG_ID_POSITIONAL)
+@filter_app.command("toggle")
 def filter_toggle(
     ctx: typer.Context,
     pk: int = typer.Argument(..., help="Channel primary key"),
@@ -2265,7 +2275,7 @@ def settings_get(
     run_async(settings_cmd.get_impl(ctx.obj.config, key=key))
 
 
-@settings_app.command("set", context_settings=_NEG_ID_POSITIONAL)
+@settings_app.command("set")
 def settings_set(
     ctx: typer.Context,
     key: str = typer.Argument(..., help="Setting key"),
@@ -2395,7 +2405,7 @@ def scheduler_stop(ctx: typer.Context) -> None:
     run_async(scheduler_cmd.stop_impl(ctx.obj.config))
 
 
-@scheduler_app.command("job-toggle", context_settings=_NEG_ID_POSITIONAL)
+@scheduler_app.command("job-toggle")
 def scheduler_job_toggle(
     ctx: typer.Context,
     job_id: str = typer.Argument(..., help="Job identifier (e.g. collect_all, sq_1)"),
@@ -2405,7 +2415,7 @@ def scheduler_job_toggle(
     run_async(scheduler_cmd.job_toggle_impl(ctx.obj.config, job_id=job_id))
 
 
-@scheduler_app.command("set-interval", context_settings=_NEG_ID_POSITIONAL)
+@scheduler_app.command("set-interval")
 def scheduler_set_interval(
     ctx: typer.Context,
     job_id: str = typer.Argument(..., help="Job identifier"),
@@ -2416,7 +2426,7 @@ def scheduler_set_interval(
     run_async(scheduler_cmd.set_interval_impl(ctx.obj.config, job_id=job_id, minutes=minutes))
 
 
-@scheduler_app.command("task-cancel", context_settings=_NEG_ID_POSITIONAL)
+@scheduler_app.command("task-cancel")
 def scheduler_task_cancel(
     ctx: typer.Context,
     task_id: int = typer.Argument(..., help="Task ID to cancel"),
@@ -2474,7 +2484,7 @@ def account_info(
     run_async(account_cmd.info_impl(ctx.obj.config, phone=phone))
 
 
-@account_app.command("toggle", context_settings=_NEG_ID_POSITIONAL)
+@account_app.command("toggle")
 def account_toggle(
     ctx: typer.Context,
     account_id: int = typer.Argument(..., metavar="id", help="Account id"),
@@ -2484,7 +2494,7 @@ def account_toggle(
     run_async(account_cmd.toggle_impl(ctx.obj.config, account_id=account_id))
 
 
-@account_app.command("set-primary", context_settings=_NEG_ID_POSITIONAL)
+@account_app.command("set-primary")
 def account_set_primary(
     ctx: typer.Context,
     account_id: int = typer.Argument(..., metavar="id", help="Account id"),
@@ -2494,7 +2504,7 @@ def account_set_primary(
     run_async(account_cmd.set_primary_impl(ctx.obj.config, account_id=account_id))
 
 
-@account_app.command("delete", context_settings=_NEG_ID_POSITIONAL)
+@account_app.command("delete")
 def account_delete(
     ctx: typer.Context,
     account_id: int = typer.Argument(..., metavar="id", help="Account id"),
@@ -2694,7 +2704,7 @@ def agent_thread_create(
     run_async(agent_cmd.thread_create_impl(ctx.obj.config, title=title))
 
 
-@agent_app.command("thread-delete", context_settings=_NEG_ID_POSITIONAL)
+@agent_app.command("thread-delete")
 def agent_thread_delete(
     ctx: typer.Context,
     thread_id: int = typer.Argument(..., help="Thread ID"),
@@ -2718,7 +2728,7 @@ def agent_chat(
     run_async(agent_cmd.chat_impl(ctx.obj.config, prompt=prompt, thread_id=thread_id, model=model))
 
 
-@agent_app.command("thread-rename", context_settings=_NEG_ID_POSITIONAL)
+@agent_app.command("thread-rename")
 def agent_thread_rename(
     ctx: typer.Context,
     thread_id: int = typer.Argument(..., help="Thread ID"),
@@ -2729,7 +2739,7 @@ def agent_thread_rename(
     run_async(agent_cmd.thread_rename_impl(ctx.obj.config, thread_id=thread_id, title=title))
 
 
-@agent_app.command("thread-stop", context_settings=_NEG_ID_POSITIONAL)
+@agent_app.command("thread-stop")
 def agent_thread_stop(
     ctx: typer.Context,
     thread_id: int = typer.Argument(..., help="Thread ID"),
@@ -2739,7 +2749,7 @@ def agent_thread_stop(
     run_async(agent_cmd.thread_stop_impl(ctx.obj.config, thread_id=thread_id))
 
 
-@agent_app.command("messages", context_settings=_NEG_ID_POSITIONAL)
+@agent_app.command("messages")
 def agent_messages(
     ctx: typer.Context,
     thread_id: int = typer.Argument(..., help="Thread ID"),
@@ -2750,7 +2760,7 @@ def agent_messages(
     run_async(agent_cmd.messages_impl(ctx.obj.config, thread_id=thread_id, limit=limit))
 
 
-@agent_app.command("context", context_settings=_NEG_ID_POSITIONAL)
+@agent_app.command("context")
 def agent_context(
     ctx: typer.Context,
     thread_id: int = typer.Argument(..., help="Thread ID"),
@@ -2899,7 +2909,7 @@ def photo_loader_items(
     run_async(photo_loader_cmd.items_impl(ctx.obj.config, batch_id=batch_id, limit=limit))
 
 
-@photo_loader_app.command("batch-cancel", context_settings=_NEG_ID_POSITIONAL)
+@photo_loader_app.command("batch-cancel")
 def photo_loader_batch_cancel(
     ctx: typer.Context,
     item_id: int = typer.Argument(..., metavar="id", help="Photo item id"),
@@ -2941,7 +2951,7 @@ def photo_loader_auto_list(ctx: typer.Context) -> None:
     run_async(photo_loader_cmd.auto_list_impl(ctx.obj.config))
 
 
-@photo_loader_app.command("auto-update", context_settings=_NEG_ID_POSITIONAL)
+@photo_loader_app.command("auto-update")
 def photo_loader_auto_update(
     ctx: typer.Context,
     job_id: int = typer.Argument(..., metavar="id", help="Job id"),
@@ -2968,7 +2978,7 @@ def photo_loader_auto_update(
     )
 
 
-@photo_loader_app.command("auto-toggle", context_settings=_NEG_ID_POSITIONAL)
+@photo_loader_app.command("auto-toggle")
 def photo_loader_auto_toggle(
     ctx: typer.Context,
     job_id: int = typer.Argument(..., metavar="id", help="Job id"),
@@ -2978,7 +2988,7 @@ def photo_loader_auto_toggle(
     run_async(photo_loader_cmd.auto_toggle_impl(ctx.obj.config, job_id=job_id))
 
 
-@photo_loader_app.command("auto-delete", context_settings=_NEG_ID_POSITIONAL)
+@photo_loader_app.command("auto-delete")
 def photo_loader_auto_delete(
     ctx: typer.Context,
     job_id: int = typer.Argument(..., metavar="id", help="Job id"),
