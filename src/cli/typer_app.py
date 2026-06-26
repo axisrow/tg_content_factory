@@ -45,8 +45,7 @@ from src.cli.runtime import ensure_data_dirs, setup_logging
 
 _T = TypeVar("_T")
 
-#: Default config path — mirrors the argparse ``--config`` default in
-#: ``src/cli/parser.py`` so the two entry points resolve identically.
+#: Default config path for the ``--config`` global option (see ``main_callback``).
 DEFAULT_CONFIG = "config.yaml"
 
 app = typer.Typer(
