@@ -102,6 +102,69 @@ _SQL_CYRILLIC = """
     WHERE text IS NOT NULL AND text != ''
 """
 
+# ── Sampled SQL templates (quick mode, #1138) ───────────────────────────────
+# Instead of scanning the whole messages table, sample the last N messages per
+# channel. The leading table is `channels` (~1.4k rows); for each one a
+# correlated subquery does an index seek + LIMIT N on
+# sqlite_autoindex_messages_1 (channel_id, message_id) and aggregates the slice.
+#
+# Why not ROW_NUMBER() OVER (PARTITION BY channel_id ORDER BY message_id DESC)?
+# It reads cleaner, but SQLite cannot push the `rn <= N` filter into the index —
+# it full-scans all messages and sorts in a TEMP B-TREE. Measured on the 25.6M-row
+# production DB that is ~267s vs ~5s for the channels-driven form below (#1138).
+# Each template takes the sample size twice (one bind per correlated subquery).
+# N=300 is the calibrated default: binary verdict matches the full-history
+# baseline on 99.65% of channels (#1138 stage 2).
+
+_SQL_UNIQUENESS_SAMPLED = """
+    SELECT
+        ch.channel_id AS channel_id,
+        (SELECT COUNT(*) FROM (
+            SELECT text FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s WHERE s.text IS NOT NULL AND s.text != '') AS total,
+        (SELECT COUNT(DISTINCT substr(text, 1, 100)) FROM (
+            SELECT text FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s WHERE s.text IS NOT NULL AND s.text != '') AS uniq
+    FROM channels ch
+"""
+
+_SQL_SHORT_MESSAGE_SAMPLED = """
+    SELECT
+        ch.channel_id AS channel_id,
+        (SELECT COUNT(*) FROM (
+            SELECT text FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s) AS total,
+        (SELECT SUM(CASE WHEN text IS NOT NULL AND length(text) <= 10
+                    THEN 1 ELSE 0 END) FROM (
+            SELECT text FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s) AS short
+    FROM channels ch
+"""
+
+_SQL_CYRILLIC_SAMPLED = """
+    SELECT
+        ch.channel_id AS channel_id,
+        (SELECT COUNT(*) FROM (
+            SELECT text FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s WHERE s.text IS NOT NULL AND s.text != '') AS total,
+        (SELECT SUM(has_cyrillic(text)) FROM (
+            SELECT text FROM messages m
+            WHERE m.channel_id = ch.channel_id
+            ORDER BY m.message_id DESC LIMIT ?
+         ) s WHERE s.text IS NOT NULL AND s.text != '') AS cyr
+    FROM channels ch
+"""
+
 if TYPE_CHECKING:
     from src.database.facade import Database
 
@@ -148,18 +211,26 @@ class FilterRepository:
         return await cur.fetchall()
 
     async def fetch_uniqueness_map(
-        self, channel_id: int | None = None
+        self, channel_id: int | None = None, *, sample_size: int | None = None
     ) -> dict[int, tuple[int, int]]:
         """Карта `channel_id → (всего сообщений, уникальных по префиксу текста)`.
 
-        Низкая доля уникальных — признак канала-репостера/спама.
+        Низкая доля уникальных — признак канала-репостера/спама. С ``sample_size``
+        метрика считается по последним N сообщениям канала (quick-режим, #1138).
         """
-        sql = _SQL_UNIQUENESS
-        params: tuple = ()
-        if channel_id is not None:
-            sql += " AND channel_id = ?"
-            params = (channel_id,)
-        sql += " GROUP BY channel_id"
+        if sample_size is not None:
+            sql = _SQL_UNIQUENESS_SAMPLED
+            params: tuple = (sample_size, sample_size)
+            if channel_id is not None:
+                sql += " WHERE ch.channel_id = ?"
+                params = (sample_size, sample_size, channel_id)
+        else:
+            sql = _SQL_UNIQUENESS
+            params = ()
+            if channel_id is not None:
+                sql += " AND channel_id = ?"
+                params = (channel_id,)
+            sql += " GROUP BY channel_id"
         cur = await self._db.execute(sql, params)
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["total"], row["uniq"]) for row in rows}
@@ -180,18 +251,26 @@ class FilterRepository:
         return {row["channel_id"]: row["subscriber_count"] for row in rows}
 
     async def fetch_short_message_map(
-        self, channel_id: int | None = None
+        self, channel_id: int | None = None, *, sample_size: int | None = None
     ) -> dict[int, tuple[int, int]]:
         """Карта `channel_id → (всего сообщений, из них коротких ≤10 символов)`.
 
         Высокая доля коротких сообщений — признак чата-шума, а не контент-канала.
+        С ``sample_size`` считается по последним N сообщениям канала (#1138).
         """
-        sql = _SQL_SHORT_MESSAGE
-        params: tuple = ()
-        if channel_id is not None:
-            sql += " WHERE channel_id = ?"
-            params = (channel_id,)
-        sql += " GROUP BY channel_id"
+        if sample_size is not None:
+            sql = _SQL_SHORT_MESSAGE_SAMPLED
+            params: tuple = (sample_size, sample_size)
+            if channel_id is not None:
+                sql += " WHERE ch.channel_id = ?"
+                params = (sample_size, sample_size, channel_id)
+        else:
+            sql = _SQL_SHORT_MESSAGE
+            params = ()
+            if channel_id is not None:
+                sql += " WHERE channel_id = ?"
+                params = (channel_id,)
+            sql += " GROUP BY channel_id"
         cur = await self._db.execute(sql, params)
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["total"], row["short"] or 0) for row in rows}
@@ -232,18 +311,28 @@ class FilterRepository:
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["uniq_total"], row["duped"] or 0) for row in rows}
 
-    async def fetch_cyrillic_map(self, channel_id: int | None = None) -> dict[int, tuple[int, int]]:
+    async def fetch_cyrillic_map(
+        self, channel_id: int | None = None, *, sample_size: int | None = None
+    ) -> dict[int, tuple[int, int]]:
         """Карта `channel_id → (всего сообщений, из них с кириллицей)` через UDF `has_cyrillic`.
 
         Низкая доля кириллицы отсеивает иноязычные каналы для русскоязычного сбора.
+        С ``sample_size`` считается по последним N сообщениям канала (#1138).
         """
         await self._ensure_udf()
-        sql = _SQL_CYRILLIC
-        params: tuple = ()
-        if channel_id is not None:
-            sql += " AND channel_id = ?"
-            params = (channel_id,)
-        sql += " GROUP BY channel_id"
+        if sample_size is not None:
+            sql = _SQL_CYRILLIC_SAMPLED
+            params: tuple = (sample_size, sample_size)
+            if channel_id is not None:
+                sql += " WHERE ch.channel_id = ?"
+                params = (sample_size, sample_size, channel_id)
+        else:
+            sql = _SQL_CYRILLIC
+            params = ()
+            if channel_id is not None:
+                sql += " AND channel_id = ?"
+                params = (channel_id,)
+            sql += " GROUP BY channel_id"
         cur = await self._db.execute(sql, params)
         rows = await cur.fetchall()
         return {row["channel_id"]: (row["total"], row["cyr"] or 0) for row in rows}
@@ -283,6 +372,7 @@ class FilterRepository:
         channel_id: int | None = None,
         *,
         include_cross_dupe: bool = True,
+        sample_size: int | None = None,
     ) -> tuple[
         dict[int, tuple[int, int]],  # uniqueness_map
         dict[int, int],               # subscriber_map
@@ -294,10 +384,43 @@ class FilterRepository:
 
         include_cross_dupe=False skips the cross-channel duplicate self-join —
         by far the heaviest query on large DBs (#774) — returning an empty map.
+        sample_size routes the three text-based maps (uniqueness/short/cyrillic)
+        to the last-N-per-channel sampled SQL (#1138); subscriber stays full
+        (it is count/stats-based, not text-based).
         """
-        # Build parameterised SQL for each query
-        u_sql = _SQL_UNIQUENESS + (" AND channel_id = ?" if channel_id is not None else "") + " GROUP BY channel_id"
-        u_params: tuple = (channel_id,) if channel_id is not None else ()
+        sampled = sample_size is not None
+        # Build parameterised SQL for each query. The text maps switch to the
+        # channels-driven sampled templates when sample_size is given.
+        if sampled:
+            u_sql = _SQL_UNIQUENESS_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
+            u_params: tuple = (
+                (sample_size, sample_size, channel_id) if channel_id is not None else (sample_size, sample_size)
+            )
+            sm_sql = _SQL_SHORT_MESSAGE_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
+            sm_params: tuple = (
+                (sample_size, sample_size, channel_id) if channel_id is not None else (sample_size, sample_size)
+            )
+            cy_sql = _SQL_CYRILLIC_SAMPLED + (" WHERE ch.channel_id = ?" if channel_id is not None else "")
+            cy_params: tuple = (
+                (sample_size, sample_size, channel_id) if channel_id is not None else (sample_size, sample_size)
+            )
+        else:
+            u_sql = (
+                _SQL_UNIQUENESS + (" AND channel_id = ?" if channel_id is not None else "") + " GROUP BY channel_id"
+            )
+            u_params = (channel_id,) if channel_id is not None else ()
+            sm_sql = (
+                _SQL_SHORT_MESSAGE
+                + (" WHERE channel_id = ?" if channel_id is not None else "")
+                + " GROUP BY channel_id"
+            )
+            sm_params = (channel_id,) if channel_id is not None else ()
+            cy_sql = (
+                _SQL_CYRILLIC
+                + (" AND channel_id = ?" if channel_id is not None else "")
+                + " GROUP BY channel_id"
+            )
+            cy_params = (channel_id,) if channel_id is not None else ()
 
         s_sql = (
             _SQL_SUBSCRIBER_BASE
@@ -306,26 +429,12 @@ class FilterRepository:
         )
         s_params: tuple = (channel_id,) if channel_id is not None else ()
 
-        sm_sql = (
-            _SQL_SHORT_MESSAGE
-            + (" WHERE channel_id = ?" if channel_id is not None else "")
-            + " GROUP BY channel_id"
-        )
-        sm_params: tuple = (channel_id,) if channel_id is not None else ()
-
         cd_sql = (
             _SQL_CROSS_DUPE
             + (" WHERE cp.channel_id = ?" if channel_id is not None else "")
             + " GROUP BY cp.channel_id"
         )
         cd_params: tuple = (channel_id,) if channel_id is not None else ()
-
-        cy_sql = (
-            _SQL_CYRILLIC
-            + (" AND channel_id = ?" if channel_id is not None else "")
-            + " GROUP BY channel_id"
-        )
-        cy_params: tuple = (channel_id,) if channel_id is not None else ()
 
         async def _no_rows() -> list[aiosqlite.Row]:
             return []

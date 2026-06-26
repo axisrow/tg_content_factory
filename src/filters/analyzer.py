@@ -7,6 +7,7 @@ from src.database import Database
 from src.filters.criteria import (
     CHAT_NOISE_THRESHOLD,
     CROSS_DUPE_THRESHOLD,
+    DEFAULT_QUICK_SAMPLE_SIZE,
     LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD,
     LOW_SUBSCRIBER_RATIO_THRESHOLD,
     LOW_UNIQUENESS_THRESHOLD,
@@ -48,7 +49,13 @@ class ChannelAnalyzer:
             logger=logger,
         )
 
-    async def _build_report(self, channel_id: int | None = None, *, skip_cross_dupe: bool = False) -> FilterReport:
+    async def _build_report(
+        self,
+        channel_id: int | None = None,
+        *,
+        skip_cross_dupe: bool = False,
+        sample_size: int | None = None,
+    ) -> FilterReport:
         t0 = time.monotonic()
         channels = await self._repo.fetch_channels_for_analysis(channel_id)
         logger.info("filter/analyze: fetched %d channels in %.1fs", len(channels), time.monotonic() - t0)
@@ -56,10 +63,15 @@ class ChannelAnalyzer:
             return FilterReport()
 
         if self._repo._can_parallel():
-            logger.info("filter/analyze: all maps — started (parallel)")
+            logger.info(
+                "filter/analyze: all maps — started (parallel%s)",
+                f", sample={sample_size}" if sample_size is not None else "",
+            )
             t_map = time.monotonic()
             uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map = (
-                await self._repo.fetch_maps_parallel(channel_id, include_cross_dupe=not skip_cross_dupe)
+                await self._repo.fetch_maps_parallel(
+                    channel_id, include_cross_dupe=not skip_cross_dupe, sample_size=sample_size
+                )
             )
             logger.info(
                 "filter/analyze: all maps in %.1fs (parallel) — %d channels",
@@ -67,15 +79,21 @@ class ChannelAnalyzer:
                 len(uniqueness_map),
             )
         else:
-            uniqueness_map = await _timed_fetch("uniqueness map", self._repo.fetch_uniqueness_map(channel_id))
+            uniqueness_map = await _timed_fetch(
+                "uniqueness map", self._repo.fetch_uniqueness_map(channel_id, sample_size=sample_size)
+            )
             subscriber_map = await _timed_fetch("subscriber map", self._repo.fetch_subscriber_map(channel_id))
-            short_map = await _timed_fetch("short-message map", self._repo.fetch_short_message_map(channel_id))
+            short_map = await _timed_fetch(
+                "short-message map", self._repo.fetch_short_message_map(channel_id, sample_size=sample_size)
+            )
             cross_dupe_map = (
                 {}
                 if skip_cross_dupe
                 else await _timed_fetch("cross-dupe map", self._repo.fetch_cross_dupe_map(channel_id))
             )
-            cyrillic_map = await _timed_fetch("cyrillic map", self._repo.fetch_cyrillic_map(channel_id))
+            cyrillic_map = await _timed_fetch(
+                "cyrillic map", self._repo.fetch_cyrillic_map(channel_id, sample_size=sample_size)
+            )
 
         min_subs = await self._load_min_subscribers_filter()
 
@@ -190,9 +208,30 @@ class ChannelAnalyzer:
             return report.results[0]
         return ChannelFilterResult(channel_id=channel_id)
 
-    async def analyze_all(self, quick: bool = False) -> FilterReport:
-        """Analyze all channels; quick=True skips the heavy cross-dupe query (#774)."""
-        return await self._build_report(skip_cross_dupe=quick)
+    async def analyze_all(self, quick: bool = False, *, sample_size: int | None = None) -> FilterReport:
+        """Analyze all channels.
+
+        quick=True skips the heavy cross-dupe self-join (#774) AND samples only the
+        last N messages per channel for the text metrics instead of scanning the
+        whole messages table (#1138) — turning a ~6-min full scan into seconds.
+        N defaults to DEFAULT_QUICK_SAMPLE_SIZE (300, calibrated); pass sample_size
+        to override. sample_size is ignored unless quick=True (a full analyze always
+        scans the whole history).
+
+        A non-positive sample_size (0 or negative) falls back to the calibrated
+        default: ``LIMIT 0`` would make every sampled text total zero, so the
+        ``if total > 0`` guards suppress low_uniqueness / non_cyrillic / chat_noise
+        and EVERY channel would look clean regardless of content (Codex review on
+        #1138). The CLI/agent pass an unconstrained int, so the clamp lives here at
+        the single chokepoint rather than in each caller.
+        """
+        if not quick:
+            effective_sample = None
+        elif sample_size is None or sample_size < 1:
+            effective_sample = DEFAULT_QUICK_SAMPLE_SIZE
+        else:
+            effective_sample = sample_size
+        return await self._build_report(skip_cross_dupe=quick, sample_size=effective_sample)
 
     async def apply_filters(self, report: FilterReport) -> int:
         # Dedupe by channel_id (merge flags via set union) to avoid double updates/count inflation.
