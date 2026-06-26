@@ -814,6 +814,48 @@ def test_account_import_mutex_rejects_both_and_neither():
     ).exit_code != 0
 
 
+def test_account_export_session_invalid_mutex_skips_startup():
+    """#1162 drift §3: an invalid --id/--phone mutex is rejected at parse time.
+
+    The check now runs *before* ``apply_startup`` (the env / logging / data-dir
+    side effects), the way argparse rejected the mutex during ``parse_args()``.
+    So neither the startup side effects nor the impl ever fire on a bad mutex —
+    important in a read-only runtime where ``apply_startup`` could raise first.
+    """
+    for argv in (
+        ["account", "export-session"],  # neither
+        ["account", "export-session", "--id", "1", "--phone", "+1"],  # both
+    ):
+        with (
+            patch("src.cli.typer_commands.apply_startup") as mock_startup,
+            patch("src.cli.typer_commands.run_async") as mock_run,
+            patch("src.cli.typer_commands.account_cmd.export_session_impl") as mock_impl,
+        ):
+            result = runner.invoke(app, argv)
+        assert result.exit_code != 0
+        mock_startup.assert_not_called()
+        mock_run.assert_not_called()
+        mock_impl.assert_not_called()
+
+
+def test_account_import_invalid_mutex_skips_startup():
+    """#1162 drift §3: a bad session-source mutex is rejected before apply_startup."""
+    for argv in (
+        ["account", "import", "--phone", "+1"],  # neither source
+        ["account", "import", "--phone", "+1", "--session-string", "X", "--session-string-stdin"],
+    ):
+        with (
+            patch("src.cli.typer_commands.apply_startup") as mock_startup,
+            patch("src.cli.typer_commands.run_async") as mock_run,
+            patch("src.cli.typer_commands.account_cmd.import_impl") as mock_impl,
+        ):
+            result = runner.invoke(app, argv)
+        assert result.exit_code != 0
+        mock_startup.assert_not_called()
+        mock_run.assert_not_called()
+        mock_impl.assert_not_called()
+
+
 def test_account_export_session_delegates_via_argparse():
     mock_impl = MagicMock()
     with (

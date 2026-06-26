@@ -2639,13 +2639,16 @@ def account_export_session(
     """Print the decrypted StringSession for SSO (⚠️ full account access — keep secret).
 
     Exactly one of --id / --phone is required (the argparse mutually-exclusive
-    group is enforced here in the body — Typer has no native mutex group). The
-    session string is NEVER logged.
+    group is enforced here — Typer has no native mutex group). The check runs
+    *before* ``apply_startup`` so an invalid mutex is rejected at parse time, the
+    way argparse rejected it during ``parse_args()`` — without first touching the
+    env / logging / data dirs (matters in a read-only runtime, #1162 drift §3).
+    The session string is NEVER logged.
     """
-    apply_startup(ctx)
     if (account_id is None) == (phone is None):
         # Mirror argparse's "exactly one required" mutually-exclusive group.
         raise typer.BadParameter("provide exactly one of --id or --phone")
+    apply_startup(ctx)
     run_async(
         account_cmd.export_session_impl(
             ctx.obj.config, account_id=account_id, phone=phone, as_json=as_json
@@ -2674,15 +2677,17 @@ def account_import(
     """Add an account from a ready StringSession (SSO import, skips login).
 
     Exactly one of --session-string / --session-string-stdin is required (the
-    argparse mutually-exclusive group is enforced here in the body). The raw
+    argparse mutually-exclusive group is enforced here). The check runs *before*
+    ``apply_startup`` so an invalid mutex is rejected at parse time — without
+    first touching the env / logging / data dirs (#1162 drift §3). The raw
     session string is never echoed back or logged.
     """
-    apply_startup(ctx)
     if (session_string is None) == (not session_string_stdin):
         # Mirror argparse's required mutually-exclusive group: exactly one source.
         raise typer.BadParameter(
             "provide exactly one of --session-string or --session-string-stdin"
         )
+    apply_startup(ctx)
     run_async(
         account_cmd.import_impl(
             ctx.obj.config,
@@ -2846,13 +2851,13 @@ def photo_loader_send(
     ctx: typer.Context,
     phone: str = typer.Option(..., "--phone", help="Account phone"),
     target: str = typer.Option(..., "--target", help="Dialog id"),
-    # argparse uses ``--files a b c`` (nargs='+'). Click options can't be variadic
-    # (``nargs=-1`` is arguments-only), so the Typer leaf takes the repeated form
-    # ``--files a --files b``. The production path is unaffected: main.py parses with
-    # argparse first and ``_photo_loader_argv`` rewrites ``--files a b`` into the
-    # repeated form before invoking Typer. The single-flag form is restored when the
-    # argparse layer is removed in the final wave (#1125, #1123 review).
-    files: list[str] = typer.Option(..., "--files", help="Photo file paths"),
+    # ``--files`` is a repeatable option: ``--files a --files b --files c``.
+    # Click options cannot be variadic (``nargs=-1`` is arguments-only), so the
+    # argparse ``--files a b c`` (nargs='+') form maps to the repeated flag here.
+    # Keeping the ``--files`` flag name (rather than a positional variadic) holds
+    # the CLI surface / manifest tuple stable (#1162 drift §2, resolved by keeping
+    # the repeated form as the single direct surface once argparse was removed).
+    files: list[str] = typer.Option(..., "--files", help="Photo file paths (repeat per file)"),
     mode: PhotoMode = typer.Option(PhotoMode.album, "--mode"),
     caption: str | None = typer.Option(None, "--caption", help="Caption"),
 ) -> None:
@@ -2870,7 +2875,7 @@ def photo_loader_schedule_send(
     ctx: typer.Context,
     phone: str = typer.Option(..., "--phone", help="Account phone"),
     target: str = typer.Option(..., "--target", help="Dialog id"),
-    files: list[str] = typer.Option(..., "--files", help="Photo file paths"),
+    files: list[str] = typer.Option(..., "--files", help="Photo file paths (repeat per file)"),
     at: str = typer.Option(..., "--at", help="ISO datetime"),
     mode: PhotoMode = typer.Option(PhotoMode.album, "--mode"),
     caption: str | None = typer.Option(None, "--caption", help="Caption"),
