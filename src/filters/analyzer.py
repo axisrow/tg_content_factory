@@ -217,8 +217,20 @@ class ChannelAnalyzer:
         N defaults to DEFAULT_QUICK_SAMPLE_SIZE (300, calibrated); pass sample_size
         to override. sample_size is ignored unless quick=True (a full analyze always
         scans the whole history).
+
+        A non-positive sample_size (0 or negative) falls back to the calibrated
+        default: ``LIMIT 0`` would make every sampled text total zero, so the
+        ``if total > 0`` guards suppress low_uniqueness / non_cyrillic / chat_noise
+        and EVERY channel would look clean regardless of content (Codex review on
+        #1138). The CLI/agent pass an unconstrained int, so the clamp lives here at
+        the single chokepoint rather than in each caller.
         """
-        effective_sample = (sample_size if sample_size is not None else DEFAULT_QUICK_SAMPLE_SIZE) if quick else None
+        if not quick:
+            effective_sample = None
+        elif sample_size is None or sample_size < 1:
+            effective_sample = DEFAULT_QUICK_SAMPLE_SIZE
+        else:
+            effective_sample = sample_size
         return await self._build_report(skip_cross_dupe=quick, sample_size=effective_sample)
 
     async def apply_filters(self, report: FilterReport) -> int:
