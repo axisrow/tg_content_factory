@@ -16,7 +16,7 @@
 |---|-------------|----------|-----------|
 | 1 | **FastAPI REST** (`/api/*`, JSON) | для **программ** (interop, внешние воркеры) | `src/web/routes/tasks.py` (`/api/tasks`, #829) + машинные JSON parity-эндпоинты внутри HTML-роутеров (CLI↔Web parity) |
 | 2 | **Web** (HTML/HTMX) | для **человека** в браузере | `src/web/routes/` — Jinja2-шаблоны, HTMX-фрагменты, формы |
-| 3 | **CLI** | команды терминала | `src/cli/commands/` + `src/cli/parser_domains/` (~209 leaf-команд) |
+| 3 | **CLI** | команды терминала | `src/cli/commands/` (тела `*_impl`) + `src/cli/typer_commands.py` (Typer-приложение `app`, ~212 leaf-команд) |
 | 4 | **Agent-tools** | тулы AI-агента (MCP) | `src/agent/tools/` (173 tools в 20 группах) |
 | 5 | **TUI** (Textual) | интерактивный терминальный UI | `src/cli/commands/agent_tui.py` + `.tcss` (dep `textual[syntax]`); запуск — `agent chat` без `--prompt`. **УЗКАЯ**: только AI-чат, см. ниже |
 
