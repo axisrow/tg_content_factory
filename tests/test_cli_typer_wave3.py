@@ -630,6 +630,42 @@ def test_account_export_session_mutex_rejects_both_and_neither():
     ).exit_code != 0
 
 
+def test_account_export_session_value_is_printed_not_logged(capsys, caplog):
+    """The SSO export prints the session string to stdout but NEVER logs it (#828).
+
+    Regression guard for the secret-handling invariant: ``_run_export_session``
+    (the real business logic, not the removed argv bridge) emits the decrypted
+    session string on stdout and a warning on stderr, but the secret must not
+    leak into the logging subsystem at any level. Exercises the impl with a
+    stubbed DB so a known sentinel session string flows through.
+    """
+    import argparse
+    import asyncio
+    import logging
+    from unittest.mock import AsyncMock
+
+    from src.cli.commands.account import _run_export_session
+    from src.models import AccountSummary
+
+    secret = "enc-sentinel-SESSION-STRING-do-not-log"
+    summary = AccountSummary(id=3, phone="+1234567890")
+
+    db = MagicMock()
+    db.get_account_summaries = AsyncMock(return_value=[summary])
+    db.repos.accounts.get_decrypted_session = AsyncMock(return_value=secret)
+
+    args = argparse.Namespace(id=3, phone=None, json=False)
+    with caplog.at_level(logging.DEBUG, logger="src.cli.commands.account"):
+        asyncio.run(_run_export_session(args, db))
+
+    out = capsys.readouterr()
+    # Printed to stdout (the operator asked for it), warning to stderr.
+    assert secret in out.out
+    assert "full access" in out.err
+    # …but never written to the logging subsystem.
+    assert secret not in caplog.text
+
+
 def test_account_import_session_string():
     mock_impl = MagicMock()
     with (
