@@ -15,9 +15,7 @@ assert each sub-command:
 
 The shared bodies are stubbed (and ``run_async`` is patched to capture rather than
 execute the coroutine) so no real DB / Telegram / provider work happens — the
-wiring from CLI tokens to the body is what is under test. The final section drives
-the real prod path (``build_parser`` → ``dispatch_via_typer``) to guard the
-argparse→Typer round-trip end to end.
+wiring from CLI tokens to the body is what is under test.
 """
 
 from __future__ import annotations
@@ -26,17 +24,9 @@ from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
-from src.cli.parser import build_parser
 from src.cli.typer_app import app
-from src.cli.typer_commands import dispatch_via_typer
 
 runner = CliRunner()
-
-
-def _delegate(argv: list[str]) -> None:
-    """Run the real prod path: argparse parse → argparse→Typer delegation."""
-    args = build_parser().parse_args(argv)
-    dispatch_via_typer(args)
 
 
 # --------------------------------------------------------------------------- #
@@ -573,154 +563,23 @@ def test_global_config_threads_into_group():
 
 
 # --------------------------------------------------------------------------- #
-# argparse → Typer delegation round-trip (the real prod path)
-#
-# `main()` parses with argparse, then `dispatch_via_typer` rebuilds the Typer
-# argv. These guard the "names / flags / behaviour unchanged" invariant end to
-# end, including awkward positionals (negative channel ids, dash-leading prompts).
+# Bare-group help: a group invoked with no sub-command renders its help.
+# These ``no_args_is_help`` groups list their sub-commands and exit non-zero;
+# crucially they never leak a NoArgsIsHelpError traceback.
 # --------------------------------------------------------------------------- #
 
 
-def test_delegation_debug_logs_roundtrip():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.debug_cmd.logs_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["debug", "logs", "--limit", "7"])
-    mock_impl.assert_called_once_with("config.yaml", limit=7)
+def test_provider_without_subcommand_shows_help():
+    result = runner.invoke(app, ["provider"])
+    assert result.exit_code != 0  # no_args_is_help → non-zero
+    assert "list" in result.output and "add" in result.output
 
 
-def test_delegation_export_csv_negative_channel_id():
-    """Regression: a negative channel id survives argparse→Typer delegation."""
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.export_cmd.export_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["export", "csv", "--channel-id", "-100123", "--limit", "5"])
-    mock_impl.assert_called_once_with(
-        "config.yaml", fmt="csv", channel_id=-100123, limit=5, output=None
-    )
-
-
-def test_delegation_export_telegram_roundtrip():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.export_cmd.telegram_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["export", "telegram", "--channel-id", "-100500", "--format", "html", "--with-media"])
-    kwargs = mock_impl.call_args.kwargs
-    assert kwargs["channel_id"] == -100500
-    assert kwargs["export_format"] == "html"
-    assert kwargs["with_media"] is True
-
-
-def test_delegation_translate_message_roundtrip():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.translate_cmd.message_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["translate", "message", "42", "--target", "ru"])
-    mock_impl.assert_called_once_with("config.yaml", message_id=42, target="ru")
-
-
-def test_delegation_image_generate_dash_prompt():
-    """Regression: a prompt starting with '-' survives delegation as the prompt."""
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.image_cmd.generate_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["image", "generate", "-weird prompt", "--model", "openai:dall-e-3"])
-    kwargs = mock_impl.call_args.kwargs
-    assert kwargs["prompt"] == "-weird prompt"
-    assert kwargs["model"] == "openai:dall-e-3"
-
-
-def test_delegation_provider_add_roundtrip():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.provider_cmd.add_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["provider", "add", "openai", "--api-key", "sk-1", "--base-url", "http://h"])
-    mock_impl.assert_called_once_with(
-        "config.yaml", name="openai", api_key="sk-1", base_url="http://h"
-    )
-
-
-def test_delegation_provider_test_all_roundtrip():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.provider_cmd.test_all_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["provider", "test-all"])
-    mock_impl.assert_called_once_with("config.yaml")
-
-
-def test_delegation_notification_set_account_roundtrip():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.notification_cmd.set_account_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["notification", "set-account", "--phone", "+15550001111"])
-    mock_impl.assert_called_once_with("config.yaml", phone="+15550001111")
-
-
-def test_delegation_notification_dry_run_roundtrip():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.notification_cmd.dry_run_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["notification", "dry-run"])
-    mock_impl.assert_called_once_with("config.yaml")
-
-
-def test_delegation_honours_global_config():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.provider_cmd.list_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["--config", "prod.yaml", "provider", "list"])
-    mock_impl.assert_called_once_with("prod.yaml")
-
-
-# --------------------------------------------------------------------------- #
-# Bare-group help parity: a group with no sub-command prints help, exits 0.
-# argparse's old `sub_attr` fallback printed `<group> --help` and exited 0; the
-# Typer path (no_args_is_help groups raise NoArgsIsHelpError, caught by
-# dispatch_via_typer) must match.
-# --------------------------------------------------------------------------- #
-
-
-def test_provider_without_subcommand_shows_help_and_exits_zero():
-    import pytest
-
-    args = build_parser().parse_args(["provider"])
-    with pytest.raises(SystemExit) as exc_info:
-        dispatch_via_typer(args)
-    assert exc_info.value.code == 0
-
-
-def test_image_without_subcommand_clean_via_full_cli(capsys):
-    """End-to-end: `python -m src.main image` prints help, exits 0, no traceback."""
-    import pytest
-
-    from src.cli.main import main
-
-    with patch("sys.argv", ["main.py", "image"]):
-        with pytest.raises(SystemExit) as exc_info:
-            main()
-    assert exc_info.value.code == 0
-    out = capsys.readouterr()
-    combined = out.out + out.err
+def test_image_without_subcommand_shows_help_no_traceback():
+    """A bare ``image`` group prints help listing its sub-commands, no traceback."""
+    result = runner.invoke(app, ["image"])
+    assert result.exit_code != 0
+    combined = result.output
     assert "NoArgsIsHelpError" not in combined
     assert "Traceback" not in combined
     assert "generate" in combined  # the help lists the sub-commands

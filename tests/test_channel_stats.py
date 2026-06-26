@@ -415,17 +415,9 @@ async def test_collect_all_stats(db):
 
 def test_cli_channel_stats_no_args(cli_init_patch, capsys):
     """Calling `channel stats` without identifier or --all should not crash."""
-    import argparse
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from src.main import cmd_channel
-
-    args = argparse.Namespace(
-        config="config.yaml",
-        channel_action="stats",
-        identifier=None,
-        all=False,
-    )
+    from src.cli.commands import channel as channel_cmd
 
     mock_db = AsyncMock()
     mock_db.close = AsyncMock()
@@ -438,10 +430,14 @@ def test_cli_channel_stats_no_args(cli_init_patch, capsys):
         return config, mock_pool
 
     with (
-        cli_init_patch(mock_db, "src.main._init_db"),
-        patch("src.main._init_pool", fake_init_pool),
+        cli_init_patch(mock_db, "src.cli.runtime.init_db"),
+        patch("src.cli.runtime.init_pool", fake_init_pool),
     ):
-        cmd_channel(args)
+        asyncio.run(
+            channel_cmd.stats_impl(
+                "config.yaml", identifier=None, all_channels=False, max_channels=None
+            )
+        )
 
     captured = capsys.readouterr()
     assert "Specify a channel identifier or use --all" in captured.out

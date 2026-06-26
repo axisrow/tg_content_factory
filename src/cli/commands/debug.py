@@ -67,11 +67,11 @@ async def timing_impl(config_path: str) -> None:
 
 
 def run(args: argparse.Namespace) -> None:
-    """Thin argparse adapter over the ``*_impl`` bodies (legacy dispatch path).
+    """Thin argparse-Namespace adapter over the ``*_impl`` bodies.
 
-    The production CLI routes ``debug`` through the Typer ``app`` (#1122); this
-    wrapper is kept so the argparse ``build_parser()`` leaf audit and the existing
-    command-level tests still exercise the shared bodies.
+    The production CLI routes ``debug`` through the Typer ``app`` (#1122). This
+    wrapper is kept so the existing command-level tests that drive the legacy
+    ``commands.debug.run(Namespace)`` path still exercise the shared bodies.
     """
     action = args.debug_action
     if action == "logs":

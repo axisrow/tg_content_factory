@@ -7,7 +7,7 @@ Typer ``app``: serve · worker · stop · restart · mcp-server · collect
 These tests drive the production ``app`` through ``typer.testing.CliRunner`` and
 assert each command:
 
-* exposes the *same* flags / arguments the argparse parser did (identical names,
+* exposes the *same* flags / arguments the legacy parser did (identical names,
   defaults, behaviour — the hard invariant of the migration), and
 * delegates to the shared command body (``serve_web`` / ``*_impl``) with the
   flags mapped to exactly the right keyword arguments.
@@ -23,24 +23,9 @@ from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
-from src.cli.parser import build_parser
 from src.cli.typer_app import app
-from src.cli.typer_commands import dispatch_via_typer
 
 runner = CliRunner()
-
-
-def _delegate(argv: list[str]) -> None:
-    """Run the real prod path: argparse parse → argparse→Typer delegation.
-
-    Mirrors ``src/cli/main.py``: the process argv is parsed by ``build_parser``,
-    then a migrated command is executed by ``dispatch_via_typer`` (which rebuilds
-    the Typer argv from the Namespace). This is the round-trip that must preserve
-    every flag / positional, including the awkward ones (negative ids, queries
-    that start with ``-``).
-    """
-    args = build_parser().parse_args(argv)
-    dispatch_via_typer(args)
 
 
 # --------------------------------------------------------------------------- #
@@ -370,116 +355,12 @@ def test_messages_read_date_filters_db_mode():
 
 
 # --------------------------------------------------------------------------- #
-# argparse → Typer delegation round-trip (the real prod path)
-#
-# These guard the invariant "names / flags / behaviour are unchanged" end to
-# end: `main()` parses with argparse, then `dispatch_via_typer` rebuilds the
-# Typer argv. Awkward positionals (negative ids, dash-leading queries) that
-# argparse accepts but Click would mis-read as options must survive the trip.
-# --------------------------------------------------------------------------- #
-
-
-def test_delegation_serve_flags_roundtrip():
-    with patch("src.cli.typer_commands.serve_cmd.serve_web") as mock_serve:
-        _delegate(["serve", "--web-pass", "pw", "--no-worker"])
-    mock_serve.assert_called_once_with("config.yaml", web_pass="pw", no_worker=True)
-
-
-def test_delegation_collect_single_channel_roundtrip():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.collect_cmd.collect_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["collect", "--channel-id", "12345", "--full"])
-    mock_impl.assert_called_once_with("config.yaml", channel_id=12345, full=True)
-
-
-def test_delegation_collect_sample_negative_id():
-    """Regression: a negative channel id must survive argparse→Typer delegation."""
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.collect_cmd.collect_sample_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["collect", "sample", "-100123", "--limit", "5"])
-    mock_impl.assert_called_once_with("config.yaml", channel_id=-100123, limit=5)
-
-
-def test_delegation_search_dash_query():
-    """Regression: a query starting with '-' must survive delegation as the query."""
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.search_cmd.search_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["search", "-100500", "--mode", "semantic"])
-    kwargs = mock_impl.call_args.kwargs
-    assert kwargs["query"] == "-100500"
-    assert kwargs["mode"] == "semantic"
-
-
-def test_delegation_search_channel_mode_negative_channel_id():
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.search_cmd.search_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["search", "q", "--mode", "channel", "--channel-id", "-100500"])
-    kwargs = mock_impl.call_args.kwargs
-    assert kwargs["channel_id"] == -100500
-
-
-def test_delegation_messages_read_negative_identifier():
-    """Regression: a negative-id identifier must survive argparse→Typer delegation."""
-    mock_impl = MagicMock()
-    with (
-        patch("src.cli.typer_commands.messages_cmd.messages_read_impl", mock_impl),
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        _delegate(["messages", "read", "-100500", "--format", "json", "--limit", "10"])
-    kwargs = mock_impl.call_args.kwargs
-    assert kwargs["identifier"] == "-100500"
-    assert kwargs["output_format"] == "json"
-    assert kwargs["limit"] == 10
-
-
-def test_delegation_mcp_server_no_pool():
-    with patch("src.cli.typer_commands.mcp_server_cmd.serve_mcp") as mock_mcp:
-        _delegate(["mcp-server", "--no-pool"])
-    mock_mcp.assert_called_once_with("config.yaml", no_pool=True)
-
-
-def test_delegation_honours_global_config():
-    with patch("src.cli.typer_commands.worker_cmd.serve_worker") as mock_worker:
-        _delegate(["--config", "prod.yaml", "worker"])
-    mock_worker.assert_called_once_with("prod.yaml")
-
-
-# --------------------------------------------------------------------------- #
 # Bare-group help parity (regression for the messages-no-subcommand blocker)
 #
 # argparse's old `sub_attr` fallback printed `messages --help` and exited 0 for
 # a bare `messages` (no `read`). The Typer path must match: render help, exit 0,
-# and crucially NOT leak a `NoArgsIsHelpError` traceback. Because Typer vendors
-# its own Click, the exception is `typer._click.exceptions.NoArgsIsHelpError`
-# (not the stdlib `click` one), so `dispatch_via_typer` must catch both.
+# and crucially NOT leak a `NoArgsIsHelpError` traceback.
 # --------------------------------------------------------------------------- #
-
-
-def test_messages_without_subcommand_shows_help_and_exits_zero():
-    import pytest
-
-    args = build_parser().parse_args(["messages"])
-    # No body should run — only help. dispatch_via_typer raises SystemExit(0).
-    with (
-        patch("src.cli.typer_commands.messages_cmd.messages_read_impl") as mock_impl,
-        patch("src.cli.typer_commands.run_async"),
-    ):
-        with pytest.raises(SystemExit) as exc_info:
-            dispatch_via_typer(args)
-    assert exc_info.value.code == 0
-    mock_impl.assert_not_called()
 
 
 def test_messages_without_subcommand_clean_via_full_cli(capsys):
