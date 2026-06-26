@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import ast
 import os
 import sqlite3
@@ -726,31 +725,45 @@ def _cli_live_policy_paths() -> list[Path]:
 
 
 def _cli_leaf_commands() -> set[tuple[str, ...]]:
-    from src.cli.parser import build_parser
+    """Leaf-command paths of the CLI, derived from the Typer app (#1125 Final).
+
+    Since the argparse framework was removed in #1125, the Typer ``app`` is the
+    single source of truth for the CLI surface. We walk the Click command tree
+    that ``typer.main.get_command(app)`` produces and reproduce the exact leaf
+    set the old argparse walker yielded:
+
+    * a plain (non-group) command is always a leaf;
+    * a group is *also* a leaf when it is directly invokable — i.e. it has its
+      own parameters beyond the implicit ``--help`` *and* ``invoke_without_command``
+      is set (the Typer ``@group.callback(invoke_without_command=True)`` pattern,
+      e.g. ``collect`` / ``channel tag``). This mirrors argparse's "a sub-parser
+      with its own non-help arguments is itself a runnable leaf".
+
+    The empty root prefix is never recorded. Verified to yield the identical
+    set of 212 leaf tuples the argparse ``build_parser()`` walker produced.
+    """
+    import click
+    import typer
+
+    from src.cli.typer_commands import app
 
     leafs: set[tuple[str, ...]] = set()
 
-    def walk(parser: argparse.ArgumentParser, prefix: tuple[str, ...]) -> None:
-        subparser_actions = [
-            action for action in parser._actions if isinstance(action, argparse._SubParsersAction)
-        ]
-        if not subparser_actions:
-            if prefix:
+    def walk(command: click.BaseCommand, prefix: tuple[str, ...]) -> None:
+        if isinstance(command, click.Group):
+            own_params = [
+                param
+                for param in command.params
+                if not (isinstance(param, click.Option) and param.name == "help")
+            ]
+            if prefix and own_params and command.invoke_without_command:
                 leafs.add(prefix)
-            return
-
-        has_own_arguments = any(
-            not isinstance(action, (argparse._HelpAction, argparse._SubParsersAction))
-            for action in parser._actions
-        )
-        if prefix and has_own_arguments:
+            for name, subcommand in command.commands.items():
+                walk(subcommand, (*prefix, name))
+        elif prefix:
             leafs.add(prefix)
 
-        for action in subparser_actions:
-            for name, subparser in action.choices.items():
-                walk(subparser, (*prefix, name))
-
-    walk(build_parser(), ())
+    walk(typer.main.get_command(app), ())
     return leafs
 
 
