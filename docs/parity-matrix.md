@@ -15,7 +15,7 @@
 |---|-------------|----------|-----------|:------:|
 | 1 | **FastAPI REST** (`/api/*`, JSON) | для **программ** (interop) | `src/web/routes/tasks.py` (`/api/tasks`, #829) + машинные JSON parity-зеркала внутри HTML-роутеров | ✅ узкая |
 | 2 | **Web** (HTML/HTMX) | для **человека** в браузере | `src/web/routes/` — Jinja2/HTMX/SSE/формы | — |
-| 3 | **CLI** | команды терминала | `src/cli/commands/` + `src/cli/parser_domains/` | — |
+| 3 | **CLI** | команды терминала | `src/cli/commands/` (тела `*_impl`) + `src/cli/typer_commands.py` (Typer-объявления) | — |
 | 4 | **Agent-tools** | тулы AI-агента (MCP) | `src/agent/tools/` | — |
 | 5 | **TUI** (Textual) | интерактивный терминальный UI | `src/cli/commands/agent_tui.py` + `.tcss` | ✅ узкая |
 
@@ -29,7 +29,7 @@
 |-------------|---------|-----------------|
 | **FastAPI REST** | 1 полноценный interop-контур (`/api/tasks`) + JSON parity-зеркала в ~14 роутерах | `src/web/routes/tasks.py` + `JSONResponse`-эндпоинты |
 | **Web** | 26 смонтированных роутеров, ~18 UI-страниц меню | `src/web/assembly.py` |
-| **CLI** | 25 регистраторов доменов (`server_control` даёт `stop`+`restart` → 26 top-level команд), ~209 leaf-команд | `src/cli/parser_domains/__init__.py` |
+| **CLI** | 26 top-level команд (`server_control` даёт `stop`+`restart`), ~212 leaf-команд | `src/cli/typer_commands.py` (приложение Typer `app`) |
 | **Agent-tools** | **173 tools**, **20 групп**, **75 read / 82 write / 16 delete** | `permissions.py` (`TOOL_CATEGORIES`, `MODULE_GROUPS`) |
 | **TUI** | 1 app (`AgentTuiApp`) — покрывает ровно 1 сервис («AI-агент») | `src/cli/commands/agent_tui.py` |
 
@@ -101,7 +101,7 @@
 ### Jobs (#19) — детально
 - Web: `GET /jobs` + `GET /jobs/fragments/list` (`src/web/routes/jobs.py:46-88`), бэкенд `JobsReadModel` (`src/services/jobs_read_model.py`).
 - FastAPI REST: `GET /jobs/api/list` (JSON, filterable по source/status — `jobs.py:57-66`).
-- CLI: **нет домена `jobs`** — подтверждено: в `src/cli/parser_domains/__init__.py` 25 регистраторов, `jobs` отсутствует. Косвенно видно через `scheduler status`, `dialogs queue status`, `pipeline runs`.
+- CLI: **нет домена `jobs`** — подтверждено: в приложении Typer (`src/cli/typer_commands.py`) такой top-level команды нет. Косвенно видно через `scheduler status`, `dialogs queue status`, `pipeline runs`.
 - agent: **нет прямого tool** — только косвенно `get_telegram_queue_status` (группа «Сообщения») и `get_pipeline_queue` (группа «Пайплайны»). Нет агрегированного jobs-tool.
 
 ### Providers (#22) — детально

@@ -125,15 +125,30 @@ def test_analyze_quick_skips_cross_dupe(tmp_path, cli_init_patch, capsys):
 
 
 def test_filter_analyze_parser_accepts_quick_flag():
-    """CLI parser exposes --quick on `filter analyze` (#774)."""
-    from src.cli.parser import build_parser
+    """CLI exposes --quick on `filter analyze` (#774)."""
+    from typer.testing import CliRunner
 
-    args = build_parser().parse_args(["filter", "analyze", "--quick"])
-    assert args.filter_action == "analyze"
-    assert args.quick is True
+    from src.cli.typer_app import app
 
-    args_default = build_parser().parse_args(["filter", "analyze"])
-    assert args_default.quick is False
+    runner = CliRunner()
+
+    mock_impl = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.analyze_impl", mock_impl),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result = runner.invoke(app, ["filter", "analyze", "--quick"])
+    assert result.exit_code == 0
+    assert mock_impl.call_args.kwargs["quick"] is True
+
+    mock_impl_default = MagicMock()
+    with (
+        patch("src.cli.typer_commands.filter_cmd.analyze_impl", mock_impl_default),
+        patch("src.cli.typer_commands.run_async"),
+    ):
+        result_default = runner.invoke(app, ["filter", "analyze"])
+    assert result_default.exit_code == 0
+    assert mock_impl_default.call_args.kwargs["quick"] is False
 
 
 def test_filter_apply(tmp_path, cli_init_patch, capsys):
