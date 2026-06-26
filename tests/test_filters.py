@@ -260,6 +260,20 @@ class TestAnalyzeAllQuickSampling:
         quick_802 = next(r for r in quick.results if r.channel_id == 802)
         assert "low_uniqueness" in quick_802.flags
 
+    async def test_quick_nonpositive_sample_size_falls_back_to_default(self, db, raw_db):
+        # Codex review #1138: sample_size=0 -> LIMIT 0 -> every text total is 0 ->
+        # the `if total > 0` guards suppress all flags -> a spammy channel would look
+        # clean. analyze_all must clamp non-positive sizes to the calibrated default.
+        await _insert_channel(raw_db, 805)
+        await _insert_messages(raw_db, 805, ["spam"] * 20)  # low_uniqueness in any sane window
+        analyzer = ChannelAnalyzer(db)
+
+        for bad in (0, -5):
+            report = await analyzer.analyze_all(quick=True, sample_size=bad)
+            ch = next(r for r in report.results if r.channel_id == 805)
+            assert "low_uniqueness" in ch.flags, f"sample_size={bad} silently produced a clean verdict"
+            assert ch.uniqueness_pct is not None
+
     async def test_full_analyze_never_samples(self, db, raw_db):
         # Explicit sample_size is ignored unless quick=True: full path scans all.
         await _insert_channel(raw_db, 803)
