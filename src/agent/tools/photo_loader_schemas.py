@@ -4,7 +4,7 @@ from typing import Annotated
 
 PHONE_ARG = Annotated[str, "Номер телефона аккаунта (например +79001234567)"]
 CONFIRM_ARG = Annotated[bool, "Установите true для подтверждения действия"]
-PHOTO_TARGET_ARG = Annotated[str, "ID диалога-получателя (из list_photo_dialogs или me)"]
+PHOTO_TARGET_ARG = Annotated[str, "ID диалога-получателя (из list_photo_dialogs) или 'me'/'self' для Saved Messages"]
 FILE_PATHS_ARG = Annotated[str, "Пути к файлам через запятую (серверные пути)"]
 MODE_ARG = Annotated[str, "Режим отправки: album или separate"]
 CAPTION_ARG = Annotated[str, "Подпись к фото"]
