@@ -1427,13 +1427,16 @@ class Collector:
                     stream_outcome=stream_outcome,
                 )
 
-            if stream_idle_timeout and not stop_due_to_persistence_error:
-                await _check_collected_notification_queries()
-
             if stop_due_to_persistence_error or stream_idle_timeout:
                 # Idle timeout and persistence errors both stop this pass; the
                 # finally block above already flushed any pending batch and
-                # advanced last_collected_id, so progress is never lost.
+                # advanced last_collected_id, so message data is never lost.
+                # Run the notification check for the messages that *did* persist
+                # this pass — without it their search-query matches would be
+                # lost, since last_collected_id has already advanced past them
+                # (bug-hunt umbrella #1127). The closure drains its buffer on
+                # success, so the call is idempotent and exactly-once here.
+                await _check_collected_notification_queries()
                 return total_collected + collected_count
 
             # Handle FloodWait AFTER finally has flushed progress.
