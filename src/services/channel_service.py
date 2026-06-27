@@ -187,6 +187,12 @@ class ChannelService:
         result = await TelegramActionService(self._pool).leave_dialogs(phone=phone, dialogs=dialogs)
         return result.results
 
+    async def delete_dialogs(self, phone: str, dialogs: list[tuple[int, str]]) -> dict[int, bool]:
+        from src.services.telegram_actions import TelegramActionService
+
+        result = await TelegramActionService(self._pool).delete_dialogs(phone=phone, dialogs=dialogs)
+        return result.results
+
     async def get_by_pk(self, pk: int) -> Channel | None:
         return await self._channels.get_by_pk(pk)
 

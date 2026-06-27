@@ -335,6 +335,53 @@ async def test_leave_channels_flood_breaks_loop():
 
 
 @pytest.mark.anyio
+async def test_delete_dialogs_dispatches_request_per_type():
+    """delete_dialogs picks the right TL request per dialog type:
+    channel/supergroup → DeleteChannelRequest, legacy group → DeleteChatRequest,
+    dm → delete_dialog (history clear)."""
+    from telethon.tl.functions.channels import DeleteChannelRequest
+    from telethon.tl.functions.messages import DeleteChatRequest
+
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+    invoked_requests = []
+
+    async def _get_entity(peer):
+        return MagicMock()
+
+    async def _invoke(request):
+        invoked_requests.append(request)
+
+    # The session wrapper calls ``self._client(request)`` to invoke a TL request,
+    # so the client itself must be awaitable-on-call → side_effect returns a coroutine.
+    mock_client = MagicMock(side_effect=_invoke)
+    mock_client.get_entity = _get_entity
+    mock_client.delete_dialog = AsyncMock()
+
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+    pool._db = MagicMock()
+    pool._db.repos.dialog_cache.clear_dialogs = AsyncMock()
+    pool.invalidate_dialogs_cache = MagicMock()
+
+    dialogs = [(-100111, "channel"), (-100222, "supergroup"), (333, "group"), (999, "dm")]
+    with patch("src.telegram.pool_dialogs.asyncio.sleep", AsyncMock()):
+        result = await ClientPool.delete_dialogs(pool, "+1234567890", dialogs)
+
+    assert result == {-100111: True, -100222: True, 333: True, 999: True}
+    # channel + supergroup → 2× DeleteChannelRequest; group → 1× DeleteChatRequest; dm → delete_dialog
+    channel_reqs = [r for r in invoked_requests if isinstance(r, DeleteChannelRequest)]
+    chat_reqs = [r for r in invoked_requests if isinstance(r, DeleteChatRequest)]
+    assert len(channel_reqs) == 2
+    assert len(chat_reqs) == 1
+    assert chat_reqs[0].chat_id == 333
+    mock_client.delete_dialog.assert_awaited_once()
+    pool.invalidate_dialogs_cache.assert_called_once_with("+1234567890")
+    pool._db.repos.dialog_cache.clear_dialogs.assert_awaited_once_with("+1234567890")
+
+
+@pytest.mark.anyio
 async def test_leave_dialogs_post(client):
     """POST /dialogs/leave enqueues a dialogs.leave command."""
     resp = await client.post(
