@@ -2,13 +2,14 @@ import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from telethon.errors import FloodWaitError, UsernameNotOccupiedError
 from telethon.tl.types import InputPeerChannel, PeerChannel
 
 from src.config import SchedulerConfig
+from src.database import DatabaseBusyError
 from src.models import Channel, ChannelStats, CollectionTaskStatus, Message, StatsAllTaskPayload
 from src.telegram.backends import TelegramTransportSession
 from src.telegram.collector import (
@@ -1271,6 +1272,151 @@ async def test_progress_callback_invoked_on_batch_flush(db):
     assert progress_cb.await_count == 2
     progress_cb.assert_any_await(500)
     progress_cb.assert_any_await(600)
+
+
+@pytest.mark.anyio
+async def test_collect_channel_checks_notifications_on_persistence_error(db):
+    """#1127: when a mid-pass persistence failure stops collection
+    (``stop_due_to_persistence_error`` set in ``_finalize_collection_pass``),
+    the messages that *did* persist (batch A) must still be checked against
+    notification queries before the early return. ``last_collected_id`` has
+    already advanced past them in the finally block, so skipping the check
+    would lose their matches forever.
+
+    Repro: batch A (ids 6,7) flushes successfully mid-stream and is accumulated
+    for notifications; batch B (ids 8,9) fails to persist →
+    ``stop_due_to_persistence_error`` is set. The pre-fix early-return branch
+    skipped ``_check_collected_notification_queries`` for the persisted batch.
+    """
+    ch = Channel(
+        channel_id=-100201,
+        title="Notify",
+        username="notify_ch",
+        last_collected_id=5,
+    )
+    await db.add_channel(ch)
+
+    mock_messages = [_make_mock_message(i, text=f"msg {i}") for i in range(6, 10)]
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterMessages(mock_messages))
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(delay_between_requests_sec=0),
+        notifier=MagicMock(),
+    )
+
+    real_insert = db.insert_messages_batch
+    insert_calls = {"n": 0}
+
+    async def _flaky_insert(batch):
+        # Batch A (first flush) persists; every later flush (the failing batch
+        # and its leftover retry in _finalize_collection_pass) raises a
+        # transient lock → flush returns False → stop_due_to_persistence_error.
+        insert_calls["n"] += 1
+        if insert_calls["n"] == 1:
+            return await real_insert(batch)
+        raise DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+
+    db.insert_messages_batch = _flaky_insert
+
+    with patch("src.telegram.collector.MESSAGE_FLUSH_BATCH_SIZE", 2), patch.object(
+        collector, "_check_notification_queries", new=AsyncMock()
+    ) as check_mock, patch.object(
+        collector, "_maybe_enqueue_auto_translate", new=AsyncMock()
+    ):
+        count = await collector._collect_channel(ch)
+
+    # Batch A persisted and was counted; batch B failed.
+    assert count == 2
+    # last_collected_id advanced to batch A's max — proving the next run would
+    # skip these messages via the min_id filter, so the notification check MUST
+    # run THIS pass.
+    updated = await db.get_channel_by_channel_id(ch.channel_id)
+    assert updated is not None
+    assert updated.last_collected_id == 7
+    # The notification check ran exactly once, covering the persisted batch A.
+    check_mock.assert_awaited_once()
+    checked_ids = {m.message_id for m in check_mock.await_args.args[0]}
+    assert checked_ids == {6, 7}
+
+
+@pytest.mark.anyio
+async def test_collect_channel_checks_notifications_across_flood_rotation(db):
+    """#1169: a FloodWait that rotates the channel to another account (the
+    flood-branch ``continue``) must not drop notification matches for the
+    messages that *did* persist before the flood. ``last_collected_id`` has
+    already advanced past them in the finally block, and the next pass's
+    ``min_id`` filter won't re-stream them, so the notification check must run
+    before the flood rotation resets the per-pass buffer.
+
+    Repro (Codex): incremental channel (last_collected_id=5); pass 1 yields
+    id=6 then raises FloodWait → persists 6, rotates; pass 2 yields id=7.
+    count==2, but the pre-fix flood branch discarded all_messages=[6] on the
+    ``continue``, so _check_notification_queries only ever saw {7}; id=6 was
+    lost forever (cursor already past it).
+    """
+    ch = Channel(
+        channel_id=-100172,
+        title="FloodNotify",
+        username="floodnotify",
+        last_collected_id=5,
+    )
+    ch_id = await db.add_channel(ch)
+    await db.update_channel_last_id(ch.channel_id, 5)
+    stored = await db.get_channel_by_pk(ch_id)
+    assert stored is not None
+
+    client = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
+
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(client, "+7000")))
+    collector = Collector(
+        pool,
+        db,
+        SchedulerConfig(delay_between_requests_sec=0, max_flood_wait_sec=10),
+        notifier=MagicMock(),
+    )
+
+    call_index = {"idx": 0}
+
+    def _iter_messages_factory(*_args, **_kwargs):
+        idx = call_index["idx"]
+        call_index["idx"] += 1
+        if idx == 0:
+
+            async def _generator():
+                yield _make_mock_message(6, text="msg 6")
+                raise FloodWaitError(request=None, capture=3)
+
+            return _generator()
+        return _AsyncIterMessages([_make_mock_message(7, text="msg 7")])
+
+    client.iter_messages = MagicMock(side_effect=_iter_messages_factory)
+
+    with patch.object(
+        collector, "_check_notification_queries", new=AsyncMock()
+    ) as check_mock, patch.object(
+        collector, "_maybe_enqueue_auto_translate", new=AsyncMock()
+    ):
+        count = await collector._collect_channel(stored)
+
+    assert count == 2
+    updated = await db.get_channel_by_channel_id(stored.channel_id)
+    assert updated is not None
+    assert updated.last_collected_id == 7
+    pool.report_flood.assert_awaited_once()
+    # The notification check ran once per pass, covering BOTH persisted
+    # messages — id=6 (pre-flood, pass 1) and id=7 (pass 2). Pre-fix, the
+    # flood-branch continue reset all_messages=[6] so only {7} was ever seen.
+    checked_ids = set()
+    for call in check_mock.await_args_list:
+        checked_ids.update(m.message_id for m in call.args[0])
+    assert checked_ids == {6, 7}
 
 
 @pytest.mark.anyio
