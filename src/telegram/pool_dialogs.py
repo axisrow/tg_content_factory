@@ -1344,10 +1344,16 @@ class DialogsMixin:
                         peer = PeerChannel(abs(cid))
 
                     async def _delete(peer: object = peer, ctype: str = ctype, cid: int = cid) -> None:
-                        entity = await session.resolve_entity(peer)
+                        # Resolve the entity only where it is actually needed. A legacy
+                        # group is deleted by bare chat_id (DeleteChatRequest), so a
+                        # needless resolve_entity here would fail deletion for a group
+                        # whose entity can't be resolved (migrated to supergroup, stale
+                        # entity cache).
                         if ctype == "group":
                             await session.delete_chat(abs(cid))
-                        elif ctype in ("dm", "bot", "saved"):
+                            return
+                        entity = await session.resolve_entity(peer)
+                        if ctype in ("dm", "bot", "saved"):
                             await session.remove_dialog(entity)
                         else:
                             await session.delete_channel(entity)
