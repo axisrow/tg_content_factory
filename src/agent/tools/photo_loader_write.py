@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from claude_agent_sdk import tool
@@ -31,7 +32,6 @@ from src.agent.tools.photo_loader_schemas import (
     UPDATE_AUTO_UPLOAD_SCHEMA,
 )
 from src.models import PhotoAutoUploadJob, PhotoSendMode
-from src.services import photo_task_service as photo_task_module
 from src.utils.datetime import parse_required_schedule_datetime
 
 
@@ -187,10 +187,21 @@ def register_batch_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]
             return gate
         try:
             svc = photo_task_service(db, client_pool)
-            entries = [{"file_path": file_path} for file_path in files]
+            # Entry contract matches PhotoTaskService.create_batch (reads entry["files"],
+            # a list) and the web manifest shape {"files": [...]} — a bare "file_path"
+            # key made the service see files=[] → "No files provided" (#1126). One file
+            # per entry → one item per file; send_mode is normalized by len(files).
+            # create_batch also requires "at" (schedule) per entry; default to now so the
+            # items are immediately due for run_photo_due.
+            now_iso = datetime.now(timezone.utc).isoformat()
+            entries = [{"files": [file_path], "at": now_iso} for file_path in files]
+            # Resolve 'me'/'self'/dialog-name targets like send/schedule do — a raw
+            # int(target) crashes on the documented 'me' literal (#1126), and a bare
+            # id loses target_type="saved" so Saved Messages mis-resolves to a channel.
+            photo_target = await resolve_photo_target(client_pool, phone, target)
             batch_id = await svc.create_batch(
                 phone=phone,
-                target=photo_task_module.PhotoTarget(dialog_id=int(target)),
+                target=photo_target,
                 entries=entries,
                 caption=caption,
             )
@@ -330,10 +341,16 @@ def register_auto_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
             return gate
         try:
             svc = photo_auto_upload_service(db, client_pool)
+            # Resolve 'me'/'self'/dialog-name targets like send/schedule do — a raw
+            # int(target) crashes on the documented 'me' literal (#1126), and a bare
+            # id loses target_type="saved" so Saved Messages mis-resolves to a channel.
+            pt = await resolve_photo_target(client_pool, phone, target)
             job_id = await svc.create_job(
                 PhotoAutoUploadJob(
                     phone=phone,
-                    target_dialog_id=int(target),
+                    target_dialog_id=pt.dialog_id,
+                    target_title=pt.title,
+                    target_type=pt.target_type,
                     folder_path=folder_path,
                     send_mode=PhotoSendMode(mode),
                     caption=caption,
