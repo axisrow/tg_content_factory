@@ -499,6 +499,35 @@ class TestCreatePhotoBatch:
         text = _text(result)
         assert "Батч создан" in text
 
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("alias", ["me", "self"])
+    async def test_create_batch_self_target_carries_saved_type(self, mock_db, alias):
+        """target='me'/'self' must not crash int('me'); it resolves to Saved Messages
+        with target_type='saved' so it doesn't mis-resolve to a channel (#1126)."""
+        photo_task_svc, auto_upload_svc = _make_photo_services()
+        mock_pool, _ = _make_mock_pool()
+        session = MagicMock()
+        session.fetch_me = AsyncMock(return_value=MagicMock(id=555))
+        mock_pool.get_client_by_phone = AsyncMock(return_value=(session, None))
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+
+        # Do NOT patch PhotoTarget — we want to inspect the real target fields.
+        with _photo_ctx(photo_task_svc, auto_upload_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["create_photo_batch"](
+                {
+                    "phone": "+79001234567",
+                    "target": alias,
+                    "file_paths": "a.jpg",
+                    "confirm": True,
+                }
+            )
+        assert "Батч создан" in _text(result)
+        photo_task_svc.create_batch.assert_awaited_once()
+        target = photo_task_svc.create_batch.await_args.kwargs["target"]
+        assert target.dialog_id == 555
+        assert target.target_type == "saved"
+
 
 class TestRunPhotoDue:
     @pytest.mark.anyio
@@ -622,6 +651,36 @@ class TestCreateAutoUpload:
             )
         text = _text(result)
         assert "Автозагрузка создана" in text
+
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("alias", ["me", "self"])
+    async def test_create_auto_upload_self_target_carries_saved_type(self, mock_db, alias):
+        """target='me'/'self' must not crash int('me'); the PhotoAutoUploadJob carries
+        target_type='saved' and target_dialog_id==own user-id (#1126)."""
+        photo_task_svc, auto_upload_svc = _make_photo_services()
+        mock_pool, _ = _make_mock_pool()
+        session = MagicMock()
+        session.fetch_me = AsyncMock(return_value=MagicMock(id=555))
+        mock_pool.get_client_by_phone = AsyncMock(return_value=(session, None))
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+
+        with _photo_ctx(photo_task_svc, auto_upload_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["create_auto_upload"](
+                {
+                    "phone": "+79001234567",
+                    "target": alias,
+                    "folder_path": "/photos",
+                    "interval_minutes": 30,
+                    "mode": "album",
+                    "confirm": True,
+                }
+            )
+        assert "Автозагрузка создана" in _text(result)
+        auto_upload_svc.create_job.assert_awaited_once()
+        job = auto_upload_svc.create_job.await_args.args[0]
+        assert job.target_type == "saved"
+        assert job.target_dialog_id == 555
 
 
 class TestUpdateAutoUpload:
