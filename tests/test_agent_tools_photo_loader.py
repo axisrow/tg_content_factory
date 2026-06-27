@@ -528,6 +528,48 @@ class TestCreatePhotoBatch:
         assert target.dialog_id == 555
         assert target.target_type == "saved"
 
+    @pytest.mark.anyio
+    @pytest.mark.parametrize("target", ["me", "12345"])
+    async def test_create_batch_real_service_persists_files(self, db, tmp_path, target):
+        """End-to-end against the REAL PhotoTaskService.create_batch (no service mock):
+        the handler-built entries must satisfy the service's entry['files'] contract so a
+        real .jpg is persisted with non-empty item.file_paths. Regression — an entry-key
+        mismatch made the service raise 'No files provided', which the mocked-service
+        tests silently missed (#1126)."""
+        jpg = tmp_path / "photo.jpg"
+        jpg.write_bytes(b"\xff\xd8\xff\xe0")  # JPEG SOI + APP0 magic bytes
+
+        mock_pool, _ = _make_mock_pool()
+        session = MagicMock()
+        session.fetch_me = AsyncMock(return_value=MagicMock(id=555))
+        mock_pool.get_client_by_phone = AsyncMock(return_value=(session, None))
+
+        # No _photo_ctx: the REAL PhotoTaskService + PhotoLoaderBundle back the tool.
+        handlers = _get_tool_handlers(db, client_pool=mock_pool)
+        result = await handlers["create_photo_batch"](
+            {
+                "phone": "+79001234567",
+                "target": target,
+                "file_paths": str(jpg),
+                "confirm": True,
+            }
+        )
+        text = _text(result)
+        assert "Батч создан" in text
+        assert "No files provided" not in text
+
+        # Read back through the real bundle and confirm the file was persisted.
+        from src.database.bundles import PhotoLoaderBundle
+        from src.services.photo_publish_service import PhotoPublishService
+        from src.services.photo_task_service import PhotoTaskService
+
+        readback = PhotoTaskService(
+            PhotoLoaderBundle.from_database(db), PhotoPublishService(mock_pool)
+        )
+        items = await readback.list_items(limit=10)
+        assert len(items) == 1
+        assert items[0].file_paths == [str(jpg)]
+
 
 class TestRunPhotoDue:
     @pytest.mark.anyio
