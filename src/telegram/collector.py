@@ -1427,16 +1427,19 @@ class Collector:
                     stream_outcome=stream_outcome,
                 )
 
+            # The finally block above already flushed any pending batch and
+            # advanced last_collected_id past the messages that persisted this
+            # pass. Run the notification check ONCE for them before any exit
+            # branch — the next pass's min_id filter will never re-stream them,
+            # so without this their search-query matches would be lost forever.
+            # The closure drains its buffer on success, so this is idempotent
+            # and exactly-once across every exit path below: stop/idle return
+            # (#1127/#1168), FloodWait rotation/return (#1169), normal completion.
+            await _check_collected_notification_queries()
+
             if stop_due_to_persistence_error or stream_idle_timeout:
-                # Idle timeout and persistence errors both stop this pass; the
-                # finally block above already flushed any pending batch and
-                # advanced last_collected_id, so message data is never lost.
-                # Run the notification check for the messages that *did* persist
-                # this pass — without it their search-query matches would be
-                # lost, since last_collected_id has already advanced past them
-                # (bug-hunt umbrella #1127). The closure drains its buffer on
-                # success, so the call is idempotent and exactly-once here.
-                await _check_collected_notification_queries()
+                # Idle timeout and persistence errors both stop this pass;
+                # message data is never lost (the finally flushed + advanced).
                 return total_collected + collected_count
 
             # Handle FloodWait AFTER finally has flushed progress.
@@ -1459,8 +1462,6 @@ class Collector:
                 if kind == "continue":
                     continue
                 return total_collected + collected_count
-
-            await _check_collected_notification_queries()
 
             await self._post_collection_actions(
                 channel_id,
