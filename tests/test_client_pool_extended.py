@@ -274,19 +274,35 @@ async def test_get_users_info_avatar_flood_does_not_mark_generic_account(mock_db
 
 @pytest.mark.anyio
 async def test_leave_channels_flood(mock_db, mock_auth):
+    """Transient FloodWait(5s) during leave is retried in place (#1176): the dialog
+    succeeds on the 2nd attempt and the remaining dialog is still processed (no break).
+    """
     acc = Account(phone="+7001", is_active=True, session_string="s1")
     mock_db.get_accounts.return_value = [acc]
     client = MagicMock()
     client.is_connected = MagicMock(return_value=True)
-    client.get_entity = AsyncMock(return_value=MagicMock())
-    client.delete_dialog = AsyncMock(side_effect=FloodWaitError(5))
+    client.get_input_entity = AsyncMock(return_value=MagicMock())
+    delete_calls = {"n": 0}
+
+    async def _delete_dialog(entity):
+        delete_calls["n"] += 1
+        if delete_calls["n"] == 1:
+            err = FloodWaitError(request=None, capture=0)
+            err.seconds = 5
+            raise err
+
+    client.delete_dialog = _delete_dialog
 
     pool = ClientPool(mock_auth, mock_db)
     pool.clients = {"+7001": TelegramTransportSession(client, disconnect_on_close=False)}
 
-    res = await pool.leave_channels("+7001", [(123, "channel"), (456, "channel")])
-    assert res[123] is False
-    assert res[456] is False
+    with (
+        patch("src.telegram.flood_wait.asyncio.sleep", AsyncMock()),
+        patch("src.telegram.pool_dialogs.asyncio.sleep", AsyncMock()),
+    ):
+        res = await pool.leave_channels("+7001", [(123, "channel"), (456, "channel")])
+    assert res[123] is True
+    assert res[456] is True
     mock_db.update_account_flood.assert_called_once()
 
 
