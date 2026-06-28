@@ -205,6 +205,14 @@ async def batch_create_impl(
     await _run_with_services(config_path, _body)
 
 
+async def publish_impl(config_path: str, *, batch_id: int) -> None:
+    """Publish a held photo batch into the due queue."""
+    async def _body(s: _Services) -> None:
+        published = await s.tasks.publish_batch(batch_id)
+        print(f"Published photo batch #{batch_id}: items={published}")
+    await _run_with_services(config_path, _body)
+
+
 async def batch_list_impl(config_path: str) -> None:
     """List photo batches."""
     async def _body(s: _Services) -> None:
@@ -404,6 +412,8 @@ def run(args: argparse.Namespace) -> None:
                 caption=getattr(args, "caption", None),
             )
         )
+    elif action == "publish":
+        asyncio.run(publish_impl(args.config, batch_id=args.id))
     elif action == "batch-list":
         asyncio.run(batch_list_impl(args.config))
     elif action == "items":

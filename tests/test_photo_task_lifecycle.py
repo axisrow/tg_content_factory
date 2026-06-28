@@ -58,6 +58,12 @@ async def test_sync_batch_with_pending_stays_running():
     assert status == PhotoBatchStatus.RUNNING
 
 
+@pytest.mark.anyio
+async def test_sync_batch_all_held_stays_held():
+    status = await _run_sync([PhotoBatchStatus.HELD, PhotoBatchStatus.HELD])
+    assert status == PhotoBatchStatus.HELD
+
+
 # ── 835#3: cancel_item unschedules a server-scheduled item ────────────────────
 
 

@@ -248,6 +248,7 @@
 | Отправить фото | `photo-loader send` | `POST /dialogs/photos/send` | `send_photos_now` |
 | Запланировать | `photo-loader schedule-send` | `POST /dialogs/photos/schedule` | `schedule_photos` |
 | Создать батч | `photo-loader batch-create` | `POST /dialogs/photos/batch` | `create_photo_batch` |
+| Опубликовать батч | `photo-loader publish` | `POST /dialogs/photos/batches/{id}/publish` | `publish_photo_batch` |
 | Список батчей | `photo-loader batch-list` | `GET /dialogs/photos/batches` | `list_photo_batches` |
 | Отменить батч | `photo-loader batch-cancel` | `POST /dialogs/photos/items/{id}/cancel` | `cancel_photo_item` |
 | Авто-загрузка | `photo-loader auto-create` | `POST /dialogs/photos/auto` | `create_auto_upload` |

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.models import Account
+from src.models import Account, PhotoBatchStatus
 from tests.agent_tools_helpers import _get_tool_handlers, _text
 
 
@@ -60,6 +60,7 @@ def _make_photo_services():
     photo_task_svc.schedule_send = AsyncMock(return_value=schedule_result)
     photo_task_svc.cancel_item = AsyncMock(return_value=True)
     photo_task_svc.create_batch = AsyncMock(return_value=99)
+    photo_task_svc.publish_batch = AsyncMock(return_value=1)
     photo_task_svc.run_due = AsyncMock(return_value=3)
 
     auto_upload_svc = MagicMock()
@@ -625,6 +626,7 @@ class TestCreatePhotoBatch:
         items = await readback.list_items(limit=10)
         assert len(items) == 1
         assert items[0].file_paths == [str(jpg)]
+        assert items[0].status == PhotoBatchStatus.HELD
 
     @pytest.mark.anyio
     async def test_create_batch_album_keeps_single_item(self, db, tmp_path):
@@ -663,6 +665,28 @@ class TestCreatePhotoBatch:
         assert len(items) == 1
         assert items[0].send_mode == PhotoSendMode.ALBUM
         assert set(items[0].file_paths) == set(files)
+        assert items[0].status == PhotoBatchStatus.HELD
+
+
+class TestPublishPhotoBatch:
+    @pytest.mark.anyio
+    async def test_no_confirm_returns_gate(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["publish_photo_batch"]({"batch_id": 99})
+        assert "confirm=true" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_with_confirm_publishes_batch(self, mock_db):
+        photo_task_svc, auto_upload_svc = _make_photo_services()
+        mock_pool, _ = _make_mock_pool()
+
+        with _photo_ctx(photo_task_svc, auto_upload_svc):
+            handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+            result = await handlers["publish_photo_batch"]({"batch_id": 99, "confirm": True})
+
+        text = _text(result)
+        assert "Батч опубликован" in text
+        photo_task_svc.publish_batch.assert_awaited_once_with(99)
 
 
 class TestRunPhotoDue:

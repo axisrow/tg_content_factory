@@ -21,6 +21,7 @@ from src.web.photo_loader.handlers import (
     handle_photo_loader_dialogs,
     handle_photo_loader_page,
     handle_photo_loader_refresh,
+    handle_photo_publish_batch,
     handle_photo_run_due,
     handle_photo_schedule,
     handle_photo_send,
@@ -157,6 +158,12 @@ async def photo_auto_create(
 @router.post("/run-due")
 async def photo_run_due(request: Request, phone: str = Form(""), dry_run: bool = Form(False)):
     result = await handle_photo_run_due(request, PhotoPhoneForm(phone=phone, dry_run=dry_run))
+    return photo_loader_response(request, result)
+
+
+@router.post("/batches/{batch_id}/publish")
+async def photo_publish_batch(request: Request, batch_id: int, phone: str = Form("")):
+    result = await handle_photo_publish_batch(request, batch_id, PhotoPhoneForm(phone=phone))
     return photo_loader_response(request, result)
 
 

@@ -77,6 +77,7 @@ _REQUIRED_ARGS_BY_TOOL: dict[str, frozenset[str]] = {
     "toggle_auto_upload": frozenset({"job_id"}),
     "delete_auto_upload": frozenset({"job_id"}),
     "create_photo_batch": frozenset({"target", "file_paths"}),
+    "publish_photo_batch": frozenset({"batch_id"}),
     "create_auto_upload": frozenset({"target", "folder_path"}),
     "update_auto_upload": frozenset({"job_id"}),
     "leave_dialogs": frozenset({"dialog_ids"}),

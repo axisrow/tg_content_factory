@@ -152,6 +152,25 @@ class PhotoLoaderRepository:
             tuple(params),
         )
 
+    async def publish_batch(self, batch_id: int) -> int:
+        """Move HELD items in a batch into the PENDING queue; return affected rows."""
+        cur = await self._database.execute_write(
+            """
+            UPDATE photo_batch_items
+            SET status = ?, error = NULL
+            WHERE batch_id = ? AND status = ?
+            """,
+            (
+                PhotoBatchStatus.PENDING.value,
+                batch_id,
+                PhotoBatchStatus.HELD.value,
+            ),
+        )
+        count = cur.rowcount or 0
+        if count:
+            await self.update_batch(batch_id, status=PhotoBatchStatus.PENDING, error="")
+        return count
+
     async def get_batch(self, batch_id: int) -> PhotoBatch | None:
         """Один батч по id, либо ``None``."""
         cur = await self._db.execute("SELECT * FROM photo_batches WHERE id = ?", (batch_id,))
@@ -253,17 +272,18 @@ class PhotoLoaderRepository:
         )
 
     async def cancel_item(self, item_id: int) -> bool:
-        """Отменить ещё не завершённый элемент (pending/scheduled/running); вернуть ``True``, если отменили."""
+        """Отменить ещё не завершённый элемент (held/pending/scheduled/running); вернуть ``True``, если отменили."""
         cur = await self._database.execute_write(
             """
             UPDATE photo_batch_items
             SET status = ?, completed_at = ?
-            WHERE id = ? AND status IN (?, ?, ?)
+            WHERE id = ? AND status IN (?, ?, ?, ?)
             """,
             (
                 PhotoBatchStatus.CANCELLED.value,
                 datetime.now(timezone.utc).isoformat(),
                 item_id,
+                PhotoBatchStatus.HELD.value,
                 PhotoBatchStatus.PENDING.value,
                 PhotoBatchStatus.SCHEDULED.value,
                 PhotoBatchStatus.RUNNING.value,
