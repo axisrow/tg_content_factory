@@ -187,14 +187,14 @@ def register_batch_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]
             return gate
         try:
             svc = photo_task_service(db, client_pool)
-            # Entry contract matches PhotoTaskService.create_batch (reads entry["files"],
-            # a list) and the web manifest shape {"files": [...]} — a bare "file_path"
-            # key made the service see files=[] → "No files provided" (#1126). One file
-            # per entry → one item per file; send_mode is normalized by len(files).
-            # create_batch also requires "at" (schedule) per entry; default to now so the
-            # items are immediately due for run_photo_due.
+            # All files in ONE entry so normalize_mode sees len(files)>1 and keeps
+            # ALBUM. Splitting one-entry-per-file downgrades ALBUM→SEPARATE because
+            # each entry has len==1 (#1180). The entry contract matches
+            # PhotoTaskService.create_batch (reads entry["files"], a list) and the
+            # web manifest shape {"files": [...]} (#1126). "at" (schedule) defaults
+            # to now so the items are immediately due for run_photo_due.
             now_iso = datetime.now(timezone.utc).isoformat()
-            entries = [{"files": [file_path], "at": now_iso} for file_path in files]
+            entries = [{"files": files, "at": now_iso}]
             # Resolve 'me'/'self'/dialog-name targets like send/schedule do — a raw
             # int(target) crashes on the documented 'me' literal (#1126), and a bare
             # id loses target_type="saved" so Saved Messages mis-resolves to a channel.
