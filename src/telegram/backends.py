@@ -532,6 +532,18 @@ class TelegramTransportSession:
     async def remove_dialog(self, entity: Any) -> None:
         await self._run("telegram_remove_dialog", self._client.delete_dialog(entity))
 
+    async def delete_channel(self, entity: Any) -> None:
+        """Permanently delete a channel/supergroup (only the creator may do this)."""
+        from telethon.tl.functions.channels import DeleteChannelRequest
+
+        await self.invoke_request(DeleteChannelRequest(channel=entity))
+
+    async def delete_chat(self, chat_id: int) -> None:
+        """Permanently delete a legacy small group."""
+        from telethon.tl.functions.messages import DeleteChatRequest
+
+        await self.invoke_request(DeleteChatRequest(chat_id=chat_id))
+
     async def invoke_request(self, request: Any) -> Any:
         return await self._run("telegram_invoke_request", self._client(request))
 

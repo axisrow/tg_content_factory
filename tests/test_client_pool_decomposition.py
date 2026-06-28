@@ -52,6 +52,7 @@ PUBLIC_CONTRACT: frozenset[str] = frozenset(
         "get_dialogs",
         "get_forum_topics",
         "leave_channels",
+        "delete_dialogs",
         # lifecycle / acquisition
         "initialize",
         "add_client",

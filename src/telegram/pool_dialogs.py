@@ -1311,6 +1311,77 @@ class DialogsMixin:
         await self._db.repos.dialog_cache.clear_dialogs(phone)
         return outcomes
 
+    async def delete_dialogs(self, phone: str, dialogs: list[tuple[int, str]]) -> dict[int, bool]:
+        """Fully delete a list of dialogs for the given account.
+
+        Unlike ``leave_channels`` (which only drops the dialog from the account's
+        list — a no-op for the *owner* of a channel/supergroup, the entity keeps
+        existing), this deletes whatever Telethon allows for each type:
+
+        * channel/supergroup/gigagroup/forum → ``channels.DeleteChannelRequest``
+          (full destruction; only the creator may do this)
+        * legacy small group → ``messages.DeleteChatRequest``
+        * dm/bot/saved → ``delete_dialog`` (clears the conversation history)
+
+        dialogs: list of (channel_id, channel_type) as produced by
+        ``get_dialogs_for_phone``.
+        """
+        result = await self.get_client_by_phone(phone)
+        if not result:
+            return {cid: False for cid, _ in dialogs}
+        session, phone = result
+        session = adapt_transport_session(session, disconnect_on_close=False)
+        outcomes: dict[int, bool] = {}
+        try:
+            for cid, ctype in dialogs:
+                try:
+                    if ctype in ("dm", "bot", "saved"):
+                        peer: object = PeerUser(cid)
+                    elif ctype == "group":
+                        # Legacy small groups are PeerChat, not PeerChannel.
+                        peer = PeerChat(abs(cid))
+                    else:
+                        peer = PeerChannel(abs(cid))
+
+                    async def _delete(peer: object = peer, ctype: str = ctype, cid: int = cid) -> None:
+                        # Resolve the entity only where it is actually needed. A legacy
+                        # group is deleted by bare chat_id (DeleteChatRequest), so a
+                        # needless resolve_entity here would fail deletion for a group
+                        # whose entity can't be resolved (migrated to supergroup, stale
+                        # entity cache).
+                        if ctype == "group":
+                            await session.delete_chat(abs(cid))
+                            return
+                        entity = await session.resolve_entity(peer)
+                        if ctype in ("dm", "bot", "saved"):
+                            await session.remove_dialog(entity)
+                        else:
+                            await session.delete_channel(entity)
+
+                    await run_with_flood_wait(
+                        _delete(),
+                        operation=f"delete_dialogs:{cid}",
+                        phone=phone,
+                        pool=self,
+                        logger_=logger,
+                    )
+                    outcomes[cid] = True
+                    await asyncio.sleep(0.3)
+                except HandledFloodWaitError:
+                    outcomes[cid] = False
+                    for remaining_cid, _ in dialogs:
+                        if remaining_cid not in outcomes:
+                            outcomes[remaining_cid] = False
+                    break
+                except Exception as e:
+                    logger.warning("delete_dialogs: failed for %d: %s", cid, e)
+                    outcomes[cid] = False
+        finally:
+            await self.release_client(phone)
+        self.invalidate_dialogs_cache(phone)
+        await self._db.repos.dialog_cache.clear_dialogs(phone)
+        return outcomes
+
     async def get_forum_topics(self, channel_id: int) -> list[dict]:
         """Fetch forum topics for a forum-type channel.
 

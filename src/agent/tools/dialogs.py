@@ -44,6 +44,7 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
         "search_dialogs": ToolMeta(ToolCategory.READ, phone_bound=True),
         "refresh_dialogs": ToolMeta(ToolCategory.WRITE, phone_bound=True),
         "leave_dialogs": ToolMeta(ToolCategory.DELETE, phone_bound=True),
+        "delete_dialogs": ToolMeta(ToolCategory.DELETE, phone_bound=True),
         "join_channel": ToolMeta(ToolCategory.WRITE, phone_bound=True),
         "join_chat": ToolMeta(ToolCategory.WRITE, phone_bound=True),
         "subscribe_channel": ToolMeta(ToolCategory.WRITE, phone_bound=True),
@@ -257,6 +258,59 @@ def register(db, client_pool, embedding_service, **kwargs):
             return _text_response(f"Ошибка выхода из диалогов: {e}")
 
     tools.append(leave_dialogs)
+
+    @tool(
+        "delete_dialogs",
+        "⚠️ DANGEROUS & IRREVERSIBLE: Permanently DELETE Telegram channels/groups you own "
+        "(DeleteChannel/DeleteChat), not just leave them. dialog_ids = comma-separated Telegram "
+        "chat IDs (get from search_dialogs). Only the creator can delete; this destroys the "
+        "entity for all members. Always ask user for confirmation first.",
+        {
+            "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],
+            "dialog_ids": Annotated[str, "Telegram ID диалогов через запятую"],
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+        },
+        annotations=ToolAnnotations(destructiveHint=True),
+    )
+    async def delete_dialogs(args):
+        live_gate = ctx.require_live_runtime("Удаление диалогов", tool_name="delete_dialogs")
+        if live_gate:
+            return live_gate
+        phone, err = await ctx.resolve_phone(args.get("phone", ""))
+        if err:
+            return err
+        dialog_ids_str = args.get("dialog_ids", "")
+        if not dialog_ids_str:
+            return _text_response("Ошибка: dialog_ids обязателен.")
+        perm_gate = await ctx.require_phone_permission(phone, "delete_dialogs")
+        if perm_gate:
+            return perm_gate
+        gate = require_confirmation(
+            f"НАВСЕГДА удалит {len(dialog_ids_str.split(','))} диалогов на аккаунте {phone}", args
+        )
+        if gate:
+            return gate
+        try:
+            ids = [int(x.strip()) for x in dialog_ids_str.split(",") if x.strip()]
+            # Resolve per-dialog channel_type so delete_dialogs picks the right TL request
+            # (DeleteChannel/DeleteChat/delete_dialog). Unknown ids fall back to "channel"
+            # → PeerChannel, mirroring the leave path (audit #837/7).
+            from src.services.channel_service import ChannelService
+
+            my_dialogs = await ChannelService(db, client_pool, None).get_my_dialogs(phone)
+            type_map = {d["channel_id"]: d["channel_type"] for d in my_dialogs}
+            dialog_ids = [(cid, type_map.get(cid, "channel")) for cid in ids]
+            result = await TelegramActionService(client_pool).delete_dialogs(
+                phone=phone,
+                dialogs=dialog_ids,
+            )
+            return _text_response(
+                f"Удаление завершено: {result.success_count}/{len(result.results)} диалогов удалены."
+            )
+        except Exception as e:
+            return _text_response(f"Ошибка удаления диалогов: {e}")
+
+    tools.append(delete_dialogs)
 
     join_channel_schema = {
         "phone": Annotated[str, "Номер телефона аккаунта (например +79001234567)"],

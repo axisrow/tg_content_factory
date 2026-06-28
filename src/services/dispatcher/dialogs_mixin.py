@@ -44,6 +44,20 @@ else:
 logger = logging.getLogger(__name__)
 
 
+def _payload_channel_type(item: dict[str, Any]) -> str:
+    """Channel type for a leave/delete payload item.
+
+    The web form parses ``channel_ids`` as ``"id:type"`` and forwards the type
+    here. Older payloads only carried ``title``; for those (and any missing
+    type) fall back to ``"channel"`` → ``PeerChannel``, mirroring the CLI/agent
+    convention (a bare-positive id is a channel, never a user).
+    """
+    channel_type = item.get("channel_type")
+    if isinstance(channel_type, str) and channel_type:
+        return channel_type
+    return "channel"
+
+
 class DialogsCommandsMixin(_Base):
     """``dialogs.*`` command handlers and the reaction rate-limit machinery."""
 
@@ -68,9 +82,21 @@ class DialogsCommandsMixin(_Base):
 
     async def _handle_dialogs_leave(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])
-        dialogs = [(int(item["dialog_id"]), str(item["title"])) for item in payload.get("dialogs", [])]
+        dialogs = [
+            (int(item["dialog_id"]), _payload_channel_type(item))
+            for item in payload.get("dialogs", [])
+        ]
         result = await TelegramActionService(self._pool).leave_dialogs(phone=phone, dialogs=dialogs)
         return {"left": result.success_count, "failed": result.failed_count}
+
+    async def _handle_dialogs_delete(self, payload: dict[str, Any]) -> dict[str, Any]:
+        phone = str(payload["phone"])
+        dialogs = [
+            (int(item["dialog_id"]), _payload_channel_type(item))
+            for item in payload.get("dialogs", [])
+        ]
+        result = await TelegramActionService(self._pool).delete_dialogs(phone=phone, dialogs=dialogs)
+        return {"deleted": result.success_count, "failed": result.failed_count}
 
     async def _handle_dialogs_send(self, payload: dict[str, Any]) -> dict[str, Any]:
         result = await TelegramActionService(self._pool).send_message(

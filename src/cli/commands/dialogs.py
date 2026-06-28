@@ -178,6 +178,55 @@ async def _dialogs_leave(args, db, pool, *, channel_service_cls) -> None:
     print(f"\nDone: {left} left, {failed} failed.")
 
 
+async def _dialogs_delete(args, db, pool, *, channel_service_cls) -> None:
+    phone = _resolve_phone(pool, args)
+    if phone is None:
+        return
+
+    raw_ids: list[str] = []
+    for item in args.dialog_ids:
+        raw_ids.extend(part.strip() for part in item.split(",") if part.strip())
+    dialog_ids: list[int] = []
+    for raw in raw_ids:
+        try:
+            dialog_ids.append(int(raw))
+        except ValueError:
+            print(f"Invalid dialog ID: {raw!r}, skipping.")
+    if not dialog_ids:
+        print("No valid dialog IDs provided.")
+        return
+
+    svc = channel_service_cls(db, pool, None)  # type: ignore[arg-type]
+    dialogs_info = await svc.get_my_dialogs(phone)
+    type_map = {dialog["channel_id"]: dialog["channel_type"] for dialog in dialogs_info}
+    title_map = {dialog["channel_id"]: dialog["title"] for dialog in dialogs_info}
+
+    # Unknown ids fall back to "channel" -> PeerChannel (parity with leave / the
+    # agent delete_dialogs tool).
+    dialogs = [
+        (channel_id, type_map.get(channel_id, "channel"))
+        for channel_id in dialog_ids
+    ]
+
+    if not args.yes:
+        print(f"About to PERMANENTLY DELETE {len(dialogs)} dialog(s):")
+        for channel_id, channel_type in dialogs:
+            title = title_map.get(channel_id, str(channel_id))
+            print(f"  {channel_id}  {title}  ({channel_type})")
+        answer = input("This is irreversible. Continue? [y/N] ").strip().lower()
+        if answer != "y":
+            print("Aborted.")
+            return
+
+    result = await TelegramActionService(pool).delete_dialogs(phone=phone, dialogs=dialogs)
+    for channel_id, ok in result.results.items():
+        status = "deleted" if ok else "failed"
+        print(f"  {channel_id}: {status}")
+    deleted = result.success_count
+    failed = result.failed_count
+    print(f"\nDone: {deleted} deleted, {failed} failed.")
+
+
 async def _dialogs_join(args, db, pool) -> None:
     phone = _resolve_phone(pool, args)
     if phone is None:
@@ -800,6 +849,7 @@ _DIALOGS_HANDLERS = {
     "list": (_dialogs_list, True),
     "resolve": (_dialogs_resolve, False),
     "leave": (_dialogs_leave, True),
+    "delete": (_dialogs_delete, True),
     "join": (_dialogs_join, False),
     "topics": (_dialogs_topics, False),
     "send": (_dialogs_send, False),

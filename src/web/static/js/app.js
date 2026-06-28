@@ -328,11 +328,15 @@
     document.addEventListener('submit', async function(e) {
         var form = e.target;
         if (form._confirming || form._confirmPending) return;
+        var submitter = e.submitter;
         var reassignRaw = form.dataset && form.dataset.notifyReassign;
-        var msg = form.dataset && form.dataset.confirm;
+        // Prefer the clicked submitter's data-confirm over the form's, so a button
+        // with its own confirmation (e.g. an irreversible delete via formaction) shows
+        // ITS prompt instead of the form's softer one.
+        var msg = (submitter && submitter.dataset && submitter.dataset.confirm)
+            || (form.dataset && form.dataset.confirm);
         if (!reassignRaw && !msg) return;
         e.preventDefault();
-        var submitter = e.submitter;
         form._confirmPending = true;
         try {
             if (reassignRaw) {

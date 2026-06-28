@@ -198,6 +198,7 @@
 | `search_dialogs` | READ | Поиск диалогов по названию (search, type, limit) |
 | `refresh_dialogs` | WRITE | Обновить кеш |
 | `leave_dialogs` | DELETE | Покинуть диалоги |
+| `delete_dialogs` | DELETE | Удалить диалоги навсегда (DeleteChannel/DeleteChat) |
 | `join_channel` | WRITE | Подписаться/вступить в канал или группу |
 | `join_chat` | WRITE | Alias: вступить в группу/чат |
 | `subscribe_channel` | WRITE | Alias: подписаться на канал |

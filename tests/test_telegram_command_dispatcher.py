@@ -401,6 +401,25 @@ async def test_dialogs_leave():
     assert r["failed"] == 1
 
 
+async def test_dialogs_delete():
+    pool = _mock_pool()
+    pool.delete_dialogs = AsyncMock(return_value={-100: True, -200: False})
+    d = _dispatcher(pool=pool)
+    r = await d._handle_dialogs_delete({
+        "phone": "+1",
+        "dialogs": [
+            {"dialog_id": -100, "channel_type": "channel"},
+            {"dialog_id": -200, "channel_type": "supergroup"},
+        ],
+    })
+    assert r["deleted"] == 1
+    assert r["failed"] == 1
+    # channel_type must be forwarded verbatim (not dropped like the old leave title bug)
+    pool.delete_dialogs.assert_awaited_once_with(
+        "+1", [(-100, "channel"), (-200, "supergroup")]
+    )
+
+
 async def test_dialogs_send():
     pool = _mock_pool()
     c = _client_mock()

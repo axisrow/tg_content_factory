@@ -23,6 +23,7 @@ def _mock_pool():
          "channel_type": "channel", "already_added": False},
     ])
     pool.leave_channels = AsyncMock(return_value={100111: True})
+    pool.delete_dialogs = AsyncMock(return_value={100111: True})
     return pool
 
 
@@ -116,6 +117,19 @@ def test_cli_dialogs_leave(cli_db, capsys):
     )
     out = capsys.readouterr().out
     assert "left" in out
+
+
+def test_cli_dialogs_delete(cli_db, capsys):
+    """Test `dialogs delete` with auto-confirm."""
+    pool = _mock_pool()
+    _run(
+        _ns(dialogs_action="delete", phone="+1234567890",
+            dialog_ids=["100111"], yes=True),
+        pool, cli_db,
+    )
+    out = capsys.readouterr().out
+    assert "deleted" in out
+    pool.delete_dialogs.assert_awaited_once()
 
 
 def test_cli_dialogs_join(cli_db, capsys):

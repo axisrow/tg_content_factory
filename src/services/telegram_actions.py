@@ -176,6 +176,20 @@ class LeaveDialogsResult:
         return len(self.results) - self.success_count
 
 
+@dataclass(frozen=True)
+class DeleteDialogsResult:
+    phone: str
+    results: dict[Any, bool]
+
+    @property
+    def success_count(self) -> int:
+        return sum(1 for value in self.results.values() if value)
+
+    @property
+    def failed_count(self) -> int:
+        return len(self.results) - self.success_count
+
+
 class TelegramActionService:
     """Typed facade for Telegram-side business actions.
 
@@ -740,6 +754,22 @@ class TelegramActionService:
         if inspect.isawaitable(results):
             results = await results
         return LeaveDialogsResult(phone=phone, results=dict(results))
+
+    async def delete_dialogs(
+        self,
+        *,
+        phone: str,
+        dialogs: list[tuple[int, str]],
+    ) -> DeleteDialogsResult:
+        delete_dialogs = getattr(self._pool, "delete_dialogs", None)
+        if delete_dialogs is None:
+            raise TelegramActionClientUnavailableError(
+                "client pool does not implement delete_dialogs"
+            )
+        results = delete_dialogs(phone, dialogs)
+        if inspect.isawaitable(results):
+            results = await results
+        return DeleteDialogsResult(phone=phone, results=dict(results))
 
     async def create_channel(
         self,

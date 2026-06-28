@@ -1243,6 +1243,17 @@ def dialogs_leave(
     _run_dialogs(ctx, "leave", dialog_ids=dialog_ids, phone=phone, yes=yes)
 
 
+@dialogs_app.command("delete", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_delete(
+    ctx: typer.Context,
+    dialog_ids: list[str] = typer.Argument(..., help="Dialog IDs to delete (space- or comma-separated)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Permanently delete dialogs by ID (DeleteChannel/DeleteChat)."""
+    _run_dialogs(ctx, "delete", dialog_ids=dialog_ids, phone=phone, yes=yes)
+
+
 @dialogs_app.command("join", context_settings=_NEG_ID_POSITIONAL)
 def dialogs_join(
     ctx: typer.Context,

@@ -197,6 +197,21 @@ async def test_leave_dialogs_delegates_to_pool_leave_channels():
 
 
 @pytest.mark.anyio
+async def test_delete_dialogs_delegates_to_pool_delete_dialogs():
+    pool = MagicMock()
+    pool.delete_dialogs = AsyncMock(return_value={100: True, 200: False})
+
+    result = await TelegramActionService(pool).delete_dialogs(
+        phone="+1",
+        dialogs=[(100, "channel"), (200, "supergroup")],
+    )
+
+    assert result.success_count == 1
+    assert result.failed_count == 1
+    pool.delete_dialogs.assert_awaited_once_with("+1", [(100, "channel"), (200, "supergroup")])
+
+
+@pytest.mark.anyio
 async def test_action_service_raises_when_client_unavailable():
     pool = MagicMock()
     pool.get_native_client_by_phone = AsyncMock(return_value=None)

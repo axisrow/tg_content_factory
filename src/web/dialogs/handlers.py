@@ -14,6 +14,7 @@ from src.web.dialogs.forms import (
     CacheClearForm,
     ChatActionForm,
     CreateChannelForm,
+    DeleteDialogsForm,
     DownloadMediaForm,
     EditAdminForm,
     EditMessageForm,
@@ -167,7 +168,26 @@ async def leave_dialogs(request: Request) -> CommandRedirect:
         "dialogs.leave",
         payload={
             "phone": form.phone,
-            "dialogs": [{"dialog_id": dialog_id, "title": title} for dialog_id, title in form.dialogs],
+            "dialogs": [
+                {"dialog_id": dialog_id, "channel_type": channel_type}
+                for dialog_id, channel_type in form.dialogs
+            ],
+        },
+        phone=form.phone or None,
+    )
+
+
+async def delete_dialogs(request: Request) -> CommandRedirect:
+    form = await parse_dialog_form(request, DeleteDialogsForm)
+    return await _enqueue(
+        request,
+        "dialogs.delete",
+        payload={
+            "phone": form.phone,
+            "dialogs": [
+                {"dialog_id": dialog_id, "channel_type": channel_type}
+                for dialog_id, channel_type in form.dialogs
+            ],
         },
         phone=form.phone or None,
     )

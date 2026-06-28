@@ -215,6 +215,7 @@
 | Список диалогов | `dialogs list` | `GET /dialogs/` | `search_dialogs` |
 | Обновить кеш | `dialogs refresh` | `POST /dialogs/refresh` | `refresh_dialogs` |
 | Покинуть диалоги | `dialogs leave` | `POST /dialogs/leave` | `leave_dialogs` |
+| Удалить диалоги | `dialogs delete` | `POST /dialogs/delete` | `delete_dialogs` |
 | Подписаться/вступить | `dialogs join` | `POST /dialogs/join` | `join_channel`, `join_chat`, `subscribe_channel` |
 | Resolve entity | `dialogs resolve` | `POST /dialogs/resolve` | `resolve_entity` |
 | Статус кеша | `dialogs cache-status` | `GET /dialogs/cache-status` | `get_cache_status` |
