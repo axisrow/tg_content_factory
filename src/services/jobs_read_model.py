@@ -51,6 +51,7 @@ _TG_TERMINAL = {
     TelegramCommandStatus.CANCELLED: JobRuntimeState.CANCELLED,
 }
 _PHOTO_ITEM_STATE = {
+    PhotoBatchStatus.HELD: JobRuntimeState.PENDING,
     PhotoBatchStatus.RUNNING: JobRuntimeState.RUNNING,
     PhotoBatchStatus.PENDING: JobRuntimeState.PENDING,
     PhotoBatchStatus.SCHEDULED: JobRuntimeState.SCHEDULED,

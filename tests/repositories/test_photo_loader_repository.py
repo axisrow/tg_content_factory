@@ -133,6 +133,24 @@ async def test_cancel_item(db):
 
 
 @pytest.mark.anyio
+async def test_cancel_held_item(db):
+    repo = db.repos.photo_loader
+    bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1, status=PhotoBatchStatus.HELD))
+    iid = await repo.create_item(
+        PhotoBatchItem(
+            batch_id=bid,
+            phone="+1",
+            target_dialog_id=1,
+            file_paths=["/a"],
+            status=PhotoBatchStatus.HELD,
+        )
+    )
+    assert await repo.cancel_item(iid) is True
+    item = await repo.get_item(iid)
+    assert item.status == PhotoBatchStatus.CANCELLED
+
+
+@pytest.mark.anyio
 async def test_cancel_item_already_completed(db):
     repo = db.repos.photo_loader
     bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
@@ -154,6 +172,32 @@ async def test_claim_next_due_item(db):
     assert claimed is not None
     assert claimed.id == iid
     assert claimed.status == PhotoBatchStatus.RUNNING
+
+
+@pytest.mark.anyio
+async def test_publish_batch_makes_held_item_claimable(db):
+    repo = db.repos.photo_loader
+    bid = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1, status=PhotoBatchStatus.HELD))
+    iid = await repo.create_item(
+        PhotoBatchItem(
+            batch_id=bid,
+            phone="+1",
+            target_dialog_id=1,
+            file_paths=["/a"],
+            status=PhotoBatchStatus.HELD,
+        )
+    )
+    now = datetime.now(timezone.utc)
+
+    assert await repo.claim_next_due_item(now) is None
+    assert await repo.publish_batch(bid) == 1
+
+    claimed = await repo.claim_next_due_item(now)
+    assert claimed is not None
+    assert claimed.id == iid
+    assert claimed.status == PhotoBatchStatus.RUNNING
+    batch = await repo.get_batch(bid)
+    assert batch.status == PhotoBatchStatus.PENDING
 
 
 @pytest.mark.anyio
