@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from src.models import Channel
 
 
@@ -363,6 +365,67 @@ async def test_reset_all_filters_empty(channels_repo):
     """Test resetting filters when no channels exist."""
     count = await channels_repo.reset_all_filters()
     assert count == 0
+
+
+# commit=False write-lock invariant (#569 / #1182).
+#
+# The three bulk filter methods expose a ``commit=False`` branch that writes
+# directly on ``self._database.db``, bypassing ``execute_write``/``transaction``
+# (which hold the connection-wide ``_write_lock``). That branch is only safe
+# when the caller already owns an open ``Database.transaction()`` block (so the
+# lock is held transitively). The repository now asserts that invariant itself:
+# calling ``commit=False`` *outside* a transaction must fail loudly instead of
+# silently reintroducing the #569 race.
+
+
+async def test_set_filtered_bulk_commit_false_requires_transaction(channels_repo):
+    """commit=False outside a transaction must assert (write-lock invariant #569)."""
+    with pytest.raises(AssertionError):
+        await channels_repo.set_filtered_bulk([(1, "spam")], commit=False)
+
+
+async def test_reset_all_filters_commit_false_requires_transaction(channels_repo):
+    """commit=False outside a transaction must assert (write-lock invariant #569)."""
+    with pytest.raises(AssertionError):
+        await channels_repo.reset_all_filters(commit=False)
+
+
+async def test_reset_filters_for_pks_commit_false_requires_transaction(channels_repo):
+    """commit=False outside a transaction must assert (write-lock invariant #569)."""
+    with pytest.raises(AssertionError):
+        await channels_repo.reset_filters_for_pks([1], commit=False)
+
+
+async def test_set_filtered_bulk_commit_false_inside_transaction_ok(channels_repo):
+    """commit=False inside a caller-owned transaction() is the supported path (analyzer.py)."""
+    await channels_repo.add_channel(make_channel(1))
+    async with channels_repo._database.transaction():
+        count = await channels_repo.set_filtered_bulk([(1, "low_uniqueness")], commit=False)
+    assert count == 1
+    channel = await channels_repo.get_channel_by_channel_id(1)
+    assert channel.is_filtered is True
+    assert channel.filter_flags == "low_uniqueness"
+
+
+async def test_reset_all_filters_commit_false_inside_transaction_ok(channels_repo):
+    """commit=False inside a caller-owned transaction() is the supported path (analyzer.py)."""
+    await channels_repo.add_channel(make_channel(1))
+    await channels_repo.set_channel_filtered(
+        (await channels_repo.get_channels())[0].id, True
+    )
+    async with channels_repo._database.transaction():
+        count = await channels_repo.reset_all_filters(commit=False)
+    assert count == 1
+
+
+async def test_reset_filters_for_pks_commit_false_inside_transaction_ok(channels_repo):
+    """commit=False inside a caller-owned transaction() is the supported path (analyzer.py)."""
+    await channels_repo.add_channel(make_channel(1))
+    pk = (await channels_repo.get_channels())[0].id
+    await channels_repo.set_channel_filtered(pk, True)
+    async with channels_repo._database.transaction():
+        count = await channels_repo.reset_filters_for_pks([pk], commit=False)
+    assert count == 1
 
 
 # update_channel_meta tests

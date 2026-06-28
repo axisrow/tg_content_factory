@@ -282,6 +282,15 @@ class ChannelsRepository:
                         updated_rows += rowcount
             return updated_rows
         assert self._database is not None
+        # Enforce the #569 invariant: the only safe caller is one that already
+        # owns a Database.transaction() block (holding _write_lock transitively).
+        # Without this guard a future commit=False caller outside any transaction
+        # would write through the shared connection with no lock and resurrect the
+        # race that execute_write/transaction exist to close (#1182).
+        assert self._database.db.in_transaction, (
+            "ChannelsRepository.set_filtered_bulk(commit=False) must run inside a "
+            "caller-owned Database.transaction() block (write-lock invariant #569)"
+        )
         updated_rows = 0
         for channel_id, flags_csv in updates:
             cur = await self._database.db.execute(
@@ -307,6 +316,11 @@ class ChannelsRepository:
             return rowcount if rowcount > 0 else 0
         # commit=False: write on the caller's open write transaction (see set_filtered_bulk).
         assert self._database is not None
+        # Enforce the #569 invariant — see set_filtered_bulk(commit=False) (#1182).
+        assert self._database.db.in_transaction, (
+            "ChannelsRepository.reset_all_filters(commit=False) must run inside a "
+            "caller-owned Database.transaction() block (write-lock invariant #569)"
+        )
         cur = await self._database.db.execute("UPDATE channels SET is_filtered = 0, filter_flags = ''")
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         return rowcount if rowcount > 0 else 0
@@ -330,6 +344,11 @@ class ChannelsRepository:
             return rowcount if rowcount > 0 else 0
         # commit=False: write on the caller's open write transaction (see set_filtered_bulk).
         assert self._database is not None
+        # Enforce the #569 invariant — see set_filtered_bulk(commit=False) (#1182).
+        assert self._database.db.in_transaction, (
+            "ChannelsRepository.reset_filters_for_pks(commit=False) must run inside a "
+            "caller-owned Database.transaction() block (write-lock invariant #569)"
+        )
         cur = await self._database.db.execute(sql, tuple(pks))
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         return rowcount if rowcount > 0 else 0
