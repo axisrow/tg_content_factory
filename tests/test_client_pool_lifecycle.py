@@ -71,6 +71,123 @@ async def test_release_client_falls_back_to_lifo_without_native_lease():
     pool._backend_router.release.assert_not_awaited()
 
 
+def _pool_with_in_use(in_use: set[str]) -> ClientPool:
+    """A bare pool whose _in_use is a real, observable set (shared with the
+    lease pool in production). The #1181 race is about the visibility of this
+    set's exclusive marker, so the tests must poke the real object."""
+    pool = ClientPool.__new__(ClientPool)
+    pool._lock = asyncio.Lock()
+    pool._in_use = in_use
+    pool._active_leases = {}
+    pool._lease_pool = MagicMock()
+    pool._lease_pool.release = AsyncMock()
+    pool._backend_router = MagicMock()
+    pool._backend_router.release = AsyncMock()
+    return pool
+
+
+@pytest.mark.anyio
+async def test_release_client_discards_in_use_under_client_pool_lock():
+    """#1181 regression: the exclusive _in_use marker must be discarded in the
+    SAME ClientPool._lock critical section that pops the _active_leases stack.
+    Previously release_client released ClientPool._lock, THEN called
+    _lease_pool.release (which takes AccountLeasePool._lock to discard) — an
+    await window in which a concurrent _acquire_phone_lease could observe the
+    stale marker, grab a shared lease, and let a later caller take exclusive
+    after the discard: shared+exclusive on one session.
+
+    Pins the fix by asserting ClientPool._lock is still held at the moment
+    _lease_pool.release runs (no window), and that the pop has already emptied
+    the stack by then (pop -> discard ordering under one lock)."""
+    pool = _pool_with_in_use(in_use={"+7"})
+    lease = SimpleNamespace(disconnect_on_release=False)
+    pool._active_leases["+7"] = [lease]
+
+    observed: dict[str, object] = {}
+
+    async def _spy_release(phone):
+        # _lease_pool.release performs _in_use.discard under AccountLeasePool._lock.
+        # For the race window to be closed it must ALSO run under ClientPool._lock.
+        observed["client_lock_held"] = pool._lock.locked()
+        observed["active_leases_snapshot"] = {k: list(v) for k, v in pool._active_leases.items()}
+        observed["in_use_snapshot"] = set(pool._in_use)
+        # Mirror the real AccountLeasePool.release: drop the marker here.
+        pool._in_use.discard(phone)
+
+    pool._lease_pool.release = _spy_release
+
+    await pool.release_client("+7")
+
+    # The discard ran while ClientPool._lock was held (old bug: False here).
+    assert observed["client_lock_held"] is True, (
+        "_in_use.discard ran outside ClientPool._lock — pop/discard window reopened (#1181)"
+    )
+    # The pop already emptied the stack before the discard ran (no reordering).
+    assert observed["active_leases_snapshot"] == {}
+    # _in_use still holds the marker at the instant release is entered (discard
+    # happens inside _lease_pool.release, after this snapshot).
+    assert observed["in_use_snapshot"] == {"+7"}
+    # After release_client returns, both the stack and the marker are gone.
+    assert "+7" not in pool._active_leases
+    assert "+7" not in pool._in_use
+
+
+@pytest.mark.anyio
+async def test_release_client_skips_discard_under_lock_when_stack_remains():
+    """#1181: when the popped lease leaves remaining leases on the stack, the
+    phone is still exclusively held, so _in_use must NOT be discarded — and the
+    decision still happens under ClientPool._lock (atomic with the pop)."""
+    pool = _pool_with_in_use(in_use={"+7"})
+    kept = SimpleNamespace(disconnect_on_release=False)
+    top = SimpleNamespace(disconnect_on_release=False)
+    pool._active_leases["+7"] = [kept, top]
+
+    await pool.release_client("+7")
+
+    pool._lease_pool.release.assert_not_awaited()
+    assert pool._active_leases["+7"] == [kept]
+    assert pool._in_use == {"+7"}, "marker must survive while leases remain on the stack"
+
+
+@pytest.mark.anyio
+async def test_release_client_no_await_window_between_pop_and_discard():
+    """#1181 contract (the issue's minimum bar): there is no scheduling point
+    between popping _active_leases and discarding the _in_use marker. Spies
+    _lease_pool.release (the call that owns the discard under
+    AccountLeasePool._lock in production) and records ClientPool._lock state at
+    the exact moment of discard. With the fix the only await between pop and
+    discard is _lease_pool.release itself, executed while ClientPool._lock is
+    held — so no concurrent acquirer can interleave.
+
+    Regression guard: on the pre-fix code _lease_pool.release ran AFTER
+    ClientPool._lock was released, so the snapshot here would catch the lock
+    FREE mid-discard."""
+    in_use: set[str] = {"+7"}
+    pool = _pool_with_in_use(in_use=in_use)
+    lease = SimpleNamespace(disconnect_on_release=False)
+    pool._active_leases["+7"] = [lease]
+
+    # Stand in for AccountLeasePool.release: it owns the discard under its own
+    # lock; we record the ClientPool._lock state at the exact moment of discard.
+    timeline: list[tuple[str, bool]] = []
+
+    async def _discard_under_lease_lock(phone):
+        timeline.append(("discard", pool._lock.locked()))
+        # Mirror the real AccountLeasePool.release: drop the marker here.
+        pool._in_use.discard(phone)
+
+    pool._lease_pool.release = _discard_under_lease_lock
+
+    await pool.release_client("+7")
+
+    assert timeline == [("discard", True)], (
+        "_in_use.discard did not run under ClientPool._lock — the pop/discard "
+        "window is open, allowing shared+exclusive on one session (#1181)"
+    )
+    assert in_use == set()
+    assert "+7" not in pool._active_leases
+
+
 @pytest.mark.anyio
 async def test_disconnect_all_cancels_background_tasks():
     """Warm/refresh background tasks must be cancelled on teardown (audit #836/11)."""
