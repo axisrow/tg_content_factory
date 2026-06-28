@@ -30,6 +30,9 @@ def mock_db():
 @pytest.fixture
 def mock_pool():
     pool = MagicMock()
+    # resolve_entity (#1187) and resolve_photo_target (#1179) release the lease
+    # they acquire; mock pools that flow through them need an awaitable release.
+    pool.release_client = AsyncMock()
     return pool
 
 
