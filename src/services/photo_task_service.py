@@ -349,7 +349,9 @@ class PhotoTaskService:
                 return 0
             await self._run_claimed_item(item)
             if on_progress is not None:
-                on_progress(1, due_total)
+                # A claimed single item counts as 1 even if count_due_items saw 0
+                # (e.g. claimed by id before its schedule_at) — avoid "[1/0]".
+                on_progress(1, max(due_total, 1))
             return 1
 
         total = min(due_total, max(limit, 0))
@@ -361,7 +363,9 @@ class PhotoTaskService:
             processed += 1
             await self._run_claimed_item(item)
             if on_progress is not None:
-                on_progress(processed, total)
+                # An item can pass its schedule_at mid-run and be claimed beyond
+                # the pre-loop snapshot — never show progress over the total.
+                on_progress(processed, max(total, processed))
         return processed
 
     async def _run_claimed_item(self, item: PhotoBatchItem) -> None:
