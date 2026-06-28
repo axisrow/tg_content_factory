@@ -52,6 +52,7 @@ from src.telegram.flood_wait import (
     HandledFloodWaitError,
     is_blocking_flood_wait_until,
     run_with_flood_wait,
+    run_with_flood_wait_retry,
 )
 from src.telegram.utils import normalize_utc
 
@@ -1266,6 +1267,13 @@ class DialogsMixin:
 
         dialogs: list of (channel_id, channel_type) where channel_type comes from
         get_dialogs_for_phone (e.g. "channel", "supergroup", "dm", "bot").
+
+        Each dialog is resolved through ``resolve_entity_with_warm`` (warms the
+        cold StringSession entity cache on a cache miss — #1176) and the whole
+        leave step runs under ``run_with_flood_wait_retry``: a transient flood
+        (≤60s) is awaited and retried in place. A *blocking* flood is no longer a
+        ``break`` — the current dialog is marked failed/deferred and the loop keeps
+        going so the remaining dialogs still get a chance (#1176).
         """
         result = await self.get_client_by_phone(phone)
         if not result:
@@ -1283,12 +1291,21 @@ class DialogsMixin:
                         peer = PeerChat(abs(cid))
                     else:
                         peer = PeerChannel(abs(cid))
-                    async def _remove_dialog() -> None:
-                        entity = await session.resolve_entity(peer)
+
+                    async def _remove_dialog(
+                        peer: object = peer, cid: int = cid
+                    ) -> None:
+                        entity = await self.resolve_entity_with_warm(
+                            session,
+                            phone,
+                            peer,
+                            operation=f"leave_channels:{cid}",
+                            use_input_entity=True,
+                        )
                         await session.remove_dialog(entity)
 
-                    await run_with_flood_wait(
-                        _remove_dialog(),
+                    await run_with_flood_wait_retry(
+                        _remove_dialog,
                         operation=f"leave_channels:{cid}",
                         phone=phone,
                         pool=self,
@@ -1297,11 +1314,11 @@ class DialogsMixin:
                     outcomes[cid] = True
                     await asyncio.sleep(0.3)
                 except HandledFloodWaitError:
+                    # Blocking flood (>60s) — defer THIS dialog, keep going (#1176).
+                    logger.warning(
+                        "leave_channels: blocking flood on %d, deferring", cid
+                    )
                     outcomes[cid] = False
-                    for remaining_cid, _ in dialogs:
-                        if remaining_cid not in outcomes:
-                            outcomes[remaining_cid] = False
-                    break
                 except Exception as e:
                     logger.warning("leave_channels: failed for %d: %s", cid, e)
                     outcomes[cid] = False
@@ -1352,14 +1369,20 @@ class DialogsMixin:
                         if ctype == "group":
                             await session.delete_chat(abs(cid))
                             return
-                        entity = await session.resolve_entity(peer)
+                        entity = await self.resolve_entity_with_warm(
+                            session,
+                            phone,
+                            peer,
+                            operation=f"delete_dialogs:{cid}",
+                            use_input_entity=True,
+                        )
                         if ctype in ("dm", "bot", "saved"):
                             await session.remove_dialog(entity)
                         else:
                             await session.delete_channel(entity)
 
-                    await run_with_flood_wait(
-                        _delete(),
+                    await run_with_flood_wait_retry(
+                        _delete,
                         operation=f"delete_dialogs:{cid}",
                         phone=phone,
                         pool=self,
@@ -1368,11 +1391,11 @@ class DialogsMixin:
                     outcomes[cid] = True
                     await asyncio.sleep(0.3)
                 except HandledFloodWaitError:
+                    # Blocking flood (>60s) — defer THIS dialog, keep going (#1176).
+                    logger.warning(
+                        "delete_dialogs: blocking flood on %d, deferring", cid
+                    )
                     outcomes[cid] = False
-                    for remaining_cid, _ in dialogs:
-                        if remaining_cid not in outcomes:
-                            outcomes[remaining_cid] = False
-                    break
                 except Exception as e:
                     logger.warning("delete_dialogs: failed for %d: %s", cid, e)
                     outcomes[cid] = False
