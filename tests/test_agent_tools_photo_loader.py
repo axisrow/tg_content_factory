@@ -41,6 +41,7 @@ def _make_mock_pool():
     mock_pool = MagicMock()
     mock_pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, None))
     mock_pool.get_client_by_phone = AsyncMock(return_value=(mock_session, None))
+    mock_pool.release_client = AsyncMock()
     mock_pool.resolve_dialog_entity = AsyncMock(return_value=MagicMock(id=123456))
     return mock_pool, mock_client
 
@@ -82,6 +83,61 @@ def _photo_ctx(photo_task_svc, auto_upload_svc):
         patch("src.services.photo_publish_service.PhotoPublishService"),
     ):
         yield
+
+
+class TestResolvePhotoTargetLease:
+    @pytest.mark.anyio
+    async def test_self_target_releases_client_lease(self):
+        """resolve_photo_target must release the acquired client lease so the account
+        stays in exclusive collector rotation (#1179). Mirror of
+        PhotoPublishService._acquire_client_and_resolve's try/finally release."""
+        from src.agent.tools._photo_loader_runtime import resolve_photo_target
+
+        session = MagicMock()
+        session.fetch_me = AsyncMock(return_value=MagicMock(id=555))
+
+        class _LeaseTrackingPool:
+            def __init__(self):
+                self.acquired = 0
+                self.released: list[str] = []
+
+            async def get_client_by_phone(self, phone: str):
+                self.acquired += 1
+                return session, phone
+
+            async def release_client(self, phone: str) -> None:
+                self.released.append(phone)
+
+        pool = _LeaseTrackingPool()
+        target = await resolve_photo_target(pool, "+79001234567", "me")
+        assert target.dialog_id == 555
+        assert target.target_type == "saved"
+        assert pool.acquired == 1
+        assert pool.released == ["+79001234567"]
+
+    @pytest.mark.anyio
+    async def test_self_target_releases_even_on_fetch_error(self):
+        """If fetch_me raises, the lease must still be released (try/finally) (#1179)."""
+        from src.agent.tools._photo_loader_runtime import resolve_photo_target
+
+        class _BoomSession:
+            async def fetch_me(self):
+                raise RuntimeError("network down")
+
+        class _LeaseTrackingPool:
+            def __init__(self):
+                self.released: list[str] = []
+
+            async def get_client_by_phone(self, phone: str):
+                return _BoomSession(), phone
+
+            async def release_client(self, phone: str) -> None:
+                self.released.append(phone)
+
+        pool = _LeaseTrackingPool()
+        with pytest.raises(RuntimeError, match="network down"):
+            await resolve_photo_target(pool, "+79001234567", "me")
+        assert pool.released == ["+79001234567"]
 
 
 class TestListPhotoBatches:
