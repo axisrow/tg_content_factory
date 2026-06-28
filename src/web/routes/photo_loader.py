@@ -16,6 +16,7 @@ from src.web.photo_loader.forms import (
 from src.web.photo_loader.handlers import (
     handle_photo_auto_create,
     handle_photo_batch,
+    handle_photo_batch_progress,
     handle_photo_cancel_item,
     handle_photo_delete_auto,
     handle_photo_loader_dialogs,
@@ -41,6 +42,11 @@ async def photo_loader_page(request: Request, phone: str | None = None):
 @router.get("/fragments/dialogs", response_class=HTMLResponse)
 async def photo_loader_dialogs_fragment(request: Request, phone: str | None = None):
     return photo_loader_response(request, await handle_photo_loader_dialogs(request, phone))
+
+
+@router.get("/fragments/batches/{batch_id}", response_class=HTMLResponse)
+async def photo_batch_progress_fragment(request: Request, batch_id: int):
+    return photo_loader_response(request, await handle_photo_batch_progress(request, batch_id))
 
 
 @router.post("/refresh")

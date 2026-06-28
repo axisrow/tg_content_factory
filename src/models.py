@@ -952,6 +952,13 @@ class PhotoBatch(BaseModel):
     last_run_at: datetime | None = None
 
 
+class PhotoBatchView(PhotoBatch):
+    """Read-model row for photo batch tables with item-count progress attached."""
+
+    completed_items: int = 0
+    total_items: int = 0
+
+
 class PhotoBatchItem(BaseModel):
     """Элемент фото-батча: конкретный набор файлов (`file_paths`) к отправке.
 

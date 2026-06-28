@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import TypeVar
@@ -128,6 +129,38 @@ def _parse_schedule_at(value: str) -> datetime:
     from src.utils.datetime import parse_required_schedule_datetime
 
     return parse_required_schedule_datetime(value)
+
+
+def _format_eta(seconds: float) -> str:
+    if seconds <= 0:
+        return "0m"
+    minutes = int(round(seconds / 60))
+    if minutes < 1:
+        return "<1m"
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, mins = divmod(minutes, 60)
+    return f"{hours}h {mins}m" if mins else f"{hours}h"
+
+
+def _make_progress_printer(label: str) -> tuple[Callable[[int, int], None], dict[str, int]]:
+    started = time.monotonic()
+    state = {"done": 0, "total": 0}
+
+    def _progress(done: int, total: int) -> None:
+        state["done"] = done
+        state["total"] = total
+        remaining = max(total - done, 0)
+        eta = 0.0 if done <= 0 else (time.monotonic() - started) * remaining / done
+        print(f"[{done}/{total}] {label} processed  (~{_format_eta(eta)} left)")
+
+    return _progress, state
+
+
+def _print_progress_summary(label: str, processed: int, state: dict[str, int]) -> None:
+    total = state["total"] or processed
+    if total or processed:
+        print(f"Progress: {processed}/{total} {label} processed.")
 
 
 async def dialogs_impl(config_path: str, *, phone: str) -> None:
@@ -357,12 +390,16 @@ async def run_due_impl(config_path: str, *, item_id: int | None = None, dry_run:
                 for file_path in preview.files:
                     print(f"    - {file_path}")
             return
-        items = await s.tasks.run_due(item_id=item_id)
+        item_progress, item_state = _make_progress_printer("photo item")
+        items = await s.tasks.run_due(item_id=item_id, on_progress=item_progress)
+        _print_progress_summary("photo items", items, item_state)
         jobs = 0
         if item_id is None:
-            processed = await s.auto.run_due()
+            auto_progress, auto_state = _make_progress_printer("auto job")
+            processed = await s.auto.run_due(on_progress=auto_progress)
             assert isinstance(processed, int)  # non-dry-run returns a count
             jobs = processed
+            _print_progress_summary("auto jobs", jobs, auto_state)
         print(f"Processed due photo items={items} auto_jobs={jobs}")
     await _run_with_services(config_path, _body)
 
