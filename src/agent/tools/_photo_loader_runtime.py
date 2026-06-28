@@ -46,9 +46,12 @@ async def resolve_photo_target(client_pool: Any, phone: str, target: str) -> Any
     client_result = await client_pool.get_client_by_phone(phone)
     if not client_result:
         raise LookupError(f"Клиент для {phone} не найден.")
-    session, _ = client_result
-    me = await session.fetch_me()
-    return photo_task_module.PhotoTarget(dialog_id=int(me.id), title="Saved Messages", target_type="saved")
+    session, acquired_phone = client_result
+    try:
+        me = await session.fetch_me()
+        return photo_task_module.PhotoTarget(dialog_id=int(me.id), title="Saved Messages", target_type="saved")
+    finally:
+        await client_pool.release_client(acquired_phone)
 
 
 async def resolve_photo_target_id(client_pool: Any, phone: str, target: str) -> int:
