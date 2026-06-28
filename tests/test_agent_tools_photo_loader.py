@@ -570,6 +570,44 @@ class TestCreatePhotoBatch:
         assert len(items) == 1
         assert items[0].file_paths == [str(jpg)]
 
+    @pytest.mark.anyio
+    async def test_create_batch_album_keeps_single_item(self, db, tmp_path):
+        """create_photo_batch must put all files in ONE entry so normalize_mode sees
+        len(files)>1 and keeps ALBUM. Splitting one-entry-per-file makes each entry
+        have len==1 → normalize downgrades ALBUM→SEPARATE, silently degrading an
+        album into N separate single-photo messages (#1180)."""
+        from src.models import PhotoSendMode
+
+        files = []
+        for name in ("a.jpg", "b.jpg", "c.jpg"):
+            fp = tmp_path / name
+            fp.write_bytes(b"\xff\xd8\xff\xe0")
+            files.append(str(fp))
+
+        mock_pool, _ = _make_mock_pool()
+        handlers = _get_tool_handlers(db, client_pool=mock_pool)
+        result = await handlers["create_photo_batch"](
+            {
+                "phone": "+79001234567",
+                "target": "12345",
+                "file_paths": ",".join(files),
+                "confirm": True,
+            }
+        )
+        assert "Батч создан" in _text(result)
+
+        from src.database.bundles import PhotoLoaderBundle
+        from src.services.photo_publish_service import PhotoPublishService
+        from src.services.photo_task_service import PhotoTaskService
+
+        readback = PhotoTaskService(
+            PhotoLoaderBundle.from_database(db), PhotoPublishService(mock_pool)
+        )
+        items = await readback.list_items(limit=10)
+        assert len(items) == 1
+        assert items[0].send_mode == PhotoSendMode.ALBUM
+        assert set(items[0].file_paths) == set(files)
+
 
 class TestRunPhotoDue:
     @pytest.mark.anyio
