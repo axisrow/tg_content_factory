@@ -18,6 +18,41 @@ class SnapshotClientPool:
         return set(self.clients)
 
 
+class DisconnectingIterClient:
+    def __init__(self, entity, messages):
+        self.entity = entity
+        self.messages = list(messages)
+        self.disconnected = False
+
+    async def get_entity(self, cid):
+        if self.disconnected:
+            raise RuntimeError("client disconnected before get_entity")
+        return self.entity
+
+    async def disconnect(self):
+        self.disconnected = True
+
+    async def iter_messages(self, entity, **kwargs):
+        if self.disconnected:
+            raise RuntimeError("client disconnected before iter_messages")
+        for message in self.messages:
+            yield message
+
+
+class DisconnectingReleasePool:
+    def __init__(self, phone, client):
+        self.clients = {phone: object()}
+        self.client = client
+        self.release_calls = []
+
+    async def get_native_client_by_phone(self, phone):
+        return self.client, phone
+
+    async def release_client(self, phone):
+        self.release_calls.append(phone)
+        await self.client.disconnect()
+
+
 @pytest.fixture
 def mock_db():
     db = MagicMock(spec=Database)
@@ -61,8 +96,14 @@ def _setup_resolve_entity(pool, client, entity=None):
     """Configure pool to return a working client+entity pair."""
     if entity is None:
         entity = SimpleNamespace(id=100)
-    pool.get_native_client_by_phone = AsyncMock(return_value=(client, None))
-    pool.get_client_by_phone = AsyncMock(return_value=(MagicMock(), None))
+    async def _get_native(phone, **_kwargs):
+        return client, phone
+
+    async def _get_regular(phone, **_kwargs):
+        return MagicMock(), phone
+
+    pool.get_native_client_by_phone = AsyncMock(side_effect=_get_native)
+    pool.get_client_by_phone = AsyncMock(side_effect=_get_regular)
     # Non-numeric path
     client.get_entity = AsyncMock(return_value=entity)
     return entity
@@ -814,6 +855,26 @@ class TestReadMessagesTool:
         assert "Hello world" in text
         assert "1 сообщений" in text
         assert "реакции:" not in text
+
+    @pytest.mark.anyio
+    async def test_read_messages_uses_resolved_client_before_release(self, mock_db):
+        entity = SimpleNamespace(id=100)
+        msg = SimpleNamespace(id=1, sender_id=42, date=None, text="lease stays live")
+        client = DisconnectingIterClient(entity, [msg])
+        pool = DisconnectingReleasePool("+79001234567", client)
+
+        handlers = _get_tool_handlers(mock_db, client_pool=pool)
+        result = await handlers["read_messages"]({
+            "phone": "+79001234567",
+            "chat_id": "@test",
+            "limit": 10,
+        })
+
+        text = _text(result)
+        assert "lease stays live" in text
+        assert "Ошибка чтения сообщений" not in text
+        assert client.disconnected
+        assert pool.release_calls == ["+79001234567"]
 
     @pytest.mark.anyio
     async def test_with_message_reactions(self, mock_db, mock_pool):
