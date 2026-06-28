@@ -248,8 +248,8 @@ class ClientLifecycleMixin:
         disconnect-on-release one so the native client/connection is torn down
         promptly instead of lingering until an unrelated caller releases (#838/8).
         """
+        lease = None
         async with self._lock:
-            lease = None
             stack = self._active_leases.get(phone)
             if stack:
                 # Strict LIFO: release the most-recently-acquired lease for this phone.
@@ -262,9 +262,20 @@ class ClientLifecycleMixin:
                 lease = stack.pop()
                 if not stack:
                     self._active_leases.pop(phone, None)
-            should_release = not self._active_leases.get(phone)
-        if should_release:
-            await self._lease_pool.release(phone)
+            # Drop the exclusive _in_use marker in the SAME critical section that
+            # pops the lease stack, holding ClientPool._lock across the nested
+            # _lease_pool.release (which takes AccountLeasePool._lock). With both
+            # locks held there is no window in which a concurrent acquirer — the
+            # fallback in _acquire_phone_lease (ClientPool._lock) OR
+            # AccountLeasePool.acquire_by_phone (AccountLeasePool._lock) — can
+            # observe a stale exclusive marker, grab a shared lease, and then let
+            # a later caller take exclusive once this discard completes: that
+            # sequence puts shared+exclusive on one session concurrently (#1181).
+            # Lock order ClientPool._lock -> AccountLeasePool._lock has no reverse
+            # holder (AccountLeasePool never calls back into ClientPool), so the
+            # nesting cannot deadlock.
+            if not self._active_leases.get(phone):
+                await self._lease_pool.release(phone)
         if lease is not None and lease.disconnect_on_release:
             await self._backend_router.release(lease)
 
