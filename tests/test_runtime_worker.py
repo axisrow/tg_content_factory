@@ -211,6 +211,24 @@ async def test_publish_snapshots_notification_bot_cancelled_is_nonfatal(caplog):
     assert "Notification bot snapshot refresh was cancelled; continuing worker" in caplog.text
 
 
+async def test_publish_snapshots_notification_bot_timeout_is_nonfatal(caplog):
+    container = _make_container(target_state="available")
+    with patch("src.runtime.worker.NotificationService") as mock_notif_svc:
+        mock_notif = MagicMock()
+        mock_notif.get_status = AsyncMock(side_effect=asyncio.TimeoutError("bot timeout"))
+        mock_notif_svc.return_value = mock_notif
+
+        caplog.set_level("WARNING", logger="src.runtime.worker")
+        await _publish_snapshots(container)
+
+    calls = container.db.repos.runtime_snapshots.upsert_snapshot.call_args_list
+    notif_call = [c for c in calls if c[0][0].snapshot_type == "notification_target_status"][0]
+    bot_payload = notif_call[0][0].payload["bot"]
+    assert bot_payload["configured"] is False
+    assert "Notification bot snapshot timed out (network); continuing" in caplog.text
+    assert "Traceback" not in caplog.text
+
+
 async def test_publish_worker_down_snapshot_for_decrypt_failure():
     container = _make_container()
     exc = AccountSessionDecryptError(phone="+1234", status="key_mismatch")
