@@ -369,8 +369,8 @@ class ClientLifecycleMixin:
         self._session_overrides.pop(phone, None)
         async with self._lock:
             leases = list(self._active_leases.pop(phone, []))
-        client = self.clients.pop(phone, None)
-        self._in_use.discard(phone)
+            client = self.clients.pop(phone, None)
+            await self._lease_pool.release(phone)
         self.reset_dialogs_warm(phone)
         self.invalidate_dialogs_cache(phone)
         self.clear_premium_flood(phone)
@@ -426,9 +426,10 @@ class ClientLifecycleMixin:
                 await asyncio.wait_for(self.remove_client(phone), timeout=5.0)
             except asyncio.TimeoutError:
                 logger.warning("Timeout disconnecting %s, forcing cleanup", phone)
-                self.clients.pop(phone, None)
-                self._in_use.discard(phone)
-                self._active_leases.pop(phone, None)
+                async with self._lock:
+                    self.clients.pop(phone, None)
+                    self._active_leases.pop(phone, None)
+                    await self._lease_pool.release(phone)
                 self.reset_dialogs_warm(phone)
             except Exception:
                 logger.debug("Error disconnecting %s", phone, exc_info=True)
@@ -534,7 +535,8 @@ class ClientLifecycleMixin:
         except Exception as exc:
             logger.error("Failed to acquire client for %s: %s", phone, exc)
             if not account_lease.shared:
-                await self._lease_pool.release(phone)
+                async with self._lock:
+                    await self._lease_pool.release(phone)
             if lease is not None and lease.disconnect_on_release:
                 try:
                     await self._backend_router.release(lease)
