@@ -213,6 +213,8 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
             if _is_expected_shutdown_cancellation(stop_event):
                 raise
             logger.warning("Notification bot snapshot refresh was cancelled; continuing worker")
+        except asyncio.TimeoutError:
+            logger.warning("Notification bot snapshot timed out (network); continuing")
         except Exception:
             logger.warning("Failed to refresh notification bot snapshot", exc_info=True)
         else:
