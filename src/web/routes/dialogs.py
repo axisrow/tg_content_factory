@@ -64,6 +64,11 @@ async def leave_dialogs(request: Request):
     return dialog_response(request, await handlers.leave_dialogs(request))
 
 
+@router.post("/delete")
+async def delete_dialogs(request: Request):
+    return dialog_response(request, await handlers.delete_dialogs(request))
+
+
 @router.post("/send")
 async def send_message(request: Request):
     return dialog_response(request, await handle_send_message(request))

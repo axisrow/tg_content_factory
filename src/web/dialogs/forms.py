@@ -36,6 +36,20 @@ class LeaveDialogsForm(_FrozenForm):
         return parsed
 
 
+class DeleteDialogsForm(_FrozenForm):
+    phone: str = ""
+    channel_ids: list[str] = Field(default_factory=list)
+
+    @property
+    def dialogs(self) -> list[tuple[int, str]]:
+        parsed: list[tuple[int, str]] = []
+        for item in self.channel_ids:
+            parts = item.split(":", 1)
+            if len(parts) == 2 and parts[0].lstrip("-").isdigit():
+                parsed.append((int(parts[0]), parts[1]))
+        return parsed
+
+
 class SendMessageForm(_FrozenForm):
     phone: str = ""
     recipient: str = ""

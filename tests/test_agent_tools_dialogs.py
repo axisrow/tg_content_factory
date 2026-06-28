@@ -242,6 +242,59 @@ class TestDialogsToolLeaveDialogs:
         assert passed[999] == "channel"
 
 
+class TestDialogsToolDeleteDialogs:
+    @pytest.mark.anyio
+    async def test_no_pool(self, mock_db):
+        handlers = _get_tool_handlers(mock_db, client_pool=None)
+        result = await handlers["delete_dialogs"]({"phone": "+7123456", "dialog_ids": "1,2"})
+        assert "CLI-режиме" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_requires_confirmation(self, mock_db):
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        mock_db.get_setting = AsyncMock(return_value=None)
+        handlers = _get_tool_handlers(mock_db, client_pool=MagicMock())
+        result = await handlers["delete_dialogs"](
+            {"phone": "+79001234567", "dialog_ids": "1,2", "confirm": False}
+        )
+        assert "Подтвердите" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_resolves_channel_type_per_dialog(self, mock_db):
+        """delete_dialogs resolves each dialog's channel_type so the backend picks
+        the right TL request (DeleteChannel/DeleteChat/delete_dialog)."""
+        mock_db.get_accounts = AsyncMock(
+            return_value=[SimpleNamespace(phone="+79001234567", is_primary=True)]
+        )
+        mock_db.get_setting = AsyncMock(return_value=None)
+        ch_svc = MagicMock()
+        ch_svc.get_my_dialogs = AsyncMock(
+            return_value=[
+                {"channel_id": 777, "channel_type": "group", "title": "G"},
+                {"channel_id": -100123, "channel_type": "channel", "title": "C"},
+            ]
+        )
+        action = MagicMock()
+        action.delete_dialogs = AsyncMock(
+            return_value=SimpleNamespace(success_count=2, results={777: True, -100123: True})
+        )
+        with (
+            patch("src.services.channel_service.ChannelService", return_value=ch_svc),
+            patch("src.agent.tools.dialogs.TelegramActionService", return_value=action),
+        ):
+            handlers = _get_tool_handlers(mock_db, client_pool=MagicMock())
+            await handlers["delete_dialogs"](
+                {"phone": "+79001234567", "dialog_ids": "777,-100123,999", "confirm": True}
+            )
+        passed = dict(action.delete_dialogs.await_args.kwargs["dialogs"])
+        assert passed[777] == "group"
+        assert passed[-100123] == "channel"
+        # Unknown id falls back to "channel" (parity with leave).
+        assert passed[999] == "channel"
+
+
 JOIN_TOOL_NAMES = ("join_channel", "join_chat", "subscribe_channel")
 
 
