@@ -216,6 +216,7 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("photo-loader", "auto-update"): "local auto-upload mutation",
     ("photo-loader", "batch-cancel"): "Telegram-visible cleanup helper; used only via cli_run_direct",
     ("photo-loader", "batch-create"): "local photo batch write",
+    ("photo-loader", "publish"): "local photo batch publish; HELD to PENDING DB-only flip, no Telegram call",
     ("photo-loader", "batch-list"): "list-only but depends on mutable photo-loader setup",
     ("photo-loader", "items"): "list-only but depends on mutable photo-loader setup",
     ("pipeline", "add"): "local pipeline write",

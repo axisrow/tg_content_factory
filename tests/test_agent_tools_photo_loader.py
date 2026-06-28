@@ -670,6 +670,12 @@ class TestCreatePhotoBatch:
 
 class TestPublishPhotoBatch:
     @pytest.mark.anyio
+    async def test_missing_batch_id_returns_error(self, mock_db):
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["publish_photo_batch"]({})
+        assert "batch_id обязателен" in _text(result)
+
+    @pytest.mark.anyio
     async def test_no_confirm_returns_gate(self, mock_db):
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["publish_photo_batch"]({"batch_id": 99})

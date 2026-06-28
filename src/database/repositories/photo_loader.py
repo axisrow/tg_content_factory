@@ -153,22 +153,38 @@ class PhotoLoaderRepository:
         )
 
     async def publish_batch(self, batch_id: int) -> int:
-        """Move HELD items in a batch into the PENDING queue; return affected rows."""
-        cur = await self._database.execute_write(
-            """
-            UPDATE photo_batch_items
-            SET status = ?, error = NULL
-            WHERE batch_id = ? AND status = ?
-            """,
-            (
-                PhotoBatchStatus.PENDING.value,
-                batch_id,
-                PhotoBatchStatus.HELD.value,
-            ),
+        """Atomically move HELD items in a batch into the PENDING queue; return affected rows.
+
+        Both the items-flip and the batch-status update run inside one transaction so
+        the photo_due cron cannot claim a just-published item between the two writes and
+        then have ``_sync_batch_status`` flip the batch to RUNNING only for the second
+        write to clobber it back to PENDING. Idempotent: re-publishing a batch with no
+        HELD items is a no-op (UPDATE affects zero rows)."""
+        assert self._database is not None, (
+            "PhotoLoaderRepository.publish_batch requires a Database reference"
         )
-        count = cur.rowcount or 0
-        if count:
-            await self.update_batch(batch_id, status=PhotoBatchStatus.PENDING, error="")
+        async with self._database.transaction() as conn:
+            cur = await conn.execute(
+                """
+                UPDATE photo_batch_items
+                SET status = ?, error = NULL
+                WHERE batch_id = ? AND status = ?
+                """,
+                (
+                    PhotoBatchStatus.PENDING.value,
+                    batch_id,
+                    PhotoBatchStatus.HELD.value,
+                ),
+            )
+            count = cur.rowcount or 0
+            if count:
+                await conn.execute(
+                    """
+                    UPDATE photo_batches SET status = ?, error = ?
+                    WHERE id = ?
+                    """,
+                    (PhotoBatchStatus.PENDING.value, "", batch_id),
+                )
         return count
 
     async def get_batch(self, batch_id: int) -> PhotoBatch | None:
