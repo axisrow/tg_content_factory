@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from src.models import PhotoBatch, PhotoBatchItem, PhotoBatchStatus
+
 
 @pytest.fixture
 async def db(base_app):
@@ -372,6 +374,48 @@ async def test_photos_auto_missing_interval_minutes(route_client):
         follow_redirects=False,
     )
     assert resp.status_code == 303
+
+
+@pytest.mark.anyio
+async def test_photo_batch_progress_fragment_shows_count_and_polls_running(route_client, db):
+    batch_id = await db.repos.photo_loader.create_batch(
+        PhotoBatch(
+            phone="+1234567890",
+            target_dialog_id=200,
+            target_title="Dialog",
+            status=PhotoBatchStatus.RUNNING,
+        )
+    )
+    await db.repos.photo_loader.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+1234567890",
+            target_dialog_id=200,
+            file_paths=["/tmp/a.jpg"],
+            status=PhotoBatchStatus.COMPLETED,
+        )
+    )
+    await db.repos.photo_loader.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+1234567890",
+            target_dialog_id=200,
+            file_paths=["/tmp/b.jpg"],
+            status=PhotoBatchStatus.RUNNING,
+        )
+    )
+
+    resp = await route_client.get(
+        f"/dialogs/photos/fragments/batches/{batch_id}",
+        headers={"HX-Request": "true"},
+    )
+
+    assert resp.status_code == 200
+    assert f'id="photo-batch-{batch_id}"' in resp.text
+    assert "1/2" in resp.text
+    assert f'hx-get="/dialogs/photos/fragments/batches/{batch_id}"' in resp.text
+    assert 'hx-trigger="every 5s"' in resp.text
+    assert 'hx-swap="outerHTML"' in resp.text
 
 
 # === read-only JSON GET routes (parity: photo-loader batch-list/auto-list/items) ===

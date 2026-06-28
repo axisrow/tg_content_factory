@@ -251,6 +251,22 @@ class PhotoLoaderRepository:
         cur = await self._db.execute(sql, params)
         return [self._to_item(row) for row in await cur.fetchall()]
 
+    async def count_items_by_batch_status(self, batch_id: int) -> dict[PhotoBatchStatus, int]:
+        """Count batch items grouped by status for live batch progress read-models."""
+        cur = await self._db.execute(
+            """
+            SELECT status, COUNT(*) AS item_count
+            FROM photo_batch_items
+            WHERE batch_id = ?
+            GROUP BY status
+            """,
+            (batch_id,),
+        )
+        return {
+            PhotoBatchStatus(row["status"]): int(row["item_count"])
+            for row in await cur.fetchall()
+        }
+
     async def update_item(
         self,
         item_id: int,
@@ -355,6 +371,22 @@ class PhotoLoaderRepository:
             )
             claimed = await cur.fetchone()
         return self._to_item(claimed) if claimed else None
+
+    async def count_due_items(self, now: datetime, *, item_id: int | None = None) -> int:
+        """Count PENDING items due at ``now``; optionally narrow to one item id."""
+        now_iso = now.astimezone(timezone.utc).isoformat()
+        sql = """
+            SELECT COUNT(*) AS item_count
+            FROM photo_batch_items
+            WHERE status = ? AND (schedule_at IS NULL OR schedule_at <= ?)
+        """
+        params: list[object] = [PhotoBatchStatus.PENDING.value, now_iso]
+        if item_id is not None:
+            sql += " AND id = ?"
+            params.append(int(item_id))
+        cur = await self._db.execute(sql, tuple(params))
+        row = await cur.fetchone()
+        return int(row["item_count"]) if row else 0
 
     async def requeue_running_items_on_startup(self, now: datetime) -> int:
         """На старте вернуть зависшие RUNNING-элементы в PENDING (авто-восстановление после сбоя); вернуть число."""

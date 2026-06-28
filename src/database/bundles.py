@@ -700,6 +700,10 @@ class PhotoLoaderBundle:
         """Элементы конкретного батча; `limit=None` — все."""
         return await self.photo_loader.list_items_for_batch(batch_id, limit=limit)
 
+    async def count_items_by_batch_status(self, batch_id: int) -> dict[PhotoBatchStatus, int]:
+        """Количество элементов батча по статусам."""
+        return await self.photo_loader.count_items_by_batch_status(batch_id)
+
     async def update_item(
         self,
         item_id: int,
@@ -733,6 +737,10 @@ class PhotoLoaderBundle:
         только указанный, и лишь если он сам due. None, если подходящего нет.
         """
         return await self.photo_loader.claim_next_due_item(now, item_id=item_id)
+
+    async def count_due_items(self, now: datetime, *, item_id: int | None = None) -> int:
+        """Количество готовых к запуску PENDING-элементов."""
+        return await self.photo_loader.count_due_items(now, item_id=item_id)
 
     async def requeue_running_items_on_startup(self, now: datetime) -> int:
         """Вернуть зависшие RUNNING-элементы в очередь при старте; вернуть число затронутых."""
