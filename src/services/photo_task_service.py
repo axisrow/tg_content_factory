@@ -296,7 +296,7 @@ class PhotoTaskService:
                 target_type=target.target_type,
                 send_mode=PhotoSendMode.ALBUM,
                 caption=caption,
-                status=PhotoBatchStatus.PENDING,
+                status=PhotoBatchStatus.HELD,
             )
         )
         for entry in entries:
@@ -317,10 +317,16 @@ class PhotoTaskService:
                     send_mode=send_mode,
                     caption=entry.get("caption", caption),
                     schedule_at=schedule_at,
-                    status=PhotoBatchStatus.PENDING,
+                    status=PhotoBatchStatus.HELD,
                 )
             )
         return batch_id
+
+    async def publish_batch(self, batch_id: int) -> int:
+        batch = await self._bundle.get_batch(batch_id)
+        if batch is None:
+            return 0
+        return await self._bundle.publish_batch(batch_id)
 
     async def list_batches(self, limit: int = 50) -> list[PhotoBatch]:
         return await self._bundle.list_batches(limit)
@@ -433,17 +439,19 @@ class PhotoTaskService:
         # SCHEDULED is a server-side in-flight state; PENDING/RUNNING are local
         # in-flight. While any item is in-flight the batch is not terminal.
         in_flight = {
+            PhotoBatchStatus.HELD,
             PhotoBatchStatus.PENDING,
             PhotoBatchStatus.RUNNING,
             PhotoBatchStatus.SCHEDULED,
         }
         if statuses & in_flight:
             # All-SCHEDULED batches surface as SCHEDULED, otherwise RUNNING.
-            status = (
-                PhotoBatchStatus.SCHEDULED
-                if statuses <= {PhotoBatchStatus.SCHEDULED}
-                else PhotoBatchStatus.RUNNING
-            )
+            if statuses <= {PhotoBatchStatus.HELD}:
+                status = PhotoBatchStatus.HELD
+            elif statuses <= {PhotoBatchStatus.SCHEDULED}:
+                status = PhotoBatchStatus.SCHEDULED
+            else:
+                status = PhotoBatchStatus.RUNNING
             await self._bundle.update_batch(batch_id, status=status, last_run_at=last_run_at)
             return
         # Every item is terminal (COMPLETED / FAILED / CANCELLED). Recognise

@@ -2829,7 +2829,7 @@ def agent_test_tools(ctx: typer.Context) -> None:
 
 # --------------------------------------------------------------------------- #
 # photo-loader → dialogs / refresh / send / schedule-send / batch-create /
-#                batch-list / items / batch-cancel / auto-create / auto-list /
+#                publish / batch-list / items / batch-cancel / auto-create / auto-list /
 #                auto-update / auto-toggle / auto-delete / run-due
 # --------------------------------------------------------------------------- #
 
@@ -2928,6 +2928,16 @@ def photo_loader_batch_list(ctx: typer.Context) -> None:
     """List photo batches."""
     apply_startup(ctx)
     run_async(photo_loader_cmd.batch_list_impl(ctx.obj.config))
+
+
+@photo_loader_app.command("publish")
+def photo_loader_publish(
+    ctx: typer.Context,
+    batch_id: int = typer.Argument(..., metavar="batch_id", help="Photo batch id"),
+) -> None:
+    """Publish a held photo batch into the due queue."""
+    apply_startup(ctx)
+    run_async(photo_loader_cmd.publish_impl(ctx.obj.config, batch_id=batch_id))
 
 
 @photo_loader_app.command("items")

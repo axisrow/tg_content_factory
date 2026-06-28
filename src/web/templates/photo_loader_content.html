@@ -303,7 +303,7 @@
                 {% if batches %}
                 <div class="table-responsive">
                     <table class="tga-table">
-                        <thead><tr><th>ID</th><th>Target</th><th>Режим</th><th>Статус</th><th>Создан</th></tr></thead>
+                        <thead><tr><th>ID</th><th>Target</th><th>Режим</th><th>Статус</th><th>Создан</th><th></th></tr></thead>
                         <tbody>
                         {% for batch in batches %}
                         <tr data-photo-result-row="batch"
@@ -313,6 +313,14 @@
                             <td>{{ batch.send_mode }}</td>
                             <td>{{ batch.status }}</td>
                             <td>{{ batch.created_at|local_dt }}</td>
+                            <td>
+                                {% if batch.status == 'held' %}
+                                <form method="post" action="/dialogs/photos/batches/{{ batch.id }}/publish" data-busy>
+                                    <input type="hidden" name="phone" value="{{ selected_phone or batch.phone }}">
+                                    <button type="submit" class="btn btn-sm btn-outline-primary">Publish</button>
+                                </form>
+                                {% endif %}
+                            </td>
                         </tr>
                         {% endfor %}
                         </tbody>

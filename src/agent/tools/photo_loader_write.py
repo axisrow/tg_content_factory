@@ -25,6 +25,7 @@ from src.agent.tools.photo_loader_schemas import (
     CREATE_AUTO_UPLOAD_SCHEMA,
     CREATE_PHOTO_BATCH_SCHEMA,
     DELETE_AUTO_UPLOAD_SCHEMA,
+    PUBLISH_PHOTO_BATCH_SCHEMA,
     RUN_PHOTO_DUE_SCHEMA,
     SCHEDULE_PHOTOS_SCHEMA,
     SEND_PHOTOS_NOW_SCHEMA,
@@ -191,8 +192,9 @@ def register_batch_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]
             # ALBUM. Splitting one-entry-per-file downgrades ALBUM→SEPARATE because
             # each entry has len==1 (#1180). The entry contract matches
             # PhotoTaskService.create_batch (reads entry["files"], a list) and the
-            # web manifest shape {"files": [...]} (#1126). "at" (schedule) defaults
-            # to now so the items are immediately due for run_photo_due.
+            # web manifest shape {"files": [...]} (#1126). "at" is still required
+            # by the manifest parser, but create_batch stores items as HELD until
+            # publish_photo_batch explicitly moves them into the due queue (#1173).
             now_iso = datetime.now(timezone.utc).isoformat()
             entries = [{"files": files, "at": now_iso}]
             # Resolve 'me'/'self'/dialog-name targets like send/schedule do — a raw
@@ -210,6 +212,31 @@ def register_batch_write_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]
             return _text_response(f"Ошибка создания батча: {exc}")
 
     tools.append(create_photo_batch)
+
+    @tool(
+        "publish_photo_batch",
+        "⚠️ Publish a held photo batch into the local due queue. "
+        "After publish, cron/run_photo_due may send the batch items to Telegram. "
+        "Ask user for confirmation first.",
+        PUBLISH_PHOTO_BATCH_SCHEMA,
+    )
+    async def publish_photo_batch(args):
+        batch_id = args.get("batch_id")
+        if batch_id is None:
+            return _text_response("Ошибка: batch_id обязателен.")
+        gate = require_confirmation(f"опубликует батч фото batch_id={batch_id} в очередь отправки", args)
+        if gate:
+            return gate
+        try:
+            svc = photo_task_service(db, client_pool)
+            published = await svc.publish_batch(int(batch_id))
+            if published:
+                return _text_response(f"Батч опубликован: id={batch_id}, items={published}")
+            return _text_response(f"Не удалось опубликовать batch_id={batch_id} (нет held items).")
+        except Exception as exc:
+            return _text_response(f"Ошибка публикации батча: {exc}")
+
+    tools.append(publish_photo_batch)
 
     @tool(
         "run_photo_due",

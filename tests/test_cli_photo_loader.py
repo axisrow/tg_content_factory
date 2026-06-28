@@ -268,6 +268,38 @@ def test_batch_create_action(tmp_path, cli_init_patch, capsys):
     assert "Created photo batch #3" in out
 
 
+def test_publish_action(tmp_path, cli_init_patch, capsys):
+    """Test publish action moves held batch items into the due queue."""
+    db_path = str(tmp_path / "photo_publish.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _setup_photo_db(db)
+
+    async def fake_init_pool(_config, _db):
+        pool = MagicMock()
+        pool.disconnect_all = AsyncMock()
+        return MagicMock(), pool
+
+    publish_batch = AsyncMock(return_value=2)
+    fake_task, fake_auto = _create_fake_services(
+        task_methods={"publish_batch": publish_batch},
+    )
+
+    with (
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
+        patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
+    ):
+        from src.cli.commands.photo_loader import run
+
+        run(_ns(photo_loader_action="publish", id=3))
+
+    out = capsys.readouterr().out
+    assert "Published photo batch #3: items=2" in out
+    publish_batch.assert_awaited_once_with(3)
+
+
 def test_batch_list_action(tmp_path, cli_init_patch, capsys):
     """Test batch-list action lists batches."""
     db_path = str(tmp_path / "photo_batch_list.db")
