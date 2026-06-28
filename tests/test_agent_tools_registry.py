@@ -19,6 +19,7 @@ from src.agent.tools._registry import (
     require_confirmation,
     require_phone_permission,
     require_pool,
+    resolve_entity,
     resolve_live_read_phone,
     resolve_phone,
 )
@@ -411,3 +412,273 @@ class TestRequirePhonePermission:
             result = await require_phone_permission(db, "+7900", "search_messages")
         assert result is not None
         assert "не разрешён" in result["content"][0]["text"]
+
+
+# ── resolve_entity client-lease hygiene (#1187) ──────────────────────────────
+
+
+class _FakeNativeClient:
+    """Minimal stand-in for a native Telethon client returned by the pool."""
+
+    def __init__(self, entity, *, messages=None, raise_on_get_entity=None):
+        self._entity = entity
+        self._messages = list(messages or [])
+        self._raise = raise_on_get_entity
+        self.disconnected = False
+
+    async def get_entity(self, cid):
+        if self.disconnected:
+            raise RuntimeError("client disconnected")
+        if self._raise is not None:
+            raise self._raise
+        return self._entity
+
+    async def disconnect(self):
+        self.disconnected = True
+
+    async def iter_messages(self, entity, **kwargs):
+        if self.disconnected:
+            raise RuntimeError("client disconnected")
+        for message in self._messages:
+            yield message
+
+
+class _LeaseTrackingPool:
+    """Fake ClientPool with a real LIFO lease stack and native disconnect.
+
+    resolve_entity has TWO acquire sites — get_native_client_by_phone (always)
+    and get_client_by_phone (numeric path only) — and before #1187 released
+    neither. This pool tracks both acquire kinds and makes native release
+    disconnect the returned client so use-after-disconnect is visible in tests.
+    """
+
+    def __init__(
+        self,
+        *,
+        entity=None,
+        warm_resolver=True,
+        resolve_dialog=None,
+        native_none=False,
+        regular_none=False,
+        native_client=None,
+        release_failures=None,
+    ):
+        self._entity = entity if entity is not None else SimpleNamespace(id=4242)
+        self._native_client = native_client if native_client is not None else _FakeNativeClient(self._entity)
+        self._resolve_dialog = resolve_dialog
+        self._native_none = native_none
+        self._regular_none = regular_none
+        self._release_failures = set(release_failures or ())
+        # Disable the warm resolver by shadowing the class method with None;
+        # explicit_pool_method treats a non-callable instance attr as absent.
+        if not warm_resolver:
+            self.resolve_entity_with_warm = None
+        self.native_acquired = 0
+        self.regular_acquired = 0
+        self.released: list[tuple[str, str]] = []
+        self._lease_stack: list[tuple[str, object]] = []
+
+    async def get_native_client_by_phone(self, phone):
+        if self._native_none:
+            return None
+        self.native_acquired += 1
+        self._lease_stack.append(("native", self._native_client))
+        return self._native_client, phone
+
+    async def get_client_by_phone(self, phone):
+        if self._regular_none:
+            return None
+        self.regular_acquired += 1
+        session = object()
+        self._lease_stack.append(("regular", session))
+        return session, phone
+
+    async def release_client(self, phone):
+        kind, lease_client = self._lease_stack.pop()
+        self.released.append((phone, kind))
+        if kind == "native":
+            await lease_client.disconnect()
+        if kind in self._release_failures:
+            raise RuntimeError(f"{kind} release failed")
+
+    # Class-level so utils.introspection.explicit_pool_method finds it.
+    async def resolve_entity_with_warm(self, raw_client, phone, cid, *, operation=None):
+        return self._entity
+
+    async def resolve_dialog_entity(self, session, phone, dialog_id, target_type=None):
+        if self._resolve_dialog is not None:
+            return self._resolve_dialog(dialog_id, target_type)
+        return self._entity
+
+    @property
+    def total_acquired(self) -> int:
+        return self.native_acquired + self.regular_acquired
+
+    @property
+    def released_phones(self) -> list[str]:
+        return [phone for phone, _kind in self.released]
+
+    @property
+    def released_kinds(self) -> list[str]:
+        return [kind for _phone, kind in self.released]
+
+
+class TestResolveEntityLease:
+    """resolve_entity must transfer successful native-lease ownership to the
+    caller and release all acquired leases on error/not-found. A leaked lease
+    leaves the phone in ClientPool._in_use forever and drops it out of the
+    exclusive collector rotation (#1187, same class as resolve_photo_target
+    #1179)."""
+
+    PHONE = "+79001234567"
+
+    @pytest.mark.anyio
+    async def test_username_path_returns_release_handle_for_native_lease(self):
+        """Non-numeric id (username) acquires only the native lease (#1). The
+        returned client stays connected until the caller releases the handle."""
+        pool = _LeaseTrackingPool()
+        result = await resolve_entity(pool, self.PHONE, "@channel")
+        raw_client, entity, err = result
+        assert err is None
+        assert entity is pool._entity
+        assert raw_client is pool._native_client
+        assert pool.native_acquired == 1
+        assert pool.regular_acquired == 0
+        assert pool.released == []
+        assert not pool._native_client.disconnected
+        await result.release()
+        assert pool.released == [(self.PHONE, "native")]
+        assert pool.total_acquired == len(pool.released)
+        assert pool._native_client.disconnected
+
+    @pytest.mark.anyio
+    async def test_me_path_returns_release_handle_via_get_entity_fallback(self):
+        """'me' is non-numeric and hits the raw_client.get_entity fallback (no
+        warm resolver) — still a single native lease owned by the caller."""
+        pool = _LeaseTrackingPool(warm_resolver=False)
+        result = await resolve_entity(pool, self.PHONE, "me")
+        raw_client, entity, err = result
+        assert err is None
+        assert entity is pool._entity
+        assert pool.native_acquired == 1
+        assert pool.regular_acquired == 0
+        assert pool.released == []
+        await result.release()
+        assert pool.released == [(self.PHONE, "native")]
+        assert pool.total_acquired == len(pool.released)
+
+    @pytest.mark.anyio
+    async def test_numeric_path_release_handle_releases_both_leases_lifo(self):
+        """Numeric id acquires BOTH the native (#1) and regular (#2) leases — the
+        double-leak site called out in #1187. The handle releases regular first
+        and native last so the returned native client lives through use."""
+        pool = _LeaseTrackingPool()
+        result = await resolve_entity(pool, self.PHONE, "123456")
+        raw_client, entity, err = result
+        assert err is None
+        assert entity is pool._entity
+        assert pool.native_acquired == 1
+        assert pool.regular_acquired == 1
+        assert pool.released == []
+        assert not pool._native_client.disconnected
+        await result.release()
+        assert pool.released == [(self.PHONE, "regular"), (self.PHONE, "native")]
+        assert pool.total_acquired == len(pool.released)
+        assert pool._native_client.disconnected
+
+    @pytest.mark.anyio
+    async def test_returned_client_remains_usable_until_release(self):
+        """Regression guard for PR #1188 blocker: the old finally release
+        disconnected raw_client before read_recent_messages could iterate."""
+        entity = SimpleNamespace(id=4242)
+        message = SimpleNamespace(id=1, text="still connected")
+        client = _FakeNativeClient(entity, messages=[message])
+        pool = _LeaseTrackingPool(entity=entity, warm_resolver=False, native_client=client)
+
+        result = await resolve_entity(pool, self.PHONE, "@channel")
+        raw_client, resolved_entity, err = result
+
+        assert err is None
+        assert resolved_entity is entity
+        messages = [msg async for msg in raw_client.iter_messages(resolved_entity, limit=1)]
+        assert messages == [message]
+        assert not client.disconnected
+
+        await result.release()
+        assert client.disconnected
+        with pytest.raises(RuntimeError, match="client disconnected"):
+            [msg async for msg in raw_client.iter_messages(resolved_entity, limit=1)]
+
+    @pytest.mark.anyio
+    async def test_numeric_not_found_still_releases_both_leases(self):
+        """resolve_dialog_entity raising ValueError (entity not cached) must still
+        release both acquired leases before the not-found error response."""
+        def raise_valueerror(dialog_id, target_type):
+            raise ValueError("entity is None")
+
+        pool = _LeaseTrackingPool(resolve_dialog=raise_valueerror)
+        result = await resolve_entity(pool, self.PHONE, "987654")
+        raw_client, entity, err = result
+        assert err is not None
+        assert entity is None
+        assert pool.native_acquired == 1
+        assert pool.regular_acquired == 1
+        assert pool.released == [(self.PHONE, "regular"), (self.PHONE, "native")]
+        assert pool.total_acquired == len(pool.released)
+        await result.release()
+        assert pool.released == [(self.PHONE, "regular"), (self.PHONE, "native")]
+
+    @pytest.mark.anyio
+    async def test_username_exception_path_releases_native_lease(self):
+        """If the username resolver raises, the native lease is still released
+        (try/finally) and an error response is returned."""
+        boom = RuntimeError("network down")
+        client = _FakeNativeClient(None, raise_on_get_entity=boom)
+        pool = _LeaseTrackingPool(warm_resolver=False, native_client=client)
+        result = await resolve_entity(pool, self.PHONE, "@ghost")
+        raw_client, entity, err = result
+        assert err is not None
+        assert entity is None
+        assert pool.native_acquired == 1
+        assert pool.regular_acquired == 0
+        assert pool.released == [(self.PHONE, "native")]
+        assert pool.total_acquired == len(pool.released)
+
+    @pytest.mark.anyio
+    async def test_numeric_regular_client_unavailable_releases_native_lease(self):
+        """On the numeric path, if the regular client is unavailable (None), only
+        the native lease was acquired — it must still be released."""
+        pool = _LeaseTrackingPool(regular_none=True)
+        result = await resolve_entity(pool, self.PHONE, "555")
+        raw_client, entity, err = result
+        assert err is not None
+        assert pool.native_acquired == 1
+        assert pool.regular_acquired == 0
+        assert pool.released == [(self.PHONE, "native")]
+        assert pool.total_acquired == len(pool.released)
+
+    @pytest.mark.anyio
+    async def test_native_client_unavailable_acquires_and_releases_nothing(self):
+        """If get_native_client_by_phone returns None, no lease is acquired and
+        nothing should be released."""
+        pool = _LeaseTrackingPool(native_none=True)
+        result = await resolve_entity(pool, self.PHONE, "@channel")
+        raw_client, entity, err = result
+        assert err is not None
+        assert pool.total_acquired == 0
+        assert pool.released == []
+
+    @pytest.mark.anyio
+    async def test_release_handle_continues_after_one_release_fails(self):
+        """Best-effort release: one failing release_client call must not block
+        later leases from being released."""
+        pool = _LeaseTrackingPool(release_failures={"regular"})
+        result = await resolve_entity(pool, self.PHONE, "123456")
+        raw_client, entity, err = result
+
+        assert err is None
+        assert entity is pool._entity
+        await result.release()
+
+        assert pool.released_kinds == ["regular", "native"]
+        assert pool._native_client.disconnected

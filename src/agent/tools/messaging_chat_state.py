@@ -226,14 +226,18 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
         reaction_users_limit = normalize_reaction_users_limit(args.get("reaction_users_limit"))
         if not chat_id:
             return _text_response("Ошибка: chat_id обязателен.")
+        resolved_entity = None
         try:
-            client, entity, err = await resolve_entity(client_pool, phone, chat_id)
+            resolved_entity = await resolve_entity(client_pool, phone, chat_id)
+            client, entity, err = resolved_entity
             if err:
                 fallback_chat_id, fallback_err = await find_single_dialog_id_by_title(db, client_pool, phone, chat_id)
                 if fallback_err:
                     return fallback_err
                 if fallback_chat_id:
-                    client, entity, err = await resolve_entity(client_pool, phone, fallback_chat_id)
+                    await resolved_entity.release()
+                    resolved_entity = await resolve_entity(client_pool, phone, fallback_chat_id)
+                    client, entity, err = resolved_entity
                     if not err:
                         chat_id = fallback_chat_id
                 if err:
@@ -321,6 +325,9 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
             return _text_response("\n".join(lines))
         except Exception as e:
             return _text_response(f"Ошибка чтения сообщений: {e}")
+        finally:
+            if resolved_entity is not None:
+                await resolved_entity.release()
 
     tools.append(read_messages)
     return tools

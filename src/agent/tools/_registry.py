@@ -709,6 +709,49 @@ async def require_phone_permission(db: object, phone: str, tool_name: str) -> di
 _NUMERIC_ID_RE = _re.compile(r"^-?\d+$")
 
 
+@dataclass(slots=True)
+class ResolvedEntityLease:
+    """Resolved entity plus ownership of client leases acquired for that resolve."""
+
+    client: object | None
+    entity: object | None
+    error: dict | None
+    _client_pool: object | None = None
+    _release_phones: tuple[str, ...] = ()
+    _released: bool = False
+
+    def __iter__(self):
+        yield self.client
+        yield self.entity
+        yield self.error
+
+    async def release(self) -> None:
+        """Release acquired client leases in LIFO order without masking callers."""
+        if self._released:
+            return
+        self._released = True
+        releaser = getattr(self._client_pool, "release_client", None)
+        if releaser is None:
+            return
+        for phone in reversed(self._release_phones):
+            try:
+                result = releaser(phone)
+                if isawaitable(result):
+                    await result
+            except Exception:
+                logger.debug("Failed to release resolve_entity lease for %s", phone, exc_info=True)
+
+
+async def _released_resolve_entity_result(
+    client_pool: object,
+    release_phones: list[str],
+    error: dict,
+) -> ResolvedEntityLease:
+    result = ResolvedEntityLease(None, None, error, client_pool, tuple(release_phones))
+    await result.release()
+    return result
+
+
 def should_try_dialog_title_lookup(identifier: object) -> bool:
     """Return True when an identifier can reasonably be a dialog title."""
     value = str(identifier or "").strip()
@@ -794,66 +837,94 @@ async def resolve_entity(
     chat_id: str,
     *,
     is_user: bool = False,
-) -> tuple[object, object, dict | None]:
+) -> ResolvedEntityLease:
     """Resolve a chat/user entity for Telethon operations with dialog-cache warming fallback.
 
     For usernames, t.me links, and "me" → uses the shared pool resolver when available.
     For numeric IDs → uses ``ClientPool.resolve_dialog_entity()`` which warms the entity cache
     automatically when the entity isn't cached yet (e.g. private groups without a username).
 
-    Returns ``(raw_client, entity, None)`` on success or ``(None, None, error_response)`` on failure.
+    Returns a ``ResolvedEntityLease`` that still unpacks as
+    ``(raw_client, entity, error_response)`` for compatibility. Successful
+    results own the acquired client lease until the caller awaits
+    ``result.release()`` after it has finished using ``raw_client``.
     Pass ``is_user=True`` when *chat_id* is a user ID (e.g. the ``user_id`` param in admin tools).
     """
     result = await client_pool.get_native_client_by_phone(phone)
     if result is None:
-        return None, None, _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
-    raw_client, _ = result
-
-    # Non-numeric identifiers: use the shared pool resolver when available so
-    # username/t.me live resolves obey the same FloodWait budget as workers.
-    cid = chat_id.strip()
-    if not _NUMERIC_ID_RE.match(cid):
-        try:
-            resolver = explicit_pool_method(client_pool, "resolve_entity_with_warm")
-            if resolver is not None:
-                entity = await resolver(raw_client, phone, cid, operation="agent_resolve_entity")
-            else:
-                entity = await raw_client.get_entity(cid)
-            return raw_client, entity, None
-        except Exception as e:
-            return None, None, _text_response(f"Ошибка: не удалось найти чат/пользователя '{chat_id}': {e}")
-
-    # Numeric ID: use resolve_dialog_entity which handles cache warming
-    dialog_id = int(cid)
-    session_result = await client_pool.get_client_by_phone(phone)
-    if session_result is None:
-        return None, None, _text_response(f"Клиент для {phone} не найден или flood-wait активен.")
-    session, _ = session_result
-
-    target_type = "dm" if is_user else None
+        return ResolvedEntityLease(None, None, _text_response(f"Клиент для {phone} не найден или flood-wait активен."))
+    raw_client, native_phone = result
+    acquired_phones: list[str] = [native_phone]
     try:
-        entity = await client_pool.resolve_dialog_entity(session, phone, dialog_id, target_type)
-        if entity is None:
-            raise ValueError("entity is None")
-        return raw_client, entity, None
-    except (ValueError, TypeError, KeyError):
-        pass
-    except Exception as e:
-        # Propagate flood waits and auth errors — do not retry
-        return None, None, _text_response(f"Ошибка: не удалось получить entity для {chat_id}: {e}")
+        # Non-numeric identifiers: use the shared pool resolver when available so
+        # username/t.me live resolves obey the same FloodWait budget as workers.
+        cid = chat_id.strip()
+        if not _NUMERIC_ID_RE.match(cid):
+            try:
+                resolver = explicit_pool_method(client_pool, "resolve_entity_with_warm")
+                if resolver is not None:
+                    entity = await resolver(raw_client, native_phone, cid, operation="agent_resolve_entity")
+                else:
+                    entity = await raw_client.get_entity(cid)
+                return ResolvedEntityLease(raw_client, entity, None, client_pool, tuple(acquired_phones))
+            except Exception as e:
+                return await _released_resolve_entity_result(
+                    client_pool,
+                    acquired_phones,
+                    _text_response(f"Ошибка: не удалось найти чат/пользователя '{chat_id}': {e}"),
+                )
 
-    # Fallback: if not is_user, also try as PeerUser (numeric user DMs without username)
-    if not is_user:
+        # Numeric ID: use resolve_dialog_entity which handles cache warming
+        dialog_id = int(cid)
+        session_result = await client_pool.get_client_by_phone(phone)
+        if session_result is None:
+            return await _released_resolve_entity_result(
+                client_pool,
+                acquired_phones,
+                _text_response(f"Клиент для {phone} не найден или flood-wait активен."),
+            )
+        session, regular_phone = session_result
+        acquired_phones.append(regular_phone)
+
+        target_type = "dm" if is_user else None
         try:
-            entity = await client_pool.resolve_dialog_entity(session, phone, dialog_id, "dm")
-            if entity is not None:
-                return raw_client, entity, None
+            entity = await client_pool.resolve_dialog_entity(session, regular_phone, dialog_id, target_type)
+            if entity is None:
+                raise ValueError("entity is None")
+            return ResolvedEntityLease(raw_client, entity, None, client_pool, tuple(acquired_phones))
         except (ValueError, TypeError, KeyError):
             pass
         except Exception as e:
-            return None, None, _text_response(f"Ошибка: не удалось получить entity для {chat_id}: {e}")
+            # Propagate flood waits and auth errors — do not retry
+            return await _released_resolve_entity_result(
+                client_pool,
+                acquired_phones,
+                _text_response(f"Ошибка: не удалось получить entity для {chat_id}: {e}"),
+            )
 
-    return None, None, _text_response(
-        f"Ошибка: не удалось найти чат/пользователя с ID {chat_id}. "
-        f"Попробуйте сначала обновить кэш диалогов (refresh_dialogs)."
-    )
+        # Fallback: if not is_user, also try as PeerUser (numeric user DMs without username)
+        if not is_user:
+            try:
+                entity = await client_pool.resolve_dialog_entity(session, regular_phone, dialog_id, "dm")
+                if entity is not None:
+                    return ResolvedEntityLease(raw_client, entity, None, client_pool, tuple(acquired_phones))
+            except (ValueError, TypeError, KeyError):
+                pass
+            except Exception as e:
+                return await _released_resolve_entity_result(
+                    client_pool,
+                    acquired_phones,
+                    _text_response(f"Ошибка: не удалось получить entity для {chat_id}: {e}"),
+                )
+
+        return await _released_resolve_entity_result(
+            client_pool,
+            acquired_phones,
+            _text_response(
+                f"Ошибка: не удалось найти чат/пользователя с ID {chat_id}. "
+                f"Попробуйте сначала обновить кэш диалогов (refresh_dialogs)."
+            ),
+        )
+    except BaseException:
+        await ResolvedEntityLease(None, None, None, client_pool, tuple(acquired_phones)).release()
+        raise
