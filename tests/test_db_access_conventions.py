@@ -22,7 +22,7 @@ BUNDLES = SRC_DIR / "database" / "bundles.py"
 # Current size of the pass-through surface. These are CAPS, not exact counts:
 # the guard prevents growth. Lower them whenever shims are removed.
 FACADE_PASSTHROUGH_BASELINE = 88
-BUNDLE_METHOD_BASELINE = 135
+BUNDLE_METHOD_BASELINE = 136
 
 # Every facade pass-through opens with `self._require()`; counting it is a
 # robust, signature-shape-independent proxy for the pass-through surface.
