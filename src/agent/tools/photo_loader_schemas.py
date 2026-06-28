@@ -48,6 +48,11 @@ CREATE_PHOTO_BATCH_SCHEMA = {
     "confirm": CONFIRM_ARG,
 }
 
+PUBLISH_PHOTO_BATCH_SCHEMA = {
+    "batch_id": Annotated[int, "ID батча из list_photo_batches"],
+    "confirm": CONFIRM_ARG,
+}
+
 RUN_PHOTO_DUE_SCHEMA = {
     "dry_run": Annotated[bool, "Только предпросмотр: показать, что отправилось бы, без реальной отправки"],
     "confirm": CONFIRM_ARG,

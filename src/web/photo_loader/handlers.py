@@ -88,6 +88,22 @@ def build_feedback(
             "highlight_kind": "batch",
         }
 
+    if msg == "photo_batch_published":
+        batch = batches[0] if batches else None
+        target = _target_label(
+            getattr(batch, "target_title", None),
+            getattr(batch, "target_dialog_id", None),
+        )
+        body = "Batch photo tasks опубликован в очередь отправки."
+        if target:
+            body = f"Batch photo tasks для {target} опубликован в очередь отправки."
+        return {
+            "variant": "success",
+            "title": "Batch опубликован",
+            "body": body + " Due-run/cron теперь может отправить его items.",
+            "highlight_kind": "batch",
+        }
+
     if msg == "photo_auto_created":
         job = auto_jobs[0] if auto_jobs else None
         target = _target_label(
@@ -428,6 +444,16 @@ async def handle_photo_run_due(request: Request, form: PhotoPhoneForm) -> PhotoL
     # lands in the command's result for the admin to inspect — nothing is sent.
     code = "photo_run_due_dry_queued" if form.dry_run else "photo_run_due_queued"
     return PhotoLoaderRedirect(form.phone, code, command_id=command_id)
+
+
+async def handle_photo_publish_batch(request: Request, batch_id: int, form: PhotoPhoneForm) -> PhotoLoaderRedirect:
+    try:
+        published = await deps.get_photo_task_service(request).publish_batch(batch_id)
+    except Exception:
+        logger.exception("Photo batch publish failed: batch_id=%s phone=%s", batch_id, form.phone)
+        return PhotoLoaderRedirect(form.phone, "photo_batch_publish_failed", error=True)
+    code = "photo_batch_published" if published else "photo_batch_publish_failed"
+    return PhotoLoaderRedirect(form.phone, code, error=not bool(published))
 
 
 async def handle_photo_cancel_item(request: Request, item_id: int, form: PhotoPhoneForm) -> PhotoLoaderRedirect:

@@ -672,6 +672,10 @@ class PhotoLoaderBundle:
             last_run_at=last_run_at,
         )
 
+    async def publish_batch(self, batch_id: int) -> int:
+        """Перевести HELD-элементы батча в локальную очередь PENDING."""
+        return await self.photo_loader.publish_batch(batch_id)
+
     async def get_batch(self, batch_id: int) -> PhotoBatch | None:
         """Батч по id, либо None."""
         return await self.photo_loader.get_batch(batch_id)

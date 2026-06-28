@@ -195,7 +195,7 @@ async def test_photo_task_schedule_send_passes_schedule(db, tmp_path, real_pool_
 
 
 @pytest.mark.anyio
-async def test_photo_task_run_due_processes_pending_items(db, tmp_path, real_pool_harness_factory):
+async def test_photo_task_create_batch_holds_until_publish(db, tmp_path, real_pool_harness_factory):
     image = tmp_path / "one.jpg"
     image.write_bytes(b"x")
     harness = real_pool_harness_factory()
@@ -224,6 +224,20 @@ async def test_photo_task_run_due_processes_pending_items(db, tmp_path, real_poo
             }
         ],
     )
+
+    claimed = await db.repos.photo_loader.claim_next_due_item(datetime.now(timezone.utc))
+    assert claimed is None
+    processed_before_publish = await service.run_due()
+    assert processed_before_publish == 0
+    item = (await db.repos.photo_loader.list_items_for_batch(batch_id))[0]
+    assert item.status == PhotoBatchStatus.HELD
+
+    published = await service.publish_batch(batch_id)
+    assert published == 1
+    claimed = await db.repos.photo_loader.claim_next_due_item(datetime.now(timezone.utc))
+    assert claimed is not None
+    assert claimed.status == PhotoBatchStatus.RUNNING
+    await db.repos.photo_loader.update_item(claimed.id or 0, status=PhotoBatchStatus.PENDING)
 
     processed = await service.run_due()
     assert processed == 1
@@ -1198,6 +1212,32 @@ async def test_photo_batch_redirects_when_target_validation_raises(
     assert "msg=photo_batch_created" in resp.headers["location"]
     app.state.photo_task_service.create_batch.assert_awaited_once()
     assert "Photo batch creation failed" not in caplog.text
+    await db.close()
+
+
+@pytest.mark.anyio
+async def test_photo_publish_batch_redirects_and_calls_service(tmp_path, telethon_cli_spy, native_auth_spy):
+    app, db = await _build_photo_loader_app(tmp_path, telethon_cli_spy, native_auth_spy)
+    app.state.photo_task_service = SimpleNamespace(
+        publish_batch=AsyncMock(return_value=2),
+    )
+
+    transport = ASGITransport(app=app)
+    auth_header = base64.b64encode(b":testpass").decode()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"Authorization": f"Basic {auth_header}", "Origin": "http://test"},
+    ) as client:
+        resp = await client.post(
+            "/dialogs/photos/batches/123/publish",
+            data={"phone": "+7000"},
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 303
+    assert "msg=photo_batch_published" in resp.headers["location"]
+    app.state.photo_task_service.publish_batch.assert_awaited_once_with(123)
     await db.close()
 
 

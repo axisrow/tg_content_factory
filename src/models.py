@@ -914,10 +914,13 @@ class PhotoSendMode(StrEnum):
 
 
 class PhotoBatchStatus(StrEnum):
-    """Жизненный цикл фото-батча/элемента: `PENDING`/`SCHEDULED` → `RUNNING` →
-    терминальные `COMPLETED`/`FAILED`/`CANCELLED` (`SCHEDULED` — отложенная
-    отправка по времени)."""
+    """Жизненный цикл фото-батча/элемента.
 
+    `HELD` — создан, но ещё не опубликован в локальную очередь; cron его не
+    забирает. `SCHEDULED` — уже поставлен на сервер Telegram через schedule_send.
+    """
+
+    HELD = "held"
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"

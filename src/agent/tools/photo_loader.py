@@ -31,6 +31,7 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
         "toggle_auto_upload": ToolMeta(ToolCategory.WRITE),
         "delete_auto_upload": ToolMeta(ToolCategory.DELETE),
         "create_photo_batch": ToolMeta(ToolCategory.WRITE, phone_bound=True),
+        "publish_photo_batch": ToolMeta(ToolCategory.WRITE),
         "run_photo_due": ToolMeta(ToolCategory.WRITE),
         "create_auto_upload": ToolMeta(ToolCategory.WRITE, phone_bound=True),
         "update_auto_upload": ToolMeta(ToolCategory.WRITE),

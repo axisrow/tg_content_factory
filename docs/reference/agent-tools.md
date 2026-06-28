@@ -185,6 +185,7 @@
 | `toggle_auto_upload` | WRITE | Вкл/выкл авто |
 | `delete_auto_upload` | DELETE | Удалить авто |
 | `create_photo_batch` | WRITE | Создать батч |
+| `publish_photo_batch` | WRITE | Опубликовать батч |
 | `run_photo_due` | WRITE | Запустить due |
 | `create_auto_upload` | WRITE | Создать авто |
 | `update_auto_upload` | WRITE | Обновить авто |

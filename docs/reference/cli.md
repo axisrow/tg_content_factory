@@ -223,6 +223,7 @@ python -m src.main photo-loader refresh --phone PHONE
 python -m src.main photo-loader send --phone PHONE --target DIALOG_ID --files FILE [FILE ...] [--mode album|separate] [--caption TEXT]
 python -m src.main photo-loader schedule-send --phone PHONE --target DIALOG_ID --files FILE [FILE ...] --at ISO_DATETIME [--mode album|separate] [--caption TEXT]
 python -m src.main photo-loader batch-create --phone PHONE --target DIALOG_ID --manifest FILE [--caption TEXT]
+python -m src.main photo-loader publish BATCH_ID
 python -m src.main photo-loader batch-list
 python -m src.main photo-loader items [--batch-id ID] [--limit N]
 python -m src.main photo-loader batch-cancel ID
