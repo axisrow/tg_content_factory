@@ -309,6 +309,8 @@ class TestClientPoolProperties:
         pool._session_overrides = {"+1": "s"}
         pool._lock = asyncio.Lock()
         pool._active_leases = {}
+        pool._lease_pool = MagicMock()
+        pool._lease_pool.release = AsyncMock()
         pool.clients = {"+1": MagicMock()}
         pool._in_use = {"+1"}
         pool._premium_in_use = set()
@@ -319,6 +321,7 @@ class TestClientPoolProperties:
         await pool.remove_client("+1")
         assert "+1" not in pool._session_overrides
         assert "+1" not in pool.clients
+        pool._lease_pool.release.assert_awaited_once_with("+1")
 
     @pytest.mark.anyio
     async def test_get_db_cached_dialogs_empty(self):

@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.models import Account
+from src.telegram.account_lease_pool import AccountLease
 from src.telegram.client_pool import ClientPool
 
 
@@ -83,6 +85,18 @@ def _pool_with_in_use(in_use: set[str]) -> ClientPool:
     pool._lease_pool.release = AsyncMock()
     pool._backend_router = MagicMock()
     pool._backend_router.release = AsyncMock()
+    return pool
+
+
+def _pool_with_lifecycle_state(in_use: set[str]) -> ClientPool:
+    pool = _pool_with_in_use(in_use)
+    pool.clients = {}
+    pool._session_overrides = {}
+    pool._dialogs_fetched = set()
+    pool._dialogs_fetched_at_monotonic = {}
+    pool._dialogs_cache = {}
+    pool._premium_flood_wait_until = {}
+    pool._mtproto_watchdog = None
     return pool
 
 
@@ -186,6 +200,112 @@ async def test_release_client_no_await_window_between_pop_and_discard():
     )
     assert in_use == set()
     assert "+7" not in pool._active_leases
+
+
+@pytest.mark.anyio
+async def test_remove_client_releases_in_use_under_client_pool_lock():
+    """#1191: remove_client must release the shared _in_use marker through
+    AccountLeasePool.release while ClientPool._lock still protects the local
+    teardown state. On the old code this spy was never called because
+    remove_client did a bare _in_use.discard outside both locks."""
+    pool = _pool_with_lifecycle_state(in_use={"+7"})
+    lease = SimpleNamespace(disconnect_on_release=False)
+    pool.clients["+7"] = object()
+    pool._active_leases["+7"] = [lease]
+
+    observed: dict[str, object] = {}
+
+    async def _spy_release(phone):
+        observed["client_lock_held"] = pool._lock.locked()
+        observed["active_leases_snapshot"] = {k: list(v) for k, v in pool._active_leases.items()}
+        observed["client_present_snapshot"] = phone in pool.clients
+        observed["in_use_snapshot"] = set(pool._in_use)
+        pool._in_use.discard(phone)
+
+    pool._lease_pool.release = _spy_release
+
+    await pool.remove_client("+7")
+
+    assert observed.get("client_lock_held") is True, (
+        "remove_client did not release _in_use through AccountLeasePool.release "
+        "while holding ClientPool._lock (#1191)"
+    )
+    assert observed["active_leases_snapshot"] == {}
+    assert observed["client_present_snapshot"] is False
+    assert observed["in_use_snapshot"] == {"+7"}
+    assert "+7" not in pool.clients
+    assert "+7" not in pool._active_leases
+    assert "+7" not in pool._in_use
+
+
+@pytest.mark.anyio
+async def test_disconnect_all_timeout_releases_in_use_under_client_pool_lock():
+    """#1191: the forced timeout cleanup path must use AccountLeasePool.release
+    under ClientPool._lock, not a bare _in_use.discard."""
+    pool = _pool_with_lifecycle_state(in_use={"+7"})
+    pool.clients["+7"] = object()
+    pool._active_leases["+7"] = [SimpleNamespace(disconnect_on_release=False)]
+
+    async def _timeout_remove(phone):
+        raise asyncio.TimeoutError
+
+    pool.remove_client = _timeout_remove  # type: ignore[method-assign]
+
+    observed: dict[str, object] = {}
+
+    async def _spy_release(phone):
+        observed["client_lock_held"] = pool._lock.locked()
+        observed["active_leases_snapshot"] = {k: list(v) for k, v in pool._active_leases.items()}
+        observed["client_present_snapshot"] = phone in pool.clients
+        observed["in_use_snapshot"] = set(pool._in_use)
+        pool._in_use.discard(phone)
+
+    pool._lease_pool.release = _spy_release
+
+    await pool.disconnect_all()
+
+    assert observed.get("client_lock_held") is True, (
+        "disconnect_all timeout cleanup did not release _in_use through "
+        "AccountLeasePool.release while holding ClientPool._lock (#1191)"
+    )
+    assert observed["active_leases_snapshot"] == {}
+    assert observed["client_present_snapshot"] is False
+    assert observed["in_use_snapshot"] == {"+7"}
+    assert "+7" not in pool.clients
+    assert "+7" not in pool._active_leases
+    assert "+7" not in pool._in_use
+
+
+@pytest.mark.anyio
+async def test_acquire_from_lease_failure_releases_in_use_under_client_pool_lock():
+    """#1191: when a non-shared lease fails before becoming active, the release
+    must still happen inside ClientPool._lock. On the old code the spy saw the
+    release with ClientPool._lock free."""
+    pool = _pool_with_in_use(in_use={"+7"})
+    pool.clients = {}
+    pool._backend_router.acquire_client = AsyncMock(side_effect=RuntimeError("boom"))
+    account_lease = AccountLease(
+        account=Account(phone="+7", session_string="session", is_active=True),
+        shared=False,
+    )
+
+    observed: dict[str, object] = {}
+
+    async def _spy_release(phone):
+        observed["client_lock_held"] = pool._lock.locked()
+        observed["in_use_snapshot"] = set(pool._in_use)
+        pool._in_use.discard(phone)
+
+    pool._lease_pool.release = _spy_release
+
+    result = await pool._acquire_from_lease(account_lease)
+
+    assert result is None
+    assert observed.get("client_lock_held") is True, (
+        "_acquire_from_lease failure release did not run under ClientPool._lock (#1191)"
+    )
+    assert observed["in_use_snapshot"] == {"+7"}
+    assert "+7" not in pool._in_use
 
 
 @pytest.mark.anyio
