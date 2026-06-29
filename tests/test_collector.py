@@ -1344,7 +1344,7 @@ async def test_collect_channel_checks_notifications_on_persistence_error(db):
 
     db.insert_messages_batch = _flaky_insert
 
-    with patch("src.telegram.collector.MESSAGE_FLUSH_BATCH_SIZE", 2), patch.object(
+    with patch("src.telegram.collector_mixins.stream.MESSAGE_FLUSH_BATCH_SIZE", 2), patch.object(
         collector, "_check_notification_queries", new=AsyncMock()
     ) as check_mock, patch.object(
         collector, "_maybe_enqueue_auto_translate", new=AsyncMock()
@@ -1508,7 +1508,7 @@ async def test_collect_channel_hanging_stream_close_times_out_and_releases_clien
         async def aclose(self):
             await asyncio.Event().wait()
 
-    monkeypatch.setattr("src.telegram.collector.STREAM_CLEANUP_TIMEOUT_SEC", 0.05)
+    monkeypatch.setattr("src.telegram.collector_mixins.stream.STREAM_CLEANUP_TIMEOUT_SEC", 0.05)
     monkeypatch.setattr("src.telegram.backends.STREAM_ITERATOR_CLOSE_TIMEOUT_SEC", 0.01)
 
     mock_client = AsyncMock()
@@ -1546,7 +1546,7 @@ async def test_collect_channel_abandoned_stream_read_retires_client(db, monkeypa
         async def aclose(self):
             await asyncio.Event().wait()
 
-    monkeypatch.setattr("src.telegram.collector.STREAM_CLEANUP_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr("src.telegram.collector_mixins.stream.STREAM_CLEANUP_TIMEOUT_SEC", 0.01)
     monkeypatch.setattr("src.telegram.backends.STREAM_ITERATOR_CLOSE_TIMEOUT_SEC", 0.05)
 
     mock_client = AsyncMock()
@@ -1590,7 +1590,7 @@ async def test_collect_channel_dirty_client_remove_timeout_releases_lease(db, mo
     async def _hung_remove(_phone):
         await asyncio.Event().wait()
 
-    monkeypatch.setattr("src.telegram.collector.STREAM_CLEANUP_TIMEOUT_SEC", 0.01)
+    monkeypatch.setattr("src.telegram.collector_mixins.stream.STREAM_CLEANUP_TIMEOUT_SEC", 0.01)
     monkeypatch.setattr("src.telegram.backends.STREAM_ITERATOR_CLOSE_TIMEOUT_SEC", 0.05)
 
     mock_client = AsyncMock()
@@ -1765,8 +1765,8 @@ async def test_incremental_batch_flushes_to_avoid_huge_final_flush(db):
 @pytest.mark.anyio
 async def test_flush_verifies_persisted_ids_in_chunks(db, monkeypatch):
     """Persist verification should chunk SQL IN parameters under SQLite's limit."""
-    monkeypatch.setattr("src.telegram.collector.MESSAGE_FLUSH_BATCH_SIZE", 1001)
-    monkeypatch.setattr("src.telegram.collector.PERSISTED_ID_VERIFY_CHUNK_SIZE", 400)
+    monkeypatch.setattr("src.telegram.collector_mixins.stream.MESSAGE_FLUSH_BATCH_SIZE", 1001)
+    monkeypatch.setattr("src.telegram.collector_mixins.collection.PERSISTED_ID_VERIFY_CHUNK_SIZE", 400)
 
     ch = Channel(channel_id=-100131, title="Test", username="test131", last_collected_id=50)
     ch_id = await db.add_channel(ch)
@@ -1819,7 +1819,7 @@ async def test_collect_correct_across_flush_boundaries_for_batch_size(db, monkey
     real in-memory DB (no insert mock), parameterised on both the current default
     and the rejected 1000 hypothesis.
     """
-    monkeypatch.setattr("src.telegram.collector.MESSAGE_FLUSH_BATCH_SIZE", batch_size)
+    monkeypatch.setattr("src.telegram.collector_mixins.stream.MESSAGE_FLUSH_BATCH_SIZE", batch_size)
 
     # N straddles 2.4 flush partitions at batch=500 and 1.2 at batch=1000, so a
     # boundary-off-by-one in either dedup or last_id advancement would show up.
