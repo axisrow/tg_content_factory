@@ -10,6 +10,11 @@ from httpx import ASGITransport, AsyncClient
 
 from src.models import Account
 
+
+async def _quality_provider(**kwargs):
+    return '{"overall": 0.8, "issues": []}'
+
+
 _ADD_DATA = {
     "name": "Test Pipeline",
     "prompt_template": "Write a summary",
@@ -330,7 +335,7 @@ async def test_generate_stream_success(client):
 
     mock_provider_instance = MagicMock()
     mock_provider_instance.has_providers = MagicMock(return_value=True)
-    mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
+    mock_provider_instance.get_provider_callable = MagicMock(return_value=_quality_provider)
 
     app = client._transport.app  # type: ignore
     app.state.llm_provider_service = mock_provider_instance
@@ -394,7 +399,6 @@ async def test_generate_stream_pipeline_not_found(client):
     assert "error=pipeline_invalid" in resp.headers["location"]
 
 
-@pytest.mark.slow  # real provider-retry backoff on the failure path (~8s)
 @pytest.mark.anyio
 async def test_generate_stream_scope_error_fails_closed(client):
     """Fail-closed (#1077): a source-scope resolution failure must abort the run
@@ -409,7 +413,7 @@ async def test_generate_stream_scope_error_fails_closed(client):
 
     mock_provider_instance = MagicMock()
     mock_provider_instance.has_providers = MagicMock(return_value=True)
-    mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
+    mock_provider_instance.get_provider_callable = MagicMock(return_value=_quality_provider)
     app = client._transport.app  # type: ignore
     app.state.llm_provider_service = mock_provider_instance
     db = app.state.db
@@ -440,12 +444,12 @@ async def test_generate_pipeline_success(client):
 
     mock_provider_instance = MagicMock()
     mock_provider_instance.has_providers = MagicMock(return_value=True)
-    mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
+    mock_provider_instance.get_provider_callable = MagicMock(return_value=_quality_provider)
 
     app = client._transport.app  # type: ignore
     app.state.llm_provider_service = mock_provider_instance
 
-    with patch("src.services.generation_service.GenerationService") as mock_gen:
+    with patch("src.services.content_generation_service.GenerationService") as mock_gen:
         mock_instance = MagicMock()
         mock_instance.generate = AsyncMock(
             return_value={"generated_text": "Test output", "citations": []}
@@ -459,7 +463,6 @@ async def test_generate_pipeline_success(client):
         assert resp.status_code == 200
 
 
-@pytest.mark.slow  # real provider-retry backoff on the failure path (~9s)
 @pytest.mark.anyio
 async def test_generate_pipeline_failure(client):
     """Test non-streaming generation failure."""
@@ -469,12 +472,12 @@ async def test_generate_pipeline_failure(client):
 
     mock_provider_instance = MagicMock()
     mock_provider_instance.has_providers = MagicMock(return_value=True)
-    mock_provider_instance.get_provider_callable = MagicMock(return_value=lambda: None)
+    mock_provider_instance.get_provider_callable = MagicMock(return_value=_quality_provider)
 
     app = client._transport.app  # type: ignore
     app.state.llm_provider_service = mock_provider_instance
 
-    with patch("src.services.generation_service.GenerationService") as mock_gen:
+    with patch("src.services.content_generation_service.GenerationService") as mock_gen:
         mock_instance = MagicMock()
         mock_instance.generate = AsyncMock(side_effect=Exception("Generation error"))
         mock_gen.return_value = mock_instance

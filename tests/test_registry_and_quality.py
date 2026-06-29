@@ -4,8 +4,6 @@ from __future__ import annotations
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from src.agent.tools._registry import (
     _text_response,
     normalize_phone,
@@ -14,6 +12,7 @@ from src.agent.tools._registry import (
     require_pool,
     resolve_phone,
 )
+from tests.helpers import fast_llm_error_recovery
 
 # --- normalize_phone ---
 
@@ -206,11 +205,10 @@ async def test_quality_scoring_passes():
     assert svc.passes_threshold(score, threshold=0.9) is False
 
 
-@pytest.mark.slow  # real provider-retry backoff on the exception path (~8s)
 async def test_quality_scoring_no_provider():
     from src.services.quality_scoring_service import QualityScoringService
 
-    svc = QualityScoringService(db=MagicMock())
+    svc = QualityScoringService(db=MagicMock(), error_recovery=fast_llm_error_recovery())
     with patch("src.services.quality_scoring_service.RuntimeProviderRegistry", create=True):
         # Provider raises exception
         mock_ps = MagicMock()

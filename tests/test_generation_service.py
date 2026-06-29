@@ -4,6 +4,7 @@ import pytest
 
 from src.models import Message, SearchResult
 from src.services.generation_service import GenerationService
+from tests.helpers import fast_llm_error_recovery
 
 
 class DummySearchEngine:
@@ -246,7 +247,6 @@ async def test_generation_service_sync_iterator_provider():
     assert chunks[-1]["generated_text"] == "chunk1chunk2chunk3"
 
 
-@pytest.mark.slow  # real provider-retry backoff on the exception path (~8s)
 async def test_generation_service_provider_exception():
     """Test generation handles provider exception."""
 
@@ -254,7 +254,11 @@ async def test_generation_service_provider_exception():
         raise ValueError("Provider error")
 
     engine = DummySearchEngine([])
-    service = GenerationService(search_engine=engine, provider_callable=failing_provider)
+    service = GenerationService(
+        search_engine=engine,
+        provider_callable=failing_provider,
+        error_recovery=fast_llm_error_recovery(),
+    )
 
     with pytest.raises(ValueError, match="Provider error"):
         await service.generate(query="test")
