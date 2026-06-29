@@ -49,19 +49,18 @@ class ChannelAnalyzer:
             logger=logger,
         )
 
-    async def _build_report(
+    async def _fetch_channels_for_report(self, channel_id: int | None, started_at: float) -> list:
+        channels = await self._repo.fetch_channels_for_analysis(channel_id)
+        logger.info("filter/analyze: fetched %d channels in %.1fs", len(channels), time.monotonic() - started_at)
+        return channels
+
+    async def _fetch_analysis_maps(
         self,
         channel_id: int | None = None,
         *,
         skip_cross_dupe: bool = False,
         sample_size: int | None = None,
-    ) -> FilterReport:
-        t0 = time.monotonic()
-        channels = await self._repo.fetch_channels_for_analysis(channel_id)
-        logger.info("filter/analyze: fetched %d channels in %.1fs", len(channels), time.monotonic() - t0)
-        if not channels:
-            return FilterReport()
-
+    ) -> tuple:
         if self._repo._can_parallel():
             logger.info(
                 "filter/analyze: all maps — started (parallel%s)",
@@ -94,113 +93,202 @@ class ChannelAnalyzer:
             cyrillic_map = await _timed_fetch(
                 "cyrillic map", self._repo.fetch_cyrillic_map(channel_id, sample_size=sample_size)
             )
+        return uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map
 
-        min_subs = await self._load_min_subscribers_filter()
+    def _append_uniqueness_flag(self, flags: list[str], channel_id_value: int, uniqueness_map: dict) -> float | None:
+        uniqueness_pct: float | None = None
+        low_uniqueness = False
+        if channel_id_value in uniqueness_map:
+            total, uniq = uniqueness_map[channel_id_value]
+            if total > 0:
+                raw_uniqueness = uniq / total * 100
+                uniqueness_pct = round(raw_uniqueness, 1)
+                low_uniqueness = raw_uniqueness < LOW_UNIQUENESS_THRESHOLD
+        if low_uniqueness:
+            flags.append("low_uniqueness")
+        return uniqueness_pct
 
-        results: list[ChannelFilterResult] = []
-        for channel in channels:
-            channel_id_value = channel["channel_id"]
-            message_count = int(channel["message_count"] or 0)
-            flags: list[str] = []
-
-            uniqueness_pct: float | None = None
-            low_uniqueness = False
-            if channel_id_value in uniqueness_map:
-                total, uniq = uniqueness_map[channel_id_value]
-                if total > 0:
-                    raw_uniqueness = uniq / total * 100
-                    uniqueness_pct = round(raw_uniqueness, 1)
-                    low_uniqueness = raw_uniqueness < LOW_UNIQUENESS_THRESHOLD
-            if low_uniqueness:
-                flags.append("low_uniqueness")
-
-            subscriber_ratio: float | None = None
-            low_subscriber = False
-            subscriber_count = subscriber_map.get(channel_id_value)
-            if subscriber_count is not None and message_count > 0:
-                raw_ratio = subscriber_count / message_count
-                subscriber_ratio = round(raw_ratio, 2)
-                is_broadcast = channel["channel_type"] in BROADCAST_CHANNEL_TYPES
-                threshold = (
-                    LOW_SUBSCRIBER_RATIO_THRESHOLD
-                    if is_broadcast
-                    else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
-                )
-                low_subscriber = raw_ratio < threshold
-            manual_subs_flagged = False
-            if min_subs > 0 and subscriber_count is not None and subscriber_count < min_subs:
-                flags.append("low_subscriber_manual")
-                manual_subs_flagged = True
-
-            if low_subscriber and not manual_subs_flagged:
-                flags.append("low_subscriber_ratio")
-
-            cross_dupe_pct: float | None = None
-            cross_dupe = False
-            if channel_id_value in cross_dupe_map:
-                uniq_total, duped = cross_dupe_map[channel_id_value]
-                if uniq_total > 0:
-                    raw_cross_pct = duped / uniq_total * 100
-                    cross_dupe_pct = round(raw_cross_pct, 1)
-                    cross_dupe = raw_cross_pct > CROSS_DUPE_THRESHOLD
-            if cross_dupe:
-                flags.append("cross_channel_spam")
-
-            cyrillic_pct: float | None = None
-            non_cyrillic = False
-            if channel_id_value in cyrillic_map:
-                cyr_total, cyr_count = cyrillic_map[channel_id_value]
-                if cyr_total > 0:
-                    raw_cyr_pct = cyr_count / cyr_total * 100
-                    cyrillic_pct = round(raw_cyr_pct, 1)
-                    non_cyrillic = raw_cyr_pct < NON_CYRILLIC_THRESHOLD
-            if non_cyrillic:
-                flags.append("non_cyrillic")
-
-            short_msg_pct: float | None = None
-            noisy_chat = False
-            is_chat = channel["channel_type"] in CHAT_CHANNEL_TYPES
-            if is_chat and channel_id_value in short_map:
-                short_total, short_count = short_map[channel_id_value]
-                if short_total > 0:
-                    raw_short_pct = short_count / short_total * 100
-                    short_msg_pct = round(raw_short_pct, 1)
-                    noisy_chat = raw_short_pct > CHAT_NOISE_THRESHOLD
-            if noisy_chat:
-                flags.append("chat_noise")
-
-            raw_username = channel["username"]
-            if raw_username and SUSPICIOUS_USERNAME_RE.match(raw_username):
-                flags.append("suspicious_username")
-
-            results.append(
-                ChannelFilterResult(
-                    channel_id=channel_id_value,
-                    title=channel["title"],
-                    username=channel["username"],
-                    message_count=message_count,
-                    flags=flags,
-                    uniqueness_pct=uniqueness_pct,
-                    subscriber_ratio=subscriber_ratio,
-                    cyrillic_pct=cyrillic_pct,
-                    short_msg_pct=short_msg_pct,
-                    cross_dupe_pct=cross_dupe_pct,
-                    is_filtered=bool(flags),
-                )
+    def _append_subscriber_flags(
+        self,
+        flags: list[str],
+        channel,
+        message_count: int,
+        subscriber_count: int | None,
+        min_subs: int,
+    ) -> float | None:
+        subscriber_ratio: float | None = None
+        low_subscriber = False
+        if subscriber_count is not None and message_count > 0:
+            raw_ratio = subscriber_count / message_count
+            subscriber_ratio = round(raw_ratio, 2)
+            is_broadcast = channel["channel_type"] in BROADCAST_CHANNEL_TYPES
+            threshold = (
+                LOW_SUBSCRIBER_RATIO_THRESHOLD
+                if is_broadcast
+                else LOW_SUBSCRIBER_RATIO_CHAT_THRESHOLD
             )
+            low_subscriber = raw_ratio < threshold
+        manual_subs_flagged = False
+        if min_subs > 0 and subscriber_count is not None and subscriber_count < min_subs:
+            flags.append("low_subscriber_manual")
+            manual_subs_flagged = True
 
+        if low_subscriber and not manual_subs_flagged:
+            flags.append("low_subscriber_ratio")
+        return subscriber_ratio
+
+    def _append_cross_dupe_flag(self, flags: list[str], channel_id_value: int, cross_dupe_map: dict) -> float | None:
+        cross_dupe_pct: float | None = None
+        cross_dupe = False
+        if channel_id_value in cross_dupe_map:
+            uniq_total, duped = cross_dupe_map[channel_id_value]
+            if uniq_total > 0:
+                raw_cross_pct = duped / uniq_total * 100
+                cross_dupe_pct = round(raw_cross_pct, 1)
+                cross_dupe = raw_cross_pct > CROSS_DUPE_THRESHOLD
+        if cross_dupe:
+            flags.append("cross_channel_spam")
+        return cross_dupe_pct
+
+    def _append_cyrillic_flag(self, flags: list[str], channel_id_value: int, cyrillic_map: dict) -> float | None:
+        cyrillic_pct: float | None = None
+        non_cyrillic = False
+        if channel_id_value in cyrillic_map:
+            cyr_total, cyr_count = cyrillic_map[channel_id_value]
+            if cyr_total > 0:
+                raw_cyr_pct = cyr_count / cyr_total * 100
+                cyrillic_pct = round(raw_cyr_pct, 1)
+                non_cyrillic = raw_cyr_pct < NON_CYRILLIC_THRESHOLD
+        if non_cyrillic:
+            flags.append("non_cyrillic")
+        return cyrillic_pct
+
+    def _append_chat_noise_flag(
+        self,
+        flags: list[str],
+        channel,
+        channel_id_value: int,
+        short_map: dict,
+    ) -> float | None:
+        short_msg_pct: float | None = None
+        noisy_chat = False
+        is_chat = channel["channel_type"] in CHAT_CHANNEL_TYPES
+        if is_chat and channel_id_value in short_map:
+            short_total, short_count = short_map[channel_id_value]
+            if short_total > 0:
+                raw_short_pct = short_count / short_total * 100
+                short_msg_pct = round(raw_short_pct, 1)
+                noisy_chat = raw_short_pct > CHAT_NOISE_THRESHOLD
+        if noisy_chat:
+            flags.append("chat_noise")
+        return short_msg_pct
+
+    def _append_suspicious_username_flag(self, flags: list[str], channel) -> None:
+        raw_username = channel["username"]
+        if raw_username and SUSPICIOUS_USERNAME_RE.match(raw_username):
+            flags.append("suspicious_username")
+
+    def _build_channel_result(
+        self,
+        channel,
+        *,
+        uniqueness_map: dict,
+        subscriber_map: dict,
+        short_map: dict,
+        cross_dupe_map: dict,
+        cyrillic_map: dict,
+        min_subs: int,
+    ) -> ChannelFilterResult:
+        channel_id_value = channel["channel_id"]
+        message_count = int(channel["message_count"] or 0)
+        flags: list[str] = []
+
+        uniqueness_pct = self._append_uniqueness_flag(flags, channel_id_value, uniqueness_map)
+        subscriber_count = subscriber_map.get(channel_id_value)
+        subscriber_ratio = self._append_subscriber_flags(flags, channel, message_count, subscriber_count, min_subs)
+        cross_dupe_pct = self._append_cross_dupe_flag(flags, channel_id_value, cross_dupe_map)
+        cyrillic_pct = self._append_cyrillic_flag(flags, channel_id_value, cyrillic_map)
+        short_msg_pct = self._append_chat_noise_flag(flags, channel, channel_id_value, short_map)
+        self._append_suspicious_username_flag(flags, channel)
+
+        return ChannelFilterResult(
+            channel_id=channel_id_value,
+            title=channel["title"],
+            username=channel["username"],
+            message_count=message_count,
+            flags=flags,
+            uniqueness_pct=uniqueness_pct,
+            subscriber_ratio=subscriber_ratio,
+            cyrillic_pct=cyrillic_pct,
+            short_msg_pct=short_msg_pct,
+            cross_dupe_pct=cross_dupe_pct,
+            is_filtered=bool(flags),
+        )
+
+    def _build_channel_results(
+        self,
+        channels: list,
+        *,
+        uniqueness_map: dict,
+        subscriber_map: dict,
+        short_map: dict,
+        cross_dupe_map: dict,
+        cyrillic_map: dict,
+        min_subs: int,
+    ) -> list[ChannelFilterResult]:
+        return [
+            self._build_channel_result(
+                channel,
+                uniqueness_map=uniqueness_map,
+                subscriber_map=subscriber_map,
+                short_map=short_map,
+                cross_dupe_map=cross_dupe_map,
+                cyrillic_map=cyrillic_map,
+                min_subs=min_subs,
+            )
+            for channel in channels
+        ]
+
+    def _filter_report_from_results(self, results: list[ChannelFilterResult], started_at: float) -> FilterReport:
         filtered_count = sum(1 for result in results if result.is_filtered)
         logger.info(
             "filter/analyze: report complete — %d channels, %d filtered in %.1fs",
             len(results),
             filtered_count,
-            time.monotonic() - t0,
+            time.monotonic() - started_at,
         )
         return FilterReport(
             results=results,
             total_channels=len(results),
             filtered_count=filtered_count,
         )
+
+    async def _build_report(
+        self,
+        channel_id: int | None = None,
+        *,
+        skip_cross_dupe: bool = False,
+        sample_size: int | None = None,
+    ) -> FilterReport:
+        t0 = time.monotonic()
+        channels = await self._fetch_channels_for_report(channel_id, t0)
+        if not channels:
+            return FilterReport()
+
+        uniqueness_map, subscriber_map, short_map, cross_dupe_map, cyrillic_map = await self._fetch_analysis_maps(
+            channel_id, skip_cross_dupe=skip_cross_dupe, sample_size=sample_size
+        )
+        min_subs = await self._load_min_subscribers_filter()
+        results = self._build_channel_results(
+            channels,
+            uniqueness_map=uniqueness_map,
+            subscriber_map=subscriber_map,
+            short_map=short_map,
+            cross_dupe_map=cross_dupe_map,
+            cyrillic_map=cyrillic_map,
+            min_subs=min_subs,
+        )
+        return self._filter_report_from_results(results, t0)
 
     async def analyze_channel(self, channel_id: int) -> ChannelFilterResult:
         report = await self._build_report(channel_id=channel_id)
