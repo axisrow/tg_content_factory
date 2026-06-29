@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -355,6 +356,82 @@ async def test_start_container_continues_when_pool_init_decrypt_fails(tmp_path, 
         container.pool.warm_all_dialogs.assert_not_called()
     finally:
         await db.close()
+
+
+@pytest.mark.anyio
+async def test_start_container_worker_startup_phase_order(tmp_path):
+    """Worker startup keeps the load-bearing service phase order."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    await db.set_setting("scheduler_autostart", "1")
+
+    order: list[str] = []
+
+    def sync_step(name: str):
+        def _step(*_args, **_kwargs):
+            order.append(name)
+
+        return _step
+
+    def async_step(name: str, result=0):
+        async def _step(*_args, **_kwargs):
+            order.append(name)
+            return result
+
+        return _step
+
+    class OrderedPool:
+        clients = {"connected": object()}
+
+        async def initialize(self):
+            order.append("pool.initialize")
+
+    container = _make_container(db)
+    container.runtime_mode = "worker"
+    container.auth.is_configured = True
+    container.pool = OrderedPool()
+    container.photo_task_service.recover_running = async_step("recover.photo")
+    container.db.repos.generation_runs.reset_running_on_startup = async_step("recover.generation")
+    container.db.repos.telegram_commands.reset_running_on_startup = async_step("recover.commands")
+    container.collection_queue = SimpleNamespace(
+        pause=sync_step("queue.pause"),
+        requeue_startup_tasks=async_step("queue.requeue"),
+        start_db_pull=sync_step("queue.db_pull"),
+    )
+    container.unified_dispatcher = SimpleNamespace(start=async_step("unified_dispatcher.start"))
+    container.telegram_command_dispatcher = SimpleNamespace(
+        start=async_step("telegram_command_dispatcher.start")
+    )
+    container.ai_search = SimpleNamespace(initialize=sync_step("ai_search.initialize"))
+    container.agent_manager = SimpleNamespace(
+        refresh_settings_cache=async_step("agent.preflight"),
+        initialize=sync_step("agent.initialize"),
+    )
+    container.scheduler = SimpleNamespace(
+        load_settings=async_step("scheduler.load_settings"),
+        start=async_step("scheduler.start"),
+    )
+
+    try:
+        await start_container(container)
+    finally:
+        await db.close()
+
+    assert order == [
+        "recover.photo",
+        "recover.generation",
+        "recover.commands",
+        "pool.initialize",
+        "queue.requeue",
+        "queue.db_pull",
+        "unified_dispatcher.start",
+        "telegram_command_dispatcher.start",
+        "ai_search.initialize",
+        "agent.preflight",
+        "agent.initialize",
+        "scheduler.load_settings",
+        "scheduler.start",
+    ]
 
 
 @pytest.mark.anyio
