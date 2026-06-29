@@ -1371,7 +1371,7 @@ class TestCLIAgent:
             yield assistant_msg
             yield result_msg
 
-        with _patch("src.agent.manager.query", mock_query):
+        with _patch("src.agent.backends.claude_sdk.query", mock_query):
             run(
                 _ns(
                     agent_action="chat",
