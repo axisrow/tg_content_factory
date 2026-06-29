@@ -1628,7 +1628,6 @@ class TestDeepagentsProbeAndRun:
         assert result.status == "supported"
         assert result.model == "gpt-4"
 
-    @pytest.mark.slow  # exercises a real probe timeout (~10s)
     @pytest.mark.anyio
     async def test_probe_config_timeout(self, mock_db):
         """probe_config returns 'unknown' on timeout."""
@@ -1647,12 +1646,12 @@ class TestDeepagentsProbeAndRun:
         import src.agent.manager as mgr_module
 
         original_timeout = mgr_module._DEEPAGENTS_PROBE_TIMEOUT_SECONDS
-        mgr_module._DEEPAGENTS_PROBE_TIMEOUT_SECONDS = 0.5
+        mgr_module._DEEPAGENTS_PROBE_TIMEOUT_SECONDS = 0.01
 
         try:
             # _run_probe runs via asyncio.to_thread, so we need it to block
             # in a real thread to allow the wait_for timeout to fire.
-            with patch.object(backend, "_run_probe", side_effect=lambda cfg: __import__("time").sleep(10)):
+            with patch.object(backend, "_run_probe", side_effect=lambda cfg: __import__("time").sleep(0.05)):
                 result = await backend.probe_config(cfg)
         finally:
             mgr_module._DEEPAGENTS_PROBE_TIMEOUT_SECONDS = original_timeout
