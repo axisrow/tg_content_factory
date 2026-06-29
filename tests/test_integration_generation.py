@@ -5,7 +5,6 @@ import pytest
 # pipeline_client fixture is shared from tests/conftest.py (deduped).
 
 
-@pytest.mark.slow  # real provider-retry backoff on the success path (~8s)
 @pytest.mark.anyio
 async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
     # Mock LLM provider service so the Generate button is shown in the template
@@ -13,7 +12,11 @@ async def test_pipeline_generate_and_publish(pipeline_client, monkeypatch):
 
     mock_llm_service = MagicMock()
     mock_llm_service.has_providers = MagicMock(return_value=True)
-    mock_llm_service.get_provider_callable = MagicMock(return_value=None)
+
+    async def quality_provider(**kwargs):
+        return '{"overall": 0.8, "issues": []}'
+
+    mock_llm_service.get_provider_callable = MagicMock(return_value=quality_provider)
     app = pipeline_client._transport.app  # type: ignore
     app.state.llm_provider_service = mock_llm_service
 

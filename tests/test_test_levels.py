@@ -9,6 +9,8 @@ nothing unlevelled) via a real collection of the suite.
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -159,9 +161,9 @@ def test_ast_scan_flags_only_db_building_tests(tmp_path) -> None:
 # --- structural invariants over the real collection ------------------------
 
 
-@pytest.mark.slow  # forks a full pytest collection in a subprocess (~14s)
+@pytest.mark.slow  # forks one full pytest collection in a subprocess
 @pytest.mark.integration  # forks a full pytest collection in a subprocess
-def test_collection_invariants_hold_over_real_suite() -> None:
+def test_collection_invariants_hold_over_real_suite(tmp_path) -> None:
     """End-to-end gate: every collected test gets exactly one level.
 
     Collects the whole suite in a subprocess and asserts that nothing is left
@@ -172,18 +174,65 @@ def test_collection_invariants_hold_over_real_suite() -> None:
     import sys
 
     repo = Path(__file__).resolve().parents[1]
+    inventory_path = tmp_path / "test_level_inventory.json"
+    plugin_path = tmp_path / "level_inventory_plugin.py"
+    plugin_path.write_text(
+        """
+from __future__ import annotations
 
-    def _count(marker_expr: str) -> int:
-        proc = subprocess.run(
-            [sys.executable, "-m", "pytest", "--co", "-q", "-p", "no:cacheprovider", "-m", marker_expr],
-            cwd=repo,
-            capture_output=True,
-            text=True,
-        )
-        return sum(1 for line in proc.stdout.splitlines() if "::" in line)
+import json
+import os
 
-    unlevelled = _count("not (unit or integration or smoke or e2e)")
-    assert unlevelled == 0, f"{unlevelled} collected tests carry no level marker"
 
-    both = _count("unit and integration")
-    assert both == 0, f"{both} collected tests are both unit and integration"
+LEVEL_MARKERS = {"unit", "integration", "smoke", "e2e"}
+
+
+def pytest_collection_finish(session):
+    inventory = {
+        "total": len(session.items),
+        "unlevelled": [],
+        "multi_level": [],
+        "unit_and_integration": [],
+    }
+    for item in session.items:
+        levels = sorted({marker.name for marker in item.iter_markers() if marker.name in LEVEL_MARKERS})
+        if not levels:
+            inventory["unlevelled"].append(item.nodeid)
+        if len(levels) > 1:
+            inventory["multi_level"].append({"nodeid": item.nodeid, "levels": levels})
+        if {"unit", "integration"}.issubset(levels):
+            inventory["unit_and_integration"].append(item.nodeid)
+    with open(os.environ["TEST_LEVEL_INVENTORY_PATH"], "w", encoding="utf-8") as fh:
+        json.dump(inventory, fh)
+""".lstrip()
+    )
+    env = os.environ.copy()
+    env["TEST_LEVEL_INVENTORY_PATH"] = str(inventory_path)
+    env["PYTHONPATH"] = (
+        str(tmp_path)
+        if not env.get("PYTHONPATH")
+        else f"{tmp_path}{os.pathsep}{env['PYTHONPATH']}"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "--co", "-q", "-p", "no:cacheprovider", "-p", "level_inventory_plugin"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    inventory = json.loads(inventory_path.read_text())
+
+    assert inventory["total"] > 0
+    assert inventory["unlevelled"] == [], (
+        f"{len(inventory['unlevelled'])} collected tests carry no level marker: "
+        f"{inventory['unlevelled'][:10]}"
+    )
+    assert inventory["multi_level"] == [], (
+        f"{len(inventory['multi_level'])} collected tests carry multiple level markers: "
+        f"{inventory['multi_level'][:10]}"
+    )
+    assert inventory["unit_and_integration"] == [], (
+        f"{len(inventory['unit_and_integration'])} collected tests are both unit and integration: "
+        f"{inventory['unit_and_integration'][:10]}"
+    )

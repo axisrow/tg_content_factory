@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -18,6 +18,7 @@ from src.models import (
     SearchResult,
 )
 from src.services.content_generation_service import ContentGenerationService
+from tests.helpers import fast_llm_error_recovery
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -966,7 +967,6 @@ async def test_generate_run_not_found_after_save():
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.slow  # real provider-retry backoff on the exception path (~9s)
 @pytest.mark.anyio
 async def test_generate_exception_sets_failed():
     """Any exception during generation should mark run as failed."""
@@ -988,7 +988,9 @@ async def test_generate_exception_sets_failed():
 
     orig = _patch_provider(failing_provider)
     try:
-        with pytest.raises(RuntimeError, match="Provider crashed"):
+        with pytest.raises(RuntimeError, match="Provider crashed"), patch(
+            "src.services.generation_service.for_llm", side_effect=fast_llm_error_recovery
+        ):
             await service.generate(pipeline)
         # The run should have been marked as failed
         # Since we get a new run_id on each call, check the repo
