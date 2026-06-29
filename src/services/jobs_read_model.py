@@ -61,6 +61,13 @@ _PHOTO_ITEM_STATE = {
     PhotoBatchStatus.FAILED: JobRuntimeState.FAILED,
     PhotoBatchStatus.CANCELLED: JobRuntimeState.CANCELLED,
 }
+# An item counts as "processed" for the progress bar once it reaches any terminal
+# state — succeeded OR failed OR cancelled — so the bar always reaches N/N (#1152).
+_PHOTO_TERMINAL_STATUSES = frozenset(
+    status
+    for status, state in _PHOTO_ITEM_STATE.items()
+    if state in {JobRuntimeState.COMPLETED, JobRuntimeState.FAILED, JobRuntimeState.CANCELLED}
+)
 
 # UTC-aware floor for jobs without a timestamp (e.g. scheduler jobs) so they sort
 # last; kept aware to match ``normalize_utc`` keys in the sort below.
@@ -143,9 +150,12 @@ class JobsReadModel:
             if batch.id is not None
             else {}
         )
+        # "Progress" means how many items reached a terminal state — not how many
+        # SUCCEEDED. Counting only COMPLETED froze the bar at e.g. 2/3 forever once
+        # any item FAILED, even though the batch was fully terminal (#1152 follow-up).
         return PhotoBatchView(
             **batch.model_dump(),
-            completed_items=counts.get(PhotoBatchStatus.COMPLETED, 0),
+            completed_items=sum(counts.get(status, 0) for status in _PHOTO_TERMINAL_STATUSES),
             total_items=sum(counts.values()),
         )
 
