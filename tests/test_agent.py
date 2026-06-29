@@ -63,7 +63,7 @@ async def test_agent_chat_stream_mocked(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -102,7 +102,7 @@ async def test_chat_stream_stream_events_yield_incremental_chunks(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -145,7 +145,7 @@ async def test_chat_stream_fallback_to_assistant_message_when_no_stream_events(d
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -200,7 +200,7 @@ async def test_chat_stream_emits_tool_start_and_tool_end_events(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -249,7 +249,7 @@ async def test_chat_stream_emits_tool_start_end_from_assistant_message(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -297,7 +297,7 @@ async def test_chat_stream_passes_prompt_as_async_iterable(db):
     mgr = AgentManager(db)
     mgr.initialize()
 
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for _ in mgr.chat_stream(thread_id, "hello"):
             pass
 
@@ -335,7 +335,7 @@ async def test_chat_stream_options_have_can_use_tool(db):
     mgr = AgentManager(db)
     mgr.initialize()
 
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for _ in mgr.chat_stream(thread_id, "test"):
             pass
 
@@ -372,7 +372,7 @@ async def test_chat_stream_closes_sdk_generator(db):
     mgr = AgentManager(db)
     mgr.initialize()
 
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for _ in mgr.chat_stream(thread_id, "test"):
             pass
 
@@ -400,7 +400,7 @@ async def test_chat_stream_closes_sdk_generator_on_timeout(db):
     mgr.initialize()
     mgr._config.agent.first_event_timeout = 1  # 1s for fast test
 
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for _ in mgr.chat_stream(thread_id, "test"):
             pass
 
@@ -435,7 +435,7 @@ async def test_stderr_errors_surfaced_as_warnings(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -475,7 +475,7 @@ async def test_stderr_debug_lines_not_surfaced(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -509,7 +509,7 @@ async def test_stderr_stage_keywords_not_duplicated_as_warnings(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -549,7 +549,7 @@ async def test_stderr_api_request_counter_not_deduped(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -589,7 +589,7 @@ async def test_user_message_does_not_break_stream(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -629,7 +629,7 @@ async def test_chat_stream_emits_tool_result_from_assistant_message(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -667,7 +667,7 @@ async def test_chat_stream_retry_emits_status_event(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -705,7 +705,7 @@ async def test_chat_stream_text_delta_not_broken_by_tool_tracking(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -761,7 +761,7 @@ async def test_chat_stream_multiple_tools_sequence(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -797,7 +797,7 @@ async def test_chat_stream_emits_initial_connection_status(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -831,7 +831,7 @@ async def test_chat_stream_emits_stderr_stage_status(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -891,7 +891,7 @@ async def test_chat_stream_renders_saved_prompt_template_variables(db):
     mgr = AgentManager(db)
     mgr.initialize()
 
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "test")]
 
     assert chunks
@@ -1122,7 +1122,7 @@ async def test_claude_backend_uses_model_from_config(db):
         yield assistant_msg
         yield result_msg
 
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         chunks = [chunk async for chunk in mgr.chat_stream(thread_id, "test")]
 
     assert chunks
@@ -1272,7 +1272,7 @@ async def test_chat_stream_edge(db, name, text):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, text):
             chunks.append(chunk)
 
@@ -1310,7 +1310,7 @@ async def test_chat_stream_edge_history_mix(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", mock_query):
+    with patch("src.agent.backends.claude_sdk.query", mock_query):
         async for chunk in mgr.chat_stream(thread_id, final_msg):
             chunks.append(chunk)
 
@@ -1930,7 +1930,7 @@ async def test_first_event_timeout_fires(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", stalling_query):
+    with patch("src.agent.backends.claude_sdk.query", stalling_query):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
@@ -1966,7 +1966,7 @@ async def test_idle_timeout_fires(db):
     mgr.initialize()
 
     chunks = []
-    with patch("src.agent.manager.query", stalling_after_first):
+    with patch("src.agent.backends.claude_sdk.query", stalling_after_first):
         async for chunk in mgr.chat_stream(thread_id, "test"):
             chunks.append(chunk)
 
