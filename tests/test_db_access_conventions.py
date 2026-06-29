@@ -22,7 +22,10 @@ BUNDLES = SRC_DIR / "database" / "bundles.py"
 # Current size of the pass-through surface. These are CAPS, not exact counts:
 # the guard prevents growth. Lower them whenever shims are removed.
 FACADE_PASSTHROUGH_BASELINE = 88
-BUNDLE_METHOD_BASELINE = 136
+# +2 for PhotoLoaderBundle.count_due_items / count_items_by_batch_status (#1152):
+# PhotoTaskService / JobsReadModel consume the bundle, not db.repos, so the
+# progress-count reads must be reachable through the bundle surface.
+BUNDLE_METHOD_BASELINE = 138
 
 # Every facade pass-through opens with `self._require()`; counting it is a
 # robust, signature-shape-independent proxy for the pass-through surface.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -70,7 +71,11 @@ class PhotoAutoUploadService:
     async def delete_job(self, job_id: int) -> None:
         await self._bundle.delete_auto_job(job_id)
 
-    async def run_due(self, dry_run: bool = False) -> int | list[PhotoAutoPreview]:
+    async def run_due(
+        self,
+        dry_run: bool = False,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> int | list[PhotoAutoPreview]:
         """Run every due job. In dry-run mode, return a per-job preview list instead of
         sending — no Telegram I/O, no dedup marking, no job-state mutation."""
         jobs = await self._bundle.list_auto_jobs(active_only=True)
@@ -87,6 +92,8 @@ class PhotoAutoUploadService:
         for job in due_jobs:
             await self.run_job(job.id or 0)
             processed += 1
+            if on_progress is not None:
+                on_progress(processed, len(due_jobs))
         return processed
 
     async def run_job(self, job_id: int, dry_run: bool = False) -> int | PhotoAutoPreview:

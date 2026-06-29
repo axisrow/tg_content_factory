@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -334,14 +335,26 @@ class PhotoTaskService:
     async def list_items(self, limit: int = 100) -> list[PhotoBatchItem]:
         return await self._bundle.list_items(limit)
 
-    async def run_due(self, limit: int = 20, item_id: int | None = None) -> int:
+    async def run_due(
+        self,
+        limit: int = 20,
+        item_id: int | None = None,
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> int:
+        now = datetime.now(timezone.utc)
+        due_total = await self._bundle.count_due_items(now, item_id=item_id)
         if item_id is not None:
-            item = await self._bundle.claim_next_due_item(datetime.now(timezone.utc), item_id=item_id)
+            item = await self._bundle.claim_next_due_item(now, item_id=item_id)
             if item is None:
                 return 0
             await self._run_claimed_item(item)
+            if on_progress is not None:
+                # A claimed single item counts as 1 even if count_due_items saw 0
+                # (e.g. claimed by id before its schedule_at) — avoid "[1/0]".
+                on_progress(1, max(due_total, 1))
             return 1
 
+        total = min(due_total, max(limit, 0))
         processed = 0
         while processed < limit:
             item = await self._bundle.claim_next_due_item(datetime.now(timezone.utc))
@@ -349,6 +362,10 @@ class PhotoTaskService:
                 break
             processed += 1
             await self._run_claimed_item(item)
+            if on_progress is not None:
+                # An item can pass its schedule_at mid-run and be claimed beyond
+                # the pre-loop snapshot — never show progress over the total.
+                on_progress(processed, max(total, processed))
         return processed
 
     async def _run_claimed_item(self, item: PhotoBatchItem) -> None:

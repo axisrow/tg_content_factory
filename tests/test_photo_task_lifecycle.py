@@ -20,6 +20,49 @@ from tests.helpers import FakeCliTelethonClient
 _NOW = datetime.now(timezone.utc)
 
 
+def _due_item(item_id: int) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=item_id,
+        batch_id=None,
+        phone="+7",
+        target_dialog_id=-100,
+        target_type="channel",
+        file_paths=[f"/tmp/{item_id}.jpg"],
+        send_mode=PhotoSendMode.SEPARATE,
+        caption=None,
+    )
+
+
+@pytest.mark.anyio
+async def test_run_due_reports_progress_after_each_item():
+    bundle = MagicMock()
+    bundle.count_due_items = AsyncMock(return_value=2)
+    bundle.claim_next_due_item = AsyncMock(side_effect=[_due_item(1), _due_item(2), None])
+    bundle.update_item = AsyncMock()
+    publish = MagicMock()
+    publish.send_now = AsyncMock(return_value=[101])
+    svc = PhotoTaskService(bundle, publish)
+
+    progress: list[tuple[int, int]] = []
+    processed = await svc.run_due(on_progress=lambda done, total: progress.append((done, total)))
+
+    assert processed == 2
+    assert progress == [(1, 2), (2, 2)]
+
+
+@pytest.mark.anyio
+async def test_run_due_without_progress_callback_still_processes():
+    bundle = MagicMock()
+    bundle.count_due_items = AsyncMock(return_value=1)
+    bundle.claim_next_due_item = AsyncMock(side_effect=[_due_item(1), None])
+    bundle.update_item = AsyncMock()
+    publish = MagicMock()
+    publish.send_now = AsyncMock(return_value=[101])
+    svc = PhotoTaskService(bundle, publish)
+
+    assert await svc.run_due() == 1
+
+
 # ── 837#11: _sync_batch_status terminal handling ──────────────────────────────
 
 
