@@ -152,6 +152,26 @@ include = ["*.py"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W"]
 
+[tool.mypy]
+
+[[tool.mypy.overrides]]
+module = [
+    "apscheduler.*",
+    "boto3",
+    "botocore.*",
+    "google.adk.*",
+    "langdetect",
+    "openpyxl",
+    "openpyxl.*",
+    "sklearn.*",
+    "telethon",
+    "telethon.*",
+    "telethon_cli",
+    "telethon_cli.*",
+    "yaml",
+]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 anyio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
