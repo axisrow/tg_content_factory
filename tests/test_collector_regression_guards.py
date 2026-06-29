@@ -387,7 +387,7 @@ async def test_acquire_waits_for_warming_then_uses_discovered_phone(db):
     pool.mark_dialogs_fetched("+7001")  # cache already warm for this phone
 
     collector = Collector(pool, db, SchedulerConfig())
-    with patch("src.telegram.collector.adapt_transport_session", _identity_adapt):
+    with patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt):
         result = await collector._acquire_collection_client(channel, set())
 
     assert warmed["done"] is True
@@ -416,7 +416,7 @@ async def test_acquire_falls_back_to_available_when_phone_unknown_after_warm(db)
     pool.mark_dialogs_fetched("+7009")
 
     collector = Collector(pool, db, SchedulerConfig())
-    with patch("src.telegram.collector.adapt_transport_session", _identity_adapt):
+    with patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt):
         result = await collector._acquire_collection_client(channel, set())
 
     pool.wait_for_warm.assert_awaited_once()
@@ -441,7 +441,7 @@ async def test_acquire_does_not_rewarm_already_warmed_phone(db):
     pool.mark_dialogs_fetched("+7000")  # already warm
 
     collector = Collector(pool, db, SchedulerConfig())
-    with patch("src.telegram.collector.adapt_transport_session", _identity_adapt):
+    with patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt):
         result = await collector._acquire_collection_client(channel, set())
 
     assert result is not _ACQUIRE_RETRY
@@ -458,7 +458,7 @@ async def test_acquire_warms_cold_phone_exactly_once_and_marks_fetched(db):
     # "+7000" starts cold (not in _dialogs_fetched).
 
     collector = Collector(pool, db, SchedulerConfig())
-    with patch("src.telegram.collector.adapt_transport_session", _identity_adapt):
+    with patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt):
         result = await collector._acquire_collection_client(channel, set())
 
     assert result is not _ACQUIRE_RETRY
@@ -488,7 +488,7 @@ async def test_acquire_flood_during_warm_retries_without_marking_fetched(db):
     pool.release_client = AsyncMock()
 
     collector = Collector(pool, db, SchedulerConfig())
-    with patch("src.telegram.collector.adapt_transport_session", _identity_adapt):
+    with patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt):
         result = await collector._acquire_collection_client(channel, set())
 
     assert result is _ACQUIRE_RETRY
@@ -677,7 +677,7 @@ async def test_transient_warm_dialog_flood_is_retried_in_place(db):
 
     collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
     with (
-        patch("src.telegram.collector.adapt_transport_session", _identity_adapt),
+        patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt),
         patch("src.telegram.flood_wait.asyncio.sleep", _fake_sleep),
     ):
         result = await collector._acquire_collection_client(channel, set())

@@ -315,7 +315,7 @@ async def test_acquire_rewarms_after_ttl_expiry(mock_auth, mock_db):
     clock["now"] += 200.0  # past the 100s TTL → stale
 
     collector = Collector(pool, mock_db, SchedulerConfig())
-    with patch("src.telegram.collector.adapt_transport_session", _identity_adapt):
+    with patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt):
         result = await collector._acquire_collection_client(channel, set())
 
     assert result is not _ACQUIRE_RETRY
@@ -337,7 +337,7 @@ async def test_acquire_skips_rewarm_within_ttl(mock_auth, mock_db):
     clock["now"] += 50.0  # still inside the 100s TTL → fresh
 
     collector = Collector(pool, mock_db, SchedulerConfig())
-    with patch("src.telegram.collector.adapt_transport_session", _identity_adapt):
+    with patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt):
         result = await collector._acquire_collection_client(channel, set())
 
     assert result is not _ACQUIRE_RETRY

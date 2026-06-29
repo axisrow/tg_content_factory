@@ -2493,7 +2493,7 @@ async def test_collect_all_stats_defers_on_flood_without_sleep(monkeypatch):
     collector = Collector(pool, db, config)
 
     sleep = AsyncMock()
-    monkeypatch.setattr("src.telegram.collector.asyncio.sleep", sleep)
+    monkeypatch.setattr("src.telegram.collector_mixins.stats.asyncio.sleep", sleep)
 
     next_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
