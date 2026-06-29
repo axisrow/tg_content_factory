@@ -207,141 +207,199 @@ async def _pipeline_show(args: argparse.Namespace, db, config, svc: PipelineServ
 
 
 
-async def _pipeline_add(args: argparse.Namespace, db, config, svc: PipelineService) -> None:
+async def _pipeline_add_from_json(
+    args: argparse.Namespace,
+    svc: PipelineService,
+    json_file: str,
+) -> int | None:
+    import json as _json
+
+    with open(json_file) as _f:
+        graph_data = _json.load(_f)
+    data = {
+        "name": args.name,
+        "prompt_template": args.prompt_template or ".",
+        "llm_model": args.llm_model,
+        "source_ids": args.source or [],
+        "target_refs": (
+            [{"phone": r.phone, "dialog_id": r.dialog_id} for r in _parse_target_refs(args.target)]
+            if args.target
+            else []
+        ),
+        "generate_interval_minutes": args.interval,
+        "pipeline_json": graph_data,
+    }
+    return await svc.import_json(data)
+
+
+def _build_pipeline_add_node_specs(node_specs_raw: list[str]) -> tuple[list, bool]:
+    from src.cli.node_dsl import NodeSpecError, parse_node_spec
+
+    specs = []
+    for raw in node_specs_raw:
+        try:
+            specs.append(parse_node_spec(raw))
+        except NodeSpecError as exc:
+            print(f"Invalid node spec '{raw}': {exc}")
+            return specs, False
+    return specs, True
+
+
+def _apply_pipeline_add_edges(args: argparse.Namespace, builder) -> bool:
+    if getattr(args, "edge", None):
+        for edge_str in args.edge:
+            from_id, _, to_id = edge_str.partition("->")
+            if not to_id:
+                print(f"Invalid edge format '{edge_str}'; use FROM->TO")
+                return False
+            builder.add_explicit_edge(from_id.strip(), to_id.strip())
+    return True
+
+
+def _apply_pipeline_add_node_configs(args: argparse.Namespace, builder) -> bool:
+    if getattr(args, "node_configs", None):
+        import json as _json
+
+        for nc_str in args.node_configs:
+            node_id, _, json_str = nc_str.partition("=")
+            try:
+                config = _json.loads(json_str)
+            except _json.JSONDecodeError as exc:
+                print(f"Invalid JSON in --node-config for {node_id}: {exc}")
+                return False
+            builder.set_node_config_override(node_id.strip(), config)
+    return True
+
+
+def _build_pipeline_add_graph(args: argparse.Namespace, node_specs_raw: list[str]):
+    from src.cli.graph_builder import GraphBuilder, GraphBuilderError
+
+    specs, ok = _build_pipeline_add_node_specs(node_specs_raw)
+    if not ok:
+        return None
+
+    builder = GraphBuilder()
+    for spec in specs:
+        builder.add_node_spec(spec)
+
+    if args.source:
+        builder.set_sources(args.source)
+
+    if args.target:
+        target_refs_list = [{"phone": t.phone, "dialog_id": t.dialog_id} for t in _parse_target_refs(args.target)]
+        builder.set_targets(target_refs_list)
+
+    if not _apply_pipeline_add_edges(args, builder):
+        return None
+    if not _apply_pipeline_add_node_configs(args, builder):
+        return None
+
+    try:
+        return builder.build()
+    except GraphBuilderError as exc:
+        print(f"Graph build error: {exc}")
+        return None
+
+
+async def _pipeline_add_from_nodes(
+    args: argparse.Namespace,
+    svc: PipelineService,
+    node_specs_raw: list[str],
+) -> tuple[int | None, bool]:
+    import json as _json
+
+    graph = _build_pipeline_add_graph(args, node_specs_raw)
+    if graph is None:
+        return None, False
+
+    pipeline_id = await svc.import_json(
+        {
+            "name": args.name,
+            "prompt_template": args.prompt_template or ".",
+            "llm_model": args.llm_model,
+            "image_model": args.image_model,
+            "generation_backend": args.generation_backend,
+            "publish_mode": args.publish_mode,
+            "generate_interval_minutes": args.interval,
+            "pipeline_json": _json.loads(graph.to_json()),
+            "source_ids": args.source or [],
+            "target_refs": (
+                [f"{t.phone}|{t.dialog_id}" for t in _parse_target_refs(args.target)]
+                if args.target
+                else []
+            ),
+        },
+    )
+
+    # Activate if --inactive was not passed
+    if not args.inactive and pipeline_id:
+        await svc._bundle.set_active(pipeline_id, True)
+    return pipeline_id, True
+
+
+async def _pipeline_add_legacy(
+    args: argparse.Namespace,
+    svc: PipelineService,
+) -> tuple[int | None, bool]:
+    # Legacy mode: --prompt-template + --source + --target required
+    if not args.prompt_template:
+        print("Error: --prompt-template is required when --json-file/--node is not used")
+        return None, False
+    if not args.source:
+        print("Error: --source is required")
+        return None, False
+    if not args.target:
+        print("Error: --target is required")
+        return None, False
+    pipeline_id = await svc.add(
+        name=args.name,
+        prompt_template=args.prompt_template,
+        source_channel_ids=args.source,
+        target_refs=_parse_target_refs(args.target),
+        llm_model=args.llm_model,
+        image_model=args.image_model,
+        publish_mode=args.publish_mode,
+        generation_backend=args.generation_backend,
+        generate_interval_minutes=args.interval,
+        is_active=not args.inactive,
+        ab_num_variants=getattr(args, "ab_variants", 1) or 1,
+        ab_auto_select=getattr(args, "ab_auto_select", False),
+    )
+    return pipeline_id, True
+
+
+async def _pipeline_add_pipeline(args: argparse.Namespace, svc: PipelineService) -> tuple[int | None, bool]:
     json_file = getattr(args, "json_file", None)
     node_specs_raw = getattr(args, "node_specs", None)
+    if json_file:
+        return await _pipeline_add_from_json(args, svc, json_file), True
+    if node_specs_raw:
+        # DAG mode: build graph from --node specs
+        return await _pipeline_add_from_nodes(args, svc, node_specs_raw)
+    return await _pipeline_add_legacy(args, svc)
+
+
+async def _pipeline_enqueue_run_after(args: argparse.Namespace, db, pipeline_id: int | None) -> None:
+    from src.services.task_enqueuer import TaskEnqueuer
+
+    since_h = to_since_hours(args.since_value, args.since_unit)
+    enqueuer = TaskEnqueuer(db)
+    await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=since_h)
+    print(f"Enqueued pipeline run (since={args.since_value}{args.since_unit})")
+
+
+async def _pipeline_add(args: argparse.Namespace, db, config, svc: PipelineService) -> None:
     try:
-        if json_file:
-            import json as _json
-
-            with open(json_file) as _f:
-                graph_data = _json.load(_f)
-            data = {
-                "name": args.name,
-                "prompt_template": args.prompt_template or ".",
-                "llm_model": args.llm_model,
-                "source_ids": args.source or [],
-                "target_refs": (
-                    [{"phone": r.phone, "dialog_id": r.dialog_id}
-                     for r in _parse_target_refs(args.target)]
-                    if args.target else []
-                ),
-                "generate_interval_minutes": args.interval,
-                "pipeline_json": graph_data,
-            }
-            pipeline_id = await svc.import_json(data)
-        elif node_specs_raw:
-            # DAG mode: build graph from --node specs
-            import json as _json
-
-            from src.cli.graph_builder import GraphBuilder, GraphBuilderError
-            from src.cli.node_dsl import NodeSpecError, parse_node_spec
-
-            specs = []
-            for raw in node_specs_raw:
-                try:
-                    specs.append(parse_node_spec(raw))
-                except NodeSpecError as exc:
-                    print(f"Invalid node spec '{raw}': {exc}")
-                    return
-
-            builder = GraphBuilder()
-            for spec in specs:
-                builder.add_node_spec(spec)
-
-            if args.source:
-                builder.set_sources(args.source)
-
-            target_refs_list = []
-            if args.target:
-                target_refs_list = [
-                    {"phone": t.phone, "dialog_id": t.dialog_id}
-                    for t in _parse_target_refs(args.target)
-                ]
-                builder.set_targets(target_refs_list)
-
-            if getattr(args, "edge", None):
-                for edge_str in args.edge:
-                    from_id, _, to_id = edge_str.partition("->")
-                    if not to_id:
-                        print(f"Invalid edge format '{edge_str}'; use FROM->TO")
-                        return
-                    builder.add_explicit_edge(from_id.strip(), to_id.strip())
-
-            if getattr(args, "node_configs", None):
-                for nc_str in args.node_configs:
-                    node_id, _, json_str = nc_str.partition("=")
-                    try:
-                        config = _json.loads(json_str)
-                    except _json.JSONDecodeError as exc:
-                        print(f"Invalid JSON in --node-config for {node_id}: {exc}")
-                        return
-                    builder.set_node_config_override(node_id.strip(), config)
-
-            try:
-                graph = builder.build()
-            except GraphBuilderError as exc:
-                print(f"Graph build error: {exc}")
-                return
-
-            pipeline_id = await svc.import_json(
-                {
-                    "name": args.name,
-                    "prompt_template": args.prompt_template or ".",
-                    "llm_model": args.llm_model,
-                    "image_model": args.image_model,
-                    "generation_backend": args.generation_backend,
-                    "publish_mode": args.publish_mode,
-                    "generate_interval_minutes": args.interval,
-                    "pipeline_json": _json.loads(graph.to_json()),
-                    "source_ids": args.source or [],
-                    "target_refs": (
-                        [f"{t.phone}|{t.dialog_id}" for t in _parse_target_refs(args.target)]
-                        if args.target
-                        else []
-                    ),
-                },
-            )
-
-            # Activate if --inactive was not passed
-            if not args.inactive and pipeline_id:
-                await svc._bundle.set_active(pipeline_id, True)
-        else:
-            # Legacy mode: --prompt-template + --source + --target required
-            if not args.prompt_template:
-                print("Error: --prompt-template is required when --json-file/--node is not used")
-                return
-            if not args.source:
-                print("Error: --source is required")
-                return
-            if not args.target:
-                print("Error: --target is required")
-                return
-            pipeline_id = await svc.add(
-                name=args.name,
-                prompt_template=args.prompt_template,
-                source_channel_ids=args.source,
-                target_refs=_parse_target_refs(args.target),
-                llm_model=args.llm_model,
-                image_model=args.image_model,
-                publish_mode=args.publish_mode,
-                generation_backend=args.generation_backend,
-                generate_interval_minutes=args.interval,
-                is_active=not args.inactive,
-                ab_num_variants=getattr(args, "ab_variants", 1) or 1,
-                ab_auto_select=getattr(args, "ab_auto_select", False),
-            )
+        pipeline_id, should_print = await _pipeline_add_pipeline(args, svc)
     except PipelineValidationError as exc:
         print(f"Error: {exc}")
         return
+
+    if not should_print:
+        return
     print(f"Added pipeline id={pipeline_id}: {args.name}")
     if getattr(args, "run_after", False):
-        from src.services.task_enqueuer import TaskEnqueuer
-
-        since_h = to_since_hours(args.since_value, args.since_unit)
-        enqueuer = TaskEnqueuer(db)
-        await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=since_h)
-        print(f"Enqueued pipeline run (since={args.since_value}{args.since_unit})")
+        await _pipeline_enqueue_run_after(args, db, pipeline_id)
 
 
 
