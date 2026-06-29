@@ -110,6 +110,22 @@ class ContentGenerationService:
         If dry_run=True: skips image generation and draft notifications; marks
         metadata with dry_run=True so callers can distinguish test runs.
         """
+        run_id = await self._create_running_run(pipeline)
+        try:
+            return await self._generate_run(
+                run_id=run_id,
+                pipeline=pipeline,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                dry_run=dry_run,
+                since_hours=since_hours,
+            )
+        except Exception as exc:
+            await self._mark_generation_failed(run_id, pipeline, exc)
+            raise
+
+    async def _create_running_run(self, pipeline: ContentPipeline) -> int:
         run_id = await self._db.repos.generation_runs.create_run(
             pipeline_id=pipeline.id,
             prompt=pipeline.prompt_template,
@@ -119,154 +135,290 @@ class ContentGenerationService:
         except Exception:
             await self._db.repos.generation_runs.set_status(run_id, "failed")
             raise
+        return run_id
 
-        try:
-            result = await self._run_generation(
-                pipeline=pipeline,
-                model=model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                since_hours=since_hours,
-                run_id=run_id,
-                dry_run=dry_run,
+    async def _generate_run(
+        self,
+        run_id: int,
+        pipeline: ContentPipeline,
+        model: str | None,
+        max_tokens: int,
+        temperature: float,
+        dry_run: bool,
+        since_hours: float,
+    ) -> GenerationRun:
+        result = await self._run_generation(
+            pipeline=pipeline,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            since_hours=since_hours,
+            run_id=run_id,
+            dry_run=dry_run,
+        )
+        generated_text, effective_publish_mode, metadata = self._prepare_generation_result(
+            result,
+            pipeline,
+            dry_run=dry_run,
+        )
+        generated_text = await self._maybe_apply_generation_refinement(
+            generated_text,
+            metadata,
+            pipeline,
+            model,
+            max_tokens,
+            temperature,
+        )
+
+        # Persist the base text first, then run A/B selection, THEN generate
+        # the image — so the image is rendered from the finally-selected
+        # text, not a discarded base variant (review: Codex). Quality scoring
+        # below likewise sees the final text.
+        await self._db.repos.generation_runs.save_result(run_id, generated_text, metadata)
+
+        generated_text = await self._maybe_run_generation_ab_testing(
+            run_id,
+            pipeline,
+            generated_text,
+            dry_run=dry_run,
+        )
+        await self._maybe_attach_generation_image(
+            run_id,
+            pipeline,
+            generated_text,
+            result,
+            dry_run=dry_run,
+        )
+        await self._maybe_score_generated_content(run_id, pipeline, generated_text)
+        await self._maybe_approve_auto_publish(run_id, effective_publish_mode, dry_run=dry_run)
+        run = await self._get_generation_run_after_save(run_id)
+        await self._maybe_notify_new_draft(
+            run,
+            pipeline,
+            effective_publish_mode,
+            dry_run=dry_run,
+        )
+        return run
+
+    def _prepare_generation_result(
+        self,
+        result: dict[str, Any],
+        pipeline: ContentPipeline,
+        *,
+        dry_run: bool,
+    ) -> tuple[str, str, dict[str, Any]]:
+        generated_text = result.get("generated_text", "")
+        effective_publish_mode = result.get("publish_mode") or pipeline.publish_mode.value
+        metadata = self._build_metadata(
+            {**result, "publish_mode": effective_publish_mode},
+            dry_run=dry_run,
+        )
+        return generated_text, effective_publish_mode, metadata
+
+    async def _maybe_apply_generation_refinement(
+        self,
+        generated_text: str,
+        metadata: dict[str, Any],
+        pipeline: ContentPipeline,
+        model: str | None,
+        max_tokens: int,
+        temperature: float,
+    ) -> str:
+        if pipeline.refinement_steps and generated_text and pipeline.pipeline_json is None:
+            # Refinement steps are only applied for legacy pipelines (graph-based ones encode them as nodes)
+            generated_text = await self._apply_refinement_steps(
+                generated_text, pipeline, model, max_tokens, temperature
             )
-            generated_text = result.get("generated_text", "")
-            effective_publish_mode = result.get("publish_mode") or pipeline.publish_mode.value
-            metadata = self._build_metadata(
-                {**result, "publish_mode": effective_publish_mode},
-                dry_run=dry_run,
+            metadata["refinement_steps_applied"] = len(pipeline.refinement_steps)
+        return generated_text
+
+    async def _maybe_run_generation_ab_testing(
+        self,
+        run_id: int,
+        pipeline: ContentPipeline,
+        generated_text: str,
+        *,
+        dry_run: bool,
+    ) -> str:
+        # A/B variant generation (issue #1068). Runs after the base text is
+        # persisted and before image generation + quality scoring so both the
+        # image and the score reflect the finally-selected text. Skipped for
+        # dry runs (×N token cost) and when disabled (ab_num_variants <= 1).
+        # A failure here must not lose the already-saved base run, so it
+        # degrades gracefully. It runs before the AUTO moderation_status
+        # alignment below (#1036), so an AUTO run publishes the selected
+        # variant (and its matching image), not the base text.
+        if (
+            not dry_run
+            and generated_text
+            and pipeline.ab_num_variants
+            and pipeline.ab_num_variants > 1
+        ):
+            return await self._run_ab_testing(run_id, pipeline, generated_text)
+        return generated_text
+
+    async def _maybe_attach_generation_image(
+        self,
+        run_id: int,
+        pipeline: ContentPipeline,
+        generated_text: str,
+        result: dict[str, Any],
+        *,
+        dry_run: bool,
+    ) -> None:
+        # Use image_url from graph executor if available, otherwise fall back to legacy image gen
+        # Image generation is skipped for dry runs to save time and cost
+        if dry_run:
+            return
+        image_url_from_graph = result.get("image_url")
+        if image_url_from_graph:
+            await self._db.repos.generation_runs.set_image_url(run_id, image_url_from_graph)
+            return
+        await self._maybe_attach_legacy_image(run_id, pipeline, generated_text)
+
+    async def _maybe_attach_legacy_image(
+        self,
+        run_id: int,
+        pipeline: ContentPipeline,
+        generated_text: str,
+    ) -> None:
+        image_model = pipeline.image_model
+        if not image_model:
+            image_model = await self._db.get_setting("default_image_model") or ""
+        if not image_model or pipeline.pipeline_json is not None:
+            return
+
+        orphan = await self._find_generation_orphan_image(run_id, pipeline)
+        if orphan is not None:
+            await self._claim_generation_orphan_image(run_id, pipeline, orphan)
+            return
+
+        image_url = await self._generate_image(pipeline, generated_text, model=image_model)
+        if image_url:
+            await self._db.repos.generation_runs.set_image_url(run_id, image_url)
+
+    async def _find_generation_orphan_image(
+        self,
+        run_id: int,
+        pipeline: ContentPipeline,
+    ) -> tuple[int, str] | None:
+        # Idempotency guard against double-billing on retry (#1117).
+        # The paid image POST happens before the fallible post-image
+        # steps below (quality scoring, AUTO moderation alignment). If
+        # one of those raised, the run was marked 'failed' and the
+        # periodic content_generate job creates a fresh run on its next
+        # tick — a new run_id that an in-run image_url check can't
+        # dedupe. So before issuing a new billed POST, reuse the image
+        # an earlier *failed* run of this pipeline already paid for, and
+        # consume it (transfer, not copy) so it cannot be re-inherited
+        # by a later scheduled post. Same category as #958, different
+        # call site (the generation service, not the adapter).
+        if pipeline.id is None:
+            return None
+        return await self._db.repos.generation_runs.find_orphan_image(
+            pipeline.id, exclude_run_id=run_id
+        )
+
+    async def _claim_generation_orphan_image(
+        self,
+        run_id: int,
+        pipeline: ContentPipeline,
+        orphan: tuple[int, str],
+    ) -> None:
+        source_run_id, reusable_url = orphan
+        logger.info(
+            "Reusing already-paid image from failed run_id=%s for "
+            "pipeline_id=%s run_id=%s instead of re-billing the provider (#1117)",
+            source_run_id,
+            pipeline.id,
+            run_id,
+        )
+        await self._db.repos.generation_runs.claim_orphan_image(
+            source_run_id, run_id, reusable_url
+        )
+
+    async def _maybe_score_generated_content(
+        self,
+        run_id: int,
+        pipeline: ContentPipeline,
+        generated_text: str,
+    ) -> None:
+        if self._quality_service and generated_text:
+            quality = await self._quality_service.score_content(
+                generated_text,
+                model=pipeline.llm_model,
             )
-
-            if pipeline.refinement_steps and generated_text and pipeline.pipeline_json is None:
-                # Refinement steps are only applied for legacy pipelines (graph-based ones encode them as nodes)
-                generated_text = await self._apply_refinement_steps(
-                    generated_text, pipeline, model, max_tokens, temperature
-                )
-                metadata["refinement_steps_applied"] = len(pipeline.refinement_steps)
-
-            # Persist the base text first, then run A/B selection, THEN generate
-            # the image — so the image is rendered from the finally-selected
-            # text, not a discarded base variant (review: Codex). Quality scoring
-            # below likewise sees the final text.
-            await self._db.repos.generation_runs.save_result(run_id, generated_text, metadata)
-
-            # A/B variant generation (issue #1068). Runs after the base text is
-            # persisted and before image generation + quality scoring so both the
-            # image and the score reflect the finally-selected text. Skipped for
-            # dry runs (×N token cost) and when disabled (ab_num_variants <= 1).
-            # A failure here must not lose the already-saved base run, so it
-            # degrades gracefully. It runs before the AUTO moderation_status
-            # alignment below (#1036), so an AUTO run publishes the selected
-            # variant (and its matching image), not the base text.
-            if (
-                not dry_run
-                and generated_text
-                and pipeline.ab_num_variants
-                and pipeline.ab_num_variants > 1
-            ):
-                generated_text = await self._run_ab_testing(
-                    run_id, pipeline, generated_text
-                )
-
-            # Use image_url from graph executor if available, otherwise fall back to legacy image gen
-            # Image generation is skipped for dry runs to save time and cost
-            if not dry_run:
-                image_url_from_graph = result.get("image_url")
-                if image_url_from_graph:
-                    await self._db.repos.generation_runs.set_image_url(run_id, image_url_from_graph)
-                else:
-                    image_model = pipeline.image_model
-                    if not image_model:
-                        image_model = await self._db.get_setting("default_image_model") or ""
-                    if image_model and pipeline.pipeline_json is None:
-                        # Idempotency guard against double-billing on retry (#1117).
-                        # The paid image POST happens before the fallible post-image
-                        # steps below (quality scoring, AUTO moderation alignment). If
-                        # one of those raised, the run was marked 'failed' and the
-                        # periodic content_generate job creates a fresh run on its next
-                        # tick — a new run_id that an in-run image_url check can't
-                        # dedupe. So before issuing a new billed POST, reuse the image
-                        # an earlier *failed* run of this pipeline already paid for, and
-                        # consume it (transfer, not copy) so it cannot be re-inherited
-                        # by a later scheduled post. Same category as #958, different
-                        # call site (the generation service, not the adapter).
-                        orphan = None
-                        if pipeline.id is not None:
-                            orphan = await self._db.repos.generation_runs.find_orphan_image(
-                                pipeline.id, exclude_run_id=run_id
-                            )
-                        if orphan is not None:
-                            source_run_id, reusable_url = orphan
-                            logger.info(
-                                "Reusing already-paid image from failed run_id=%s for "
-                                "pipeline_id=%s run_id=%s instead of re-billing the provider (#1117)",
-                                source_run_id,
-                                pipeline.id,
-                                run_id,
-                            )
-                            await self._db.repos.generation_runs.claim_orphan_image(
-                                source_run_id, run_id, reusable_url
-                            )
-                        else:
-                            image_url = await self._generate_image(pipeline, generated_text, model=image_model)
-                            if image_url:
-                                await self._db.repos.generation_runs.set_image_url(run_id, image_url)
-
-            if self._quality_service and generated_text:
-                quality = await self._quality_service.score_content(
-                    generated_text,
-                    model=pipeline.llm_model,
-                )
-                await self._db.repos.generation_runs.set_quality_score(
-                    run_id,
-                    quality.overall,
-                    quality.issues,
-                )
-
-            # Single point that aligns moderation_status with the effective
-            # publish mode (issue #1036). AUTO content has no human review, so it
-            # must skip 'pending' the instant generation completes: a 'pending'
-            # AUTO run would surface in the moderation queue and, if the later
-            # publish fails, stay stranded there forever. 'approved' is the
-            # publish-eligible state PublishService expects; a successful delivery
-            # then advances it to 'published'. MODERATED stays 'pending' (the
-            # create_run / DB default) until a human approves it. dry_run never
-            # publishes, so its status is left untouched.
-            #
-            # This runs only AFTER every fallible post-save step above (quality
-            # scoring / set_quality_score) has succeeded. If any of them raises,
-            # the except below sets status='failed' and the run keeps its
-            # non-publishable 'pending' moderation_status — so the background
-            # CONTENT_PUBLISH handler (which selects moderation_status='approved')
-            # can never deliver a failed generation to Telegram (review: Codex).
-            if not dry_run and effective_publish_mode == PipelinePublishMode.AUTO.value:
-                await self._db.repos.generation_runs.set_moderation_status(run_id, "approved")
-
-            run = await self._db.repos.generation_runs.get(run_id)
-            if run is None:
-                raise RuntimeError(f"Generation run {run_id} not found after save")
-
-            if (
-                not dry_run
-                and self._notification_service
-                and run.moderation_status == "pending"
-                and effective_publish_mode == PipelinePublishMode.MODERATED.value
-            ):
-                try:
-                    await self._notification_service.notify_new_draft(run, pipeline)
-                except Exception:
-                    logger.warning("Failed to send draft notification", exc_info=True)
-            return run
-        except Exception as exc:
-            logger.exception(
-                "Content generation failed for pipeline_id=%s run_id=%s",
-                pipeline.id,
+            await self._db.repos.generation_runs.set_quality_score(
                 run_id,
+                quality.overall,
+                quality.issues,
             )
-            node_errors = getattr(exc, "node_errors", None)
-            meta = {"node_errors": node_errors} if node_errors else None
-            await self._db.repos.generation_runs.set_status(run_id, "failed", metadata=meta)
-            raise
+
+    async def _maybe_approve_auto_publish(
+        self,
+        run_id: int,
+        effective_publish_mode: str,
+        *,
+        dry_run: bool,
+    ) -> None:
+        # Single point that aligns moderation_status with the effective
+        # publish mode (issue #1036). AUTO content has no human review, so it
+        # must skip 'pending' the instant generation completes: a 'pending'
+        # AUTO run would surface in the moderation queue and, if the later
+        # publish fails, stay stranded there forever. 'approved' is the
+        # publish-eligible state PublishService expects; a successful delivery
+        # then advances it to 'published'. MODERATED stays 'pending' (the
+        # create_run / DB default) until a human approves it. dry_run never
+        # publishes, so its status is left untouched.
+        #
+        # This runs only AFTER every fallible post-save step above (quality
+        # scoring / set_quality_score) has succeeded. If any of them raises,
+        # the except below sets status='failed' and the run keeps its
+        # non-publishable 'pending' moderation_status — so the background
+        # CONTENT_PUBLISH handler (which selects moderation_status='approved')
+        # can never deliver a failed generation to Telegram (review: Codex).
+        if not dry_run and effective_publish_mode == PipelinePublishMode.AUTO.value:
+            await self._db.repos.generation_runs.set_moderation_status(run_id, "approved")
+
+    async def _get_generation_run_after_save(self, run_id: int) -> GenerationRun:
+        run = await self._db.repos.generation_runs.get(run_id)
+        if run is None:
+            raise RuntimeError(f"Generation run {run_id} not found after save")
+        return run
+
+    async def _maybe_notify_new_draft(
+        self,
+        run: GenerationRun,
+        pipeline: ContentPipeline,
+        effective_publish_mode: str,
+        *,
+        dry_run: bool,
+    ) -> None:
+        if (
+            not dry_run
+            and self._notification_service
+            and run.moderation_status == "pending"
+            and effective_publish_mode == PipelinePublishMode.MODERATED.value
+        ):
+            try:
+                await self._notification_service.notify_new_draft(run, pipeline)
+            except Exception:
+                logger.warning("Failed to send draft notification", exc_info=True)
+
+    async def _mark_generation_failed(
+        self,
+        run_id: int,
+        pipeline: ContentPipeline,
+        exc: Exception,
+    ) -> None:
+        logger.exception(
+            "Content generation failed for pipeline_id=%s run_id=%s",
+            pipeline.id,
+            run_id,
+        )
+        node_errors = getattr(exc, "node_errors", None)
+        meta = {"node_errors": node_errors} if node_errors else None
+        await self._db.repos.generation_runs.set_status(run_id, "failed", metadata=meta)
 
     async def _run_generation(
         self,
