@@ -55,7 +55,7 @@ async def test_discover_phone_handles_handled_flood_wait():
     pool.is_dialogs_fetched = MagicMock(return_value=True)
     pool.release_client = AsyncMock()
 
-    with patch("src.telegram.collector.adapt_transport_session", lambda s, **k: s):
+    with patch("src.telegram.collector_mixins.collection.adapt_transport_session", lambda s, **k: s):
         result = await c._discover_phone_for_channel(123, exclude="+2")
 
     assert result is None
