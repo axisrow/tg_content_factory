@@ -52,9 +52,7 @@ async def _publish_worker_down_snapshot(container, exc: AccountSessionDecryptErr
     )
 
 
-async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = None) -> None:
-    now = datetime.now(timezone.utc)
-    connected_phones = sorted(getattr(container.pool, "clients", {}).keys())
+async def _load_active_accounts(container) -> list:
     active_accounts = []
     for getter_name in ("get_account_summaries", "get_accounts"):
         getter = getattr(container.db, getter_name, None)
@@ -69,6 +67,10 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
                 break
         except Exception:
             logger.debug("Failed to load accounts while publishing account status snapshot", exc_info=True)
+    return active_accounts
+
+
+def _resolve_available_phones(active_accounts: list, connected_phones: list[str], now: datetime) -> tuple[dict, list]:
     flood_waits = {}
     available_phones = []
     if active_accounts:
@@ -85,16 +87,23 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
                 available_phones.append(phone)
     else:
         available_phones = list(connected_phones)
+    return flood_waits, available_phones
+
+
+def _resolve_pool_warming(pool) -> bool:
     is_warming_method = None
-    pool_attrs = getattr(container.pool, "__dict__", {})
+    pool_attrs = getattr(pool, "__dict__", {})
     if isinstance(pool_attrs, dict) and "is_warming" in pool_attrs:
         is_warming_method = pool_attrs["is_warming"]
-    elif callable(getattr(type(container.pool), "is_warming", None)):
-        is_warming_method = getattr(container.pool, "is_warming")
-    is_warming = bool(is_warming_method()) if callable(is_warming_method) else False
+    elif callable(getattr(type(pool), "is_warming", None)):
+        is_warming_method = getattr(pool, "is_warming")
+    return bool(is_warming_method()) if callable(is_warming_method) else False
+
+
+def _resolve_backoffs(pool, connected_phones: list[str]) -> dict[str, str]:
     # Per-phone live-resolve backoff deadlines (#790) — surfaced for web parity.
     resolve_backoffs: dict[str, str] = {}
-    get_backoff_until = getattr(container.pool, "get_resolve_username_backoff_until", None)
+    get_backoff_until = getattr(pool, "get_resolve_username_backoff_until", None)
     if callable(get_backoff_until):
         for phone in connected_phones:
             try:
@@ -103,12 +112,28 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
                 break
             if isinstance(until, datetime):
                 resolve_backoffs[phone] = until.isoformat()
+    return resolve_backoffs
+
+
+async def _publish_worker_heartbeat_snapshot(container, now: datetime) -> None:
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="worker_heartbeat",
             payload={"status": "alive", "timestamp": now.isoformat()},
         )
     )
+
+
+async def _publish_accounts_status_snapshot(
+    container,
+    *,
+    connected_phones: list[str],
+    available_phones: list,
+    flood_waits: dict,
+    resolve_backoffs: dict[str, str],
+    is_warming: bool,
+    now: datetime,
+) -> None:
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="accounts_status",
@@ -123,36 +148,45 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
             },
         )
     )
-    pool = container.pool
+
+
+def _pool_counters_payload(pool) -> dict:
     dialogs_cache = getattr(pool, "_dialogs_cache", {})
     active_leases = getattr(pool, "_active_leases", {})
     premium_flood_waits = getattr(pool, "_premium_flood_wait_until", {})
     session_overrides = getattr(pool, "_session_overrides", {})
+    return {
+        "dialogs_cache_entries": (
+            len(dialogs_cache) if hasattr(dialogs_cache, "__len__") else 0
+        ),
+        "active_leases": (
+            {k: len(v) for k, v in active_leases.items()}
+            if isinstance(active_leases, dict)
+            else {}
+        ),
+        "premium_flood_waits": (
+            len(premium_flood_waits)
+            if hasattr(premium_flood_waits, "__len__")
+            else 0
+        ),
+        "session_overrides": (
+            len(session_overrides)
+            if hasattr(session_overrides, "__len__")
+            else 0
+        ),
+    }
+
+
+async def _publish_pool_counters_snapshot(container) -> None:
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="pool_counters",
-            payload={
-                "dialogs_cache_entries": (
-                    len(dialogs_cache) if hasattr(dialogs_cache, "__len__") else 0
-                ),
-                "active_leases": (
-                    {k: len(v) for k, v in active_leases.items()}
-                    if isinstance(active_leases, dict)
-                    else {}
-                ),
-                "premium_flood_waits": (
-                    len(premium_flood_waits)
-                    if hasattr(premium_flood_waits, "__len__")
-                    else 0
-                ),
-                "session_overrides": (
-                    len(session_overrides)
-                    if hasattr(session_overrides, "__len__")
-                    else 0
-                ),
-            },
+            payload=_pool_counters_payload(container.pool),
         )
     )
+
+
+async def _publish_collector_status_snapshot(container, connected_phones: list[str]) -> None:
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="collector_status",
@@ -164,6 +198,9 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
             },
         )
     )
+
+
+async def _publish_scheduler_status_snapshot(container) -> None:
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="scheduler_status",
@@ -173,12 +210,18 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
             },
         )
     )
+
+
+async def _publish_scheduler_jobs_snapshot(container) -> None:
     jobs = []
     if hasattr(container.scheduler, "get_potential_jobs"):
         jobs = await container.scheduler.get_potential_jobs()
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(snapshot_type="scheduler_jobs", payload={"jobs": jobs})
     )
+
+
+def _collection_queue_status_payload(container, now: datetime) -> dict:
     queue = getattr(container, "collection_queue", None)
     active_task_ids = list(getattr(queue, "_active_task_ids", {}).keys()) if queue is not None else []
     target_worker_count = 0
@@ -186,19 +229,26 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
         getter = getattr(queue, "_target_worker_count", None)
         if callable(getter):
             target_worker_count = getter()
+    return {
+        "paused": bool(getattr(queue, "is_paused", False)) if queue is not None else False,
+        "current_task_id": active_task_ids[0] if active_task_ids else None,
+        "active_task_ids": active_task_ids,
+        "running_count": len(active_task_ids),
+        "target_worker_count": target_worker_count,
+        "timestamp": now.isoformat(),
+    }
+
+
+async def _publish_collection_queue_status_snapshot(container, now: datetime) -> None:
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="collection_queue_status",
-            payload={
-                "paused": bool(getattr(queue, "is_paused", False)) if queue is not None else False,
-                "current_task_id": active_task_ids[0] if active_task_ids else None,
-                "active_task_ids": active_task_ids,
-                "running_count": len(active_task_ids),
-                "target_worker_count": target_worker_count,
-                "timestamp": now.isoformat(),
-            },
+            payload=_collection_queue_status_payload(container, now),
         )
     )
+
+
+async def _notification_target_status_payload(container, stop_event: asyncio.Event | None) -> dict:
     target_status = await container.notification_target_service.describe_target()
     bot_payload = {"configured": False}
     if target_status.state == "available":
@@ -225,15 +275,47 @@ async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = No
                     "bot_id": bot.bot_id,
                     "created_at": bot.created_at.isoformat() if bot.created_at else None,
                 }
+    return {
+        "target": asdict(target_status),
+        "bot": bot_payload,
+    }
+
+
+async def _publish_notification_target_status_snapshot(
+    container,
+    stop_event: asyncio.Event | None,
+) -> None:
     await container.db.repos.runtime_snapshots.upsert_snapshot(
         RuntimeSnapshot(
             snapshot_type="notification_target_status",
-            payload={
-                "target": asdict(target_status),
-                "bot": bot_payload,
-            },
+            payload=await _notification_target_status_payload(container, stop_event),
         )
     )
+
+
+async def _publish_snapshots(container, *, stop_event: asyncio.Event | None = None) -> None:
+    now = datetime.now(timezone.utc)
+    connected_phones = sorted(getattr(container.pool, "clients", {}).keys())
+    active_accounts = await _load_active_accounts(container)
+    flood_waits, available_phones = _resolve_available_phones(active_accounts, connected_phones, now)
+    is_warming = _resolve_pool_warming(container.pool)
+    resolve_backoffs = _resolve_backoffs(container.pool, connected_phones)
+    await _publish_worker_heartbeat_snapshot(container, now)
+    await _publish_accounts_status_snapshot(
+        container,
+        connected_phones=connected_phones,
+        available_phones=available_phones,
+        flood_waits=flood_waits,
+        resolve_backoffs=resolve_backoffs,
+        is_warming=is_warming,
+        now=now,
+    )
+    await _publish_pool_counters_snapshot(container)
+    await _publish_collector_status_snapshot(container, connected_phones)
+    await _publish_scheduler_status_snapshot(container)
+    await _publish_scheduler_jobs_snapshot(container)
+    await _publish_collection_queue_status_snapshot(container, now)
+    await _publish_notification_target_status_snapshot(container, stop_event)
 
 
 async def _run_worker_async(config: AppConfig) -> None:
