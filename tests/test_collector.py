@@ -24,12 +24,27 @@ from tests.helpers import AsyncIterMessages as _AsyncIterMessages
 from tests.helpers import FakeTelethonClient, make_mock_message, make_mock_pool, make_mock_reactions
 
 
+def _legacy_collect_all_stats(
+    *,
+    channels: int = 0,
+    messages: int = 0,
+    errors: int = 0,
+    deferred: int = 0,
+) -> dict[str, int]:
+    stats = {"channels": channels, "messages": messages, "errors": errors}
+    for _ in range(deferred):
+        stats["deferred"] = stats.get("deferred", 0) + 1
+    return stats
+
+
 @pytest.mark.anyio
 async def test_collect_no_channels(db):
     pool = make_mock_pool()
     config = SchedulerConfig()
     collector = Collector(pool, db, config)
     stats = await collector.collect_all_channels()
+    assert type(stats) is dict
+    assert stats == _legacy_collect_all_stats()
     assert stats["channels"] == 0
     assert stats["messages"] == 0
 
@@ -564,6 +579,8 @@ async def test_collect_all_channels_continues_cache_only_during_backoff(db):
     stats = await collector.collect_all_channels()
 
     # Run did NOT stop on the backoff; both channels were processed (deferred).
+    assert type(stats) is dict
+    assert stats == _legacy_collect_all_stats(deferred=2)
     assert stats["errors"] == 0
     assert stats["messages"] == 0
     assert stats["deferred"] == 2
@@ -604,6 +621,8 @@ async def test_collect_all_channels_continues_after_mid_run_resolve_flood(db):
     # break on channel 1's flood.
     assert pool.get_available_client.await_count == 2
     # The triggering channel is counted as deferred, not as an error.
+    assert type(stats) is dict
+    assert stats == _legacy_collect_all_stats(channels=1, deferred=1)
     assert stats["errors"] == 0
     assert stats.get("deferred", 0) == 1
     # Backoff is active for Telegram's full FloodWait window — on the flooded

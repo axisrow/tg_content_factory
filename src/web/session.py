@@ -17,10 +17,8 @@ def _b64url_encode(data: bytes) -> str:
 
 
 def _b64url_decode(s: str) -> bytes:
-    padding = 4 - len(s) % 4
-    if padding != 4:
-        s += "=" * padding
-    return base64.urlsafe_b64decode(s)
+    # urlsafe_b64decode ignores surplus padding; three chars cover stripped JWT-style segments.
+    return base64.urlsafe_b64decode(s + "===")
 
 
 @lru_cache(maxsize=4)

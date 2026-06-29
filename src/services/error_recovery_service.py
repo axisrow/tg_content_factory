@@ -5,6 +5,7 @@ import inspect
 import logging
 import time
 import weakref
+from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
 from typing import Awaitable, Callable, TypeVar
@@ -368,10 +369,7 @@ class ErrorRecoveryService:
         if not self._error_history:
             return {"total_errors": 0, "by_category": {}, "recent": []}
 
-        by_category: dict[str, int] = {}
-        for record in self._error_history:
-            cat = record.category.value
-            by_category[cat] = by_category.get(cat, 0) + 1
+        by_category = dict(Counter(record.category.value for record in self._error_history))
 
         recent = [
             {

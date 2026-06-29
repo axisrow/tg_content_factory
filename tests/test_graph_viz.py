@@ -1,6 +1,7 @@
 """Tests for graph_viz ASCII rendering and embedding service helpers."""
 from __future__ import annotations
 
+from collections import defaultdict
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,6 +10,77 @@ from src.cli.graph_viz import _config_summary, render_ascii
 from src.models import PipelineEdge, PipelineGraph, PipelineNode, PipelineNodeType
 
 # --- graph_viz tests ---
+
+
+def _legacy_render_ascii_manual_counter(graph: PipelineGraph) -> str:
+    if not graph.nodes:
+        return "(empty graph)"
+
+    node_by_id = {n.id: n for n in graph.nodes}
+    outgoing: dict[str, list[str]] = defaultdict(list)
+    for edge in graph.edges:
+        outgoing[edge.from_node].append(edge.to_node)
+
+    in_degree: dict[str, int] = {n.id: 0 for n in graph.nodes}
+    for edge in graph.edges:
+        in_degree[edge.to_node] = in_degree.get(edge.to_node, 0) + 1
+    queue = [nid for nid, d in in_degree.items() if d == 0]
+    order: list[str] = []
+    while queue:
+        queue.sort()
+        nid = queue.pop(0)
+        order.append(nid)
+        for child in outgoing.get(nid, []):
+            in_degree[child] -= 1
+            if in_degree[child] == 0:
+                queue.append(child)
+
+    remaining = [n.id for n in graph.nodes if n.id not in set(order)]
+    order.extend(remaining)
+
+    lines: list[str] = []
+    rendered: set[str] = set()
+    for idx, nid in enumerate(list(order)):
+        if nid in rendered:
+            continue
+        node = node_by_id.get(nid)
+        if node is None:
+            continue
+        config_summary = _config_summary(node.config)
+        lines.append(f"[{node.type.value}] id={node.id}{config_summary}")
+
+        children = outgoing.get(nid, [])
+        if idx < len(order) - 1 or children:
+            if len(children) <= 1:
+                next_nid = children[0] if children else None
+                if next_nid and next_nid in node_by_id:
+                    lines.append("   |")
+                    lines.append("   v")
+            else:
+                prefix = "   "
+                for ci, child_id in enumerate(children):
+                    child = node_by_id.get(child_id)
+                    if child is None:
+                        continue
+                    c_summary = _config_summary(child.config)
+                    label = f"[{child.type.value}] id={child.id}{c_summary}"
+                    if ci == 0:
+                        lines.append(f"{prefix}|")
+                        lines.append(f"{prefix}+---> {label}")
+                    else:
+                        lines.append(f"{prefix}|")
+                        lines.append(f"{prefix}+---> {label}")
+                rendered.update(children)
+
+    return "\n".join(lines)
+
+
+def _viz_node(
+    node_id: str,
+    node_type: PipelineNodeType = PipelineNodeType.LLM_GENERATE,
+    config: dict | None = None,
+) -> PipelineNode:
+    return PipelineNode(id=node_id, name=node_id, type=node_type, config=config or {})
 
 
 def test_render_empty_graph():
@@ -50,6 +122,45 @@ def test_render_fan_out():
     result = render_ascii(graph)
     assert "n1" in result
     assert "+--->" in result
+
+
+def test_render_ascii_matches_legacy_manual_counter_cases():
+    cases = [
+        PipelineGraph(nodes=[], edges=[]),
+        PipelineGraph(
+            nodes=[
+                _viz_node("src", PipelineNodeType.SOURCE),
+                _viz_node("gen"),
+                _viz_node("pub", PipelineNodeType.PUBLISH),
+            ],
+            edges=[
+                PipelineEdge(from_node="src", to_node="gen"),
+                PipelineEdge(from_node="gen", to_node="pub"),
+            ],
+        ),
+        PipelineGraph(
+            nodes=[
+                _viz_node("src", PipelineNodeType.SOURCE, {"topic": "news"}),
+                _viz_node("pub1", PipelineNodeType.PUBLISH),
+                _viz_node("pub2", PipelineNodeType.PUBLISH),
+            ],
+            edges=[
+                PipelineEdge(from_node="src", to_node="pub1"),
+                PipelineEdge(from_node="src", to_node="pub2"),
+            ],
+        ),
+        PipelineGraph(
+            nodes=[_viz_node("a"), _viz_node("b"), _viz_node("orphan", PipelineNodeType.NOTIFY)],
+            edges=[
+                PipelineEdge(from_node="a", to_node="b"),
+                PipelineEdge(from_node="a", to_node="b"),
+                PipelineEdge(from_node="missing", to_node="a"),
+            ],
+        ),
+    ]
+
+    for graph in cases:
+        assert render_ascii(graph) == _legacy_render_ascii_manual_counter(graph)
 
 
 def test_config_summary_empty():

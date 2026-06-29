@@ -5,7 +5,13 @@ from __future__ import annotations
 import base64
 import json
 
-from src.web.session import _b64url_encode, _signer, create_session_token, verify_session_token
+from src.web.session import (
+    _b64url_decode,
+    _b64url_encode,
+    _signer,
+    create_session_token,
+    verify_session_token,
+)
 
 
 def _b64url(data: bytes) -> str:
@@ -15,6 +21,26 @@ def _b64url(data: bytes) -> str:
 def _signed(value, secret: str = "secret") -> str:
     """Produce a validly-signed token wrapping an arbitrary JSON value."""
     return _signer(secret).sign(_b64url_encode(json.dumps(value).encode())).decode()
+
+
+def _legacy_b64url_decode(value: str) -> bytes:
+    padding = 4 - len(value) % 4
+    if padding != 4:
+        value += "=" * padding
+    return base64.urlsafe_b64decode(value)
+
+
+def test_b64url_decode_matches_legacy_manual_padding_cases():
+    samples = [
+        b"abc",  # no stripped padding
+        b"ab",  # one stripped "="
+        b"a",  # two stripped "="
+        "привет ✓".encode(),
+    ]
+
+    for sample in samples:
+        encoded = _b64url_encode(sample)
+        assert _b64url_decode(encoded) == _legacy_b64url_decode(encoded) == sample
 
 
 def test_round_trip_valid_token():
