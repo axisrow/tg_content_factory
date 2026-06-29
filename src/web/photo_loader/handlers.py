@@ -7,6 +7,7 @@ import uuid
 from fastapi import Request
 
 from src.models import PhotoAutoUploadJob, PhotoSendMode
+from src.services.jobs_read_model import JobsReadModel
 from src.services.photo_task_service import PhotoTarget
 from src.web import deps
 from src.web.photo_loader import forms
@@ -188,7 +189,8 @@ async def handle_photo_loader_dialogs(request: Request, phone: str | None = None
     if selected_phone:
         dialogs = await deps.channel_service(request).get_my_dialogs(selected_phone)
         dialogs_cached_at = await deps.get_db(request).repos.dialog_cache.get_cached_at(selected_phone)
-    batches = await deps.get_photo_task_service(request).list_batches(limit=20)
+    jobs_read_model = JobsReadModel(deps.get_db(request))
+    batches = await jobs_read_model.list_photo_batches(limit=20)
     items = await deps.get_photo_task_service(request).list_items(limit=20)
     auto_jobs = await deps.get_photo_auto_upload_service(request).list_jobs()
     photo_feedback = build_feedback(
@@ -209,6 +211,14 @@ async def handle_photo_loader_dialogs(request: Request, phone: str | None = None
         "photo_feedback": photo_feedback,
     }
     return PhotoLoaderTemplate("photo_loader_content.html", context)
+
+
+async def handle_photo_batch_progress(request: Request, batch_id: int) -> PhotoLoaderTemplate:
+    batch = await JobsReadModel(deps.get_db(request)).get_photo_batch(batch_id)
+    return PhotoLoaderTemplate(
+        "photo_loader_batch_row.html",
+        {"batch": batch, "batch_id": batch_id},
+    )
 
 
 async def _validate_target(

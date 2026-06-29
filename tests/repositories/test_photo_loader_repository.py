@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -99,6 +99,86 @@ async def test_list_items_for_batch(db):
     assert len(await repo.list_items_for_batch(b1)) == 2
     assert len(await repo.list_items_for_batch(b1, limit=1)) == 1
     assert len(await repo.list_items_for_batch(b2)) == 1
+
+
+@pytest.mark.anyio
+async def test_count_items_by_batch_status(db):
+    repo = db.repos.photo_loader
+    batch_id = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
+    await repo.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+1",
+            target_dialog_id=1,
+            file_paths=["/a"],
+            status=PhotoBatchStatus.COMPLETED,
+        )
+    )
+    await repo.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+1",
+            target_dialog_id=1,
+            file_paths=["/b"],
+            status=PhotoBatchStatus.PENDING,
+        )
+    )
+    await repo.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+1",
+            target_dialog_id=1,
+            file_paths=["/c"],
+            status=PhotoBatchStatus.PENDING,
+        )
+    )
+
+    counts = await repo.count_items_by_batch_status(batch_id)
+
+    assert counts == {
+        PhotoBatchStatus.COMPLETED: 1,
+        PhotoBatchStatus.PENDING: 2,
+    }
+
+
+@pytest.mark.anyio
+async def test_count_due_items_respects_schedule_and_item_filter(db):
+    repo = db.repos.photo_loader
+    now = datetime.now(timezone.utc)
+    batch_id = await repo.create_batch(PhotoBatch(phone="+1", target_dialog_id=1))
+    due_id = await repo.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+1",
+            target_dialog_id=1,
+            file_paths=["/due"],
+            schedule_at=now - timedelta(minutes=1),
+            status=PhotoBatchStatus.PENDING,
+        )
+    )
+    future_id = await repo.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+1",
+            target_dialog_id=1,
+            file_paths=["/future"],
+            schedule_at=now + timedelta(minutes=1),
+            status=PhotoBatchStatus.PENDING,
+        )
+    )
+    await repo.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+1",
+            target_dialog_id=1,
+            file_paths=["/done"],
+            status=PhotoBatchStatus.COMPLETED,
+        )
+    )
+
+    assert await repo.count_due_items(now) == 1
+    assert await repo.count_due_items(now, item_id=due_id) == 1
+    assert await repo.count_due_items(now, item_id=future_id) == 0
 
 
 @pytest.mark.anyio

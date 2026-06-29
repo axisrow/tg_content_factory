@@ -1,0 +1,29 @@
+{% if batch %}
+<tr id="photo-batch-{{ batch.id }}"
+    data-photo-result-row="batch"
+    data-photo-result-target="{{ batch.target_title or batch.target_dialog_id }}"
+    {% if batch.status == "running" %}
+    hx-get="/dialogs/photos/fragments/batches/{{ batch.id }}"
+    hx-trigger="every 5s"
+    hx-swap="outerHTML"
+    {% endif %}>
+    <td>{{ batch.id }}</td>
+    <td>{{ batch.target_title or batch.target_dialog_id }}</td>
+    <td>{{ batch.send_mode }}</td>
+    <td>{{ batch.status }}</td>
+    <td>{{ batch.completed_items }}/{{ batch.total_items }}</td>
+    <td>{{ batch.created_at|local_dt }}</td>
+    <td>
+        {% if batch.status == 'held' %}
+        <form method="post" action="/dialogs/photos/batches/{{ batch.id }}/publish" data-busy>
+            <input type="hidden" name="phone" value="{{ selected_phone or batch.phone }}">
+            <button type="submit" class="btn btn-sm btn-outline-primary">Publish</button>
+        </form>
+        {% endif %}
+    </td>
+</tr>
+{% else %}
+<tr id="photo-batch-{{ batch_id }}">
+    <td colspan="7" class="text-muted">Batch not found</td>
+</tr>
+{% endif %}

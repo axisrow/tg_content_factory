@@ -515,6 +515,54 @@ def test_run_due_action(tmp_path, cli_init_patch, capsys):
     assert "auto_jobs=2" in out
 
 
+def test_run_due_action_prints_progress(tmp_path, cli_init_patch, capsys):
+    """run-due prints plain [N/M] progress lines when services report progress."""
+    db_path = str(tmp_path / "photo_run_due_progress.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _setup_photo_db(db)
+
+    async def fake_init_pool(_config, _db):
+        pool = MagicMock()
+        pool.disconnect_all = AsyncMock()
+        return MagicMock(), pool
+
+    async def _run_items(*, item_id=None, on_progress=None):
+        assert item_id is None
+        assert on_progress is not None
+        on_progress(1, 2)
+        on_progress(2, 2)
+        return 2
+
+    async def _run_auto(*, on_progress=None, dry_run=False):
+        assert dry_run is False
+        assert on_progress is not None
+        on_progress(1, 1)
+        return 1
+
+    fake_task, fake_auto = _create_fake_services(
+        task_methods={"run_due": AsyncMock(side_effect=_run_items)},
+        auto_methods={"run_due": AsyncMock(side_effect=_run_auto)},
+    )
+
+    with (
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
+        patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
+        patch("src.cli.commands.photo_loader.PhotoTaskService", fake_task),
+        patch("src.cli.commands.photo_loader.PhotoAutoUploadService", fake_auto),
+    ):
+        from src.cli.commands.photo_loader import run
+
+        run(_ns(photo_loader_action="run-due"))
+
+    out = capsys.readouterr().out
+    assert "[1/2] photo item processed" in out
+    assert "[2/2] photo item processed" in out
+    assert "Progress: 2/2 photo items processed." in out
+    assert "[1/1] auto job processed" in out
+    assert "Progress: 1/1 auto jobs processed." in out
+
+
 def test_run_due_action_with_item_id_skips_auto_jobs(tmp_path, cli_init_patch, capsys):
     """Test run-due --item-id only processes the requested item."""
     db_path = str(tmp_path / "photo_run_due_item.db")
@@ -547,7 +595,9 @@ def test_run_due_action_with_item_id_skips_auto_jobs(tmp_path, cli_init_patch, c
     out = capsys.readouterr().out
     assert "items=1" in out
     assert "auto_jobs=0" in out
-    run_due.assert_awaited_once_with(item_id=77)
+    run_due.assert_awaited_once()
+    assert run_due.await_args.kwargs["item_id"] == 77
+    assert callable(run_due.await_args.kwargs["on_progress"])
     auto_run_due.assert_not_awaited()
 
 

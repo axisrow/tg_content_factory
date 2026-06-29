@@ -13,6 +13,7 @@ from src.models import (
     JobRuntimeState,
     JobSource,
     PhotoAutoUploadJob,
+    PhotoBatch,
     PhotoBatchItem,
     PhotoBatchStatus,
     RuntimeSnapshot,
@@ -141,6 +142,50 @@ async def test_list_jobs_aggregates_all_sources(db):
     sched = next(j for j in jobs if j.source == JobSource.SCHEDULER_JOB)
     assert sched.job_type == "collect_all"
     assert sched.summary == "every 60m"
+
+
+async def test_photo_batch_read_model_counts_progress(db):
+    batch_id = await db.repos.photo_loader.create_batch(
+        PhotoBatch(
+            phone="+1",
+            target_dialog_id=10,
+            target_title="Chan",
+            status=PhotoBatchStatus.RUNNING,
+        )
+    )
+    await db.repos.photo_loader.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+1",
+            target_dialog_id=10,
+            file_paths=["a.jpg"],
+            status=PhotoBatchStatus.COMPLETED,
+        )
+    )
+    await db.repos.photo_loader.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+1",
+            target_dialog_id=10,
+            file_paths=["b.jpg"],
+            status=PhotoBatchStatus.RUNNING,
+        )
+    )
+    await db.repos.photo_loader.create_item(
+        PhotoBatchItem(
+            batch_id=batch_id,
+            phone="+1",
+            target_dialog_id=10,
+            file_paths=["c.jpg"],
+            status=PhotoBatchStatus.PENDING,
+        )
+    )
+
+    batch = await JobsReadModel(db).get_photo_batch(batch_id)
+
+    assert batch is not None
+    assert batch.completed_items == 1
+    assert batch.total_items == 3
 
 
 async def test_list_jobs_filters_by_source_and_state(db):

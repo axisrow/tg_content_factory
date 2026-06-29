@@ -28,8 +28,10 @@ from src.models import (
     JobSource,
     JobView,
     PhotoAutoUploadJob,
+    PhotoBatch,
     PhotoBatchItem,
     PhotoBatchStatus,
+    PhotoBatchView,
     TelegramCommand,
     TelegramCommandStatus,
 )
@@ -124,6 +126,28 @@ class JobsReadModel:
         # ``limit`` is the unified cap; each source is also fetched with it as a
         # per-source bound, so the final slice honours the documented contract.
         return jobs[:limit]
+
+    async def list_photo_batches(self, *, limit: int = 50) -> list[PhotoBatchView]:
+        batches = await self._db.repos.photo_loader.list_batches(limit=limit)
+        return [await self._from_photo_batch(batch) for batch in batches]
+
+    async def get_photo_batch(self, batch_id: int) -> PhotoBatchView | None:
+        batch = await self._db.repos.photo_loader.get_batch(batch_id)
+        if batch is None:
+            return None
+        return await self._from_photo_batch(batch)
+
+    async def _from_photo_batch(self, batch: PhotoBatch) -> PhotoBatchView:
+        counts = (
+            await self._db.repos.photo_loader.count_items_by_batch_status(batch.id)
+            if batch.id is not None
+            else {}
+        )
+        return PhotoBatchView(
+            **batch.model_dump(),
+            completed_items=counts.get(PhotoBatchStatus.COMPLETED, 0),
+            total_items=sum(counts.values()),
+        )
 
     @staticmethod
     def _want(source: JobSource, wanted: set[JobSource] | None) -> bool:

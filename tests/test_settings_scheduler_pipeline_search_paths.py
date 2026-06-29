@@ -1459,6 +1459,7 @@ class TestPhotoTaskServiceRunDue:
 
         bundle = MagicMock()
         bundle.claim_next_due_item = AsyncMock(return_value=None)
+        bundle.count_due_items = AsyncMock(return_value=0)
         svc = PhotoTaskService(bundle, MagicMock())
         processed = await svc.run_due()
         assert processed == 0
@@ -1486,6 +1487,7 @@ class TestPhotoTaskServiceRunDue:
 
         bundle = MagicMock()
         bundle.claim_next_due_item = AsyncMock(side_effect=[item, None])
+        bundle.count_due_items = AsyncMock(return_value=1)
         bundle.update_item = AsyncMock()
         bundle.list_items_for_batch = AsyncMock(return_value=[completed_item])
         bundle.update_batch = AsyncMock()
@@ -1519,6 +1521,7 @@ class TestPhotoTaskServiceRunDue:
 
         bundle = MagicMock()
         bundle.claim_next_due_item = AsyncMock(return_value=item)
+        bundle.count_due_items = AsyncMock(return_value=1)
         bundle.update_item = AsyncMock()
         bundle.list_items_for_batch = AsyncMock(return_value=[completed_item])
         bundle.update_batch = AsyncMock()
@@ -1556,6 +1559,7 @@ class TestPhotoTaskServiceRunDue:
 
         bundle = MagicMock()
         bundle.claim_next_due_item = AsyncMock(side_effect=[item, None])
+        bundle.count_due_items = AsyncMock(return_value=1)
         bundle.update_item = AsyncMock()
         bundle.list_items_for_batch = AsyncMock(return_value=[failed_item])
         bundle.update_batch = AsyncMock()
