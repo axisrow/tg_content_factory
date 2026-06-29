@@ -456,7 +456,7 @@ class TestAgentChatOneShotMode:
 
         with (
             cli_init_patch(cli_env, "src.cli.runtime.init_db"),
-            _patch("src.agent.manager.query", mock_query),
+            _patch("src.agent.backends.claude_sdk.query", mock_query),
         ):
             run(_ns(agent_action="chat", prompt=prompt, thread_id=thread_id, model=None))
 
