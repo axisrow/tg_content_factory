@@ -129,6 +129,193 @@ class _ChatStreamState:
         self.streamed = False
 
 
+async def _dispatch_rate_limit_event(
+    msg: RateLimitEvent,
+    *,
+    tracker: _ToolTracker,
+    queue: asyncio.Queue,
+    last_rate_limit: list[str],
+    thread_id: int,
+) -> None:
+    info = msg.rate_limit_info
+    rl_status = info.status if info else "unknown"
+    resets = info.resets_at if info else None
+    utilization = info.utilization if info else None
+    logger.warning(
+        "Rate limit event (thread %d): status=%s, resets_at=%s, utilization=%s",
+        thread_id, rl_status, resets, utilization,
+    )
+    rl_parts = [rl_status]
+    if utilization is not None:
+        rl_parts.append(f"{utilization:.0%}")
+    rl_summary = ", ".join(rl_parts)
+    rl_text = f"Rate limit: {rl_summary}"
+    last_rate_limit[0] = rl_summary
+    if rl_status == "rejected":
+        # Hard reject — surface as warning, not just status
+        await queue.put(_sse({"type": "warning", "text": f"⛔ {rl_text}. API отклоняет запросы."}))
+    else:
+        await tracker.on_status(rl_text)
+
+
+async def _dispatch_content_block_start(
+    event: dict[str, Any],
+    *,
+    tracker: _ToolTracker,
+    last_activity: list[float],
+    thread_id: int,
+) -> None:
+    block = event.get("content_block", {})
+    block_type = block.get("type")
+    if block_type == "tool_use":
+        last_activity[0] = time.monotonic()
+        await tracker.on_tool_start(
+            block.get("name", "unknown"),
+            event.get("index", 0),
+            tool_use_id=block.get("id", ""),
+        )
+    else:
+        logger.debug(
+            "content_block_start type=%s (thread %d)",
+            block_type, thread_id,
+        )
+
+
+async def _dispatch_content_block_delta(
+    event: dict[str, Any],
+    *,
+    tracker: _ToolTracker,
+    queue: asyncio.Queue,
+    state: _ChatStreamState,
+    last_activity: list[float],
+) -> None:
+    delta = event.get("delta", {})
+    delta_type = delta.get("type")
+    if delta_type == "text_delta":
+        text_chunk = delta.get("text", "")
+        if text_chunk:
+            last_activity[0] = time.monotonic()
+            state.full_text += text_chunk
+            state.streamed = True
+            await queue.put(_sse({"text": text_chunk}))
+            await asyncio.sleep(0)
+    elif delta_type == "input_json_delta":
+        last_activity[0] = time.monotonic()
+        tracker.accumulate_input(delta.get("partial_json", ""))
+
+
+async def _dispatch_stream_error_event(
+    event: dict[str, Any],
+    *,
+    thread_id: int,
+) -> None:
+    error_info = event.get("error", {})
+    api_error_type = error_info.get("type", "unknown")
+    api_error_msg = error_info.get("message", str(error_info))
+    logger.warning(
+        "API stream error event (thread %d): type=%s message=%s",
+        thread_id, api_error_type, api_error_msg,
+    )
+    if api_error_type == "overloaded_error":
+        raise CLIConnectionError(f"API overloaded: {api_error_msg}")
+    raise ClaudeSDKError(f"{api_error_type}: {api_error_msg}")
+
+
+async def _dispatch_stream_event(
+    msg: StreamEvent,
+    *,
+    tracker: _ToolTracker,
+    queue: asyncio.Queue,
+    state: _ChatStreamState,
+    last_activity: list[float],
+    thread_id: int,
+) -> None:
+    event = msg.event
+    event_type = event.get("type")
+    await tracker.on_first_event()
+
+    if event_type == "content_block_start":
+        await _dispatch_content_block_start(
+            event,
+            tracker=tracker,
+            last_activity=last_activity,
+            thread_id=thread_id,
+        )
+    elif event_type == "content_block_delta":
+        await _dispatch_content_block_delta(
+            event,
+            tracker=tracker,
+            queue=queue,
+            state=state,
+            last_activity=last_activity,
+        )
+    elif event_type == "content_block_stop":
+        last_activity[0] = time.monotonic()
+        await tracker.on_block_stop(event.get("index", 0))
+    elif event_type == "error":
+        await _dispatch_stream_error_event(event, thread_id=thread_id)
+
+
+async def _dispatch_assistant_message(
+    msg: AssistantMessage,
+    *,
+    tracker: _ToolTracker,
+    queue: asyncio.Queue,
+    state: _ChatStreamState,
+    last_activity: list[float],
+) -> None:
+    last_activity[0] = time.monotonic()
+    for _idx, block in enumerate(msg.content):
+        if isinstance(block, TextBlock) and not state.streamed:
+            state.full_text += block.text
+            await queue.put(_sse({"text": block.text}))
+        elif isinstance(block, ToolUseBlock):
+            # SDK delivers tool calls via AssistantMessage (not
+            # StreamEvent content_block_start), so we must
+            # manually emit tool_start / tool_end events here.
+            await tracker.on_tool_start(
+                block.name, _idx, tool_use_id=block.id
+            )
+            tracker.accumulate_input(
+                safe_json_dumps(block.input or {}, ensure_ascii=False)
+            )
+            await tracker.on_block_stop(_idx)
+        elif isinstance(block, ToolResultBlock):
+            content = block.content if isinstance(block.content, str) else ""
+            await tracker.on_tool_result(
+                block.tool_use_id, content, bool(block.is_error)
+            )
+
+
+async def _dispatch_result_message(
+    msg: ResultMessage,
+    *,
+    queue: asyncio.Queue,
+    state: _ChatStreamState,
+) -> None:
+    done_data: dict = {
+        "done": True,
+        "full_text": state.full_text,
+        "backend": "claude",
+    }
+    _usage = getattr(msg, "usage", None)
+    if isinstance(_usage, dict):
+        done_data["usage"] = _usage
+    _model_usage = getattr(msg, "model_usage", None)
+    if isinstance(_model_usage, dict):
+        done_data["model_usage"] = _model_usage
+    _cost = getattr(msg, "total_cost_usd", None)
+    if isinstance(_cost, (int, float)):
+        done_data["total_cost_usd"] = _cost
+    _turns = getattr(msg, "num_turns", None)
+    if isinstance(_turns, int) and _turns > 0:
+        done_data["num_turns"] = _turns
+    _sid = getattr(msg, "session_id", None)
+    if isinstance(_sid, str) and _sid:
+        done_data["session_id"] = _sid
+    await queue.put(_sse(done_data))
+
+
 async def _dispatch_stream_message(
     msg,
     *,
@@ -144,124 +331,35 @@ async def _dispatch_stream_message(
     / ClaudeSDKError for API stream-error events (the caller's retry loop owns
     them); asyncio.CancelledError propagates for the caller's draining handling."""
     if isinstance(msg, RateLimitEvent):
-        info = msg.rate_limit_info
-        rl_status = info.status if info else "unknown"
-        resets = info.resets_at if info else None
-        utilization = info.utilization if info else None
-        logger.warning(
-            "Rate limit event (thread %d): status=%s, resets_at=%s, utilization=%s",
-            thread_id, rl_status, resets, utilization,
+        await _dispatch_rate_limit_event(
+            msg,
+            tracker=tracker,
+            queue=queue,
+            last_rate_limit=last_rate_limit,
+            thread_id=thread_id,
         )
-        rl_parts = [rl_status]
-        if utilization is not None:
-            rl_parts.append(f"{utilization:.0%}")
-        rl_summary = ", ".join(rl_parts)
-        rl_text = f"Rate limit: {rl_summary}"
-        last_rate_limit[0] = rl_summary
-        if rl_status == "rejected":
-            # Hard reject — surface as warning, not just status
-            await queue.put(_sse({"type": "warning", "text": f"⛔ {rl_text}. API отклоняет запросы."}))
-        else:
-            await tracker.on_status(rl_text)
     elif isinstance(msg, StreamEvent):
-        event = msg.event
-        event_type = event.get("type")
-        await tracker.on_first_event()
-
-        if event_type == "content_block_start":
-            block = event.get("content_block", {})
-            block_type = block.get("type")
-            if block_type == "tool_use":
-                last_activity[0] = time.monotonic()
-                await tracker.on_tool_start(
-                    block.get("name", "unknown"),
-                    event.get("index", 0),
-                    tool_use_id=block.get("id", ""),
-                )
-            else:
-                logger.debug(
-                    "content_block_start type=%s (thread %d)",
-                    block_type, thread_id,
-                )
-
-        elif event_type == "content_block_delta":
-            delta = event.get("delta", {})
-            delta_type = delta.get("type")
-            if delta_type == "text_delta":
-                text_chunk = delta.get("text", "")
-                if text_chunk:
-                    last_activity[0] = time.monotonic()
-                    state.full_text += text_chunk
-                    state.streamed = True
-                    await queue.put(_sse({"text": text_chunk}))
-                    await asyncio.sleep(0)
-            elif delta_type == "input_json_delta":
-                last_activity[0] = time.monotonic()
-                tracker.accumulate_input(delta.get("partial_json", ""))
-
-        elif event_type == "content_block_stop":
-            last_activity[0] = time.monotonic()
-            await tracker.on_block_stop(event.get("index", 0))
-
-        elif event_type == "error":
-            error_info = event.get("error", {})
-            api_error_type = error_info.get("type", "unknown")
-            api_error_msg = error_info.get("message", str(error_info))
-            logger.warning(
-                "API stream error event (thread %d): type=%s message=%s",
-                thread_id, api_error_type, api_error_msg,
-            )
-            if api_error_type == "overloaded_error":
-                raise CLIConnectionError(f"API overloaded: {api_error_msg}")
-            raise ClaudeSDKError(f"{api_error_type}: {api_error_msg}")
-
+        await _dispatch_stream_event(
+            msg,
+            tracker=tracker,
+            queue=queue,
+            state=state,
+            last_activity=last_activity,
+            thread_id=thread_id,
+        )
     elif isinstance(msg, AssistantMessage):
-        last_activity[0] = time.monotonic()
-        for _idx, block in enumerate(msg.content):
-            if isinstance(block, TextBlock) and not state.streamed:
-                state.full_text += block.text
-                await queue.put(_sse({"text": block.text}))
-            elif isinstance(block, ToolUseBlock):
-                # SDK delivers tool calls via AssistantMessage (not
-                # StreamEvent content_block_start), so we must
-                # manually emit tool_start / tool_end events here.
-                await tracker.on_tool_start(
-                    block.name, _idx, tool_use_id=block.id
-                )
-                tracker.accumulate_input(
-                    safe_json_dumps(block.input or {}, ensure_ascii=False)
-                )
-                await tracker.on_block_stop(_idx)
-            elif isinstance(block, ToolResultBlock):
-                content = block.content if isinstance(block.content, str) else ""
-                await tracker.on_tool_result(
-                    block.tool_use_id, content, bool(block.is_error)
-                )
+        await _dispatch_assistant_message(
+            msg,
+            tracker=tracker,
+            queue=queue,
+            state=state,
+            last_activity=last_activity,
+        )
     elif isinstance(msg, UserMessage):
         # Tool results sent back to Claude — real progress.
         last_activity[0] = time.monotonic()
     elif isinstance(msg, ResultMessage):
-        done_data: dict = {
-            "done": True,
-            "full_text": state.full_text,
-            "backend": "claude",
-        }
-        _usage = getattr(msg, "usage", None)
-        if isinstance(_usage, dict):
-            done_data["usage"] = _usage
-        _model_usage = getattr(msg, "model_usage", None)
-        if isinstance(_model_usage, dict):
-            done_data["model_usage"] = _model_usage
-        _cost = getattr(msg, "total_cost_usd", None)
-        if isinstance(_cost, (int, float)):
-            done_data["total_cost_usd"] = _cost
-        _turns = getattr(msg, "num_turns", None)
-        if isinstance(_turns, int) and _turns > 0:
-            done_data["num_turns"] = _turns
-        _sid = getattr(msg, "session_id", None)
-        if isinstance(_sid, str) and _sid:
-            done_data["session_id"] = _sid
-        await queue.put(_sse(done_data))
+        await _dispatch_result_message(msg, queue=queue, state=state)
     else:
         logger.warning(
             "Unhandled SDK message type: %s (thread %d)",

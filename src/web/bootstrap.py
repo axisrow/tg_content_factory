@@ -392,12 +392,12 @@ async def build_container_with_templates(
     )
 
 
-async def start_container(container: AppContainer) -> None:
-    t_start = time.monotonic()
-    runtime_mode = getattr(container, "runtime_mode", "worker")
-    if _is_dev:
-        t1 = time.monotonic()
-
+async def _recover_startup_state(
+    container: AppContainer,
+    *,
+    runtime_mode: str,
+    t_start: float,
+) -> None:
     # Startup recovery resets RUNNING rows on the shared SQLite file. In a split
     # deploy (serve --no-worker + separate worker) a web restart must NOT touch
     # the live worker's in-flight photo/generation/command rows, or it corrupts
@@ -416,6 +416,14 @@ async def start_container(container: AppContainer) -> None:
                 "Reset %d stuck telegram_commands from RUNNING to PENDING on startup", tc_recovered
             )
     logger.info("startup: recovery done (%.1fs)", time.monotonic() - t_start)
+
+
+async def _initialize_startup_telegram_pool(
+    container: AppContainer,
+    *,
+    runtime_mode: str,
+    t_start: float,
+) -> None:
     if _is_dev:
         t1 = time.monotonic()
 
@@ -459,6 +467,13 @@ async def start_container(container: AppContainer) -> None:
     if _is_dev:
         logger.info("startup/start: telegram_pool %.2fs", time.monotonic() - t1)
 
+
+async def _start_collection_queue(
+    container: AppContainer,
+    *,
+    runtime_mode: str,
+    t_start: float,
+) -> None:
     if runtime_mode == "worker" and container.collection_queue is not None:
         if container.auth.is_configured and _connected_pool_count(container.pool) == 0:
             logger.warning(
@@ -477,8 +492,16 @@ async def start_container(container: AppContainer) -> None:
         container.collection_queue.start_db_pull()
     logger.info("startup: collection queue done (%.1fs)", time.monotonic() - t_start)
 
+
+async def _start_dispatchers_ai_and_agent(
+    container: AppContainer,
+    *,
+    runtime_mode: str,
+    t_start: float,
+) -> float | None:
     if _is_dev:
         t1 = time.monotonic()
+
     if runtime_mode == "worker" and container.unified_dispatcher is not None:
         result = container.unified_dispatcher.start()
         if inspect.isawaitable(result):
@@ -500,7 +523,15 @@ async def start_container(container: AppContainer) -> None:
     if _is_dev:
         logger.info("startup/start: dispatcher+ai+agent %.2fs", time.monotonic() - t1)
         t1 = time.monotonic()
+    return t1 if _is_dev else None
 
+
+async def _start_scheduler(
+    container: AppContainer,
+    *,
+    runtime_mode: str,
+    t_start: float,
+) -> None:
     if runtime_mode == "worker":
         await container.scheduler.load_settings()
         autostart = await container.db.get_setting("scheduler_autostart")
@@ -508,9 +539,32 @@ async def start_container(container: AppContainer) -> None:
             logger.info("Auto-starting scheduler (scheduler_autostart=1)")
             await container.scheduler.start()
     logger.info("startup: scheduler done (%.1fs)", time.monotonic() - t_start)
+
+
+async def start_container(container: AppContainer) -> None:
+    t_start = time.monotonic()
+    runtime_mode = getattr(container, "runtime_mode", "worker")
+
+    await _recover_startup_state(container, runtime_mode=runtime_mode, t_start=t_start)
+    await _initialize_startup_telegram_pool(
+        container,
+        runtime_mode=runtime_mode,
+        t_start=t_start,
+    )
+    await _start_collection_queue(container, runtime_mode=runtime_mode, t_start=t_start)
+    scheduler_dev_started_at = await _start_dispatchers_ai_and_agent(
+        container,
+        runtime_mode=runtime_mode,
+        t_start=t_start,
+    )
+    await _start_scheduler(
+        container,
+        runtime_mode=runtime_mode,
+        t_start=t_start,
+    )
     logger.info("startup: READY (total %.1fs)", time.monotonic() - t_start)
-    if _is_dev:
-        logger.info("startup/start: scheduler %.2fs", time.monotonic() - t1)
+    if _is_dev and scheduler_dev_started_at is not None:
+        logger.info("startup/start: scheduler %.2fs", time.monotonic() - scheduler_dev_started_at)
         logger.info("startup/start: TOTAL %.2fs", time.monotonic() - t_start)
 
 
