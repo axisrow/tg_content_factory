@@ -188,6 +188,41 @@ async def test_photo_batch_read_model_counts_progress(db):
     assert batch.total_items == 3
 
 
+async def test_photo_batch_progress_counts_all_terminal_items(db):
+    """Progress counts items that reached ANY terminal state (completed/failed/
+    cancelled), so the bar reaches N/N even when some items failed — counting only
+    COMPLETED used to freeze the bar at e.g. 2/3 forever (#1152 follow-up)."""
+    batch_id = await db.repos.photo_loader.create_batch(
+        PhotoBatch(
+            phone="+1",
+            target_dialog_id=10,
+            target_title="Chan",
+            status=PhotoBatchStatus.FAILED,
+        )
+    )
+    for fname, status in (
+        ("a.jpg", PhotoBatchStatus.COMPLETED),
+        ("b.jpg", PhotoBatchStatus.FAILED),
+        ("c.jpg", PhotoBatchStatus.CANCELLED),
+    ):
+        await db.repos.photo_loader.create_item(
+            PhotoBatchItem(
+                batch_id=batch_id,
+                phone="+1",
+                target_dialog_id=10,
+                file_paths=[fname],
+                status=status,
+            )
+        )
+
+    batch = await JobsReadModel(db).get_photo_batch(batch_id)
+
+    assert batch is not None
+    # all three are terminal → bar reaches N/N, not stuck at 1/3
+    assert batch.completed_items == 3
+    assert batch.total_items == 3
+
+
 async def test_list_jobs_filters_by_source_and_state(db):
     await db.repos.tasks.create_collection_task(100, "Chan")  # pending collection task
 
