@@ -1283,6 +1283,90 @@ async def test_settings_bulk_test_refreshes_each_provider_once(client, monkeypat
     probe_mock.assert_awaited_once()
 
 
+def _legacy_bulk_summary(statuses: list[str]) -> dict[str, int]:
+    summary = {"supported": 0, "unsupported": 0, "unknown": 0}
+    for status in statuses:
+        summary[status] = summary.get(status, 0) + 1
+    return summary
+
+
+@pytest.mark.anyio
+async def test_settings_bulk_test_summary_counter_refactor_matches_legacy(client, monkeypatch, tmp_path):
+    db = client._transport.app.state.db
+    await db.set_setting("agent_dev_mode_enabled", "1")
+    service = ProviderConfigService(db, client._transport.app.state.config)
+    await service.save_provider_configs(
+        [
+            ProviderRuntimeConfig(
+                provider="openai",
+                enabled=True,
+                priority=0,
+                selected_model="gpt-4.1-mini",
+                secret_fields={"api_key": "openai-key"},
+            )
+        ]
+    )
+    from src.web.settings import handlers as settings_handlers
+
+    models = ["gpt-4.1", "gpt-4.1-mini", "gpt-4o"]
+    statuses = ["supported", "unsupported", "unknown"]
+    export_path = tmp_path / "compat_catalog.json"
+    request = SimpleNamespace(app=client._transport.app, state=SimpleNamespace())
+
+    async def _fake_refresh_models_for_provider(self, provider_name, cfg=None):
+        del cfg
+        return ProviderModelCacheEntry(
+            provider=provider_name,
+            models=models,
+            source="live",
+            fetched_at="2026-03-12T00:00:00+00:00",
+        )
+
+    async def _fake_probe_provider_config(service, manager, model_cfg, *, probe_kind, force=False):
+        del service, manager, probe_kind, force
+        status = statuses[models.index(model_cfg.selected_model)]
+        return ProviderModelCompatibilityRecord(
+            model=model_cfg.selected_model,
+            status=status,
+            reason="",
+            tested_at="2026-03-12T00:00:01+00:00",
+            config_fingerprint=f"fingerprint-{model_cfg.selected_model}",
+            probe_kind="dev-bulk",
+        )
+
+    async def _fake_export_catalog(self, configs, cache=None, *, path=None):
+        del configs, cache, path
+        export_path.write_text('{"providers": []}', encoding="utf-8")
+        return export_path
+
+    monkeypatch.setattr(
+        ProviderConfigService,
+        "refresh_models_for_provider",
+        _fake_refresh_models_for_provider,
+    )
+    monkeypatch.setattr(settings_handlers, "_probe_provider_config", _fake_probe_provider_config)
+    monkeypatch.setattr(
+        ProviderConfigService,
+        "export_compatibility_catalog",
+        _fake_export_catalog,
+    )
+    monkeypatch.setattr(
+        settings_handlers,
+        "_settings_agent_manager",
+        lambda request: (SimpleNamespace(refresh_settings_cache=AsyncMock()), False),
+    )
+
+    await settings_handlers._run_bulk_test_job(request)
+
+    status = settings_handlers._bulk_test_status_payload(request)
+    expected = _legacy_bulk_summary(statuses)
+    assert type(status["summary"]) is dict
+    assert type(status["providers"]["openai"]["summary"]) is dict
+    assert status["summary"] == expected
+    assert status["providers"]["openai"]["summary"] == expected
+    assert status["completed_probes"] == 3
+
+
 @pytest.mark.anyio
 async def test_settings_bulk_test_exports_catalog(client, monkeypatch, tmp_path):
     db = client._transport.app.state.db

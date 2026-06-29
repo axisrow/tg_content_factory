@@ -10,27 +10,11 @@
       "confidence": "med"
     },
     {
-      "file": "src/cli/graph_viz.py",
-      "line": 31,
-      "kind": "manual-counter",
-      "what": "самописный частотный счётчик в render_ascii()",
-      "replacement": "collections.Counter",
-      "confidence": "med"
-    },
-    {
       "file": "src/database/facade.py",
       "line": 236,
       "kind": "handrolled-retry-loop",
       "what": "самописный retry/backoff-цикл в _with_busy_retry()",
       "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
-      "confidence": "med"
-    },
-    {
-      "file": "src/services/error_recovery_service.py",
-      "line": 355,
-      "kind": "manual-counter",
-      "what": "самописный частотный счётчик в get_error_stats()",
-      "replacement": "collections.Counter",
       "confidence": "med"
     },
     {
@@ -75,23 +59,15 @@
     },
     {
       "file": "src/telegram/collector.py",
-      "line": 2277,
+      "line": 2281,
       "kind": "handrolled-retry-loop",
       "what": "самописный retry/backoff-цикл в collect_all_stats()",
       "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
       "confidence": "med"
     },
     {
-      "file": "src/telegram/collector.py",
-      "line": 694,
-      "kind": "manual-counter",
-      "what": "самописный частотный счётчик в collect_all_channels()",
-      "replacement": "collections.Counter",
-      "confidence": "med"
-    },
-    {
       "file": "src/telegram/pool_dialogs.py",
-      "line": 311,
+      "line": 312,
       "kind": "handrolled-retry-loop",
       "what": "самописный retry/backoff-цикл в warm_all_dialogs()",
       "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
@@ -99,9 +75,17 @@
     },
     {
       "file": "src/telegram/pool_dialogs.py",
-      "line": 1277,
+      "line": 1285,
       "kind": "handrolled-retry-loop",
       "what": "самописный retry/backoff-цикл в leave_channels()",
+      "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
+      "confidence": "med"
+    },
+    {
+      "file": "src/telegram/pool_dialogs.py",
+      "line": 1353,
+      "kind": "handrolled-retry-loop",
+      "what": "самописный retry/backoff-цикл в delete_dialogs()",
       "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
       "confidence": "med"
     },
@@ -119,22 +103,6 @@
       "kind": "handrolled-retry-loop",
       "what": "самописный retry/backoff-цикл в _telegram_search_via_worker()",
       "replacement": "tenacity.retry / aiolimiter (для rate-limit)",
-      "confidence": "med"
-    },
-    {
-      "file": "src/web/session.py",
-      "line": 22,
-      "kind": "manual-base64-padding",
-      "what": "ручная добивка base64-паддинга '='",
-      "replacement": "base64.urlsafe_b64decode с корректным выравниванием",
-      "confidence": "med"
-    },
-    {
-      "file": "src/web/settings/handlers.py",
-      "line": 376,
-      "kind": "manual-counter",
-      "what": "самописный частотный счётчик в _run_bulk_test_job()",
-      "replacement": "collections.Counter",
       "confidence": "med"
     }
   ]

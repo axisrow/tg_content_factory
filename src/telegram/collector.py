@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections import deque
+from collections import Counter, deque
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from inspect import isawaitable
@@ -660,13 +660,13 @@ class Collector:
             self._cancel_event.clear()
             self._auto_delete_cached = None
             self._active_collection_count += 1
-            stats = {"channels": 0, "messages": 0, "errors": 0}
+            stats: Counter[str] = Counter({"channels": 0, "messages": 0, "errors": 0})
 
             try:
                 channels = await self._db.get_channels(active_only=True, include_filtered=False)
                 if not channels:
                     logger.info("No active unfiltered channels to collect")
-                    return stats
+                    return dict(stats)
                 logger.info("Found %d active unfiltered channels to collect", len(channels))
 
                 min_subs = await self._load_min_subscribers_filter()
@@ -691,7 +691,7 @@ class Collector:
                             channel.channel_id,
                             e.next_available_at.isoformat(),
                         )
-                        stats["deferred"] = stats.get("deferred", 0) + 1
+                        stats["deferred"] += 1
                         continue
                     except UsernameResolveRateLimitedError as e:
                         logger.warning(
@@ -700,7 +700,7 @@ class Collector:
                             e.run_after_with_buffer().isoformat(),
                             e.phone,
                         )
-                        stats["deferred"] = stats.get("deferred", 0) + 1
+                        stats["deferred"] += 1
                         continue
                     except Exception as e:
                         logger.error("Error collecting channel %s: %s", channel.channel_id, e)
@@ -714,7 +714,7 @@ class Collector:
             stats["messages"],
             stats["errors"],
         )
-        return stats
+        return dict(stats)
 
     @staticmethod
     def _get_media_type(msg) -> str | None:
