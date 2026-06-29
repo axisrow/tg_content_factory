@@ -184,6 +184,51 @@ async def test_error_stats_empty():
     assert stats["recent"] == []
 
 
+def _legacy_get_error_stats(service: ErrorRecoveryService) -> dict:
+    if not service._error_history:
+        return {"total_errors": 0, "by_category": {}, "recent": []}
+
+    by_category: dict[str, int] = {}
+    for record in service._error_history:
+        cat = record.category.value
+        by_category[cat] = by_category.get(cat, 0) + 1
+
+    recent = [
+        {
+            "timestamp": r.timestamp,
+            "type": r.error_type,
+            "message": r.message,
+            "category": r.category.value,
+        }
+        for r in service._error_history[-10:]
+    ]
+
+    return {
+        "total_errors": len(service._error_history),
+        "by_category": by_category,
+        "recent": recent,
+        "circuit_breaker": service._circuit_breaker.get_state(),
+    }
+
+
+def test_error_stats_counter_refactor_matches_legacy_cases():
+    cases = [
+        [],
+        [ErrorCategory.TRANSIENT, ErrorCategory.RATE_LIMIT, ErrorCategory.TRANSIENT],
+        [ErrorCategory.UNKNOWN] * 11 + [ErrorCategory.FATAL],
+    ]
+
+    for categories in cases:
+        service = ErrorRecoveryService()
+        for idx, category in enumerate(categories):
+            service._record_error(RuntimeError(f"boom {idx}"), category)
+
+        stats = service.get_error_stats()
+
+        assert type(stats["by_category"]) is dict
+        assert stats == _legacy_get_error_stats(service)
+
+
 def test_error_classifier_detects_network_error():
     """Test error classifier detects network errors."""
     err = ConnectionError("Connection reset by peer")
