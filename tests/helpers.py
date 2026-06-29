@@ -852,3 +852,17 @@ async def drain_loop(rounds: int = 3) -> None:
     """
     for _ in range(rounds):
         await asyncio.sleep(0)
+
+
+def fast_llm_error_recovery(max_retries: int = 0):
+    """Return an LLM recovery service without wall-clock retry backoff."""
+    from src.services.error_recovery_service import ErrorRecoveryService, RetryPolicy
+
+    return ErrorRecoveryService(
+        retry_policy=RetryPolicy(
+            max_retries=max_retries,
+            base_delay=0.0,
+            max_delay=0.0,
+            jitter=False,
+        )
+    )

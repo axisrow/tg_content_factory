@@ -803,13 +803,13 @@ class TestQualityScoringServiceCoverage:
             # Should get defaults when no JSON found
             assert score.relevance == 0.5
 
-    @pytest.mark.slow  # real provider-retry backoff on the exception path (~8s)
     async def test_score_content_os_error(self):
         """Lines 117-119: OSError during scoring."""
         from src.services.quality_scoring_service import QualityScoringService
+        from tests.helpers import fast_llm_error_recovery
 
         db = _make_mock_db()
-        svc = QualityScoringService(db)
+        svc = QualityScoringService(db, error_recovery=fast_llm_error_recovery())
 
         mock_provider = AsyncMock(side_effect=OSError("network"))
         with patch(
@@ -819,13 +819,13 @@ class TestQualityScoringServiceCoverage:
             score = await svc.score_content("test text", model="test")
             assert score.overall == 0.5
 
-    @pytest.mark.slow  # real provider-retry backoff on the exception path (~9s)
     async def test_score_content_unexpected_error(self):
         """Lines 120-122: unexpected error during scoring."""
         from src.services.quality_scoring_service import QualityScoringService
+        from tests.helpers import fast_llm_error_recovery
 
         db = _make_mock_db()
-        svc = QualityScoringService(db)
+        svc = QualityScoringService(db, error_recovery=fast_llm_error_recovery())
 
         mock_provider = AsyncMock(side_effect=RuntimeError("unexpected"))
         with patch(
@@ -1538,5 +1538,3 @@ class TestNumpySemanticCoverage:
 
 
 # ---- telegram/auth.py coverage ----
-
-
