@@ -4,7 +4,7 @@ Renders a pipeline DAG as a vertical text diagram suitable for terminal output.
 """
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any
 
 from src.models import PipelineGraph
@@ -26,9 +26,8 @@ def render_ascii(graph: PipelineGraph) -> str:
         outgoing[edge.from_node].append(edge.to_node)
 
     # Topological order (Kahn's algorithm)
-    in_degree: dict[str, int] = {n.id: 0 for n in graph.nodes}
-    for edge in graph.edges:
-        in_degree[edge.to_node] = in_degree.get(edge.to_node, 0) + 1
+    in_degree: Counter[str] = Counter({n.id: 0 for n in graph.nodes})
+    in_degree.update(edge.to_node for edge in graph.edges)
     queue = [nid for nid, d in in_degree.items() if d == 0]
     order: list[str] = []
     while queue:

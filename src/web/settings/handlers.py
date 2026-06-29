@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections import Counter
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -272,6 +273,8 @@ async def _run_bulk_test_job(
     manager, is_persistent_manager = _settings_agent_manager(request)
     if configs is None:
         configs = await service.load_provider_configs()
+    status_summary_counts: Counter[str] = Counter({"supported": 0, "unsupported": 0, "unknown": 0})
+    status_summary = dict(status_summary_counts)
     status = {
         "running": True,
         "started_at": datetime.now(UTC).isoformat(),
@@ -280,7 +283,7 @@ async def _run_bulk_test_job(
         "current_model": "",
         "completed_probes": 0,
         "total_probes": 0,
-        "summary": {"supported": 0, "unsupported": 0, "unknown": 0},
+        "summary": status_summary,
         "providers": {},
         "catalog_path": "",
         "error": "",
@@ -314,7 +317,8 @@ async def _run_bulk_test_job(
                 entry.error or "",
             )
             provider_results: list[dict[str, str]] = []
-            provider_summary = {"supported": 0, "unsupported": 0, "unknown": 0}
+            provider_summary_counts: Counter[str] = Counter({"supported": 0, "unsupported": 0, "unknown": 0})
+            provider_summary = dict(provider_summary_counts)
             status["providers"][cfg.provider] = {
                 "models": provider_results,
                 "source": entry.source,
@@ -372,8 +376,10 @@ async def _run_bulk_test_job(
                         record.status,
                         record.reason or "",
                     )
-                status["summary"][record.status] = status["summary"].get(record.status, 0) + 1
-                provider_summary[record.status] = provider_summary.get(record.status, 0) + 1
+                status_summary_counts.update([record.status])
+                provider_summary_counts.update([record.status])
+                status_summary.update(status_summary_counts)
+                provider_summary.update(provider_summary_counts)
                 status["completed_probes"] = int(status["completed_probes"]) + 1
                 provider_results.append(
                     {
