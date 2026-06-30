@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import aiosqlite
 
+from src.database.pool import ReadConnection
 from src.models import GeneratedImage
 
 if TYPE_CHECKING:
@@ -20,7 +21,7 @@ class GeneratedImagesRepository:
 
     def __init__(
         self,
-        db: aiosqlite.Connection,
+        db: ReadConnection,
         *,
         database: "Database | None" = None,
     ):

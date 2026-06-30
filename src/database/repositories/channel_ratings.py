@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import aiosqlite
 
+from src.database.pool import ReadConnection
 from src.models import ChannelRating
 
 if TYPE_CHECKING:
@@ -23,7 +24,7 @@ class ChannelRatingsRepository:
     строку с flag_count=0) — ручной аудит важнее.
     """
 
-    def __init__(self, db: aiosqlite.Connection, *, database: "Database | None" = None):
+    def __init__(self, db: ReadConnection, *, database: "Database | None" = None):
         self._db = db
         self._database = database
 

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import aiosqlite
-
+from src.database.pool import ReadConnection
 from src.models import ChannelStats
 from src.utils.datetime import parse_datetime
 
@@ -23,7 +22,7 @@ class ChannelStatsRepository:
 
     def __init__(
         self,
-        db: aiosqlite.Connection,
+        db: ReadConnection,
         *,
         database: "Database | None" = None,
     ):

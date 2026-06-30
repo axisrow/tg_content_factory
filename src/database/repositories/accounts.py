@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING
 
 import aiosqlite
 
+from src.database.pool import ReadConnection
 from src.models import Account, AccountSessionStatus, AccountSummary
 from src.security import SessionCipher, decrypt_failure_status, log_expected_decrypt_failure
 from src.utils.datetime import parse_datetime
@@ -58,7 +59,7 @@ class AccountsRepository:
 
     def __init__(
         self,
-        db: aiosqlite.Connection,
+        db: ReadConnection,
         session_cipher: SessionCipher | None = None,
         *,
         database: "Database | None" = None,

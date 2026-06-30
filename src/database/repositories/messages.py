@@ -23,8 +23,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, AsyncIterator
 
-import aiosqlite
-
+from src.database.pool import ReadConnection
 from src.models import Message, SearchParams, SearchQuery
 from src.telegram.reactions import parse_reactions_json
 from src.utils.datetime import parse_datetime, parse_required_datetime
@@ -84,7 +83,7 @@ class MessagesRepository:
 
     def __init__(
         self,
-        db: aiosqlite.Connection,
+        db: ReadConnection,
         *,
         fts_available: bool = True,
         database: "Database | None" = None,
