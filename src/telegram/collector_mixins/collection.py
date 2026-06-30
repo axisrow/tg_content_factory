@@ -8,6 +8,7 @@ from collections import Counter
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from inspect import isawaitable
+from typing import TYPE_CHECKING
 
 from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import PeerChannel
@@ -52,6 +53,17 @@ from src.telegram.rate_limiter import (
 )
 from src.utils.safe_logging import mask_phone
 
+if TYPE_CHECKING:
+    from typing import Any, Protocol, TypeAlias
+
+    from src.telegram.collector import Collector as _RuntimeCollector
+
+    _RuntimeCollectorType: TypeAlias = type[_RuntimeCollector]
+
+    class Collector(Protocol):
+        def __getattribute__(self, name: str) -> Any: ...
+        def __setattr__(self, name: str, value: Any) -> None: ...
+
 logger = logging.getLogger("src.telegram.collector")
 
 PERSISTED_ID_VERIFY_CHUNK_SIZE = 500
@@ -60,10 +72,10 @@ NOTIFICATION_BACKLOG_LOOKBACK_HOURS = 24.0
 
 class CollectionMixin:
     @property
-    def delay_between_channels_sec(self) -> int:
+    def delay_between_channels_sec(self: "Collector") -> int:
         return self._config.delay_between_channels_sec
 
-    def collection_worker_count(self) -> int:
+    def collection_worker_count(self: "Collector") -> int:
         configured = int(getattr(self._config, "collection_worker_count", 0) or 0)
         connected = len(getattr(self._pool, "clients", {}) or {})
         if configured <= 0:
@@ -72,7 +84,7 @@ class CollectionMixin:
             return max(1, configured)
         return max(1, min(configured, connected))
 
-    async def available_collection_slot_count(self) -> int:
+    async def available_collection_slot_count(self: "Collector") -> int:
         counter = getattr(self._pool, "available_collection_client_count", None)
         if callable(counter):
             try:
@@ -84,7 +96,7 @@ class CollectionMixin:
                 logger.debug("Failed to read available collection client slots", exc_info=True)
         return self.collection_worker_count()
 
-    async def available_collection_worker_count(self) -> int:
+    async def available_collection_worker_count(self: "Collector") -> int:
         configured = int(getattr(self._config, "collection_worker_count", 0) or 0)
         connected = len(getattr(self._pool, "clients", {}) or {})
         available = await self.available_collection_slot_count()
@@ -95,7 +107,7 @@ class CollectionMixin:
             return max(1, configured) if configured > 0 else 1
         return 1
 
-    async def _load_min_subscribers_filter(self) -> int:
+    async def _load_min_subscribers_filter(self: "Collector") -> int:
         return parse_int_setting(
             await self._db.get_setting("min_subscribers_filter"),
             setting_name="min_subscribers_filter",
@@ -103,7 +115,7 @@ class CollectionMixin:
             logger=logger,
         )
 
-    async def _is_auto_delete_enabled(self) -> bool:
+    async def _is_auto_delete_enabled(self: "Collector") -> bool:
         """Check if auto_delete_on_collect is enabled (cached per collection run)."""
         cached = getattr(self, "_auto_delete_cached", None)
         if cached is not None:
@@ -114,7 +126,7 @@ class CollectionMixin:
         return result
 
     async def _handle_meta_change_review(
-        self,
+        self: "Collector",
         channel: Channel,
         new_username: str | None,
         new_title: str | None,
@@ -174,7 +186,7 @@ class CollectionMixin:
         )
         return True
 
-    async def _maybe_auto_delete(self, channel_id: int) -> bool:
+    async def _maybe_auto_delete(self: "Collector", channel_id: int) -> bool:
         """Purge messages from filtered channel if auto_delete_on_collect is enabled."""
         if not await self._is_auto_delete_enabled():
             return False
@@ -191,7 +203,7 @@ class CollectionMixin:
             return False
 
     async def _resolve_channel_input_entity(
-        self,
+        self: "Collector",
         session,
         *,
         channel_id: int,
@@ -250,7 +262,7 @@ class CollectionMixin:
         )
 
     async def collect_single_channel(
-        self,
+        self: "Collector",
         channel: Channel,
         *,
         full: bool = False,
@@ -290,7 +302,7 @@ class CollectionMixin:
         finally:
             self._active_collection_count = max(0, self._active_collection_count - 1)
 
-    async def collect_all_channels(self) -> dict:
+    async def collect_all_channels(self: "Collector") -> dict:
         """Collect messages from all active channels. Returns stats."""
         async with self._lock:
             self._cancel_event.clear()
@@ -357,7 +369,7 @@ class CollectionMixin:
         """Determine media type from a Telethon message."""
         return get_media_type_for(msg)
 
-    async def _acquire_collection_client(self, channel: Channel, attempted_resolve_phones: set[str]):
+    async def _acquire_collection_client(self: "Collector", channel: Channel, attempted_resolve_phones: set[str]):
         """Pick a client for `channel`, adapt its session, decide cache-only resolve
         mode, and warm the PeerChannel dialog cache once per phone.
 
@@ -446,7 +458,7 @@ class CollectionMixin:
         return session, phone, resolve_cache_only
 
     async def _handle_post_collection_flood(
-        self,
+        self: "Collector",
         channel: Channel,
         phone: str,
         flood_wait_sec: int,
@@ -578,7 +590,7 @@ class CollectionMixin:
             return ("continue", total_collected + collected_count, updated)
         return ("return", total_collected, channel)
 
-    async def _verify_persisted_ids(self, channel_id: int, expected_ids: set[int]) -> set[int]:
+    async def _verify_persisted_ids(self: "Collector", channel_id: int, expected_ids: set[int]) -> set[int]:
         """Return which of ``expected_ids`` are actually present in ``messages``.
 
         Queried in ``PERSISTED_ID_VERIFY_CHUNK_SIZE``-sized ``IN (...)`` chunks to
@@ -601,7 +613,7 @@ class CollectionMixin:
         return persisted_ids
 
     async def _finalize_collection_pass(
-        self,
+        self: "Collector",
         *,
         channel_id: int,
         messages_batch: list[Message],
@@ -661,7 +673,7 @@ class CollectionMixin:
         return stop_due_to_persistence_error
 
     async def _collect_channel(
-        self,
+        self: "Collector",
         channel: Channel,
         progress_callback: Callable[[int], Awaitable[None]] | None = None,
         force: bool = False,
@@ -916,7 +928,7 @@ class CollectionMixin:
             return total_collected + collected_count
 
     async def _post_collection_actions(
-        self,
+        self: "Collector",
         channel_id: int,
         *,
         is_first_run: bool,
@@ -962,7 +974,7 @@ class CollectionMixin:
                     )
 
     async def _resolve_channel_entity(
-        self,
+        self: "Collector",
         channel: Channel,
         session,
         phone: str,
@@ -987,7 +999,7 @@ class CollectionMixin:
         )
 
     async def _apply_pre_collection_filters(
-        self,
+        self: "Collector",
         channel: Channel,
         channel_id: int,
         session,
@@ -1100,7 +1112,7 @@ class CollectionMixin:
         return True
 
     async def _discover_phone_for_channel(
-        self, channel_id: int, exclude: str
+        self: "Collector", channel_id: int, exclude: str
     ) -> str | None:
         """Try all connected phones (except `exclude`) to find one with access to channel_id.
 
@@ -1147,7 +1159,7 @@ class CollectionMixin:
         return None
 
     async def _precheck_sample(
-        self,
+        self: "Collector",
         session,
         entity,
         limit: int,
@@ -1167,7 +1179,7 @@ class CollectionMixin:
                 prefixes.append(msg.text[:100])
         return prefixes
 
-    async def _maybe_enqueue_auto_translate(self) -> None:
+    async def _maybe_enqueue_auto_translate(self: "Collector") -> None:
         """Enqueue a TRANSLATE_BATCH after collection if auto-translate is enabled.
 
         The settings toggle was previously inert — nothing read it (audit #836/6).
@@ -1199,7 +1211,7 @@ class CollectionMixin:
         except Exception:
             logger.warning("auto-translate enqueue failed", exc_info=True)
 
-    async def _check_notification_queries(self, messages: list[Message]) -> None:
+    async def _check_notification_queries(self: "Collector", messages: list[Message]) -> None:
         """Check messages against active notification queries and send batched notifications."""
         if not self._notifier:
             return
@@ -1263,10 +1275,10 @@ class CollectionMixin:
         )
         await matcher.match_and_notify(candidates, queries)
 
-    async def _channel_still_exists(self, channel_id: int) -> bool:
+    async def _channel_still_exists(self: "Collector", channel_id: int) -> bool:
         return await self._db.get_channel_by_channel_id(channel_id) is not None
 
-    async def sample_channel(self, channel_id: int, limit: int = 10) -> list[dict]:
+    async def sample_channel(self: "Collector", channel_id: int, limit: int = 10) -> list[dict]:
         """Fetch the last `limit` messages from a channel for preview. No DB writes."""
         result = await self._pool.get_available_client()
         if result is None:
