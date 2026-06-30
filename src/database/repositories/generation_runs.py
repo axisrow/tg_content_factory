@@ -62,6 +62,9 @@ class GenerationRunsRepository:
 
     async def create_run(self, pipeline_id: int | None, prompt: str) -> int:
         """Создать запуск в статусе ``pending`` для пайплайна и промпта; вернуть его id."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.create_run requires a Database reference"
+        )
         cur = await self._database.execute_write(
             ("INSERT INTO generation_runs (pipeline_id, status, prompt, created_at) "
              "VALUES (?, 'pending', ?, datetime('now'))"),
@@ -71,6 +74,9 @@ class GenerationRunsRepository:
 
     async def set_status(self, run_id: int, status: str, metadata: dict | None = None) -> None:
         """Обновить статус выполнения запуска; при переданном ``metadata`` — заодно перезаписать JSON-метаданные."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.set_status requires a Database reference"
+        )
         if metadata is not None:
             await self._database.execute_write(
                 ("UPDATE generation_runs SET status = ?, metadata = ?, "
@@ -87,6 +93,9 @@ class GenerationRunsRepository:
         self, run_id: int, generated_text: str, metadata: dict | None = None
     ) -> None:
         """Сохранить сгенерированный текст и метаданные, переводя запуск в статус ``completed``."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.save_result requires a Database reference"
+        )
         await self._database.execute_write(
             ("UPDATE generation_runs SET generated_text = ?, metadata = ?, status = 'completed', "
              "updated_at = datetime('now') WHERE id = ?"),
@@ -112,6 +121,9 @@ class GenerationRunsRepository:
         ``published_at``. ``list_pending_moderation`` surfaces ``pending`` +
         ``approved`` (drafts and approved-but-not-yet-delivered runs).
         """
+        assert self._database is not None, (
+            "GenerationRunsRepository.set_moderation_status requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') WHERE id = ?",
             (status, run_id),
@@ -128,6 +140,9 @@ class GenerationRunsRepository:
         mid-batch error rolls the whole update back and propagates so the
         caller can surface the failure instead of a partial-success message.
         """
+        assert self._database is not None, (
+            "GenerationRunsRepository.set_moderation_status_bulk requires a Database reference"
+        )
         if not run_ids:
             return
         async with self._database.transaction() as conn:
@@ -138,6 +153,9 @@ class GenerationRunsRepository:
 
     async def set_image_url(self, run_id: int, image_url: str) -> None:
         """Привязать к запуску URL/путь сгенерированной картинки."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.set_image_url requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE generation_runs SET image_url = ?, updated_at = datetime('now') WHERE id = ?",
             (image_url, run_id),
@@ -203,6 +221,9 @@ class GenerationRunsRepository:
         (the publish path gates on ``status='completed'``), so its ``image_url`` is
         dead bookkeeping once the live retry owns the picture.
         """
+        assert self._database is not None, (
+            "GenerationRunsRepository.claim_orphan_image requires a Database reference"
+        )
         async with self._database.transaction() as conn:
             await conn.execute(
                 "UPDATE generation_runs SET image_url = ?, updated_at = datetime('now') WHERE id = ?",
@@ -222,6 +243,9 @@ class GenerationRunsRepository:
         статуса и ``published_at`` не трогает), иначе получите published-запуск
         без отметки времени.
         """
+        assert self._database is not None, (
+            "GenerationRunsRepository.set_published_at requires a Database reference"
+        )
         await self._database.execute_write(
             ("UPDATE generation_runs SET published_at = datetime('now'), "
              "moderation_status = 'published', updated_at = datetime('now') WHERE id = ?"),
@@ -234,6 +258,9 @@ class GenerationRunsRepository:
         Used to record incremental publish progress (per-target delivery) so a
         retry does not re-send to targets already published.
         """
+        assert self._database is not None, (
+            "GenerationRunsRepository.set_metadata requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE generation_runs SET metadata = ?, updated_at = datetime('now') WHERE id = ?",
             (safe_json_dumps(metadata, ensure_ascii=False), run_id),
@@ -243,6 +270,9 @@ class GenerationRunsRepository:
         self, run_id: int, score: float, issues: list[str] | None = None
     ) -> None:
         """Сохранить оценку качества запуска и (опционально) список выявленных проблем."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.set_quality_score requires a Database reference"
+        )
         issues_json = safe_json_dumps(issues, ensure_ascii=False) if issues else None
         await self._database.execute_write(
             ("UPDATE generation_runs SET quality_score = ?, quality_issues = ?, "
@@ -252,6 +282,9 @@ class GenerationRunsRepository:
 
     async def set_variants(self, run_id: int, variants: list[str]) -> None:
         """Сохранить список A/B-вариантов текста запуска (issue #1068)."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.set_variants requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE generation_runs SET variants = ?, updated_at = datetime('now') WHERE id = ?",
             (safe_json_dumps(variants, ensure_ascii=False), run_id),
@@ -263,6 +296,9 @@ class GenerationRunsRepository:
         Заодно обнуляет ``quality_score``/``quality_issues`` — они относились к
         прежнему тексту и были бы устаревшими (см. комментарий ниже).
         """
+        assert self._database is not None, (
+            "GenerationRunsRepository.select_variant requires a Database reference"
+        )
         # Selecting a variant changes generated_text, so any existing
         # quality_score/quality_issues belong to the PREVIOUS text and would be
         # stale — a low-quality selected variant could otherwise hide behind a
@@ -305,6 +341,9 @@ class GenerationRunsRepository:
 
     async def reset_running_on_startup(self) -> int:
         """Reset generation_runs stuck in 'running' state to 'failed' on server startup."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.reset_running_on_startup requires a Database reference"
+        )
         cur = await self._database.execute_write(
             "UPDATE generation_runs SET status = 'failed', updated_at = datetime('now') WHERE status = 'running'",
         )

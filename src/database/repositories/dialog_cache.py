@@ -116,6 +116,9 @@ class DialogCacheRepository:
 
     async def clear_dialogs(self, phone: str) -> None:
         """Удалить кэш диалогов одного аккаунта."""
+        assert self._database is not None, (
+            "DialogCacheRepository.clear_dialogs requires a Database reference"
+        )
         await self._database.execute_write("DELETE FROM dialog_cache WHERE phone = ?", (phone,))
 
     async def has_dialogs(self, phone: str) -> bool:
@@ -154,4 +157,7 @@ class DialogCacheRepository:
 
     async def clear_all_dialogs(self) -> None:
         """Delete all entries from dialog_cache regardless of phone."""
+        assert self._database is not None, (
+            "DialogCacheRepository.clear_all_dialogs requires a Database reference"
+        )
         await self._database.execute_write("DELETE FROM dialog_cache")

@@ -73,6 +73,9 @@ class PipelineTemplatesRepository:
 
     async def add(self, template: PipelineTemplate) -> int:
         """Сохранить шаблон (граф сериализуется в JSON). Возвращает id новой строки."""
+        assert self._database is not None, (
+            "PipelineTemplatesRepository.add requires a Database reference"
+        )
         cur = await self._database.execute_write(
             """
             INSERT INTO pipeline_templates (name, description, category, template_json, is_builtin)
@@ -90,6 +93,9 @@ class PipelineTemplatesRepository:
 
     async def delete(self, template_id: int) -> None:
         """Удалить шаблон по id."""
+        assert self._database is not None, (
+            "PipelineTemplatesRepository.delete requires a Database reference"
+        )
         await self._database.execute_write("DELETE FROM pipeline_templates WHERE id = ?", (template_id,))
 
     async def ensure_builtins(self, builtins: list[PipelineTemplate]) -> None:
