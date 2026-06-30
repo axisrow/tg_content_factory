@@ -331,6 +331,8 @@ async def handle_photo_schedule(request: Request, form: PhotoScheduleForm) -> Ph
         )
         if target_error:
             return PhotoLoaderRedirect(form.phone, target_error, error=True)
+        if target is None:
+            return PhotoLoaderRedirect(form.phone, "Target not resolved", error=True)
         saved = await forms.persist_uploads(form.photos, f"scheduled_{uuid.uuid4().hex}")
         parsed_schedule_at = forms.parse_schedule_at(form.schedule_at)
         command_id = await deps.telegram_command_service(request).enqueue(
@@ -377,6 +379,8 @@ async def handle_photo_batch(request: Request, form: PhotoBatchForm) -> PhotoLoa
         )
         if target_error:
             return PhotoLoaderRedirect(form.phone, target_error, error=True)
+        if target is None:
+            return PhotoLoaderRedirect(form.phone, "Target not resolved", error=True)
         manifest = json.loads(form.manifest_text)
         await deps.get_photo_task_service(request).create_batch(
             phone=form.phone,
@@ -413,6 +417,8 @@ async def handle_photo_auto_create(request: Request, form: PhotoAutoCreateForm) 
         )
         if target_error:
             return PhotoLoaderRedirect(form.phone, target_error, error=True)
+        if target is None:
+            return PhotoLoaderRedirect(form.phone, "Target not resolved", error=True)
         await deps.get_photo_auto_upload_service(request).create_job(
             PhotoAutoUploadJob(
                 phone=form.phone,

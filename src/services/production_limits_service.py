@@ -266,6 +266,7 @@ class CostTracker:
         crashes the caller (matching the previous best-effort persist).
         """
         now = time.time()
+        assert self._db is not None, "CostTracker._atomic_increment requires initialized Database"
         try:
             async with self._db.transaction() as conn:
                 cur = await conn.execute(

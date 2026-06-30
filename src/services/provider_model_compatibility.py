@@ -16,8 +16,48 @@ from src.utils.datetime import try_parse_datetime
 from src.utils.json import safe_json_dumps
 
 if TYPE_CHECKING:
-    from src.services.agent_provider_service import ProviderConfigService
+    from typing import Protocol
+
     from src.services.provider_model_cache import ProviderModelCacheEntry
+
+    class ProviderConfigService(Protocol):
+        def normalize_provider_plain_fields(self, cfg: ProviderRuntimeConfig) -> dict[str, str]: ...
+
+        async def load_model_cache(self) -> dict[str, ProviderModelCacheEntry]: ...
+
+        async def save_model_cache(self, cache: dict[str, ProviderModelCacheEntry]) -> None: ...
+
+        def _empty_model_cache_entry(self, provider_name: str) -> ProviderModelCacheEntry: ...
+
+        def config_fingerprint(
+            self,
+            cfg: ProviderRuntimeConfig,
+            *,
+            model: str | None = None,
+        ) -> str: ...
+
+        def get_compatibility_record(
+            self,
+            cache_entry: ProviderModelCacheEntry | None,
+            cfg: ProviderRuntimeConfig,
+            *,
+            model: str | None = None,
+            fresh_only: bool = False,
+            max_age_hours: int = ...,
+        ) -> ProviderModelCompatibilityRecord | None: ...
+
+        def is_compatibility_record_fresh(
+            self,
+            record: ProviderModelCompatibilityRecord,
+            *,
+            max_age_hours: int = ...,
+        ) -> bool: ...
+
+        def _config_sort_key(self, cfg: ProviderRuntimeConfig) -> tuple[int, int]: ...
+
+        def canonical_endpoint_fingerprint(self, cfg: ProviderRuntimeConfig) -> str | None: ...
+
+        def _app_version(self) -> str: ...
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +188,7 @@ class ProviderModelCompatibilityMixin:
         return datetime.now(UTC) - tested_at <= timedelta(hours=max_age_hours)
 
     async def ensure_model_compatibility(
-        self,
+        self: "ProviderConfigService",
         cfg: ProviderRuntimeConfig,
         *,
         probe_runner: Callable[
@@ -204,7 +244,7 @@ class ProviderModelCompatibilityMixin:
         return result
 
     async def export_compatibility_catalog(
-        self,
+        self: "ProviderConfigService",
         configs: list[ProviderRuntimeConfig],
         cache: dict[str, ProviderModelCacheEntry] | None = None,
         *,

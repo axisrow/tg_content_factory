@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
 
@@ -21,7 +21,50 @@ from src.services.provider_model_compatibility import ProviderModelCompatibility
 from src.utils.json import safe_json_dumps
 
 if TYPE_CHECKING:
-    from src.services.agent_provider_service import ProviderConfigService
+    from typing import Protocol
+
+    from src.database import Database
+
+    class ProviderConfigService(Protocol):
+        _db: Database
+
+        async def load_provider_configs(self) -> list[ProviderRuntimeConfig]: ...
+
+        async def load_model_cache(self) -> dict[str, ProviderModelCacheEntry]: ...
+
+        async def save_model_cache(self, cache: dict[str, ProviderModelCacheEntry]) -> None: ...
+
+        def _empty_model_cache_entry(self, provider_name: str) -> ProviderModelCacheEntry: ...
+
+        async def _fetch_live_models(
+            self,
+            spec: ProviderSpec,
+            cfg: ProviderRuntimeConfig | None,
+        ) -> list[str]: ...
+
+        async def _fetch_zai_models(self, base_url: str, api_key: str) -> list[str]: ...
+
+        async def _fetch_openai_models(self, base_url: str, api_key: str) -> list[str]: ...
+
+        async def _fetch_anthropic_models(self, api_key: str) -> list[str]: ...
+
+        async def _fetch_google_genai_models(self, api_key: str) -> list[str]: ...
+
+        async def _fetch_cohere_models(self, api_key: str) -> list[str]: ...
+
+        async def _fetch_ollama_models(self, base_url: str, api_key: str) -> list[str]: ...
+
+        async def _fetch_huggingface_models(self, api_key: str) -> list[str]: ...
+
+        async def refresh_models_for_provider(
+            self,
+            provider_name: str,
+            cfg: ProviderRuntimeConfig | None = None,
+        ) -> ProviderModelCacheEntry: ...
+
+        def normalize_ollama_base_url(self, base_url: str, api_key: str = "") -> str: ...
+
+        async def _fetch_json(self, url: str, headers: dict[str, str] | None = None) -> Any: ...
 
 logger = logging.getLogger(__name__)
 
@@ -75,9 +118,8 @@ class ProviderModelCacheMixin:
     of these methods keeps working.
     """
 
-    async def load_model_cache(self) -> dict[str, ProviderModelCacheEntry]:
-        service = cast("ProviderConfigService", self)
-        raw = await service._db.get_setting(MODEL_CACHE_SETTINGS_KEY)
+    async def load_model_cache(self: "ProviderConfigService") -> dict[str, ProviderModelCacheEntry]:
+        raw = await self._db.get_setting(MODEL_CACHE_SETTINGS_KEY)
         if not raw:
             return {}
         try:
@@ -121,7 +163,9 @@ class ProviderModelCacheMixin:
             )
         return cache
 
-    async def save_model_cache(self, cache: dict[str, ProviderModelCacheEntry]) -> None:
+    async def save_model_cache(
+        self: "ProviderConfigService", cache: dict[str, ProviderModelCacheEntry]
+    ) -> None:
         payload = {
             provider: {
                 "models": entry.models,
@@ -147,7 +191,9 @@ class ProviderModelCacheMixin:
         )
 
     async def refresh_models_for_provider(
-        self, provider_name: str, cfg: ProviderRuntimeConfig | None = None
+        self: "ProviderConfigService",
+        provider_name: str,
+        cfg: ProviderRuntimeConfig | None = None,
     ) -> ProviderModelCacheEntry:
         spec = provider_spec(provider_name)
         if spec is None:
@@ -186,7 +232,7 @@ class ProviderModelCacheMixin:
         return entry
 
     async def refresh_all_models(
-        self,
+        self: "ProviderConfigService",
         configs: list[ProviderRuntimeConfig] | None = None,
     ) -> dict[str, ProviderModelCacheEntry]:
         if configs is None:
@@ -207,7 +253,7 @@ class ProviderModelCacheMixin:
         )
 
     async def _fetch_live_models(
-        self,
+        self: "ProviderConfigService",
         spec: ProviderSpec,
         cfg: ProviderRuntimeConfig | None,
     ) -> list[str]:
@@ -288,7 +334,9 @@ class ProviderModelCacheMixin:
             if item.get("name")
         ]
 
-    async def _fetch_ollama_models(self, base_url: str, api_key: str) -> list[str]:
+    async def _fetch_ollama_models(
+        self: "ProviderConfigService", base_url: str, api_key: str
+    ) -> list[str]:
         resolved_base_url = self.normalize_ollama_base_url(base_url, api_key)
         headers = {"Authorization": f"Bearer {api_key}"} if api_key.strip() else None
         payload = await self._fetch_json(

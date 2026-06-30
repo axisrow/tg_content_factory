@@ -293,7 +293,7 @@ class ClientLifecycleMixin:
 
     async def reconnect_phone(self, phone: str) -> bool:
         """Attempt to reconnect a disconnected client. Returns True on success."""
-        session = self.clients.get(phone)
+        session = cast(TelegramTransportSession | None, self.clients.get(phone))
         if session is None:
             return False
         try:
@@ -320,7 +320,7 @@ class ClientLifecycleMixin:
         formally connected while every incoming message is dropped, so
         :meth:`reconnect_phone`'s ``is_connected()`` guard never fires.
         """
-        session = self.clients.get(phone)
+        session = cast(TelegramTransportSession | None, self.clients.get(phone))
         if session is None:
             return False
         try:
