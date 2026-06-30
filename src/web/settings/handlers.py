@@ -903,6 +903,7 @@ async def handle_refresh_agent_provider_models(
     service, guard_error = await _agent_provider_write_guard(request, provider_name)
     if guard_error is not None:
         return guard_error
+    assert service is not None, "guard returned no service and no error"
     configs = await service.load_provider_configs()
     cfg = service.parse_single_provider_form(form.raw, configs, provider_name)
     entry = await service.refresh_models_for_provider(provider_name, cfg)
@@ -966,6 +967,7 @@ async def handle_probe_agent_provider_model(
     service, guard_error = await _agent_provider_write_guard(request, provider_name)
     if guard_error is not None:
         return guard_error
+    assert service is not None, "guard returned no service and no error"
 
     existing = await service.load_provider_configs()
     cfg = service.parse_single_provider_form(form.raw, existing, provider_name)

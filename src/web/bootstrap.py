@@ -6,6 +6,7 @@ import logging
 import os
 import secrets
 import time
+from typing import cast
 
 from fastapi.templating import Jinja2Templates
 
@@ -268,8 +269,9 @@ async def build_container_with_templates(
         )
         search_pool = pool
     else:
-        collector = SnapshotCollector(db)
-        await collector.refresh()
+        snapshot_collector = SnapshotCollector(db)
+        await snapshot_collector.refresh()
+        collector = cast(Collector, snapshot_collector)
         search_pool = None
     search_engine = SearchEngine(search_bundle, search_pool, config=config)
     ai_search = AISearchEngine(config.llm, search_bundle)
