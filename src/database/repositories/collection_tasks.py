@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
+from src.database.pool import ReadConnection
 from src.models import (
     CollectionTask,
     CollectionTaskStatus,
@@ -55,7 +56,7 @@ class CollectionTasksRepository:
 
     def __init__(
         self,
-        db: aiosqlite.Connection,
+        db: ReadConnection,
         *,
         database: "Database | None" = None,
     ):

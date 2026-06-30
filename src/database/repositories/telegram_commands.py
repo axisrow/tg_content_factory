@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
+from src.database.pool import ReadConnection
 from src.models import TelegramCommand, TelegramCommandStatus
 from src.utils.datetime import parse_datetime
 from src.utils.json import safe_json_dumps
@@ -38,7 +39,7 @@ class TelegramCommandsRepository:
 
     def __init__(
         self,
-        db: aiosqlite.Connection,
+        db: ReadConnection,
         *,
         database: "Database | None" = None,
     ):

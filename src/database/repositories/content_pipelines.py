@@ -11,10 +11,11 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import aiosqlite
 
+from src.database.pool import ReadConnection
 from src.models import (
     ContentPipeline,
     PipelineGenerationBackend,
@@ -36,7 +37,7 @@ class ContentPipelinesRepository:
 
     def __init__(
         self,
-        db: aiosqlite.Connection,
+        db: ReadConnection,
         *,
         database: "Database | None" = None,
     ):
@@ -335,7 +336,7 @@ class ContentPipelinesRepository:
         # Must run on the caller's transaction connection so the DELETE+INSERT
         # stay inside the write-lock; falling back to self._db would commit them
         # autonomously and let another coroutine interleave (#633).
-        executor = conn or self._db
+        executor: Any = conn or self._db
         await executor.execute("DELETE FROM pipeline_sources WHERE pipeline_id = ?", (pipeline_id,))
         if source_channel_ids:
             await executor.executemany(
@@ -349,7 +350,7 @@ class ContentPipelinesRepository:
         targets: list[PipelineTarget],
         conn=None,
     ) -> None:
-        executor = conn or self._db
+        executor: Any = conn or self._db
         await executor.execute("DELETE FROM pipeline_targets WHERE pipeline_id = ?", (pipeline_id,))
         if targets:
             await executor.executemany(

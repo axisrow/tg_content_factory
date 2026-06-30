@@ -5,8 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-import aiosqlite
-
+from src.database.pool import ReadConnection
 from src.utils.datetime import parse_datetime
 
 if TYPE_CHECKING:
@@ -24,7 +23,7 @@ class DialogCacheRepository:
 
     def __init__(
         self,
-        db: aiosqlite.Connection,
+        db: ReadConnection,
         *,
         database: "Database | None" = None,
     ):

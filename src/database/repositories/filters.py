@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING
 
 import aiosqlite
 
+from src.database.pool import ReadConnection
+
 # Intentionally duplicated from src/filters/criteria.py — UDF layer must not
 # depend on the filters package to keep DB initialisation self-contained.
 _CYRILLIC_RE = re.compile(r"[а-яА-ЯёЁ]")
@@ -182,7 +184,7 @@ class FilterRepository:
 
     def __init__(
         self,
-        db: aiosqlite.Connection,
+        db: ReadConnection,
         *,
         database: "Database | None" = None,
     ):
