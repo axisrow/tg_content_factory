@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import PeerChannel
@@ -22,29 +23,40 @@ from src.telegram.rate_limiter import (
     UsernameResolveRateLimitedError,
 )
 
+if TYPE_CHECKING:
+    from typing import Any, Protocol, TypeAlias
+
+    from src.telegram.collector import Collector as _RuntimeCollector
+
+    _RuntimeCollectorType: TypeAlias = type[_RuntimeCollector]
+
+    class Collector(Protocol):
+        def __getattribute__(self, name: str) -> Any: ...
+        def __setattr__(self, name: str, value: Any) -> None: ...
+
 logger = logging.getLogger("src.telegram.collector")
 
 
 class StatsMixin:
     @property
-    def is_stats_running(self) -> bool:
+    def is_stats_running(self: "Collector") -> bool:
         return self._stats_running or self._stats_all_running
 
-    def stats_worker_count(self) -> int:
+    def stats_worker_count(self: "Collector") -> int:
         configured = max(1, int(getattr(self._config, "stats_worker_count", 3) or 1))
         connected = len(getattr(self._pool, "clients", {}) or {})
         if connected <= 0:
             return configured
         return max(1, min(configured, connected))
 
-    def stats_all_worker_count(self) -> int:
+    def stats_all_worker_count(self: "Collector") -> int:
         configured = max(1, int(getattr(self._config, "stats_all_worker_count", 1) or 1))
         connected = len(getattr(self._pool, "clients", {}) or {})
         if connected <= 0:
             return configured
         return max(1, min(configured, connected))
 
-    async def available_stats_worker_count(self) -> int:
+    async def available_stats_worker_count(self: "Collector") -> int:
         configured = max(1, int(getattr(self._config, "stats_worker_count", 3) or 1))
         counter = getattr(self._pool, "available_stats_client_count", None)
         if callable(counter):
@@ -60,7 +72,7 @@ class StatsMixin:
                 logger.debug("Failed to read available stats client count", exc_info=True)
         return self.stats_worker_count()
 
-    async def available_stats_all_worker_count(self) -> int:
+    async def available_stats_all_worker_count(self: "Collector") -> int:
         configured = max(1, int(getattr(self._config, "stats_all_worker_count", 1) or 1))
         counter = getattr(self._pool, "available_stats_client_count", None)
         if callable(counter):
@@ -76,13 +88,13 @@ class StatsMixin:
                 logger.debug("Failed to read available stats-all client count", exc_info=True)
         return self.stats_all_worker_count()
 
-    def set_stats_all_running(self, running: bool) -> None:
+    def set_stats_all_running(self: "Collector", running: bool) -> None:
         self._stats_all_running = running
 
-    async def get_stats_availability(self):
+    async def get_stats_availability(self: "Collector"):
         return await self.get_collection_availability()
 
-    async def collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
+    async def collect_channel_stats(self: "Collector", channel: Channel) -> ChannelStats | None:
         async with self._stats_lock:
             self._stats_running = True
             try:
@@ -96,11 +108,11 @@ class StatsMixin:
             finally:
                 self._stats_running = False
 
-    async def collect_channel_stats_unlocked(self, channel: Channel) -> ChannelStats | None:
+    async def collect_channel_stats_unlocked(self: "Collector", channel: Channel) -> ChannelStats | None:
         return await self._collect_channel_stats(channel)
 
     async def _resolve_stats_entity_or_deactivate(
-        self,
+        self: "Collector",
         session: object,
         phone: str,
         channel: Channel,
@@ -154,7 +166,7 @@ class StatsMixin:
             return None
 
     async def _collect_stats_metrics(
-        self, session, entity, phone: str, channel_id: int
+        self: "Collector", session, entity, phone: str, channel_id: int
     ) -> tuple[list[int], list[int], list[int]]:
         """Stream up to 50 recent messages and accumulate ``(views, reactions,
         forwards)`` totals for stats averaging. Extracted from
@@ -198,7 +210,7 @@ class StatsMixin:
 
         return views_list, reactions_list, forwards_list
 
-    async def _collect_channel_stats(self, channel: Channel) -> ChannelStats | None:
+    async def _collect_channel_stats(self: "Collector", channel: Channel) -> ChannelStats | None:
         while True:
             result = await self._pool.get_available_client()
             if result is None:
@@ -337,14 +349,14 @@ class StatsMixin:
             finally:
                 await self._pool.release_client(phone)
 
-    def _stats_all_channel_limit(self, max_channels: int | None = None) -> int:
+    def _stats_all_channel_limit(self: "Collector", max_channels: int | None = None) -> int:
         configured = max_channels
         if configured is None:
             configured = int(getattr(self._config, "stats_all_max_channels_per_run", 10) or 10)
         return max(1, int(configured))
 
     async def _order_stats_all_channels(
-        self, channels: list[Channel], *, skip_fresh_hours: int = 0
+        self: "Collector", channels: list[Channel], *, skip_fresh_hours: int = 0
     ) -> list[Channel]:
         try:
             latest_stats = await self._db.get_latest_stats_for_all()
@@ -391,7 +403,7 @@ class StatsMixin:
 
         return ordered
 
-    async def collect_all_stats(self, *, max_channels: int | None = None) -> dict:
+    async def collect_all_stats(self: "Collector", *, max_channels: int | None = None) -> dict:
         async with self._stats_all_lock:
             self._stats_all_running = True
             # Fresh run — drop any stale stats-cancel from a previous STATS_ALL.
