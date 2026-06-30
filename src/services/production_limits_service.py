@@ -240,6 +240,9 @@ class CostTracker:
         On read failure, falls back to the in-memory value (fail-open read; the
         cap check below still guards with whatever total we have).
         """
+        assert self._db is not None, (
+            "CostTracker._read_persisted_cost requires initialized Database"
+        )
         try:
             raw = await self._db.get_setting(_COST_STATE_KEY)
         except Exception:

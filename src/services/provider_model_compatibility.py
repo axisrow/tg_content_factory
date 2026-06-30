@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from src.agent.provider_registry import (
     ProviderRuntimeConfig,
@@ -16,6 +16,7 @@ from src.utils.datetime import try_parse_datetime
 from src.utils.json import safe_json_dumps
 
 if TYPE_CHECKING:
+    from src.services.agent_provider_service import ProviderConfigService
     from src.services.provider_model_cache import ProviderModelCacheEntry
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,8 @@ class ProviderModelCompatibilityMixin:
         spec = provider_spec(cfg.provider)
         if spec is None:
             raise RuntimeError(f"Unknown provider: {cfg.provider}")
-        normalized_plain = self.normalize_provider_plain_fields(cfg)
+        service = cast("ProviderConfigService", self)
+        normalized_plain = service.normalize_provider_plain_fields(cfg)
         secret_payload = {
             field.name: cfg.secret_fields.get(field.name, "").strip()
             for field in spec.secret_fields

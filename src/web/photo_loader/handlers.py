@@ -285,6 +285,8 @@ async def handle_photo_send(request: Request, form: PhotoSendForm) -> PhotoLoade
         )
         if target_error:
             return PhotoLoaderRedirect(form.phone, target_error, error=True)
+        if target is None:
+            return PhotoLoaderRedirect(form.phone, "Target not resolved", error=True)
         saved = await forms.persist_uploads(form.photos, f"manual_{uuid.uuid4().hex}")
         command_id = await deps.telegram_command_service(request).enqueue(
             "photo.send_now",

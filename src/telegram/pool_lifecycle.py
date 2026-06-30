@@ -31,7 +31,7 @@ import base64
 import io
 import logging
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from src.database.live_accounts import load_live_usable_accounts
 from src.models import Account, TelegramUserInfo
@@ -178,11 +178,12 @@ class ClientLifecycleMixin:
             for phone in phones:
                 if phone in self.clients:
                     try:
+                        session = cast(TelegramTransportSession, self.clients[phone])
                         # close() is a no-op (disconnect_on_close=False), so
                         # disconnect the underlying Telethon client directly to
                         # cancel its background tasks (_send_loop, _recv_loop).
                         await asyncio.wait_for(
-                            self.clients[phone].raw_client.disconnect(), timeout=3.0,
+                            session.raw_client.disconnect(), timeout=3.0,
                         )
                     except Exception:
                         pass

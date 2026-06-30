@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import aiohttp
 
@@ -19,6 +19,9 @@ from src.agent.provider_registry import (
 )
 from src.services.provider_model_compatibility import ProviderModelCompatibilityRecord
 from src.utils.json import safe_json_dumps
+
+if TYPE_CHECKING:
+    from src.services.agent_provider_service import ProviderConfigService
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +76,8 @@ class ProviderModelCacheMixin:
     """
 
     async def load_model_cache(self) -> dict[str, ProviderModelCacheEntry]:
-        raw = await self._db.get_setting(MODEL_CACHE_SETTINGS_KEY)
+        service = cast("ProviderConfigService", self)
+        raw = await service._db.get_setting(MODEL_CACHE_SETTINGS_KEY)
         if not raw:
             return {}
         try:
