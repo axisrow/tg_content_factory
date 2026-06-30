@@ -28,6 +28,9 @@ class SearchLogRepository:
 
     async def log_search(self, phone: str, query: str, results_count: int) -> None:
         """Записать факт поиска: телефон, запрос и число найденных результатов."""
+        assert self._database is not None, (
+            "SearchLogRepository.log_search requires a Database reference"
+        )
         await self._database.execute_write(
             "INSERT INTO search_log (phone, query, results_count) VALUES (?, ?, ?)",
             (phone, query, results_count),

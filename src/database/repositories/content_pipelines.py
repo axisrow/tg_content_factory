@@ -176,6 +176,9 @@ class ContentPipelinesRepository:
 
     async def update_generate_interval(self, pipeline_id: int, minutes: int) -> None:
         """Изменить интервал автогенерации (в минутах) для пайплайна."""
+        assert self._database is not None, (
+            "ContentPipelinesRepository.update_generate_interval requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE content_pipelines SET generate_interval_minutes = ? WHERE id = ?",
             (minutes, pipeline_id),
@@ -239,6 +242,9 @@ class ContentPipelinesRepository:
 
     async def set_refinement_steps(self, pipeline_id: int, steps: list[dict]) -> None:
         """Сохранить шаги доработки текста (список ``{name, prompt}``) для пайплайна как JSON."""
+        assert self._database is not None, (
+            "ContentPipelinesRepository.set_refinement_steps requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE content_pipelines SET refinement_steps = ? WHERE id = ?",
             (json.dumps(steps, ensure_ascii=False), pipeline_id),
@@ -246,6 +252,9 @@ class ContentPipelinesRepository:
 
     async def set_pipeline_json(self, pipeline_id: int, graph: PipelineGraph | None) -> None:
         """Сохранить (или очистить через ``None``) DAG-конфигурацию пайплайна (issue #343)."""
+        assert self._database is not None, (
+            "ContentPipelinesRepository.set_pipeline_json requires a Database reference"
+        )
         value = graph.to_json() if graph else None
         await self._database.execute_write(
             "UPDATE content_pipelines SET pipeline_json = ? WHERE id = ?",
@@ -254,6 +263,9 @@ class ContentPipelinesRepository:
 
     async def set_active(self, pipeline_id: int, active: bool) -> None:
         """Включить/выключить пайплайн (неактивный не запускается планировщиком)."""
+        assert self._database is not None, (
+            "ContentPipelinesRepository.set_active requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE content_pipelines SET is_active = ? WHERE id = ?",
             (int(active), pipeline_id),
@@ -261,6 +273,9 @@ class ContentPipelinesRepository:
 
     async def set_last_generated_id(self, pipeline_id: int, value: int) -> None:
         """Сдвинуть курсор последнего обработанного сообщения-источника (инкрементальная генерация)."""
+        assert self._database is not None, (
+            "ContentPipelinesRepository.set_last_generated_id requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE content_pipelines SET last_generated_id = ? WHERE id = ?",
             (value, pipeline_id),
@@ -268,6 +283,9 @@ class ContentPipelinesRepository:
 
     async def delete(self, pipeline_id: int) -> None:
         """Удалить пайплайн по id (источники/цели уходят каскадом по FK)."""
+        assert self._database is not None, (
+            "ContentPipelinesRepository.delete requires a Database reference"
+        )
         await self._database.execute_write("DELETE FROM content_pipelines WHERE id = ?", (pipeline_id,))
 
     async def list_sources(self, pipeline_id: int) -> list[PipelineSource]:

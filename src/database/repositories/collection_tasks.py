@@ -174,6 +174,9 @@ class CollectionTasksRepository:
         ``run_after`` откладывает запуск (хранится в UTC); если нужна дедупликация
         по уже активной задаче канала — см. :meth:`create_collection_task_if_not_active`.
         """
+        assert self._database is not None, (
+            "CollectionTasksRepository.create_collection_task requires a Database reference"
+        )
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
         payload_json = self._serialize_payload(payload)
         cur = await self._database.execute_write(
@@ -207,6 +210,9 @@ class CollectionTasksRepository:
 
         Returns the new task ID, or ``None`` if an active task already exists.
         """
+        assert self._database is not None, (
+            "CollectionTasksRepository.create_collection_task_if_not_active requires a Database reference"
+        )
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
         payload_json = self._serialize_payload(payload)
         cur = await self._database.execute_write(
@@ -244,6 +250,9 @@ class CollectionTasksRepository:
         parent_task_id: int | None = None,
     ) -> int:
         """Поставить задачу обновления статистики всех каналов (STATS_ALL); вернуть её id."""
+        assert self._database is not None, (
+            "CollectionTasksRepository.create_stats_task requires a Database reference"
+        )
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
         cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
@@ -269,6 +278,9 @@ class CollectionTasksRepository:
         concurrent POSTs (review on #823). Returns the new task id, or ``None``
         when a pending/running task already exists.
         """
+        assert self._database is not None, (
+            "CollectionTasksRepository.create_filter_analyze_task requires a Database reference"
+        )
         cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, task_type, payload) "
@@ -321,6 +333,9 @@ class CollectionTasksRepository:
 
     async def update_collection_task_progress(self, task_id: int, messages_collected: int) -> None:
         """Записать прогресс задачи (число собранных сообщений) и обновить «часы прогресса» (`last_progress_at`)."""
+        assert self._database is not None, (
+            "CollectionTasksRepository.update_collection_task_progress requires a Database reference"
+        )
         now = datetime.now(tz=timezone.utc).isoformat()
         await self._database.execute_write(
             "UPDATE collection_tasks SET messages_collected = ?, last_progress_at = ? WHERE id = ?",
@@ -335,6 +350,9 @@ class CollectionTasksRepository:
         messages_collected: int,
     ) -> None:
         """Persist current cursor/counters into the DB row for crash-safe resume."""
+        assert self._database is not None, (
+            "CollectionTasksRepository.persist_stats_progress requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE collection_tasks SET messages_collected = ?, payload = ? WHERE id = ?",
             (messages_collected, self._serialize_payload(payload), task_id),
@@ -356,6 +374,9 @@ class CollectionTasksRepository:
         CANCELLED row protected by the guard below, or a ``required_status``
         mismatch). ``required_status`` adds ``AND status = ?`` so e.g. the interop
         complete/fail API only mutates a task that is actually RUNNING (#961)."""
+        assert self._database is not None, (
+            "CollectionTasksRepository.update_collection_task requires a Database reference"
+        )
         status_value = status.value if isinstance(status, CollectionTaskStatus) else status
         now = datetime.now(tz=timezone.utc).isoformat()
         sets = ["status = ?"]
@@ -415,6 +436,9 @@ class CollectionTasksRepository:
 
         Терминальный CANCELLED не трогается (#633).
         """
+        assert self._database is not None, (
+            "CollectionTasksRepository.reschedule_collection_task requires a Database reference"
+        )
         sets = [
             "status = ?",
             "run_after = ?",
@@ -448,6 +472,9 @@ class CollectionTasksRepository:
         note: str | None = None,
     ) -> None:
         """Сбросить задачу в PENDING немедленно, очистив отметки выполнения; CANCELLED не трогается."""
+        assert self._database is not None, (
+            "CollectionTasksRepository.reset_collection_task_to_pending requires a Database reference"
+        )
         sets = [
             "status = ?",
             "started_at = NULL",
@@ -592,6 +619,9 @@ class CollectionTasksRepository:
         messages_collected: int,
     ) -> None:
         """Return an in-progress stats task to PENDING with updated payload/run_after."""
+        assert self._database is not None, (
+            "CollectionTasksRepository.reschedule_stats_task requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE collection_tasks "
             "SET status = ?, payload = ?, run_after = ?, messages_collected = ?, "
@@ -622,6 +652,9 @@ class CollectionTasksRepository:
 
     async def delete_pending_channel_tasks(self) -> int:
         """Удалить все ожидающие задачи сбора (очистить очередь); вернуть число удалённых."""
+        assert self._database is not None, (
+            "CollectionTasksRepository.delete_pending_channel_tasks requires a Database reference"
+        )
         cur = await self._database.execute_write(
             "DELETE FROM collection_tasks "
             "WHERE task_type = ? AND status = ?",
@@ -638,6 +671,9 @@ class CollectionTasksRepository:
         Вариант, требующий ручного перезапуска; см. :meth:`reset_orphaned_running_tasks`,
         который вместо этого возвращает их в PENDING для авто-восстановления.
         """
+        assert self._database is not None, (
+            "CollectionTasksRepository.fail_running_collection_tasks_on_startup requires a Database reference"
+        )
         now = datetime.now(tz=timezone.utc).isoformat()
         cur = await self._database.execute_write(
             "UPDATE collection_tasks "
@@ -657,6 +693,9 @@ class CollectionTasksRepository:
         Called on startup to recover from ungraceful shutdowns where RUNNING
         tasks were not properly completed or failed.
         """
+        assert self._database is not None, (
+            "CollectionTasksRepository.reset_orphaned_running_tasks requires a Database reference"
+        )
         cur = await self._database.execute_write(
             "UPDATE collection_tasks "
             "SET status = ?, started_at = NULL, completed_at = NULL, error = NULL "
@@ -689,6 +728,9 @@ class CollectionTasksRepository:
         parent_task_id: int | None = None,
     ) -> int:
         """Поставить «генерическую» задачу диспетчера (PIPELINE_RUN, CONTENT_*, EXPORT…); вернуть её id."""
+        assert self._database is not None, (
+            "CollectionTasksRepository.create_generic_task requires a Database reference"
+        )
         tt = task_type
         task_type_value = tt.value if isinstance(tt, CollectionTaskType) else tt
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
@@ -746,6 +788,9 @@ class CollectionTasksRepository:
         self, now: datetime, handled_types: list[str]
     ) -> int:
         """На старте вернуть зависшие RUNNING генерические задачи в PENDING (авто-восстановление); вернуть число."""
+        assert self._database is not None, (
+            "CollectionTasksRepository.requeue_running_generic_tasks_on_startup requires a Database reference"
+        )
         if not handled_types:
             return 0
         now_iso = now.astimezone(timezone.utc).isoformat()
@@ -767,6 +812,9 @@ class CollectionTasksRepository:
         note: str | None = None,
     ) -> int:
         """На старте пометить зависшие RUNNING генерические задачи как failed с заданным ``error``; вернуть число."""
+        assert self._database is not None, (
+            "CollectionTasksRepository.fail_running_generic_tasks_on_startup requires a Database reference"
+        )
         if not handled_types:
             return 0
         now_iso = now.astimezone(timezone.utc).isoformat()
@@ -827,6 +875,9 @@ class CollectionTasksRepository:
         Терминальные задачи не трогаются (WHERE по статусу), поэтому ``False``
         означает «нечего было отменять».
         """
+        assert self._database is not None, (
+            "CollectionTasksRepository.cancel_collection_task requires a Database reference"
+        )
         now = datetime.now(tz=timezone.utc).isoformat()
         sets = ["status = 'cancelled'", "completed_at = ?"]
         params: list[Any] = [now]

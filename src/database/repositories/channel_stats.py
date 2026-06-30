@@ -32,6 +32,9 @@ class ChannelStatsRepository:
 
     async def save_channel_stats(self, stats: ChannelStats) -> int:
         """Добавить новое измерение метрик канала. Возвращает id новой строки."""
+        assert self._database is not None, (
+            "ChannelStatsRepository.save_channel_stats requires a Database reference"
+        )
         cur = await self._database.execute_write(
             """INSERT INTO channel_stats
                (channel_id, subscriber_count, avg_views, avg_reactions, avg_forwards)

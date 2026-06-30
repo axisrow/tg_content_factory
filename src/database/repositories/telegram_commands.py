@@ -63,6 +63,9 @@ class TelegramCommandsRepository:
 
     async def create_command(self, command: TelegramCommand) -> int:
         """Поставить команду в очередь воркеру. Возвращает id новой строки."""
+        assert self._database is not None, (
+            "TelegramCommandsRepository.create_command requires a Database reference"
+        )
         cur = await self._database.execute_write(
             """
             INSERT INTO telegram_commands (
@@ -212,6 +215,9 @@ class TelegramCommandsRepository:
         middle of a Telegram API call and the row would be overwritten when
         it finishes; cancel from the UI is only safe for not-yet-claimed work.
         """
+        assert self._database is not None, (
+            "TelegramCommandsRepository.cancel_command requires a Database reference"
+        )
         finished_at = datetime.now(timezone.utc).isoformat()
         cur = await self._database.execute_write(
             """
@@ -235,6 +241,9 @@ class TelegramCommandsRepository:
         phone: str | None = None,
     ) -> int:
         """Bulk-cancel PENDING commands matching the filters. Returns count."""
+        assert self._database is not None, (
+            "TelegramCommandsRepository.cancel_pending_commands requires a Database reference"
+        )
         finished_at = datetime.now(timezone.utc).isoformat()
         where = ["status = ?"]
         params: list[Any] = [TelegramCommandStatus.PENDING.value]
@@ -267,6 +276,9 @@ class TelegramCommandsRepository:
         they would stay claimed forever, since claim_next_command only picks
         PENDING rows.
         """
+        assert self._database is not None, (
+            "TelegramCommandsRepository.reset_running_on_startup requires a Database reference"
+        )
         cur = await self._database.execute_write(
             """
             UPDATE telegram_commands
@@ -338,6 +350,9 @@ class TelegramCommandsRepository:
         и `finished_at` пишутся через COALESCE — терминальный апдейт без свежего payload
         сохраняет прежнюю диагностику, а не затирает её в NULL (audit #835/15).
         """
+        assert self._database is not None, (
+            "TelegramCommandsRepository.update_command requires a Database reference"
+        )
         finished_at = None
         if status in {
             TelegramCommandStatus.SUCCEEDED,

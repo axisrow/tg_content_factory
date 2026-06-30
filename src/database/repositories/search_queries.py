@@ -32,6 +32,9 @@ class SearchQueriesRepository:
 
     async def add(self, sq: SearchQuery) -> int:
         """Создать сохранённый запрос; вернуть его новый id."""
+        assert self._database is not None, (
+            "SearchQueriesRepository.add requires a Database reference"
+        )
         cur = await self._database.execute_write(
             "INSERT INTO search_queries "
             "(name, query, is_regex, is_fts, is_active, notify_on_collect, "
@@ -71,12 +74,18 @@ class SearchQueriesRepository:
 
     async def set_active(self, sq_id: int, active: bool) -> None:
         """Включить/выключить запрос (неактивный не запускается планировщиком)."""
+        assert self._database is not None, (
+            "SearchQueriesRepository.set_active requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE search_queries SET is_active = ? WHERE id = ?", (int(active), sq_id)
         )
 
     async def update(self, sq_id: int, sq: SearchQuery) -> None:
         """Перезаписать редактируемые поля запроса (флаг is_active не трогается — для него есть set_active)."""
+        assert self._database is not None, (
+            "SearchQueriesRepository.update requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE search_queries SET name = ?, query = ?, is_regex = ?, is_fts = ?, "
             "notify_on_collect = ?, track_stats = ?, interval_minutes = ?, "
