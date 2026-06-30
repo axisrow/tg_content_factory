@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from inspect import isawaitable
+from typing import TYPE_CHECKING
 
 from src.models import Channel, Message
 from src.telegram.collector_message_parse import (
@@ -20,6 +21,17 @@ from src.telegram.collector_message_parse import (
 )
 from src.telegram.collector_types import _StreamOutcome
 
+if TYPE_CHECKING:
+    from typing import Any, Protocol, TypeAlias
+
+    from src.telegram.collector import Collector as _RuntimeCollector
+
+    _RuntimeCollectorType: TypeAlias = type[_RuntimeCollector]
+
+    class Collector(Protocol):
+        def __getattribute__(self, name: str) -> Any: ...
+        def __setattr__(self, name: str, value: Any) -> None: ...
+
 logger = logging.getLogger("src.telegram.collector")
 
 MESSAGE_FLUSH_BATCH_SIZE = 500
@@ -28,7 +40,7 @@ STREAM_CLEANUP_TIMEOUT_SEC = 10.0
 
 class StreamMixin:
     async def _release_collection_client(
-        self,
+        self: "Collector",
         phone: str,
         session,
         *,
@@ -76,7 +88,7 @@ class StreamMixin:
         await self._pool.release_client(phone)
 
     async def _stream_channel_messages(
-        self,
+        self: "Collector",
         *,
         session,
         entity,

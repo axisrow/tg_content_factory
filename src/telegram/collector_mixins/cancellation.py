@@ -6,6 +6,7 @@ import asyncio
 import logging
 from datetime import datetime
 from inspect import isawaitable
+from typing import TYPE_CHECKING
 
 from src.telegram.collector_types import (
     AllCollectionClientsFloodedError,
@@ -16,17 +17,28 @@ from src.telegram.flood_wait import (
     sleep_for_flood_wait_seconds,
 )
 
+if TYPE_CHECKING:
+    from typing import Any, Protocol, TypeAlias
+
+    from src.telegram.collector import Collector as _RuntimeCollector
+
+    _RuntimeCollectorType: TypeAlias = type[_RuntimeCollector]
+
+    class Collector(Protocol):
+        def __getattribute__(self, name: str) -> Any: ...
+        def __setattr__(self, name: str, value: Any) -> None: ...
+
 logger = logging.getLogger("src.telegram.collector")
 
 
 class CancellationMixin:
-    def _get_resolve_username_backoff_remaining_sec(self, phone: str | None = None) -> int:
+    def _get_resolve_username_backoff_remaining_sec(self: "Collector", phone: str | None = None) -> int:
         # The pool owns the single source of truth for the resolve backoff
         # (#785). With ``phone`` — that account's window; without — the
         # pool-wide aggregate (0 while any connected account is free, #790).
         return self._pool.get_resolve_username_backoff_remaining_sec(phone)
 
-    async def _can_rotate_resolve(self, attempted_phones: set[str]) -> bool:
+    async def _can_rotate_resolve(self: "Collector", attempted_phones: set[str]) -> bool:
         """True if another connected account outside ``attempted_phones`` can
         run a live username resolve right now (#790).
 
@@ -47,7 +59,7 @@ class CancellationMixin:
             return False
         return bool(has_capable(exclude=attempted_phones))
 
-    async def _next_resolve_capable_at(self) -> datetime | None:
+    async def _next_resolve_capable_at(self: "Collector") -> datetime | None:
         """Earliest moment any connected account can live-resolve again (#790).
 
         Prefers the async pool method, which also accounts for *generic*
@@ -64,7 +76,7 @@ class CancellationMixin:
             return result
         return self._pool.get_resolve_username_backoff_until()
 
-    async def get_collection_availability(self):
+    async def get_collection_availability(self: "Collector"):
         availability_fn = getattr(self._pool, "get_stats_availability", None)
         if callable(availability_fn):
             result = availability_fn()
@@ -73,7 +85,7 @@ class CancellationMixin:
         return await self._fallback_collection_availability()
 
     @property
-    def is_running(self) -> bool:
+    def is_running(self: "Collector") -> bool:
         return (
             bool(getattr(self, "_running", False))
             or int(getattr(self, "_active_collection_count", 0) or 0) > 0
@@ -81,16 +93,16 @@ class CancellationMixin:
             or bool(getattr(self, "_stats_all_running", False))
         )
 
-    def _is_collection_cancelled(self, cancel_event: asyncio.Event | None = None) -> bool:
+    def _is_collection_cancelled(self: "Collector", cancel_event: asyncio.Event | None = None) -> bool:
         if cancel_event is not None:
             return cancel_event.is_set() or self._cancel_event.is_set()
         return self._cancel_event.is_set()
 
-    def _should_clear_collection_cancel_on_start(self, cancel_event: asyncio.Event | None) -> bool:
+    def _should_clear_collection_cancel_on_start(self: "Collector", cancel_event: asyncio.Event | None) -> bool:
         return cancel_event is None or not self.is_running
 
     async def _wait_if_live_runtime_paused(
-        self,
+        self: "Collector",
         *,
         stop_event: asyncio.Event | None = None,
     ) -> bool:
@@ -100,7 +112,7 @@ class CancellationMixin:
             stop_event=stop_event or self._cancel_event
         )
 
-    async def _fallback_collection_availability(self):
+    async def _fallback_collection_availability(self: "Collector"):
         connected = bool(getattr(self._pool, "clients", {}))
         if connected:
             return type(
@@ -123,7 +135,7 @@ class CancellationMixin:
         )()
 
     def _log_collection_unavailability_once(
-        self,
+        self: "Collector",
         *,
         state: str,
         retry_after_sec: int | None = None,
@@ -149,10 +161,10 @@ class CancellationMixin:
             return
         logger.error("No available clients for collection: no active connected clients")
 
-    def _reset_collection_unavailability_log(self) -> None:
+    def _reset_collection_unavailability_log(self: "Collector") -> None:
         self._last_unavailability_log = None
 
-    async def _wait_for_transient_collection_flood(self, availability) -> bool:
+    async def _wait_for_transient_collection_flood(self: "Collector", availability) -> bool:
         retry_after_sec = getattr(availability, "retry_after_sec", None)
         if getattr(availability, "state", None) != "all_flooded":
             return False
@@ -166,7 +178,7 @@ class CancellationMixin:
         self._reset_collection_unavailability_log()
         return True
 
-    async def _raise_collection_unavailability(self, availability=None) -> None:
+    async def _raise_collection_unavailability(self: "Collector", availability=None) -> None:
         availability = availability or await self.get_collection_availability()
         self._log_collection_unavailability_once(
             state=availability.state,
@@ -184,18 +196,18 @@ class CancellationMixin:
             )
         raise NoActiveCollectionClientsError("No active connected clients")
 
-    async def cancel(self) -> None:
+    async def cancel(self: "Collector") -> None:
         self._cancel_event.set()
 
-    async def cancel_stats(self) -> None:
+    async def cancel_stats(self: "Collector") -> None:
         """Cancel an in-flight STATS_ALL run without touching channel collection."""
         self._stats_cancel_event.set()
 
-    def _is_stats_cancelled(self) -> bool:
+    def _is_stats_cancelled(self: "Collector") -> bool:
         # Global shutdown (cancel()) also stops stats; a stats-only cancel does not
         # stop channel collection.
         return self._cancel_event.is_set() or self._stats_cancel_event.is_set()
 
     @property
-    def is_cancelled(self) -> bool:
+    def is_cancelled(self: "Collector") -> bool:
         return self._cancel_event.is_set()
