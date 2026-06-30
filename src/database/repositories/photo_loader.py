@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 import aiosqlite
 
+from src.database.pool import ReadConnection
 from src.models import (
     PhotoAutoUploadJob,
     PhotoBatch,
@@ -39,7 +40,7 @@ class PhotoLoaderRepository:
 
     def __init__(
         self,
-        db: aiosqlite.Connection,
+        db: ReadConnection,
         *,
         database: "Database | None" = None,
     ):

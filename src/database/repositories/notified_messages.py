@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import aiosqlite
+from src.database.pool import ReadConnection
 
 if TYPE_CHECKING:
     from src.database.facade import Database
@@ -18,7 +18,7 @@ class NotifiedMessagesRepository:
     cursor.
     """
 
-    def __init__(self, db: aiosqlite.Connection, *, database: "Database | None" = None):
+    def __init__(self, db: ReadConnection, *, database: "Database | None" = None):
         self._db = db
         self._database = database
 
