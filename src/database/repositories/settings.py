@@ -51,6 +51,9 @@ class SettingsRepository:
 
     async def set_setting(self, key: str, value: str) -> None:
         """Записать/обновить настройку (upsert по ключу)."""
+        assert self._database is not None, (
+            "SettingsRepository.set_setting requires a Database reference"
+        )
         await self._database.execute_write(
             "INSERT INTO settings (key, value) VALUES (?, ?) "
             "ON CONFLICT(key) DO UPDATE SET value = excluded.value",

@@ -79,6 +79,9 @@ class AccountsRepository:
         запрошенный ``is_primary`` срабатывает, только если primary-аккаунта ещё
         нет (#733), иначе сохраняется 0.
         """
+        assert self._database is not None, (
+            "AccountsRepository.add_account requires a Database reference"
+        )
         session_string = account.session_string
         if self._session_cipher:
             session_string = self._session_cipher.encrypt(session_string)
@@ -122,6 +125,9 @@ class AccountsRepository:
         source of truth for "already exists" (#1146 review). Session is encrypted as
         usual; is_primary is still derived atomically (#733).
         """
+        assert self._database is not None, (
+            "AccountsRepository.add_account_if_absent requires a Database reference"
+        )
         session_string = account.session_string
         if self._session_cipher:
             session_string = self._session_cipher.encrypt(session_string)
@@ -470,6 +476,9 @@ class AccountsRepository:
 
         `ClientPool` пропускает аккаунты, у которых ``flood_wait_until`` ещё в будущем.
         """
+        assert self._database is not None, (
+            "AccountsRepository.update_account_flood requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE accounts SET flood_wait_until = ? WHERE phone = ?",
             (until.isoformat() if until else None, phone),
@@ -477,6 +486,9 @@ class AccountsRepository:
 
     async def update_account_premium(self, phone: str, is_premium: bool) -> None:
         """Обновить флаг Telegram Premium у аккаунта (нужен для premium-only операций)."""
+        assert self._database is not None, (
+            "AccountsRepository.update_account_premium requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE accounts SET is_premium = ? WHERE phone = ?",
             (int(is_premium), phone),

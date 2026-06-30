@@ -53,6 +53,9 @@ class ChannelRatingsRepository:
         `flag_count` сохраняется из существующей строки, а не из переданного
         рейтинга — машинная переклассификация не должна сбрасывать ручные флаги.
         """
+        assert self._database is not None, (
+            "ChannelRatingsRepository.upsert requires a Database reference"
+        )
         now = (rating.updated_at or datetime.now(tz=timezone.utc)).isoformat()
         await self._database.execute_write(
             "INSERT INTO channel_ratings "

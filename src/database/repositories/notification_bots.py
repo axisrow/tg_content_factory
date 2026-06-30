@@ -48,6 +48,9 @@ class NotificationBotsRepository:
         конфликте-обновлении lastrowid остаётся от последней вставки в
         соединении, для точного id читайте строку по `tg_user_id`.
         """
+        assert self._database is not None, (
+            "NotificationBotsRepository.save_bot requires a Database reference"
+        )
         cur = await self._database.execute_write(
             """
             INSERT INTO notification_bots (tg_user_id, tg_username, bot_id, bot_username, bot_token)
@@ -70,6 +73,9 @@ class NotificationBotsRepository:
 
     async def delete_bot(self, tg_user_id: int) -> None:
         """Удалить бота пользователя по его Telegram id."""
+        assert self._database is not None, (
+            "NotificationBotsRepository.delete_bot requires a Database reference"
+        )
         await self._database.execute_write(
             "DELETE FROM notification_bots WHERE tg_user_id = ?",
             (tg_user_id,),

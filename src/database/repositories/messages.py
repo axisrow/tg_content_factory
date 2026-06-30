@@ -131,6 +131,9 @@ class MessagesRepository:
         return row["value"] if row else None
 
     async def _set_setting(self, key: str, value: str) -> None:
+        assert self._database is not None, (
+            "MessagesRepository._set_setting requires a Database reference"
+        )
         await self._database.execute_write(
             """
             INSERT INTO settings (key, value)
@@ -184,6 +187,9 @@ class MessagesRepository:
         пробрасывает наружу (не маскирует под «не сохранилось»), чтобы вызывающий
         пересобрал заново.
         """
+        assert self._database is not None, (
+            "MessagesRepository.insert_message requires a Database reference"
+        )
         # Local import — see insert_messages_batch for the partial-init rationale.
         from src.database import DatabaseBusyError
 
@@ -255,6 +261,9 @@ class MessagesRepository:
         ``message_date`` is the parent message's ISO date, stored on each reaction
         row so analytics can filter by recency without joining messages (#760).
         """
+        assert self._database is not None, (
+            "MessagesRepository._upsert_reactions requires a Database reference"
+        )
         items = _parse_reactions_json(reactions_json)
         data = [(channel_id, message_id, r["emoji"], r.get("count", 0), message_date) for r in items]
         try:
@@ -286,6 +295,9 @@ class MessagesRepository:
         строки, добытые Premium-поиском (для последующей очистки). Транзиентная
         блокировка пробрасывается наружу, как и в :meth:`insert_message`.
         """
+        assert self._database is not None, (
+            "MessagesRepository.insert_messages_batch requires a Database reference"
+        )
         if not messages:
             return 0
         data = [
@@ -422,6 +434,9 @@ class MessagesRepository:
         clear_premium_search_query: bool = False,
     ) -> None:
         """Refresh mutable fields for already-known Telegram messages."""
+        assert self._database is not None, (
+            "MessagesRepository._refresh_existing_messages requires a Database reference"
+        )
         if not messages:
             return
         data = [
@@ -496,6 +511,9 @@ class MessagesRepository:
 
         Все векторы должны быть одной размерности (она фиксируется индексом).
         """
+        assert self._database is not None, (
+            "MessagesRepository.upsert_message_embeddings requires a Database reference"
+        )
         if not embeddings:
             return 0
         dimensions = len(embeddings[0][1])
@@ -518,6 +536,9 @@ class MessagesRepository:
         self, embeddings: list[tuple[int, list[float]]]
     ) -> int:
         """Store embeddings in the portable JSON table (issue #173)."""
+        assert self._database is not None, (
+            "MessagesRepository.upsert_message_embedding_json requires a Database reference"
+        )
         if not embeddings:
             return 0
         dimensions = len(embeddings[0][1])
@@ -1581,6 +1602,9 @@ class MessagesRepository:
 
     async def update_detected_lang(self, message_db_id: int, lang: str) -> None:
         """Update detected_lang for a message."""
+        assert self._database is not None, (
+            "MessagesRepository.update_detected_lang requires a Database reference"
+        )
         await self._database.execute_write("UPDATE messages SET detected_lang = ? WHERE id = ?", (lang, message_db_id))
 
     # ── translation helpers ──────────────────────────────────────────
@@ -1634,6 +1658,9 @@ class MessagesRepository:
 
     async def update_translation(self, message_db_id: int, target: str, translated_text: str) -> None:
         """Update translation_en or translation_custom for a message."""
+        assert self._database is not None, (
+            "MessagesRepository.update_translation requires a Database reference"
+        )
         col = "translation_en" if target == "en" else "translation_custom"
         await self._database.execute_write(
             f"UPDATE messages SET {col} = ? WHERE id = ?",
