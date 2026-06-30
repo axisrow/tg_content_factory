@@ -1192,6 +1192,8 @@ async def _run_telegram_live_checks(config_path: str) -> list[CheckResult]:
         return state.results
 
     # 5. tg_resolve_channel
+    if state.copy_db is None:
+        raise RuntimeError("test: copy_db not initialized before tg_resolve_channel step")
     channels = await state.copy_db.get_channels(active_only=True)
     if not await _run_tg_resolve_channel_step(state, channels):
         return state.results

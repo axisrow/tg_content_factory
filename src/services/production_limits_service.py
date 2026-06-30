@@ -240,6 +240,9 @@ class CostTracker:
         On read failure, falls back to the in-memory value (fail-open read; the
         cap check below still guards with whatever total we have).
         """
+        assert self._db is not None, (
+            "CostTracker._read_persisted_cost requires initialized Database"
+        )
         try:
             raw = await self._db.get_setting(_COST_STATE_KEY)
         except Exception:
@@ -263,6 +266,7 @@ class CostTracker:
         crashes the caller (matching the previous best-effort persist).
         """
         now = time.time()
+        assert self._db is not None, "CostTracker._atomic_increment requires initialized Database"
         try:
             async with self._db.transaction() as conn:
                 cur = await conn.execute(

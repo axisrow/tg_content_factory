@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from src.agent.provider_registry import (
     ProviderRuntimeConfig,
@@ -16,7 +16,48 @@ from src.utils.datetime import try_parse_datetime
 from src.utils.json import safe_json_dumps
 
 if TYPE_CHECKING:
+    from typing import Protocol
+
     from src.services.provider_model_cache import ProviderModelCacheEntry
+
+    class ProviderConfigService(Protocol):
+        def normalize_provider_plain_fields(self, cfg: ProviderRuntimeConfig) -> dict[str, str]: ...
+
+        async def load_model_cache(self) -> dict[str, ProviderModelCacheEntry]: ...
+
+        async def save_model_cache(self, cache: dict[str, ProviderModelCacheEntry]) -> None: ...
+
+        def _empty_model_cache_entry(self, provider_name: str) -> ProviderModelCacheEntry: ...
+
+        def config_fingerprint(
+            self,
+            cfg: ProviderRuntimeConfig,
+            *,
+            model: str | None = None,
+        ) -> str: ...
+
+        def get_compatibility_record(
+            self,
+            cache_entry: ProviderModelCacheEntry | None,
+            cfg: ProviderRuntimeConfig,
+            *,
+            model: str | None = None,
+            fresh_only: bool = False,
+            max_age_hours: int = ...,
+        ) -> ProviderModelCompatibilityRecord | None: ...
+
+        def is_compatibility_record_fresh(
+            self,
+            record: ProviderModelCompatibilityRecord,
+            *,
+            max_age_hours: int = ...,
+        ) -> bool: ...
+
+        def _config_sort_key(self, cfg: ProviderRuntimeConfig) -> tuple[int, int]: ...
+
+        def canonical_endpoint_fingerprint(self, cfg: ProviderRuntimeConfig) -> str | None: ...
+
+        def _app_version(self) -> str: ...
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +101,8 @@ class ProviderModelCompatibilityMixin:
         spec = provider_spec(cfg.provider)
         if spec is None:
             raise RuntimeError(f"Unknown provider: {cfg.provider}")
-        normalized_plain = self.normalize_provider_plain_fields(cfg)
+        service = cast("ProviderConfigService", self)
+        normalized_plain = service.normalize_provider_plain_fields(cfg)
         secret_payload = {
             field.name: cfg.secret_fields.get(field.name, "").strip()
             for field in spec.secret_fields
@@ -146,7 +188,7 @@ class ProviderModelCompatibilityMixin:
         return datetime.now(UTC) - tested_at <= timedelta(hours=max_age_hours)
 
     async def ensure_model_compatibility(
-        self,
+        self: "ProviderConfigService",
         cfg: ProviderRuntimeConfig,
         *,
         probe_runner: Callable[
@@ -202,7 +244,7 @@ class ProviderModelCompatibilityMixin:
         return result
 
     async def export_compatibility_catalog(
-        self,
+        self: "ProviderConfigService",
         configs: list[ProviderRuntimeConfig],
         cache: dict[str, ProviderModelCacheEntry] | None = None,
         *,
