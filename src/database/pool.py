@@ -19,12 +19,23 @@ fetch* calls then read from the buffer, not the (already-released) connection.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Protocol
 
 import aiosqlite
 
 from src.database.connection import DEFAULT_TUNING, ConnectionTuning, open_connection
+
+
+class ReadConnection(Protocol):
+    """Structural read-only connection interface used by repositories."""
+
+    async def execute(self, sql: str, params: Sequence[Any] = ()) -> Any:
+        """Return a cursor-like object with async fetchone/fetchall."""
+        ...
+
+    async def create_function(self, name: str, narg: int, func: Any, **kwargs: Any) -> None: ...
 
 
 class BufferedCursor:
@@ -152,14 +163,14 @@ class ReadPoolProxy:
     def __init__(self, pool: ReadConnectionPool):
         self._pool = pool
 
-    async def execute(self, sql: str, params: tuple = ()) -> BufferedCursor:
+    async def execute(self, sql: str, params: Sequence[Any] = ()) -> BufferedCursor:
         _reject_writes(sql)
         async with self._pool.acquire_read() as conn:
             cur = await conn.execute(sql, params)
             # fetchall() returns a fresh owned list, so BufferedCursor can take it directly.
             return BufferedCursor(await cur.fetchall())
 
-    async def execute_fetchall(self, sql: str, params: tuple = ()) -> list[Any]:
+    async def execute_fetchall(self, sql: str, params: Sequence[Any] = ()) -> list[Any]:
         _reject_writes(sql)
         async with self._pool.acquire_read() as conn:
             return await conn.execute_fetchall(sql, params)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import aiosqlite
+from src.database.pool import ReadConnection
 
 if TYPE_CHECKING:
     from src.database.facade import Database
@@ -16,7 +16,7 @@ class PipelineActionLogRepository:
 
     def __init__(
         self,
-        db: aiosqlite.Connection,
+        db: ReadConnection,
         *,
         database: "Database | None" = None,
     ):
