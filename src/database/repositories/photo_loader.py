@@ -104,6 +104,9 @@ class PhotoLoaderRepository:
 
     async def create_batch(self, batch: PhotoBatch) -> int:
         """Создать фото-батч (общая цель/режим отправки); вернуть его id."""
+        assert self._database is not None, (
+            "PhotoLoaderRepository.create_batch requires a Database reference"
+        )
         cur = await self._database.execute_write(
             """
             INSERT INTO photo_batches (
@@ -133,6 +136,9 @@ class PhotoLoaderRepository:
         last_run_at: datetime | None = None,
     ) -> None:
         """Частично обновить батч (статус/ошибку/время запуска); ни одного поля — no-op."""
+        assert self._database is not None, (
+            "PhotoLoaderRepository.update_batch requires a Database reference"
+        )
         sets: list[str] = []
         params: list[object] = []
         if status is not None:
@@ -203,6 +209,9 @@ class PhotoLoaderRepository:
 
     async def create_item(self, item: PhotoBatchItem) -> int:
         """Создать элемент батча (одна отправка с файлами и опциональным расписанием); вернуть id."""
+        assert self._database is not None, (
+            "PhotoLoaderRepository.create_item requires a Database reference"
+        )
         cur = await self._database.execute_write(
             """
             INSERT INTO photo_batch_items (
@@ -278,6 +287,9 @@ class PhotoLoaderRepository:
         completed_at: datetime | None = None,
     ) -> None:
         """Частично обновить элемент батча (статус, ошибка, id отправленных сообщений, тайминги); пусто — no-op."""
+        assert self._database is not None, (
+            "PhotoLoaderRepository.update_item requires a Database reference"
+        )
         sets: list[str] = []
         params: list[object] = []
         if status is not None:
@@ -305,6 +317,9 @@ class PhotoLoaderRepository:
 
     async def cancel_item(self, item_id: int) -> bool:
         """Отменить ещё не завершённый элемент (held/pending/scheduled/running); вернуть ``True``, если отменили."""
+        assert self._database is not None, (
+            "PhotoLoaderRepository.cancel_item requires a Database reference"
+        )
         cur = await self._database.execute_write(
             """
             UPDATE photo_batch_items
@@ -390,6 +405,9 @@ class PhotoLoaderRepository:
 
     async def requeue_running_items_on_startup(self, now: datetime) -> int:
         """На старте вернуть зависшие RUNNING-элементы в PENDING (авто-восстановление после сбоя); вернуть число."""
+        assert self._database is not None, (
+            "PhotoLoaderRepository.requeue_running_items_on_startup requires a Database reference"
+        )
         cur = await self._database.execute_write(
             """
             UPDATE photo_batch_items
@@ -406,6 +424,9 @@ class PhotoLoaderRepository:
 
     async def create_auto_job(self, job: PhotoAutoUploadJob) -> int:
         """Создать задание авто-загрузки новых файлов из папки по интервалу; вернуть id."""
+        assert self._database is not None, (
+            "PhotoLoaderRepository.create_auto_job requires a Database reference"
+        )
         cur = await self._database.execute_write(
             """
             INSERT INTO photo_auto_upload_jobs (
@@ -445,6 +466,9 @@ class PhotoLoaderRepository:
         last_seen_marker: str | None = None,
     ) -> None:
         """Частично обновить задание авто-загрузки (папка, режим, интервал, активность, маркер…); пусто — no-op."""
+        assert self._database is not None, (
+            "PhotoLoaderRepository.update_auto_job requires a Database reference"
+        )
         sets: list[str] = []
         params: list[object] = []
         if folder_path is not None:
@@ -520,6 +544,9 @@ class PhotoLoaderRepository:
 
     async def mark_auto_file_sent(self, job_id: int, file_path: str) -> None:
         """Отметить файл отправленным в леджере задания (идемпотентно, INSERT OR IGNORE)."""
+        assert self._database is not None, (
+            "PhotoLoaderRepository.mark_auto_file_sent requires a Database reference"
+        )
         await self._database.execute_write(
             """
             INSERT OR IGNORE INTO photo_auto_upload_files (job_id, file_path, sent_at)

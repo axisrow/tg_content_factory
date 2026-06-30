@@ -47,6 +47,9 @@ class ChannelsRepository:
         соединении — для гарантированного pk существующего канала читайте его по
         ``channel_id`` (например `get_channel_by_channel_id`).
         """
+        assert self._database is not None, (
+            "ChannelsRepository.add_channel requires a Database reference"
+        )
         cur = await self._database.execute_write(
             """INSERT INTO channels (channel_id, title, username, channel_type, is_active,
                                      about, linked_chat_id, has_comments, created_at)
@@ -193,6 +196,9 @@ class ChannelsRepository:
 
     async def update_channel_last_id(self, channel_id: int, last_id: int) -> None:
         """Продвинуть курсор инкрементального сбора (`last_collected_id`) — только вперёд (монотонно)."""
+        assert self._database is not None, (
+            "ChannelsRepository.update_channel_last_id requires a Database reference"
+        )
         await self._database.execute_write(
             """
             UPDATE channels
@@ -207,10 +213,16 @@ class ChannelsRepository:
 
     async def set_channel_active(self, pk: int, active: bool) -> None:
         """Включить/выключить отслеживание канала (неактивный не собирается)."""
+        assert self._database is not None, (
+            "ChannelsRepository.set_channel_active requires a Database reference"
+        )
         await self._database.execute_write("UPDATE channels SET is_active = ? WHERE id = ?", (int(active), pk))
 
     async def set_channel_review(self, pk: int, reason: str) -> None:
         """Flag a channel for human review (quarantine) — stays active until resolved."""
+        assert self._database is not None, (
+            "ChannelsRepository.set_channel_review requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE channels SET needs_review = 1, review_reason = ? WHERE id = ?",
             (reason, pk),
@@ -218,6 +230,9 @@ class ChannelsRepository:
 
     async def clear_channel_review(self, pk: int) -> None:
         """Clear the review flag (operator decided, or the channel resolved live again)."""
+        assert self._database is not None, (
+            "ChannelsRepository.clear_channel_review requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE channels SET needs_review = 0, review_reason = '' WHERE id = ?",
             (pk,),
@@ -256,6 +271,9 @@ class ChannelsRepository:
         на write-соединение внутри уже открытой транзакции вызывающего — см.
         комментарий в теле о write- против read-пула (#760).
         """
+        assert self._database is not None, (
+            "ChannelsRepository.set_filtered_bulk requires a Database reference"
+        )
         if not updates:
             return 0
         # When commit=False, the caller already holds a Database.transaction()
@@ -281,19 +299,23 @@ class ChannelsRepository:
                     if rowcount > 0:
                         updated_rows += rowcount
             return updated_rows
-        assert self._database is not None
+        db = self._database
+        write_conn = db.db
+        assert write_conn is not None, (
+            "ChannelsRepository.set_filtered_bulk requires an active Database connection"
+        )
         # Enforce the #569 invariant: the only safe caller is one that already
         # owns a Database.transaction() block (holding _write_lock transitively).
         # Without this guard a future commit=False caller outside any transaction
         # would write through the shared connection with no lock and resurrect the
         # race that execute_write/transaction exist to close (#1182).
-        assert self._database.db.in_transaction, (
+        assert write_conn.in_transaction, (
             "ChannelsRepository.set_filtered_bulk(commit=False) must run inside a "
             "caller-owned Database.transaction() block (write-lock invariant #569)"
         )
         updated_rows = 0
         for channel_id, flags_csv in updates:
-            cur = await self._database.db.execute(
+            cur = await write_conn.execute(
                 "UPDATE channels SET is_filtered = 1, filter_flags = ? WHERE channel_id = ?",
                 (flags_csv, channel_id),
             )
@@ -315,18 +337,28 @@ class ChannelsRepository:
             rowcount = cur.rowcount if cur.rowcount is not None else 0
             return rowcount if rowcount > 0 else 0
         # commit=False: write on the caller's open write transaction (see set_filtered_bulk).
-        assert self._database is not None
+        assert self._database is not None, (
+            "ChannelsRepository.reset_all_filters requires a Database reference"
+        )
+        db = self._database
+        write_conn = db.db
+        assert write_conn is not None, (
+            "ChannelsRepository.reset_all_filters requires an active Database connection"
+        )
         # Enforce the #569 invariant — see set_filtered_bulk(commit=False) (#1182).
-        assert self._database.db.in_transaction, (
+        assert write_conn.in_transaction, (
             "ChannelsRepository.reset_all_filters(commit=False) must run inside a "
             "caller-owned Database.transaction() block (write-lock invariant #569)"
         )
-        cur = await self._database.db.execute("UPDATE channels SET is_filtered = 0, filter_flags = ''")
+        cur = await write_conn.execute("UPDATE channels SET is_filtered = 0, filter_flags = ''")
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         return rowcount if rowcount > 0 else 0
 
     async def reset_filters_for_pks(self, pks: list[int], *, commit: bool = True) -> int:
         """Снять фильтрацию только с указанных pk; вернуть число снятых. ``commit`` как в :meth:`set_filtered_bulk`."""
+        assert self._database is not None, (
+            "ChannelsRepository.reset_filters_for_pks requires a Database reference"
+        )
         if not pks:
             return 0
         placeholders = ",".join("?" * len(pks))
@@ -343,18 +375,25 @@ class ChannelsRepository:
             rowcount = cur.rowcount if cur.rowcount is not None else 0
             return rowcount if rowcount > 0 else 0
         # commit=False: write on the caller's open write transaction (see set_filtered_bulk).
-        assert self._database is not None
+        db = self._database
+        write_conn = db.db
+        assert write_conn is not None, (
+            "ChannelsRepository.reset_filters_for_pks requires an active Database connection"
+        )
         # Enforce the #569 invariant — see set_filtered_bulk(commit=False) (#1182).
-        assert self._database.db.in_transaction, (
+        assert write_conn.in_transaction, (
             "ChannelsRepository.reset_filters_for_pks(commit=False) must run inside a "
             "caller-owned Database.transaction() block (write-lock invariant #569)"
         )
-        cur = await self._database.db.execute(sql, tuple(pks))
+        cur = await write_conn.execute(sql, tuple(pks))
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         return rowcount if rowcount > 0 else 0
 
     async def set_channel_type(self, channel_id: int, channel_type: str) -> None:
         """Обновить тип канала (channel/supergroup/group/…) по Telegram ``channel_id``."""
+        assert self._database is not None, (
+            "ChannelsRepository.set_channel_type requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE channels SET channel_type=? WHERE channel_id=?",
             (channel_type, channel_id),
@@ -364,6 +403,9 @@ class ChannelsRepository:
         self, channel_id: int, *, username: str | None, title: str | None
     ) -> None:
         """Обновить username и title канала (после переименования/смены @username)."""
+        assert self._database is not None, (
+            "ChannelsRepository.update_channel_meta requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE channels SET username = ?, title = ? WHERE channel_id = ?",
             (username, title, channel_id),
@@ -373,6 +415,9 @@ class ChannelsRepository:
         self, channel_id: int, *, about: str | None, linked_chat_id: int | None, has_comments: bool
     ) -> None:
         """Обновить расширенные метаданные канала: описание, привязанный чат и наличие комментариев."""
+        assert self._database is not None, (
+            "ChannelsRepository.update_channel_full_meta requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE channels SET about = ?, linked_chat_id = ?, has_comments = ? WHERE channel_id = ?",
             (about, linked_chat_id, int(has_comments), channel_id),
@@ -382,6 +427,9 @@ class ChannelsRepository:
         self, channel_id: int, phone: str | None
     ) -> None:
         """Set or clear the preferred Telegram account phone for collecting this channel."""
+        assert self._database is not None, (
+            "ChannelsRepository.update_channel_preferred_phone requires a Database reference"
+        )
         await self._database.execute_write(
             "UPDATE channels SET preferred_phone = ? WHERE channel_id = ?",
             (phone, channel_id),
@@ -398,6 +446,9 @@ class ChannelsRepository:
 
     async def update_channel_created_at(self, channel_id: int, created_at) -> None:
         """Set created_at only if currently NULL (backfill from entity.date)."""
+        assert self._database is not None, (
+            "ChannelsRepository.update_channel_created_at requires a Database reference"
+        )
         iso = created_at.isoformat() if hasattr(created_at, "isoformat") else created_at
         await self._database.execute_write(
             "UPDATE channels SET created_at = ? WHERE channel_id = ? AND created_at IS NULL",
@@ -526,6 +577,9 @@ class ChannelsRepository:
 
     async def create_tag(self, name: str) -> None:
         """Создать тег по имени (пустое игнорируется, дубликат — no-op через INSERT OR IGNORE)."""
+        assert self._database is not None, (
+            "ChannelsRepository.create_tag requires a Database reference"
+        )
         name = name.strip()
         if not name:
             return
@@ -533,6 +587,9 @@ class ChannelsRepository:
 
     async def delete_tag(self, name: str) -> None:
         """Удалить тег по имени (связи каналов с ним уходят каскадом по FK)."""
+        assert self._database is not None, (
+            "ChannelsRepository.delete_tag requires a Database reference"
+        )
         await self._database.execute_write("DELETE FROM tags WHERE name = ?", (name,))
 
     async def get_channel_tags(self, channel_pk: int) -> list[str]:

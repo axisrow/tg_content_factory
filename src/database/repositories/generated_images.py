@@ -40,6 +40,9 @@ class GeneratedImagesRepository:
 
     async def save(self, prompt: str, model: str | None, image_url: str | None, local_path: str | None) -> int:
         """Сохранить запись о сгенерированном изображении. Возвращает id новой строки."""
+        assert self._database is not None, (
+            "GeneratedImagesRepository.save requires a Database reference"
+        )
         cur = await self._database.execute_write(
             "INSERT INTO generated_images (prompt, model, image_url, local_path) VALUES (?, ?, ?, ?)",
             (prompt, model, image_url, local_path),

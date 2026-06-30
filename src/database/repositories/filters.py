@@ -348,6 +348,9 @@ class FilterRepository:
 
     async def _open_readonly_conn(self) -> aiosqlite.Connection:
         """Open a temporary read-only connection for parallel queries."""
+        assert self._database is not None, (
+            "FilterRepository._open_readonly_conn requires a Database reference"
+        )
         db_path = self._database._db_path  # noqa: SLF001
         conn = await aiosqlite.connect(
             f"file:{db_path}?mode=ro",

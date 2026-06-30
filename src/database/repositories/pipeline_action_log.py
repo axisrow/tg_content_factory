@@ -68,6 +68,9 @@ class PipelineActionLogRepository:
         message_id: int,
     ) -> None:
         """Record that (pipeline, node, action) acted on a message. Idempotent."""
+        assert self._database is not None, (
+            "PipelineActionLogRepository.log_action requires a Database reference"
+        )
         await self._database.execute_write(
             "INSERT OR IGNORE INTO pipeline_action_log "
             "(pipeline_id, node_id, action, channel_id, message_id) VALUES (?, ?, ?, ?, ?)",

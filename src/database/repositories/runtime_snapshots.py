@@ -58,6 +58,9 @@ class RuntimeSnapshotsRepository:
 
         `updated_at` берётся из снимка либо проставляется текущим временем БД.
         """
+        assert self._database is not None, (
+            "RuntimeSnapshotsRepository.upsert_snapshot requires a Database reference"
+        )
         await self._database.execute_write(
             """
             INSERT INTO runtime_snapshots (snapshot_type, scope, payload, updated_at)
