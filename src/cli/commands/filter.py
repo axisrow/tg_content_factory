@@ -11,9 +11,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    apply_startup,
+    run_async,
+)
 from src.database.bundles import ChannelBundle
 from src.filters.analyzer import ChannelAnalyzer
+from src.filters.criteria import DEFAULT_QUICK_SAMPLE_SIZE
 from src.services.channel_service import ChannelService
 from src.services.filter_deletion_service import FilterDeletionService
 
@@ -296,3 +303,100 @@ def run(args: argparse.Namespace) -> None:
                 args.config, pks=getattr(args, "pks", None), yes=getattr(args, "yes", False)
             )
         )
+
+
+# --------------------------------------------------------------------------- #
+# filter → analyze / apply / reset / precheck / toggle / purge / purge-messages
+#          / hard-delete
+# --------------------------------------------------------------------------- #
+
+filter_app = typer.Typer(no_args_is_help=True, help="Channel content filter")
+
+
+@filter_app.command("analyze")
+def filter_analyze(
+    ctx: typer.Context,
+    quick: bool = typer.Option(
+        False,
+        "--quick",
+        help="Sample the last N messages/channel + skip cross-dupe analysis (seconds on large DBs)",
+    ),
+    sample_size: int = typer.Option(
+        DEFAULT_QUICK_SAMPLE_SIZE,
+        "--sample-size",
+        help=(
+            f"Messages/channel to sample in --quick mode "
+            f"(default: {DEFAULT_QUICK_SAMPLE_SIZE}; ignored without --quick)"
+        ),
+    ),
+) -> None:
+    """Analyze channels and show report."""
+    apply_startup(ctx)
+    run_async(analyze_impl(ctx.obj.config, quick=quick, sample_size=sample_size))
+
+
+@filter_app.command("apply")
+def filter_apply(ctx: typer.Context) -> None:
+    """Analyze and mark filtered channels."""
+    apply_startup(ctx)
+    run_async(apply_impl(ctx.obj.config))
+
+
+@filter_app.command("reset")
+def filter_reset(
+    ctx: typer.Context,
+    pks: str | None = typer.Option(None, "--pks", help="Comma-separated PKs (default: all)"),
+) -> None:
+    """Reset channel filter flag."""
+    apply_startup(ctx)
+    run_async(reset_impl(ctx.obj.config, pks=pks))
+
+
+@filter_app.command("precheck")
+def filter_precheck(ctx: typer.Context) -> None:
+    """Apply pre-filter by subscriber ratio (no Telegram needed)."""
+    apply_startup(ctx)
+    run_async(precheck_impl(ctx.obj.config))
+
+
+@filter_app.command("toggle")
+def filter_toggle(
+    ctx: typer.Context,
+    pk: int = typer.Argument(..., help="Channel primary key"),
+) -> None:
+    """Toggle filter for a single channel."""
+    apply_startup(ctx)
+    run_async(toggle_impl(ctx.obj.config, pk=pk))
+
+
+@filter_app.command("purge")
+def filter_purge(
+    ctx: typer.Context,
+    pks: str | None = typer.Option(None, "--pks", help="Comma-separated PKs (default: all)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Purge messages from filtered channels."""
+    apply_startup(ctx)
+    run_async(purge_impl(ctx.obj.config, pks=pks, yes=yes))
+
+
+@filter_app.command("purge-messages")
+def filter_purge_messages(
+    ctx: typer.Context,
+    channel_id: int = typer.Option(..., "--channel-id", help="Channel ID whose messages to delete"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Delete messages for a specific channel from DB."""
+    apply_startup(ctx)
+    run_async(purge_messages_impl(ctx.obj.config, channel_id=channel_id, yes=yes))
+
+
+@filter_app.command("hard-delete")
+def filter_hard_delete(
+    ctx: typer.Context,
+    pks: str | None = typer.Option(None, "--pks", help="Comma-separated PKs (default: all)"),
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation prompt"),
+) -> None:
+    """Hard-delete filtered channels from DB (dev/testing)."""
+    apply_startup(ctx)
+    run_async(hard_delete_impl(ctx.obj.config, pks=pks, yes=yes))
