@@ -50,7 +50,7 @@ class TestPipelinesToolListPipelines:
     @pytest.mark.anyio
     async def test_empty(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
-            mock_svc.return_value.list = AsyncMock(return_value=[])
+            mock_svc.return_value.list_pipelines = AsyncMock(return_value=[])
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["list_pipelines"]({"active_only": False})
         assert "не найдены" in _text(result)
@@ -67,7 +67,7 @@ class TestPipelinesToolListPipelines:
             generation_backend="chain",
         )
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
-            mock_svc.return_value.list = AsyncMock(return_value=[p])
+            mock_svc.return_value.list_pipelines = AsyncMock(return_value=[p])
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["list_pipelines"]({"active_only": True})
         text = _text(result)
@@ -78,14 +78,14 @@ class TestPipelinesToolListPipelines:
     @pytest.mark.anyio
     async def test_error(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
-            mock_svc.return_value.list = AsyncMock(side_effect=Exception("db err"))
+            mock_svc.return_value.list_pipelines = AsyncMock(side_effect=Exception("db err"))
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["list_pipelines"]({})
         assert "Ошибка" in _text(result)
 
     @pytest.mark.anyio
     async def test_empty_returns_not_found(self, mock_db):
-        with patch("src.services.pipeline_service.PipelineService.list", AsyncMock(return_value=[])):
+        with patch("src.services.pipeline_service.PipelineService.list_pipelines", AsyncMock(return_value=[])):
             handlers = _get_tool_handlers(mock_db, config=MagicMock())
             result = await handlers["list_pipelines"]({})
             assert "Пайплайны не найдены" in _text(result)
@@ -93,7 +93,7 @@ class TestPipelinesToolListPipelines:
     @pytest.mark.anyio
     async def test_with_pipelines(self, mock_db):
         p = _make_pipeline(pk=1, name="NewsPipeline")
-        with patch("src.services.pipeline_service.PipelineService.list", AsyncMock(return_value=[p])):
+        with patch("src.services.pipeline_service.PipelineService.list_pipelines", AsyncMock(return_value=[p])):
             handlers = _get_tool_handlers(mock_db, config=MagicMock())
             result = await handlers["list_pipelines"]({})
             text = _text(result)
