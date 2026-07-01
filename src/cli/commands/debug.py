@@ -15,7 +15,13 @@ import os
 import resource
 from collections import deque
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    apply_startup,
+    run_async,
+)
 from src.cli.runtime import APP_LOG_PATH
 
 
@@ -126,3 +132,44 @@ def run(args: argparse.Namespace) -> None:
         asyncio.run(timing_impl(args.config))
     elif action == "errors":
         asyncio.run(errors_impl(args.config, as_json=getattr(args, "json", False)))
+
+
+# --------------------------------------------------------------------------- #
+# debug → logs / memory / timing
+# --------------------------------------------------------------------------- #
+
+debug_app = typer.Typer(no_args_is_help=True, help="Diagnostic tools")
+
+
+@debug_app.command("logs")
+def debug_logs(
+    ctx: typer.Context,
+    limit: int = typer.Option(50, "--limit", help="Number of log lines (default: 50)"),
+) -> None:
+    """Show recent log entries."""
+    apply_startup(ctx)
+    run_async(logs_impl(ctx.obj.config, limit=limit))
+
+
+@debug_app.command("memory")
+def debug_memory(ctx: typer.Context) -> None:
+    """Show memory usage statistics."""
+    apply_startup(ctx)
+    run_async(memory_impl(ctx.obj.config))
+
+
+@debug_app.command("timing")
+def debug_timing(ctx: typer.Context) -> None:
+    """Show operation timing stats."""
+    apply_startup(ctx)
+    run_async(timing_impl(ctx.obj.config))
+
+
+@debug_app.command("errors")
+def debug_errors(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json", help="Emit raw JSON instead of text"),
+) -> None:
+    """Show aggregated provider error-recovery stats (#1055)."""
+    apply_startup(ctx)
+    run_async(errors_impl(ctx.obj.config, as_json=as_json))

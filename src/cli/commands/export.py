@@ -9,7 +9,14 @@ import sys
 from datetime import datetime, timezone
 from email.utils import format_datetime
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    ExportFormat,
+    apply_startup,
+    run_async,
+)
 from src.utils.text_safety import csv_safe_cell, escape_xml_text
 
 
@@ -282,3 +289,103 @@ def run(args: argparse.Namespace) -> None:
                 output=getattr(args, "output", None),
             )
         )
+
+
+# --------------------------------------------------------------------------- #
+# export → json / csv / rss / telegram
+# --------------------------------------------------------------------------- #
+
+export_app = typer.Typer(no_args_is_help=True, help="Export collected messages")
+
+
+def _export_flat(
+    ctx: typer.Context,
+    fmt: str,
+    channel_id: int | None,
+    limit: int,
+    output: str | None,
+) -> None:
+    """Shared body for the flat json/csv/rss export sub-commands."""
+    apply_startup(ctx)
+    run_async(
+        export_impl(
+            ctx.obj.config,
+            fmt=fmt,
+            channel_id=channel_id,
+            limit=limit,
+            output=output,
+        )
+    )
+
+
+@export_app.command("json")
+def export_json(
+    ctx: typer.Context,
+    channel_id: int | None = typer.Option(None, "--channel-id", help="Filter by channel ID"),
+    limit: int = typer.Option(200, "--limit", help="Max messages (default: 200)"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
+) -> None:
+    """Export as JSON."""
+    _export_flat(ctx, "json", channel_id, limit, output)
+
+
+@export_app.command("csv")
+def export_csv(
+    ctx: typer.Context,
+    channel_id: int | None = typer.Option(None, "--channel-id", help="Filter by channel ID"),
+    limit: int = typer.Option(200, "--limit", help="Max messages (default: 200)"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
+) -> None:
+    """Export as CSV."""
+    _export_flat(ctx, "csv", channel_id, limit, output)
+
+
+@export_app.command("rss")
+def export_rss(
+    ctx: typer.Context,
+    channel_id: int | None = typer.Option(None, "--channel-id", help="Filter by channel ID"),
+    limit: int = typer.Option(200, "--limit", help="Max messages (default: 200)"),
+    output: str | None = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
+) -> None:
+    """Export as RSS."""
+    _export_flat(ctx, "rss", channel_id, limit, output)
+
+
+@export_app.command("telegram")
+def export_telegram(
+    ctx: typer.Context,
+    channel_id: int | None = typer.Option(None, "--channel-id", help="Telegram channel ID to export (required)"),
+    export_format: ExportFormat = typer.Option(ExportFormat.json, "--format", help="Output format (default: json)"),
+    with_media: bool = typer.Option(
+        False, "--with-media", help="Download media artifacts (enqueues a worker task)"
+    ),
+    wait: bool = typer.Option(
+        False, "--wait", help="With --with-media: poll the enqueued task until it finishes"
+    ),
+    max_file_size: int | None = typer.Option(
+        None, "--max-file-size", help="Skip files larger than N MB (default: from settings or 3)"
+    ),
+    date_from: str | None = typer.Option(None, "--date-from", help="Start date YYYY-MM-DD"),
+    date_to: str | None = typer.Option(None, "--date-to", help="End date YYYY-MM-DD"),
+    limit: int = typer.Option(5000, "--limit", help="Max messages (default: 5000)"),
+    output: str | None = typer.Option(
+        None, "--output", "-o",
+        help="Output directory (default: data/exports/ChatExport_<date>_<channel>)",
+    ),
+) -> None:
+    """Export as Telegram-Desktop JSON/HTML."""
+    apply_startup(ctx)
+    run_async(
+        telegram_impl(
+            ctx.obj.config,
+            channel_id=channel_id,
+            export_format=export_format.value,
+            with_media=with_media,
+            wait=wait,
+            max_file_size=max_file_size,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            output=output,
+        )
+    )
