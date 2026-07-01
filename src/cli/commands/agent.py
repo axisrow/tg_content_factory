@@ -18,7 +18,13 @@ import json
 import logging
 import sys
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    apply_startup,
+    run_async,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -487,3 +493,119 @@ def run(args: argparse.Namespace) -> None:
         asyncio.run(test_escaping_impl(args.config))
     elif action == "test-tools":
         asyncio.run(test_tools_impl(args.config))
+
+
+# --------------------------------------------------------------------------- #
+# agent → threads / thread-create / thread-delete / chat / thread-rename /
+#         thread-stop / messages / context / test-escaping / test-tools
+# --------------------------------------------------------------------------- #
+
+agent_app = typer.Typer(no_args_is_help=True, help="Agent chat management")
+
+
+@agent_app.command("threads")
+def agent_threads(ctx: typer.Context) -> None:
+    """List agent threads."""
+    apply_startup(ctx)
+    run_async(threads_impl(ctx.obj.config))
+
+
+@agent_app.command("thread-create")
+def agent_thread_create(
+    ctx: typer.Context,
+    title: str | None = typer.Option(None, "--title", help="Thread title"),
+) -> None:
+    """Create new thread."""
+    apply_startup(ctx)
+    run_async(thread_create_impl(ctx.obj.config, title=title))
+
+
+@agent_app.command("thread-delete")
+def agent_thread_delete(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., help="Thread ID"),
+) -> None:
+    """Delete thread."""
+    apply_startup(ctx)
+    run_async(thread_delete_impl(ctx.obj.config, thread_id=thread_id))
+
+
+@agent_app.command("chat")
+def agent_chat(
+    ctx: typer.Context,
+    prompt: str | None = typer.Option(
+        None, "-p", "--prompt", help="Message text (non-interactive mode)"
+    ),
+    thread_id: int | None = typer.Option(None, "--thread-id"),
+    model: str | None = typer.Option(None, "--model", help="Model name"),
+) -> None:
+    """Interactive TUI chat or one-shot message (with -p)."""
+    apply_startup(ctx)
+    run_async(chat_impl(ctx.obj.config, prompt=prompt, thread_id=thread_id, model=model))
+
+
+@agent_app.command("thread-rename")
+def agent_thread_rename(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., help="Thread ID"),
+    title: str = typer.Argument(..., help="New title"),
+) -> None:
+    """Rename thread."""
+    apply_startup(ctx)
+    run_async(thread_rename_impl(ctx.obj.config, thread_id=thread_id, title=title))
+
+
+@agent_app.command("thread-stop")
+def agent_thread_stop(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., help="Thread ID"),
+) -> None:
+    """Stop/cancel an ongoing agent response for a thread."""
+    apply_startup(ctx)
+    run_async(thread_stop_impl(ctx.obj.config, thread_id=thread_id))
+
+
+@agent_app.command("messages")
+def agent_messages(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., help="Thread ID"),
+    limit: int | None = typer.Option(None, "--limit", help="Last N messages"),
+) -> None:
+    """Show thread messages."""
+    apply_startup(ctx)
+    run_async(messages_impl(ctx.obj.config, thread_id=thread_id, limit=limit))
+
+
+@agent_app.command("context")
+def agent_context(
+    ctx: typer.Context,
+    thread_id: int = typer.Argument(..., help="Thread ID"),
+    channel_id: int = typer.Option(..., "--channel-id"),
+    limit: int = typer.Option(100000, "--limit", help="Max messages"),
+    topic_id: int | None = typer.Option(None, "--topic-id"),
+) -> None:
+    """Inject channel context into thread."""
+    apply_startup(ctx)
+    run_async(
+        context_impl(
+            ctx.obj.config,
+            thread_id=thread_id,
+            channel_id=channel_id,
+            limit=limit,
+            topic_id=topic_id,
+        )
+    )
+
+
+@agent_app.command("test-escaping")
+def agent_test_escaping(ctx: typer.Context) -> None:
+    """Test agent with special characters."""
+    apply_startup(ctx)
+    run_async(test_escaping_impl(ctx.obj.config))
+
+
+@agent_app.command("test-tools")
+def agent_test_tools(ctx: typer.Context) -> None:
+    """Test that agent tool calls produce tool_start/tool_end events."""
+    apply_startup(ctx)
+    run_async(test_tools_impl(ctx.obj.config))

@@ -14,9 +14,15 @@ import asyncio
 import inspect
 import logging
 
+import typer
 from pydantic import ValidationError
 
 from src.cli import runtime
+from src.cli.commands.common import (
+    _NEG_ID_POSITIONAL,
+    apply_startup,
+    run_async,
+)
 from src.database.bundles import SearchQueryBundle
 from src.services.search_query_service import SearchQueryService
 
@@ -308,3 +314,153 @@ def run(args: argparse.Namespace) -> None:
         asyncio.run(run_impl(args.config, query_id=args.id))
     elif action == "stats":
         asyncio.run(stats_impl(args.config, query_id=args.id, days=getattr(args, "days", 30)))
+
+
+# --------------------------------------------------------------------------- #
+# search-query → list / get / add / edit / delete / toggle / run / stats
+# --------------------------------------------------------------------------- #
+
+search_query_app = typer.Typer(no_args_is_help=True, help="Search query management")
+
+
+@search_query_app.command("list")
+def search_query_list(ctx: typer.Context) -> None:
+    """List search queries."""
+    apply_startup(ctx)
+    run_async(list_impl(ctx.obj.config))
+
+
+@search_query_app.command("get")
+def search_query_get(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+) -> None:
+    """Show search query details."""
+    apply_startup(ctx)
+    run_async(get_impl(ctx.obj.config, query_id=query_id))
+
+
+@search_query_app.command("add", context_settings=_NEG_ID_POSITIONAL)
+def search_query_add(
+    ctx: typer.Context,
+    query: str = typer.Argument(..., help="FTS5 search query text"),
+    interval: int = typer.Option(60, "--interval", help="Run interval in minutes"),
+    regex: bool = typer.Option(False, "--regex", help="Use regex matching"),
+    fts: bool = typer.Option(False, "--fts", help="Use FTS5 boolean syntax (no quoting)"),
+    notify: bool = typer.Option(False, "--notify", help="Notify on collect"),
+    no_track_stats: bool = typer.Option(
+        False, "--no-track-stats", help="Disable stat tracking (default: tracking on)"
+    ),
+    exclude_patterns: str = typer.Option(
+        "", "--exclude-patterns", help="Exclude patterns, one per line (use \\n)"
+    ),
+    max_length: int | None = typer.Option(None, "--max-length", help="Max message text length"),
+    chats: str = typer.Option("", "--chats", help="Chat filter: IDs, usernames or t.me links"),
+) -> None:
+    """Add search query."""
+    apply_startup(ctx)
+    # argparse declares ONLY ``--no-track-stats`` (store_false, default True) on
+    # ``add`` — no ``--track-stats`` flag. Mirror that exactly so the Typer surface
+    # is not one flag wider than argparse (#1123 review).
+    run_async(
+        add_impl(
+            ctx.obj.config,
+            query=query,
+            interval=interval,
+            is_regex=regex,
+            is_fts=fts,
+            notify=notify,
+            track_stats=not no_track_stats,
+            exclude_patterns=exclude_patterns,
+            max_length=max_length,
+            chats=chats,
+        )
+    )
+
+
+@search_query_app.command("edit")
+def search_query_edit(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+    query: str | None = typer.Option(None, "--query", help="New query text"),
+    interval: int | None = typer.Option(None, "--interval", help="New interval in minutes"),
+    regex: bool | None = typer.Option(None, "--regex/--no-regex", help="Toggle regex matching"),
+    fts: bool | None = typer.Option(None, "--fts/--no-fts", help="Toggle FTS5 syntax"),
+    notify: bool | None = typer.Option(None, "--notify/--no-notify", help="Toggle notify on collect"),
+    track_stats: bool | None = typer.Option(
+        None, "--track-stats/--no-track-stats", help="Toggle stat tracking"
+    ),
+    exclude_patterns: str | None = typer.Option(
+        None, "--exclude-patterns", help="Exclude patterns (use \\n)"
+    ),
+    max_length: int | None = typer.Option(None, "--max-length", help="Max message text length"),
+    clear_max_length: bool = typer.Option(
+        False, "--no-max-length", help="Clear the max-length limit"
+    ),
+    chats: str | None = typer.Option(
+        None, "--chats", help="Chat filter: IDs, usernames or t.me links"
+    ),
+    clear_chats: bool = typer.Option(False, "--clear-chats", help="Clear the chat filter"),
+) -> None:
+    """Edit search query; unset flags keep their current value."""
+    apply_startup(ctx)
+    # ``--no-max-length`` maps to the sentinel -1 the impl treats as "clear";
+    # ``--clear-chats`` maps to "" — mirrors the argparse store_const declarations.
+    resolved_max_length = -1 if clear_max_length else max_length
+    resolved_chats = "" if clear_chats else chats
+    run_async(
+        edit_impl(
+            ctx.obj.config,
+            query_id=query_id,
+            query=query,
+            interval=interval,
+            is_regex=regex,
+            is_fts=fts,
+            notify=notify,
+            track_stats=track_stats,
+            exclude_patterns=exclude_patterns,
+            max_length=resolved_max_length,
+            chats=resolved_chats,
+        )
+    )
+
+
+@search_query_app.command("delete")
+def search_query_delete(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+) -> None:
+    """Delete search query."""
+    apply_startup(ctx)
+    run_async(delete_impl(ctx.obj.config, query_id=query_id))
+
+
+@search_query_app.command("toggle")
+def search_query_toggle(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+) -> None:
+    """Toggle search query active state."""
+    apply_startup(ctx)
+    run_async(toggle_impl(ctx.obj.config, query_id=query_id))
+
+
+@search_query_app.command("run")
+def search_query_run(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+) -> None:
+    """Run a search query once and show matches."""
+    apply_startup(ctx)
+    run_async(run_impl(ctx.obj.config, query_id=query_id))
+
+
+@search_query_app.command("stats")
+def search_query_stats(
+    ctx: typer.Context,
+    query_id: int = typer.Argument(..., metavar="id", help="Search query id"),
+    days: int = typer.Option(30, "--days", help="Number of days"),
+) -> None:
+    """Show daily stats for a search query."""
+    apply_startup(ctx)
+    run_async(stats_impl(ctx.obj.config, query_id=query_id, days=days))

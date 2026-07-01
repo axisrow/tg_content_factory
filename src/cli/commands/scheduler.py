@@ -15,7 +15,13 @@ import argparse
 import asyncio
 import logging
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    apply_startup,
+    run_async,
+)
 from src.database.bundles import ChannelBundle
 from src.scheduler.service import SchedulerManager
 from src.services.collection_service import CollectionService
@@ -257,3 +263,91 @@ def run(args: argparse.Namespace) -> None:
         asyncio.run(queue_pause_impl(args.config))
     elif action == "queue-resume":
         asyncio.run(queue_resume_impl(args.config))
+
+
+# --------------------------------------------------------------------------- #
+# scheduler → start / trigger / status / stop / job-toggle / set-interval
+#             / task-cancel / clear-pending / queue-pause / queue-resume
+# --------------------------------------------------------------------------- #
+
+scheduler_app = typer.Typer(no_args_is_help=True, help="Scheduler control")
+
+
+@scheduler_app.command("start")
+def scheduler_start(ctx: typer.Context) -> None:
+    """Start scheduler (foreground)."""
+    apply_startup(ctx)
+    run_async(start_impl(ctx.obj.config))
+
+
+@scheduler_app.command("trigger")
+def scheduler_trigger(ctx: typer.Context) -> None:
+    """Trigger one-shot collection."""
+    apply_startup(ctx)
+    run_async(trigger_impl(ctx.obj.config))
+
+
+@scheduler_app.command("status")
+def scheduler_status(ctx: typer.Context) -> None:
+    """Show scheduler configuration and status."""
+    apply_startup(ctx)
+    run_async(status_impl(ctx.obj.config))
+
+
+@scheduler_app.command("stop")
+def scheduler_stop(ctx: typer.Context) -> None:
+    """Disable scheduler autostart."""
+    apply_startup(ctx)
+    run_async(stop_impl(ctx.obj.config))
+
+
+@scheduler_app.command("job-toggle")
+def scheduler_job_toggle(
+    ctx: typer.Context,
+    job_id: str = typer.Argument(..., help="Job identifier (e.g. collect_all, sq_1)"),
+) -> None:
+    """Toggle scheduler job enabled/disabled."""
+    apply_startup(ctx)
+    run_async(job_toggle_impl(ctx.obj.config, job_id=job_id))
+
+
+@scheduler_app.command("set-interval")
+def scheduler_set_interval(
+    ctx: typer.Context,
+    job_id: str = typer.Argument(..., help="Job identifier"),
+    minutes: int = typer.Argument(..., help="Interval in minutes (1-1440)"),
+) -> None:
+    """Set scheduler job interval."""
+    apply_startup(ctx)
+    run_async(set_interval_impl(ctx.obj.config, job_id=job_id, minutes=minutes))
+
+
+@scheduler_app.command("task-cancel")
+def scheduler_task_cancel(
+    ctx: typer.Context,
+    task_id: int = typer.Argument(..., help="Task ID to cancel"),
+) -> None:
+    """Cancel a collection task."""
+    apply_startup(ctx)
+    run_async(task_cancel_impl(ctx.obj.config, task_id=task_id))
+
+
+@scheduler_app.command("clear-pending")
+def scheduler_clear_pending(ctx: typer.Context) -> None:
+    """Clear all pending collection tasks."""
+    apply_startup(ctx)
+    run_async(clear_pending_impl(ctx.obj.config))
+
+
+@scheduler_app.command("queue-pause")
+def scheduler_queue_pause(ctx: typer.Context) -> None:
+    """Pause the collection queue (queued tasks stay pending)."""
+    apply_startup(ctx)
+    run_async(queue_pause_impl(ctx.obj.config))
+
+
+@scheduler_app.command("queue-resume")
+def scheduler_queue_resume(ctx: typer.Context) -> None:
+    """Resume the collection queue."""
+    apply_startup(ctx)
+    run_async(queue_resume_impl(ctx.obj.config))
