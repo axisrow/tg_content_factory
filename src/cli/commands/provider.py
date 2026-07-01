@@ -10,8 +10,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+import typer
+
 from src.agent.provider_registry import PROVIDER_SPECS, ProviderRuntimeConfig, provider_spec
 from src.cli import runtime
+from src.cli.commands.common import (
+    apply_startup,
+    run_async,
+)
 from src.services.agent_provider_service import ProviderConfigService
 
 
@@ -221,3 +227,66 @@ def run(args: argparse.Namespace) -> None:
         asyncio.run(refresh_impl(args.config, name=getattr(args, "name", None)))
     elif action == "test-all":
         asyncio.run(test_all_impl(args.config))
+
+
+# --------------------------------------------------------------------------- #
+# provider → list / add / delete / probe / refresh / test-all
+# --------------------------------------------------------------------------- #
+
+provider_app = typer.Typer(no_args_is_help=True, help="LLM provider management")
+
+
+@provider_app.command("list")
+def provider_list(ctx: typer.Context) -> None:
+    """List configured providers with models and status."""
+    apply_startup(ctx)
+    run_async(list_impl(ctx.obj.config))
+
+
+@provider_app.command("add")
+def provider_add(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Provider name (e.g. openai, groq, anthropic)"),
+    api_key: str = typer.Option(..., "--api-key", help="API key"),
+    base_url: str | None = typer.Option(None, "--base-url", help="Custom base URL"),
+) -> None:
+    """Add or update a provider."""
+    apply_startup(ctx)
+    run_async(add_impl(ctx.obj.config, name=name, api_key=api_key, base_url=base_url))
+
+
+@provider_app.command("delete")
+def provider_delete(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Provider name"),
+) -> None:
+    """Delete a provider."""
+    apply_startup(ctx)
+    run_async(delete_impl(ctx.obj.config, name=name))
+
+
+@provider_app.command("probe")
+def provider_probe(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Provider name"),
+) -> None:
+    """Test provider connection."""
+    apply_startup(ctx)
+    run_async(probe_impl(ctx.obj.config, name=name))
+
+
+@provider_app.command("refresh")
+def provider_refresh(
+    ctx: typer.Context,
+    name: str | None = typer.Argument(None, help="Provider name (default: all)"),
+) -> None:
+    """Refresh provider models."""
+    apply_startup(ctx)
+    run_async(refresh_impl(ctx.obj.config, name=name))
+
+
+@provider_app.command("test-all")
+def provider_test_all(ctx: typer.Context) -> None:
+    """Test all configured providers."""
+    apply_startup(ctx)
+    run_async(test_all_impl(ctx.obj.config))
