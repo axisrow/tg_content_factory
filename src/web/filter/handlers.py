@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import cast
 
 from fastapi import Request
 
@@ -121,7 +122,7 @@ async def hard_delete_all(request: Request) -> FilterRedirect:
     #      comparison rejects. Duplicates are rejected at parse time.
     #      Delete then runs on the unique PK list extracted from the
     #      validated snapshot.
-    confirm = (form.get("confirm") or "").strip()
+    confirm = cast(str, form.get("confirm") or "").strip()
     if confirm != HARD_DELETE_ALL_CONFIRM_PHRASE:
         return manage_redirect(error="hard_delete_confirm_required")
     confirm_pks_raw = form.get("confirm_pks")
@@ -200,7 +201,7 @@ async def apply_filters(request: Request) -> FilterRedirect:
     form = await request.form()
     if form.get("snapshot") != "1":
         return channels_redirect(error="filter_snapshot_required")
-    snapshot_results = parse_snapshot(form.getlist("selected"))
+    snapshot_results = parse_snapshot(cast(list[str], form.getlist("selected")))
     report = FilterReport(
         results=snapshot_results,
         total_channels=len(snapshot_results),

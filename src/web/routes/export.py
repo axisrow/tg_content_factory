@@ -9,6 +9,7 @@ EXPORT task (the worker owns the live Telegram clients needed to fetch media).
 from __future__ import annotations
 
 import logging
+from typing import Literal, cast
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import JSONResponse
@@ -32,7 +33,9 @@ async def export_channel(
     date_to: str | None = Form(None),
     limit: int = Form(5000),
 ) -> JSONResponse:
-    fmt = format if format in ("json", "html", "both") else "json"
+    fmt: Literal["json", "html", "both"] = (
+        cast(Literal["json", "html", "both"], format) if format in ("json", "html", "both") else "json"
+    )
     # Cap the inline export so a single web request can't pull a 100k-message
     # channel into the event loop (Claude review on #937).
     limit = max(1, min(limit, 10_000))

@@ -15,8 +15,9 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 
 from fastapi import Request
+from typing_extensions import TypedDict
 
-from src.models import AccountSessionStatus
+from src.models import AccountSessionStatus, CollectionTask
 from src.services.pipeline_result import result_kind_label
 from src.services.runtime_diagnostics import (
     WORKER_HEARTBEAT_STALE_AFTER_SEC as WORKER_HEARTBEAT_STALE_AFTER_SEC_SVC,
@@ -49,7 +50,7 @@ WORKER_HEARTBEAT_STALE_AFTER_SEC = WORKER_HEARTBEAT_STALE_AFTER_SEC_SVC
 
 
 def _is_running_task_stale(
-    running_task,
+    running_task: CollectionTask | None,
     *,
     idle_timeout_sec: float | None = None,
     now: datetime | None = None,
@@ -213,8 +214,14 @@ def _collector_health_recommendations(
     return recommendations
 
 
-def _dedupe_recent_unavailability_events(recent_tasks) -> list[dict[str, object]]:
-    events: dict[str, dict[str, object]] = {}
+class _RecentUnavailabilityEvent(TypedDict):
+    message: str
+    count: int
+    latest_at: datetime | None
+
+
+def _dedupe_recent_unavailability_events(recent_tasks: list[CollectionTask]) -> list[_RecentUnavailabilityEvent]:
+    events: dict[str, _RecentUnavailabilityEvent] = {}
     for task in recent_tasks:
         message = ""
         if task.note and "Flood Wait" in task.note:
@@ -226,7 +233,7 @@ def _dedupe_recent_unavailability_events(recent_tasks) -> list[dict[str, object]
         if not message:
             continue
         item = events.setdefault(message, {"message": message, "count": 0, "latest_at": None})
-        item["count"] = int(item["count"]) + 1
+        item["count"] = item["count"] + 1
         occurred_at = _as_utc_datetime(task.completed_at or task.started_at or task.created_at)
         if occurred_at is not None:
             latest_at = item["latest_at"]
@@ -291,7 +298,7 @@ class _RecentTasksSummary(NamedTuple):
     """Running/zero-collect figures derived from recent collection-task rows.
     Split out of ``_build_collector_health_context`` (#922)."""
 
-    running_task: object | None
+    running_task: CollectionTask | None
     running_count: int
     recent_zero_collect_count: int
     running_task_stale: bool
@@ -339,7 +346,7 @@ async def _probe_collector_availability(collector) -> _CollectorAvailability:
     return _CollectorAvailability(state, retry_after, next_at, all_flooded_blocking)
 
 
-def _summarize_recent_tasks(recent_tasks: list, idle_timeout_sec) -> _RecentTasksSummary:
+def _summarize_recent_tasks(recent_tasks: list[CollectionTask], idle_timeout_sec: float | None) -> _RecentTasksSummary:
     """Reduce recent collection-task rows to the running/zero-collect figures the
     scheduler page needs. Pure logic split out of
     ``_build_collector_health_context`` (#922)."""

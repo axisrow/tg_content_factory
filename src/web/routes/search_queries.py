@@ -1,3 +1,5 @@
+from typing import cast
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
@@ -48,7 +50,7 @@ async def get_search_query_stats(request: Request, sq_id: int, days: int = 30):
     svc = deps.search_query_service(request)
     if await svc.get(sq_id) is None:
         return JSONResponse({"error": "search_query_not_found"}, status_code=404)
-    stats = await svc.get_daily_stats(sq_id, days=days)
+    stats = cast(list[SearchQueryDailyStat], await svc.get_daily_stats(sq_id, days=days))
     return JSONResponse([s.model_dump(mode="json") for s in stats])
 
 

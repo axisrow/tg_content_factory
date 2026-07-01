@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import TypeVar, cast
 
 from fastapi import Request
 from fastapi.templating import Jinja2Templates
@@ -22,7 +22,6 @@ from src.database.bundles import (
     SearchBundle,
     SearchQueryBundle,
 )
-from src.scheduler.service import SchedulerManager
 from src.search.ai_search import AISearchEngine
 from src.search.engine import SearchEngine
 from src.services.channel_service import ChannelService
@@ -44,7 +43,7 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
-from src.web.container import AppContainer
+from src.web.container import AppContainer, WebClientPool, WebCollector, WebScheduler
 from src.web.log_handler import LogBuffer
 from src.web.paths import TEMPLATES_DIR
 from src.web.timing import TimingBuffer
@@ -69,7 +68,7 @@ def _request_cached(request: Request, key: str, factory: Callable[[], T]) -> T:
     if value is _MISSING:
         value = factory()
         setattr(request.state, key, value)
-    return value
+    return cast(T, value)
 
 
 def _require_app_state_attr(request: Request, name: str):
@@ -197,11 +196,11 @@ def get_search_query_bundle(request: Request) -> SearchQueryBundle:
     return get_container(request).search_query_bundle
 
 
-def get_pool(request: Request) -> ClientPool:
+def get_pool(request: Request) -> WebClientPool:
     return get_container(request).pool
 
 
-def get_collector(request: Request) -> Collector:
+def get_collector(request: Request) -> WebCollector:
     return get_container(request).collector
 
 
@@ -222,7 +221,7 @@ def get_task_enqueuer(request: Request) -> TaskEnqueuer | None:
     return get_container(request).task_enqueuer
 
 
-def get_scheduler(request: Request) -> SchedulerManager:
+def get_scheduler(request: Request) -> WebScheduler:
     return get_container(request).scheduler
 
 
@@ -320,7 +319,7 @@ def channel_service(request: Request) -> ChannelService:
     return _request_cached(
         request,
         "_channel_service",
-        lambda: ChannelService(get_db(request), get_pool(request), get_queue(request)),
+        lambda: ChannelService(get_db(request), cast(ClientPool, get_pool(request)), get_queue(request)),
     )
 
 
@@ -330,7 +329,7 @@ def collection_service(request: Request) -> CollectionService:
         "_collection_service",
         lambda: CollectionService(
             get_channel_bundle(request),
-            get_collector(request),
+            cast(Collector, get_collector(request)),
             get_queue(request),
         ),
     )
@@ -389,5 +388,5 @@ def filter_deletion_service(request: Request) -> FilterDeletionService:
     )
 
 
-def scheduler_service(request: Request) -> SchedulerManager:
+def scheduler_service(request: Request) -> WebScheduler:
     return get_scheduler(request)

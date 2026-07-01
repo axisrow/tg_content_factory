@@ -11,7 +11,9 @@ from dataclasses import dataclass, field
 from fastapi import Request
 from pydantic import ValidationError
 
-from src.models import SearchResult, TelegramCommandStatus
+from src.database import Database
+from src.models import Channel, SearchResult, TelegramCommandStatus
+from src.services.search_service import SearchService
 from src.utils.safe_logging import elapsed_ms, query_log_fields
 from src.web import deps
 from src.web.search.forms import extract_length, parse_channel_id
@@ -200,16 +202,16 @@ class _SearchContext:
     skeleton (#946 lazyload) and the results fragment."""
 
     redirect: SearchRedirect | None = None
-    db: object = None
-    service: object = None
-    channels: list = field(default_factory=list)
+    db: Database | None = None
+    service: SearchService | None = None
+    channels: list[Channel] = field(default_factory=list)
     channel_id_int: int | None = None
     channel_id_error: str | None = None
     mode: str = "local"
     fts_query: str = ""
     min_length: int | None = None
     max_length: int | None = None
-    available_modes: set = field(default_factory=set)
+    available_modes: set[str] = field(default_factory=set)
     runtime_mode: str = "web"
     limit: int = 50
     offset: int = 0
@@ -299,6 +301,7 @@ async def render_search_page(
     ctx = await _build_search_context(request, q=q, channel_id=channel_id, mode=mode, page=page)
     if ctx.redirect is not None:
         return ctx.redirect
+    assert ctx.service is not None, "Search service is required after search context setup"
 
     try:
         search_quota = await ctx.service.check_quota()
@@ -346,6 +349,7 @@ async def render_search_results(
         return SearchTemplate("search_results.html", {"result": None})
 
     service = ctx.service
+    assert service is not None, "Search service is required after search context setup"
     channel_id_int = ctx.channel_id_int
     mode = ctx.mode
     limit, offset = ctx.limit, ctx.offset

@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING, cast
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -12,6 +13,9 @@ from src.database.repositories.accounts import AccountSessionDecryptError
 from src.web import deps
 from src.web.schemas.accounts import AccountInfoResponse, FloodStatusItem
 from src.web.schemas.common import ErrorResponse
+
+if TYPE_CHECKING:
+    from src.telegram.client_pool import ClientPool
 
 logger = logging.getLogger(__name__)
 
@@ -148,7 +152,7 @@ async def account_info(request: Request, account_id: int):
     runtime = AgentRuntimeContext.build(
         db=db,
         config=getattr(request.app.state, "config", None),
-        client_pool=client_pool,
+        client_pool=cast("ClientPool | None", client_pool),
     )
     try:
         live_info = await get_live_account_info_text(runtime, acc.phone)
