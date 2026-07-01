@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, cast
 
 import typer
 
@@ -138,9 +138,9 @@ async def _upsert_filter_node(svc: PipelineService, pipeline_id: int, config: di
         upstream_id = graph.nodes[0].id
 
     downstream_ids = [edge.to_node for edge in graph.edges if edge.from_node == upstream_id] if upstream_id else []
-    for downstream_id in downstream_ids:
-        await svc.remove_edge(pipeline_id, upstream_id, downstream_id)
     if upstream_id:
+        for downstream_id in downstream_ids:
+            await svc.remove_edge(pipeline_id, upstream_id, downstream_id)
         await _safe_add_edge(svc, pipeline_id, upstream_id, "filter_1")
     for downstream_id in downstream_ids:
         if downstream_id != "filter_1":
@@ -393,8 +393,9 @@ async def _pipeline_enqueue_run_after(args: argparse.Namespace, db, pipeline_id:
     from src.services.task_enqueuer import TaskEnqueuer
 
     since_h = to_since_hours(args.since_value, args.since_unit)
-    enqueuer = TaskEnqueuer(db)
-    await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=since_h)
+    enqueuer_factory = cast(Callable[[object], TaskEnqueuer], TaskEnqueuer)
+    enqueuer = enqueuer_factory(db)
+    await enqueuer.enqueue_pipeline_run(cast(int, pipeline_id), since_hours=since_h)
     print(f"Enqueued pipeline run (since={args.since_value}{args.since_unit})")
 
 
@@ -488,7 +489,7 @@ async def _pipeline_run(args: argparse.Namespace, db, config, svc: PipelineServi
     pipeline = await svc.get(args.id)
     if pipeline is None:
         print(f"Pipeline id={args.id} not found")
-        return
+        return None
     engine = SearchEngine(db)
 
     from src.services.provider_service import build_provider_service
@@ -502,7 +503,7 @@ async def _pipeline_run(args: argparse.Namespace, db, config, svc: PipelineServi
             "LLM provider is not configured. Add one in /settings or set an API key "
             "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
         )
-        return
+        return None
 
     _, pool = await runtime.init_pool(config, db)
     client_pool = pool
@@ -545,7 +546,7 @@ async def _pipeline_generate(args: argparse.Namespace, db, config, svc: Pipeline
     pipeline = await svc.get(args.id)
     if pipeline is None:
         print(f"Pipeline id={args.id} not found")
-        return
+        return None
     # Per-run A/B overrides (issue #1068): --ab-variants / --auto-select
     # override the pipeline's stored A/B config for this single run only.
     ab_overrides: dict[str, object] = {}
@@ -567,7 +568,7 @@ async def _pipeline_generate(args: argparse.Namespace, db, config, svc: Pipeline
             "LLM provider is not configured. Add one in /settings or set an API key "
             "env var (e.g. OPENAI_API_KEY). Non-LLM pipelines run without a provider."
         )
-        return
+        return None
     _, pool = await runtime.init_pool(config, db)
     client_pool = pool
     agent_manager = None
@@ -922,15 +923,15 @@ async def _pipeline_publish(args: argparse.Namespace, db, config, svc: PipelineS
     run = await db.repos.generation_runs.get(args.run_id)
     if run is None:
         print(f"Run id={args.run_id} not found")
-        return
+        return None
     if run.pipeline_id is None:
         print(f"Run id={args.run_id} has no pipeline")
-        return
+        return None
 
     pipeline = await svc.get(run.pipeline_id)
     if pipeline is None:
         print(f"Pipeline id={run.pipeline_id} not found")
-        return
+        return None
 
     _, pool = await runtime.init_pool(config, db)
     if not pool.clients:
