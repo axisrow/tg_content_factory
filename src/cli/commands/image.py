@@ -11,7 +11,13 @@ import argparse
 import asyncio
 import logging
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    apply_startup,
+    run_async,
+)
 from src.services.image_generation_service import ImageGenerationService
 
 logger = logging.getLogger(__name__)
@@ -140,3 +146,52 @@ def run(args: argparse.Namespace) -> None:
         # parse); kept so the legacy adapter degrades to usage help like the
         # original dispatcher did.
         print("Usage: image {generate|models|providers|generated}")
+
+
+# --------------------------------------------------------------------------- #
+# image → generate / models / providers / generated
+# --------------------------------------------------------------------------- #
+
+image_app = typer.Typer(no_args_is_help=True, help="Image generation")
+
+
+@image_app.command("generate")
+def image_generate(
+    ctx: typer.Context,
+    prompt: str = typer.Argument(..., help="Text prompt for image generation"),
+    model: str | None = typer.Option(None, "--model", help="Model string (e.g. replicate:flux-schnell)"),
+) -> None:
+    """Generate an image from prompt."""
+    apply_startup(ctx)
+    run_async(generate_impl(ctx.obj.config, prompt=prompt, model=model))
+
+
+@image_app.command("models")
+def image_models(
+    ctx: typer.Context,
+    provider: str = typer.Option(..., "--provider", help="Provider name (replicate, together, openai)"),
+    query: str = typer.Option("", "--query", help="Search query"),
+    refresh: bool = typer.Option(
+        False, "--refresh", help="Fetch the live model list from the provider (OpenAI: /v1/models)"
+    ),
+) -> None:
+    """Search available models."""
+    apply_startup(ctx)
+    run_async(models_impl(ctx.obj.config, provider=provider, query=query, refresh=refresh))
+
+
+@image_app.command("providers")
+def image_providers(ctx: typer.Context) -> None:
+    """List configured image providers."""
+    apply_startup(ctx)
+    run_async(providers_impl(ctx.obj.config))
+
+
+@image_app.command("generated")
+def image_generated(
+    ctx: typer.Context,
+    limit: int = typer.Option(20, "--limit", help="Max images to show"),
+) -> None:
+    """List generated images."""
+    apply_startup(ctx)
+    run_async(generated_impl(ctx.obj.config, limit=limit))

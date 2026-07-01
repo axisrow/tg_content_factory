@@ -4,7 +4,14 @@ import argparse
 import asyncio
 import logging
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    _NEG_ID_POSITIONAL,
+    apply_startup,
+    run_async,
+)
 from src.database.bundles import ChannelBundle
 from src.services.collection_service import CollectionService
 from src.services.task_enqueuer import TaskEnqueuer
@@ -159,3 +166,44 @@ def run(args: argparse.Namespace) -> None:
             full=bool(getattr(args, "full", False)),
         )
     )
+
+
+# --------------------------------------------------------------------------- #
+# collect (+ collect sample)
+# --------------------------------------------------------------------------- #
+
+collect_app = typer.Typer(no_args_is_help=False, help="Run one-shot collection")
+
+
+@collect_app.callback(invoke_without_command=True)
+def collect(
+    ctx: typer.Context,
+    channel_id: int | None = typer.Option(
+        None,
+        "--channel-id",
+        help="Collect single channel by channel_id (incremental by default)",
+    ),
+    full: bool = typer.Option(
+        False,
+        "--full",
+        help="For --channel-id, explicitly backfill the full channel history",
+    ),
+) -> None:
+    """Run one-shot collection (no sub-command = collect all / single channel)."""
+    # The ``sample`` sub-command has its own body; only run the top-level
+    # collection when no sub-command was invoked.
+    if ctx.invoked_subcommand is not None:
+        return
+    apply_startup(ctx)
+    run_async(collect_impl(ctx.obj.config, channel_id=channel_id, full=full))
+
+
+@collect_app.command("sample", context_settings=_NEG_ID_POSITIONAL)
+def collect_sample(
+    ctx: typer.Context,
+    channel_id: int = typer.Argument(..., help="Channel ID (numeric)"),
+    limit: int = typer.Option(10, "--limit", help="Number of messages to preview (default: 10)"),
+) -> None:
+    """Preview last N messages without saving to DB."""
+    apply_startup(ctx)
+    run_async(collect_sample_impl(ctx.obj.config, channel_id=channel_id, limit=limit))
