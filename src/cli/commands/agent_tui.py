@@ -7,7 +7,7 @@ import subprocess
 import sys
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from textual import events, on
 from textual.app import App, ComposeResult
@@ -21,6 +21,9 @@ from textual.widgets import Button, Footer, Header, Label, ListItem, ListView, M
 from textual.worker import WorkerState
 
 if TYPE_CHECKING:
+    from textual.timer import Timer
+    from textual.worker import Worker
+
     from src.agent.manager import AgentManager
     from src.config import AppConfig
     from src.database import Database
@@ -96,7 +99,7 @@ class StreamingMessage(Static):
         self._log_lines: list[str] = []
         self._pending_status: str = ""
         self._last_log_time: float = 0.0
-        self._tick_timer = None
+        self._tick_timer: Timer | None = None
         self._start_time: float = 0.0
         self._render_timer: asyncio.TimerHandle | None = None
         self._pending_render = False
@@ -241,7 +244,7 @@ class ChatInput(TextArea):
         if event.key == "enter":
             event.prevent_default()
             event.stop()
-            await self.app.action_send_message()
+            await cast("AgentTuiApp", self.app).action_send_message()
         elif event.key in ("shift+enter", "meta+enter", "alt+enter", "escape+enter"):
             event.prevent_default()
             event.stop()
@@ -424,7 +427,7 @@ class AgentTuiApp(App):
         self.db = db
         self.config = config
         self.agent_manager = agent_manager
-        self._stream_worker = None
+        self._stream_worker: Worker[None] | None = None
         self._session_id = str(uuid.uuid4())
 
     def compose(self) -> ComposeResult:

@@ -94,6 +94,7 @@ async def _run_export_session(args: argparse.Namespace, db: Database) -> None:
         match = next((s for s in summaries if s.id == account_id), None)
         target = f"id={account_id}"
     else:
+        assert phone is not None
         match = next((s for s in summaries if s.phone == phone), None)
         target = phone
     if match is None:

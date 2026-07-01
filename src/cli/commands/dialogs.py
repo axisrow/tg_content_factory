@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 
 import typer
 
@@ -851,7 +852,7 @@ async def _dialogs_queue(args, db, pool) -> None:
 
 # action -> (handler, needs_channel_service_cls). Depth-2 `queue` dispatches on
 # args.queue_action inside its own handler.
-_DIALOGS_HANDLERS = {
+_DIALOGS_HANDLERS: dict[str, tuple[Callable[..., Awaitable[None]], bool]] = {
     "refresh": (_dialogs_refresh, True),
     "list": (_dialogs_list, True),
     "resolve": (_dialogs_resolve, False),

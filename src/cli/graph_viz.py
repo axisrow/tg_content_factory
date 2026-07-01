@@ -66,11 +66,11 @@ def render_ascii(graph: PipelineGraph) -> str:
                 # Fan-out
                 prefix = "   "
                 for ci, child_id in enumerate(children):
-                    child = node_by_id.get(child_id)
-                    if child is None:
+                    child_node = node_by_id.get(child_id)
+                    if child_node is None:
                         continue
-                    c_summary = _config_summary(child.config)
-                    label = f"[{child.type.value}] id={child.id}{c_summary}"
+                    c_summary = _config_summary(child_node.config)
+                    label = f"[{child_node.type.value}] id={child_node.id}{c_summary}"
                     if ci == 0:
                         lines.append(f"{prefix}|")
                         lines.append(f"{prefix}+---> {label}")

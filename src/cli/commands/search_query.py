@@ -13,6 +13,7 @@ import argparse
 import asyncio
 import inspect
 import logging
+from typing import Any, cast
 
 import typer
 from pydantic import ValidationError
@@ -24,6 +25,7 @@ from src.cli.commands.common import (
     run_async,
 )
 from src.database.bundles import SearchQueryBundle
+from src.models import SearchQueryDailyStat
 from src.services.search_query_service import SearchQueryService
 
 logger = logging.getLogger(__name__)
@@ -51,7 +53,7 @@ async def list_impl(config_path: str) -> None:
     _, db = await runtime.init_db(config_path)
     try:
         svc = SearchQueryService(SearchQueryBundle.from_database(db))
-        items = await svc.get_with_stats()
+        items = cast(list[dict[str, Any]], await svc.get_with_stats())
         if not items:
             print("No search queries found.")
             return
@@ -249,7 +251,7 @@ async def stats_impl(config_path: str, *, query_id: int, days: int = 30) -> None
     _, db = await runtime.init_db(config_path)
     try:
         svc = SearchQueryService(SearchQueryBundle.from_database(db))
-        stats = await svc.get_daily_stats(query_id, days)
+        stats = cast(list[SearchQueryDailyStat], await svc.get_daily_stats(query_id, days))
         if not stats:
             print("No stats found.")
             return
