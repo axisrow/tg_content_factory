@@ -22,7 +22,6 @@ Design:
 from __future__ import annotations
 
 import argparse
-from enum import Enum
 
 import typer
 
@@ -51,132 +50,65 @@ from src.cli.commands import settings as settings_cmd
 from src.cli.commands import test as test_cmd
 from src.cli.commands import translate as translate_cmd
 from src.cli.commands import worker as worker_cmd
+from src.cli.commands.collect import collect_app
+from src.cli.commands.common import (
+    _NEG_ID_POSITIONAL,
+    AnalyticsGenre,
+    AnalyticsUseful,
+    ExportFormat,
+    GenerationBackend,
+    OutputFormat,
+    PhotoMode,
+    PublishMode,
+    SearchMode,
+    SinceUnit,
+    TriBool,
+)
+from src.cli.commands.debug import debug_app
+from src.cli.commands.export import export_app
+from src.cli.commands.image import image_app
+from src.cli.commands.messages import messages_app
+from src.cli.commands.translate import translate_app
 from src.cli.typer_app import app, apply_startup, run_async
 from src.filters.criteria import DEFAULT_QUICK_SAMPLE_SIZE
 
-#: Context settings for the commands whose first positional can be a *negative*
-#: identifier — Telegram channel / chat ids (``-100123…``), ``@username`` /
-#: dialog identifiers, search queries, etc. argparse accepted ``search -100500`` /
-#: ``dialogs archive -100… --yes`` directly because no option in this CLI is a
-#: negative number, so a ``-N`` token was unambiguously a value. Click instead
-#: reads ``-100500`` as an unknown option and errors. ``ignore_unknown_options``
-#: restores argparse's behaviour: a ``-N`` token falls through to the positional,
-#: options and the negative interleave freely (``-100 --yes`` and ``--yes -100``
-#: both work), and a genuinely unknown ``--option`` still errors with exit 2 *when
-#: every positional slot is already filled*. This replaces the fragile
-#: argv-``--``-insertion the #1125 review rejected (string-munging could not
-#: reproduce argparse's free interleaving).
-#:
-#: **Applied narrowly (#1162 review):** only the ~34 commands whose first
-#: positional is a Telegram-id / identifier / query (``channel_id`` / ``chat_id`` /
-#: ``identifier`` / ``recipient`` / ``from_chat`` / ``query`` / ``message_id`` /
-#: ``source`` / ``target``) carry this. Commands keyed on a *positive* DB primary
-#: key (``pipeline <id>``, ``agent context <thread_id>``, ``search-query <id>``, …)
-#: keep Click's strict option checking, so an ``--typo`` on those still errors.
-#:
-#: **Accepted trade-off (#1162 review):** on the negative-capable commands above,
-#: ``ignore_unknown_options`` cannot distinguish a real negative value from an
-#: unknown dash token, so an unknown option (``-x`` *or* ``--xyz``) that lands in
-#: front of an *open* string positional is absorbed as that positional instead of
-#: erroring — e.g. ``search --typo`` searches for the literal ``--typo`` rather
-#: than exiting 2. This is strictly more permissive (no valid invocation breaks)
-#: and the operator's negative-id workflow (Telegram ids are negative everywhere)
-#: is the priority; the loss of strict ``--typo`` detection on this subset is the
-#: accepted cost.
-_NEG_ID_POSITIONAL = {"ignore_unknown_options": True}
+_COMMAND_MODULE_ALIASES_FOR_TEST_PATCHING = (
+    account_cmd,
+    agent_cmd,
+    analytics_cmd,
+    channel_cmd,
+    collect_cmd,
+    debug_cmd,
+    dialogs_cmd,
+    export_cmd,
+    filter_cmd,
+    image_cmd,
+    messages_cmd,
+    notification_cmd,
+    photo_loader_cmd,
+    pipeline_cmd,
+    provider_cmd,
+    scheduler_cmd,
+    search_query_cmd,
+    settings_cmd,
+    test_cmd,
+    translate_cmd,
+)
 
+_COMMON_TYPER_NAMES_FOR_COMPAT = (
+    _NEG_ID_POSITIONAL,
+    AnalyticsGenre,
+    AnalyticsUseful,
+    ExportFormat,
+    GenerationBackend,
+    OutputFormat,
+    PhotoMode,
+    PublishMode,
+    SearchMode,
+    SinceUnit,
+    TriBool,
+)
 
-class SearchMode(str, Enum):
-    """``search --mode`` choices — mirrors the argparse ``choices=[…]`` set.
-
-    Subclassing ``str`` keeps the value a plain string for the command bodies
-    (which compare against ``"local"`` / ``"telegram"`` / … literals) while
-    giving Typer the closed choice set argparse enforced, so an unknown ``--mode``
-    is rejected on the Typer path too (not silently treated as ``local``).
-    """
-
-    local = "local"
-    semantic = "semantic"
-    hybrid = "hybrid"
-    telegram = "telegram"
-    my_chats = "my_chats"
-    channel = "channel"
-
-
-class OutputFormat(str, Enum):
-    """``messages read --format`` choices — mirrors the argparse ``choices=[…]``."""
-
-    text = "text"
-    json = "json"
-    csv = "csv"
-
-
-class PhotoMode(str, Enum):
-    """``photo-loader … --mode`` choices — mirrors the argparse ``choices=[…]``.
-
-    Subclasses ``str`` so the command body receives a plain ``"album"``/``"separate"``
-    and ``.value`` round-trips cleanly into the *_impl bodies.
-    """
-
-    album = "album"
-    separate = "separate"
-
-
-
-
-class ExportFormat(str, Enum):
-    """``export telegram --format`` choices — mirrors the argparse ``choices=[…]``."""
-
-    json = "json"
-    html = "html"
-    both = "both"
-
-
-class AnalyticsUseful(str, Enum):
-    """``analytics channel-rating --useful`` choices — mirrors the argparse set."""
-
-    useful = "useful"
-    useless = "useless"
-
-
-class AnalyticsGenre(str, Enum):
-    """``analytics channel-rating --genre`` choices — mirrors the argparse set."""
-
-    ad = "ad"
-    infobiz = "infobiz"
-    aggregator = "aggregator"
-    copy = "copy"
-    original = "original"
-
-
-class PublishMode(str, Enum):
-    """``pipeline add/edit --publish-mode`` choices."""
-
-    auto = "auto"
-    moderated = "moderated"
-
-
-class GenerationBackend(str, Enum):
-    """``pipeline add/edit --generation-backend`` choices."""
-
-    chain = "chain"
-    agent = "agent"
-    deep_agents = "deep_agents"
-
-
-class SinceUnit(str, Enum):
-    """``pipeline add/dry-run-count --since-unit`` choices."""
-
-    m = "m"
-    h = "h"
-    d = "d"
-
-
-class TriBool(str, Enum):
-    """``pipeline filter set --forwarded/--has-text`` choices (true/false)."""
-
-    true = "true"
-    false = "false"
 
 
 # --------------------------------------------------------------------------- #
@@ -257,42 +189,7 @@ def mcp_server(
 # collect (+ collect sample)
 # --------------------------------------------------------------------------- #
 
-collect_app = typer.Typer(no_args_is_help=False, help="Run one-shot collection")
 app.add_typer(collect_app, name="collect")
-
-
-@collect_app.callback(invoke_without_command=True)
-def collect(
-    ctx: typer.Context,
-    channel_id: int | None = typer.Option(
-        None,
-        "--channel-id",
-        help="Collect single channel by channel_id (incremental by default)",
-    ),
-    full: bool = typer.Option(
-        False,
-        "--full",
-        help="For --channel-id, explicitly backfill the full channel history",
-    ),
-) -> None:
-    """Run one-shot collection (no sub-command = collect all / single channel)."""
-    # The ``sample`` sub-command has its own body; only run the top-level
-    # collection when no sub-command was invoked.
-    if ctx.invoked_subcommand is not None:
-        return
-    apply_startup(ctx)
-    run_async(collect_cmd.collect_impl(ctx.obj.config, channel_id=channel_id, full=full))
-
-
-@collect_app.command("sample", context_settings=_NEG_ID_POSITIONAL)
-def collect_sample(
-    ctx: typer.Context,
-    channel_id: int = typer.Argument(..., help="Channel ID (numeric)"),
-    limit: int = typer.Option(10, "--limit", help="Number of messages to preview (default: 10)"),
-) -> None:
-    """Preview last N messages without saving to DB."""
-    apply_startup(ctx)
-    run_async(collect_cmd.collect_sample_impl(ctx.obj.config, channel_id=channel_id, limit=limit))
 
 
 # --------------------------------------------------------------------------- #
@@ -353,303 +250,35 @@ def search(
 # messages read
 # --------------------------------------------------------------------------- #
 
-messages_app = typer.Typer(no_args_is_help=True, help="Read messages from DB or live Telegram")
 app.add_typer(messages_app, name="messages")
-
-
-@messages_app.command("read", context_settings=_NEG_ID_POSITIONAL)
-def messages_read(
-    ctx: typer.Context,
-    identifier: str = typer.Argument(..., help="Channel pk, channel_id, @username, or dialog ID"),
-    limit: int = typer.Option(50, "--limit", help="Max messages (default: 50)"),
-    live: bool = typer.Option(False, "--live", help="Read from Telegram instead of DB"),
-    phone: str | None = typer.Option(None, "--phone", help="Account phone (for --live)"),
-    query: str = typer.Option("", "--query", help="Text filter (DB only)"),
-    date_from: str | None = typer.Option(None, "--date-from", help="Start date YYYY-MM-DD (DB only)"),
-    date_to: str | None = typer.Option(None, "--date-to", help="End date YYYY-MM-DD (DB only)"),
-    topic_id: int | None = typer.Option(None, "--topic-id", help="Forum topic ID"),
-    offset_id: int | None = typer.Option(
-        None, "--offset-id", help="Read messages before this message ID (--live)"
-    ),
-    include_reaction_users: bool = typer.Option(
-        False, "--include-reaction-users", help="Show users who reacted (live mode only)"
-    ),
-    reaction_users_limit: int = typer.Option(
-        20,
-        "--reaction-users-limit",
-        help="Max reaction users per message for --include-reaction-users (default: 20)",
-    ),
-    output_format: OutputFormat = typer.Option(
-        OutputFormat.text, "--format", help="Output format (default: text)"
-    ),
-) -> None:
-    """Read messages from a channel/dialog."""
-    apply_startup(ctx)
-    run_async(
-        messages_cmd.messages_read_impl(
-            ctx.obj.config,
-            identifier=identifier,
-            limit=limit,
-            live=live,
-            phone=phone,
-            query=query,
-            date_from=date_from,
-            date_to=date_to,
-            topic_id=topic_id,
-            offset_id=offset_id,
-            include_reaction_users=include_reaction_users,
-            reaction_users_limit=reaction_users_limit,
-            output_format=output_format.value,
-        )
-    )
 
 
 # --------------------------------------------------------------------------- #
 # debug → logs / memory / timing
 # --------------------------------------------------------------------------- #
 
-debug_app = typer.Typer(no_args_is_help=True, help="Diagnostic tools")
 app.add_typer(debug_app, name="debug")
-
-
-@debug_app.command("logs")
-def debug_logs(
-    ctx: typer.Context,
-    limit: int = typer.Option(50, "--limit", help="Number of log lines (default: 50)"),
-) -> None:
-    """Show recent log entries."""
-    apply_startup(ctx)
-    run_async(debug_cmd.logs_impl(ctx.obj.config, limit=limit))
-
-
-@debug_app.command("memory")
-def debug_memory(ctx: typer.Context) -> None:
-    """Show memory usage statistics."""
-    apply_startup(ctx)
-    run_async(debug_cmd.memory_impl(ctx.obj.config))
-
-
-@debug_app.command("timing")
-def debug_timing(ctx: typer.Context) -> None:
-    """Show operation timing stats."""
-    apply_startup(ctx)
-    run_async(debug_cmd.timing_impl(ctx.obj.config))
-
-
-@debug_app.command("errors")
-def debug_errors(
-    ctx: typer.Context,
-    as_json: bool = typer.Option(False, "--json", help="Emit raw JSON instead of text"),
-) -> None:
-    """Show aggregated provider error-recovery stats (#1055)."""
-    apply_startup(ctx)
-    run_async(debug_cmd.errors_impl(ctx.obj.config, as_json=as_json))
 
 
 # --------------------------------------------------------------------------- #
 # export → json / csv / rss / telegram
 # --------------------------------------------------------------------------- #
 
-export_app = typer.Typer(no_args_is_help=True, help="Export collected messages")
 app.add_typer(export_app, name="export")
-
-
-def _export_flat(
-    ctx: typer.Context,
-    fmt: str,
-    channel_id: int | None,
-    limit: int,
-    output: str | None,
-) -> None:
-    """Shared body for the flat json/csv/rss export sub-commands."""
-    apply_startup(ctx)
-    run_async(
-        export_cmd.export_impl(
-            ctx.obj.config,
-            fmt=fmt,
-            channel_id=channel_id,
-            limit=limit,
-            output=output,
-        )
-    )
-
-
-@export_app.command("json")
-def export_json(
-    ctx: typer.Context,
-    channel_id: int | None = typer.Option(None, "--channel-id", help="Filter by channel ID"),
-    limit: int = typer.Option(200, "--limit", help="Max messages (default: 200)"),
-    output: str | None = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
-) -> None:
-    """Export as JSON."""
-    _export_flat(ctx, "json", channel_id, limit, output)
-
-
-@export_app.command("csv")
-def export_csv(
-    ctx: typer.Context,
-    channel_id: int | None = typer.Option(None, "--channel-id", help="Filter by channel ID"),
-    limit: int = typer.Option(200, "--limit", help="Max messages (default: 200)"),
-    output: str | None = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
-) -> None:
-    """Export as CSV."""
-    _export_flat(ctx, "csv", channel_id, limit, output)
-
-
-@export_app.command("rss")
-def export_rss(
-    ctx: typer.Context,
-    channel_id: int | None = typer.Option(None, "--channel-id", help="Filter by channel ID"),
-    limit: int = typer.Option(200, "--limit", help="Max messages (default: 200)"),
-    output: str | None = typer.Option(None, "--output", "-o", help="Output file (default: stdout)"),
-) -> None:
-    """Export as RSS."""
-    _export_flat(ctx, "rss", channel_id, limit, output)
-
-
-@export_app.command("telegram")
-def export_telegram(
-    ctx: typer.Context,
-    channel_id: int | None = typer.Option(None, "--channel-id", help="Telegram channel ID to export (required)"),
-    export_format: ExportFormat = typer.Option(ExportFormat.json, "--format", help="Output format (default: json)"),
-    with_media: bool = typer.Option(
-        False, "--with-media", help="Download media artifacts (enqueues a worker task)"
-    ),
-    wait: bool = typer.Option(
-        False, "--wait", help="With --with-media: poll the enqueued task until it finishes"
-    ),
-    max_file_size: int | None = typer.Option(
-        None, "--max-file-size", help="Skip files larger than N MB (default: from settings or 3)"
-    ),
-    date_from: str | None = typer.Option(None, "--date-from", help="Start date YYYY-MM-DD"),
-    date_to: str | None = typer.Option(None, "--date-to", help="End date YYYY-MM-DD"),
-    limit: int = typer.Option(5000, "--limit", help="Max messages (default: 5000)"),
-    output: str | None = typer.Option(
-        None, "--output", "-o",
-        help="Output directory (default: data/exports/ChatExport_<date>_<channel>)",
-    ),
-) -> None:
-    """Export as Telegram-Desktop JSON/HTML."""
-    apply_startup(ctx)
-    run_async(
-        export_cmd.telegram_impl(
-            ctx.obj.config,
-            channel_id=channel_id,
-            export_format=export_format.value,
-            with_media=with_media,
-            wait=wait,
-            max_file_size=max_file_size,
-            date_from=date_from,
-            date_to=date_to,
-            limit=limit,
-            output=output,
-        )
-    )
 
 
 # --------------------------------------------------------------------------- #
 # translate → stats / detect / run / message
 # --------------------------------------------------------------------------- #
 
-translate_app = typer.Typer(no_args_is_help=True, help="Language detection and translation")
 app.add_typer(translate_app, name="translate")
-
-
-@translate_app.command("stats")
-def translate_stats(ctx: typer.Context) -> None:
-    """Show language distribution."""
-    apply_startup(ctx)
-    run_async(translate_cmd.stats_impl(ctx.obj.config))
-
-
-@translate_app.command("detect")
-def translate_detect(
-    ctx: typer.Context,
-    batch_size: int = typer.Option(5000, "--batch-size"),
-) -> None:
-    """Backfill language detection."""
-    apply_startup(ctx)
-    run_async(translate_cmd.detect_impl(ctx.obj.config, batch_size=batch_size))
-
-
-@translate_app.command("run")
-def translate_run(
-    ctx: typer.Context,
-    target: str = typer.Option("en", "--target", help="Target language code"),
-    source_filter: str = typer.Option("", "--source-filter", help="Comma-separated source languages"),
-    limit: int = typer.Option(100, "--limit", help="Max messages to translate"),
-) -> None:
-    """Run translation batch."""
-    apply_startup(ctx)
-    run_async(
-        translate_cmd.run_impl(
-            ctx.obj.config,
-            target=target,
-            source_filter=source_filter,
-            limit=limit,
-        )
-    )
-
-
-@translate_app.command("message")
-def translate_message(
-    ctx: typer.Context,
-    message_id: int = typer.Argument(..., help="Message DB id"),
-    target: str = typer.Option("en", "--target", help="Target language code"),
-) -> None:
-    """Translate a single message."""
-    apply_startup(ctx)
-    run_async(translate_cmd.message_impl(ctx.obj.config, message_id=message_id, target=target))
 
 
 # --------------------------------------------------------------------------- #
 # image → generate / models / providers / generated
 # --------------------------------------------------------------------------- #
 
-image_app = typer.Typer(no_args_is_help=True, help="Image generation")
 app.add_typer(image_app, name="image")
-
-
-@image_app.command("generate")
-def image_generate(
-    ctx: typer.Context,
-    prompt: str = typer.Argument(..., help="Text prompt for image generation"),
-    model: str | None = typer.Option(None, "--model", help="Model string (e.g. replicate:flux-schnell)"),
-) -> None:
-    """Generate an image from prompt."""
-    apply_startup(ctx)
-    run_async(image_cmd.generate_impl(ctx.obj.config, prompt=prompt, model=model))
-
-
-@image_app.command("models")
-def image_models(
-    ctx: typer.Context,
-    provider: str = typer.Option(..., "--provider", help="Provider name (replicate, together, openai)"),
-    query: str = typer.Option("", "--query", help="Search query"),
-    refresh: bool = typer.Option(
-        False, "--refresh", help="Fetch the live model list from the provider (OpenAI: /v1/models)"
-    ),
-) -> None:
-    """Search available models."""
-    apply_startup(ctx)
-    run_async(image_cmd.models_impl(ctx.obj.config, provider=provider, query=query, refresh=refresh))
-
-
-@image_app.command("providers")
-def image_providers(ctx: typer.Context) -> None:
-    """List configured image providers."""
-    apply_startup(ctx)
-    run_async(image_cmd.providers_impl(ctx.obj.config))
-
-
-@image_app.command("generated")
-def image_generated(
-    ctx: typer.Context,
-    limit: int = typer.Option(20, "--limit", help="Max images to show"),
-) -> None:
-    """List generated images."""
-    apply_startup(ctx)
-    run_async(image_cmd.generated_impl(ctx.obj.config, limit=limit))
 
 
 # --------------------------------------------------------------------------- #

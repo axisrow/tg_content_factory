@@ -10,7 +10,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    apply_startup,
+    run_async,
+)
 
 
 async def stats_impl(config_path: str) -> None:
@@ -147,3 +153,57 @@ def run(args: argparse.Namespace) -> None:
         asyncio.run(
             message_impl(args.config, message_id=args.message_id, target=getattr(args, "target", "en"))
         )
+
+
+# --------------------------------------------------------------------------- #
+# translate → stats / detect / run / message
+# --------------------------------------------------------------------------- #
+
+translate_app = typer.Typer(no_args_is_help=True, help="Language detection and translation")
+
+
+@translate_app.command("stats")
+def translate_stats(ctx: typer.Context) -> None:
+    """Show language distribution."""
+    apply_startup(ctx)
+    run_async(stats_impl(ctx.obj.config))
+
+
+@translate_app.command("detect")
+def translate_detect(
+    ctx: typer.Context,
+    batch_size: int = typer.Option(5000, "--batch-size"),
+) -> None:
+    """Backfill language detection."""
+    apply_startup(ctx)
+    run_async(detect_impl(ctx.obj.config, batch_size=batch_size))
+
+
+@translate_app.command("run")
+def translate_run(
+    ctx: typer.Context,
+    target: str = typer.Option("en", "--target", help="Target language code"),
+    source_filter: str = typer.Option("", "--source-filter", help="Comma-separated source languages"),
+    limit: int = typer.Option(100, "--limit", help="Max messages to translate"),
+) -> None:
+    """Run translation batch."""
+    apply_startup(ctx)
+    run_async(
+        run_impl(
+            ctx.obj.config,
+            target=target,
+            source_filter=source_filter,
+            limit=limit,
+        )
+    )
+
+
+@translate_app.command("message")
+def translate_message(
+    ctx: typer.Context,
+    message_id: int = typer.Argument(..., help="Message DB id"),
+    target: str = typer.Option("en", "--target", help="Target language code"),
+) -> None:
+    """Translate a single message."""
+    apply_startup(ctx)
+    run_async(message_impl(ctx.obj.config, message_id=message_id, target=target))

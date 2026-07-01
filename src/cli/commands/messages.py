@@ -6,8 +6,16 @@ import csv
 import io
 import json
 
+import typer
+
 from src.cli import runtime
-from src.cli.commands.common import resolve_channel
+from src.cli.commands.common import (
+    _NEG_ID_POSITIONAL,
+    OutputFormat,
+    apply_startup,
+    resolve_channel,
+    run_async,
+)
 from src.models import Message
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.reactions import (
@@ -253,5 +261,59 @@ def run(args: argparse.Namespace) -> None:
             include_reaction_users=getattr(args, "include_reaction_users", False),
             reaction_users_limit=getattr(args, "reaction_users_limit", None),
             output_format=getattr(args, "output_format", "text"),
+        )
+    )
+
+
+# --------------------------------------------------------------------------- #
+# messages read
+# --------------------------------------------------------------------------- #
+
+messages_app = typer.Typer(no_args_is_help=True, help="Read messages from DB or live Telegram")
+
+
+@messages_app.command("read", context_settings=_NEG_ID_POSITIONAL)
+def messages_read(
+    ctx: typer.Context,
+    identifier: str = typer.Argument(..., help="Channel pk, channel_id, @username, or dialog ID"),
+    limit: int = typer.Option(50, "--limit", help="Max messages (default: 50)"),
+    live: bool = typer.Option(False, "--live", help="Read from Telegram instead of DB"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (for --live)"),
+    query: str = typer.Option("", "--query", help="Text filter (DB only)"),
+    date_from: str | None = typer.Option(None, "--date-from", help="Start date YYYY-MM-DD (DB only)"),
+    date_to: str | None = typer.Option(None, "--date-to", help="End date YYYY-MM-DD (DB only)"),
+    topic_id: int | None = typer.Option(None, "--topic-id", help="Forum topic ID"),
+    offset_id: int | None = typer.Option(
+        None, "--offset-id", help="Read messages before this message ID (--live)"
+    ),
+    include_reaction_users: bool = typer.Option(
+        False, "--include-reaction-users", help="Show users who reacted (live mode only)"
+    ),
+    reaction_users_limit: int = typer.Option(
+        20,
+        "--reaction-users-limit",
+        help="Max reaction users per message for --include-reaction-users (default: 20)",
+    ),
+    output_format: OutputFormat = typer.Option(
+        OutputFormat.text, "--format", help="Output format (default: text)"
+    ),
+) -> None:
+    """Read messages from a channel/dialog."""
+    apply_startup(ctx)
+    run_async(
+        messages_read_impl(
+            ctx.obj.config,
+            identifier=identifier,
+            limit=limit,
+            live=live,
+            phone=phone,
+            query=query,
+            date_from=date_from,
+            date_to=date_to,
+            topic_id=topic_id,
+            offset_id=offset_id,
+            include_reaction_users=include_reaction_users,
+            reaction_users_limit=reaction_users_limit,
+            output_format=output_format.value,
         )
     )
