@@ -322,7 +322,7 @@ def register_message_write_tools(ctx: Any, client_pool: Any) -> list[Any]:
         "Ask user for confirmation first.",
         SEND_REACTIONS_SCHEMA,
     )
-    async def send_reactions(args):
+    async def send_reactions(args: dict[str, Any]) -> dict[str, Any]:
         pool_gate = ctx.require_pool("Реакции на сообщения")
         if pool_gate:
             return pool_gate

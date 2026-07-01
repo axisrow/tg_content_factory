@@ -95,7 +95,7 @@ async def _dispatch_rate_limit_event(
         "Rate limit event (thread %d): status=%s, resets_at=%s, utilization=%s",
         thread_id, rl_status, resets, utilization,
     )
-    rl_parts = [rl_status]
+    rl_parts: list[str] = [rl_status]
     if utilization is not None:
         rl_parts.append(f"{utilization:.0%}")
     rl_summary = ", ".join(rl_parts)
