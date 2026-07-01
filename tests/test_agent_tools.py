@@ -348,7 +348,7 @@ class TestListPipelinesTool:
     @pytest.mark.anyio
     async def test_empty(self, mock_db):
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
-            mock_svc.return_value.list = AsyncMock(return_value=[])
+            mock_svc.return_value.list_pipelines = AsyncMock(return_value=[])
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["list_pipelines"]({"active_only": False})
 
@@ -366,7 +366,7 @@ class TestListPipelinesTool:
             generation_backend="chain",
         )
         with patch("src.services.pipeline_service.PipelineService") as mock_svc:
-            mock_svc.return_value.list = AsyncMock(return_value=[pipeline])
+            mock_svc.return_value.list_pipelines = AsyncMock(return_value=[pipeline])
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["list_pipelines"]({})
 

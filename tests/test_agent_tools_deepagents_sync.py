@@ -867,7 +867,7 @@ class TestDeepagentsSyncListPipelines:
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
         svc_mock = MagicMock()
-        svc_mock.list = AsyncMock(return_value=[])
+        svc_mock.list_pipelines = AsyncMock(return_value=[])
         with patch("src.services.pipeline_service.PipelineService", return_value=svc_mock):
             tools = build_deepagents_tools(mock_db)
             tool_map = {t.__name__: t for t in tools}
@@ -879,7 +879,7 @@ class TestDeepagentsSyncListPipelines:
 
         p = SimpleNamespace(id=1, name="Pipeline A", is_active=True, llm_model="gpt-4o")
         svc_mock = MagicMock()
-        svc_mock.list = AsyncMock(return_value=[p])
+        svc_mock.list_pipelines = AsyncMock(return_value=[p])
         with patch("src.services.pipeline_service.PipelineService", return_value=svc_mock):
             tools = build_deepagents_tools(mock_db)
             tool_map = {t.__name__: t for t in tools}

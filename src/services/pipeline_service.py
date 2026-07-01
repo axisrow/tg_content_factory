@@ -87,16 +87,19 @@ async def resolve_retrieval_scope(
     channel_id: int | None = None
     if list_sources is None:
         return PipelineRetrievalScope(query=query, channel_id=channel_id)
+    pipeline_id = pipeline.id
+    if pipeline_id is None:
+        raise PipelineScopeError("Could not resolve source scope for unsaved pipeline; aborting.")
     try:
-        sources = await list_sources(pipeline.id)
+        sources = await list_sources(pipeline_id)
     except Exception as exc:
         logger.error(
             "Failed to load pipeline sources for %s; refusing to widen scope to all channels",
-            pipeline.id,
+            pipeline_id,
             exc_info=True,
         )
         raise PipelineScopeError(
-            f"Could not resolve source scope for pipeline {pipeline.id}; "
+            f"Could not resolve source scope for pipeline {pipeline_id}; "
             "aborting to avoid cross-channel retrieval"
         ) from exc
     if len(sources) == 1:
@@ -149,14 +152,11 @@ class PipelineService:
 
     @staticmethod
     def _source_titles(source_ids: list[int], channels_by_id: dict[int, Any]) -> list[str]:
-        return [
-            (
-                channels_by_id.get(source_id).title or str(source_id)
-                if channels_by_id.get(source_id)
-                else str(source_id)
-            )
-            for source_id in source_ids
-        ]
+        titles: list[str] = []
+        for source_id in source_ids:
+            channel = channels_by_id.get(source_id)
+            titles.append(channel.title or str(source_id) if channel else str(source_id))
+        return titles
 
     async def add(
         self,
@@ -216,9 +216,14 @@ class PipelineService:
         is_dag = existing_pipeline_json is not None
 
         # Determine if the updated pipeline will need LLM based on new backend + existing pipeline_json
+        try:
+            probe_backend = PipelineGenerationBackend(generation_backend)
+        except ValueError:
+            probe_backend = PipelineGenerationBackend.CHAIN
         probe = ContentPipeline(
             name="x",
-            generation_backend=generation_backend,
+            generation_backend=probe_backend,
+            generate_interval_minutes=generate_interval_minutes,
             pipeline_json=existing_pipeline_json,
             ab_num_variants=ab_num_variants,
         )
@@ -271,7 +276,7 @@ class PipelineService:
             targets = await self._normalize_targets(target_refs)
         return await self._bundle.update(pipeline_id, pipeline, sources, targets)
 
-    async def list(self, active_only: bool = False) -> list[ContentPipeline]:
+    async def list_pipelines(self, active_only: bool = False) -> list[ContentPipeline]:
         pipelines = await self._bundle.get_all(active_only)
         pipeline_ids = [
             pipeline.id
@@ -460,7 +465,7 @@ class PipelineService:
         if graph is None:
             return
         if source_ids:
-            clean_ids = sorted(set(source_ids))
+            clean_ids: list[int] = sorted(set(source_ids))
             for node in graph.nodes:
                 if node.type == PipelineNodeType.SOURCE and not node.config.get("channel_ids"):
                     node.config["channel_ids"] = clean_ids
@@ -527,42 +532,47 @@ class PipelineService:
     ) -> int:
         """Create a pipeline from a JSON export dict. Returns the new pipeline ID."""
         if isinstance(data, str):
-            data = json.loads(data)
-        name = name_override or data.get("name", "Imported pipeline")
-        prompt_template = data.get("prompt_template", "")
-        source_ids = [int(x) for x in data.get("source_ids", [])]
-        target_refs_raw = data.get("target_refs", [])
-        target_refs = []
+            decoded = json.loads(data)
+            if not isinstance(decoded, dict):
+                raise PipelineValidationError("JSON export must be an object.")
+            payload: dict[str, Any] = decoded
+        else:
+            payload = data
+        name = name_override or payload.get("name", "Imported pipeline")
+        prompt_template = payload.get("prompt_template", "")
+        source_ids = [int(x) for x in payload.get("source_ids", [])]
+        target_refs_raw = payload.get("target_refs", [])
+        target_refs: list[PipelineTargetRef] = []
         for ref in target_refs_raw:
             if isinstance(ref, str) and "|" in ref:
                 phone, _, dialog_id = ref.partition("|")
                 target_refs.append(PipelineTargetRef(phone=phone, dialog_id=int(dialog_id)))
 
         pipeline_json: PipelineGraph | None = None
-        if "pipeline_json" in data:
+        if "pipeline_json" in payload:
             try:
-                pipeline_json = PipelineGraph.from_json(data["pipeline_json"])
+                pipeline_json = PipelineGraph.from_json(payload["pipeline_json"])
             except Exception:
                 logger.warning("import_json: failed to parse pipeline_json field, ignoring")
 
         pipeline = await self._build_pipeline(
             name=name,
             prompt_template=prompt_template or ".",
-            llm_model=data.get("llm_model"),
-            image_model=data.get("image_model"),
-            publish_mode=data.get("publish_mode", PipelinePublishMode.MODERATED),
-            generation_backend=data.get("generation_backend", PipelineGenerationBackend.CHAIN),
-            generate_interval_minutes=int(data.get("generate_interval_minutes", 60)),
+            llm_model=payload.get("llm_model"),
+            image_model=payload.get("image_model"),
+            publish_mode=payload.get("publish_mode", PipelinePublishMode.MODERATED),
+            generation_backend=payload.get("generation_backend", PipelineGenerationBackend.CHAIN),
+            generate_interval_minutes=int(payload.get("generate_interval_minutes", 60)),
             is_active=False,
-            account_phone=data.get("account_phone"),
+            account_phone=payload.get("account_phone"),
         )
         self._inject_runtime_refs(pipeline_json, source_ids, target_refs)
         # Restore publish_times here (add() persists it) and refinement_steps after
         # add() (not in the add() INSERT) so an export→import round-trip keeps both
         # fields instead of resetting them to defaults (audit #837/4).
         update: dict[str, Any] = {"pipeline_json": pipeline_json}
-        if data.get("publish_times") is not None:
-            update["publish_times"] = data["publish_times"]
+        if payload.get("publish_times") is not None:
+            update["publish_times"] = payload["publish_times"]
         pipeline = pipeline.model_copy(update=update)
 
         # Imported pipelines may not include runtime data (source/target IDs valid in
@@ -571,7 +581,7 @@ class PipelineService:
         targets = await self._normalize_targets(target_refs) if target_refs else []
 
         new_id = await self._bundle.add(pipeline, sources, targets)
-        refinement_steps = data.get("refinement_steps")
+        refinement_steps = payload.get("refinement_steps")
         if refinement_steps:
             await self._bundle.content_pipelines.set_refinement_steps(new_id, refinement_steps)
         return new_id
@@ -828,7 +838,7 @@ class PipelineService:
                 raise PipelineValidationError(
                     f"Edge {from_node} -> {to_node} would create a cycle in the pipeline graph."
                 )
-            graph.edges.append(PipelineEdge(from_node=from_node, to_node=to_node))
+            graph.edges.append(PipelineEdge.model_validate({"from": from_node, "to": to_node}))
             await self._bundle.content_pipelines.set_pipeline_json(pipeline_id, graph)
         return True
 
