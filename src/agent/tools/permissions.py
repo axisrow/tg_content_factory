@@ -16,8 +16,9 @@ import json
 import logging
 import time
 from collections import OrderedDict
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, TypeAlias
 
 from src.agent.tools._categories import (
     TOOL_MODULE_ORDER,
@@ -26,6 +27,12 @@ from src.agent.tools._categories import (
     ToolMeta,
 )
 from src.agent.tools._registry import _get_accounts
+
+if TYPE_CHECKING:
+    from src.database import Database
+    from src.models import Account, AccountSummary
+
+    AccountLike: TypeAlias = Account | AccountSummary
 
 __all__ = [  # noqa: F822 — TOOL_CATEGORIES & co. are served by module __getattr__
     "TOOL_CATEGORIES",
@@ -120,7 +127,7 @@ def _phone_binded_tools() -> frozenset[str]:
     return _build_metadata()[2]
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     # PEP 562: keep the historical module attributes working for all existing
     # importers while building them lazily (tool modules pull the agent SDK —
     # CLI paths that import permissions for constants must not pay for that
@@ -171,7 +178,7 @@ def _default_permissions(*, for_missing_in_saved: bool = False) -> dict[str, boo
     return {name: True for name in _tool_categories()}
 
 
-def _is_per_phone_format(saved: dict) -> bool:
+def _is_per_phone_format(saved: dict[str, object]) -> bool:
     """Detect whether saved dict is per-phone (values are dicts) or flat (values are bools)."""
     if not saved:
         return False
@@ -179,7 +186,7 @@ def _is_per_phone_format(saved: dict) -> bool:
     return isinstance(first_value, dict)
 
 
-async def _load_raw_permissions(db) -> dict:
+async def _load_raw_permissions(db: Database) -> dict[str, Any]:
     """Load raw JSON from DB setting."""
     raw = await db.get_setting(TOOL_PERMISSIONS_SETTING)
     if not raw:
@@ -191,7 +198,7 @@ async def _load_raw_permissions(db) -> dict:
         return {}
 
 
-async def _load_raw_permissions_strict(db) -> tuple[dict, bool]:
+async def _load_raw_permissions_strict(db: Database) -> tuple[dict[str, Any], bool]:
     """Load raw permissions and preserve corruption as a fail-closed signal."""
     raw = await db.get_setting(TOOL_PERMISSIONS_SETTING)
     if not raw:
@@ -223,7 +230,7 @@ def _merge_access_states(states: list[ToolAccessState]) -> ToolAccessState:
     return ToolAccessState.DENIED
 
 
-async def load_tool_access_policy(db, *, use_cache: bool = False) -> dict[str, ToolAccessState]:
+async def load_tool_access_policy(db: Database, *, use_cache: bool = False) -> dict[str, ToolAccessState]:
     """Return aggregate tool access states for model visibility decisions.
 
     ``ALLOWED`` means at least one configured scope explicitly allows the tool.
@@ -265,7 +272,7 @@ async def load_tool_access_policy(db, *, use_cache: bool = False) -> dict[str, T
     return result
 
 
-async def get_tool_access_state(db, tool_name: str, *, phone: str = "") -> ToolAccessState:
+async def get_tool_access_state(db: Database, tool_name: str, *, phone: str = "") -> ToolAccessState:
     """Return access state for one tool, optionally scoped to a phone."""
     if tool_name not in _tool_categories():
         return ToolAccessState.DENIED
@@ -289,7 +296,7 @@ async def get_tool_access_state(db, tool_name: str, *, phone: str = "") -> ToolA
     return _state_from_saved_value(phone_perms.get(tool_name))
 
 
-async def get_explicit_allowed_phones(db, tool_name: str) -> list[str]:
+async def get_explicit_allowed_phones(db: Database, tool_name: str) -> list[str]:
     """Return phones with an explicit True grant for the tool."""
     try:
         saved, malformed = await _load_raw_permissions_strict(db)
@@ -305,7 +312,7 @@ async def get_explicit_allowed_phones(db, tool_name: str) -> list[str]:
     )
 
 
-async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]:
+async def load_tool_permissions(db: Database, phone: str | None = None) -> dict[str, bool]:
     """Load per-tool permissions from DB for a specific phone.
 
     If *phone* is ``None``, loads permissions for the primary account.
@@ -367,7 +374,10 @@ async def load_tool_permissions(db, phone: str | None = None) -> dict[str, bool]
     return result
 
 
-async def load_tool_permissions_all_phones(db, accounts) -> dict[str, dict[str, bool]]:
+async def load_tool_permissions_all_phones(
+    db: Database,
+    accounts: Iterable[AccountLike],
+) -> dict[str, dict[str, bool]]:
     """Load permissions for every account phone.  Returns ``{phone: {tool: bool}}``."""
     defaults = _default_permissions()
     missing_defaults = _default_permissions(for_missing_in_saved=True)
@@ -398,7 +408,7 @@ async def load_tool_permissions_all_phones(db, accounts) -> dict[str, dict[str, 
     return result
 
 
-async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | None = None) -> None:
+async def save_tool_permissions(db: Database, permissions: dict[str, bool], phone: str | None = None) -> None:
     """Persist per-tool permissions as JSON.
 
     If *phone* is given, saves under the per-phone key without touching other phones.
@@ -432,7 +442,7 @@ async def save_tool_permissions(db, permissions: dict[str, bool], phone: str | N
     await db.set_setting(TOOL_PERMISSIONS_SETTING, json.dumps(saved, ensure_ascii=False))
 
 
-async def load_tool_permissions_union(db, *, use_cache: bool = False) -> dict[str, bool]:
+async def load_tool_permissions_union(db: Database, *, use_cache: bool = False) -> dict[str, bool]:
     """Compatibility boolean view: True only for explicitly allowed tools.
 
     New code should use ``load_tool_access_policy`` plus ``visible_tools_for_llm``

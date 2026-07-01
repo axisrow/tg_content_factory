@@ -8,7 +8,7 @@ import re as _re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from inspect import isawaitable
-from typing import Any
+from typing import TYPE_CHECKING, Any, TypeAlias, cast
 
 from src.agent.runtime_context import AgentRuntimeContext
 from src.telegram.flood_wait import (
@@ -19,6 +19,13 @@ from src.telegram.flood_wait import (
 )
 from src.utils.datetime import try_parse_utc_datetime
 from src.utils.introspection import explicit_pool_method
+
+if TYPE_CHECKING:
+    from src.database import Database
+    from src.models import Account, AccountSummary
+    from src.telegram.client_pool import ClientPool
+
+    AccountLike: TypeAlias = Account | AccountSummary
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +46,9 @@ class ToolInputError(ValueError):
 class AgentToolContext:
     """Shared dependencies and guards for agent tool handlers."""
 
-    db: object
+    db: Database
     config: object | None = None
-    client_pool: object | None = None
+    client_pool: ClientPool | None = None
     scheduler_manager: object | None = None
     embedding_service: object | None = None
     runtime_context: AgentRuntimeContext | None = None
@@ -50,9 +57,9 @@ class AgentToolContext:
     def build(
         cls,
         *,
-        db: object,
+        db: Database,
         config: object | None = None,
-        client_pool: object | None = None,
+        client_pool: ClientPool | None = None,
         scheduler_manager: object | None = None,
         embedding_service: object | None = None,
         runtime_context: AgentRuntimeContext | None = None,
@@ -85,12 +92,17 @@ class AgentToolContext:
         return await require_phone_permission(self.db, phone, tool_name)
 
     async def resolve_live_read_phone(self, raw_phone: object, *, tool_name: str) -> tuple[str, dict | None]:
-        return await resolve_live_read_phone(self.db, self.client_pool, raw_phone, tool_name=tool_name)
+        return await resolve_live_read_phone(
+            self.db,
+            cast("ClientPool", self.client_pool),
+            raw_phone,
+            tool_name=tool_name,
+        )
 
     def channel_service(self):
         from src.services.channel_service import ChannelService
 
-        return ChannelService(self.db, self.client_pool, None)
+        return ChannelService(self.db, cast("ClientPool", self.client_pool), None)
 
     def pipeline_service(self):
         from src.services.pipeline_service import PipelineService
@@ -101,8 +113,8 @@ class AgentToolContext:
 def get_tool_context(
     kwargs: dict,
     *,
-    db: object,
-    client_pool: object | None = None,
+    db: Database,
+    client_pool: ClientPool | None = None,
     embedding_service: object | None = None,
 ) -> AgentToolContext:
     """Return the shared tool context passed by the registry, or build one for direct tests."""
@@ -323,7 +335,7 @@ def _pool_reports_connections(client_pool: object | None) -> bool:
         return False
 
 
-async def _get_accounts(db: object, *, active_only: bool = False) -> list[object]:
+async def _get_accounts(db: Database, *, active_only: bool = False) -> list[AccountLike]:
     for getter_name in ("get_account_summaries", "get_accounts"):
         getter = getattr(db, getter_name, None)
         if not callable(getter):
@@ -335,11 +347,11 @@ async def _get_accounts(db: object, *, active_only: bool = False) -> list[object
         if isawaitable(result):
             result = await result
         if isinstance(result, (list, tuple)):
-            return list(result)
+            return cast("list[AccountLike]", list(result))
     return []
 
 
-async def _clear_account_flood(db: object, phone: str) -> None:
+async def _clear_account_flood(db: Database, phone: str) -> None:
     updater = getattr(db, "update_account_flood", None)
     if not callable(updater):
         return
@@ -352,11 +364,11 @@ async def _clear_account_flood(db: object, phone: str) -> None:
 
 
 async def get_accounts_with_flood_cleanup(
-    db: object,
+    db: Database,
     *,
     active_only: bool = False,
     now: datetime | None = None,
-) -> list[object]:
+) -> list[AccountLike]:
     """Load accounts and clear stale flood_wait_until values before callers inspect them."""
     now = now or datetime.now(timezone.utc)
     accounts = await _get_accounts(db, active_only=active_only)
@@ -404,7 +416,7 @@ def require_live_runtime(
 
 
 def available_live_read_phones(
-    accounts: list[object],
+    accounts: list[AccountLike],
     connected_phones: set[str],
     *,
     trust_empty_connected: bool = True,
@@ -431,8 +443,8 @@ def available_live_read_phones(
 
 
 async def resolve_live_read_phone(
-    db: object,
-    client_pool: object,
+    db: Database,
+    client_pool: ClientPool,
     raw_phone: object,
     *,
     tool_name: str,
@@ -608,7 +620,7 @@ def require_pool(client_pool: object | None, action: str = "Эта операц�
     )
 
 
-async def resolve_phone(db: object, raw_phone: object) -> tuple[str, dict | None]:
+async def resolve_phone(db: Database, raw_phone: object) -> tuple[str, dict | None]:
     """Normalize phone, default to primary account if empty.
 
     Returns ``(phone, None)`` on success or ``("", error_response)`` on failure.
@@ -637,7 +649,7 @@ async def resolve_phone(db: object, raw_phone: object) -> tuple[str, dict | None
     return primary.phone, None
 
 
-async def require_phone_permission(db: object, phone: str, tool_name: str) -> dict | None:
+async def require_phone_permission(db: Database, phone: str, tool_name: str) -> dict | None:
     """Return helpful response with allowed phones if not permitted, else None.
 
     If db has no phone permissions configured, returns None (all phones allowed).
@@ -743,7 +755,7 @@ class ResolvedEntityLease:
 
 
 async def _released_resolve_entity_result(
-    client_pool: object,
+    client_pool: ClientPool,
     release_phones: list[str],
     error: dict,
 ) -> ResolvedEntityLease:
@@ -762,8 +774,8 @@ def should_try_dialog_title_lookup(identifier: object) -> bool:
 
 
 async def load_dialogs_for_title_lookup(
-    db: object,
-    client_pool: object,
+    db: Database,
+    client_pool: ClientPool,
     phone: str,
     *,
     refresh: bool = False,
@@ -789,8 +801,8 @@ async def load_dialogs_for_title_lookup(
 
 
 async def find_dialogs_by_exact_title(
-    db: object,
-    client_pool: object,
+    db: Database,
+    client_pool: ClientPool,
     phone: str,
     title: object,
     *,
@@ -832,7 +844,7 @@ def format_dialog_title_candidates(title: object, matches: list[dict]) -> dict:
 
 
 async def resolve_entity(
-    client_pool: object,
+    client_pool: ClientPool,
     phone: str,
     chat_id: str,
     *,

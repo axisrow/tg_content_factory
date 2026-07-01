@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, cast
 
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
@@ -24,11 +24,14 @@ from src.agent.tools._registry import (
     require_confirmation,
 )
 from src.database.repositories.accounts import AccountSessionDecryptError
-from src.models import Account
+from src.models import Account, AccountSummary
 from src.services.account_availability import compute_account_availability
 from src.services.notification_target_service import NotificationTargetService
 from src.services.runtime_diagnostics import evaluate_worker_heartbeat
 from src.telegram.auth import validate_session_string
+
+if TYPE_CHECKING:
+    from src.telegram.client_pool import ClientPool
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +87,7 @@ def _remaining_seconds(account: object) -> int | None:
     return max(1, int((flood_until - datetime.now(timezone.utc)).total_seconds()))
 
 
-def _diagnostic_lines(accounts: list[object], client_pool: object | None) -> list[str]:
+def _diagnostic_lines(accounts: list[Account | AccountSummary], client_pool: object | None) -> list[str]:
     active_accounts = [a for a in accounts if getattr(a, "is_active", False)]
     active_phones = [str(getattr(a, "phone", "")) for a in active_accounts if getattr(a, "phone", "")]
     connected = connected_phones_from_pool(client_pool)
@@ -124,8 +127,9 @@ async def get_live_account_info_text(runtime: AgentRuntimeContext, phone: object
             details.append(f"Runtime connected phones snapshot: {_format_phones(connected)}.")
         return "\n".join(details)
 
+    client_pool = cast("ClientPool", runtime.client_pool)
     try:
-        users = await runtime.client_pool.get_users_info(include_avatar=False)
+        users = await client_pool.get_users_info(include_avatar=False)
     except Exception:
         users = []
     if phone_filter:
