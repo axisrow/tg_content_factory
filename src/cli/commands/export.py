@@ -8,6 +8,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from email.utils import format_datetime
+from typing import Literal, cast
 
 import typer
 
@@ -18,6 +19,8 @@ from src.cli.commands.common import (
     run_async,
 )
 from src.utils.text_safety import csv_safe_cell, escape_xml_text
+
+ExportMediaFormat = Literal["json", "html", "both"]
 
 
 def _rfc822(dt: datetime | None) -> str:
@@ -150,7 +153,7 @@ async def _enqueue_media_export(
 
     payload = ExportTaskPayload(
         channel_id=channel_id,
-        fmt=export_format,
+        fmt=cast(ExportMediaFormat, export_format),
         with_media=True,
         max_file_size_mb=max_file_size,
         date_from=date_from,

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from typing import TYPE_CHECKING, cast
 
 import typer
 
@@ -24,10 +25,13 @@ from src.filters.criteria import DEFAULT_QUICK_SAMPLE_SIZE
 from src.services.channel_service import ChannelService
 from src.services.filter_deletion_service import FilterDeletionService
 
+if TYPE_CHECKING:
+    from src.telegram.client_pool import ClientPool
+
 
 def _build_deletion_service(db) -> FilterDeletionService:
     channel_bundle = ChannelBundle.from_database(db)
-    channel_service = ChannelService(channel_bundle, None, queue=None)
+    channel_service = ChannelService(channel_bundle, cast("ClientPool", None), queue=None)
     return FilterDeletionService(db, channel_service)
 
 

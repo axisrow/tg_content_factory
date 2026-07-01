@@ -15,7 +15,7 @@ hints, applying auto-wiring rules:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable, cast
 
 from src.cli.node_dsl import NodeSpec, generate_node_id
 from src.models import (
@@ -31,6 +31,7 @@ class GraphBuilderError(ValueError):
 
 
 _AUTO_INSERT_TYPES = {PipelineNodeType.FETCH_MESSAGES}
+_PIPELINE_EDGE_FACTORY = cast(Callable[..., PipelineEdge], PipelineEdge)
 
 
 @dataclass
@@ -208,7 +209,7 @@ class GraphBuilder:
         chain.extend(nid for nid in state.user_node_ids if nid not in chain)
 
         for i in range(len(chain) - 1):
-            state.edges.append(PipelineEdge(from_node=chain[i], to_node=chain[i + 1]))
+            state.edges.append(_PIPELINE_EDGE_FACTORY(from_node=chain[i], to_node=chain[i + 1]))
 
         # -- 7. Explicit edges ---------------------------------------------------
         node_ids = {n.id for n in state.nodes}
@@ -219,7 +220,7 @@ class GraphBuilder:
                     f"Edge references non-existent node: {from_id} -> {to_id}"
                 )
             if (from_id, to_id) not in existing:
-                state.edges.append(PipelineEdge(from_node=from_id, to_node=to_id))
+                state.edges.append(_PIPELINE_EDGE_FACTORY(from_node=from_id, to_node=to_id))
 
     def _apply_overrides_and_validate(self, state: _BuildState) -> None:
         # -- 8. Apply node config overrides --------------------------------------

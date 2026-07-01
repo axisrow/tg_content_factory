@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import cast
+import importlib
+from typing import Any, cast
 
 import click
 
@@ -25,7 +26,7 @@ from src.cli.typer_app import app
 # ``click`` types if a future Typer drops it, so the import can never crash the
 # CLI.
 try:  # pragma: no cover - exercised indirectly via main() bare-group tests
-    from typer._click import exceptions as _typer_click_exc
+    _typer_click_exc = cast(Any, importlib.import_module("typer._click.exceptions"))
 
     _CLICK_EXCEPTIONS: tuple[type[BaseException], ...] = (
         click.exceptions.ClickException,
