@@ -418,7 +418,7 @@ class TestSearchQueryToolErrors:
         handlers, _ = sq_setup
         sq = SimpleNamespace(id=1, query="test", interval_minutes=60, is_active=True,
                              is_regex=True, is_fts=True, notify_on_collect=True)
-        with patch("src.services.search_query_service.SearchQueryService.list",
+        with patch("src.services.search_query_service.SearchQueryService.list_queries",
                     new_callable=AsyncMock, return_value=[sq]):
             result = await handlers["list_search_queries"]({})
             text = _text(result)
@@ -426,7 +426,7 @@ class TestSearchQueryToolErrors:
 
     async def test_list_search_queries_exception(self, sq_setup):
         handlers, _ = sq_setup
-        with patch("src.services.search_query_service.SearchQueryService.list",
+        with patch("src.services.search_query_service.SearchQueryService.list_queries",
                     new_callable=AsyncMock, side_effect=RuntimeError("fail")):
             result = await handlers["list_search_queries"]({})
             assert "ошибка" in _text(result).lower()
@@ -800,7 +800,7 @@ class TestDeepagentsSyncExceptions:
         tools, _ = sync_tools
         assert "list_search_queries" in tools
         with patch(
-            "src.services.search_query_service.SearchQueryService.list",
+            "src.services.search_query_service.SearchQueryService.list_queries",
             side_effect=RuntimeError("fail"),
         ):
             result = tools["list_search_queries"]()
@@ -1011,4 +1011,3 @@ class TestAgentManagerEdge:
 # ===========================================================================
 # 24. cli/commands/test.py — _run_write_checks (via real in-memory DB)
 # ===========================================================================
-

@@ -345,9 +345,11 @@ class ImageProviderService:
             cfg = cfg_by_provider.get(name)
             if cfg is not None and not cfg.enabled:
                 continue
-            if spec.keyless:
-                if spec.detect() and spec.keyless_factory is not None:
-                    adapters[name] = spec.keyless_factory()
+            detect = spec.detect
+            keyless_factory = spec.keyless_factory
+            if detect is not None:
+                if detect() and keyless_factory is not None:
+                    adapters[name] = keyless_factory()
                 elif cfg is not None and cfg.enabled:
                     # Enabled in the UI but detection failed (SDK missing or not
                     # authenticated). detect() results are cached for the process

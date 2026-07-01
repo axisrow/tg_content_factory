@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Awaitable, Callable, Dict, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Dict, Mapping, Optional, cast
 
 from src.agent.provider_registry import (
     ProviderRuntimeConfig,
@@ -15,9 +15,14 @@ from src.agent.provider_registry import (
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from src.config import AppConfig
+    from src.database import Database
+
+
 async def build_provider_service(
-    db: object | None = None,
-    config: object | None = None,
+    db: Database | None = None,
+    config: AppConfig | None = None,
     env: Mapping[str, str] | None = None,
 ) -> "RuntimeProviderRegistry":
     """Create RuntimeProviderRegistry and eagerly load DB-backed providers when possible.
@@ -60,13 +65,13 @@ class RuntimeProviderRegistry:
 
     def __init__(
         self,
-        db: Optional[object] = None,
-        config: Optional[object] = None,
+        db: Optional[Database] = None,
+        config: Optional[AppConfig] = None,
         *,
         env: Mapping[str, str] | None = None,
     ) -> None:
-        self.db = db
-        self._config = config
+        self.db: Database | None = db
+        self._config: AppConfig | None = config
         # Env is injected explicitly. The registry NEVER reads the process
         # environment: doing so coupled provider registration to shared process
         # state, which under ``pytest -n auto`` let a neighbouring xdist worker's
@@ -384,10 +389,11 @@ class RuntimeProviderRegistry:
                 extra["max_tokens"] = int(max_tokens)
             if temperature is not None:
                 extra["temperature"] = float(temperature)
+            chat_kwargs = cast(dict[str, Any], extra)
             chat_model = init_chat_model(
                 model=resolved_model,
                 model_provider=model_provider,
-                **extra,
+                **chat_kwargs,
             )
             response = await chat_model.ainvoke(prompt)
             return self._response_text(response)

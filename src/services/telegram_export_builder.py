@@ -290,7 +290,7 @@ class TelegramExportBuilder:
             rows.append(media_html)
         reactions = parse_reactions_json(message.reactions_json)
         if reactions:
-            rendered = "  ".join(f'{html.escape(r["emoji"])} {r["count"]}' for r in reactions)
+            rendered = "  ".join(f'{html.escape(str(r["emoji"]))} {r["count"]}' for r in reactions)
             rows.append(f'<div class="reactions">{rendered}</div>')
         return f'<div class="message" id="message{message.message_id}">' + "".join(rows) + "</div>"
 

@@ -46,7 +46,7 @@ def register(db, client_pool, embedding_service, **kwargs):
 
             svc = SearchQueryService(db)
             active_only = arg_bool(args, "active_only", False)
-            queries = await svc.list(active_only=active_only)
+            queries = await svc.list_queries(active_only=active_only)
             if not queries:
                 return _text_response("Поисковые запросы не найдены.")
             lines = [f"Поисковые запросы ({len(queries)}):"]

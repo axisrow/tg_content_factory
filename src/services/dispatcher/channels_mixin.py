@@ -71,6 +71,8 @@ class ChannelsCommandsMixin(_Base):
         deactivated = 0
         quarantined = 0
         for ch in channels:
+            channel_pk = ch.id
+            assert channel_pk is not None
             identifier = ch.username or str(ch.channel_id)
             try:
                 # numeric_fallback so a stale @username doesn't deactivate a live
@@ -84,13 +86,13 @@ class ChannelsCommandsMixin(_Base):
             # for human review. This runs in the background worker with no interactive
             # user, so flagging for review is the only safe move (#875 redesign).
             if info and info.get("review"):
-                await self._db.repos.channels.set_channel_review(ch.id, info.get("reason", "uncertain"))
+                await self._db.repos.channels.set_channel_review(channel_pk, info.get("reason", "uncertain"))
                 quarantined += 1
                 continue
             # Definitive not-found → deactivate; transient None → skip and leave
             # active (audit #835/8; old `if info is False` was unreachable).
             if info and info.get("gone"):
-                await self._db.set_channel_active(ch.id, False)
+                await self._db.set_channel_active(channel_pk, False)
                 await self._db.set_channel_type(ch.channel_id, "unavailable")
                 deactivated += 1
                 continue
@@ -99,7 +101,7 @@ class ChannelsCommandsMixin(_Base):
                 continue
             # Resolved live: clear any stale quarantine flag (channel recovered).
             if getattr(ch, "needs_review", False):
-                await self._db.repos.channels.clear_channel_review(ch.id)
+                await self._db.repos.channels.clear_channel_review(channel_pk)
             await self._db.set_channel_type(ch.channel_id, info["channel_type"])
             updated += 1
         return {

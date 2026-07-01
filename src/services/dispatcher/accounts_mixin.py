@@ -10,7 +10,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from src.database.live_accounts import load_live_usable_accounts
-from src.models import Account
+from src.models import Account, AccountSummary
 
 if TYPE_CHECKING:
     from src.services.dispatcher._base import _DispatcherProtocol
@@ -52,7 +52,7 @@ class AccountsCommandsMixin(_Base):
     async def _handle_accounts_toggle(self, payload: dict[str, Any]) -> dict[str, Any]:
         account_id = int(payload["account_id"])
         summaries = await self._db.get_account_summaries(active_only=False)
-        account_summary = next((a for a in summaries if a.id == account_id), None)
+        account_summary: AccountSummary | Account | None = next((a for a in summaries if a.id == account_id), None)
         live_account: Account | None = None
         if account_summary is None:
             accounts = await load_live_usable_accounts(self._db, active_only=False)

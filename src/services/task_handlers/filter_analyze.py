@@ -43,18 +43,19 @@ class FilterAnalyzeTaskHandler:
 
     async def handle(self, task: CollectionTask) -> None:
         ctx = self._context
-        if task.id is None:
+        task_id = task.id
+        if task_id is None:
             return
 
         if not isinstance(task.payload, FilterAnalyzeTaskPayload):
             await ctx.tasks.update_collection_task(
-                task.id, CollectionTaskStatus.FAILED, error="Unsupported filter-analyze payload"
+                task_id, CollectionTaskStatus.FAILED, error="Unsupported filter-analyze payload"
             )
             return
 
         if ctx.db is None:
             await ctx.tasks.update_collection_task(
-                task.id, CollectionTaskStatus.FAILED, error="Database is not available"
+                task_id, CollectionTaskStatus.FAILED, error="Database is not available"
             )
             return
 
@@ -65,7 +66,7 @@ class FilterAnalyzeTaskHandler:
             # apply_filters writes under the same DB contention that can stall
             # analyze_all, so the timeout must cover both (review on #823).
             report = await analyzer.analyze_all()
-            if await self._is_cancelled(task.id):
+            if await self._is_cancelled(task_id):
                 return report
             await analyzer.apply_filters(report)
             return report
@@ -77,22 +78,22 @@ class FilterAnalyzeTaskHandler:
                 report = await _analyze()
         except asyncio.TimeoutError:
             await ctx.tasks.update_collection_task(
-                task.id,
+                task_id,
                 CollectionTaskStatus.FAILED,
                 error=f"Analysis timed out after {timeout:.0f}s",
             )
             return
         except Exception as exc:
-            logger.exception("filter/analyze task %s failed", task.id)
+            logger.exception("filter/analyze task %s failed", task_id)
             await ctx.tasks.update_collection_task(
-                task.id, CollectionTaskStatus.FAILED, error=str(exc)[:500]
+                task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500]
             )
             return
 
         # An admin can cancel the task from the scheduler page mid-analysis;
         # honour that before any side effects (Codex review on #823).
-        if await self._is_cancelled(task.id):
-            logger.info("filter/analyze task %s cancelled, skipping apply/purge", task.id)
+        if await self._is_cancelled(task_id):
+            logger.info("filter/analyze task %s cancelled, skipping apply/purge", task_id)
             return
 
         purge_note = ""
@@ -104,11 +105,11 @@ class FilterAnalyzeTaskHandler:
             # completes; the purge failure stays visible in the note and the
             # log instead of raising a false "analysis failed" alarm (#676,
             # review on #823).
-            logger.exception("filter/analyze task %s: auto-purge failed", task.id)
+            logger.exception("filter/analyze task %s: auto-purge failed", task_id)
             purge_note = f" auto_purge_failed={str(exc)[:200]}"
 
         await ctx.tasks.update_collection_task(
-            task.id,
+            task_id,
             CollectionTaskStatus.COMPLETED,
             messages_collected=report.filtered_count,
             note=(

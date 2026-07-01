@@ -24,11 +24,13 @@ from src.services.task_handlers.base import build_image_service
 from src.telegram.collector import Collector
 
 if TYPE_CHECKING:
+    from src.config import AppConfig
     from src.database import Database
     from src.search.engine import SearchEngine
     from src.services.image_generation_service import ImageGenerationService
     from src.services.photo_auto_upload_service import PhotoAutoUploadService
     from src.services.photo_task_service import PhotoTaskService
+    from src.telegram.client_pool import ClientPool
     from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
@@ -88,9 +90,9 @@ class UnifiedDispatcher:
         search_engine: "SearchEngine" | None = None,
         pipeline_bundle: PipelineBundle | None = None,
         db: "Database" | None = None,
-        client_pool: object | None = None,
+        client_pool: "ClientPool | None" = None,
         notifier: "Notifier | None" = None,
-        config: object | None = None,
+        config: "AppConfig | None" = None,
         llm_provider_service: object | None = None,
         live_runtime_pause_gate: LiveRuntimePauseGate | None = None,
     ):
