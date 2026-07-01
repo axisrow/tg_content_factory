@@ -20,7 +20,14 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import TypeVar
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    PhotoMode,
+    apply_startup,
+    run_async,
+)
 from src.database.bundles import PhotoLoaderBundle
 from src.models import PhotoAutoUploadJob, PhotoSendMode
 from src.services.channel_service import ChannelService
@@ -502,3 +509,230 @@ def run(args: argparse.Namespace) -> None:
                 dry_run=getattr(args, "dry_run", False),
             )
         )
+
+
+# --------------------------------------------------------------------------- #
+# photo-loader → dialogs / refresh / send / schedule-send / batch-create /
+#                publish / batch-list / items / batch-cancel / auto-create / auto-list /
+#                auto-update / auto-toggle / auto-delete / run-due
+# --------------------------------------------------------------------------- #
+
+photo_loader_app = typer.Typer(no_args_is_help=True, help="Photo upload automation")
+
+
+@photo_loader_app.command("dialogs")
+def photo_loader_dialogs(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+) -> None:
+    """List dialogs for an account."""
+    apply_startup(ctx)
+    run_async(dialogs_impl(ctx.obj.config, phone=phone))
+
+
+@photo_loader_app.command("refresh")
+def photo_loader_refresh(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+) -> None:
+    """Refresh dialog cache for photo loader."""
+    apply_startup(ctx)
+    run_async(refresh_impl(ctx.obj.config, phone=phone))
+
+
+@photo_loader_app.command("send")
+def photo_loader_send(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+    target: str = typer.Option(..., "--target", help="Dialog id"),
+    # ``--files`` is a repeatable option: ``--files a --files b --files c``.
+    # Click options cannot be variadic (``nargs=-1`` is arguments-only), so the
+    # argparse ``--files a b c`` (nargs='+') form maps to the repeated flag here.
+    # Keeping the ``--files`` flag name (rather than a positional variadic) holds
+    # the CLI surface / manifest tuple stable (#1162 drift §2, resolved by keeping
+    # the repeated form as the single direct surface once argparse was removed).
+    files: list[str] = typer.Option(..., "--files", help="Photo file paths (repeat per file)"),
+    mode: PhotoMode = typer.Option(PhotoMode.album, "--mode"),
+    caption: str | None = typer.Option(None, "--caption", help="Caption"),
+) -> None:
+    """Send photos now."""
+    apply_startup(ctx)
+    run_async(
+        send_impl(
+            ctx.obj.config, phone=phone, target=target, files=files, mode=mode.value, caption=caption
+        )
+    )
+
+
+@photo_loader_app.command("schedule-send")
+def photo_loader_schedule_send(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+    target: str = typer.Option(..., "--target", help="Dialog id"),
+    files: list[str] = typer.Option(..., "--files", help="Photo file paths (repeat per file)"),
+    at: str = typer.Option(..., "--at", help="ISO datetime"),
+    mode: PhotoMode = typer.Option(PhotoMode.album, "--mode"),
+    caption: str | None = typer.Option(None, "--caption", help="Caption"),
+) -> None:
+    """Schedule photo send via Telegram."""
+    apply_startup(ctx)
+    run_async(
+        schedule_send_impl(
+            ctx.obj.config,
+            phone=phone,
+            target=target,
+            files=files,
+            at=at,
+            mode=mode.value,
+            caption=caption,
+        )
+    )
+
+
+@photo_loader_app.command("batch-create")
+def photo_loader_batch_create(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+    target: str = typer.Option(..., "--target", help="Dialog id"),
+    manifest: str = typer.Option(..., "--manifest", help="JSON/YAML manifest path"),
+    caption: str | None = typer.Option(None, "--caption", help="Default caption"),
+) -> None:
+    """Create delayed batch from manifest."""
+    apply_startup(ctx)
+    run_async(
+        batch_create_impl(
+            ctx.obj.config, phone=phone, target=target, manifest=manifest, caption=caption
+        )
+    )
+
+
+@photo_loader_app.command("batch-list")
+def photo_loader_batch_list(ctx: typer.Context) -> None:
+    """List photo batches."""
+    apply_startup(ctx)
+    run_async(batch_list_impl(ctx.obj.config))
+
+
+@photo_loader_app.command("publish")
+def photo_loader_publish(
+    ctx: typer.Context,
+    batch_id: int = typer.Argument(..., metavar="batch_id", help="Photo batch id"),
+) -> None:
+    """Publish a held photo batch into the due queue."""
+    apply_startup(ctx)
+    run_async(publish_impl(ctx.obj.config, batch_id=batch_id))
+
+
+@photo_loader_app.command("items")
+def photo_loader_items(
+    ctx: typer.Context,
+    batch_id: int | None = typer.Option(None, "--batch-id", help="Filter by batch id"),
+    limit: int = typer.Option(100, "--limit", help="Max items to show"),
+) -> None:
+    """List photo batch items."""
+    apply_startup(ctx)
+    run_async(items_impl(ctx.obj.config, batch_id=batch_id, limit=limit))
+
+
+@photo_loader_app.command("batch-cancel")
+def photo_loader_batch_cancel(
+    ctx: typer.Context,
+    item_id: int = typer.Argument(..., metavar="id", help="Photo item id"),
+) -> None:
+    """Cancel a photo batch item."""
+    apply_startup(ctx)
+    run_async(batch_cancel_impl(ctx.obj.config, item_id=item_id))
+
+
+@photo_loader_app.command("auto-create")
+def photo_loader_auto_create(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+    target: str = typer.Option(..., "--target", help="Dialog id"),
+    folder: str = typer.Option(..., "--folder", help="Folder path"),
+    interval: int = typer.Option(..., "--interval", help="Interval in minutes"),
+    mode: PhotoMode = typer.Option(PhotoMode.album, "--mode"),
+    caption: str | None = typer.Option(None, "--caption", help="Caption"),
+) -> None:
+    """Create auto-upload job."""
+    apply_startup(ctx)
+    run_async(
+        auto_create_impl(
+            ctx.obj.config,
+            phone=phone,
+            target=target,
+            folder=folder,
+            interval=interval,
+            mode=mode.value,
+            caption=caption,
+        )
+    )
+
+
+@photo_loader_app.command("auto-list")
+def photo_loader_auto_list(ctx: typer.Context) -> None:
+    """List auto-upload jobs."""
+    apply_startup(ctx)
+    run_async(auto_list_impl(ctx.obj.config))
+
+
+@photo_loader_app.command("auto-update")
+def photo_loader_auto_update(
+    ctx: typer.Context,
+    job_id: int = typer.Argument(..., metavar="id", help="Job id"),
+    folder: str | None = typer.Option(None, "--folder", help="Folder path"),
+    interval: int | None = typer.Option(None, "--interval", help="Interval in minutes"),
+    mode: PhotoMode | None = typer.Option(None, "--mode"),
+    caption: str | None = typer.Option(None, "--caption", help="Caption"),
+    active: bool = typer.Option(False, "--active", help="Enable job"),
+    paused: bool = typer.Option(False, "--paused", help="Pause job"),
+) -> None:
+    """Update auto-upload job."""
+    apply_startup(ctx)
+    run_async(
+        auto_update_impl(
+            ctx.obj.config,
+            job_id=job_id,
+            folder=folder,
+            interval=interval,
+            mode=mode.value if mode else None,
+            caption=caption,
+            active=active,
+            paused=paused,
+        )
+    )
+
+
+@photo_loader_app.command("auto-toggle")
+def photo_loader_auto_toggle(
+    ctx: typer.Context,
+    job_id: int = typer.Argument(..., metavar="id", help="Job id"),
+) -> None:
+    """Toggle auto-upload job."""
+    apply_startup(ctx)
+    run_async(auto_toggle_impl(ctx.obj.config, job_id=job_id))
+
+
+@photo_loader_app.command("auto-delete")
+def photo_loader_auto_delete(
+    ctx: typer.Context,
+    job_id: int = typer.Argument(..., metavar="id", help="Job id"),
+) -> None:
+    """Delete auto-upload job."""
+    apply_startup(ctx)
+    run_async(auto_delete_impl(ctx.obj.config, job_id=job_id))
+
+
+@photo_loader_app.command("run-due")
+def photo_loader_run_due(
+    ctx: typer.Context,
+    item_id: int | None = typer.Option(None, "--item-id", help="Run only one due photo item"),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview which auto-job files would be posted (where/when) without sending or marking",
+    ),
+) -> None:
+    """Run due photo items and auto jobs now."""
+    apply_startup(ctx)
+    run_async(run_due_impl(ctx.obj.config, item_id=item_id, dry_run=dry_run))
