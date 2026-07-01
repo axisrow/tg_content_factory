@@ -119,7 +119,7 @@ async def test_list_returns_all_queries(service, bundle):
     await service.add("query1")
     await service.add("query2")
 
-    result = await service.list()
+    result = await service.list_queries()
 
     assert len(result) == 2
 
@@ -131,7 +131,7 @@ async def test_list_active_only(service, bundle):
     id2 = await service.add("inactive query")
     await bundle.set_active(id2, False)
 
-    result = await service.list(active_only=True)
+    result = await service.list_queries(active_only=True)
 
     assert len(result) == 1
     assert result[0].id == id1

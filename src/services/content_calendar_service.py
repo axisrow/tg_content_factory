@@ -75,6 +75,7 @@ class ContentCalendarService:
             for run in runs:
                 if run.pipeline_id is None:
                     continue
+                assert run.id is not None
 
                 pipeline = pipelines_by_id.get(run.pipeline_id)
                 if pipeline is None:
@@ -119,6 +120,7 @@ class ContentCalendarService:
         for run in runs:
             if run.pipeline_id is None:
                 continue
+            assert run.id is not None
 
             pipeline = pipelines_by_id.get(run.pipeline_id)
             if pipeline is None:

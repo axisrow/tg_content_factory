@@ -8,7 +8,7 @@ import weakref
 from collections import Counter
 from dataclasses import dataclass
 from enum import Enum
-from typing import Awaitable, Callable, TypeVar
+from typing import Awaitable, Callable, TypeVar, cast
 
 from tenacity import AsyncRetrying, RetryCallState, retry_if_exception, stop_after_attempt
 from tenacity.wait import wait_exponential, wait_exponential_jitter
@@ -242,7 +242,7 @@ class ErrorRecoveryService:
         error = retry_state.outcome.exception()
         if error is None:
             return
-        category = ErrorClassifier.classify(error)
+        category = ErrorClassifier.classify(cast(Exception, error))
         delay = retry_state.next_action.sleep if retry_state.next_action else 0.0
         logger.warning(
             "Attempt %d/%d failed (%s): %s. Retrying in %.1fs",

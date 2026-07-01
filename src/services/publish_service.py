@@ -3,12 +3,32 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from typing import Any, Protocol
 
 from src.database import Database
 from src.models import ContentPipeline, GenerationRun, PipelinePublishMode, PipelineTarget
 from src.telegram.backends import adapt_transport_session
 
 logger = logging.getLogger(__name__)
+
+
+class _PublishClientPool(Protocol):
+    async def get_client_by_phone(
+        self,
+        phone: str,
+        *,
+        wait_for_flood: bool = False,
+    ) -> tuple[Any, str] | None: ...
+
+    async def release_client(self, phone: str) -> None: ...
+
+    async def resolve_dialog_entity(
+        self,
+        session: Any,
+        phone: str,
+        dialog_id: int,
+        target_type: str | None = None,
+    ) -> Any: ...
 
 
 @dataclass
@@ -34,7 +54,7 @@ class PublishService:
     - Updating generation_runs.published_at on success
     """
 
-    def __init__(self, db: Database, client_pool: object) -> None:
+    def __init__(self, db: Database, client_pool: _PublishClientPool | None) -> None:
         self._db = db
         self._client_pool = client_pool
 

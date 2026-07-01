@@ -36,13 +36,14 @@ class StatsTaskHandler:
 
     async def handle_stats_all(self, task: CollectionTask) -> None:
         ctx = self._context
-        if task.id is None:
+        task_id = task.id
+        if task_id is None:
             return
 
         payload = task.payload
         if not isinstance(payload, StatsAllTaskPayload):
             await ctx.tasks.update_collection_task(
-                task.id, CollectionTaskStatus.FAILED, error="Unsupported stats task payload"
+                task_id, CollectionTaskStatus.FAILED, error="Unsupported stats task payload"
             )
             return
 
@@ -65,7 +66,7 @@ class StatsTaskHandler:
 
         if not remaining_ids:
             await ctx.tasks.update_collection_task(
-                task.id,
+                task_id,
                 CollectionTaskStatus.COMPLETED,
                 messages_collected=len(channel_ids),
             )
@@ -78,7 +79,7 @@ class StatsTaskHandler:
                 collector_wait_sec += ctx.poll_interval_sec
                 if collector_wait_sec >= ctx.channel_timeout_sec:
                     await ctx.tasks.update_collection_task(
-                        task.id,
+                        task_id,
                         CollectionTaskStatus.FAILED,
                         messages_collected=channels_ok + channels_err,
                         error="Timed out waiting for collector to finish",
@@ -96,7 +97,7 @@ class StatsTaskHandler:
                 remaining_channel_ids=list(remaining_ids),
             )
             await ctx.tasks.reschedule_stats_task(
-                task.id,
+                task_id,
                 payload=reschedule_payload,
                 run_after=datetime.now(timezone.utc),
                 messages_collected=channels_ok + channels_err,
@@ -140,7 +141,7 @@ class StatsTaskHandler:
         async def _persist_progress() -> None:
             progress_payload = await _snapshot_payload()
             await ctx.tasks.persist_stats_progress(
-                task.id,
+                task_id,
                 payload=progress_payload,
                 messages_collected=progress_payload.channels_ok + progress_payload.channels_err,
             )
@@ -171,7 +172,7 @@ class StatsTaskHandler:
         async def _worker() -> None:
             nonlocal cancelled, stop_workers
             while not ctx.stop_event.is_set():
-                fresh = await ctx.tasks.get_collection_task(task.id)
+                fresh = await ctx.tasks.get_collection_task(task_id)
                 if fresh and fresh.status == CollectionTaskStatus.CANCELLED:
                     async with state_lock:
                         cancelled = True
@@ -210,7 +211,7 @@ class StatsTaskHandler:
                     logger.error("Stats error for channel %s: %s", channel.channel_id, exc)
                     await _record_processed(channel_id, ok=False)
                 else:
-                    fresh = await ctx.tasks.get_collection_task(task.id)
+                    fresh = await ctx.tasks.get_collection_task(task_id)
                     if fresh and fresh.status == CollectionTaskStatus.CANCELLED:
                         async with state_lock:
                             cancelled = True
@@ -267,7 +268,7 @@ class StatsTaskHandler:
         if fail_error is not None:
             progress_payload = await _snapshot_payload()
             await ctx.tasks.update_collection_task(
-                task.id,
+                task_id,
                 CollectionTaskStatus.FAILED,
                 messages_collected=progress_payload.channels_ok + progress_payload.channels_err,
                 error=fail_error,
@@ -278,7 +279,7 @@ class StatsTaskHandler:
         if reschedule_at is not None or progress_payload.remaining_channel_ids:
             cooldown_at = datetime.now(timezone.utc) + timedelta(seconds=self._stats_cooldown_sec())
             await ctx.tasks.reschedule_stats_task(
-                task.id,
+                task_id,
                 payload=progress_payload,
                 run_after=reschedule_at or cooldown_at,
                 messages_collected=progress_payload.channels_ok + progress_payload.channels_err,
@@ -286,7 +287,7 @@ class StatsTaskHandler:
             return
 
         await ctx.tasks.update_collection_task(
-            task.id,
+            task_id,
             CollectionTaskStatus.COMPLETED,
             messages_collected=channels_ok + channels_err,
         )
@@ -335,12 +336,13 @@ class StatsTaskHandler:
 
     async def handle_sq_stats(self, task: CollectionTask) -> None:
         ctx = self._context
-        if task.id is None:
+        task_id = task.id
+        if task_id is None:
             return
 
         if not ctx.sq_bundle:
             await ctx.tasks.update_collection_task(
-                task.id,
+                task_id,
                 CollectionTaskStatus.COMPLETED,
                 note="No search query bundle configured",
             )
@@ -349,7 +351,7 @@ class StatsTaskHandler:
         payload = task.payload
         if not isinstance(payload, SqStatsTaskPayload):
             await ctx.tasks.update_collection_task(
-                task.id,
+                task_id,
                 CollectionTaskStatus.FAILED,
                 error="Invalid SQ_STATS payload",
             )
@@ -358,7 +360,7 @@ class StatsTaskHandler:
         sq = await ctx.sq_bundle.get_by_id(payload.sq_id)
         if not sq:
             await ctx.tasks.update_collection_task(
-                task.id,
+                task_id,
                 CollectionTaskStatus.COMPLETED,
                 note=f"Search query id={payload.sq_id} not found",
             )
@@ -374,14 +376,14 @@ class StatsTaskHandler:
                     break
             await ctx.sq_bundle.record_stat(payload.sq_id, today_count)
             await ctx.tasks.update_collection_task(
-                task.id,
+                task_id,
                 CollectionTaskStatus.COMPLETED,
                 messages_collected=today_count,
                 note=f"sq={sq.query}",
             )
         except Exception as exc:
             await ctx.tasks.update_collection_task(
-                task.id,
+                task_id,
                 CollectionTaskStatus.FAILED,
                 error=str(exc)[:500],
             )

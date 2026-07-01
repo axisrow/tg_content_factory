@@ -339,6 +339,7 @@ class TelegramCommandDispatcher(
         retry_busy: bool = True,
         **kwargs: Any,
     ) -> None:
+        assert command_id is not None
         delay = COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC
         while True:
             try:
