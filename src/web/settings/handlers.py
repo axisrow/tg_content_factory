@@ -6,6 +6,7 @@ import os
 from collections import Counter
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 
 from fastapi import Request
 
@@ -205,7 +206,7 @@ def _bulk_test_lock(request: Request) -> asyncio.Lock:
     return lock
 
 
-def _bulk_test_status_payload(request: Request) -> dict[str, object]:
+def _bulk_test_status_payload(request: Request) -> dict[str, Any]:
     status = getattr(request.app.state, "agent_provider_bulk_test_status", None)
     if status is None:
         status = {
@@ -226,11 +227,11 @@ def _bulk_test_status_payload(request: Request) -> dict[str, object]:
     return status
 
 
-def _replace_bulk_test_status(request: Request, status: dict[str, object]) -> None:
+def _replace_bulk_test_status(request: Request, status: dict[str, Any]) -> None:
     request.app.state.agent_provider_bulk_test_status = status
 
 
-def _bulk_test_recent_event(status: dict[str, object], message: str) -> None:
+def _bulk_test_recent_event(status: dict[str, Any], message: str) -> None:
     events = list(status.get("recent_events", []))
     events.append(f"{datetime.now(UTC).astimezone().strftime('%H:%M:%S')} {message}")
     status["recent_events"] = events[-12:]
@@ -275,7 +276,7 @@ async def _run_bulk_test_job(
         configs = await service.load_provider_configs()
     status_summary_counts: Counter[str] = Counter({"supported": 0, "unsupported": 0, "unknown": 0})
     status_summary = dict(status_summary_counts)
-    status = {
+    status: dict[str, Any] = {
         "running": True,
         "started_at": datetime.now(UTC).isoformat(),
         "finished_at": "",
@@ -788,7 +789,7 @@ async def handle_save_agent_settings(request: Request, form: AgentSettingsForm) 
     return SettingsFlash(msg="agent_saved")
 
 
-async def handle_add_agent_provider(request: Request, form: ProviderAddForm) -> SettingsFlash:
+async def handle_add_agent_provider(request: Request, form: ProviderAddForm) -> SettingsFlash | SettingsJson:
     service = _agent_provider_service(request)
     if not service.writes_enabled:
         return SettingsFlash(error="agent_provider_secret_required")
@@ -811,7 +812,7 @@ async def handle_add_agent_provider(request: Request, form: ProviderAddForm) -> 
     return SettingsFlash(msg="agent_saved")
 
 
-async def handle_save_agent_providers(request: Request, form: ProviderConfigForm) -> SettingsFlash:
+async def handle_save_agent_providers(request: Request, form: ProviderConfigForm) -> SettingsFlash | SettingsJson:
     service = _agent_provider_service(request)
     if not service.writes_enabled:
         return SettingsFlash(error="agent_provider_secret_required")
@@ -853,7 +854,7 @@ async def handle_save_agent_providers(request: Request, form: ProviderConfigForm
     return SettingsFlash(msg="agent_saved")
 
 
-async def handle_delete_agent_provider(request: Request, provider_name: str) -> SettingsFlash:
+async def handle_delete_agent_provider(request: Request, provider_name: str) -> SettingsFlash | SettingsJson:
     service = _agent_provider_service(request)
     if not service.writes_enabled:
         return SettingsFlash(error="agent_provider_secret_required")
@@ -874,7 +875,7 @@ async def handle_delete_agent_provider(request: Request, provider_name: str) -> 
 
 async def _agent_provider_write_guard(
     request: Request, provider_name: str
-) -> tuple[ProviderConfigService | None, SettingsJson | None]:
+) -> tuple[ProviderConfigService | None, SettingsFlash | SettingsJson | None]:
     """Shared write-guard for per-provider agent endpoints.
 
     Requires write access (SESSION_ENCRYPTION_KEY), agent dev-mode, and a known
@@ -899,7 +900,7 @@ async def handle_refresh_agent_provider_models(
     request: Request,
     provider_name: str,
     form: ProviderConfigForm,
-) -> SettingsJson:
+) -> SettingsFlash | SettingsJson:
     service, guard_error = await _agent_provider_write_guard(request, provider_name)
     if guard_error is not None:
         return guard_error
@@ -925,7 +926,7 @@ async def handle_refresh_agent_provider_models(
 async def handle_refresh_all_agent_provider_models(
     request: Request,
     form: ProviderConfigForm,
-) -> SettingsJson:
+) -> SettingsFlash | SettingsJson:
     service = _agent_provider_service(request)
     if not service.writes_enabled:
         return SettingsJson(
@@ -963,7 +964,7 @@ async def handle_probe_agent_provider_model(
     request: Request,
     provider_name: str,
     form: ProviderConfigForm,
-) -> SettingsJson:
+) -> SettingsFlash | SettingsJson:
     service, guard_error = await _agent_provider_write_guard(request, provider_name)
     if guard_error is not None:
         return guard_error
@@ -1049,7 +1050,7 @@ async def handle_test_all_agent_provider_models(
                 },
                 status_code=409,
             )
-        initial_status = {
+        initial_status: dict[str, Any] = {
             "running": True,
             "started_at": datetime.now(UTC).isoformat(),
             "finished_at": "",
