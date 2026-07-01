@@ -5,6 +5,7 @@ import inspect
 import logging
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 
 from src.database import Database
 from src.database.bundles import ChannelBundle
@@ -681,8 +682,9 @@ class CollectionQueue:
                     task.channel_id,
                 )
                 continue
-            force = bool((task.payload or {}).get("force", False))
-            full = bool((task.payload or {}).get("full", False))
+            payload = cast(dict[str, Any], task.payload or {})
+            force = bool(payload.get("force", False))
+            full = bool(payload.get("full", False))
             if resolve_backoff_remaining > 0 and channel.username:
                 run_after = datetime.now(timezone.utc) + timedelta(
                     seconds=resolve_backoff_remaining + RESOLVE_USERNAME_BACKOFF_BUFFER_SEC

@@ -17,7 +17,6 @@ from src.services.task_handlers import (
     PhotoTaskHandler,
     PipelineTaskHandler,
     StatsTaskHandler,
-    TaskHandler,
     TaskHandlerContext,
     TranslationTaskHandler,
 )
@@ -33,7 +32,8 @@ if TYPE_CHECKING:
     from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
-TTaskHandler = TypeVar("TTaskHandler", bound=TaskHandler)
+TTaskHandler = TypeVar("TTaskHandler")
+_TaskDispatchHandler = Callable[[CollectionTask], Awaitable[None]]
 
 _HANDLER_CLASSES = (
     StatsTaskHandler,
@@ -71,6 +71,8 @@ _DB_BUSY_NON_RETRY_NOTE = "Not retried after transient database lock"
 
 class UnifiedDispatcher:
     """Polls DB for non-CHANNEL_COLLECT tasks and dispatches them to task handlers."""
+
+    __handler_map: dict[CollectionTaskType, _TaskDispatchHandler]
 
     def __init__(
         self,
@@ -131,7 +133,7 @@ class UnifiedDispatcher:
             llm_provider_service=self._llm_provider_service,
         )
 
-    def _handler(self, handler_cls: type[TTaskHandler]) -> TTaskHandler:
+    def _handler(self, handler_cls: Callable[[TaskHandlerContext], TTaskHandler]) -> TTaskHandler:
         return handler_cls(self._handler_context())
 
     async def _build_image_service(self) -> "ImageGenerationService":
@@ -253,7 +255,7 @@ class UnifiedDispatcher:
         except Exception:
             logger.exception("Failed to mark DB-busy side-effecting task %s as failed", task.id)
 
-    def _handler_map(self) -> dict[CollectionTaskType, Callable[[CollectionTask], Awaitable[None]]]:
+    def _handler_map(self) -> dict[CollectionTaskType, _TaskDispatchHandler]:
         try:
             return self.__handler_map
         except AttributeError:
@@ -274,6 +276,7 @@ class UnifiedDispatcher:
     async def _dispatch(self, task: CollectionTask) -> None:
         handler = self._handler_map().get(task.task_type)
         if handler is None:
+            assert task.id is not None, "Claimed collection task id must be set"
             await self._tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.FAILED,
