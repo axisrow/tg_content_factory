@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from concurrent.futures import CancelledError as FutureCancelledError
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 _T = TypeVar("_T")
 RuntimeKind = Literal["live", "snapshot", "none"]
@@ -19,6 +19,10 @@ DEFAULT_SYNC_TIMEOUT_SEC = 120.0
 # provider_adapters.py) so the adapter times out first with its specific
 # message and subprocess kill — the generic bridge deadline is only a backstop.
 DEFAULT_TOOL_SYNC_TIMEOUT_SEC = MappingProxyType({"generate_image": 240.0})
+
+if TYPE_CHECKING:
+    from src.database import Database
+    from src.telegram.client_pool import ClientPool
 
 
 class AgentToolRuntimeError(RuntimeError):
@@ -42,9 +46,9 @@ def detect_runtime_kind(client_pool: object | None) -> RuntimeKind:
 class AgentRuntimeContext:
     """Runtime dependencies shared by async and thread-based agent tools."""
 
-    db: object
+    db: Database
     config: object | None = None
-    client_pool: object | None = None
+    client_pool: ClientPool | None = None
     scheduler_manager: object | None = None
     runtime_kind: RuntimeKind = "none"
     owner_loop: asyncio.AbstractEventLoop | None = None
@@ -59,9 +63,9 @@ class AgentRuntimeContext:
     def build(
         cls,
         *,
-        db: object,
+        db: Database,
         config: object | None = None,
-        client_pool: object | None = None,
+        client_pool: ClientPool | None = None,
         scheduler_manager: object | None = None,
         runtime_kind: RuntimeKind | None = None,
         owner_loop: asyncio.AbstractEventLoop | None = None,
@@ -111,7 +115,10 @@ class AgentRuntimeContext:
                     f"Agent tool '{tool_name}' cannot synchronously block the live Telegram owner event loop.",
                     retryable=True,
                 )
-            future = asyncio.run_coroutine_threadsafe(operation(), self.owner_loop)
+            future = asyncio.run_coroutine_threadsafe(
+                cast(Coroutine[Any, Any, _T], operation()),
+                self.owner_loop,
+            )
             cancel_event = None
             permission_wait_tracker = None
             try:
@@ -183,7 +190,7 @@ class AgentRuntimeContext:
                         ) from exc
 
         if current_loop is None:
-            return asyncio.run(operation())
+            return asyncio.run(cast(Coroutine[Any, Any, _T], operation()))
 
         raise AgentToolRuntimeError(
             f"Agent tool '{tool_name}' cannot run inside an active event loop without a sync bridge.",

@@ -6,6 +6,7 @@ import os
 import shutil
 import time
 from contextlib import suppress
+from typing import Any, Protocol, cast
 
 from claude_agent_sdk import (
     ClaudeAgentOptions,
@@ -35,6 +36,14 @@ from src.database import Database
 from src.utils.json import safe_json_dumps
 
 logger = logging.getLogger(__name__)
+
+
+class _ClosableAsyncIterator(Protocol):
+    def __aiter__(self) -> "_ClosableAsyncIterator": ...
+
+    async def __anext__(self) -> object: ...
+
+    async def aclose(self) -> None: ...
 
 
 class ClaudeSdkBackend:
@@ -123,8 +132,8 @@ class ClaudeSdkBackend:
         if "[api:request]" in _lower:
             api_request_count[0] += 1
             api_request_ts[0] = time.monotonic()
-            label = f"Жду ответ Claude API #{api_request_count[0]}: «{prompt_short}»"
-            payload = safe_json_dumps({"type": "status", "text": label}, ensure_ascii=False)
+            request_label = f"Жду ответ Claude API #{api_request_count[0]}: «{prompt_short}»"
+            payload = safe_json_dumps({"type": "status", "text": request_label}, ensure_ascii=False)
             try:
                 queue.put_nowait(f"data: {payload}\n\n")
             except Exception:
@@ -203,7 +212,7 @@ class ClaudeSdkBackend:
 
         return ClaudeAgentOptions(
             system_prompt=system_prompt,
-            mcp_servers={"telegram_db": self._server},
+            mcp_servers={"telegram_db": cast(Any, self._server)},
             tools=enabled_builtins or None,
             allowed_tools=allowed,
             cli_path=cli_path or None,
@@ -402,7 +411,10 @@ class ClaudeSdkBackend:
             first_event_logged = False
             _api_request_count[0] = 0
             try:
-                aiter = query(prompt=_as_prompt_stream(prompt), options=options).__aiter__()
+                aiter = cast(
+                    _ClosableAsyncIterator,
+                    query(prompt=_as_prompt_stream(prompt), options=options).__aiter__(),
+                )
                 try:
                   while True:
                     if not first_event_logged:

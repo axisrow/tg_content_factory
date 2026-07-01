@@ -26,6 +26,10 @@ import threading
 import uuid
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.agent.tools.permissions import ToolAccessState
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +68,7 @@ class AgentRequestContext:
     thread_id: int
     queue: asyncio.Queue              # SSE queue for this request
     db_permissions: dict[str, bool] | None = None  # legacy boolean view
-    tool_access_policy: dict[str, object] | None = None
+    tool_access_policy: dict[str, ToolAccessState] | None = None
     permission_gate: PermissionGate | None = None
     permission_timeout: int | None = None  # legacy config field; prompts no longer time out
     cancel_event: threading.Event | None = None

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from typing import Any, cast
 from unittest.mock import Mock
 
 
@@ -126,7 +127,7 @@ def format_notification_status(bot: object | None, target_status: object | None 
 
 
 def format_filter_report(report: object) -> str:
-    results = list(_value(report, "results", []) or [])
+    results = list(cast(Iterable[object], _value(report, "results", []) or []))
     if not results:
         return "Нет каналов для анализа фильтров. 0 каналов проверено, 0 рекомендовано к фильтрации."
 
@@ -137,7 +138,7 @@ def format_filter_report(report: object) -> str:
     ]
     for result in flagged:
         flags_value = _value(result, "flags", []) or []
-        flags = ", ".join(str(flag) for flag in flags_value) if flags_value else "—"
+        flags = ", ".join(str(flag) for flag in cast(Iterable[object], flags_value)) if flags_value else "—"
         title = _value(result, "title") or "Без названия"
         lines.append(f"- {title} (id={_value(result, 'channel_id', '?')}): {flags}")
     return "\n".join(lines)
@@ -148,7 +149,7 @@ def format_channel_stats(stats: Mapping[int, object], channels: Iterable[object]
         return "Статистика каналов пока не собрана."
 
     channels_by_id = {
-        int(channel_id): channel
+        int(cast(Any, channel_id)): channel
         for channel in channels or []
         if (channel_id := _value(channel, "channel_id")) is not None
     }
