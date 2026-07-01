@@ -6,8 +6,15 @@ import logging
 from datetime import timedelta
 from pathlib import Path
 
+import typer
+
 from src.cli import runtime
-from src.cli.commands.common import resolve_channel
+from src.cli.commands.common import (
+    _NEG_ID_POSITIONAL,
+    apply_startup,
+    resolve_channel,
+    run_async,
+)
 from src.models import Channel, CollectionTaskStatus
 from src.parsers import deduplicate_identifiers, parse_file, parse_identifiers
 from src.services.channel_onboarding import (
@@ -841,3 +848,213 @@ def run(args: argparse.Namespace) -> None:
         coro = list_impl(config_path)
 
     asyncio.run(coro)
+
+
+# --------------------------------------------------------------------------- #
+# channel → list / add / delete / toggle / collect / stats / refresh-types /
+#   refresh-meta / review-list / review-confirm / review-keep / import /
+#   add-bulk / list-for-import / tag (NESTED depth-2: list/add/delete/set/get)
+# --------------------------------------------------------------------------- #
+
+channel_app = typer.Typer(no_args_is_help=True, help="Channel management")
+
+# Nested depth-2 group: ``channel tag`` is its own Typer added onto the channel
+# sub-app via ``add_typer`` — the exact path ``channel tag <action>`` is the
+# fragile frozen invariant of Wave 4.
+channel_tag_app = typer.Typer(no_args_is_help=True, help="Manage channel tags")
+channel_app.add_typer(channel_tag_app, name="tag")
+
+
+@channel_app.command("list")
+def channel_list(ctx: typer.Context) -> None:
+    """List channels."""
+    apply_startup(ctx)
+    run_async(list_impl(ctx.obj.config))
+
+
+@channel_app.command("add", context_settings=_NEG_ID_POSITIONAL)
+def channel_add(
+    ctx: typer.Context,
+    identifier: str = typer.Argument(..., help="Username, link, or numeric ID"),
+) -> None:
+    """Add a channel."""
+    apply_startup(ctx)
+    run_async(add_impl(ctx.obj.config, identifier=identifier))
+
+
+@channel_app.command("delete", context_settings=_NEG_ID_POSITIONAL)
+def channel_delete(
+    ctx: typer.Context,
+    identifier: str = typer.Argument(..., help="Channel pk, channel_id, or @username"),
+) -> None:
+    """Delete a channel."""
+    apply_startup(ctx)
+    run_async(delete_impl(ctx.obj.config, identifier=identifier))
+
+
+@channel_app.command("toggle", context_settings=_NEG_ID_POSITIONAL)
+def channel_toggle(
+    ctx: typer.Context,
+    identifier: str = typer.Argument(..., help="Channel pk, channel_id, or @username"),
+) -> None:
+    """Toggle channel active state."""
+    apply_startup(ctx)
+    run_async(toggle_impl(ctx.obj.config, identifier=identifier))
+
+
+@channel_app.command("collect", context_settings=_NEG_ID_POSITIONAL)
+def channel_collect(
+    ctx: typer.Context,
+    identifier: str = typer.Argument(..., help="Channel pk, channel_id, or @username"),
+    full: bool = typer.Option(False, "--full", help="Explicitly backfill the full channel history"),
+) -> None:
+    """Collect a single channel one-shot."""
+    apply_startup(ctx)
+    run_async(collect_impl(ctx.obj.config, identifier=identifier, full=full))
+
+
+@channel_app.command("stats", context_settings=_NEG_ID_POSITIONAL)
+def channel_stats(
+    ctx: typer.Context,
+    identifier: str | None = typer.Argument(None, help="Channel pk, channel_id, or @username"),
+    all_channels: bool = typer.Option(False, "--all", help="Collect stats for all active channels"),
+    max_channels: int | None = typer.Option(
+        None, "--max-channels", help="Maximum active channels to process in this bounded stats-all run"
+    ),
+) -> None:
+    """Collect channel stats."""
+    apply_startup(ctx)
+    run_async(
+        stats_impl(
+            ctx.obj.config, all_channels=all_channels, identifier=identifier, max_channels=max_channels
+        )
+    )
+
+
+@channel_app.command("refresh-types")
+def channel_refresh_types(ctx: typer.Context) -> None:
+    """Re-resolve channel types for all active channels."""
+    apply_startup(ctx)
+    run_async(refresh_types_impl(ctx.obj.config))
+
+
+@channel_app.command("refresh-meta", context_settings=_NEG_ID_POSITIONAL)
+def channel_refresh_meta(
+    ctx: typer.Context,
+    identifier: str | None = typer.Argument(None, help="Channel pk, channel_id, or @username (omit for all)"),
+    all_channels: bool = typer.Option(False, "--all", help="Refresh metadata for all active channels"),
+) -> None:
+    """Refresh channel metadata."""
+    apply_startup(ctx)
+    run_async(
+        refresh_meta_impl(ctx.obj.config, all_channels=all_channels, identifier=identifier)
+    )
+
+
+@channel_app.command("review-list")
+def channel_review_list(ctx: typer.Context) -> None:
+    """List channels quarantined for review."""
+    apply_startup(ctx)
+    run_async(review_list_impl(ctx.obj.config))
+
+
+@channel_app.command("review-confirm", context_settings=_NEG_ID_POSITIONAL)
+def channel_review_confirm(
+    ctx: typer.Context,
+    identifier: str = typer.Argument(..., help="Channel pk, channel_id, or @username"),
+) -> None:
+    """Confirm a quarantined channel is dead and deactivate it."""
+    apply_startup(ctx)
+    run_async(review_confirm_impl(ctx.obj.config, identifier=identifier))
+
+
+@channel_app.command("review-keep", context_settings=_NEG_ID_POSITIONAL)
+def channel_review_keep(
+    ctx: typer.Context,
+    identifier: str = typer.Argument(..., help="Channel pk, channel_id, or @username"),
+) -> None:
+    """Clear a channel's review flag and keep it active."""
+    apply_startup(ctx)
+    run_async(review_keep_impl(ctx.obj.config, identifier=identifier))
+
+
+@channel_app.command("import", context_settings=_NEG_ID_POSITIONAL)
+def channel_import(
+    ctx: typer.Context,
+    source: str = typer.Argument(..., help="Path to .txt/.csv file, or comma-separated identifiers"),
+) -> None:
+    """Bulk-import channels from a file or identifier list."""
+    apply_startup(ctx)
+    run_async(import_impl(ctx.obj.config, source=source))
+
+
+@channel_app.command("add-bulk")
+def channel_add_bulk(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone"),
+    dialog_ids: str = typer.Option(..., "--dialog-ids", help="Comma-separated dialog IDs to add as channels"),
+) -> None:
+    """Add channels from an account's dialogs by id list."""
+    apply_startup(ctx)
+    run_async(add_bulk_impl(ctx.obj.config, phone=phone, dialog_ids=dialog_ids))
+
+
+@channel_app.command("list-for-import")
+def channel_list_for_import(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON instead of a table"),
+) -> None:
+    """List dialogs with an already-added flag."""
+    apply_startup(ctx)
+    run_async(list_for_import_impl(ctx.obj.config, as_json=as_json))
+
+
+# ---- nested: channel tag <action> ---------------------------------------- #
+
+
+@channel_tag_app.command("list")
+def channel_tag_list(ctx: typer.Context) -> None:
+    """List all channel tags."""
+    apply_startup(ctx)
+    run_async(_tag_impl(ctx.obj.config, "list"))
+
+
+@channel_tag_app.command("add")
+def channel_tag_add(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Tag name"),
+) -> None:
+    """Create a channel tag."""
+    apply_startup(ctx)
+    run_async(_tag_impl(ctx.obj.config, "add", name=name))
+
+
+@channel_tag_app.command("delete")
+def channel_tag_delete(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., help="Tag name"),
+) -> None:
+    """Delete a channel tag."""
+    apply_startup(ctx)
+    run_async(_tag_impl(ctx.obj.config, "delete", name=name))
+
+
+@channel_tag_app.command("set")
+def channel_tag_set(
+    ctx: typer.Context,
+    pk: int = typer.Argument(..., help="Channel primary key"),
+    tags: str = typer.Argument(..., help="Comma-separated tag names"),
+) -> None:
+    """Replace a channel's tags."""
+    apply_startup(ctx)
+    run_async(_tag_impl(ctx.obj.config, "set", pk=pk, tags=tags))
+
+
+@channel_tag_app.command("get")
+def channel_tag_get(
+    ctx: typer.Context,
+    pk: int = typer.Argument(..., help="Channel primary key"),
+) -> None:
+    """Show a channel's tags."""
+    apply_startup(ctx)
+    run_async(_tag_impl(ctx.obj.config, "get", pk=pk))

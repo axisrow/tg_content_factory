@@ -16,7 +16,13 @@ import asyncio
 import inspect
 from unittest.mock import Mock
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    apply_startup,
+    run_async,
+)
 from src.services.notification_service import NotificationService
 from src.services.notification_target_service import NotificationTargetService
 
@@ -192,3 +198,58 @@ def run(args: argparse.Namespace) -> None:
         asyncio.run(set_account_impl(args.config, phone=args.phone))
     elif action == "dry-run":
         asyncio.run(dry_run_impl(args.config))
+
+
+# --------------------------------------------------------------------------- #
+# notification → setup / status / delete / test / dry-run / set-account
+# --------------------------------------------------------------------------- #
+
+notification_app = typer.Typer(no_args_is_help=True, help="Personal notification bot management")
+
+
+@notification_app.command("setup")
+def notification_setup(ctx: typer.Context) -> None:
+    """Create personal notification bot via BotFather."""
+    apply_startup(ctx)
+    run_async(setup_impl(ctx.obj.config))
+
+
+@notification_app.command("status")
+def notification_status(ctx: typer.Context) -> None:
+    """Show notification bot status."""
+    apply_startup(ctx)
+    run_async(status_impl(ctx.obj.config))
+
+
+@notification_app.command("delete")
+def notification_delete(ctx: typer.Context) -> None:
+    """Delete notification bot via BotFather."""
+    apply_startup(ctx)
+    run_async(delete_impl(ctx.obj.config))
+
+
+@notification_app.command("test")
+def notification_test(
+    ctx: typer.Context,
+    message: str = typer.Option("Тестовое уведомление", "--message", help="Message text"),
+) -> None:
+    """Send a test notification message."""
+    apply_startup(ctx)
+    run_async(test_impl(ctx.obj.config, message=message))
+
+
+@notification_app.command("dry-run")
+def notification_dry_run(ctx: typer.Context) -> None:
+    """Preview notification matches without sending."""
+    apply_startup(ctx)
+    run_async(dry_run_impl(ctx.obj.config))
+
+
+@notification_app.command("set-account")
+def notification_set_account(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone number"),
+) -> None:
+    """Set account for notification bot."""
+    apply_startup(ctx)
+    run_async(set_account_impl(ctx.obj.config, phone=phone))
