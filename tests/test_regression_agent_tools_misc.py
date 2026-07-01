@@ -621,7 +621,7 @@ class TestPipelineToolErrors:
 
     async def test_list_pipelines_exception(self, pipe_setup):
         handlers, _ = pipe_setup
-        with patch("src.services.pipeline_service.PipelineService.list",
+        with patch("src.services.pipeline_service.PipelineService.list_pipelines",
                     new_callable=AsyncMock, side_effect=RuntimeError("fail")):
             result = await handlers["list_pipelines"]({})
             assert "ошибка" in _text(result).lower()
@@ -1011,5 +1011,4 @@ class TestAgentManagerEdge:
 # ===========================================================================
 # 24. cli/commands/test.py — _run_write_checks (via real in-memory DB)
 # ===========================================================================
-
 

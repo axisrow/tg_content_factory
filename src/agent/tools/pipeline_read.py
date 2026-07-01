@@ -26,7 +26,7 @@ def register_pipeline_read_tools(db: Any, ctx: Any) -> list[Any]:
         try:
             svc = ctx.pipeline_service()
             active_only = arg_bool(args, "active_only", False)
-            pipelines = await svc.list(active_only=active_only)
+            pipelines = await svc.list_pipelines(active_only=active_only)
             if not pipelines:
                 return _text_response("Пайплайны не найдены.")
             lines = [f"Пайплайны ({len(pipelines)}):"]

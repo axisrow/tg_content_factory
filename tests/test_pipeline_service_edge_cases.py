@@ -72,14 +72,14 @@ async def pipeline_id(svc):
 
 @pytest.mark.anyio
 async def test_list_returns_all(svc, pipeline_id):
-    items = await svc.list()
+    items = await svc.list_pipelines()
     assert len(items) == 1
     assert items[0].name == "TestPipeline"
 
 
 @pytest.mark.anyio
 async def test_list_active_only(svc, pipeline_id):
-    items = await svc.list(active_only=True)
+    items = await svc.list_pipelines(active_only=True)
     assert len(items) == 1
 
 
@@ -1004,7 +1004,7 @@ async def test_init_with_database(db):
     """PipelineService accepts Database and wraps it in PipelineBundle."""
     svc = PipelineService(db)
     # Should not raise -- bundle was created from db
-    items = await svc.list()
+    items = await svc.list_pipelines()
     assert isinstance(items, list)
 
 
