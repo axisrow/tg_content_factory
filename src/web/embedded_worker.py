@@ -199,7 +199,9 @@ class EmbeddedWorker:
         finally:
             logger.info("[embedded-worker] stopping")
             try:
-                await stop_container(self._container)
+                container = self._container
+                assert container is not None, "Embedded worker container is required during shutdown"
+                await stop_container(container)
             except Exception:
                 logger.exception("[embedded-worker] stop_container raised")
             self._container = None

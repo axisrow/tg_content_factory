@@ -68,13 +68,13 @@ async def fragment_overview(request: Request):
             and a.session_status == AccountSessionStatus.OK
             and a.phone in deps.get_pool(request).clients
         ):
-            until = a.flood_wait_until
-            if until is None:
+            flood_until = a.flood_wait_until
+            if flood_until is None:
                 all_connected_flooded = False
             else:
-                if until.tzinfo is None:
-                    until = until.replace(tzinfo=timezone.utc)
-                if not is_blocking_flood_wait_until(until, now=now):
+                if flood_until.tzinfo is None:
+                    flood_until = flood_until.replace(tzinfo=timezone.utc)
+                if not is_blocking_flood_wait_until(flood_until, now=now):
                     all_connected_flooded = False
     if connected_count == 0:
         all_connected_flooded = False

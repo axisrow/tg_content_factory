@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, TypeVar
+from typing import Any, TypeAlias, TypeVar
 
 from fastapi import Request
 from pydantic import BaseModel, ConfigDict, ValidationError
@@ -24,7 +24,7 @@ class SettingsFormError(ValueError):
 
 FormMapping = Mapping[str, Any]
 TForm = TypeVar("TForm", bound=BaseModel)
-SettingsFormResult = TForm | SettingsFormError
+SettingsFormResult: TypeAlias = TForm | SettingsFormError
 
 
 class _FrozenForm(BaseModel):

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from typing import cast
 
 from fastapi import Request
 
@@ -157,7 +159,7 @@ async def _page_context(request: Request) -> dict:
             logger.warning("pipeline_needs_llm failed for pipeline_id=%s", pipeline.id, exc_info=True)
             needs_llm_map[pipeline.id] = True
     # gather next_run times for pipelines (batch query)
-    next_runs = {}
+    next_runs: dict[int, str | None] = {}
     try:
         scheduler = deps.get_scheduler(request)
         all_jobs = scheduler.get_all_jobs_next_run()
@@ -166,7 +168,7 @@ async def _page_context(request: Request) -> dict:
             if pipeline is None or pipeline.id is None:
                 continue
             job_id = f"pipeline_run_{pipeline.id}"
-            nr = all_jobs.get(job_id)
+            nr = cast(datetime | None, all_jobs.get(job_id))
             next_runs[pipeline.id] = nr.isoformat() if nr else None
     except Exception:
         next_runs = {}
@@ -258,6 +260,7 @@ async def create_wizard_submit(
     if form.run_after:
         _since = _to_since_hours(form.since_value, form.since_unit)
         enqueuer = deps.get_task_enqueuer(request)
+        assert enqueuer is not None, "Task enqueuer is required to enqueue pipeline runs"
         await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=_since)
         return _pipeline_redirect("pipeline_run_with_since")
     return _pipeline_redirect("pipeline_added")
@@ -399,6 +402,7 @@ async def run_pipeline(request: Request, pipeline_id: int, form: PipelineRunForm
     try:
         since_hours = _to_since_hours(form.since_value, form.since_unit)
         enqueuer = deps.get_task_enqueuer(request)
+        assert enqueuer is not None, "Task enqueuer is required to enqueue pipeline runs"
         await enqueuer.enqueue_pipeline_run(pipeline_id, since_hours=since_hours)
     except Exception:
         logger.warning("Failed to enqueue pipeline run for pipeline_id=%d", pipeline_id, exc_info=True)
@@ -415,6 +419,7 @@ async def dry_run_pipeline(request: Request, pipeline_id: int):
         return _pipeline_redirect("llm_not_configured", error=True)
     try:
         enqueuer = deps.get_task_enqueuer(request)
+        assert enqueuer is not None, "Task enqueuer is required to enqueue pipeline runs"
         await enqueuer.enqueue_pipeline_run(pipeline_id, dry_run=True)
     except Exception:
         logger.warning("Failed to enqueue dry-run for pipeline_id=%d", pipeline_id, exc_info=True)

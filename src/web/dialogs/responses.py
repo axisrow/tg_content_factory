@@ -59,7 +59,7 @@ def dialog_response(request: Request, result: DialogResult):
     if isinstance(result, DialogRedirect):
         return dialogs_redirect(result.phone, msg=result.msg, error=result.error)
     if isinstance(result, CommandRedirect):
-        params = {"command_id": result.command_id}
+        params: dict[str, object | None] = {"command_id": result.command_id}
         if result.phone and "phone=" not in result.target_path:
             params["phone"] = result.phone
         return redirect_see_other(result.target_path, params)
