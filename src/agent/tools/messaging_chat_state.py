@@ -207,7 +207,7 @@ def register_chat_state_read_tools(db: Any, ctx: Any, client_pool: Any) -> list[
         "To save messages to DB for search, use add_channel + collect_channel instead.",
         READ_MESSAGES_SCHEMA,
     )
-    async def read_messages(args):
+    async def read_messages(args: dict[str, Any]) -> dict[str, Any]:
         live_gate = ctx.require_live_runtime("Чтение сообщений", tool_name="read_messages")
         if live_gate:
             return live_gate

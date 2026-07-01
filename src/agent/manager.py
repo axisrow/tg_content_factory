@@ -55,6 +55,7 @@ from src.services.agent_provider_service import ProviderModelCompatibilityRecord
 logger = logging.getLogger(__name__)
 
 _HISTORY_BUDGET = 100_000 * 4  # ~100K tokens in chars
+AgentBackend = ClaudeSdkBackend | DeepagentsBackend | CodexSdkBackend | AdkSdkBackend
 
 __all__ = [
     "AgentManager",
@@ -398,6 +399,7 @@ class AgentManager:
         if status.error and (backend_name is None or status.using_override):
             yield _sse({"error": f"Ошибка агента: {status.error}"})
             return
+        backend: AgentBackend
         if backend_name == "claude":
             backend = self._claude_backend
         elif backend_name == "deepagents":
@@ -445,7 +447,7 @@ class AgentManager:
             )
 
         async def _run_backend(
-            selected_backend: ClaudeSdkBackend | DeepagentsBackend | CodexSdkBackend | AdkSdkBackend,
+            selected_backend: AgentBackend,
             failure_prefix: Callable[[str], str],
         ) -> None:
             # Set ContextVar here so token is created and reset in the same task context.

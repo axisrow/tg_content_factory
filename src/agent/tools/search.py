@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from claude_agent_sdk import tool
 from mcp.types import ToolAnnotations
@@ -33,9 +33,9 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
     }),
 ]
 
-def register(db, client_pool, embedding_service, **kwargs):
+def register(db: Any, client_pool: Any, embedding_service: Any, **kwargs: Any) -> list[Any]:
     """Register search-related agent tools."""
-    tools = []
+    tools: list[Any] = []
 
     def _render_search_result(
         *,
@@ -167,16 +167,16 @@ def register(db, client_pool, embedding_service, **kwargs):
     # Lazy SearchEngine — created once on first Telegram/hybrid search
     # ------------------------------------------------------------------
 
-    _engine_cache: list = []
+    _engine_cache: list[Any] = []
 
-    def _get_engine():
+    def _get_engine() -> Any:
         if not _engine_cache:
             from src.search.engine import SearchEngine
 
             _engine_cache.append(SearchEngine(db, pool=client_pool, config=kwargs.get("config")))
         return _engine_cache[0]
 
-    def _render_search_response(result) -> str:
+    def _render_search_response(result: Any) -> str:
         """Render SearchResult into text, handling .error field."""
         if result.error:
             return f"Ошибка: {result.error}"

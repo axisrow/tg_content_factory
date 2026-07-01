@@ -4,9 +4,9 @@ import asyncio
 import logging
 import os
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from datetime import UTC, datetime
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 
 from src.agent.backends._stream import _embed_history_in_prompt, _ToolTracker
 from src.agent.prompt_template import DEFAULT_AGENT_PROMPT_TEMPLATE
@@ -236,7 +236,7 @@ class DeepagentsBackend:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            return asyncio.run(operation())
+            return asyncio.run(cast(Coroutine[Any, Any, _ToolResult], operation()))
         raise RuntimeError(
             f"Deepagents tool '{tool_name}' cannot run inside an active event loop: {loop}"
         )
@@ -295,7 +295,7 @@ class DeepagentsBackend:
         gate_active: bool = False,
         record_last_used: bool = True,
         system_prompt: str = DEFAULT_AGENT_PROMPT_TEMPLATE,
-    ):
+    ) -> Any:
         configured_model_name = cfg.selected_model.strip()
         if not configured_model_name:
             raise RuntimeError("Deepagents provider model is not configured.")
@@ -328,7 +328,7 @@ class DeepagentsBackend:
                     resolved_model_name,
                 )
                 from src.agent.react_agent import OllamaReActAgent
-                agent = OllamaReActAgent(
+                agent: Any = OllamaReActAgent(
                     base_url=str(extra.get("base_url", "http://localhost:11434")),
                     model=resolved_model_name,
                     tools=tools or self._default_tools(
@@ -353,10 +353,11 @@ class DeepagentsBackend:
         try:
             from langchain.chat_models import init_chat_model
 
+            model_kwargs = cast(dict[str, Any], extra)
             model = init_chat_model(
                 model=resolved_model_name,
                 model_provider=model_provider,
-                **extra,
+                **model_kwargs,
             )
         except ImportError as exc:
             package = (
@@ -422,7 +423,7 @@ class DeepagentsBackend:
         # environment. Treat legacy fallback as available when validation passes (e.g.,
         # anthopic fallback requires explicit fallback API key).
         if all(self._is_legacy_candidate(cfg) for cfg in candidates):
-            errors: list[str] = []
+            legacy_errors: list[str] = []
             for cfg in candidates:
                 validation_error = (
                     self._legacy_validation_error(cfg)
@@ -430,7 +431,7 @@ class DeepagentsBackend:
                     else self._validation_error(cfg)
                 )
                 if validation_error:
-                    errors.append(f"{cfg.provider}: {validation_error}")
+                    legacy_errors.append(f"{cfg.provider}: {validation_error}")
                     continue
                 self._preflight_available = True
                 self._init_error = None
@@ -445,15 +446,15 @@ class DeepagentsBackend:
                 return
             self._preflight_available = False
             self._init_error = (
-                "; ".join(errors) if errors else "Deepagents providers are not configured."
+                "; ".join(legacy_errors) if legacy_errors else "Deepagents providers are not configured."
             )
             raise RuntimeError(self._init_error)
 
-        errors: list[str] = []
+        candidate_errors: list[str] = []
         for cfg in candidates:
             validation_error = self._validation_error(cfg)
             if validation_error:
-                errors.append(f"{cfg.provider}: {validation_error}")
+                candidate_errors.append(f"{cfg.provider}: {validation_error}")
                 continue
             try:
                 self._build_agent(cfg)
@@ -466,11 +467,11 @@ class DeepagentsBackend:
                 )
                 return
             except Exception as exc:
-                errors.append(format_provider_error(cfg.provider, exc))
+                candidate_errors.append(format_provider_error(cfg.provider, exc))
                 logger.warning("Deepagents provider preflight failed (%s): %s", cfg.provider, exc)
         self._preflight_available = False
         self._init_error = (
-            "; ".join(errors) if errors else "Deepagents providers are not configured."
+            "; ".join(candidate_errors) if candidate_errors else "Deepagents providers are not configured."
         )
         raise RuntimeError(self._init_error)
 

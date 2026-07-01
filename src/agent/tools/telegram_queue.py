@@ -146,7 +146,7 @@ def register_queue_status_tools(db: Any, ctx: Any) -> list[Any]:
         "recent tasks, delay reasons, and failures. Read-only.",
         GET_TELEGRAM_QUEUE_STATUS_SCHEMA,
     )
-    async def get_telegram_queue_status(args):
+    async def get_telegram_queue_status(args: dict[str, Any]) -> dict[str, Any]:
         try:
             command_type = arg_str(args, "command_type")
             phone = normalize_phone(arg_str(args, "phone"))
