@@ -4,7 +4,14 @@ import argparse
 import asyncio
 import time
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    _NEG_ID_POSITIONAL,
+    apply_startup,
+    run_async,
+)
 from src.models import TelegramCommandStatus
 from src.services.channel_service import ChannelService
 from src.services.telegram_actions import (
@@ -927,3 +934,400 @@ def run_with_dependencies(
 def run(args: argparse.Namespace) -> None:
     """Primary CLI entrypoint for Telegram dialogs management."""
     run_with_dependencies(args)
+
+
+# --------------------------------------------------------------------------- #
+# dialogs → list / refresh / resolve / leave / join / topics / cache-clear /
+#   cache-status / send / forward / edit-message / delete-message /
+#   create-channel / create-group / pin-message / react / unpin-message /
+#   download-media / participants / edit-admin / edit-permissions / kick /
+#   broadcast-stats / archive / unarchive / mark-read /
+#   queue (NESTED depth-2: status/cancel/clear-pending)
+#
+# Every dialogs leaf reuses the shared async ``_dispatch`` body by
+# building the argparse Namespace it dispatches on — so the Typer path executes
+# the exact same (heavily tested) logic, including the mutating-command
+# ``--yes`` confirmation flow and the single pool-disconnect/db-close finally.
+# --------------------------------------------------------------------------- #
+
+dialogs_app = typer.Typer(no_args_is_help=True, help="Telegram dialogs management")
+
+# Nested depth-2 group: ``dialogs queue`` mounted via add_typer; the frozen
+# ``dialogs queue <action>`` paths are the fragile Wave-4 invariant.
+dialogs_queue_app = typer.Typer(
+    no_args_is_help=True,
+    help="Inspect and manage the Telegram command queue (reactions, sends, forwards, ...)",
+)
+dialogs_app.add_typer(dialogs_queue_app, name="queue")
+
+
+def _run_dialogs(ctx: typer.Context, dialogs_action: str, **ns_kwargs) -> None:
+    """Build the argparse Namespace a dialogs action dispatches on, then run it.
+
+    Centralises the apply_startup → Namespace → ``_dispatch`` bridge so each leaf
+    stays a thin type-hinted signature. ``ns_kwargs`` carries exactly the
+    attributes the matching ``_dispatch`` branch reads off ``args``.
+    """
+    apply_startup(ctx)
+    ns = argparse.Namespace(
+        config=ctx.obj.config, dialogs_action=dialogs_action, **ns_kwargs
+    )
+    run_async(_dispatch(ns))
+
+
+@dialogs_app.command("list")
+def dialogs_list(
+    ctx: typer.Context,
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+) -> None:
+    """List all dialogs for an account."""
+    _run_dialogs(ctx, "list", phone=phone)
+
+
+@dialogs_app.command("refresh")
+def dialogs_refresh(
+    ctx: typer.Context,
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+) -> None:
+    """Refresh dialog cache from Telegram."""
+    _run_dialogs(ctx, "refresh", phone=phone)
+
+
+@dialogs_app.command("resolve", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_resolve(
+    ctx: typer.Context,
+    identifier: str = typer.Argument(..., help="Identifier to resolve"),
+    phone: str | None = typer.Option(None, "--phone", help="Preferred account phone"),
+) -> None:
+    """Resolve @username, t.me link, or numeric ID."""
+    _run_dialogs(ctx, "resolve", identifier=identifier, phone=phone)
+
+
+@dialogs_app.command("leave", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_leave(
+    ctx: typer.Context,
+    dialog_ids: list[str] = typer.Argument(..., help="Dialog IDs to leave (space- or comma-separated)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Leave dialogs by ID."""
+    _run_dialogs(ctx, "leave", dialog_ids=dialog_ids, phone=phone, yes=yes)
+
+
+@dialogs_app.command("delete", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_delete(
+    ctx: typer.Context,
+    dialog_ids: list[str] = typer.Argument(..., help="Dialog IDs to delete (space- or comma-separated)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Permanently delete dialogs by ID (DeleteChannel/DeleteChat)."""
+    _run_dialogs(ctx, "delete", dialog_ids=dialog_ids, phone=phone, yes=yes)
+
+
+@dialogs_app.command("join", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_join(
+    ctx: typer.Context,
+    target: str = typer.Argument(..., help="@username, t.me link, or invite link"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Join/subscribe to a channel or group."""
+    _run_dialogs(ctx, "join", target=target, phone=phone, yes=yes)
+
+
+@dialogs_app.command("topics")
+def dialogs_topics(
+    ctx: typer.Context,
+    channel_id: int = typer.Option(..., "--channel-id", help="Channel ID to fetch forum topics for"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: any available)"),
+) -> None:
+    """List forum topics for a channel."""
+    _run_dialogs(ctx, "topics", channel_id=channel_id, phone=phone)
+
+
+@dialogs_app.command("cache-clear")
+def dialogs_cache_clear(
+    ctx: typer.Context,
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: all accounts)"),
+) -> None:
+    """Clear in-memory and DB dialog cache."""
+    _run_dialogs(ctx, "cache-clear", phone=phone)
+
+
+@dialogs_app.command("cache-status")
+def dialogs_cache_status(ctx: typer.Context) -> None:
+    """Show dialog cache status (entries, age)."""
+    _run_dialogs(ctx, "cache-status")
+
+
+@dialogs_app.command("send", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_send(
+    ctx: typer.Context,
+    recipient: str = typer.Argument(..., help="Recipient: @username, phone number, or numeric ID"),
+    text: str = typer.Argument(..., help="Message text to send"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Send a direct message to a user or chat."""
+    _run_dialogs(ctx, "send", recipient=recipient, text=text, phone=phone, yes=yes)
+
+
+@dialogs_app.command("forward", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_forward(
+    ctx: typer.Context,
+    from_chat: str = typer.Argument(..., help="Source chat ID or @username"),
+    to_chat: str = typer.Argument(..., help="Destination chat ID or @username"),
+    message_ids: list[str] = typer.Argument(..., help="Message IDs to forward (space or comma-separated)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Forward messages between chats."""
+    _run_dialogs(
+        ctx, "forward", from_chat=from_chat, to_chat=to_chat, message_ids=message_ids, phone=phone, yes=yes
+    )
+
+
+@dialogs_app.command("edit-message", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_edit_message(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    message_id: int = typer.Argument(..., help="Message ID to edit"),
+    text: str = typer.Argument(..., help="New message text"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Edit a sent message."""
+    _run_dialogs(ctx, "edit-message", chat_id=chat_id, message_id=message_id, text=text, phone=phone, yes=yes)
+
+
+@dialogs_app.command("delete-message", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_delete_message(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    message_ids: list[str] = typer.Argument(..., help="Message IDs to delete (space or comma-separated)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Delete messages from a chat."""
+    _run_dialogs(ctx, "delete-message", chat_id=chat_id, message_ids=message_ids, phone=phone, yes=yes)
+
+
+@dialogs_app.command("create-channel")
+def dialogs_create_channel(
+    ctx: typer.Context,
+    title: str = typer.Option(..., "--title", help="Channel title"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    about: str = typer.Option("", "--about", help="Channel description"),
+    username: str = typer.Option("", "--username", help="Public username (leave empty for private)"),
+) -> None:
+    """Create a new Telegram broadcast channel."""
+    _run_dialogs(ctx, "create-channel", title=title, phone=phone, about=about, username=username)
+
+
+@dialogs_app.command("create-group")
+def dialogs_create_group(
+    ctx: typer.Context,
+    title: str = typer.Option(..., "--title", help="Group title"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    about: str = typer.Option("", "--about", help="Group description"),
+) -> None:
+    """Create a new Telegram group."""
+    _run_dialogs(ctx, "create-group", title=title, phone=phone, about=about)
+
+
+@dialogs_app.command("pin-message", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_pin_message(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    message_id: int = typer.Argument(..., help="Message ID to pin"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    notify: bool = typer.Option(False, "--notify", help="Notify members about pinned message"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Pin a message in a chat."""
+    _run_dialogs(ctx, "pin-message", chat_id=chat_id, message_id=message_id, phone=phone, notify=notify, yes=yes)
+
+
+@dialogs_app.command("react", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_react(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    message_id: int = typer.Argument(..., help="Message ID to react on"),
+    emoji: str | None = typer.Argument(None, help="Reaction emoji to set; required unless --clear is used"),
+    clear: bool = typer.Option(False, "--clear", help="Remove your reaction from the message"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Set or clear your reaction on a message."""
+    _run_dialogs(ctx, "react", chat_id=chat_id, message_id=message_id, emoji=emoji, clear=clear, phone=phone, yes=yes)
+
+
+@dialogs_app.command("unpin-message", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_unpin_message(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    message_id: int | None = typer.Option(None, "--message-id", help="Message ID to unpin (omit to unpin all)"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Unpin a message in a chat."""
+    _run_dialogs(ctx, "unpin-message", chat_id=chat_id, message_id=message_id, phone=phone, yes=yes)
+
+
+@dialogs_app.command("download-media", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_download_media(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    message_id: int = typer.Argument(..., help="Message ID containing media"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    output_dir: str = typer.Option(".", "--output-dir", help="Directory to save file (default: current dir)"),
+) -> None:
+    """Download media from a message."""
+    _run_dialogs(ctx, "download-media", chat_id=chat_id, message_id=message_id, phone=phone, output_dir=output_dir)
+
+
+@dialogs_app.command("participants", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_participants(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    limit: int = typer.Option(200, "--limit", help="Max participants to fetch (default: 200)"),
+    search: str = typer.Option("", "--search", help="Search query to filter participants"),
+) -> None:
+    """List participants of a channel/group."""
+    _run_dialogs(ctx, "participants", chat_id=chat_id, phone=phone, limit=limit, search=search)
+
+
+@dialogs_app.command("edit-admin", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_edit_admin(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    user_id: str = typer.Argument(..., help="User ID or @username to change admin rights for"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    title: str | None = typer.Option(None, "--title", help="Custom admin title"),
+    is_admin: bool = typer.Option(True, "--is-admin/--no-admin", help="Promote to admin (default) / demote"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Promote or demote a user as admin."""
+    _run_dialogs(
+        ctx, "edit-admin", chat_id=chat_id, user_id=user_id, phone=phone,
+        title=title, is_admin=is_admin, yes=yes,
+    )
+
+
+@dialogs_app.command("edit-permissions", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_edit_permissions(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    user_id: str = typer.Argument(..., help="User ID or @username"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    until_date: str | None = typer.Option(
+        None, "--until-date", help="Restriction end date (ISO format, e.g. 2025-12-31)"
+    ),
+    send_messages: str | None = typer.Option(None, "--send-messages", help="Allow sending messages (true/false)"),
+    send_media: str | None = typer.Option(None, "--send-media", help="Allow sending media (true/false)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Restrict or unrestrict a user in a group."""
+    _run_dialogs(
+        ctx, "edit-permissions", chat_id=chat_id, user_id=user_id, phone=phone,
+        until_date=until_date, send_messages=send_messages, send_media=send_media, yes=yes,
+    )
+
+
+@dialogs_app.command("kick", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_kick(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    user_id: str = typer.Argument(..., help="User ID or @username to kick"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Kick a participant from a chat."""
+    _run_dialogs(ctx, "kick", chat_id=chat_id, user_id=user_id, phone=phone, yes=yes)
+
+
+@dialogs_app.command("broadcast-stats", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_broadcast_stats(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Channel ID or @username"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+) -> None:
+    """Get broadcast statistics for a channel."""
+    _run_dialogs(ctx, "broadcast-stats", chat_id=chat_id, phone=phone)
+
+
+@dialogs_app.command("archive", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_archive(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+) -> None:
+    """Archive a dialog (move to archive folder)."""
+    _run_dialogs(ctx, "archive", chat_id=chat_id, phone=phone)
+
+
+@dialogs_app.command("unarchive", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_unarchive(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+) -> None:
+    """Unarchive a dialog (move to main folder)."""
+    _run_dialogs(ctx, "unarchive", chat_id=chat_id, phone=phone)
+
+
+@dialogs_app.command("mark-read", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_mark_read(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    max_id: int | None = typer.Option(None, "--max-id", help="Mark messages up to this ID as read (default: all)"),
+) -> None:
+    """Mark messages as read in a chat."""
+    _run_dialogs(ctx, "mark-read", chat_id=chat_id, phone=phone, max_id=max_id)
+
+
+# ---- nested: dialogs queue <action> --------------------------------------- #
+
+
+def _run_dialogs_queue(ctx: typer.Context, queue_action: str, **ns_kwargs) -> None:
+    """Bridge for the nested ``dialogs queue`` group — sets ``dialogs_action=queue``."""
+    apply_startup(ctx)
+    ns = argparse.Namespace(
+        config=ctx.obj.config, dialogs_action="queue", queue_action=queue_action, **ns_kwargs
+    )
+    run_async(_dispatch(ns))
+
+
+@dialogs_queue_app.command("status")
+def dialogs_queue_status(
+    ctx: typer.Context,
+    command_type: str | None = typer.Option(None, "--command-type", help="Filter by command type, e.g. dialogs.react"),
+    phone: str | None = typer.Option(None, "--phone", help="Filter by account phone"),
+    limit: int = typer.Option(20, "--limit", help="Recent entries to show (1-100)"),
+) -> None:
+    """Show pending/running queue status."""
+    _run_dialogs_queue(ctx, "status", command_type=command_type, phone=phone, limit=limit)
+
+
+@dialogs_queue_app.command("cancel")
+def dialogs_queue_cancel(
+    ctx: typer.Context,
+    command_id: int = typer.Argument(..., help="Command id from queue status"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Cancel a pending queue command by id."""
+    _run_dialogs_queue(ctx, "cancel", command_id=command_id, yes=yes)
+
+
+@dialogs_queue_app.command("clear-pending")
+def dialogs_queue_clear_pending(
+    ctx: typer.Context,
+    command_type: str | None = typer.Option(None, "--command-type", help="Filter by command type, e.g. dialogs.react"),
+    phone: str | None = typer.Option(None, "--phone", help="Filter by account phone"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt"),
+) -> None:
+    """Bulk-cancel pending queue commands (optionally filtered)."""
+    _run_dialogs_queue(ctx, "clear-pending", command_type=command_type, phone=phone, yes=yes)
