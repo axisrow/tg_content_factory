@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from starlette.datastructures import FormData
 
 from src.filters.criteria import VALID_FLAGS
@@ -37,7 +39,7 @@ def parse_pks(form: FormData, field: str = "pks") -> list[int]:
     pks: list[int] = []
     for v in form.getlist(field):
         try:
-            pks.append(int(v))
+            pks.append(int(cast(str, v)))
         except (ValueError, TypeError):
             continue
     return pks

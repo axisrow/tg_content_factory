@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import TypeAlias
 
 from fastapi.templating import Jinja2Templates
 
@@ -39,7 +40,12 @@ from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
 from src.web.log_handler import LogBuffer
+from src.web.runtime_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
 from src.web.timing import TimingBuffer
+
+WebClientPool: TypeAlias = ClientPool | SnapshotClientPool
+WebCollector: TypeAlias = Collector | SnapshotCollector
+WebScheduler: TypeAlias = SchedulerManager | SnapshotSchedulerManager
 
 
 @dataclass(slots=True)
@@ -58,20 +64,20 @@ class AppContainer:
     scheduler_bundle: SchedulerBundle
     search_query_bundle: SearchQueryBundle
     auth: TelegramAuth
-    pool: ClientPool | object
+    pool: WebClientPool
     notification_target_service: NotificationTargetService
     notifier: Notifier | None
     photo_publish_service: PhotoPublishService
     photo_task_service: PhotoTaskService
     photo_auto_upload_service: PhotoAutoUploadService
-    collector: Collector | object
+    collector: WebCollector
     collection_queue: CollectionQueue | None
     task_enqueuer: TaskEnqueuer | None
     unified_dispatcher: UnifiedDispatcher | None
     telegram_command_dispatcher: TelegramCommandDispatcher | None
     search_engine: SearchEngine
     ai_search: AISearchEngine
-    scheduler: SchedulerManager | object
+    scheduler: WebScheduler
     templates: Jinja2Templates
     log_buffer: LogBuffer | None
     timing_buffer: TimingBuffer | None

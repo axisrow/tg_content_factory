@@ -52,7 +52,7 @@ async def login_page(request: Request):
     api_configured = _is_api_configured(request)
     step = "phone" if api_configured else "credentials"
     command = await _auth_command(request)
-    context = {"step": step, "error": None, "phone": "", "api_configured": api_configured}
+    context: dict[str, object] = {"step": step, "error": None, "phone": "", "api_configured": api_configured}
     if command is not None and command.command_type.startswith("auth."):
         payload = command.payload or {}
         result = command.result_payload or {}

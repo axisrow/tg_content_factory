@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import UploadFile
 from pydantic import BaseModel, ConfigDict
+from typing_extensions import TypedDict
 
 from src.models import PhotoSendMode
 from src.services.photo_task_service import PhotoTarget
@@ -16,6 +17,14 @@ from src.utils.datetime import parse_required_schedule_datetime
 
 UPLOAD_ROOT = Path("data/photo_uploads")
 FormMapping = Mapping[str, Any]
+
+
+class PhotoAutoUpdateValues(TypedDict, total=False):
+    folder_path: str
+    send_mode: PhotoSendMode
+    caption: str
+    interval_minutes: int
+    is_active: bool
 
 
 class _FrozenForm(BaseModel):
@@ -74,7 +83,7 @@ class PhotoPhoneForm(_FrozenForm):
 
 class PhotoAutoUpdateForm(_FrozenForm):
     phone: str
-    values: dict[str, object]
+    values: PhotoAutoUpdateValues
 
 
 async def persist_uploads(files: list[UploadFile], folder_name: str) -> list[str]:
@@ -112,7 +121,7 @@ def parse_schedule_at(value: str) -> datetime:
 
 
 def parse_auto_update_form(form: FormMapping) -> PhotoAutoUpdateForm:
-    values: dict[str, object] = {}
+    values: PhotoAutoUpdateValues = {}
     if form.get("folder"):
         values["folder_path"] = form["folder"]
     if form.get("mode"):

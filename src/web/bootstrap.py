@@ -43,7 +43,7 @@ from src.telegram.client_pool import ClientPool
 from src.telegram.collector import Collector
 from src.telegram.notifier import Notifier
 from src.utils.asyncio import make_log_task_exception_callback
-from src.web.container import AppContainer
+from src.web.container import AppContainer, WebClientPool, WebCollector, WebScheduler
 from src.web.log_handler import LogBuffer
 from src.web.paths import TEMPLATES_DIR
 from src.web.runtime_shims import SnapshotClientPool, SnapshotCollector, SnapshotSchedulerManager
@@ -72,7 +72,8 @@ def _connected_pool_count(pool: object) -> int:
 
 
 async def _retry_telegram_pool_until_connected(container: AppContainer) -> None:
-    while _connected_pool_count(container.pool) == 0 and getattr(
+    pool = cast(ClientPool, container.pool)
+    while _connected_pool_count(pool) == 0 and getattr(
         container, "shutting_down", False
     ) is not True:
         try:
@@ -84,11 +85,11 @@ async def _retry_telegram_pool_until_connected(container: AppContainer) -> None:
             raise
         if (
             getattr(container, "shutting_down", False) is True
-            or _connected_pool_count(container.pool) > 0
+            or _connected_pool_count(pool) > 0
         ):
             return
         try:
-            await asyncio.wait_for(container.pool.initialize(), timeout=_POOL_INIT_TIMEOUT)
+            await asyncio.wait_for(pool.initialize(), timeout=_POOL_INIT_TIMEOUT)
         except asyncio.TimeoutError:
             logger.warning(
                 "startup: telegram pool retry timed out after %ds; connected_count=0",
@@ -106,7 +107,7 @@ async def _retry_telegram_pool_until_connected(container: AppContainer) -> None:
         except Exception:
             logger.exception("startup: telegram pool retry failed")
         else:
-            connected_count = _connected_pool_count(container.pool)
+            connected_count = _connected_pool_count(pool)
             if connected_count > 0:
                 logger.info(
                     "startup: telegram pool recovered after retry; connected_count=%d",
@@ -231,6 +232,8 @@ async def build_container_with_templates(
 
     api_id, api_hash = await load_telegram_credentials(db, config)
     auth = TelegramAuth(api_id, api_hash)
+    pool: WebClientPool
+    search_pool: ClientPool | None
     if runtime_mode == "worker":
         pool = ClientPool(
             auth,
@@ -241,8 +244,9 @@ async def build_container_with_templates(
     else:
         pool = SnapshotClientPool(db)
         await pool.refresh()
-    notification_target_service = NotificationTargetService(notification_bundle, pool)
-    photo_publish_service = PhotoPublishService(pool)
+    pool_for_live_typed_services = cast(ClientPool, pool)
+    notification_target_service = NotificationTargetService(notification_bundle, pool_for_live_typed_services)
+    photo_publish_service = PhotoPublishService(pool_for_live_typed_services)
     photo_task_service = PhotoTaskService(photo_loader_bundle, photo_publish_service)
     photo_auto_upload_service = PhotoAutoUploadService(photo_loader_bundle, photo_publish_service)
     notifier = None
@@ -251,27 +255,30 @@ async def build_container_with_templates(
     telegram_command_dispatcher = None
     agent_manager = None
     live_runtime_pause_gate = LiveRuntimePauseGate() if runtime_mode == "worker" else None
+    collector: WebCollector
     if runtime_mode == "worker":
+        live_pool = cast(ClientPool, pool)
         notifier = Notifier(
             notification_target_service, config.notifications.admin_chat_id, notification_bundle
         )
         collector = Collector(
-            pool,
+            live_pool,
             db,
             config.scheduler,
             notifier,
             live_runtime_pause_gate=live_runtime_pause_gate,
         )
+        live_collector = cast(Collector, collector)
         collection_queue = CollectionQueue(
-            collector,
+            live_collector,
             channel_bundle,
             live_runtime_pause_gate=live_runtime_pause_gate,
         )
-        search_pool = pool
+        search_pool = live_pool
     else:
         snapshot_collector = SnapshotCollector(db)
         await snapshot_collector.refresh()
-        collector = cast(Collector, snapshot_collector)
+        collector = snapshot_collector
         search_pool = None
     search_engine = SearchEngine(search_bundle, search_pool, config=config)
     ai_search = AISearchEngine(config.llm, search_bundle)
@@ -279,7 +286,7 @@ async def build_container_with_templates(
 
     from src.services.collection_service import CollectionService
 
-    collection_service = CollectionService(channel_bundle, collector, collection_queue)
+    collection_service = CollectionService(channel_bundle, cast(Collector, collector), collection_queue)
     task_enqueuer = TaskEnqueuer(db, collection_service)
 
     from src.services.provider_service import RuntimeProviderRegistry
@@ -289,9 +296,12 @@ async def build_container_with_templates(
     llm_provider_service = RuntimeProviderRegistry(db, config, env=dict(os.environ))
     await llm_provider_service.load_db_providers()
 
+    scheduler: WebScheduler
     if runtime_mode == "worker":
+        live_pool = cast(ClientPool, pool)
+        live_collector = cast(Collector, collector)
         unified_dispatcher = UnifiedDispatcher(
-            collector,
+            live_collector,
             channel_bundle,
             repos.tasks,
             sq_bundle=search_query_bundle,
@@ -300,7 +310,7 @@ async def build_container_with_templates(
             search_engine=search_engine,
             pipeline_bundle=pipeline_bundle,
             db=db,
-            client_pool=pool,
+            client_pool=live_pool,
             notifier=notifier,
             config=config,
             llm_provider_service=llm_provider_service,
@@ -312,15 +322,15 @@ async def build_container_with_templates(
             search_query_bundle=search_query_bundle,
             task_enqueuer=task_enqueuer,
             pipeline_bundle=pipeline_bundle,
-            warm_dialogs_callback=pool.warm_all_dialogs,
+            warm_dialogs_callback=live_pool.warm_all_dialogs,
             live_runtime_pause_gate=live_runtime_pause_gate,
-            resolve_backoff_callback=pool.get_resolve_username_backoff_remaining_sec,
+            resolve_backoff_callback=live_pool.get_resolve_username_backoff_remaining_sec,
         )
         telegram_command_dispatcher = TelegramCommandDispatcher(
             db,
-            pool,
+            live_pool,
             config,
-            collector,
+            live_collector,
             scheduler=scheduler,
             auth=auth,
             search_engine=search_engine,
@@ -331,7 +341,7 @@ async def build_container_with_templates(
         agent_manager = AgentManager(
             db,
             config,
-            client_pool=pool,
+            client_pool=live_pool,
             scheduler_manager=scheduler,
             live_runtime_pause_gate=live_runtime_pause_gate,
         )
@@ -430,9 +440,10 @@ async def _initialize_startup_telegram_pool(
         t1 = time.monotonic()
 
     if runtime_mode == "worker" and container.auth.is_configured:
+        pool = cast(ClientPool, container.pool)
         telegram_pool_degraded = False
         try:
-            await asyncio.wait_for(container.pool.initialize(), timeout=_POOL_INIT_TIMEOUT)
+            await asyncio.wait_for(pool.initialize(), timeout=_POOL_INIT_TIMEOUT)
         except asyncio.TimeoutError:
             logger.warning(
                 "startup: telegram pool timed out after %ds — continuing without full init",
@@ -448,7 +459,7 @@ async def _initialize_startup_telegram_pool(
                 exc.status,
                 exc.action,
             )
-        connected_count = _connected_pool_count(container.pool)
+        connected_count = _connected_pool_count(pool)
         if connected_count == 0:
             telegram_pool_degraded = True
             logger.warning(
@@ -459,12 +470,12 @@ async def _initialize_startup_telegram_pool(
                 _schedule_telegram_pool_retry(container)
         # Warm entity cache + preferred_phone map for all accounts in background.
         # Store the task so the collector can wait on it during a race condition.
-        if not telegram_pool_degraded and hasattr(container.pool, "warm_all_dialogs"):
+        if not telegram_pool_degraded and hasattr(pool, "warm_all_dialogs"):
             _warm_task = asyncio.create_task(
-                container.pool.warm_all_dialogs(), name="warm_all_dialogs_startup"
+                pool.warm_all_dialogs(), name="warm_all_dialogs_startup"
             )
             _warm_task.add_done_callback(_log_task_exception)
-            container.pool._warming_task = _warm_task
+            pool._warming_task = _warm_task
     logger.info("startup: telegram pool done (%.1fs)", time.monotonic() - t_start)
     if _is_dev:
         logger.info("startup/start: telegram_pool %.2fs", time.monotonic() - t1)
@@ -535,11 +546,12 @@ async def _start_scheduler(
     t_start: float,
 ) -> None:
     if runtime_mode == "worker":
-        await container.scheduler.load_settings()
+        scheduler = cast(SchedulerManager, container.scheduler)
+        await scheduler.load_settings()
         autostart = await container.db.get_setting("scheduler_autostart")
         if autostart == "1":
             logger.info("Auto-starting scheduler (scheduler_autostart=1)")
-            await container.scheduler.start()
+            await scheduler.start()
     logger.info("startup: scheduler done (%.1fs)", time.monotonic() - t_start)
 
 
