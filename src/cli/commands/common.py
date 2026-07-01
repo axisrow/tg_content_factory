@@ -79,8 +79,6 @@ class PhotoMode(str, Enum):
     separate = "separate"
 
 
-
-
 class ExportFormat(str, Enum):
     """``export telegram --format`` choices — mirrors the argparse ``choices=[…]``."""
 
