@@ -131,76 +131,76 @@ async def settings_page(request: Request):
 
 @router.post("/save-scheduler")
 async def save_scheduler_settings(request: Request, form: SchedulerFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_flash_response(await handle_save_scheduler_settings(request, form))
 
 
 @router.post("/save-semantic-search")
 async def save_semantic_search_settings(request: Request, form: SemanticSearchFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_flash_response(await handle_save_semantic_search_settings(request, form))
 
 
 @router.post("/semantic-index")
 async def run_semantic_index(request: Request, form: SemanticIndexFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_flash_response(await handle_run_semantic_index(request, form))
 
 
 @router.post("/save-agent")
 async def save_agent_settings(request: Request, form: AgentFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_flash_response(await handle_save_agent_settings(request, form))
 
 
 @router.post("/agent-providers/add")
 async def add_agent_provider(request: Request, form: ProviderAddFormDep):
-    if response := _form_error_response(form):
-        return response
-    return settings_flash_response(await handle_add_agent_provider(request, form))
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
+    return settings_result_response(request, await handle_add_agent_provider(request, form))
 
 
 @router.post("/agent-providers/save")
 async def save_agent_providers(request: Request, form: ProviderConfigFormDep):
-    if response := _form_error_response(form):
-        return response
-    return settings_flash_response(await handle_save_agent_providers(request, form))
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
+    return settings_result_response(request, await handle_save_agent_providers(request, form))
 
 
 @router.post("/agent-providers/{provider_name}/delete")
 async def delete_agent_provider(request: Request, provider_name: str):
-    return settings_flash_response(await handle_delete_agent_provider(request, provider_name))
+    return settings_result_response(request, await handle_delete_agent_provider(request, provider_name))
 
 
 @router.post("/agent-providers/{provider_name}/refresh")
 async def refresh_agent_provider_models(request: Request, provider_name: str, form: ProviderConfigFormDep):
-    if response := _form_error_response(form):
-        return response
-    return settings_json_response(await handle_refresh_agent_provider_models(request, provider_name, form))
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
+    return settings_result_response(request, await handle_refresh_agent_provider_models(request, provider_name, form))
 
 
 @router.post("/agent-providers/refresh-all")
 async def refresh_all_agent_provider_models(request: Request, form: ProviderConfigFormDep):
-    if response := _form_error_response(form):
-        return response
-    return settings_json_response(await handle_refresh_all_agent_provider_models(request, form))
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
+    return settings_result_response(request, await handle_refresh_all_agent_provider_models(request, form))
 
 
 @router.post("/agent-providers/{provider_name}/probe")
 async def probe_agent_provider_model(request: Request, provider_name: str, form: ProviderConfigFormDep):
-    if response := _form_error_response(form):
-        return response
-    return settings_json_response(await handle_probe_agent_provider_model(request, provider_name, form))
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
+    return settings_result_response(request, await handle_probe_agent_provider_model(request, provider_name, form))
 
 
 @router.post("/agent-providers/test-all")
 async def test_all_agent_provider_models(request: Request, form: ProviderConfigFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_json_response(await handle_test_all_agent_provider_models(request, form))
 
 
@@ -211,22 +211,22 @@ async def test_all_agent_provider_models_status(request: Request):
 
 @router.post("/save-filters")
 async def save_filters(request: Request, form: FiltersFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_flash_response(await handle_save_filters(request, form))
 
 
 @router.post("/save-notification-account")
 async def save_notification_account(request: Request, form: NotificationAccountFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_flash_response(await handle_save_notification_account(request, form))
 
 
 @router.post("/save-credentials")
 async def save_credentials(request: Request, form: CredentialsFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_flash_response(await handle_save_credentials(request, form))
 
 
@@ -252,15 +252,15 @@ async def test_notification(request: Request):
 
 @router.post("/image-providers/add")
 async def add_image_provider(request: Request, form: ProviderAddFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_flash_response(await handle_add_image_provider(request, form))
 
 
 @router.post("/image-providers/save")
 async def save_image_providers(request: Request, form: ImageProviderSaveFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_flash_response(await handle_save_image_providers(request, form))
 
 
@@ -271,8 +271,8 @@ async def delete_image_provider(request: Request, provider_name: str):
 
 @router.post("/save-translation")
 async def save_translation_settings(request: Request, form: TranslationFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_flash_response(await handle_save_translation_settings(request, form))
 
 
@@ -283,8 +283,8 @@ async def translation_backfill_lang(request: Request):
 
 @router.post("/translation-run")
 async def translation_run_batch(request: Request, form: TranslationRunFormDep):
-    if response := _form_error_response(form):
-        return response
+    if isinstance(form, SettingsFormError):
+        return _form_error_response(form)
     return settings_flash_response(await handle_translation_run_batch(request, form))
 
 
