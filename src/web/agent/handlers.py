@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import sqlite3
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from fastapi import HTTPException, Request
 
@@ -261,7 +261,7 @@ async def inject_context(request: Request, thread_id: int) -> AgentJson:
         topic_id=topic_id,
     )
     ch = await db.get_channel_by_channel_id(channel_id)
-    title = ch.title if ch else str(channel_id)
+    title = cast(str, ch.title) if ch else str(channel_id)
 
     topics = await db.get_forum_topics(channel_id)
     topics_map = {t["id"]: t["title"] for t in topics}

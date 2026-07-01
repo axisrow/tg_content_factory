@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import cast
 
 from fastapi import Request
 
@@ -302,7 +303,7 @@ async def react_message(request: Request) -> CommandRedirect | DialogRedirect:
 async def cancel_queue_command(request: Request, command_id: int) -> DialogRedirect:
     """Cancel a pending Telegram command living in `telegram_commands` (issue #621)."""
     form = await request.form()
-    phone = (form.get("phone") or "") if hasattr(form, "get") else ""
+    phone = cast(str, form.get("phone") or "") if hasattr(form, "get") else ""
     ok = await deps.telegram_command_service(request).cancel(command_id)
     error = None if ok else "command_not_cancellable"
     msg = "command_cancelled" if ok else None
@@ -397,7 +398,7 @@ async def edit_permissions(request: Request) -> CommandRedirect | DialogRedirect
         return DialogRedirect(form.phone, error="no_permission_flags")
     if not form.phone or not form.chat_id or not form.user_id:
         return DialogRedirect(form.phone, error="missing_fields")
-    payload = {"phone": form.phone, "chat_id": form.chat_id, "user_id": form.user_id}
+    payload: dict[str, object] = {"phone": form.phone, "chat_id": form.chat_id, "user_id": form.user_id}
     if form.until_date:
         payload["until_date"] = form.until_date
     if form.send_messages is not None:

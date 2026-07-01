@@ -349,16 +349,18 @@ async def dry_run_notifications(request: Request) -> SchedulerTemplate:
         preview_messages = []
     channels = await db.get_channels() if preview_messages else []
 
-    results = []
+    results: list[dict[str, object]] = []
+    total_matches = 0
     for sq in queries:
         matched, _ = dry_run_matches(preview_messages, sq, channels)
+        count = counts.get(sq.id, 0)
+        total_matches += count
         results.append({
             "query": sq.name or sq.query,
-            "count": counts.get(sq.id, 0),
+            "count": count,
             "previews": [(m.text or "")[:150] for m in matched[:2]],
         })
 
-    total_matches = sum(r["count"] for r in results)
     logger.info("Dry-run notifications: %d queries, %d matches, since=%s", len(queries), total_matches, since)
 
     return SchedulerTemplate(
