@@ -20,9 +20,15 @@ import sys
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+import typer
+
 from src.agent.runtime_context import AgentRuntimeContext
 from src.agent.tools.accounts import get_live_account_info_text
 from src.cli import runtime
+from src.cli.commands.common import (
+    apply_startup,
+    run_async,
+)
 from src.database.repositories.accounts import AccountSessionDecryptError
 from src.models import Account
 from src.services.notification_target_service import NotificationTargetService
@@ -570,3 +576,223 @@ def run(args: argparse.Namespace) -> None:
         asyncio.run(flood_status_impl(args.config))
     elif action == "flood-clear":
         asyncio.run(flood_clear_impl(args.config, phone=args.phone))
+
+
+# --------------------------------------------------------------------------- #
+# account → list / info / toggle / set-primary / delete / send-code /
+#           verify-code / add / flood-status / flood-clear / export-session /
+#           import  (export-session & import are the SSO secret-handling ops, #828)
+# --------------------------------------------------------------------------- #
+
+account_app = typer.Typer(no_args_is_help=True, help="Account management")
+
+
+@account_app.command("list")
+def account_list(ctx: typer.Context) -> None:
+    """List accounts."""
+    apply_startup(ctx)
+    run_async(list_impl(ctx.obj.config))
+
+
+@account_app.command("info")
+def account_info(
+    ctx: typer.Context,
+    phone: str | None = typer.Option(None, "--phone", help="Filter by phone number"),
+) -> None:
+    """Show profile info for connected accounts."""
+    apply_startup(ctx)
+    run_async(info_impl(ctx.obj.config, phone=phone))
+
+
+@account_app.command("toggle")
+def account_toggle(
+    ctx: typer.Context,
+    account_id: int = typer.Argument(..., metavar="id", help="Account id"),
+) -> None:
+    """Toggle account active state."""
+    apply_startup(ctx)
+    run_async(toggle_impl(ctx.obj.config, account_id=account_id))
+
+
+@account_app.command("set-primary")
+def account_set_primary(
+    ctx: typer.Context,
+    account_id: int = typer.Argument(..., metavar="id", help="Account id"),
+) -> None:
+    """Make account the primary one."""
+    apply_startup(ctx)
+    run_async(set_primary_impl(ctx.obj.config, account_id=account_id))
+
+
+@account_app.command("delete")
+def account_delete(
+    ctx: typer.Context,
+    account_id: int = typer.Argument(..., metavar="id", help="Account id"),
+    notify_to: str | None = typer.Option(
+        None,
+        "--notify-to",
+        help="Phone to reassign notifications to if deleting the notification account",
+    ),
+) -> None:
+    """Delete account."""
+    apply_startup(ctx)
+    run_async(delete_impl(ctx.obj.config, account_id=account_id, notify_to=notify_to))
+
+
+@account_app.command("send-code")
+def account_send_code(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Phone number with country code"),
+    api_id: int | None = typer.Option(
+        None, "--api-id", help="Telegram API ID (uses stored if omitted)"
+    ),
+    api_hash: str | None = typer.Option(
+        None, "--api-hash", help="Telegram API hash (uses stored if omitted)"
+    ),
+) -> None:
+    """Send Telegram auth code to phone."""
+    apply_startup(ctx)
+    run_async(send_code_impl(ctx.obj.config, phone=phone, api_id=api_id, api_hash=api_hash))
+
+
+@account_app.command("verify-code")
+def account_verify_code(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Phone number with country code"),
+    code: str = typer.Option(..., "--code", help="Auth code received in Telegram"),
+    password: str | None = typer.Option(None, "--password", help="2FA password (if required)"),
+    api_id: int | None = typer.Option(
+        None, "--api-id", help="Telegram API ID (uses stored if omitted)"
+    ),
+    api_hash: str | None = typer.Option(
+        None, "--api-hash", help="Telegram API hash (uses stored if omitted)"
+    ),
+) -> None:
+    """Verify Telegram auth code and add account."""
+    apply_startup(ctx)
+    run_async(
+        verify_code_impl(
+            ctx.obj.config, phone=phone, code=code, password=password, api_id=api_id, api_hash=api_hash
+        )
+    )
+
+
+@account_app.command("add")
+def account_add(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Phone number with country code"),
+    code: str | None = typer.Option(None, "--code", help="Auth code received in Telegram"),
+    password: str | None = typer.Option(None, "--password", help="2FA password (if required)"),
+    api_id: int | None = typer.Option(
+        None, "--api-id", help="Telegram API ID (uses stored if omitted)"
+    ),
+    api_hash: str | None = typer.Option(
+        None, "--api-hash", help="Telegram API hash (uses stored if omitted)"
+    ),
+) -> None:
+    """Compatibility alias for send-code / verify-code account onboarding."""
+    apply_startup(ctx)
+    # ``add`` resolves to verify-code when a --code is supplied, else send-code —
+    # exactly as the old argparse run() adapter did.
+    if code:
+        run_async(
+            verify_code_impl(
+                ctx.obj.config,
+                phone=phone,
+                code=code,
+                password=password,
+                api_id=api_id,
+                api_hash=api_hash,
+            )
+        )
+    else:
+        run_async(
+            send_code_impl(ctx.obj.config, phone=phone, api_id=api_id, api_hash=api_hash)
+        )
+
+
+@account_app.command("flood-status")
+def account_flood_status(ctx: typer.Context) -> None:
+    """Show flood wait timers for all accounts."""
+    apply_startup(ctx)
+    run_async(flood_status_impl(ctx.obj.config))
+
+
+@account_app.command("flood-clear")
+def account_flood_clear(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Account phone number"),
+) -> None:
+    """Clear flood wait for an account."""
+    apply_startup(ctx)
+    run_async(flood_clear_impl(ctx.obj.config, phone=phone))
+
+
+@account_app.command("export-session")
+def account_export_session(
+    ctx: typer.Context,
+    account_id: int | None = typer.Option(None, "--id", help="Account id"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone number"),
+    as_json: bool = typer.Option(False, "--json", help="Emit {phone, session_string} JSON"),
+) -> None:
+    """Print the decrypted StringSession for SSO (⚠️ full account access — keep secret).
+
+    Exactly one of --id / --phone is required (the argparse mutually-exclusive
+    group is enforced here — Typer has no native mutex group). The check runs
+    *before* ``apply_startup`` so an invalid mutex is rejected at parse time, the
+    way argparse rejected it during ``parse_args()`` — without first touching the
+    env / logging / data dirs (matters in a read-only runtime, #1162 drift §3).
+    The session string is NEVER logged.
+    """
+    if (account_id is None) == (phone is None):
+        # Mirror argparse's "exactly one required" mutually-exclusive group.
+        raise typer.BadParameter("provide exactly one of --id or --phone")
+    apply_startup(ctx)
+    run_async(
+        export_session_impl(
+            ctx.obj.config, account_id=account_id, phone=phone, as_json=as_json
+        )
+    )
+
+
+@account_app.command("import")
+def account_import(
+    ctx: typer.Context,
+    phone: str = typer.Option(..., "--phone", help="Phone number with country code"),
+    session_string: str | None = typer.Option(
+        None,
+        "--session-string",
+        help="Telegram StringSession to import (⚠️ appears in shell history — prefer --session-string-stdin)",
+    ),
+    session_string_stdin: bool = typer.Option(
+        False,
+        "--session-string-stdin",
+        help="Read the StringSession from stdin (keeps the secret out of argv / shell history)",
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite the session of an account that already exists for this phone"
+    ),
+) -> None:
+    """Add an account from a ready StringSession (SSO import, skips login).
+
+    Exactly one of --session-string / --session-string-stdin is required (the
+    argparse mutually-exclusive group is enforced here). The check runs *before*
+    ``apply_startup`` so an invalid mutex is rejected at parse time — without
+    first touching the env / logging / data dirs (#1162 drift §3). The raw
+    session string is never echoed back or logged.
+    """
+    if (session_string is None) == (not session_string_stdin):
+        # Mirror argparse's required mutually-exclusive group: exactly one source.
+        raise typer.BadParameter(
+            "provide exactly one of --session-string or --session-string-stdin"
+        )
+    apply_startup(ctx)
+    run_async(
+        import_impl(
+            ctx.obj.config,
+            phone=phone,
+            session_string=session_string,
+            session_string_stdin=session_string_stdin,
+            force=force,
+        )
+    )

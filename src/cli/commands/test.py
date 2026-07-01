@@ -15,7 +15,12 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
+import typer
+
 from src.cli import runtime
+from src.cli.commands.common import (
+    apply_startup,
+)
 from src.database import Database
 from src.filters.analyzer import ChannelAnalyzer
 from src.models import Message, SearchQuery
@@ -1340,3 +1345,45 @@ def run(args: argparse.Namespace) -> None:
     unit tests still exercise (the production entry point is the Typer app).
     """
     run_impl(args.config, args.test_action)
+
+
+# --------------------------------------------------------------------------- #
+# test → all / read / write / telegram / benchmark
+# --------------------------------------------------------------------------- #
+
+test_app = typer.Typer(no_args_is_help=True, help="Run diagnostic tests")
+
+
+@test_app.command("all")
+def test_all(ctx: typer.Context) -> None:
+    """Run all test sections (read + write + telegram)."""
+    apply_startup(ctx)
+    run_impl(ctx.obj.config, "all")
+
+
+@test_app.command("read")
+def test_read(ctx: typer.Context) -> None:
+    """Read-only DB checks."""
+    apply_startup(ctx)
+    run_impl(ctx.obj.config, "read")
+
+
+@test_app.command("write")
+def test_write(ctx: typer.Context) -> None:
+    """Write DB checks on a temporary DB copy."""
+    apply_startup(ctx)
+    run_impl(ctx.obj.config, "write")
+
+
+@test_app.command("telegram")
+def test_telegram(ctx: typer.Context) -> None:
+    """Live Telegram API tests on a temporary DB copy."""
+    apply_startup(ctx)
+    run_impl(ctx.obj.config, "telegram")
+
+
+@test_app.command("benchmark")
+def test_benchmark(ctx: typer.Context) -> None:
+    """Benchmark serial pytest run against the safe mixed parallel test workflow."""
+    apply_startup(ctx)
+    run_impl(ctx.obj.config, "benchmark")
