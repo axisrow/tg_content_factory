@@ -3626,7 +3626,7 @@ class TestWebAgent:
         thread_id = await db.create_agent_thread("Context")
         await db.add_channel(Channel(channel_id=1, title="Context Channel"))
         await db.insert_message(
-            Message(channel_id=1, message_id=1, text="ctx", date=datetime.now())
+            Message(channel_id=1, message_id=1, text="ctx", date=datetime.now(timezone.utc))
         )
 
         resp = await client.post(f"/agent/threads/{thread_id}/context", json={"channel_id": "1"})

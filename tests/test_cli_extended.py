@@ -687,9 +687,9 @@ class TestCLITestExtended:
             m.id = 100
             m.text = "test msg"
             m.sender_id = 123
-            from datetime import datetime
+            from datetime import datetime, timezone
 
-            m.date = datetime.now()
+            m.date = datetime.now(timezone.utc)
             m.media = None
             sender_patch = patch(
                 "src.telegram.collector.Collector._get_sender_name",
@@ -799,9 +799,9 @@ class TestCLITestExtended:
             m.id = 100
             m.text = "test msg"
             m.sender_id = 123
-            from datetime import datetime
+            from datetime import datetime, timezone
 
-            m.date = datetime.now()
+            m.date = datetime.now(timezone.utc)
             m.media = None
             sender_patch = patch(
                 "src.telegram.collector.Collector._get_sender_name",
@@ -936,9 +936,9 @@ class TestCLITestExtended:
             m.id = 100
             m.text = "test msg"
             m.sender_id = 123
-            from datetime import datetime
+            from datetime import datetime, timezone
 
-            m.date = datetime.now()
+            m.date = datetime.now(timezone.utc)
             m.media = None
             sender_patch = patch(
                 "src.telegram.collector.Collector._get_sender_name",
@@ -1041,9 +1041,9 @@ class TestCLITestExtended:
             m.id = 100
             m.text = "test msg"
             m.sender_id = 123
-            from datetime import datetime
+            from datetime import datetime, timezone
 
-            m.date = datetime.now()
+            m.date = datetime.now(timezone.utc)
             m.media = None
             sender_patch = patch(
                 "src.telegram.collector.Collector._get_sender_name",
@@ -1162,9 +1162,9 @@ class TestCLITestExtended:
             m.id = 100
             m.text = "test msg"
             m.sender_id = 123
-            from datetime import datetime
+            from datetime import datetime, timezone
 
-            m.date = datetime.now()
+            m.date = datetime.now(timezone.utc)
             m.media = None
             sender_patch = patch(
                 "src.telegram.collector.Collector._get_sender_name",
@@ -1285,9 +1285,9 @@ class TestCLITestExtended:
             m.id = 100
             m.text = "test msg"
             m.sender_id = 123
-            from datetime import datetime
+            from datetime import datetime, timezone
 
-            m.date = datetime.now()
+            m.date = datetime.now(timezone.utc)
             m.media = None
             sender_patch = patch(
                 "src.telegram.collector.Collector._get_sender_name",

@@ -1,5 +1,5 @@
 """Tests for src/utils/json.py — safe_json_dumps."""
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pytest
 from pydantic import BaseModel
@@ -18,7 +18,7 @@ def test_plain_types():
 
 
 def test_datetime_serialization():
-    dt = datetime(2026, 4, 19, 12, 30, 45)
+    dt = datetime(2026, 4, 19, 12, 30, 45, tzinfo=timezone.utc).replace(tzinfo=None)
     result = safe_json_dumps({"ts": dt})
     assert '"2026-04-19T12:30:45"' in result
 
@@ -52,7 +52,7 @@ def test_unknown_type_raises_type_error():
 
 def test_mixed_types():
     payload = {
-        "dt": datetime(2026, 1, 1),
+        "dt": datetime(2026, 1, 1, tzinfo=timezone.utc).replace(tzinfo=None),
         "data": b"\xff",
         "model": _SampleModel(name="x", value=1),
         "plain": "text",
@@ -77,7 +77,10 @@ def test_custom_default_does_not_receive_datetime():
             return o.hex()
         raise TypeError("custom default should not be called for datetime")
 
-    out = safe_json_dumps({"ts": datetime(2026, 1, 1)}, default=only_bytes)
+    out = safe_json_dumps(
+        {"ts": datetime(2026, 1, 1, tzinfo=timezone.utc).replace(tzinfo=None)},
+        default=only_bytes,
+    )
     assert "2026-01-01" in out
 
 
@@ -87,7 +90,10 @@ def test_indent_pretty_prints():
 
 
 def test_list_of_datetime():
-    items = [datetime(2026, 1, 1), datetime(2026, 6, 15)]
+    items = [
+        datetime(2026, 1, 1, tzinfo=timezone.utc).replace(tzinfo=None),
+        datetime(2026, 6, 15, tzinfo=timezone.utc).replace(tzinfo=None),
+    ]
     result = safe_json_dumps(items)
     assert "2026-01-01" in result
     assert "2026-06-15" in result

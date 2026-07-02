@@ -550,7 +550,7 @@ class TestTelegramUtilsCoverage:
         """Line 11: naive datetime converted to UTC."""
         from src.telegram.utils import normalize_utc
 
-        naive = datetime(2026, 1, 1, 12, 0, 0)
+        naive = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc).replace(tzinfo=None)
         result = normalize_utc(naive)
         assert result.tzinfo == timezone.utc
 

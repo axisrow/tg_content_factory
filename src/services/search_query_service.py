@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date as date_cls
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.database import Database
 from src.database.bundles import SearchQueryBundle
@@ -102,7 +101,7 @@ class SearchQueryService:
             logger.info("Search query '%s' (id=%d): regex not counted via FTS", sq.query, sq_id)
             return 0
         daily = await self._bundle.get_fts_daily_stats_for_query(sq, days=1)
-        today = date_cls.today().isoformat()
+        today = datetime.now(timezone.utc).date().isoformat()
         count = next((stat.count for stat in daily if stat.day == today), 0)
         if sq.track_stats:
             await self._bundle.record_stat(sq_id, count)
@@ -150,7 +149,7 @@ class SearchQueryService:
     ) -> list[SearchQueryDailyStat]:
         if stats is None:
             return []
-        today = date_cls.today()
+        today = datetime.now(timezone.utc).date()
         if not stats:
             return [
                 SearchQueryDailyStat(day=(today - timedelta(days=i)).isoformat(), count=0)

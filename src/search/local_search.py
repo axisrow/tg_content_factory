@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from src.database.bundles import SearchBundle
 from src.models import SearchParams, SearchResult
@@ -101,7 +101,7 @@ class LocalSearch:
                 # Normalize date-only strings to be inclusive (match SQL path behavior)
                 effective_to = date_to
                 if len(date_to) == 10:  # "YYYY-MM-DD" without time
-                    next_day = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+                    next_day = datetime.strptime(date_to, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
                     effective_to = next_day.strftime("%Y-%m-%d")
                 if str(msg.date) >= effective_to:
                     continue

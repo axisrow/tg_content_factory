@@ -2119,7 +2119,7 @@ async def test_dialogs_broadcast_stats_str_value():
 
 
 async def test_dialogs_broadcast_stats_with_period():
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     db = _mock_db()
     pool = _mock_pool()
@@ -2131,8 +2131,8 @@ async def test_dialogs_broadcast_stats_with_period():
     stats.reactions_per_post = None
     stats.forwards_per_post = None
     period = MagicMock()
-    period.min_date = datetime(2026, 1, 1)
-    period.max_date = datetime(2026, 12, 31)
+    period.min_date = datetime(2026, 1, 1, tzinfo=timezone.utc).replace(tzinfo=None)
+    period.max_date = datetime(2026, 12, 31, tzinfo=timezone.utc).replace(tzinfo=None)
     stats.period = period
     stats.enabled_notifications = None
     c.get_broadcast_stats = AsyncMock(return_value=stats)

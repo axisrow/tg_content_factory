@@ -229,7 +229,7 @@ async def test_dashboard_flood_wait_naive_datetime(route_client, base_app):
     """Dashboard handles flood_wait_until with naive datetime (no tzinfo)."""
     app, db, pool = base_app
     # Naive future datetime
-    future_time = datetime.now() + timedelta(hours=1)
+    future_time = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None)
     accounts = await db.get_accounts(active_only=False)
     for acc in accounts:
         await db.update_account_flood(acc.phone, future_time)
