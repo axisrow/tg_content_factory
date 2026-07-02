@@ -291,7 +291,7 @@ async def test_add_search_query_string_false_flags_disabled(db):
 
     from src.services.search_query_service import SearchQueryService
 
-    queries = await SearchQueryService(db).list()
+    queries = await SearchQueryService(db).list_queries()
     assert len(queries) == 1
     sq = queries[0]
     assert sq.is_regex is False

@@ -11,12 +11,14 @@ from src.models import CollectionTask, CollectionTaskType
 from src.telegram.collector import Collector
 
 if TYPE_CHECKING:
+    from src.config import AppConfig
     from src.database import Database
     from src.search.engine import SearchEngine
     from src.services.content_generation_service import ContentGenerationService
     from src.services.image_generation_service import ImageGenerationService
     from src.services.photo_auto_upload_service import PhotoAutoUploadService
     from src.services.photo_task_service import PhotoTaskService
+    from src.telegram.client_pool import ClientPool
     from src.telegram.notifier import Notifier
 
 logger = logging.getLogger(__name__)
@@ -42,9 +44,9 @@ class TaskHandlerContext:
     search_engine: "SearchEngine | None" = None
     pipeline_bundle: PipelineBundle | None = None
     db: "Database | None" = None
-    client_pool: object | None = None
+    client_pool: "ClientPool | None" = None
     notifier: "Notifier | None" = None
-    config: object | None = None
+    config: "AppConfig | None" = None
     llm_provider_service: object | None = None
 
 
@@ -52,11 +54,13 @@ async def build_image_service(context: TaskHandlerContext) -> "ImageGenerationSe
     from src.services.image_generation_service import ImageGenerationService
 
     adapters = None
-    if context.db and context.config:
+    db = context.db
+    config = context.config
+    if db is not None and config is not None:
         try:
             from src.services.image_provider_service import ImageProviderService
 
-            svc = ImageProviderService(context.db, context.config)
+            svc = ImageProviderService(db, config)
             configs = await svc.load_provider_configs()
             built = svc.build_adapters(configs)
             if configs:
@@ -69,10 +73,10 @@ async def build_image_service(context: TaskHandlerContext) -> "ImageGenerationSe
     # Opt-in production rate-limit / daily cost cap (#814); None unless the
     # operator enabled production_limits, so default behavior is unchanged.
     limits = None
-    if context.db and context.config:
+    if db is not None and config is not None:
         from src.services.production_limits_service import ProductionLimitsService
 
-        limits = ProductionLimitsService.from_config(context.db, context.config)
+        limits = ProductionLimitsService.from_config(db, config)
     return ImageGenerationService(adapters=adapters, limits=limits)
 
 
@@ -96,13 +100,16 @@ async def build_content_generation_service(context: TaskHandlerContext) -> "Cont
     from src.services.quality_scoring_service import QualityScoringService
 
     db = context.db
+    search_engine = context.search_engine
+    assert db is not None
+    assert search_engine is not None
     notification_service = DraftNotificationService(db, context.notifier)
     image_service = await build_image_service(context)
     provider_service = await resolve_llm_provider_service(context)
     quality_service = QualityScoringService(db, provider_service=provider_service)
     return ContentGenerationService(
         db,
-        context.search_engine,
+        search_engine,
         config=context.config,
         image_service=image_service,
         notification_service=notification_service,
