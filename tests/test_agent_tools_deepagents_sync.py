@@ -700,7 +700,7 @@ class TestDeepagentsSyncListSearchQueries:
         from src.agent.tools.deepagents_sync import build_deepagents_tools
 
         svc_mock = MagicMock()
-        svc_mock.list = AsyncMock(return_value=[])
+        svc_mock.list_queries = AsyncMock(return_value=[])
         with patch("src.services.search_query_service.SearchQueryService", return_value=svc_mock):
             tools = build_deepagents_tools(mock_db)
             tool_map = {t.__name__: t for t in tools}
@@ -712,7 +712,7 @@ class TestDeepagentsSyncListSearchQueries:
 
         q = SimpleNamespace(id=3, query="crypto", is_active=True, interval_minutes=60)
         svc_mock = MagicMock()
-        svc_mock.list = AsyncMock(return_value=[q])
+        svc_mock.list_queries = AsyncMock(return_value=[q])
         with patch("src.services.search_query_service.SearchQueryService", return_value=svc_mock):
             tools = build_deepagents_tools(mock_db)
             tool_map = {t.__name__: t for t in tools}
