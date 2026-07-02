@@ -87,7 +87,7 @@ class ABTestingService:
 
                 # Bind the loop-local prompt into the recovered call. A def (not a
                 # lambda with a default arg) keeps mypy's lambda inference happy.
-                async def _call(prompt: str = prompt) -> str:
+                async def _call(prompt: str = prompt, provider_callable=provider_callable) -> str:
                     return await provider_callable(
                         prompt=prompt,
                         max_tokens=1000,
