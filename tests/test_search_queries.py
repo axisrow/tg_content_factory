@@ -40,7 +40,7 @@ async def test_add_and_list(svc):
     sq_id = await svc.add("аренда квартир", 30)
     assert sq_id > 0
 
-    items = await svc.list()
+    items = await svc.list_queries()
     assert len(items) == 1
     assert items[0].query == "аренда квартир"
     assert items[0].interval_minutes == 30
@@ -49,11 +49,11 @@ async def test_add_and_list(svc):
 @pytest.mark.anyio
 async def test_toggle(svc):
     sq_id = await svc.add("query", 60)
-    items = await svc.list()
+    items = await svc.list_queries()
     assert items[0].is_active is True
 
     await svc.toggle(sq_id)
-    items = await svc.list()
+    items = await svc.list_queries()
     assert items[0].is_active is False
 
 
@@ -61,7 +61,7 @@ async def test_toggle(svc):
 async def test_delete(svc):
     sq_id = await svc.add("query", 60)
     await svc.delete(sq_id)
-    items = await svc.list()
+    items = await svc.list_queries()
     assert len(items) == 0
 
 

@@ -48,7 +48,7 @@ class SearchQueryService:
         )
         return await self._bundle.add(sq)
 
-    async def list(self, active_only: bool = False) -> list[SearchQuery]:
+    async def list_queries(self, active_only: bool = False) -> list[SearchQuery]:
         return await self._bundle.get_all(active_only)
 
     async def get(self, sq_id: int) -> SearchQuery | None:
@@ -122,12 +122,13 @@ class SearchQueryService:
         channels = await self._get_channels()
         # Regex queries can't be counted via FTS5; exclude them from FTS stats batch
         tracked = [sq for sq in queries if sq.track_stats and not sq.is_regex]
-        tracked_ids = {sq.id for sq in tracked}
+        tracked_ids = {sq.id for sq in tracked if sq.id is not None}
         # Only tracked non-regex queries have stats; others get empty daily_stats/total_30d=0
         stats_map = await self._bundle.get_fts_daily_stats_batch(tracked, days)
         result = []
         for sq in queries:
-            raw = stats_map.get(sq.id, []) if sq.id in tracked_ids else None
+            sq_id = sq.id
+            raw = stats_map.get(sq_id, []) if sq_id is not None and sq_id in tracked_ids else None
             daily = self._fill_missing_days(raw, days)
             total = sum(s.count for s in daily)
             chat_validation = validate_chat_filter(sq.chat_filter, channels)
@@ -135,7 +136,7 @@ class SearchQueryService:
                 {
                     "query": sq,
                     "total_30d": total,
-                    "last_run": last_runs.get(sq.id),
+                    "last_run": last_runs.get(sq_id) if sq_id is not None else None,
                     "daily_stats": daily,
                     "chat_filter_warnings": chat_validation.warning_text(),
                     "chat_filter_channel_id": single_resolved_channel_id(sq.chat_filter, channels),

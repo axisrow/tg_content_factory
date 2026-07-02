@@ -511,7 +511,9 @@ class ContentGenerationService:
             logger.debug("agent_tools unavailable for pipeline execution", exc_info=True)
 
         executor = PipelineExecutor()
-        result = await executor.execute(pipeline, pipeline.pipeline_json, services)
+        graph = pipeline.pipeline_json
+        assert graph is not None
+        result = await executor.execute(pipeline, graph, services)
 
         return {
             "generated_text": result.get("generated_text", ""),

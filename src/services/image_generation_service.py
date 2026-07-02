@@ -194,9 +194,11 @@ class ImageGenerationService:
 
         for name in IMAGE_PROVIDER_ORDER:
             spec = IMAGE_PROVIDER_SPECS[name]
-            if spec.keyless:
-                if spec.detect() and spec.keyless_factory is not None:
-                    self._adapters[name] = spec.keyless_factory()
+            detect = spec.detect
+            keyless_factory = spec.keyless_factory
+            if detect is not None:
+                if detect() and keyless_factory is not None:
+                    self._adapters[name] = keyless_factory()
             else:
                 key = _env_key(spec.env_vars)
                 if key and spec.keyed_factory is not None:

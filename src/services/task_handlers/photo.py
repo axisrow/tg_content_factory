@@ -59,6 +59,7 @@ class PhotoTaskHandler:
             return
         try:
             jobs = await ctx.photo_auto_upload_service.run_due()
+            assert isinstance(jobs, int)
             await ctx.tasks.update_collection_task(
                 task.id,
                 CollectionTaskStatus.COMPLETED,
