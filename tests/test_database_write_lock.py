@@ -181,7 +181,7 @@ async def test_delete_channel_serialized_with_pipeline_add(db: Database):
             generation_backend=PipelineGenerationBackend.CHAIN,
         )
 
-        async def do_add():
+        async def do_add(pipeline: ContentPipeline = pipeline, ch_id: int = ch_id):
             try:
                 await db.repos.content_pipelines.add(
                     pipeline,

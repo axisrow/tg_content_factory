@@ -717,14 +717,18 @@ class CollectionMixin:
             is_first_run = channel.last_collected_id == 0
             should_notify = self._notifier is not None and not is_first_run
 
-            async def _check_collected_notification_queries() -> None:
+            async def _check_collected_notification_queries(
+                channel_username: str | None,
+                *,
+                should_notify: bool = should_notify,
+            ) -> None:
                 nonlocal all_messages
                 # Auto-translate runs regardless of notifications (audit #836/6).
                 await self._maybe_enqueue_auto_translate()
                 if not should_notify or not all_messages:
                     return
                 for message in all_messages:
-                    message.channel_username = channel.username
+                    message.channel_username = channel_username
                 await self._check_notification_queries(all_messages)
                 all_messages = []
 
@@ -740,7 +744,16 @@ class CollectionMixin:
                 mask_phone(phone),
             )
 
-            async def _flush_batch(batch: list[Message]) -> bool:
+            async def _flush_batch(
+                batch: list[Message],
+                *,
+                channel_id: int = channel_id,
+                channel_log_name: str = channel_log_name,
+                should_notify: bool = should_notify,
+                all_messages: list[Message] = all_messages,
+                phone: str = phone,
+                total_collected: int = total_collected,
+            ) -> bool:
                 nonlocal persisted_max_msg_id, collected_count, saw_topic_message
                 if not batch:
                     return True
@@ -874,7 +887,7 @@ class CollectionMixin:
                     channel_id=channel_id,
                     messages_batch=messages_batch,
                     flush_batch=_flush_batch,
-                    get_persisted_max_msg_id=lambda: persisted_max_msg_id,
+                    get_persisted_max_msg_id=lambda: persisted_max_msg_id,  # noqa: B023 - must read post-flush value.
                     min_id=min_id,
                     phone=phone,
                     session=session,
@@ -889,7 +902,7 @@ class CollectionMixin:
             # The closure drains its buffer on success, so this is idempotent
             # and exactly-once across every exit path below: stop/idle return
             # (#1127/#1168), FloodWait rotation/return (#1169), normal completion.
-            await _check_collected_notification_queries()
+            await _check_collected_notification_queries(channel.username)
 
             if stop_due_to_persistence_error or stream_idle_timeout:
                 # Idle timeout and persistence errors both stop this pass;
