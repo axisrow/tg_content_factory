@@ -50,6 +50,13 @@ async def _persist_new_channel(db, pool, info, existing_ids, stats_channel_ids, 
     return channel
 
 
+def _parse_channel_import_source(source: str) -> list[str]:
+    source_path = Path(source)
+    if source_path.is_file():
+        return parse_file(source_path.read_bytes(), source_path.name)
+    return parse_identifiers(source)
+
+
 # --------------------------------------------------------------------------- #
 # channel tag (nested depth-2 group) — pure-db helpers
 #
@@ -345,11 +352,7 @@ async def import_impl(config_path: str, *, source: str) -> None:
     config, db = await runtime.init_db(config_path)
     pool = None
     try:
-        source_path = Path(source)
-        if source_path.is_file():
-            identifiers = parse_file(source_path.read_bytes(), source_path.name)
-        else:
-            identifiers = parse_identifiers(source)
+        identifiers = await asyncio.to_thread(_parse_channel_import_source, source)
 
         identifiers = deduplicate_identifiers(identifiers)
         if not identifiers:

@@ -121,6 +121,17 @@ BENCHMARK_ENV_PREFIX_DENYLIST = (
 )
 
 
+def _unlink_if_exists(path: str) -> None:
+    if os.path.exists(path):
+        os.unlink(path)
+
+
+def _unlink_and_verify_removed(path: str) -> None:
+    os.unlink(path)
+    if os.path.exists(path):
+        raise RuntimeError(f"Temp file still exists after unlink: {path}")
+
+
 class Status(Enum):
     PASS = "PASS"
     FAIL = "FAIL"
@@ -475,8 +486,7 @@ async def _init_db_copy(config_path: str) -> tuple[Database, str, AppConfig]:
         await copy_db.initialize()
         return copy_db, tmp.name, config
     except Exception:
-        if os.path.exists(tmp.name):
-            os.unlink(tmp.name)
+        await asyncio.to_thread(_unlink_if_exists, tmp.name)
         raise
 
 
@@ -664,9 +674,7 @@ async def _run_filter_reset_check(copy_db: Database, results: list[CheckResult])
 async def _run_write_cleanup_check(tmp_path: str | None, results: list[CheckResult]) -> None:
     try:
         if tmp_path:
-            os.unlink(tmp_path)
-            if os.path.exists(tmp_path):
-                raise RuntimeError(f"Temp file still exists after unlink: {tmp_path}")
+            await asyncio.to_thread(_unlink_and_verify_removed, tmp_path)
         results.append(CheckResult("write_cleanup", Status.PASS, "Temp DB removed"))
     except Exception as exc:
         results.append(CheckResult("write_cleanup", Status.FAIL, str(exc)))
@@ -1291,8 +1299,8 @@ async def _cleanup_telegram(pool, copy_db, tmp_path, results) -> None:
             await pool.disconnect_all()
         if copy_db:
             await copy_db.close()
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+        if tmp_path:
+            await asyncio.to_thread(_unlink_if_exists, tmp_path)
         results.append(CheckResult("tg_cleanup", Status.PASS, "Resources released"))
     except Exception as exc:
         results.append(CheckResult("tg_cleanup", Status.FAIL, str(exc)))

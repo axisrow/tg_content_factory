@@ -57,6 +57,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _downloads_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "data" / "downloads"
+
+
 # Re-exported so existing patch points keep working:
 #   - constants accessed/patched as ``mod.<NAME>`` by the test suite;
 #   - TelegramCommandRetryLaterError imported from this module by external code.
@@ -407,7 +412,7 @@ class TelegramCommandDispatcher(
     async def _handle_dialogs_download_media(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])
         try:
-            output_dir = Path(__file__).resolve().parents[2] / "data" / "downloads"
+            output_dir = await asyncio.to_thread(_downloads_dir)
             result = await TelegramActionService(self._pool).download_media(
                 phone=phone,
                 chat_id=payload["chat_id"],
