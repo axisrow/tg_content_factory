@@ -315,6 +315,7 @@ class CollectionQueue:
             self._active_task_ids[task_id] = cancel_event
             stop_after_no_clients = False
             keep_known_task_id = False
+            should_stop_workers = False
             try:
                 await self._channels.update_collection_task(task_id, CollectionTaskStatus.RUNNING)
                 collect_kwargs = self._build_collect_kwargs(
@@ -336,7 +337,9 @@ class CollectionQueue:
                 self._queue.task_done()
                 if stop_after_no_clients:
                     self._stop_workers = True
-                    break
+                    should_stop_workers = True
+            if should_stop_workers:
+                break
 
     def _build_collect_kwargs(
         self, task_id: int, *, full: bool, force: bool, cancel_event: asyncio.Event

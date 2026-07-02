@@ -67,7 +67,7 @@ async def test_escaping_stream_ok(capsys):
 
     # Build fake SSE stream
     async def _fake_stream(*a, **kw):
-        for name, text in [("xml_tags", "<b>bold</b>")]:
+        for name, _text in [("xml_tags", "<b>bold</b>")]:
             yield f'data: {json.dumps({"text": f"processed-{name}"})}\n'
             yield f'data: {json.dumps({"done": True})}\n'
 

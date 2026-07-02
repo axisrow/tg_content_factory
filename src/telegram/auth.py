@@ -288,9 +288,9 @@ class TelegramAuth:
                     "sign_in",
                     AUTH_RPC_TIMEOUT_SECONDS,
                 )
-            except SessionPasswordNeededError:
+            except SessionPasswordNeededError as exc:
                 if not password_2fa:
-                    raise TwoFactorRequiredError()
+                    raise TwoFactorRequiredError() from exc
                 logger.info(
                     "auth.verify_code rpc start phone=%s rpc=sign_in_2fa timeout_s=%s",
                     phone,
@@ -379,9 +379,9 @@ class TelegramAuth:
                         "sign_in",
                         AUTH_RPC_TIMEOUT_SECONDS,
                     )
-                except SessionPasswordNeededError:
+                except SessionPasswordNeededError as exc:
                     if not password_2fa:
-                        raise TwoFactorRequiredError()
+                        raise TwoFactorRequiredError() from exc
                     logger.info(
                         "auth.sign_in_fresh rpc start phone=%s rpc=sign_in_2fa timeout_s=%s",
                         phone,
@@ -434,7 +434,7 @@ class TelegramAuth:
 
     async def cleanup(self) -> None:
         """Disconnect any pending clients."""
-        for phone, (client, _) in self._pending.items():
+        for _phone, (client, _) in self._pending.items():
             try:
                 await client.disconnect()
             except Exception:

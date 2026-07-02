@@ -150,7 +150,10 @@ line-length = 120
 include = ["*.py"]
 
 [tool.ruff.lint]
-select = ["B023", "DTZ", "E", "F", "I", "N", "W"]
+select = ["B", "DTZ", "E", "F", "I", "N", "W"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Option", "typer.Argument", "fastapi.Depends", "fastapi.File", "fastapi.Form"]
 
 [tool.mypy]
 

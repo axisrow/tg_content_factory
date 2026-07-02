@@ -448,7 +448,7 @@ class ClaudeSdkBackend:
                         )
                     except StopAsyncIteration:
                         break
-                    except asyncio.TimeoutError:
+                    except asyncio.TimeoutError as exc:
                         if not first_event_logged:
                             logger.error(
                                 "First event timeout %ds fired after %.1fs (thread %d)",
@@ -457,7 +457,7 @@ class ClaudeSdkBackend:
                             diag = _diagnose_connection(cli_path, stderr_lines)
                             raise TimeoutError(
                                 f"Claude не ответил за {cfg.first_event_timeout}с. {diag}"
-                            )
+                            ) from exc
                         logger.error(
                             "Idle timeout %ds fired after %.1fs total (thread %d)",
                             cfg.idle_timeout, time.monotonic() - t0, thread_id,
@@ -467,7 +467,7 @@ class ClaudeSdkBackend:
                             reason = f"Последний rate limit: {_last_rate_limit[0]}."
                         raise TimeoutError(
                             f"Стрим Claude замолчал на {cfg.idle_timeout}с. {reason}"
-                        )
+                        ) from exc
 
                     if not first_event_logged:
                         elapsed_fe = time.monotonic() - t0

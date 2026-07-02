@@ -49,6 +49,7 @@ from src.telegram.collector import (
     NoActiveCollectionClientsError,
     NoActiveStatsClientsError,
 )
+from src.telegram.flood_wait import HandledFloodWaitError
 from tests.helpers import (
     AsyncIterEmpty,
     AsyncIterMessages,
@@ -626,7 +627,7 @@ async def test_resolve_any_entity_flood_raises_after_exhaustion(mock_auth, mock_
     pool = ClientPool(mock_auth, mock_db)
     pool.clients["+7001"] = TelegramTransportSession(client, disconnect_on_close=False)
 
-    with pytest.raises(Exception):  # HandledFloodWaitError
+    with pytest.raises(HandledFloodWaitError):
         await pool.resolve_any_entity("@test")
 
 

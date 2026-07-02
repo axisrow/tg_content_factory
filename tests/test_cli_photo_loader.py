@@ -61,7 +61,7 @@ def test_resolve_target_not_found(tmp_path, capsys):
 
     try:
         asyncio.run(_resolve_target("@nonexistent", pool))
-        assert False, "Should have raised ValueError"
+        raise AssertionError("Should have raised ValueError")
     except ValueError as e:
         assert "Could not resolve target" in str(e)
 

@@ -1240,7 +1240,7 @@ async def test_photo_loader_get_batch_nonexistent(db):
 
 @pytest.mark.anyio
 async def test_photo_loader_list_batches(db):
-    for i in range(3):
+    for _i in range(3):
         batch = _make_photo_batch()
         await db.repos.photo_loader.create_batch(batch)
 
@@ -1250,7 +1250,7 @@ async def test_photo_loader_list_batches(db):
 
 @pytest.mark.anyio
 async def test_photo_loader_list_batches_with_limit(db):
-    for i in range(5):
+    for _i in range(5):
         batch = _make_photo_batch()
         await db.repos.photo_loader.create_batch(batch)
 
@@ -1326,7 +1326,7 @@ async def test_photo_loader_list_items(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
 
-    for i in range(3):
+    for _i in range(3):
         item = _make_photo_item(batch_id)
         await db.repos.photo_loader.create_item(item)
 
@@ -1339,7 +1339,7 @@ async def test_photo_loader_list_items_for_batch(db):
     batch = _make_photo_batch()
     batch_id = await db.repos.photo_loader.create_batch(batch)
 
-    for i in range(2):
+    for _i in range(2):
         item = _make_photo_item(batch_id)
         await db.repos.photo_loader.create_item(item)
 
@@ -1502,7 +1502,7 @@ async def test_photo_loader_get_auto_job_nonexistent(db):
 
 @pytest.mark.anyio
 async def test_photo_loader_list_auto_jobs(db):
-    for i in range(3):
+    for _i in range(3):
         job = _make_auto_job()
         await db.repos.photo_loader.create_auto_job(job)
 

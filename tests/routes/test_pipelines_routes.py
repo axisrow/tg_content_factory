@@ -759,7 +759,7 @@ def test_target_refs_missing_separator():
 
     try:
         _target_refs(["invalid_format"])
-        assert False, "Should have raised PipelineValidationError"
+        raise AssertionError("Should have raised PipelineValidationError")
     except PipelineValidationError as e:
         assert "Некорректный формат цели" in str(e)
 
@@ -771,7 +771,7 @@ def test_target_refs_invalid_dialog_id():
 
     try:
         _target_refs(["+1234567890|not_a_number"])
-        assert False, "Should have raised PipelineValidationError"
+        raise AssertionError("Should have raised PipelineValidationError")
     except PipelineValidationError as e:
         assert "Некорректный dialog id" in str(e)
 

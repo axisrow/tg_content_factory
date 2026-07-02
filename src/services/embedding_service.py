@@ -164,10 +164,10 @@ class EmbeddingService:
             texts = [text for _message_id, text in pending]
             vectors = await self._embed_documents(texts)
             await self._search.messages.upsert_message_embeddings(
-                list(zip(message_ids, vectors))
+                list(zip(message_ids, vectors, strict=True))
             )
             await self._search.messages.upsert_message_embedding_json(
-                list(zip(message_ids, vectors))
+                list(zip(message_ids, vectors, strict=True))
             )
             last_embedded_id = message_ids[-1]
             await self._search.set_setting(LAST_EMBEDDED_ID_SETTING, str(last_embedded_id))

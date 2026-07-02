@@ -1470,7 +1470,7 @@ class DialogsMixin:
                         raise LookupError(
                             f"Cannot resolve entity for channel {channel_id}: "
                             "not in cache and no username in DB"
-                        )
+                        ) from None
             response = await run_with_flood_wait(
                 session.fetch_forum_topics(entity, limit=100),
                 operation="get_forum_topics_fetch_topics",

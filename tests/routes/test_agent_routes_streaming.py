@@ -92,7 +92,7 @@ async def test_chat_streaming_saves_assistant_message(client, db):
     assert resp.status_code == 200
 
     # Consume the stream to trigger the save
-    async for line in resp.aiter_lines():
+    async for _line in resp.aiter_lines():
         pass
 
     messages = await db.get_agent_messages(thread_id)
@@ -363,7 +363,7 @@ async def test_chat_streaming_integrity_error_on_save(client, db):
             headers={"Content-Type": "application/json"},
         )
     assert resp.status_code == 200
-    async for line in resp.aiter_lines():
+    async for _line in resp.aiter_lines():
         pass
 
 
@@ -388,7 +388,7 @@ async def test_chat_streaming_error_in_stream(client, db):
         headers={"Content-Type": "application/json"},
     )
     assert resp.status_code == 200
-    async for line in resp.aiter_lines():
+    async for _line in resp.aiter_lines():
         pass
 
 
@@ -414,7 +414,7 @@ async def test_chat_streaming_error_integrity_delete(client, db):
             headers={"Content-Type": "application/json"},
         )
     assert resp.status_code == 200
-    async for line in resp.aiter_lines():
+    async for _line in resp.aiter_lines():
         pass
 
 
@@ -440,7 +440,7 @@ async def test_chat_streaming_malformed_chunk(client, db):
         headers={"Content-Type": "application/json"},
     )
     assert resp.status_code == 200
-    async for line in resp.aiter_lines():
+    async for _line in resp.aiter_lines():
         pass
 
 
@@ -473,7 +473,7 @@ async def test_chat_streaming_generic_exception(client, db):
             headers={"Content-Type": "application/json"},
         )
     assert resp.status_code == 200
-    async for line in resp.aiter_lines():
+    async for _line in resp.aiter_lines():
         pass
 
 

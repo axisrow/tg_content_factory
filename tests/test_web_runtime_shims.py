@@ -80,7 +80,7 @@ async def test_snapshot_pool_get_native_raises():
     pool = SnapshotClientPool(db)
     try:
         await pool.get_native_client_by_phone("+1")
-        assert False, "Should have raised"
+        raise AssertionError("Should have raised")
     except RuntimeError as e:
         assert "worker process" in str(e)
 
