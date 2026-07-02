@@ -47,7 +47,7 @@ def test_rfc822_with_datetime():
 
 
 def test_rfc822_naive_datetime():
-    dt = datetime(2024, 6, 1, 0, 0, 0)
+    dt = datetime(2024, 6, 1, 0, 0, 0, tzinfo=timezone.utc).replace(tzinfo=None)
     result = _rfc822(dt)
     assert "2024" in result
 

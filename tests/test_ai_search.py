@@ -1,6 +1,6 @@
 import sys
 import types
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -83,7 +83,7 @@ async def test_ai_search_run_success(llm_config, mock_search_bundle, fake_deepag
     mock_agent.run.return_value = "AI Summary Result"
 
     mock_search_bundle.search_messages.return_value = MessageSearchPage(
-        messages=[Message(channel_id=1, message_id=1, text="hello", date=datetime.now())],
+        messages=[Message(channel_id=1, message_id=1, text="hello", date=datetime.now(timezone.utc))],
         total=1,
     )
 
@@ -113,7 +113,7 @@ async def test_ai_search_run_error(llm_config, mock_search_bundle, fake_deepagen
 async def test_search_posts_tool_logic(llm_config, mock_search_bundle, fake_deepagents):
     # This tests the tool function defined inside initialize
     mock_search_bundle.search_messages.return_value = MessageSearchPage(
-        messages=[Message(channel_id=1, message_id=1, text="content", date=datetime.now())],
+        messages=[Message(channel_id=1, message_id=1, text="content", date=datetime.now(timezone.utc))],
         total=1,
     )
 

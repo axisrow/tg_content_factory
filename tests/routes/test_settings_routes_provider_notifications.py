@@ -24,7 +24,7 @@ async def db(base_app):
 async def test_settings_page_flood_wait_naive_tz(route_client, db):
     """Test settings page when flood_wait_until has no tzinfo (line 424)."""
     accounts = await db.get_accounts(active_only=False)
-    future_naive = datetime.now() + timedelta(hours=1)  # no tzinfo
+    future_naive = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None)
     for acc in accounts:
         await db.update_account_flood(acc.phone, future_naive)
 

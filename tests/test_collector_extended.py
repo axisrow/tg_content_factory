@@ -152,7 +152,7 @@ async def test_notification_queries_logic(collector, mock_db):
     msgs = [
         Message(
             channel_id=1, message_id=42, text="This is a test message",
-            date=datetime.now(), channel_username="mychan",
+            date=datetime.now(timezone.utc), channel_username="mychan",
         )
     ]
     await collector._check_notification_queries(msgs)
@@ -171,7 +171,7 @@ async def test_notification_queries_private_channel_link(collector, mock_db):
     mock_db.get_notification_queries.return_value = [sq]
 
     msgs = [
-        Message(channel_id=-1001234567890, message_id=99, text="hello world", date=datetime.now())
+        Message(channel_id=-1001234567890, message_id=99, text="hello world", date=datetime.now(timezone.utc))
     ]
     await collector._check_notification_queries(msgs)
     notifier.notify.assert_called_once()
@@ -212,11 +212,19 @@ async def test_empty_ledger_does_not_replay_backlog(collector, mock_db):
     store = _LedgerStore()  # empty ledger -> has_any() is False
     mock_db.repos.notified_messages = store
     # A backlog message that would match if replayed — must NOT be fetched/sent.
-    backlog_msg = Message(channel_id=1, message_id=1, text="old hit", date=datetime.now())
+    backlog_msg = Message(channel_id=1, message_id=1, text="old hit", date=datetime.now(timezone.utc))
     get_recent = AsyncMock(return_value=[backlog_msg])
     mock_db.repos.messages.get_recent_for_channels = get_recent
 
-    fresh = [Message(channel_id=1, message_id=50, text="fresh hit", date=datetime.now(), channel_username="c")]
+    fresh = [
+        Message(
+            channel_id=1,
+            message_id=50,
+            text="fresh hit",
+            date=datetime.now(timezone.utc),
+            channel_username="c",
+        )
+    ]
     await collector._check_notification_queries(fresh)
 
     # Backlog rescan skipped on empty ledger, so get_recent_for_channels was never called...
@@ -236,11 +244,25 @@ async def test_seeded_ledger_replays_backlog_for_retry(collector, mock_db):
 
     store = _LedgerStore(seeded_channels={1})  # ledger already has rows for channel 1
     mock_db.repos.notified_messages = store
-    backlog_msg = Message(channel_id=1, message_id=7, text="retry hit", date=datetime.now(), channel_username="c")
+    backlog_msg = Message(
+        channel_id=1,
+        message_id=7,
+        text="retry hit",
+        date=datetime.now(timezone.utc),
+        channel_username="c",
+    )
     get_recent = AsyncMock(return_value=[backlog_msg])
     mock_db.repos.messages.get_recent_for_channels = get_recent
 
-    fresh = [Message(channel_id=1, message_id=50, text="fresh hit", date=datetime.now(), channel_username="c")]
+    fresh = [
+        Message(
+            channel_id=1,
+            message_id=50,
+            text="fresh hit",
+            date=datetime.now(timezone.utc),
+            channel_username="c",
+        )
+    ]
     await collector._check_notification_queries(fresh)
 
     get_recent.assert_awaited_once()
@@ -269,7 +291,7 @@ async def test_collect_channel_stats_flooded_error(collector, mock_pool):
 
     mock_pool.get_stats_availability = AsyncMock(
         return_value=StatsClientAvailability(
-            state="all_flooded", retry_after_sec=10, next_available_at_utc=datetime.now()
+            state="all_flooded", retry_after_sec=10, next_available_at_utc=datetime.now(timezone.utc)
         )
     )
 

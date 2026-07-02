@@ -152,7 +152,7 @@ def test_build_message_maps_core_fields():
 
 
 def test_build_message_naive_date_coerced_to_utc():
-    naive = datetime(2025, 6, 1, 10, 0, 0)
+    naive = datetime(2025, 6, 1, 10, 0, 0, tzinfo=timezone.utc).replace(tzinfo=None)
     message = build_message_from_telethon(_msg(date=naive), channel_id=-100123)
     assert message.date is not None
     assert message.date.tzinfo == timezone.utc

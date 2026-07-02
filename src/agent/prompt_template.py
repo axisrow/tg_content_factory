@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import date as date_cls
+from datetime import datetime, timezone
 from string import Formatter
 
 AGENT_PROMPT_TEMPLATE_SETTING = "agent_prompt_template"
@@ -111,7 +112,7 @@ def build_prompt_template_context(
         else:
             source_messages = context_message
 
-    resolved_today = today or date_cls.today()
+    resolved_today = today or datetime.now(timezone.utc).date()
     return {
         "source_messages": source_messages,
         "channel_title": channel_title,

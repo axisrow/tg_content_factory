@@ -1118,7 +1118,7 @@ class TestReadMessagesTool:
 
     @pytest.mark.anyio
     async def test_with_date_and_sender(self, mock_db, mock_pool):
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         client = _make_client()
         _setup_resolve_entity(mock_pool, client)
@@ -1126,7 +1126,7 @@ class TestReadMessagesTool:
         msg = SimpleNamespace(
             id=5,
             sender_id=42,
-            date=datetime(2025, 6, 15, 12, 30),
+            date=datetime(2025, 6, 15, 12, 30, tzinfo=timezone.utc),
             text="Dated message",
         )
 

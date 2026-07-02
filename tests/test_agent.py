@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import date, datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -875,7 +875,7 @@ async def test_chat_stream_renders_saved_prompt_template_variables(db):
     assistant_msg.content = [TextBlock(text="hello")]
     result_msg = MagicMock(spec=ResultMessage)
     expected_system_prompt = (
-        f"Дата: {date.today().isoformat()}\n"
+        f"Дата: {datetime.now(timezone.utc).date().isoformat()}\n"
         "Канал: ForumChan\n"
         "Тема: Вопросы\n"
         'Сообщения:\n{"id": 1, "date": "2024-01-15", "author": "sender name=User", '
@@ -1322,7 +1322,7 @@ async def test_chat_stream_edge_history_mix(db):
 
 # ── format_context tests ─────────────────────────────────────────────────────
 
-_NOW = datetime(2024, 1, 15, 12, 0, 0)
+_NOW = datetime(2024, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
 
 
 def _msg(message_id: int, text: str, topic_id: int | None = None, sender: str = "User") -> Message:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -69,7 +69,7 @@ def _minimal_deepagents_kwargs(tool_name: str) -> dict[str, object]:
 
 
 async def _seed_read_only_contract_data(db) -> None:
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     await db.add_channel(Channel(channel_id=1001, title="Named Contract", username="named_contract"))
     await db.add_channel(Channel(channel_id=1002, title=None, username=None))
     await db.save_channel_stats(ChannelStats(channel_id=1001, subscriber_count=101, avg_views=12.5))

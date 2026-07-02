@@ -69,7 +69,7 @@ async def test_insert_message_with_all_fields(messages_repo):
         text="Full message",
         media_type="photo",
         topic_id=5,
-        date=datetime(2026, 3, 16, 12, 0, 0),
+        date=datetime(2026, 3, 16, 12, 0, 0, tzinfo=timezone.utc),
     )
     result = await messages_repo.insert_message(msg)
     assert result is True
@@ -91,7 +91,7 @@ async def test_insert_message_sender_identity_round_trips(messages_repo):
         sender_last_name="Doe",
         sender_username="@jdoe",
         text="Identity message",
-        date=datetime(2026, 3, 16, 12, 0, 0),
+        date=datetime(2026, 3, 16, 12, 0, 0, tzinfo=timezone.utc),
     )
     assert await messages_repo.insert_message(msg) is True
 
@@ -116,7 +116,7 @@ async def test_insert_message_with_structured_facets(messages_repo):
         service_action_semantic="join",
         service_action_payload_json='{"inviter_id": 42}',
         sender_kind="user",
-        date=datetime(2026, 3, 16, 12, 5, 0),
+        date=datetime(2026, 3, 16, 12, 5, 0, tzinfo=timezone.utc),
     )
     result = await messages_repo.insert_message(msg)
     assert result is True
@@ -370,8 +370,8 @@ async def test_search_messages_by_date_from(messages_repo):
     """Test filtering by date_from."""
     await messages_repo.insert_messages_batch(
         [
-            make_message(1, 100, "Old", date=datetime(2026, 3, 10)),
-            make_message(1, 101, "New", date=datetime(2026, 3, 16)),
+            make_message(1, 100, "Old", date=datetime(2026, 3, 10, tzinfo=timezone.utc)),
+            make_message(1, 101, "New", date=datetime(2026, 3, 16, tzinfo=timezone.utc)),
         ]
     )
 
@@ -384,8 +384,8 @@ async def test_search_messages_by_date_to(messages_repo):
     """Test filtering by date_to (inclusive)."""
     await messages_repo.insert_messages_batch(
         [
-            make_message(1, 100, "Old", date=datetime(2026, 3, 10)),
-            make_message(1, 101, "New", date=datetime(2026, 3, 16)),
+            make_message(1, 100, "Old", date=datetime(2026, 3, 10, tzinfo=timezone.utc)),
+            make_message(1, 101, "New", date=datetime(2026, 3, 16, tzinfo=timezone.utc)),
         ]
     )
 
@@ -399,9 +399,9 @@ async def test_search_messages_by_date_range(messages_repo):
     """Test filtering by date range."""
     await messages_repo.insert_messages_batch(
         [
-            make_message(1, 100, "Before", date=datetime(2026, 3, 5)),
-            make_message(1, 101, "In range", date=datetime(2026, 3, 10)),
-            make_message(1, 102, "After", date=datetime(2026, 3, 20)),
+            make_message(1, 100, "Before", date=datetime(2026, 3, 5, tzinfo=timezone.utc)),
+            make_message(1, 101, "In range", date=datetime(2026, 3, 10, tzinfo=timezone.utc)),
+            make_message(1, 102, "After", date=datetime(2026, 3, 20, tzinfo=timezone.utc)),
         ]
     )
 

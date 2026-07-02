@@ -275,7 +275,7 @@ async def test_get_citation_stats(db):
             text=f"msg {i}",
             views=100,
             forwards=i * 10,
-            date=datetime(2025, 1, 15, 12, 0, 0),
+            date=datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
         ))
     await _seed_messages_batch(db, 100123, messages)
 
@@ -300,7 +300,7 @@ async def test_get_err(db):
             views=100,
             forwards=5,
             reply_count=2,
-            date=datetime(2025, 1, 15, 12, 0, 0),
+            date=datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
         ))
     await _seed_messages_batch(db, 100123, messages)
 
@@ -402,7 +402,7 @@ async def test_get_ranked_channels_by_err(db):
             views=50,
             forwards=1,
             reply_count=0,
-            date=datetime(2025, 1, 15, 12, 0, 0),
+            date=datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
         )
         await db.insert_message(msg)
 
@@ -414,7 +414,7 @@ async def test_get_ranked_channels_by_err(db):
             views=500,
             forwards=20,
             reply_count=10,
-            date=datetime(2025, 1, 15, 12, 0, 0),
+            date=datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc),
         )
         await db.insert_message(msg)
 

@@ -1085,7 +1085,7 @@ class TestProviderConfigService:
         from src.services.agent_provider_service import ProviderModelCompatibilityRecord
 
         svc, _ = self._make_service()
-        naive_dt = datetime.now().isoformat()  # naive, no tz
+        naive_dt = datetime.now(UTC).replace(tzinfo=None).isoformat()
         record = ProviderModelCompatibilityRecord(model="m", status="s", tested_at=naive_dt)
         # Should handle naive datetime without crashing
         result = svc.is_compatibility_record_fresh(record)

@@ -62,14 +62,14 @@ def test_dedupe_recent_unavailability_events_handles_mixed_timezone_datetimes():
                 error=None,
                 completed_at=None,
                 started_at=None,
-                created_at=datetime(2026, 5, 2, 17, 10, 24),
+                created_at=datetime(2026, 5, 2, 17, 10, 24, tzinfo=timezone.utc).replace(tzinfo=None),
             ),
             SimpleNamespace(
                 note="Отложено: все аккаунты во Flood Wait до 2026-05-02T17:12:00+00:00",
                 error=None,
                 completed_at=datetime(2026, 5, 2, 17, 10, 25, tzinfo=timezone.utc),
                 started_at=None,
-                created_at=datetime(2026, 5, 2, 17, 10, 24),
+                created_at=datetime(2026, 5, 2, 17, 10, 24, tzinfo=timezone.utc).replace(tzinfo=None),
             ),
         ]
     )

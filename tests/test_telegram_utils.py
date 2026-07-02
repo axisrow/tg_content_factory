@@ -18,7 +18,7 @@ async def test_normalize_utc_none_returns_none():
 @pytest.mark.anyio
 async def test_normalize_utc_naive_treated_as_utc():
     """Naive datetime gets UTC tzinfo."""
-    naive = datetime(2024, 3, 15, 10, 30, 45)
+    naive = datetime(2024, 3, 15, 10, 30, 45, tzinfo=timezone.utc).replace(tzinfo=None)
     result = normalize_utc(naive)
 
     assert result is not None
@@ -58,7 +58,7 @@ async def test_normalize_utc_already_utc():
 @pytest.mark.anyio
 async def test_normalize_utc_preserves_values():
     """Time components unchanged after conversion from naive."""
-    naive = datetime(2024, 12, 31, 23, 59, 59, 999999)
+    naive = datetime(2024, 12, 31, 23, 59, 59, 999999, tzinfo=timezone.utc).replace(tzinfo=None)
     result = normalize_utc(naive)
 
     assert result is not None

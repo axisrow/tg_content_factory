@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -27,7 +27,7 @@ async def test_get_job_next_run_returns_none_when_no_scheduler():
 
 @pytest.mark.anyio
 async def test_get_job_next_run_returns_time_when_job_exists():
-    dt = datetime(2026, 3, 17, 12, 0)
+    dt = datetime(2026, 3, 17, 12, 0, tzinfo=timezone.utc)
     job = FakeJob("pipeline_run_1", next_run_time=dt)
     mgr = SchedulerManager()
     mgr._scheduler = FakeScheduler(job)

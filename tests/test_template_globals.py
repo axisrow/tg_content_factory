@@ -23,7 +23,7 @@ def test_whitespace_string_returns_dash():
 
 
 def test_naive_datetime_gets_utc_suffix():
-    dt = datetime(2024, 3, 15, 10, 30, 0)
+    dt = datetime(2024, 3, 15, 10, 30, 0, tzinfo=timezone.utc).replace(tzinfo=None)
     result = str(local_dt_filter(dt))
     assert "data-utc=" in result
     # naive datetime should have +00:00 appended (via replace(tzinfo=utc))
