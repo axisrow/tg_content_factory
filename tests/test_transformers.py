@@ -97,7 +97,7 @@ def test_convert_telethon_message_basic():
     msg.sender.first_name = "John"
     msg.sender.last_name = "Doe"
     msg.sender.username = "jdoe"
-    msg.date = datetime(2025, 1, 1)
+    msg.date = datetime(2025, 1, 1, tzinfo=timezone.utc).replace(tzinfo=None)
     msg.message = "hello"
     msg.media = None
 

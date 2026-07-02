@@ -397,9 +397,7 @@ async def test_scheduler_has_active_tasks_flag(client):
 async def test_scheduler_last_run_display(client):
     """Test scheduler displays last run time."""
     # Set last_run on scheduler
-    from datetime import datetime
-
-    client._transport.app.state.scheduler._last_run = datetime.now()
+    client._transport.app.state.scheduler._last_run = datetime.now(timezone.utc)
 
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
@@ -417,9 +415,7 @@ async def test_scheduler_last_stats_display(client):
 @pytest.mark.anyio
 async def test_scheduler_last_search_run_display(client):
     """Test scheduler displays last search run time."""
-    from datetime import datetime
-
-    client._transport.app.state.scheduler._last_search_run = datetime.now()
+    client._transport.app.state.scheduler._last_search_run = datetime.now(timezone.utc)
 
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200

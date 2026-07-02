@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -22,7 +22,7 @@ def svc(bundle):
 async def _insert_messages(db, texts, channel_id=100, base_date=None, username=None):
     """Helper: add a channel and insert messages with given texts."""
     if base_date is None:
-        base_date = datetime.now()
+        base_date = datetime.now(timezone.utc)
     ch = Channel(channel_id=channel_id, title="test", username=username)
     await db.repos.channels.add_channel(ch)
     for i, text in enumerate(texts):
@@ -118,7 +118,7 @@ async def test_get_last_recorded_at_all(bundle):
 
 @pytest.mark.anyio
 async def test_fts_daily_stats_groups_by_day(bundle, db):
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     yesterday = now - timedelta(days=1)
     ch = Channel(channel_id=200, title="ch")
     await db.repos.channels.add_channel(ch)
@@ -144,7 +144,7 @@ async def test_fts_daily_stats_groups_by_day(bundle, db):
 
 @pytest.mark.anyio
 async def test_run_once_counts_today_only(svc, db):
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     old = now - timedelta(days=5)
     await _insert_messages(db, ["target msg"], channel_id=300, base_date=now)
     ch2 = Channel(channel_id=301, title="ch2")

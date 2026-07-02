@@ -27,7 +27,7 @@ async def test_rfc822_none():
 async def test_rfc822_naive_datetime():
     from src.web.routes.rss import _rfc822
 
-    naive = datetime(2025, 6, 15, 10, 30, 0)
+    naive = datetime(2025, 6, 15, 10, 30, 0, tzinfo=timezone.utc).replace(tzinfo=None)
     result = _rfc822(naive)
     assert "+0000" in result or "GMT" in result or "UTC" in result
 

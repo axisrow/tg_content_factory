@@ -448,7 +448,7 @@ async def test_scheduler_health_with_naive_flood_wait(client, base_app):
     app, db, _ = base_app
     accounts = await db.get_accounts(active_only=False)
     # Set flood with naive datetime (no timezone)
-    naive_future = datetime.now() + timedelta(hours=1)
+    naive_future = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None)
     for acc in accounts:
         await db.update_account_flood(acc.phone, naive_future)
 

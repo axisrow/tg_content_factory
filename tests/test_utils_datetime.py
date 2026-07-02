@@ -32,7 +32,7 @@ def test_parse_required_schedule_datetime_returns_utc():
 
 
 def test_parse_required_schedule_datetime_treats_naive_as_utc():
-    source = datetime(2026, 5, 5, 12, 0)
+    source = datetime(2026, 5, 5, 12, 0, tzinfo=timezone.utc).replace(tzinfo=None)
     assert parse_required_schedule_datetime(source) == source.replace(tzinfo=timezone.utc)
 
 
@@ -48,4 +48,6 @@ def test_normalize_utc_converts_aware_datetime():
 
 def test_utc_isoformat_returns_none_or_utc_string():
     assert utc_isoformat(None) is None
-    assert utc_isoformat(datetime(2026, 5, 5, 12, 0)) == "2026-05-05T12:00:00+00:00"
+    assert utc_isoformat(
+        datetime(2026, 5, 5, 12, 0, tzinfo=timezone.utc).replace(tzinfo=None)
+    ) == "2026-05-05T12:00:00+00:00"

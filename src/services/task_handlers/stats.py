@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import deque
-from datetime import date, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from src.database import DatabaseBusyError
 from src.models import (
@@ -297,7 +297,7 @@ class StatsTaskHandler:
         if callable(setter):
             setter(running)
         elif hasattr(self._context.collector, "_stats_all_running"):
-            setattr(self._context.collector, "_stats_all_running", running)
+            self._context.collector._stats_all_running = running
 
     def _stats_batch_limit(self) -> int:
         config = self._context.config
@@ -367,7 +367,7 @@ class StatsTaskHandler:
             return
 
         try:
-            today = date.today().isoformat()
+            today = datetime.now(timezone.utc).date().isoformat()
             daily = await ctx.sq_bundle.get_fts_daily_stats_for_query(sq, days=1)
             today_count = 0
             for d in daily:

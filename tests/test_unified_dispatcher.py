@@ -66,9 +66,7 @@ def mock_tasks_repo():
 @pytest.fixture
 def mock_sq_bundle():
     """Mock SearchQueryBundle."""
-    from datetime import date
-
-    today = date.today().isoformat()
+    today = datetime.now(timezone.utc).date().isoformat()
     bundle = MagicMock()
     bundle.get_by_id = AsyncMock(return_value=MagicMock(query="test query"))
     bundle.get_fts_daily_stats_for_query = AsyncMock(

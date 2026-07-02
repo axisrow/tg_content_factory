@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date as date_cls
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -238,7 +237,7 @@ async def test_run_once_regex_query_returns_zero(service, bundle):
 async def test_run_once_fts_query_with_stats(service, bundle):
     """FTS query records stats when track_stats=True."""
     sq_id = await service.add("test", is_fts=True, track_stats=True)
-    today = date_cls.today().isoformat()
+    today = datetime.now(timezone.utc).date().isoformat()
     bundle.set_stats(sq_id, [SearchQueryDailyStat(day=today, count=5)])
 
     result = await service.run_once(sq_id)
@@ -261,7 +260,7 @@ def test_fill_missing_days_empty_stats():
 
 def test_fill_missing_days_fills_gaps():
     """Existing days preserved, missing days filled with 0."""
-    today = date_cls.today()
+    today = datetime.now(timezone.utc).date()
     day3 = (today - timedelta(days=3)).isoformat()
     day1 = (today - timedelta(days=1)).isoformat()
 
