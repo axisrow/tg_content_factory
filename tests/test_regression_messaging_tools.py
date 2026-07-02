@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from src.database import Database
+
+
+def _downloads_dir() -> Path:
+    return Path(__file__).resolve().parents[1] / "data" / "downloads"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -918,8 +925,7 @@ class TestMessagingFinalEdgeCases:
 
         mock_client.iter_messages = fake_iter
         # Return a path within the expected output directory
-        import pathlib
-        data_dir = pathlib.Path(__file__).resolve().parents[1] / "data" / "downloads"
+        data_dir = await asyncio.to_thread(_downloads_dir)
         local = str(data_dir / "test.jpg")
         mock_client.download_media = AsyncMock(return_value=local)
         pool.get_native_client_by_phone = AsyncMock(return_value=(mock_client, "+1111"))
@@ -973,5 +979,4 @@ class TestMessagingFinalEdgeCases:
 # ===========================================================================
 # 29. dialogs tools — phone/perm gate paths
 # ===========================================================================
-
 

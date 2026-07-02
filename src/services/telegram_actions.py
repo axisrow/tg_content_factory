@@ -1,6 +1,7 @@
 """Shared Telegram business actions used by CLI, web, agent tools, and pipelines."""
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from contextlib import asynccontextmanager
@@ -14,6 +15,16 @@ from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.utils.introspection import explicit_pool_method
 
 logger = logging.getLogger(__name__)
+
+
+def _ensure_resolved_dir(path: str | Path) -> Path:
+    output_path = Path(path)
+    output_path.mkdir(parents=True, exist_ok=True)
+    return output_path.resolve()
+
+
+def _resolve_path(path: str) -> Path:
+    return Path(path).resolve()
 
 # Broadcast-stats per-post metric attributes, shared so the CLI and the agent
 # tool always render the same set of fields (parity — issue #567).
@@ -617,9 +628,7 @@ class TelegramActionService:
         output_dir: str | Path,
         operation_prefix: str = "telegram_action_download_media",
     ) -> DownloadMediaResult:
-        output_path = Path(output_dir)
-        output_path.mkdir(parents=True, exist_ok=True)
-        output_resolved = output_path.resolve()
+        output_resolved = await asyncio.to_thread(_ensure_resolved_dir, output_dir)
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(client, phone=acquired_phone, identifier=chat_id)
             message = None
@@ -646,7 +655,7 @@ class TelegramActionService:
             )
             if not path:
                 raise TelegramActionNoMediaError("no_media")
-            resolved = Path(path).resolve()
+            resolved = await asyncio.to_thread(_resolve_path, path)
             if resolved != output_resolved and output_resolved not in resolved.parents:
                 raise TelegramActionPathEscapeError("path_escape")
             return DownloadMediaResult(phone=acquired_phone, path=str(resolved))
@@ -667,9 +676,7 @@ class TelegramActionService:
         returned outcome records the reason and original size so the export can
         show a Telegram-style "(File exceeds maximum size…)" placeholder (#834).
         """
-        export_root = Path(output_dir)
-        export_root.mkdir(parents=True, exist_ok=True)
-        root_resolved = export_root.resolve()
+        root_resolved = await asyncio.to_thread(_ensure_resolved_dir, output_dir)
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(client, phone=acquired_phone, identifier=chat_id)
             message = None
@@ -727,7 +734,7 @@ class TelegramActionService:
             )
             if not path:
                 raise TelegramActionNoMediaError("no_media")
-            resolved = Path(path).resolve()
+            resolved = await asyncio.to_thread(_resolve_path, path)
             if resolved != root_resolved and root_resolved not in resolved.parents:
                 raise TelegramActionPathEscapeError("path_escape")
             return MediaDownloadOutcome(

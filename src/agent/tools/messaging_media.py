@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import pathlib
 from typing import Any
 
 from claude_agent_sdk import tool
@@ -14,6 +16,10 @@ from src.services.telegram_actions import (
     TelegramActionService,
 )
 from src.telegram.flood_wait import HandledFloodWaitError
+
+
+def _downloads_dir() -> pathlib.Path:
+    return pathlib.Path(__file__).resolve().parents[3] / "data" / "downloads"
 
 
 def register_pin_media_tools(ctx: Any, client_pool: Any) -> list[Any]:
@@ -105,8 +111,6 @@ def register_pin_media_tools(ctx: Any, client_pool: Any) -> list[Any]:
         DOWNLOAD_MEDIA_SCHEMA,
     )
     async def download_media(args):
-        import pathlib
-
         live_gate = ctx.require_live_runtime("Загрузка медиа", tool_name="download_media")
         if live_gate:
             return live_gate
@@ -121,7 +125,7 @@ def register_pin_media_tools(ctx: Any, client_pool: Any) -> list[Any]:
         if not chat_id or not message_id:
             return _text_response("Ошибка: chat_id и message_id обязательны.")
         try:
-            output_dir = pathlib.Path(__file__).resolve().parents[3] / "data" / "downloads"
+            output_dir = await asyncio.to_thread(_downloads_dir)
             result = await TelegramActionService(client_pool).download_media(
                 phone=phone,
                 chat_id=chat_id,

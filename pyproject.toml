@@ -150,7 +150,10 @@ line-length = 120
 include = ["*.py"]
 
 [tool.ruff.lint]
-select = ["B", "DTZ", "E", "F", "I", "N", "W"]
+select = ["ASYNC240", "B", "DTZ", "E", "F", "I", "N", "W"]
+ignore = [
+    "ASYNC109",  # public timeout= params passed to asyncio.wait_for are intentional
+]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["typer.Option", "typer.Argument", "fastapi.Depends", "fastapi.File", "fastapi.Form"]

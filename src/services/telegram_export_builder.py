@@ -316,7 +316,7 @@ class TelegramExportBuilder:
         truncated: bool = False,
     ) -> ExportSummary:
         out = Path(out_dir)
-        out.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(out.mkdir, parents=True, exist_ok=True)
         artifacts: dict[int, MediaArtifact | None] = {m.message_id: media_resolver(m) for m in messages}
         summary = ExportSummary(out_dir=str(out), message_count=len(messages), truncated=truncated)
         for message in messages:
