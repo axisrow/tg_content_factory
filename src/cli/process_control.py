@@ -56,8 +56,8 @@ def read_pid(path: Path) -> int | None:
 
     try:
         return int(raw)
-    except ValueError:
-        raise ProcessControlError(f"Invalid PID file contents: {path}")
+    except ValueError as exc:
+        raise ProcessControlError(f"Invalid PID file contents: {path}") from exc
 
 
 def _process_command(pid: int) -> str:

@@ -143,7 +143,7 @@ async def filter_criteria_impl(
             for u in updated:
                 print(f"Set {u}")
         else:
-            for attr, setting_key in mapping.items():
+            for _attr, setting_key in mapping.items():
                 val = await db.get_setting(setting_key)
                 print(f"  {setting_key} = {val or '(not set)'}")
     finally:

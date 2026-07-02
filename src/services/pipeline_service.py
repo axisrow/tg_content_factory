@@ -767,7 +767,7 @@ class PipelineService:
         if graph is None:
             return False
         found = False
-        for i, n in enumerate(graph.nodes):
+        for _i, n in enumerate(graph.nodes):
             if n.id == node_id:
                 found = True
                 break

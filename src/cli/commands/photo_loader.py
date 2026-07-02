@@ -121,10 +121,10 @@ async def _resolve_target(raw: str, pool, phone: str | None = None) -> PhotoTarg
         return await _resolve_self_target(pool, phone)
     try:
         return PhotoTarget(dialog_id=int(raw))
-    except ValueError:
+    except ValueError as exc:
         info = await pool.resolve_channel(raw)
         if not info:
-            raise ValueError(f"Could not resolve target: {raw}")
+            raise ValueError(f"Could not resolve target: {raw}") from exc
         return PhotoTarget(
             dialog_id=int(info["channel_id"]),
             title=info.get("title"),

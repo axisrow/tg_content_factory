@@ -96,7 +96,7 @@ def _resolve_pool_warming(pool) -> bool:
     if isinstance(pool_attrs, dict) and "is_warming" in pool_attrs:
         is_warming_method = pool_attrs["is_warming"]
     elif callable(getattr(type(pool), "is_warming", None)):
-        is_warming_method = getattr(pool, "is_warming")
+        is_warming_method = pool.is_warming
     return bool(is_warming_method()) if callable(is_warming_method) else False
 
 

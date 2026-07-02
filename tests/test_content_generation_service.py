@@ -174,7 +174,7 @@ async def test_content_generation_service_deep_agents_stub():
     try:
         try:
             await service.generate(pipeline)
-            assert False, "Expected RuntimeError"
+            raise AssertionError("Expected RuntimeError")
         except RuntimeError as e:
             assert "AgentManager" in str(e) or "not configured" in str(e)
     finally:

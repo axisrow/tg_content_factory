@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -439,12 +440,11 @@ class TestWriteChecks:
         mock_db.close = AsyncMock()
 
         with patch("src.cli.runtime.init_db", new_callable=AsyncMock, return_value=(mock_config, mock_db)):
-            with pytest.raises(Exception):
+            with pytest.raises(sqlite3.Error):
                 await _init_db_copy("any_config.yaml")
 
 
 # ===========================================================================
 # 25. messaging.py — phone/perm gate paths for each tool
 # ===========================================================================
-
 

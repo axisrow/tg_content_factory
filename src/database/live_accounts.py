@@ -16,7 +16,7 @@ async def load_live_usable_accounts(db: Any, *, active_only: bool = False) -> li
     """
     getter = explicit_pool_method(db, "get_live_usable_accounts")
     if getter is None:
-        getter = getattr(db, "get_accounts")
+        getter = db.get_accounts
 
     result = getter(active_only=active_only)
     if isawaitable(result):
