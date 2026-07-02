@@ -996,7 +996,7 @@ async def _pipeline_export(args: argparse.Namespace, db, config, svc: PipelineSe
         return
     output = json.dumps(data, ensure_ascii=False, indent=2)
     if args.output:
-        if os.path.exists(args.output) and not args.force:
+        if await asyncio.to_thread(os.path.exists, args.output) and not args.force:
             print(
                 f"File {args.output} already exists. Use --force to overwrite."
             )

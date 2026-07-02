@@ -7,12 +7,17 @@ external agent (e.g. the Codex CLI) can discover and call the project's tools.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
 import pytest
 
 pytestmark = pytest.mark.anyio
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
 
 
 async def _list_tool_names(config_path: Path) -> list[str]:
@@ -22,7 +27,7 @@ async def _list_tool_names(config_path: Path) -> list[str]:
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "src.main", "--config", str(config_path), "mcp-server", "--no-pool"],
-        cwd=str(Path(__file__).resolve().parent.parent),
+        cwd=str(await asyncio.to_thread(_repo_root)),
     )
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:

@@ -150,7 +150,31 @@ line-length = 120
 include = ["*.py"]
 
 [tool.ruff.lint]
-select = ["B", "DTZ", "E", "F", "I", "N", "W"]
+select = ["ASYNC240", "B", "DTZ", "E", "F", "I", "N", "W"]
+ignore = [
+    "ASYNC109",  # public timeout= params passed to asyncio.wait_for are intentional
+]
+
+[tool.ruff.lint.per-file-ignores]
+"src/agent/backends/_stream.py" = ["ASYNC109"]
+"src/cli/commands/export.py" = ["ASYNC109"]
+"src/cli/commands/test.py" = ["ASYNC109"]
+"src/collection_queue.py" = ["ASYNC109"]
+"src/telegram/flood_wait.py" = ["ASYNC109"]
+"src/telegram/pool_dialogs.py" = ["ASYNC109"]
+"src/telegram/resolve_guard.py" = ["ASYNC109"]
+"src/web/bootstrap.py" = ["ASYNC109"]
+"src/web/embedded_worker.py" = ["ASYNC109"]
+"src/web/routes/auth.py" = ["ASYNC109"]
+"src/web/snapshot_refresher.py" = ["ASYNC109"]
+"tests/e2e/test_collection_flow.py" = ["ASYNC109"]
+"tests/helpers.py" = ["ASYNC109"]
+"tests/test_channel_stats.py" = ["ASYNC109"]
+"tests/test_collector_regression_guards.py" = ["ASYNC109"]
+"tests/test_dialogs.py" = ["ASYNC109"]
+"tests/test_flood_wait.py" = ["ASYNC109"]
+"tests/test_telegram_client_pool_collector.py" = ["ASYNC109"]
+"tests/test_web_snapshot_refresher.py" = ["ASYNC109"]
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["typer.Option", "typer.Argument", "fastapi.Depends", "fastapi.File", "fastapi.Form"]
