@@ -529,6 +529,13 @@ def _codex_path_writable(path: Path) -> bool:
         return False
 
 
+def _valid_saved_codex_path(saved: str, target_parent: Path) -> Path | None:
+    saved_path = Path(saved).resolve()
+    if saved_path.exists() and saved_path.parent == target_parent:
+        return saved_path
+    return None
+
+
 def _codex_runtime_state_writable(codex_home: Path) -> bool:
     """True when Codex can initialize/update runtime state under *codex_home*."""
     try:
@@ -681,8 +688,8 @@ def make_codex_image_adapter(
         # returned/uploaded file outside `out`. Fall back to the requested target
         # if Codex wrote there without echoing the path back.
         if saved:
-            saved_path = Path(saved).resolve()
-            if saved_path.exists() and saved_path.parent == target.parent:
+            saved_path = await asyncio.to_thread(_valid_saved_codex_path, saved, target.parent)
+            if saved_path is not None:
                 return str(saved_path)
         if target.exists():
             return str(target)

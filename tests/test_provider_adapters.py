@@ -1,6 +1,7 @@
 """Tests for provider adapters."""
 
 import asyncio
+from pathlib import Path
 
 import aiohttp
 import pytest
@@ -10,6 +11,14 @@ from src.services.provider_adapters import (
     make_context7_adapter,
     make_generic_http_adapter,
 )
+
+
+def _read_path_bytes(path: str) -> bytes:
+    return Path(path).read_bytes()
+
+
+def _path_exists(path: str) -> bool:
+    return Path(path).exists()
 
 
 class FakeResp:
@@ -936,12 +945,10 @@ async def test_openai_image_adapter_gpt_image_saves_b64(monkeypatch, tmp_path):
     adapter = make_openai_image_adapter("fake-key")
     result = await adapter("a sunset", "")  # empty model → default gpt-image-1
 
-    from pathlib import Path
-
     assert result is not None
     assert result.startswith(str(tmp_path))
     assert result.endswith(".png")
-    assert Path(result).read_bytes() == fake_png
+    assert await asyncio.to_thread(_read_path_bytes, result) == fake_png
     # Empty model resolved to the gpt-image-1 default with its family params.
     assert cap["generate_kwargs"]["model"] == "gpt-image-1"
     assert cap["generate_kwargs"]["size"] == "auto"
@@ -1213,8 +1220,6 @@ def _install_fake_codex(
 
 @pytest.mark.anyio
 async def test_codex_image_adapter_returns_saved_path(monkeypatch, tmp_path):
-    from pathlib import Path
-
     from src.services.provider_adapters import make_codex_image_adapter
 
     captured = _install_fake_codex(monkeypatch)
@@ -1223,8 +1228,8 @@ async def test_codex_image_adapter_returns_saved_path(monkeypatch, tmp_path):
 
     assert result is not None
     assert result.endswith(".png")
-    assert Path(result).exists()
-    assert Path(result).read_bytes().startswith(b"\x89PNG")
+    assert await asyncio.to_thread(_path_exists, result)
+    assert (await asyncio.to_thread(_read_path_bytes, result)).startswith(b"\x89PNG")
     # default cwd is the resolved output dir; requested model is threaded through
     assert captured["start_kwargs"]["model"] == "gpt-5.4"
     assert captured["start_kwargs"]["sandbox"] == "workspace-write"
@@ -1244,8 +1249,6 @@ async def test_codex_image_adapter_default_model(monkeypatch, tmp_path):
 @pytest.mark.anyio
 async def test_codex_image_adapter_falls_back_to_target_when_no_item(monkeypatch, tmp_path):
     """Codex wrote the file but did not echo the path in items → use the target."""
-    from pathlib import Path
-
     from src.services.provider_adapters import make_codex_image_adapter
 
     _install_fake_codex(monkeypatch, item_path=False)
@@ -1253,7 +1256,7 @@ async def test_codex_image_adapter_falls_back_to_target_when_no_item(monkeypatch
     result = await adapter("a dog", "gpt-5.4")
 
     assert result is not None
-    assert Path(result).exists()
+    assert await asyncio.to_thread(_path_exists, result)
 
 
 @pytest.mark.anyio

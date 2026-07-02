@@ -9,6 +9,7 @@ is a valid, non-empty PNG.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -37,7 +38,7 @@ async def test_codex_adapter_generates_valid_png(tmp_path):
 
     assert result is not None, "adapter returned no path"
     path = Path(result)
-    assert path.exists(), f"image file not created: {result}"
-    data = path.read_bytes()
+    assert await asyncio.to_thread(path.exists), f"image file not created: {result}"
+    data = await asyncio.to_thread(path.read_bytes)
     assert len(data) > 0, "image file is empty"
     assert data.startswith(_PNG_MAGIC), "file is not a valid PNG"

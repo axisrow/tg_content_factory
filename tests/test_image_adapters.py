@@ -7,7 +7,9 @@ aiohttp (its SDK returns a PIL.Image), so its test still mocks ``aiohttp.ClientS
 
 from __future__ import annotations
 
+import asyncio
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -19,6 +21,11 @@ from src.services.provider_adapters import (
     make_replicate_image_adapter,
     make_together_image_adapter,
 )
+
+
+def _read_path_bytes(path: str) -> bytes:
+    return Path(path).read_bytes()
+
 
 # ── aiohttp mocks (HuggingFace only) ──
 
@@ -169,9 +176,7 @@ async def test_huggingface_image_adapter_saves_binary(tmp_path):
     assert path.startswith(str(tmp_path))
     assert path.endswith(".png")
     # Verify file was written
-    from pathlib import Path
-
-    assert Path(path).read_bytes() == fake_png
+    assert await asyncio.to_thread(_read_path_bytes, path) == fake_png
 
 
 # ── OpenAI (official SDK) ──

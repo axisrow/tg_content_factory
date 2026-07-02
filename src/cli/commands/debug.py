@@ -25,6 +25,12 @@ from src.cli.commands.common import (
 from src.cli.runtime import APP_LOG_PATH
 
 
+def _db_file_size_mb(db_path: str) -> float | None:
+    if db_path and db_path != ":memory:" and os.path.exists(db_path):
+        return os.path.getsize(db_path) / (1024 * 1024)
+    return None
+
+
 async def logs_impl(config_path: str, *, limit: int = 50) -> None:
     """Print the last *limit* lines of the app log."""
     _, db = await runtime.init_db(config_path)
@@ -54,8 +60,8 @@ async def memory_impl(config_path: str) -> None:
             print(f"  {key}: {value}")
 
         db_path = db._path if hasattr(db, "_path") else "unknown"
-        if db_path and db_path != ":memory:" and os.path.exists(db_path):
-            size_mb = os.path.getsize(db_path) / (1024 * 1024)
+        size_mb = await asyncio.to_thread(_db_file_size_mb, db_path)
+        if size_mb is not None:
             print(f"  DB file size: {size_mb:.1f} MB")
     finally:
         await db.close()

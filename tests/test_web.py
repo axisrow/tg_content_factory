@@ -41,6 +41,10 @@ from src.web.template_globals import PYPROJECT_PATH, _agent_available_for_reques
 from tests.helpers import build_web_app, drain_loop, make_auth_client, make_test_config
 
 
+def _read_text(path: str | Path) -> str:
+    return Path(path).read_text(encoding="utf-8")
+
+
 @pytest.fixture
 async def client(tmp_path, real_pool_harness_factory):
     config = make_test_config(tmp_path)
@@ -399,7 +403,7 @@ async def test_settings_page_hides_credentials_form_when_env_credentials_configu
     assert "Telegram-аккаунты" in resp.text
     assert 'href="/auth/login"' in resp.text
     assert "Добавить аккаунт" in resp.text
-    template_text = Path("src/web/templates/settings.html").read_text(encoding="utf-8")
+    template_text = await asyncio.to_thread(_read_text, "src/web/templates/settings.html")
     assert "_accounts.html" in template_text
     assert "_scheduler.html" in template_text
     assert template_text.index("_accounts.html") < template_text.index("_scheduler.html")
@@ -3130,7 +3134,7 @@ async def test_get_channel_ids_with_active_tasks_returns_distinct_non_stats_ids(
 @pytest.mark.anyio
 async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
     template_path = Path("src/web/templates/channels.html")
-    template_text = template_path.read_text(encoding="utf-8")
+    template_text = await asyncio.to_thread(_read_text, template_path)
     match = re.search(r'(<span id="collect-all-btn">.*?</span>)', template_text, re.S)
     assert match is not None
     template_fragment = match.group(1)
@@ -3152,7 +3156,7 @@ async def test_channels_page_collect_all_button_matches_htmx_fragment(client):
 
 @pytest.mark.anyio
 async def test_channel_actions_include_explicit_full_backfill_button(client):
-    template_text = Path("src/web/templates/_macros.html").read_text(encoding="utf-8")
+    template_text = await asyncio.to_thread(_read_text, "src/web/templates/_macros.html")
 
     for expected in (
         'id="collect-btn-{{ prefix }}{{ ch.id }}"',

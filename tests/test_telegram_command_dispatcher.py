@@ -18,6 +18,10 @@ from src.services.telegram_command_dispatcher import TelegramCommandDispatcher, 
 from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 
 
+def _download_media_path_checks(actual_path: str, expected_file: Path, expected_dir: Path) -> tuple[bool, bool]:
+    return Path(actual_path).resolve() == expected_file.resolve(), expected_dir.exists()
+
+
 class _FakeClient:
     def __init__(self, download_return: str | None):
         self._download_return = download_return
@@ -68,8 +72,14 @@ async def test_download_media_creates_output_dir(tmp_path, monkeypatch):
         result = await dispatcher._handle_dialogs_download_media(
             {"phone": "+123", "chat_id": 1, "message_id": 42}
         )
-        assert Path(result["path"]).resolve() == expected_file.resolve()
-        assert expected_dir.exists()
+        path_matches, dir_exists = await asyncio.to_thread(
+            _download_media_path_checks,
+            result["path"],
+            expected_file,
+            expected_dir,
+        )
+        assert path_matches
+        assert dir_exists
     finally:
         await db.close()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -12,6 +13,14 @@ from src.services.photo_publish_service import PhotoPublishService
 from src.services.photo_task_service import IMAGE_EXTENSIONS
 
 logger = logging.getLogger(__name__)
+
+
+def _image_candidates(folder: Path) -> list[str]:
+    return [
+        str(path)
+        for path in sorted(folder.iterdir())
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+    ]
 
 
 @dataclass(frozen=True)
@@ -160,11 +169,7 @@ class PhotoAutoUploadService:
 
     async def _collect_new_files(self, job: PhotoAutoUploadJob) -> list[str]:
         folder = Path(job.folder_path)
-        candidates = [
-            str(path)
-            for path in sorted(folder.iterdir())
-            if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
-        ]
+        candidates = await asyncio.to_thread(_image_candidates, folder)
         fresh: list[str] = []
         for file_path in candidates:
             if await self._bundle.has_sent_auto_file(job.id or 0, file_path):

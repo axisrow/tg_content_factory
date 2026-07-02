@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from typing import Annotated
@@ -62,6 +63,11 @@ def _is_model_provider_available(model: str, adapter_names) -> bool:
     if not sep:
         return True
     return provider in set(adapter_names)
+
+
+def _unlink_if_exists(path: str) -> None:
+    if os.path.exists(path):
+        os.unlink(path)
 
 
 async def resolve_default_image_model(requested_model, db, image_service) -> str:
@@ -156,8 +162,7 @@ def register(db, client_pool, embedding_service, **kwargs):
                                         raise ValueError("Image exceeds 50 MB limit")
                                     f.write(chunk)
                         except BaseException:
-                            if os.path.exists(local_path):
-                                os.unlink(local_path)
+                            await asyncio.to_thread(_unlink_if_exists, local_path)
                             raise
                 logger.info("Image downloaded to %s", local_path)
                 if db:
