@@ -120,7 +120,7 @@ def _schedule_telegram_pool_retry(container: AppContainer) -> None:
     bg_tasks = getattr(container, "bg_tasks", None)
     if not isinstance(bg_tasks, set):
         bg_tasks = set()
-        setattr(container, "bg_tasks", bg_tasks)
+        container.bg_tasks = bg_tasks
     for task in bg_tasks:
         if not task.done() and task.get_name() == "telegram_pool_reconnect_retry":
             return

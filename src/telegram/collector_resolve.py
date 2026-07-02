@@ -113,7 +113,7 @@ async def _resolve_by_username(
             flood_wait_sec=exc.info.wait_seconds,
             flood_wait_operation=RESOLVE_USERNAME_OPERATION,
         )
-    except UsernameResolveRateLimitedError:
+    except UsernameResolveRateLimitedError as exc:
         # This phone cannot resolve live right now (backoff or limiter). Rotate
         # to a free account when one exists; defer the channel only when every
         # account is blocked (#790). The outer finally releases the client.
@@ -139,7 +139,7 @@ async def _resolve_by_username(
                 phone,
                 (capable_at - now).total_seconds(),
                 now=now,
-            )
+            ) from exc
         raise
     except (ValueError, UsernameNotOccupiedError, UsernameInvalidError):
         logger.warning(

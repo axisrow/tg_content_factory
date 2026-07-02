@@ -268,7 +268,7 @@ def connected_phones_from_pool(client_pool: object | None) -> set[str]:
     if isinstance(instance_attrs, dict) and "connected_phones" in instance_attrs:
         connected_phones = instance_attrs["connected_phones"]
     elif callable(getattr(type(client_pool), "connected_phones", None)):
-        connected_phones = getattr(client_pool, "connected_phones")
+        connected_phones = client_pool.connected_phones
 
     if callable(connected_phones):
         try:
@@ -279,7 +279,7 @@ def connected_phones_from_pool(client_pool: object | None) -> set[str]:
             return {str(phone) for phone in phones}
 
     try:
-        clients = getattr(client_pool, "clients")
+        clients = client_pool.clients
     except Exception:
         clients = {}
     if isinstance(clients, dict):
@@ -330,7 +330,7 @@ def _pool_reports_connections(client_pool: object | None) -> bool:
     if callable(getattr(type(client_pool), "connected_phones", None)):
         return True
     try:
-        return isinstance(getattr(client_pool, "clients"), dict)
+        return isinstance(client_pool.clients, dict)
     except Exception:
         return False
 
