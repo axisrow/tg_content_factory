@@ -238,7 +238,7 @@ class StatsMixin:
                 if channel.username:
                     try:
                         entity = await self._pool.run_live_username_resolve(
-                            lambda: session.resolve_entity(channel.username),
+                            lambda session=session, username=channel.username: session.resolve_entity(username),
                             operation="collect_channel_stats_resolve_username",
                             phone=phone,
                             username=str(channel.username),
