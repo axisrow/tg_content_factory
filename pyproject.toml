@@ -74,6 +74,11 @@ dependencies = [
     "beautifulsoup4>=4.14.3",
     "orjson>=3.10.0",
     "itsdangerous>=2.2.0",
+    # ReDoS guard for user-supplied notification regexes: the `regex` engine's
+    # `timeout=` aborts catastrophic backtracking inside its C matching loop,
+    # which the stdlib `re` cannot (#1240). Present transitively (dateparser,
+    # tiktoken) but declared here because it is now a direct runtime import.
+    "regex>=2024.11.6",
 ]
 
 [project.optional-dependencies]

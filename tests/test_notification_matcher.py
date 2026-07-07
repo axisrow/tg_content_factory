@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock
 
 import pytest
 
 from src.models import Message, SearchQuery
 from src.services.notification_matcher import (
+    _REGEX_TIMEOUT_SECONDS,
     NotificationMatcher,
     _fts_query_matches,
     _make_message_link,
+    message_matches_query,
 )
 
 
@@ -107,7 +110,7 @@ async def test_match_and_notify_case_insensitive():
 
 @pytest.mark.anyio
 async def test_match_and_notify_regex_query():
-    """Regex query matches via re.search."""
+    """Regex query matches via a timeout-guarded regex.search."""
     notifier = AsyncMock()
     matcher = NotificationMatcher(notifier)
 
@@ -132,6 +135,58 @@ async def test_match_and_notify_regex_error_falls_through():
     result = await matcher.match_and_notify(messages, queries)
 
     assert result == {}  # No match due to regex error
+
+
+# A pattern with nested quantifiers whose backtracking is exponential in the
+# length of a run of 'a' — the textbook ReDoS trigger (#1240).
+_EVIL_REGEX = r"(a+)+$"
+_EVIL_TEXT = "a" * 4096 + "!"
+
+
+def test_message_matches_query_redos_pattern_does_not_hang():
+    """A catastrophic-backtracking regex over a long channel text must bail out
+    fast (via the engine timeout) instead of freezing the event loop.
+
+    Guards the predicate directly — this is the synchronous C call that would
+    block the worker's loop, so we assert on wall-clock time, not on awaits."""
+    sq = make_query(_EVIL_REGEX, is_regex=True)
+    msg = make_message(_EVIL_TEXT)
+
+    start = time.perf_counter()
+    matched = message_matches_query(sq, msg)
+    elapsed = time.perf_counter() - start
+
+    assert matched is False  # timed out -> treated as no match, never raises
+    # The engine timeout checks periodically, so allow generous overshoot over the
+    # configured budget while still proving we don't spin for seconds.
+    assert elapsed < _REGEX_TIMEOUT_SECONDS + 1.0, f"regex ran {elapsed:.2f}s — loop would freeze"
+
+
+@pytest.mark.anyio
+async def test_match_and_notify_redos_pattern_falls_through(caplog):
+    """A ReDoS query fires no notification and logs a timeout warning."""
+    notifier = AsyncMock()
+    matcher = NotificationMatcher(notifier)
+
+    messages = [make_message(_EVIL_TEXT)]
+    queries = [make_query(_EVIL_REGEX, is_regex=True)]
+
+    start = time.perf_counter()
+    with caplog.at_level("WARNING"):
+        result = await matcher.match_and_notify(messages, queries)
+    elapsed = time.perf_counter() - start
+
+    assert result == {}
+    notifier.notify.assert_not_called()
+    assert elapsed < _REGEX_TIMEOUT_SECONDS + 1.0
+    assert any("timed out" in r.message for r in caplog.records)
+
+
+def test_message_matches_query_regex_still_matches_normal_pattern():
+    """The timeout guard must not change semantics for well-behaved patterns."""
+    sq = make_query(r"order #\d+", is_regex=True)
+    assert message_matches_query(sq, make_message("Order #42 shipped")) is True
+    assert message_matches_query(sq, make_message("no order here")) is False
 
 
 @pytest.mark.anyio
