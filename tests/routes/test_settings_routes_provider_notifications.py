@@ -104,16 +104,17 @@ async def test_settings_page_notification_bot_error(route_client, db):
         assert resp.status_code == 200
 
 
-# ── save_scheduler: line 560-566 (interval update via scheduler) ───────
+# ── save_scheduler: persists interval + enqueues reconcile (#1247) ─────
 
 
 @pytest.mark.anyio
 async def test_save_scheduler_updates_running_scheduler(route_client, db):
-    """Test save scheduler updates interval on running scheduler (lines 567-569)."""
-    mock_scheduler = MagicMock()
-    mock_scheduler.update_interval = MagicMock()
-    route_client._transport_app.state.scheduler = mock_scheduler
+    """Saving the collect interval persists it and enqueues scheduler.reconcile (#1247).
 
+    The old in-process scheduler.update_interval() call was a no-op behind the web
+    container; the change now reaches the live worker scheduler via a reconcile
+    command, matching the /scheduler set-interval route.
+    """
     resp = await route_client.post(
         "/settings/save-scheduler",
         data={"collect_interval_minutes": "45"},
@@ -121,7 +122,9 @@ async def test_save_scheduler_updates_running_scheduler(route_client, db):
     )
     assert resp.status_code == 303
     assert "msg=scheduler_saved" in resp.headers["location"]
-    mock_scheduler.update_interval.assert_called_once_with(45)
+    assert await db.get_setting("collect_interval_minutes") == "45"
+    reconciles = await db.repos.telegram_commands.list_commands(command_type="scheduler.reconcile")
+    assert len(reconciles) == 1
 
 
 @pytest.mark.anyio
