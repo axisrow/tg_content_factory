@@ -58,6 +58,7 @@ from src.telegram.resolve_guard import (
 )
 from src.utils.datetime import parse_datetime
 from src.web import deps
+from src.web.scheduler.commands import enqueue_scheduler_reconcile
 from src.web.settings.forms import (
     CREDENTIALS_MASK,
     AgentSettingsForm,
@@ -658,9 +659,11 @@ async def handle_save_scheduler_settings(
     db = deps.get_db(request)
     await db.repos.settings.set_setting("collect_interval_minutes", str(form.interval_minutes))
     await db.repos.settings.set_setting(REACTION_MIN_INTERVAL_SETTING, str(form.reaction_min_interval_sec))
-    scheduler = getattr(request.app.state, "scheduler", None)
-    if scheduler:
-        scheduler.update_interval(form.interval_minutes)
+    # Web-mode scheduler is a read-only snapshot shim, so calling update_interval() on it
+    # is a no-op. Enqueue a reconcile — exactly like the /scheduler set-interval route — so
+    # the live worker scheduler re-reads collect_interval_minutes and rebuilds its
+    # IntervalTrigger instead of keeping the old cadence until restart (#1247).
+    await enqueue_scheduler_reconcile(request, requested_by="web:settings.save_scheduler")
     return SettingsFlash(msg="scheduler_saved")
 
 

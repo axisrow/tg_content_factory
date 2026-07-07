@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -138,46 +138,38 @@ async def test_run_search_query(route_client):
 
 
 @pytest.mark.anyio
-async def test_scheduler_synced_after_add(route_client):
-    """Test scheduler syncs after add when running."""
-    route_client._transport_app.state.scheduler._running = True
+async def test_scheduler_synced_after_add(route_client, db):
+    """Adding a search query enqueues a scheduler.reconcile command (#1236).
 
-    with patch(
-        "src.web.search_queries.handlers.deps.get_scheduler"
-    ) as mock_get_scheduler:
-        mock_scheduler = MagicMock()
-        mock_scheduler.is_running = True
-        mock_scheduler.sync_search_query_jobs = AsyncMock()
-        mock_get_scheduler.return_value = mock_scheduler
-
-        resp = await route_client.post(
-            "/search-queries/add",
-            data={"query": "sync test", "interval_minutes": "60"},
-            follow_redirects=False,
-        )
-        assert resp.status_code == 303
-        mock_scheduler.sync_search_query_jobs.assert_called_once()
+    The old in-process sync_search_query_jobs() call was a no-op behind the web
+    container; the mutation now reaches the live worker scheduler via a reconcile
+    command instead.
+    """
+    resp = await route_client.post(
+        "/search-queries/add",
+        data={"query": "sync test", "interval_minutes": "60"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    reconciles = await db.repos.telegram_commands.list_commands(command_type="scheduler.reconcile")
+    assert len(reconciles) == 1
 
 
 @pytest.mark.anyio
-async def test_scheduler_synced_after_toggle(route_client):
-    """Test scheduler syncs after toggle when running."""
+async def test_scheduler_synced_after_toggle(route_client, db):
+    """Toggling a search query enqueues a scheduler.reconcile command (#1236)."""
     await route_client.post(
         "/search-queries/add",
         data={"query": "sync toggle", "interval_minutes": "60"},
     )
+    # The add already enqueued one reconcile; toggling must enqueue another distinct
+    # command (dedup only collapses identical PENDING ones, so drain first).
+    await db.execute_write("DELETE FROM telegram_commands", ())
 
-    with patch(
-        "src.web.search_queries.handlers.deps.get_scheduler"
-    ) as mock_get_scheduler:
-        mock_scheduler = MagicMock()
-        mock_scheduler.is_running = True
-        mock_scheduler.sync_search_query_jobs = AsyncMock()
-        mock_get_scheduler.return_value = mock_scheduler
-
-        resp = await route_client.post("/search-queries/1/toggle", follow_redirects=False)
-        assert resp.status_code == 303
-        mock_scheduler.sync_search_query_jobs.assert_called_once()
+    resp = await route_client.post("/search-queries/1/toggle", follow_redirects=False)
+    assert resp.status_code == 303
+    reconciles = await db.repos.telegram_commands.list_commands(command_type="scheduler.reconcile")
+    assert len(reconciles) == 1
 
 
 @pytest.mark.anyio
