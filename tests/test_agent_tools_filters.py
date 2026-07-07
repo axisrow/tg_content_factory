@@ -95,6 +95,33 @@ class TestAnalyzeFiltersTool:
         assert "Ошибка анализа фильтров" in _text(result)
         assert "DB fail" in _text(result)
 
+    @pytest.mark.anyio
+    async def test_quick_string_false_runs_full_analysis(self, mock_db):
+        """quick="false" (JSON-string from a string-serializing backend) → FULL analysis.
+
+        Bug class #1115 / #1238: a raw ``bool(args.get("quick"))`` treats the
+        string ``"false"`` as truthy, silently forcing the sampled fast path.
+        ``arg_bool`` must coerce it to False so ``analyze_all`` runs full.
+        """
+        report = MagicMock()
+        report.results = []
+        with patch("src.filters.analyzer.ChannelAnalyzer") as mock_analyzer:
+            mock_analyzer.return_value.analyze_all = AsyncMock(return_value=report)
+            handlers = _get_tool_handlers(mock_db)
+            await handlers["analyze_filters"]({"quick": "false"})
+        mock_analyzer.return_value.analyze_all.assert_awaited_once_with(quick=False, sample_size=None)
+
+    @pytest.mark.anyio
+    async def test_quick_string_true_runs_sampled_analysis(self, mock_db):
+        """quick="true" (string) must still enable the sampled fast path."""
+        report = MagicMock()
+        report.results = []
+        with patch("src.filters.analyzer.ChannelAnalyzer") as mock_analyzer:
+            mock_analyzer.return_value.analyze_all = AsyncMock(return_value=report)
+            handlers = _get_tool_handlers(mock_db)
+            await handlers["analyze_filters"]({"quick": "true"})
+        mock_analyzer.return_value.analyze_all.assert_awaited_once_with(quick=True, sample_size=None)
+
 
 class TestApplyFiltersTool:
     @pytest.mark.anyio
