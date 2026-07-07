@@ -176,6 +176,16 @@ class PublishService:
             if run.metadata and run.metadata.get("publish_reply"):
                 reply_to = run.metadata.get("reply_to_message_id")
 
+            # The actual send is awaited directly — NEVER wrapped in
+            # asyncio.wait_for (issue #1239). A publish is irreversible: once the
+            # MTProto request leaves for Telegram's servers the message WILL be
+            # delivered, and a client-side timeout cancels only the local wait,
+            # not the delivery. Timing out here would return success=False so the
+            # target is left out of metadata.published_targets, the run stays
+            # retry-eligible, and an operator retry re-sends the already-delivered
+            # post → duplicate. This mirrors the #795 decision that removed
+            # wait_for from resolve_entity for the same orphaned-request reason.
+            # Telethon owns the transport-level timeout/retry for the send itself.
             if run.image_url:
                 # Re-sign at publish time: a run that sat in moderation/schedule
                 # longer than the 7-day presigned TTL would otherwise send a dead
@@ -183,22 +193,16 @@ class PublishService:
                 from src.services.s3_store import refresh_s3_url
 
                 image_url = await refresh_s3_url(run.image_url)
-                msg = await asyncio.wait_for(
-                    session.publish_files(
-                        entity,
-                        image_url,
-                        caption=run.generated_text,
-                    ),
-                    timeout=60.0,
+                msg = await session.publish_files(
+                    entity,
+                    image_url,
+                    caption=run.generated_text,
                 )
             else:
                 send_kwargs: dict = {}
                 if reply_to is not None:
                     send_kwargs["reply_to"] = reply_to
-                msg = await asyncio.wait_for(
-                    session.send_message(entity, run.generated_text, **send_kwargs),
-                    timeout=60.0,
-                )
+                msg = await session.send_message(entity, run.generated_text, **send_kwargs)
 
             return PublishResult(
                 success=True,

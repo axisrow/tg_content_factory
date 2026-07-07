@@ -832,6 +832,125 @@ async def test_publish_service_db_failure_on_second_write_bounds_loss_to_one_tar
     ]
 
 
+# === issue #1239: the actual send must NOT be wrapped in asyncio.wait_for. A
+# client-side timeout cancels only the local wait, not the already-dispatched
+# MTProto delivery, so timing out returns success=False, leaves the target out
+# of published_targets, keeps the run retry-eligible, and an operator retry
+# re-sends the already-delivered post → duplicate. ===
+
+
+@pytest.mark.anyio
+async def test_publish_service_send_not_wrapped_in_wait_for():
+    """The irreversible send (send_message / publish_files) must be awaited
+    directly, never inside asyncio.wait_for (issue #1239). A client-side timeout
+    around a send that already reached Telegram's servers cancels only the local
+    wait — the post is still delivered — while the code reports success=False,
+    so a retry duplicates it. Mirrors the #795 guard for resolve_entity.
+    """
+    import asyncio
+    from unittest.mock import patch
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = FakeClientPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    with patch("asyncio.wait_for", wraps=asyncio.wait_for) as mock_wait_for:
+        results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is True
+    # No wait_for call may wrap the send coroutines. Removing the timeout from
+    # the send is the whole fix — if it were still there this would trip.
+    for call in mock_wait_for.call_args_list:
+        pos_args = call[0]
+        if not pos_args:
+            continue
+        coro_name = str(getattr(pos_args[0], "__name__", "") or "").lower()
+        assert "send_message" not in coro_name and "publish_files" not in coro_name, (
+            f"asyncio.wait_for wrapped a send operation (issue #1239): {call}"
+        )
+
+
+@pytest.mark.anyio
+async def test_publish_service_slow_send_delivered_no_duplicate_on_retry():
+    """A send that is slow but reaches Telegram is recorded as delivered, so a
+    retry does NOT re-send it — no duplicate (issue #1239).
+
+    This reproduces the production bug end-to-end: the transport actually
+    delivers the post (it registers the send) even though it took a while. With
+    the old 60s wait_for the delivery would race the timeout; on timeout the
+    target was reported success=False and dropped from published_targets, so the
+    operator's retry re-sent the already-delivered post. Now the send is awaited
+    directly: the delivery is recorded, the target lands in published_targets,
+    and the retry skips it.
+    """
+    import asyncio
+
+    class SlowButDeliveringClient(FakeClient):
+        async def send_message(self, entity, text, **kwargs):
+            # The request reaches Telegram and the post IS delivered — the delay
+            # only models a slow round-trip, exactly what the old timeout raced.
+            await asyncio.sleep(0)
+            return await super().send_message(entity, text, **kwargs)
+
+    class SlowPool(FakeClientPool):
+        async def get_client_by_phone(self, phone, *, wait_for_flood=False):
+            if not self._should_succeed or phone in self._fail_phones:
+                return None
+            client = self._clients.setdefault(phone, SlowButDeliveringClient())
+            return (client, phone)
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = SlowPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    # First publish: the slow send is delivered and recorded.
+    results = await service.publish_run(run, make_pipeline())
+    assert results[0].success is True
+    assert len(pool._clients["+1234567890"].sent_messages) == 1
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
+        "+1234567890:-1001234567890"
+    ]
+    assert 1 in db.repos.generation_runs.published_ids
+
+    # Retry: reload the run from the persisted metadata, like the dispatcher would.
+    retry_run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+        metadata=dict(db.repos.generation_runs.metadata_by_id[1]),
+    )
+    retry_results = await service.publish_run(retry_run, make_pipeline())
+
+    assert retry_results[0].success is True
+    # The already-delivered target was skipped — NOT sent a second time → no
+    # duplicate post in the channel (issue #1239).
+    assert len(pool._clients["+1234567890"].sent_messages) == 1
+
+
 @pytest.mark.anyio
 async def test_publish_service_db_failure_after_two_deliveries_no_duplicate_on_retry():
     """The exact #1116 headline: 3 targets, delivered to 2, the DB failure strikes
