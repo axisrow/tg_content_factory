@@ -14,6 +14,7 @@ from src.agent.tools._registry import (
     _get_accounts,
     _text_response,
     account_session_status,
+    arg_bool,
     available_live_read_phones,
     connected_phones_from_pool,
     get_accounts_with_flood_cleanup,
@@ -357,7 +358,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             existing = await db.get_account_summaries(active_only=False)
             if any(s.phone == phone for s in existing):
-                if not args.get("force"):
+                if not arg_bool(args, "force"):
                     return _text_response(
                         f"Аккаунт {phone} уже существует (already exists); импорт перезапишет его "
                         f"сессию. Удалите его или повторите с force=true."

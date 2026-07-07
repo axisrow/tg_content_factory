@@ -12,6 +12,7 @@ from src.agent.tools._formatters import format_filter_report
 from src.agent.tools._registry import (
     ToolInputError,
     _text_response,
+    arg_bool,
     arg_int,
     require_confirmation,
 )
@@ -57,7 +58,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         try:
             from src.filters.analyzer import ChannelAnalyzer
 
-            quick = bool(args.get("quick", False))
+            quick = arg_bool(args, "quick")
             raw_sample = args.get("sample_size")
             sample_size = int(raw_sample) if raw_sample not in (None, "") else None
             analyzer = ChannelAnalyzer(db)
