@@ -49,6 +49,7 @@ from src.web.pipelines.responses import (
     PipelineTemplate,
     PipelineUrlRedirect,
 )
+from src.web.scheduler.commands import enqueue_scheduler_reconcile
 
 logger = logging.getLogger("src.web.routes.pipelines")
 
@@ -253,8 +254,9 @@ async def create_wizard_submit(
     if form.is_active:
         await svc.toggle(pipeline_id)
     try:
-        scheduler = deps.get_scheduler(request)
-        await scheduler.sync_pipeline_jobs()
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
     if form.run_after:
@@ -290,10 +292,10 @@ async def add_pipeline(
         )
     except PipelineValidationError:
         return _pipeline_redirect("pipeline_invalid", error=True)
-    # sync scheduler jobs
     try:
-        scheduler = deps.get_scheduler(request)
-        await scheduler.sync_pipeline_jobs()
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
     # Warn if pipeline needs LLM but no provider is configured — still create it.
@@ -360,10 +362,10 @@ async def edit_pipeline(
         return _pipeline_redirect(str(exc), error=True, phone=phone)
     if not ok:
         return _pipeline_redirect("pipeline_invalid", error=True)
-    # sync scheduler jobs
     try:
-        scheduler = deps.get_scheduler(request)
-        await scheduler.sync_pipeline_jobs()
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
     return _pipeline_redirect("pipeline_edited")
@@ -374,8 +376,9 @@ async def toggle_pipeline(request: Request, pipeline_id: int):
     if not ok:
         return _pipeline_redirect("pipeline_invalid", error=True)
     try:
-        scheduler = deps.get_scheduler(request)
-        await scheduler.sync_pipeline_jobs()
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
     return _pipeline_redirect("pipeline_toggled")
@@ -384,8 +387,9 @@ async def toggle_pipeline(request: Request, pipeline_id: int):
 async def delete_pipeline(request: Request, pipeline_id: int):
     await deps.pipeline_service(request).delete(pipeline_id)
     try:
-        scheduler = deps.get_scheduler(request)
-        await scheduler.sync_pipeline_jobs()
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
     return _pipeline_redirect("pipeline_deleted")
@@ -863,8 +867,9 @@ async def create_from_template(
     except PipelineValidationError as exc:
         return _pipeline_redirect(str(exc), error=True)
     try:
-        scheduler = deps.get_scheduler(request)
-        await scheduler.sync_pipeline_jobs()
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
     return PipelineUrlRedirect(f"/pipelines/{pipeline_id}/edit")
@@ -909,8 +914,9 @@ async def import_pipeline(
         return _pipeline_redirect(f"Ошибка импорта: {exc}", error=True)
 
     try:
-        scheduler = deps.get_scheduler(request)
-        await scheduler.sync_pipeline_jobs()
+        # Web-mode scheduler is a read-only snapshot shim; enqueue a reconcile so the
+        # live worker scheduler re-registers content_generate_<id> jobs (#1236).
+        await enqueue_scheduler_reconcile(request, requested_by="web:pipeline.sync")
     except Exception:
         logger.warning("Scheduler sync failed", exc_info=True)
     return PipelineUrlRedirect(f"/pipelines/{pipeline_id}/generate")

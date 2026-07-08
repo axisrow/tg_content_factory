@@ -147,18 +147,22 @@ class SnapshotSchedulerManager:
         return None
 
     def update_interval(self, minutes: int) -> None:
-        # /settings/save-scheduler and /scheduler/jobs/*/set-interval call
-        # this synchronously after persisting the setting. The worker
-        # re-reads the interval on its own load cycle, so the web-side
-        # call is a no-op here.
+        # No-op: this snapshot shim cannot touch the live worker scheduler.
+        # Web routes must NOT rely on this to apply an interval change — the
+        # worker has no periodic re-sync, so a mutation only reaches the running
+        # scheduler when the route enqueues a `scheduler.reconcile` command
+        # (see src/web/scheduler/commands.py). Kept only to satisfy the
+        # WebScheduler interface. (#1247)
         return None
 
     async def sync_search_query_jobs(self) -> None:
-        # Search-query mutation routes call this when the scheduler is
-        # running (snapshot says is_running=True). The worker will pick
-        # up the DB change on its next sync cycle.
+        # No-op: see update_interval above. Search-query mutation routes enqueue
+        # `scheduler.reconcile` instead of calling this; the worker re-registers
+        # sq_<id> jobs when it handles that command. Kept for interface parity. (#1236)
         return None
 
     async def sync_pipeline_jobs(self) -> None:
-        # Pipeline mutation routes call this too; same rationale as above.
+        # No-op: same as sync_search_query_jobs. Pipeline mutation routes enqueue
+        # `scheduler.reconcile`; the worker re-registers content_generate_<id>
+        # jobs on reconcile. Kept for interface parity. (#1236)
         return None

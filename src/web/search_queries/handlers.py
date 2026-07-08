@@ -6,14 +6,18 @@ from fastapi import Request
 from pydantic import ValidationError
 
 from src.web import deps
+from src.web.scheduler.commands import enqueue_scheduler_reconcile
 from src.web.search_queries.forms import SearchQueryForm
 from src.web.search_queries.responses import SearchQueryRedirect, SearchQueryTemplate
 
 
 async def _sync_scheduler(request: Request) -> None:
-    scheduler = deps.get_scheduler(request)
-    if scheduler.is_running:
-        await scheduler.sync_search_query_jobs()
+    # Web-mode scheduler is a read-only snapshot shim; the only way a search-query
+    # mutation reaches the live worker scheduler is via a reconcile command, which
+    # re-registers the sq_<id> jobs. Enqueue unconditionally: the worker's reconcile
+    # handler consults scheduler_autostart itself, and the snapshot is_running flag
+    # is a stale read that must not gate this (#1236).
+    await enqueue_scheduler_reconcile(request, requested_by="web:search_query.sync")
 
 
 async def search_queries_page(request: Request) -> SearchQueryTemplate:
