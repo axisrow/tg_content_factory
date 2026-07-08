@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import functools
+import json
 import os
 import sqlite3
 import subprocess
@@ -724,7 +726,82 @@ def _cli_live_policy_paths() -> list[Path]:
     return paths
 
 
-def _cli_leaf_commands() -> set[tuple[str, ...]]:
+# Script body run in a clean subprocess to enumerate the CLI leaf set (#1258).
+# Kept as a module string so both the subprocess probe and the in-process walk
+# below share one source of truth for the leaf-derivation rule. It prints the
+# leaf tuples as JSON on stdout; anything else (imports/diagnostics) goes to
+# stderr so it never pollutes the JSON payload.
+#
+# **Version-robust walk (#1258 root cause).** ``typer.main.get_command(app)``
+# returns a ``typer.core.TyperGroup`` whose base class *changed* between typer
+# releases: on typer 0.25.x it subclassed the installed ``click.Group`` (so
+# ``isinstance(cmd, click.Group)`` was True), but typer 0.26+ vendors its own
+# click fork — ``TyperGroup`` now derives from ``typer._click.core.Command`` and
+# ``isinstance(cmd, click.Group)`` / ``isinstance(param, click.Option)`` are both
+# **False**. An ``isinstance``-based walk therefore silently produced an *empty*
+# leaf set on typer 0.26.8 (CI) while yielding 215 leaves on typer 0.25.1 (local)
+# — a "CI-only flake" that was really a deterministic version mismatch, not an
+# xdist race. So the walk uses **duck typing** that holds across both typer
+# lines: a node is a group iff it exposes a ``.commands`` mapping; a group is a
+# runnable leaf iff it is ``invoke_without_command`` and owns a non-help option
+# (detected via ``param_type_name == "option"``, which both click and typer's
+# vendored option expose). The probe asserts the leaf set is non-empty so any
+# future typer packaging change fails loud with the observed typer version
+# instead of degrading into hundreds of spurious "not a parser leaf" errors.
+_CLI_LEAF_PROBE_SCRIPT = """
+import json
+import sys
+
+import typer
+
+from src.cli.typer_commands import app
+
+leafs = []
+
+
+def _is_group(command):
+    # typer 0.26+ vendors click, so ``isinstance(command, click.Group)`` is
+    # unreliable; a group is anything exposing a ``.commands`` mapping.
+    return getattr(command, "commands", None) is not None
+
+
+def _own_non_help_options(command):
+    # A group's "own" option (beyond the implicit --help) marks it as a
+    # directly-runnable leaf. ``param_type_name`` is exposed by both the
+    # installed click Option and typer's vendored TyperOption.
+    return [
+        param
+        for param in getattr(command, "params", [])
+        if getattr(param, "param_type_name", None) == "option" and param.name != "help"
+    ]
+
+
+def walk(command, prefix):
+    if _is_group(command):
+        if prefix and _own_non_help_options(command) and getattr(command, "invoke_without_command", False):
+            leafs.append(list(prefix))
+        for name, subcommand in command.commands.items():
+            walk(subcommand, (*prefix, name))
+    elif prefix:
+        leafs.append(list(prefix))
+
+
+walk(typer.main.get_command(app), ())
+
+if not leafs:
+    raise SystemExit(
+        "CLI leaf walk produced an EMPTY leaf set — the walk is incompatible "
+        "with the installed typer "
+        + getattr(typer, "__version__", "?")
+        + " (get_command(app) tree shape changed). Update _CLI_LEAF_PROBE_SCRIPT."
+    )
+
+json.dump(leafs, sys.stdout)
+"""
+
+
+@functools.lru_cache(maxsize=1)
+def _cli_leaf_commands() -> frozenset[tuple[str, ...]]:
     """Leaf-command paths of the CLI, derived from the Typer app (#1125 Final).
 
     Since the argparse framework was removed in #1125, the Typer ``app`` is the
@@ -741,30 +818,41 @@ def _cli_leaf_commands() -> set[tuple[str, ...]]:
 
     The empty root prefix is never recorded. Verified to yield the identical
     set of 212 leaf tuples the argparse ``build_parser()`` walker produced.
+
+    **Why a clean subprocess (#1258).** ``src.cli.typer_commands.app`` is the
+    empty ``typer.Typer()`` singleton from ``typer_app``; every command is
+    registered by a ``@app.command()`` / ``add_typer`` decorator that runs while
+    ``src.cli.typer_commands`` is *imported*. Deriving the leaf set in a fresh
+    interpreter — which imports ``typer_commands`` to completion before walking —
+    keeps this immune to any in-process import ordering and lets the result be
+    memoised for the whole session (~1.3s, once).
+
+    **The real #1258 root cause was a typer-version mismatch, not an xdist
+    race.** The walk originally keyed on ``isinstance(cmd, click.Group)``. typer
+    0.26+ vendors its own click fork, so ``TyperGroup`` no longer subclasses the
+    installed ``click.Group`` and that ``isinstance`` returned False — yielding an
+    *empty* leaf set on the CI typer (0.26.8) while local typer (0.25.1) still
+    produced 215 leaves. That looked like a "CI-only flake" but was a deterministic
+    environment difference. ``_CLI_LEAF_PROBE_SCRIPT`` now walks by duck typing so
+    it is robust across typer lines, and raises loudly if the leaf set is empty.
     """
-    import click
-    import typer
-
-    from src.cli.typer_commands import app
-
-    leafs: set[tuple[str, ...]] = set()
-
-    def walk(command: click.BaseCommand, prefix: tuple[str, ...]) -> None:
-        if isinstance(command, click.Group):
-            own_params = [
-                param
-                for param in command.params
-                if not (isinstance(param, click.Option) and param.name == "help")
-            ]
-            if prefix and own_params and command.invoke_without_command:
-                leafs.add(prefix)
-            for name, subcommand in command.commands.items():
-                walk(subcommand, (*prefix, name))
-        elif prefix:
-            leafs.add(prefix)
-
-    walk(typer.main.get_command(app), ())
-    return leafs
+    proc = subprocess.run(
+        [sys.executable, "-c", _CLI_LEAF_PROBE_SCRIPT],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        # The probe exits non-zero (SystemExit) when the walk is incompatible
+        # with the installed typer, i.e. produced an empty leaf set. Surface its
+        # stderr so the failing policy test names the real cause and typer
+        # version instead of hundreds of spurious "not a parser leaf" errors.
+        raise AssertionError(
+            f"CLI leaf probe subprocess failed (rc={proc.returncode}).\n"
+            f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}"
+        )
+    return frozenset(tuple(leaf) for leaf in json.loads(proc.stdout))
 
 
 def _call_name(node: ast.AST) -> str | None:
