@@ -729,36 +729,88 @@ def _cli_live_policy_paths() -> list[Path]:
 # Script body run in a clean subprocess to enumerate the CLI leaf set (#1258).
 # Kept as a module string so both the subprocess probe and the in-process walk
 # below share one source of truth for the leaf-derivation rule. It prints the
-# leaf tuples as JSON on stdout; anything else (imports/logging) goes to stderr.
+# leaf tuples as JSON on stdout; anything else (imports/logging/diagnostics)
+# goes to stderr so it never pollutes the JSON payload.
+#
+# #1258 DIAGNOSTICS: the subprocess fix works locally but in CI still yields a
+# truncated leaf set (first missing: ("channel", "collect")) *without* the
+# subprocess erroring. We can't reproduce locally, so this probe emits a rich
+# `PROBE_DIAG` JSON blob on stderr describing the interpreter / import / app
+# state it actually observed in CI. `_cli_leaf_commands` echoes that blob into
+# captured stderr so it surfaces in the CI log next to the failing policy test.
 _CLI_LEAF_PROBE_SCRIPT = """
 import json
+import os
 import sys
+import traceback
 
-import click
-import typer
+diag = {
+    "sys_executable": sys.executable,
+    "cwd": os.getcwd(),
+    "sys_path_head": sys.path[:8],
+    "env": {
+        k: os.environ.get(k)
+        for k in (
+            "PYTHONPATH",
+            "COVERAGE_PROCESS_START",
+            "COVERAGE_FILE",
+            "PYTEST_CURRENT_TEST",
+            "PYTEST_XDIST_WORKER",
+            "VIRTUAL_ENV",
+        )
+    },
+}
 
-from src.cli.typer_commands import app
+try:
+    import click
+    import typer
 
-leafs = []
+    diag["click_version"] = getattr(click, "__version__", "?")
+    diag["typer_version"] = getattr(typer, "__version__", "?")
 
+    import src.cli.typer_commands as tc
 
-def walk(command, prefix):
-    if isinstance(command, click.Group):
-        own_params = [
-            param
-            for param in command.params
-            if not (isinstance(param, click.Option) and param.name == "help")
-        ]
-        if prefix and own_params and command.invoke_without_command:
+    diag["typer_commands_file"] = getattr(tc, "__file__", "?")
+    app = tc.app
+    diag["registered_group_names"] = sorted(
+        g.name for g in getattr(app, "registered_groups", [])
+    )
+    diag["registered_command_names"] = sorted(
+        (c.name or getattr(c.callback, "__name__", "?"))
+        for c in getattr(app, "registered_commands", [])
+    )
+
+    command = typer.main.get_command(app)
+    diag["top_level_commands"] = sorted(getattr(command, "commands", {}).keys())
+
+    leafs = []
+
+    def walk(command, prefix):
+        if isinstance(command, click.Group):
+            own_params = [
+                param
+                for param in command.params
+                if not (isinstance(param, click.Option) and param.name == "help")
+            ]
+            if prefix and own_params and command.invoke_without_command:
+                leafs.append(list(prefix))
+            for name, subcommand in command.commands.items():
+                walk(subcommand, (*prefix, name))
+        elif prefix:
             leafs.append(list(prefix))
-        for name, subcommand in command.commands.items():
-            walk(subcommand, (*prefix, name))
-    elif prefix:
-        leafs.append(list(prefix))
 
+    walk(command, ())
 
-walk(typer.main.get_command(app), ())
-json.dump(leafs, sys.stdout)
+    diag["leaf_count"] = len(leafs)
+    diag["has_channel_collect"] = ["channel", "collect"] in leafs
+    diag["has_channel_group"] = "channel" in diag["top_level_commands"]
+
+    print("PROBE_DIAG:" + json.dumps(diag), file=sys.stderr)
+    json.dump(leafs, sys.stdout)
+except Exception:  # noqa: BLE001 - surface the real failure in CI
+    diag["exception"] = traceback.format_exc()
+    print("PROBE_DIAG:" + json.dumps(diag), file=sys.stderr)
+    raise
 """
 
 
@@ -801,9 +853,35 @@ def _cli_leaf_commands() -> frozenset[tuple[str, ...]]:
         cwd=_REPO_ROOT,
         capture_output=True,
         text=True,
-        check=True,
+        check=False,
     )
-    return frozenset(tuple(leaf) for leaf in json.loads(proc.stdout))
+    # #1258 DIAGNOSTICS: always echo the subprocess result so it lands in the
+    # captured stderr of whatever policy test triggered this (memoised) call.
+    # In CI the failing policy tests will then display exactly what the clean
+    # subprocess observed — leaf count, registered groups, env, import errors.
+    # The unique marker `LEAF_PROBE_V2_SUBPROCESS` proves this NEW subprocess
+    # code path (this commit) actually ran in CI — if it is absent from the CI
+    # log, CI is executing a stale in-process/cached path, not this probe.
+    print(
+        "\n[_cli_leaf_commands probe] LEAF_PROBE_V2_SUBPROCESS "
+        f"returncode={proc.returncode} "
+        f"stdout_len={len(proc.stdout)}\n"
+        f"[_cli_leaf_commands probe stderr]\n{proc.stderr}",
+        file=sys.stderr,
+    )
+    if proc.returncode != 0:
+        raise AssertionError(
+            f"CLI leaf probe subprocess failed (rc={proc.returncode}).\n"
+            f"stderr:\n{proc.stderr}\nstdout:\n{proc.stdout}"
+        )
+    leafs = frozenset(tuple(leaf) for leaf in json.loads(proc.stdout))
+    if ("channel", "collect") not in leafs:
+        raise AssertionError(
+            "CLI leaf probe returned a TRUNCATED leaf set "
+            f"(count={len(leafs)}, missing ('channel','collect')).\n"
+            f"probe stderr:\n{proc.stderr}"
+        )
+    return leafs
 
 
 def _call_name(node: ast.AST) -> str | None:
