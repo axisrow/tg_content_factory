@@ -11,6 +11,31 @@ from src.models import Message
 from src.search.ai_search import AISearchEngine
 
 
+class _FakeAIMessage:
+    """Minimal stand-in for a langchain AIMessage — only ``.content``."""
+
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeCompiledStateGraph:
+    """Fake with the real ``create_deep_agent`` return signature.
+
+    ``create_deep_agent`` returns a langgraph ``CompiledStateGraph`` that
+    exposes ``.invoke`` and has **no** ``.run`` method. Using this instead of a
+    bare ``MagicMock`` (which auto-creates ``.run``) means the test regresses if
+    anyone reintroduces the ``.run`` call path from #1237.
+    """
+
+    def __init__(self, content):
+        self._content = content
+        self.invoke_calls: list[dict] = []
+
+    def invoke(self, state):
+        self.invoke_calls.append(state)
+        return {"messages": [{"role": "user", "content": "q"}, _FakeAIMessage(self._content)]}
+
+
 @pytest.fixture
 def llm_config():
     return LLMConfig(enabled=True, api_key="test_key", provider="anthropic", model="claude-3")
@@ -79,33 +104,87 @@ async def test_ai_search_initialization_general_error(llm_config, mock_search_bu
 
 @pytest.mark.anyio
 async def test_ai_search_run_success(llm_config, mock_search_bundle, fake_deepagents):
-    mock_agent = MagicMock()
-    mock_agent.run.return_value = "AI Summary Result"
+    # Real CompiledStateGraph shape: only .invoke, returns {"messages": [...]}.
+    # #1237 regressed here because the code called the non-existent .run.
+    agent = _FakeCompiledStateGraph("AI Summary Result")
 
     mock_search_bundle.search_messages.return_value = MessageSearchPage(
         messages=[Message(channel_id=1, message_id=1, text="hello", date=datetime.now(timezone.utc))],
         total=1,
     )
 
-    fake_deepagents.return_value = mock_agent
+    fake_deepagents.return_value = agent
     engine = AISearchEngine(llm_config, mock_search_bundle)
     engine.initialize()
 
     res = await engine.search("hello")
     assert res.ai_summary == "AI Summary Result"
     assert res.total == 1
+    # The query must actually reach the graph via .invoke({"messages": [...]}).
+    assert agent.invoke_calls == [{"messages": [{"role": "user", "content": "hello"}]}]
 
 
 @pytest.mark.anyio
-async def test_ai_search_run_error(llm_config, mock_search_bundle, fake_deepagents):
-    mock_agent = MagicMock()
-    mock_agent.run.side_effect = Exception("AI Fail")
+async def test_ai_search_invoke_not_run_regression(llm_config, mock_search_bundle, fake_deepagents):
+    """Guard against reintroducing the #1237 ``.run`` call.
 
-    fake_deepagents.return_value = mock_agent
+    A langgraph ``CompiledStateGraph`` has no ``.run`` — accessing it raises
+    ``AttributeError``, which ``search`` swallows into a degraded summary. This
+    fake mirrors that: if the code ever calls ``.run`` again, the summary flips
+    back to the "AI search error" fallback and this assertion fails.
+    """
+    agent = _FakeCompiledStateGraph("Structured answer")
+    assert not hasattr(agent, "run")  # sanity: the fake has no .run, like the real graph
+
+    fake_deepagents.return_value = agent
     engine = AISearchEngine(llm_config, mock_search_bundle)
     engine.initialize()
 
     res = await engine.search("hello")
+    assert res.ai_summary == "Structured answer"
+    assert "AI search error" not in res.ai_summary
+
+
+@pytest.mark.anyio
+async def test_ai_search_run_success_list_content(llm_config, mock_search_bundle, fake_deepagents):
+    # Content blocks (Anthropic-style) must be flattened to text.
+    agent = _FakeCompiledStateGraph([{"type": "text", "text": "Block one"}, {"type": "text", "text": "Block two"}])
+
+    fake_deepagents.return_value = agent
+    engine = AISearchEngine(llm_config, mock_search_bundle)
+    engine.initialize()
+
+    res = await engine.search("hello")
+    assert res.ai_summary == "Block one\nBlock two"
+
+
+@pytest.mark.anyio
+async def test_ai_search_legacy_run_agent_still_supported(llm_config, mock_search_bundle, fake_deepagents):
+    # hasattr-guard: backends/fakes that still expose .run keep working.
+    legacy_agent = MagicMock()
+    legacy_agent.run.return_value = "Legacy Result"
+
+    fake_deepagents.return_value = legacy_agent
+    engine = AISearchEngine(llm_config, mock_search_bundle)
+    engine.initialize()
+
+    res = await engine.search("hello")
+    assert res.ai_summary == "Legacy Result"
+    legacy_agent.run.assert_called_once_with("hello")
+    legacy_agent.invoke.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_ai_search_run_error(llm_config, mock_search_bundle, fake_deepagents):
+    agent = MagicMock(spec=["invoke"])
+    agent.invoke.side_effect = Exception("AI Fail")
+
+    fake_deepagents.return_value = agent
+    engine = AISearchEngine(llm_config, mock_search_bundle)
+    engine.initialize()
+
+    res = await engine.search("hello")
+    assert res.ai_summary is not None
     assert "AI search error: AI Fail" in res.ai_summary
 
 
