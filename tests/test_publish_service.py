@@ -832,6 +832,267 @@ async def test_publish_service_db_failure_on_second_write_bounds_loss_to_one_tar
     ]
 
 
+# === issue #1239: a send that outruns the timeout may already have reached
+# Telegram. The timeout MUST stay (clients run with connection_retries=None, so
+# a send on a dead connection would otherwise hang forever and freeze the
+# sequential publish dispatcher), but a timed-out send is UNCONFIRMED, not
+# known-failed: it is recorded in metadata.unconfirmed_targets and a retry must
+# NOT re-send it blindly (would duplicate) — it surfaces it for a manual check.
+#
+# The fake send below actually BLOCKS past the (patched-tiny) timeout so the
+# real asyncio.wait_for fires — this reproduces the true timeout-vs-delivery
+# race, not a `sleep(0)` stand-in. ===
+
+
+class _HangingSendClient(FakeClient):
+    """A client whose send blocks longer than the (patched) send timeout, so the
+    real asyncio.wait_for around the send actually fires — modelling a send that
+    is in flight to Telegram when the local wait is cancelled. It still records
+    the send (the request left the process) to mirror a possibly-delivered post.
+    """
+
+    async def send_message(self, entity, text, **kwargs):
+        import asyncio
+
+        await super().send_message(entity, text, **kwargs)  # record the attempt
+        await asyncio.sleep(1.0)  # outlast the patched tiny timeout → wait_for fires
+        return FakeMessage()
+
+    async def send_file(self, entity, files, caption=None, schedule=None):
+        import asyncio
+
+        await super().send_file(entity, files, caption=caption, schedule=schedule)
+        await asyncio.sleep(1.0)
+        return FakeMessage()
+
+
+class _HangingSendPool(FakeClientPool):
+    async def get_client_by_phone(self, phone, *, wait_for_flood=False):
+        if not self._should_succeed or phone in self._fail_phones:
+            return None
+        client = self._clients.setdefault(phone, _HangingSendClient())
+        return (client, phone)
+
+
+@pytest.mark.anyio
+async def test_publish_service_send_timeout_marks_unconfirmed_not_failed():
+    """A send that outruns SEND_TIMEOUT_SEC returns uncertain=True and is recorded
+    in unconfirmed_targets, NOT published_targets and NOT a plain failure (#1239).
+
+    The timeout fires for real (the fake send blocks past it), proving the guard
+    against a forever-hung send is intact — no vertical freeze of the dispatcher.
+    """
+    from unittest.mock import patch
+
+    import src.services.publish_service as ps
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = _HangingSendPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    # Tiny timeout so the blocking send trips it fast; the whole test still ends
+    # (the guard works — the send does NOT hang forever).
+    with patch.object(ps, "SEND_TIMEOUT_SEC", 0.02):
+        results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is False
+    assert results[0].uncertain is True
+    assert "unconfirmed" in results[0].error.lower()
+    # Recorded as unconfirmed, NOT delivered → run is not marked published.
+    md = db.repos.generation_runs.metadata_by_id[1]
+    assert md["unconfirmed_targets"] == ["+1234567890:-1001234567890"]
+    assert md.get("published_targets", []) == []
+    assert 1 not in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
+async def test_publish_service_unconfirmed_target_not_resent_on_retry():
+    """The core #1239 fix: a target left UNCONFIRMED by a timed-out send is NOT
+    re-sent on retry — no duplicate post — and is surfaced for a manual check.
+
+    This is the exact production scenario: attempt 1 times out mid-send (post may
+    already be live), the run stays retry-eligible, the operator hits publish
+    again; the retry must not blindly re-send that target.
+    """
+    from unittest.mock import patch
+
+    import src.services.publish_service as ps
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = _HangingSendPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    # Attempt 1: the send times out → target recorded unconfirmed, one send tried.
+    with patch.object(ps, "SEND_TIMEOUT_SEC", 0.02):
+        await service.publish_run(run, make_pipeline())
+    assert len(pool._clients["+1234567890"].sent_messages) == 1
+    assert db.repos.generation_runs.metadata_by_id[1]["unconfirmed_targets"] == [
+        "+1234567890:-1001234567890"
+    ]
+
+    # Attempt 2 (retry): reload from persisted metadata like the dispatcher does.
+    # No new timeout patch needed — the target must be skipped WITHOUT sending.
+    retry_pool = _HangingSendPool(should_succeed=True)
+    retry_service = PublishService(db, retry_pool)
+    retry_run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+        metadata=dict(db.repos.generation_runs.metadata_by_id[1]),
+    )
+    retry_results = await retry_service.publish_run(retry_run, make_pipeline())
+
+    # NOT re-sent — no client was even acquired for the unconfirmed target → no
+    # duplicate. It is surfaced as an unconfirmed failure for a manual check.
+    assert retry_pool._clients == {}
+    assert retry_results[0].success is False
+    assert retry_results[0].uncertain is True
+    assert "manual check" in retry_results[0].error.lower()
+    # Still not marked published — a human must confirm/re-drive it.
+    assert 1 not in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
+async def test_publish_service_image_send_timeout_marks_unconfirmed():
+    """The image branch (publish_files) gets the same unconfirmed handling as the
+    text branch — both irreversible sends are covered (#1239, Codex review)."""
+    from unittest.mock import patch
+
+    import src.services.publish_service as ps
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = _HangingSendPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Content with image",
+        image_url="https://example.com/image.jpg",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    with patch.object(ps, "SEND_TIMEOUT_SEC", 0.02):
+        results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is False
+    assert results[0].uncertain is True
+    # The image send (send_file) was attempted, then recorded unconfirmed.
+    assert len(pool._clients["+1234567890"].sent_files) == 1
+    assert db.repos.generation_runs.metadata_by_id[1]["unconfirmed_targets"] == [
+        "+1234567890:-1001234567890"
+    ]
+    assert 1 not in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
+async def test_publish_service_timeout_before_send_is_plain_retryable_failure():
+    """A timeout BEFORE the send (client acquisition / flood wait) is a plain,
+    retry-eligible failure — NOT an unconfirmed delivery. Nothing was dispatched,
+    so the target must NOT be poisoned into unconfirmed_targets (#1239)."""
+    import asyncio
+
+    class ClientAcquireTimeoutPool(FakeClientPool):
+        async def get_client_by_phone(self, phone, *, wait_for_flood=False):
+            raise asyncio.TimeoutError()
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = ClientAcquireTimeoutPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is False
+    assert results[0].uncertain is False
+    assert results[0].error == "Timeout"
+    # No send happened → nothing recorded as unconfirmed; the run can safely retry.
+    assert 1 not in db.repos.generation_runs.metadata_by_id
+    assert 1 not in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
+async def test_publish_service_s3_refresh_timeout_is_plain_retryable_not_unconfirmed():
+    """A timeout in refresh_s3_url (pre-send S3 re-signing) must stay a plain
+    retry-eligible failure — the send never started, so the target must NOT be
+    mislabeled uncertain/unconfirmed (issue #1239, Codex re-review). The narrow
+    send-only try/except is what guarantees this: refresh_s3_url runs ABOVE it.
+    """
+    import asyncio
+    from unittest.mock import patch
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = FakeClientPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Content with image",
+        image_url="https://example.com/image.jpg",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    async def _boom(_url):
+        raise asyncio.TimeoutError()
+
+    # refresh_s3_url is imported inside _publish_to_target from src.services.s3_store.
+    with patch("src.services.s3_store.refresh_s3_url", _boom):
+        results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is False
+    # Pre-send timeout → plain retryable failure via the OUTER handler, NOT uncertain.
+    assert results[0].uncertain is False
+    assert results[0].error == "Timeout"
+    # The image send was never attempted (refresh failed first).
+    assert pool._clients["+1234567890"].sent_files == []
+    # Nothing poisoned into unconfirmed_targets — the run stays cleanly retryable.
+    assert 1 not in db.repos.generation_runs.metadata_by_id
+    assert 1 not in db.repos.generation_runs.published_ids
+
+
 @pytest.mark.anyio
 async def test_publish_service_db_failure_after_two_deliveries_no_duplicate_on_retry():
     """The exact #1116 headline: 3 targets, delivered to 2, the DB failure strikes
