@@ -308,3 +308,46 @@ async def test_score_content_fallback_without_config_uses_default(mock_db):
     service = QualityScoringService(mock_db)
     score = await service.score_content("text")
     assert score.overall == 0.5
+
+
+# === _response_text LangChain .text property regression (issue #1263) ===
+
+
+def test_response_text_reads_langchain_message_text_property():
+    """``.text`` on a LangChain message is a property, not a method (issue #1263).
+
+    langchain-core exposes ``AIMessage.text`` as a ``TextAccessor`` that *is* a
+    ``str`` yet stays callable for backwards compat; calling it emits a
+    ``LangChainDeprecationWarning`` which trips ``filterwarnings=["error"]``.
+    ``_response_text`` must read it as a property and never invoke it.
+    """
+    import warnings
+
+    from langchain_core.messages import AIMessage
+
+    from src.services.provider_service import RuntimeProviderRegistry
+
+    message = AIMessage(content="generated body")
+
+    # Sanity: the accessor really is both str-like and (deprecated) callable, so
+    # this test guards against a regression to the method-call code path.
+    assert isinstance(message.text, str)
+    assert callable(message.text)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        text = RuntimeProviderRegistry._response_text(message)
+
+    assert text == "generated body"
+
+
+def test_response_text_legacy_callable_fallback():
+    """Very old LangChain exposed ``.text`` as a plain method — still supported."""
+
+    class _LegacyMessage:
+        def text(self) -> str:
+            return "legacy body"
+
+    from src.services.provider_service import RuntimeProviderRegistry
+
+    assert RuntimeProviderRegistry._response_text(_LegacyMessage()) == "legacy body"
