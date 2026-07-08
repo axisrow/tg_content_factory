@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from typing import Any
 
 from src.config import LLMConfig
 from src.database import Database
@@ -22,7 +23,10 @@ class AISearchEngine:
         if isinstance(search, Database):
             search = SearchBundle.from_database(search)
         self._search = search
-        self._agent = None
+        # deepagents.create_deep_agent returns a langgraph CompiledStateGraph;
+        # kept as Any so the runtime hasattr-guard in _run_agent_sync isn't
+        # second-guessed by the static type.
+        self._agent: Any = None
         self._init_error: str | None = None
 
     @property
@@ -82,6 +86,46 @@ class AISearchEngine:
             logger.error("Failed to initialize AI search: %s", e)
             self._init_error = str(e)
 
+    @staticmethod
+    def _extract_result_text(result: object) -> str:
+        """Extract the final assistant text from a deepagents/langgraph result.
+
+        `create_deep_agent` returns a langgraph ``CompiledStateGraph`` whose
+        ``invoke`` yields ``{"messages": [...]}`` — the last message carries the
+        answer as ``content`` (a plain string or a list of content blocks). This
+        mirrors ``DeepagentsBackend._extract_result_text``.
+        """
+        if isinstance(result, dict):
+            messages = result.get("messages") or []
+            if messages:
+                last_message = messages[-1]
+                content = getattr(last_message, "content", None)
+                if content is None and isinstance(last_message, dict):
+                    content = last_message.get("content")
+                if isinstance(content, str):
+                    return content
+                if isinstance(content, list):
+                    return "\n".join(
+                        block.get("text", "") if isinstance(block, dict) else str(block)
+                        for block in content
+                    ).strip()
+            return str(result)
+        return str(result)
+
+    def _run_agent_sync(self, query: str) -> str:
+        """Invoke the agent and normalize its response to text.
+
+        ``create_deep_agent`` returns a langgraph ``CompiledStateGraph`` that
+        exposes ``.invoke`` (not ``.run``); the hasattr-guard keeps the older
+        ``.run`` shape working for backends/fakes that still provide it.
+        """
+        agent = self._agent
+        if hasattr(agent, "run"):
+            result = agent.run(query)
+        else:
+            result = agent.invoke({"messages": [{"role": "user", "content": query}]})
+        return self._extract_result_text(result)
+
     async def search(self, query: str) -> SearchResult:
         """Run AI-powered search."""
         if not self._agent:
@@ -96,8 +140,7 @@ class AISearchEngine:
             )
 
         try:
-            response = await asyncio.to_thread(self._agent.run, query)
-            summary = str(response)
+            summary = await asyncio.to_thread(self._run_agent_sync, query)
 
             # Also get raw messages for display
             page = await self._search.search_messages(SearchParams(query=query, limit=20))
