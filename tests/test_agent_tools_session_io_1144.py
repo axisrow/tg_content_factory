@@ -129,6 +129,26 @@ class TestImportSessionTool:
         assert "импортирован" in _text(result).lower()
         mock_db.add_account.assert_awaited_once()
 
+    @pytest.mark.anyio
+    async def test_existing_phone_force_string_false_refused(self, mock_db, monkeypatch):
+        """force="false" (JSON-string from a string-serializing backend) must NOT overwrite.
+
+        Bug class #1115 / #1238: a raw ``if not args.get("force")`` treats the
+        string ``"false"`` as truthy, silently skipping the overwrite guard and
+        clobbering a working session. ``arg_bool`` must coerce it to False so the
+        refusal path fires and ``add_account`` is never called.
+        """
+        monkeypatch.setattr("src.agent.tools.accounts.validate_session_string", lambda s: True)
+        existing = _make_account(acc_id=1, phone="+71112223344")
+        mock_db.get_account_summaries = AsyncMock(return_value=[existing])
+        mock_db.add_account = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+        result = await handlers["import_session"](
+            {"phone": "+71112223344", "session_string": "valid-looking", "force": "false"}
+        )
+        assert "exist" in _text(result).lower() or "существует" in _text(result).lower()
+        mock_db.add_account.assert_not_awaited()
+
 
 # ---------------------------------------------------------------------------
 # permission / registry contract
