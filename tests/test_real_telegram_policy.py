@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import functools
 import os
 import sqlite3
 import subprocess
@@ -724,7 +725,25 @@ def _cli_live_policy_paths() -> list[Path]:
     return paths
 
 
-def _cli_leaf_commands() -> set[tuple[str, ...]]:
+@functools.lru_cache(maxsize=1)
+def _cli_click_command():
+    """The fully-assembled Click command tree for the Typer ``app`` (#1258).
+
+    Imports ``src.cli.typer_commands`` and materialises ``get_command(app)``
+    once, cached for the whole session. Called eagerly at module import (see the
+    ``_cli_click_command()`` warm-up right below the function definitions) so the
+    ``app`` is built before any cross-package collection interleave under
+    ``-n auto`` can observe a partial tree — see ``_cli_leaf_commands``.
+    """
+    import typer
+
+    from src.cli.typer_commands import app
+
+    return typer.main.get_command(app)
+
+
+@functools.lru_cache(maxsize=1)
+def _cli_leaf_commands() -> frozenset[tuple[str, ...]]:
     """Leaf-command paths of the CLI, derived from the Typer app (#1125 Final).
 
     Since the argparse framework was removed in #1125, the Typer ``app`` is the
@@ -741,11 +760,19 @@ def _cli_leaf_commands() -> set[tuple[str, ...]]:
 
     The empty root prefix is never recorded. Verified to yield the identical
     set of 212 leaf tuples the argparse ``build_parser()`` walker produced.
+
+    **Determinism under ``-n auto`` (#1258).** ``src.cli.typer_commands.app`` is
+    assembled from ~25 sub-command imports plus ``add_typer`` calls. Under
+    interleaved package collection an xdist worker that shares its slot with
+    interleave provokers (``test_collection_interleave_regression``,
+    ``test_adk_backend``, ``test_mcp_server_stdio``) could observe a *partially*
+    built ``app`` and yield a truncated leaf set — making almost every policy
+    leaf-check fail non-deterministically. We defend against this two ways: the
+    ``app`` is imported eagerly at module top (before any cross-package
+    interleave), and this walker is memoised (``lru_cache``) so the full tree is
+    computed exactly once and every caller sees the identical, complete set.
     """
     import click
-    import typer
-
-    from src.cli.typer_commands import app
 
     leafs: set[tuple[str, ...]] = set()
 
@@ -763,8 +790,15 @@ def _cli_leaf_commands() -> set[tuple[str, ...]]:
         elif prefix:
             leafs.add(prefix)
 
-    walk(typer.main.get_command(app), ())
-    return leafs
+    walk(_cli_click_command(), ())
+    return frozenset(leafs)
+
+
+# Warm up the Typer-app leaf set at module import — i.e. before any cross-package
+# collection interleave under ``-n auto`` can observe a partially-built ``app``
+# (#1258). Both caches are populated exactly once here, so every test sees the
+# identical, complete leaf tree regardless of xdist worker scheduling.
+_cli_leaf_commands()
 
 
 def _call_name(node: ast.AST) -> str | None:
