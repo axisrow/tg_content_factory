@@ -222,49 +222,49 @@ class PublishService:
             if run.metadata and run.metadata.get("publish_reply"):
                 reply_to = run.metadata.get("reply_to_message_id")
 
+            # Build the send coroutine WITHOUT starting it. All pre-send work —
+            # including refresh_s3_url — happens here, OUTSIDE the timeout try
+            # below: a timeout re-signing the S3 URL means nothing was sent to
+            # Telegram, so it must stay a plain retry-eligible failure (handled by
+            # the outer except), NOT be mislabeled as an unconfirmed delivery
+            # (issue #1239, Codex re-review). Only the actual send is inside the
+            # narrow try/except that produces uncertain=True.
+            if run.image_url:
+                # Re-sign at publish time: a run that sat in moderation/schedule
+                # longer than the 7-day presigned TTL would otherwise send a dead
+                # S3 link (#869/#873/#874). Non-S3 URLs pass through unchanged.
+                from src.services.s3_store import refresh_s3_url
+
+                image_url = await refresh_s3_url(run.image_url)
+
+                def _send() -> Any:
+                    return session.publish_files(entity, image_url, caption=run.generated_text)
+            else:
+                send_kwargs: dict = {}
+                if reply_to is not None:
+                    send_kwargs["reply_to"] = reply_to
+
+                def _send() -> Any:
+                    return session.send_message(entity, run.generated_text, **send_kwargs)
+
             # The send is bounded by SEND_TIMEOUT_SEC (issue #1239). The timeout
             # is REQUIRED, not optional: with connection_retries=None a send on a
             # dead connection would otherwise hang forever and, because the
             # publish dispatcher awaits targets sequentially, freeze all later
             # publishes permanently. BUT a client-side timeout cancels only the
             # local wait — the MTProto request may already have reached Telegram
-            # and the post may be delivered. So a timeout HERE (scoped to just the
-            # send, not client acquisition or entity resolution above) is NOT a
-            # known failure: it returns uncertain=True and publish_run records the
-            # target as UNCONFIRMED, so a retry surfaces it for a manual check
-            # instead of blindly re-sending a possibly-delivered post (duplicate).
+            # and the post may be delivered. So a timeout HERE — scoped to ONLY
+            # the send, with every pre-send step (acquire, resolve, S3 re-sign)
+            # kept above — is NOT a known failure: it returns uncertain=True and
+            # publish_run records the target as UNCONFIRMED, so a retry surfaces it
+            # for a manual check instead of re-sending a possibly-delivered post.
             try:
-                if run.image_url:
-                    # Re-sign at publish time: a run that sat in moderation/schedule
-                    # longer than the 7-day presigned TTL would otherwise send a dead
-                    # S3 link (#869/#873/#874). Non-S3 URLs pass through unchanged.
-                    from src.services.s3_store import refresh_s3_url
-
-                    image_url = await refresh_s3_url(run.image_url)
-                    msg = await asyncio.wait_for(
-                        session.publish_files(
-                            entity,
-                            image_url,
-                            caption=run.generated_text,
-                        ),
-                        timeout=SEND_TIMEOUT_SEC,
-                    )
-                else:
-                    send_kwargs: dict = {}
-                    if reply_to is not None:
-                        send_kwargs["reply_to"] = reply_to
-                    msg = await asyncio.wait_for(
-                        session.send_message(entity, run.generated_text, **send_kwargs),
-                        timeout=SEND_TIMEOUT_SEC,
-                    )
+                msg = await asyncio.wait_for(_send(), timeout=SEND_TIMEOUT_SEC)
             except asyncio.TimeoutError:
                 # The send outran the timeout: the request may already be on its
                 # way to Telegram, so we cannot say whether the post was
                 # delivered. Mark the target uncertain so publish_run records it
                 # as UNCONFIRMED and a retry does NOT re-send it blindly (#1239).
-                # Scoped to the send only — a timeout acquiring a client or
-                # resolving the entity means nothing was sent, so it is a plain
-                # (retry-eligible) failure handled by the outer handler below.
                 logger.error(
                     "Timeout sending to %s:%s — delivery unconfirmed, target needs a manual check",
                     target.phone,

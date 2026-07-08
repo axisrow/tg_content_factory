@@ -1050,6 +1050,50 @@ async def test_publish_service_timeout_before_send_is_plain_retryable_failure():
 
 
 @pytest.mark.anyio
+async def test_publish_service_s3_refresh_timeout_is_plain_retryable_not_unconfirmed():
+    """A timeout in refresh_s3_url (pre-send S3 re-signing) must stay a plain
+    retry-eligible failure — the send never started, so the target must NOT be
+    mislabeled uncertain/unconfirmed (issue #1239, Codex re-review). The narrow
+    send-only try/except is what guarantees this: refresh_s3_url runs ABOVE it.
+    """
+    import asyncio
+    from unittest.mock import patch
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = FakeClientPool(should_succeed=True)
+    service = PublishService(db, pool)
+
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Content with image",
+        image_url="https://example.com/image.jpg",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    async def _boom(_url):
+        raise asyncio.TimeoutError()
+
+    # refresh_s3_url is imported inside _publish_to_target from src.services.s3_store.
+    with patch("src.services.s3_store.refresh_s3_url", _boom):
+        results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is False
+    # Pre-send timeout → plain retryable failure via the OUTER handler, NOT uncertain.
+    assert results[0].uncertain is False
+    assert results[0].error == "Timeout"
+    # The image send was never attempted (refresh failed first).
+    assert pool._clients["+1234567890"].sent_files == []
+    # Nothing poisoned into unconfirmed_targets — the run stays cleanly retryable.
+    assert 1 not in db.repos.generation_runs.metadata_by_id
+    assert 1 not in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
 async def test_publish_service_db_failure_after_two_deliveries_no_duplicate_on_retry():
     """The exact #1116 headline: 3 targets, delivered to 2, the DB failure strikes
     on the NEXT write (after the 3rd delivery) → run FAILED → retry must NOT
