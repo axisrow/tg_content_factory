@@ -5,12 +5,26 @@ import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
+import regex
+
 from src.models import Channel, Message, SearchQuery
 from src.parsers import bare_channel_id
 from src.telegram.notifier import Notifier
 from src.utils.search_query_chat_filter import chat_filter_matches_message
 
 logger = logging.getLogger(__name__)
+
+# User-supplied notification regexes run against third-party channel text (up to
+# ~4096 chars) on the worker's event loop. A pathological pattern like ``(a+)+$``
+# would backtrack exponentially inside a synchronous C call and freeze the loop —
+# heartbeat, collection queue and snapshots all stall, and an asyncio timeout
+# can't help because the loop itself is blocked (#1240). The `regex` engine
+# enforces this wall-clock ceiling *inside* its matching loop, aborting a runaway
+# pattern with a plain ``TimeoutError`` instead. Kept small so a hostile pattern
+# can't stall a whole backlog pass (the 24h backlog is re-presented every pass and
+# dry-run scans the full window), yet comfortably above the worst-case wall time
+# of a legitimate match.
+_REGEX_TIMEOUT_SECONDS = 0.25
 
 
 class NotifiedStore(Protocol):
@@ -28,8 +42,8 @@ def message_matches_query(sq: SearchQuery, msg: Message, channels: list[Channel]
     """True if *msg* matches notification query *sq*.
 
     Shared by the live matcher and the dry-run preview so both use the exact same
-    semantics (regex via re.search, plain via substring) instead of diverging
-    (audit #838/3 keys off this predicate).
+    semantics (regex via a timeout-guarded ``regex.search``, plain via substring)
+    instead of diverging (audit #838/3 keys off this predicate).
     """
     if not msg.text:
         return False
@@ -41,8 +55,19 @@ def message_matches_query(sq: SearchQuery, msg: Message, channels: list[Channel]
         return False
     if sq.is_regex:
         try:
-            return bool(re.search(sq.query, msg.text, re.IGNORECASE))
-        except re.error:
+            return bool(regex.search(sq.query, msg.text, regex.IGNORECASE, timeout=_REGEX_TIMEOUT_SECONDS))
+        except TimeoutError:
+            # Catastrophic backtracking (or just a very heavy pattern) — bail out
+            # without matching so the loop keeps ticking. Logged because a repeated
+            # timeout signals either a malicious pattern or one worth rewriting.
+            logger.warning(
+                "Notification regex timed out after %.3gs (possible ReDoS); query id=%s pattern=%r",
+                _REGEX_TIMEOUT_SECONDS,
+                sq.id,
+                sq.query,
+            )
+            return False
+        except regex.error:
             return False
     if sq.is_fts:
         return _fts_query_matches(sq.query, msg.text)
