@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import functools
+import json
 import os
 import sqlite3
 import subprocess
@@ -725,21 +726,40 @@ def _cli_live_policy_paths() -> list[Path]:
     return paths
 
 
-@functools.lru_cache(maxsize=1)
-def _cli_click_command():
-    """The fully-assembled Click command tree for the Typer ``app`` (#1258).
+# Script body run in a clean subprocess to enumerate the CLI leaf set (#1258).
+# Kept as a module string so both the subprocess probe and the in-process walk
+# below share one source of truth for the leaf-derivation rule. It prints the
+# leaf tuples as JSON on stdout; anything else (imports/logging) goes to stderr.
+_CLI_LEAF_PROBE_SCRIPT = """
+import json
+import sys
 
-    Imports ``src.cli.typer_commands`` and materialises ``get_command(app)``
-    once, cached for the whole session. Called eagerly at module import (see the
-    ``_cli_click_command()`` warm-up right below the function definitions) so the
-    ``app`` is built before any cross-package collection interleave under
-    ``-n auto`` can observe a partial tree — see ``_cli_leaf_commands``.
-    """
-    import typer
+import click
+import typer
 
-    from src.cli.typer_commands import app
+from src.cli.typer_commands import app
 
-    return typer.main.get_command(app)
+leafs = []
+
+
+def walk(command, prefix):
+    if isinstance(command, click.Group):
+        own_params = [
+            param
+            for param in command.params
+            if not (isinstance(param, click.Option) and param.name == "help")
+        ]
+        if prefix and own_params and command.invoke_without_command:
+            leafs.append(list(prefix))
+        for name, subcommand in command.commands.items():
+            walk(subcommand, (*prefix, name))
+    elif prefix:
+        leafs.append(list(prefix))
+
+
+walk(typer.main.get_command(app), ())
+json.dump(leafs, sys.stdout)
+"""
 
 
 @functools.lru_cache(maxsize=1)
@@ -762,43 +782,28 @@ def _cli_leaf_commands() -> frozenset[tuple[str, ...]]:
     set of 212 leaf tuples the argparse ``build_parser()`` walker produced.
 
     **Determinism under ``-n auto`` (#1258).** ``src.cli.typer_commands.app`` is
-    assembled from ~25 sub-command imports plus ``add_typer`` calls. Under
-    interleaved package collection an xdist worker that shares its slot with
-    interleave provokers (``test_collection_interleave_regression``,
-    ``test_adk_backend``, ``test_mcp_server_stdio``) could observe a *partially*
-    built ``app`` and yield a truncated leaf set — making almost every policy
-    leaf-check fail non-deterministically. We defend against this two ways: the
-    ``app`` is imported eagerly at module top (before any cross-package
-    interleave), and this walker is memoised (``lru_cache``) so the full tree is
-    computed exactly once and every caller sees the identical, complete set.
+    the empty ``typer.Typer()`` singleton from ``typer_app``; every command is
+    registered by a ``@app.command()`` / ``add_typer`` decorator that runs while
+    ``src.cli.typer_commands`` is *imported*. Under xdist's interleaved package
+    collection an in-process ``get_command(app)`` can observe that module
+    *mid-import* — decorators not all applied yet — and yield a truncated leaf
+    set, making almost every policy leaf-check fail with "is not a parser leaf
+    command" (seen at up to 249 at once on unrelated PRs). Reading the app in the
+    current process is inherently exposed to that race. So we derive the leaf set
+    in a **clean subprocess** instead: a fresh interpreter imports
+    ``typer_commands`` to completion before walking, where no collection
+    interleave exists, and the result is memoised for the whole session (~1.3s,
+    once). This defends the root cause — a partial app is impossible in a
+    dedicated process — rather than racing to warm a shared singleton.
     """
-    import click
-
-    leafs: set[tuple[str, ...]] = set()
-
-    def walk(command: click.BaseCommand, prefix: tuple[str, ...]) -> None:
-        if isinstance(command, click.Group):
-            own_params = [
-                param
-                for param in command.params
-                if not (isinstance(param, click.Option) and param.name == "help")
-            ]
-            if prefix and own_params and command.invoke_without_command:
-                leafs.add(prefix)
-            for name, subcommand in command.commands.items():
-                walk(subcommand, (*prefix, name))
-        elif prefix:
-            leafs.add(prefix)
-
-    walk(_cli_click_command(), ())
-    return frozenset(leafs)
-
-
-# Warm up the Typer-app leaf set at module import — i.e. before any cross-package
-# collection interleave under ``-n auto`` can observe a partially-built ``app``
-# (#1258). Both caches are populated exactly once here, so every test sees the
-# identical, complete leaf tree regardless of xdist worker scheduling.
-_cli_leaf_commands()
+    proc = subprocess.run(
+        [sys.executable, "-c", _CLI_LEAF_PROBE_SCRIPT],
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return frozenset(tuple(leaf) for leaf in json.loads(proc.stdout))
 
 
 def _call_name(node: ast.AST) -> str | None:
