@@ -330,6 +330,15 @@ class RuntimeProviderRegistry:
         if isinstance(response, str):
             return response
         text_attr = getattr(response, "text", None)
+        # LangChain >=0.3 exposes ``.text`` as a property. In langchain-core the
+        # value is a ``TextAccessor`` that *is* a ``str`` but is still callable for
+        # backwards compat — calling it emits a LangChainDeprecationWarning
+        # ("Use .text as a property instead"), which trips ``filterwarnings=error``.
+        # Prefer the property contract: if ``.text`` already reads as a string, use
+        # it directly and never invoke it as a method.
+        if isinstance(text_attr, str):
+            return str(text_attr)
+        # Legacy fallback: very old LangChain where ``.text`` is a plain method.
         if callable(text_attr):
             try:
                 text = text_attr()
