@@ -69,7 +69,7 @@ class CollectionTasksRepository:
     ) -> (
         dict[str, Any] | StatsAllTaskPayload | SqStatsTaskPayload | FilterAnalyzeTaskPayload
         | PipelineRunTaskPayload | ContentGenerateTaskPayload | ContentPublishTaskPayload
-        | TranslateBatchTaskPayload | None
+        | TranslateBatchTaskPayload | ExportTaskPayload | None
     ):
         if not raw:
             return None
@@ -109,6 +109,7 @@ class CollectionTasksRepository:
             | ContentGenerateTaskPayload
             | ContentPublishTaskPayload
             | TranslateBatchTaskPayload
+            | ExportTaskPayload
             | None
         ),
     ) -> str | None:
