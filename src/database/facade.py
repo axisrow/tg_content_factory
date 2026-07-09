@@ -273,20 +273,22 @@ class Database:
         Not reentrant — nesting would deadlock asyncio.Lock.
         """
         assert self._db is not None
+        # Local binding keeps the narrowed (non-optional) type visible inside the lambda.
+        db = self._db
         async with self._write_lock:
             await self._with_busy_retry(
                 "transaction begin",
-                lambda: begin_immediate(self._db),
+                lambda: begin_immediate(db),
             )
             committed = False
             try:
-                yield self._db
-                await self._db.execute("COMMIT")
+                yield db
+                await db.execute("COMMIT")
                 committed = True
             finally:
                 if not committed:
                     try:
-                        await self._db.execute("ROLLBACK")
+                        await db.execute("ROLLBACK")
                     except aiosqlite.OperationalError:
                         pass
 
@@ -578,7 +580,7 @@ class Database:
         if existing:
             return existing["id"]
         try:
-            cur = await self.execute_write(
+            write_cur = await self.execute_write(
                 """
                 INSERT INTO channel_rename_events
                     (channel_id, old_title, new_title, old_username, new_username)
@@ -586,7 +588,7 @@ class Database:
                 """,
                 (channel_id, old_title, new_title, old_username, new_username),
             )
-            return cur.lastrowid or 0
+            return write_cur.lastrowid or 0
         except sqlite3.IntegrityError:
             # Concurrent INSERT won the race; re-select the existing row
             cur = await self._read(

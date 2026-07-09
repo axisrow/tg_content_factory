@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import aiosqlite
 
@@ -370,7 +370,8 @@ class FilterRepository:
         params: tuple = (),
     ) -> list[aiosqlite.Row]:
         cur = await conn.execute(sql, params)
-        return await cur.fetchall()
+        # aiosqlite stubs declare fetchall() as Iterable[Row]; at runtime it is a list.
+        return cast("list[aiosqlite.Row]", await cur.fetchall())
 
     async def fetch_maps_parallel(
         self,

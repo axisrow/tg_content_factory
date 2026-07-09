@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import cast
 
 import aiosqlite
 
@@ -242,7 +243,8 @@ async def _dedupe_primary_accounts(db: aiosqlite.Connection) -> None:
     if "is_primary" not in await table_columns(db, "accounts"):
         return
     cur = await db.execute("SELECT id FROM accounts WHERE is_primary = 1 ORDER BY id ASC")
-    rows = await cur.fetchall()
+    # aiosqlite stubs declare fetchall() as Iterable[Row]; at runtime it is a list.
+    rows = cast("list[aiosqlite.Row]", await cur.fetchall())
     if len(rows) <= 1:
         return
     keep_id = rows[0][0]
