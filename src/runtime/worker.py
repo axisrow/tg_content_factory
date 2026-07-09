@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from inspect import isawaitable
 
 from src.config import AppConfig
+from src.database import DatabaseBusyError
 from src.database.repositories.accounts import AccountSessionDecryptError
 from src.models import RuntimeSnapshot
 from src.services.notification_service import NotificationService
@@ -362,6 +363,15 @@ async def _run_worker_async(config: AppConfig) -> None:
                     "Worker snapshot publish timed out after %.1fs; continuing worker loop",
                     publish_timeout,
                 )
+            except DatabaseBusyError:
+                # Transient lock — back off quietly. A full traceback every
+                # heartbeat (~5s) floods the log while contended; the next
+                # heartbeat republishes the snapshot. Matches embedded_worker.
+                logger.warning("Worker DB busy publishing snapshots; will retry next heartbeat")
+            except Exception:
+                # Snapshot publishing must never crash the loop — the worker
+                # is still processing queued tasks even if snapshots fail.
+                logger.exception("Worker _publish_snapshots failed")
             try:
                 await asyncio.wait_for(stop_event.wait(), timeout=HEARTBEAT_INTERVAL_SEC)
             except asyncio.TimeoutError:

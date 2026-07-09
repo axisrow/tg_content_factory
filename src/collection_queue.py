@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
-from src.database import Database
+from src.database import Database, DatabaseBusyError
 from src.database.bundles import ChannelBundle
 from src.live_runtime_pause import LiveRuntimePauseGate
 from src.models import Channel, CollectionTaskStatus
@@ -447,7 +447,19 @@ class CollectionQueue:
         it COMPLETED with an optional "skipped" note when the channel became
         filtered mid-run. Split out of ``_run_single_worker`` (#922).
         """
-        persisted = await self._channels.get_collection_task(task_id)
+        # The collect run already succeeded here — messages are saved and
+        # last_collected_id is advanced. A transient DatabaseBusyError on these
+        # post-read guards must NOT drag the successful task into FAILED (#1249),
+        # so treat a busy read as "not cancelled / no skip note" and still mark
+        # the task COMPLETED. Mirrors the pre-dispatch busy guard at the top of
+        # the worker loop.
+        try:
+            persisted = await self._channels.get_collection_task(task_id)
+        except DatabaseBusyError:
+            logger.warning(
+                "DB busy reading task %d after successful collect; assuming not cancelled", task_id
+            )
+            persisted = None
         persisted_cancelled = (
             persisted is not None
             and persisted.status == CollectionTaskStatus.CANCELLED
@@ -470,7 +482,17 @@ class CollectionQueue:
             return
         note = None
         if count == 0 and not force and channel.id is not None:
-            after_ch = await self._channels.get_by_pk(channel.id)
+            try:
+                after_ch = await self._channels.get_by_pk(channel.id)
+            except DatabaseBusyError:
+                # Busy on the skip-note lookup only costs us the cosmetic
+                # "Пропущен: <reason>" note — never fail the completed task (#1249).
+                logger.warning(
+                    "DB busy reading channel %d for skip note on task %d; completing without note",
+                    channel.channel_id,
+                    task_id,
+                )
+                after_ch = None
             if after_ch and after_ch.is_filtered and not channel.is_filtered:
                 before_flags = set((channel.filter_flags or "").split(",")) - {""}
                 after_flags = set((after_ch.filter_flags or "").split(",")) - {""}
@@ -575,14 +597,29 @@ class CollectionQueue:
             )
             return False, True
         if isinstance(exc, ConnectionError):
-            requeued = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
-            if not requeued:
-                self._retried_tasks.discard(task_id)
-                await self._update_task_status_shutdown_safe(
-                    task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+            outcome = await self._try_reconnect_and_requeue(task_id, channel, full, force, exc)
+            if outcome == "requeued":
+                # Task is PENDING and back in the in-memory queue; keep it owned.
+                return True, False
+            if outcome == "pending":
+                # Queue was full: the task is PENDING in the DB. Do NOT overwrite
+                # to FAILED — that would strand the retry (the pull loop only
+                # re-picks PENDING). keep_known_task_id=False so the worker's
+                # finally drops it from _known_task_ids and the pull loop re-picks
+                # it (#1248).
+                logger.warning(
+                    "ConnectionError for channel %d: reconnected but queue full; task %d stays "
+                    "PENDING for the DB pull loop",
+                    channel.channel_id,
+                    task_id,
                 )
-                logger.exception("Collection failed for channel %d (reconnect failed)", channel.channel_id)
-            return requeued, False
+                return False, False
+            self._retried_tasks.discard(task_id)
+            await self._update_task_status_shutdown_safe(
+                task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
+            )
+            logger.exception("Collection failed for channel %d (reconnect failed)", channel.channel_id)
+            return False, False
         self._retried_tasks.discard(task_id)
         await self._update_task_status_shutdown_safe(
             task_id, CollectionTaskStatus.FAILED, error=str(exc)[:500],
@@ -617,18 +654,31 @@ class CollectionQueue:
 
     async def _try_reconnect_and_requeue(
         self, task_id: int, channel: Channel, full: bool, force: bool, exc: Exception
-    ) -> bool:
+    ) -> str:
+        """Try to recover a ConnectionError by reconnecting and re-queueing.
+
+        Returns one of three outcomes so the caller can react correctly (#1248):
+        - ``"requeued"`` — task is PENDING and back in the in-memory queue; the
+          caller must NOT overwrite it to FAILED and must keep it in
+          ``_known_task_ids`` (the in-memory item owns it).
+        - ``"pending"`` — the in-memory queue was full, so the task is PENDING in
+          the DB only. The caller must NOT overwrite it to FAILED (that would lose
+          the retry: the DB pull loop only re-picks PENDING rows). It must also
+          drop the task from ``_known_task_ids`` so the pull loop can re-pick it.
+        - ``"failed"`` — reconnect was impossible or already attempted; the caller
+          should mark the task FAILED.
+        """
         if task_id in self._retried_tasks:
-            return False
+            return "failed"
         pool = getattr(self._collector, "_pool", None)
         if pool is None or not hasattr(pool, "reconnect_phone"):
-            return False
+            return "failed"
         reconnected = False
         for phone in list(pool.clients):
             result = await pool.reconnect_phone(phone)
             reconnected = reconnected or result
         if not reconnected:
-            return False
+            return "failed"
         self._retried_tasks.add(task_id)
         await self._channels.update_collection_task(task_id, CollectionTaskStatus.PENDING, note="Reconnect retry")
         try:
@@ -640,12 +690,12 @@ class CollectionQueue:
                 "and will be picked up by the DB pull loop",
                 task_id,
             )
-            return False
+            return "pending"
         logger.warning(
             "ConnectionError for channel %d, reconnected and re-queued task %d: %s",
             channel.channel_id, task_id, exc,
         )
-        return True
+        return "requeued"
 
     async def _ingest_pending_tasks(self) -> int:
         if not self._resume_gate.is_set() or self._is_live_runtime_paused():
