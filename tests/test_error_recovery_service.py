@@ -279,6 +279,28 @@ async def test_circuit_breaker_opens_after_threshold():
 
 
 @pytest.mark.anyio
+async def test_recovered_failures_do_not_open_circuit():
+    """Failures each followed by a success must not open the breaker (#1251).
+
+    The breaker counts CONSECUTIVE failures: a success in the closed state
+    resets the counter, so transient errors that are each recovered by a
+    retry never accumulate up to the threshold over the service's lifetime.
+    """
+    breaker = CircuitBreaker(
+        CircuitBreakerConfig(failure_threshold=5, recovery_timeout=60.0)
+    )
+
+    for _ in range(5):
+        await breaker.record_failure()
+        await breaker.record_success()
+
+    allowed, state = await breaker.can_execute()
+    assert allowed is True
+    assert state == "closed"
+    assert breaker.get_state()["failure_count"] == 0
+
+
+@pytest.mark.anyio
 async def test_retry_policy_with_jitter():
     """Test retry policy calculates delay with jitter."""
     policy = RetryPolicy(max_retries=3, base_delay=1.0, jitter=True)
