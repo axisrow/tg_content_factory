@@ -543,7 +543,14 @@ class ClientLifecycleMixin:
                     await self._backend_router.release(lease)
                 except Exception:
                     logger.debug("Failed to release broken lease for %s", phone, exc_info=True)
-            if direct_session is None:
+            # Only evict the pooled session when a *pooled* acquisition failed:
+            # either its direct session was reconnect-broken above (direct_session
+            # set to None on line ~485) or a fresh non-force acquire raised. A
+            # force_native acquire uses an ephemeral session and sets
+            # direct_session=None unconditionally (line ~474) WITHOUT touching
+            # self.clients, so popping here would evict a healthy pooled client
+            # (and leak it, since it never gets disconnected) — #1242.
+            if direct_session is None and not force_native:
                 self.clients.pop(phone, None)
             return None
 
