@@ -15,7 +15,7 @@ import sqlite3
 import pytest
 
 from src.collection_queue import CollectionQueue
-from src.database import Database, DatabaseBusyError
+from src.database import Database
 from src.models import Channel
 
 
@@ -78,11 +78,45 @@ async def test_validation_read_error_does_not_strand_pending_task(tmp_path, monk
         await db.close()
 
 
+def _inject_read_error(db: Database, table: str, message: str = "database is locked"):
+    """Make every read-pool connection raise a RAW sqlite3.OperationalError for a
+    ``SELECT ... FROM <table> WHERE id = ?`` query — reproducing exactly what the
+    production read path does under lock: ReadPoolProxy.execute calls conn.execute()
+    directly, so a busy lock surfaces UN-normalised (not DatabaseBusyError). Patching
+    the repo method with a fake DatabaseBusyError (the old, wrong approach) never
+    exercised this path. ``message`` lets a test inject a NON-busy OperationalError
+    to prove the guard does not swallow real errors. Returns an undo() callable.
+    """
+    pool = db._read_pool
+    assert pool is not None, "file-backed Database must have a read pool"
+    conns = list(pool._all_conns)
+    originals = [c.execute for c in conns]
+    needle = f"from {table} where id = ?"
+
+    def _make(orig):
+        async def _boom(sql, params=()):
+            if needle in " ".join(sql.lower().split()):
+                raise sqlite3.OperationalError(message)
+            return await orig(sql, params)
+
+        return _boom
+
+    for conn, orig in zip(conns, originals, strict=True):
+        conn.execute = _make(orig)
+
+    def _undo():
+        for conn, orig in zip(conns, originals, strict=True):
+            conn.execute = orig
+
+    return _undo
+
+
 @pytest.mark.anyio
-async def test_busy_post_read_of_task_does_not_fail_completed_collection(tmp_path, monkeypatch):
-    """Regression #1249: after a successful collect, a transient DatabaseBusyError
-    on the post-completion read of the task must NOT drag the task into FAILED —
-    the messages are already saved. The task must still be marked COMPLETED."""
+async def test_busy_post_read_of_task_does_not_fail_completed_collection(tmp_path):
+    """Regression #1249: after a successful collect, a transient RAW
+    sqlite3.OperationalError('database is locked') on the post-completion read of
+    the task (the real read-pool path — NOT a normalised DatabaseBusyError) must
+    NOT drag the task into FAILED. Messages are already saved; it stays COMPLETED."""
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
     try:
@@ -97,22 +131,18 @@ async def test_busy_post_read_of_task_does_not_fail_completed_collection(tmp_pat
         collector = _FakeCollector()
         queue = CollectionQueue(collector, db)
 
-        async def _busy(*args, **kwargs):
-            raise DatabaseBusyError("database is locked")
-
-        # The post-completion guard read of the task row raises busy.
-        # ChannelBundle is a frozen dataclass, so patch the underlying repo method
-        # that ChannelBundle.get_collection_task delegates to.
-        monkeypatch.setattr(queue._channels.tasks, "get_collection_task", _busy)
+        # The post-completion guard read of the task row raises a raw busy error
+        # through the real ReadPoolProxy.
+        undo = _inject_read_error(db, "collection_tasks")
 
         # collect_single_channel already returned count=5 (messages persisted).
         await queue._handle_collection_completion(
             task_id, channel, 5, cancel_event=asyncio.Event(), force=False
         )
 
-        # queue._channels.tasks is the same repo instance as db.repos.tasks, so
-        # undo the busy patch before the verification read.
-        monkeypatch.undo()
+        # Restore reads before the verification query (the write of COMPLETED went
+        # through the write connection and is unaffected by the read-pool patch).
+        undo()
         task = await db.get_collection_task(task_id)
         assert task.status == "completed"
         assert task.messages_collected == 5
@@ -123,10 +153,10 @@ async def test_busy_post_read_of_task_does_not_fail_completed_collection(tmp_pat
 
 
 @pytest.mark.anyio
-async def test_busy_post_read_of_channel_does_not_fail_completed_collection(tmp_path, monkeypatch):
+async def test_busy_post_read_of_channel_does_not_fail_completed_collection(tmp_path):
     """Regression #1249: the count==0 skip-note lookup (get_by_pk) may also hit a
-    transient DatabaseBusyError — that must only cost the cosmetic note, never
-    fail the completed task."""
+    transient RAW sqlite3.OperationalError on the read pool — that must only cost
+    the cosmetic note, never fail the completed task."""
     db = Database(str(tmp_path / "queue.db"))
     await db.initialize()
     try:
@@ -142,22 +172,51 @@ async def test_busy_post_read_of_channel_does_not_fail_completed_collection(tmp_
         collector = _FakeCollector()
         queue = CollectionQueue(collector, db)
 
-        async def _busy(*args, **kwargs):
-            raise DatabaseBusyError("database is locked")
-
-        # count==0 path takes the get_by_pk skip-note lookup, which raises busy.
-        # ChannelBundle.get_by_pk delegates to channels.get_channel_by_pk; patch
-        # that (the bundle itself is a frozen dataclass).
-        monkeypatch.setattr(queue._channels.channels, "get_channel_by_pk", _busy)
+        # count==0 path takes the get_by_pk skip-note lookup (SELECT ... FROM
+        # channels WHERE id = ?), which raises a raw busy error via the read pool.
+        undo = _inject_read_error(db, "channels")
 
         await queue._handle_collection_completion(
             task_id, channel, 0, cancel_event=asyncio.Event(), force=False
         )
 
+        undo()
         task = await db.get_collection_task(task_id)
         assert task.status == "completed"
         assert task.messages_collected == 0
         assert task.error is None
+    finally:
+        await queue.shutdown()
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_non_busy_operational_error_is_not_swallowed(tmp_path):
+    """The #1249 guard is narrow on purpose: a NON-busy sqlite3.OperationalError
+    (a real bug — e.g. a bad column) must propagate, not be silently turned into a
+    COMPLETED task. Guards against a future widening to a bare ``except Exception``."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels(active_only=True))[0]
+        task_id = await db.repos.tasks.create_collection_task_if_not_active(
+            channel.channel_id, "t", channel_username=None, payload=None
+        )
+        assert task_id is not None
+        await db.repos.tasks.update_collection_task(task_id, "running")
+
+        collector = _FakeCollector()
+        queue = CollectionQueue(collector, db)
+
+        undo = _inject_read_error(db, "collection_tasks", message="no such column: bogus")
+        try:
+            with pytest.raises(sqlite3.OperationalError, match="no such column"):
+                await queue._handle_collection_completion(
+                    task_id, channel, 5, cancel_event=asyncio.Event(), force=False
+                )
+        finally:
+            undo()
     finally:
         await queue.shutdown()
         await db.close()
