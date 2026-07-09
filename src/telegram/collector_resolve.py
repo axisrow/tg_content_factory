@@ -211,6 +211,28 @@ async def _resolve_by_numeric(
             flood_wait_operation=exc.info.operation,
         )
     except ValueError:
+        # A numeric-PeerChannel miss means "this account cannot resolve the
+        # channel" — NOT "the channel is gone". It only justifies invalidating
+        # the stored preferred_phone / deactivating the channel when the resolve
+        # ran on the channel's OWN preferred account. When #1245's fallback
+        # routed us to an arbitrary non-member account (because the real owner
+        # was transiently flood-waited), a miss is expected and must not clear
+        # preferred_phone or deactivate a live channel — that would turn a
+        # temporary owner flood into permanent data loss (pool_dialogs.py:516
+        # documents the same "miss on an arbitrary account proves nothing").
+        own_preferred = channel.preferred_phone or collector._pool.get_phone_for_channel(
+            channel_id
+        )
+        if own_preferred is not None and phone != own_preferred:
+            logger.warning(
+                "Channel %d: numeric resolve failed on fallback account %s (owner "
+                "%s unavailable, likely transient flood); keeping preferred_phone "
+                "and channel active, skipping this pass",
+                channel_id,
+                mask_phone(phone),
+                mask_phone(own_preferred),
+            )
+            return ResolveOutcome(action="stop", channel=channel)
         # preferred_phone turned out to be wrong (account was kicked, or channel
         # added before warming finished). Invalidate and rediscover.
         if channel.preferred_phone or collector._pool.get_phone_for_channel(channel_id):

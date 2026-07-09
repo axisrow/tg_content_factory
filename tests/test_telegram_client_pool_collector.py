@@ -2924,6 +2924,63 @@ async def test_collect_channel_logs_when_persisting_rediscovered_phone_fails(cap
 
 
 @pytest.mark.anyio
+async def test_transient_owner_flood_does_not_deactivate_private_channel(caplog):
+    """#1245 regression (cycle-review BLOCK): a private single-owner channel whose
+    only member account is transiently flood-waited must NOT be deactivated, and
+    its preferred_phone must NOT be cleared, just because the #1245 fallback routed
+    the numeric resolve to a non-member account.
+
+    Scenario (empirically the data-loss path the review flagged):
+      1. Private channel (no username), preferred_phone="+7001" — the sole member.
+      2. "+7001" is transiently flooded → get_client_by_phone("+7001") returns None.
+      3. #1245 falls back to get_available_client() → "+7002", a NON-member.
+      4. Numeric PeerChannel resolve on "+7002" raises ValueError (not a member).
+
+    Pre-Fix-B, step 4 was read as "stale preferred" → clear preferred_phone +
+    set_channel_active(False): a temporary owner flood turned into permanent
+    data loss. Fix B guards clear/deactivate on "resolve ran on the channel's OWN
+    preferred phone" — a miss on a fallback account keeps the channel active and
+    its preferred_phone intact, skipping just this pass.
+    """
+    channel = Channel(id=42, channel_id=555, title="Owner Flooded", preferred_phone="+7001")
+    fallback_client = AsyncMock()
+    # Non-member fallback account cannot resolve the numeric PeerChannel.
+    fallback_client.get_entity = AsyncMock(side_effect=ValueError("not found"))
+
+    pool = make_mock_pool(
+        # Owner "+7001" is transiently flooded → None; #1245 fallback picks "+7002".
+        get_client_by_phone=AsyncMock(return_value=None),
+        get_available_client=AsyncMock(return_value=(fallback_client, "+7002")),
+    )
+    # preferred_phone lives on the channel row; the in-memory map is empty.
+    pool.get_phone_for_channel = MagicMock(return_value=None)
+    pool.clear_channel_phone = MagicMock()
+    pool.register_channel_phone = MagicMock()
+    pool.connected_phones = MagicMock(return_value={"+7001", "+7002"})
+
+    db = MagicMock()
+    db.get_channel_by_channel_id = AsyncMock(return_value=channel)
+    db.get_channel_stats = AsyncMock(return_value=[])
+    db.get_setting = AsyncMock(return_value=None)
+    db.set_channel_active = AsyncMock()
+    db.repos.channels.update_channel_preferred_phone = AsyncMock()
+
+    collector = Collector(pool, db, SchedulerConfig())
+    with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
+        result = await collector._collect_channel(channel)
+
+    # This pass collects nothing (owner flooded), but the channel survives intact.
+    assert result == 0
+    # The live channel must NOT be deactivated by a fallback-account miss.
+    db.set_channel_active.assert_not_awaited()
+    # preferred_phone must be preserved, not cleared, in both pool and DB.
+    pool.clear_channel_phone.assert_not_called()
+    db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
+    # No rediscovery is attempted off a non-member miss (would rewrite preferred).
+    pool.register_channel_phone.assert_not_called()
+
+
+@pytest.mark.anyio
 async def test_collect_channel_cancelled_during_batch():
     """Cancel event set during message streaming breaks the loop."""
     ch = Channel(channel_id=-100999, title="Test", username="test", last_collected_id=0)
