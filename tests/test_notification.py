@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -386,6 +387,67 @@ async def test_setup_bot_success(db, real_pool_harness_factory):
     saved = await db.get_notification_bot(111)
     assert saved is not None
     assert saved.bot_username == "leadhunter_alice_bot"
+
+
+@pytest.mark.anyio
+async def test_setup_bot_start_send_timeout_is_unconfirmed_not_fatal(db, real_pool_harness_factory, caplog):
+    """Orphaned-request guard (issues #1267/#1268/#1260, class #1239).
+
+    The ``/start`` sent to the freshly created bot goes through
+    ``asyncio.wait_for(client.send_message(...), timeout=30.0)``. The timeout is
+    kept (with ``connection_retries=None`` a dead-connection send would hang
+    forever and freeze bot setup), but a client-side timeout cancels only the
+    local wait — the ``/start`` may already have reached Telegram. So a timeout
+    here is an UNCONFIRMED delivery, logged as such, and setup PROCEEDS (a
+    duplicate ``/start`` is idempotent and harmless, so it is never re-sent).
+    This mirrors the #1239/#1253 fix for ``publish_service``.
+
+    Mutation-proven: narrowing the ``except asyncio.TimeoutError`` back into a
+    generic ``except Exception`` still passes, but the log message no longer
+    says "unconfirmed" — the caplog assertion below fails.
+    """
+    harness = real_pool_harness_factory()
+    # Same wiring as _connect_notification_account, but the bot /start send times
+    # out. get_me / get_entity (read-only, reversible) keep working normally.
+    harness.queue_cli_client(
+        phone="+70001111111",
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(id=555, username="dave"),
+            entity_resolver=lambda _peer: SimpleNamespace(id=987654321),
+            send_message_side_effect=asyncio.TimeoutError(),
+        ),
+    )
+    harness.queue_native_client(
+        session_string="session-1",
+        client=FakeCliTelethonClient(
+            me=SimpleNamespace(id=555, username="dave"),
+            entity_resolver=lambda _peer: SimpleNamespace(id=987654321),
+            send_message_side_effect=asyncio.TimeoutError(),
+        ),
+    )
+    await harness.add_account(phone="+70001111111", session_string="session-1", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    svc = NotificationService(db, NotificationTargetService(db, harness.pool))
+
+    with caplog.at_level("WARNING", logger="src.services.notification_service"):
+        with patch(
+            "src.services.notification_service.botfather.create_bot",
+            new_callable=AsyncMock,
+            return_value="555555555:AABBCCDDEEFFaabbccddeeffAABBCCDDEEFF",
+        ):
+            bot = await svc.setup_bot()
+
+    # Setup completed despite the /start timeout — the bot is created and saved.
+    assert bot.tg_user_id == 555
+    assert bot.bot_username == "leadhunter_dave_bot"
+    saved = await db.get_notification_bot(555)
+    assert saved is not None
+
+    # The timeout was logged as an unconfirmed delivery, distinct from a failure.
+    assert any(
+        "unconfirmed" in r.message.lower() and "/start" in r.message.lower() for r in caplog.records
+    ), "a /start send timeout must be logged as an unconfirmed delivery, not a plain failure"
 
 
 @pytest.mark.anyio
