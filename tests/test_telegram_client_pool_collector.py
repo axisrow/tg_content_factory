@@ -2876,10 +2876,16 @@ async def test_collect_channel_logs_when_persisting_rediscovered_phone_fails(cap
     client.get_entity = AsyncMock(side_effect=ValueError("not found"))
 
     pool = make_mock_pool(
-        get_available_client=AsyncMock(return_value=(client, "+7001")),
+        # Second iteration: the preferred phone is unavailable AND no other
+        # account is free either, so the picker's #1245 fallback to
+        # get_available_client() also yields nothing — the loop then legitimately
+        # raises NoActiveCollectionClientsError. (When a fallback account *is*
+        # free, #1245 rotates to it instead of raising; that branch is covered by
+        # test_acquire_falls_back_when_preferred_phone_unavailable.)
+        get_available_client=AsyncMock(return_value=None),
         get_client_by_phone=AsyncMock(side_effect=[
             (client, "+7001"),  # initial resolve attempt on the preferred phone
-            None,  # second iteration after the rediscovery `continue` -> stop the loop
+            None,  # second iteration: preferred phone unavailable -> #1245 fallback
         ]),
     )
     pool.get_phone_for_channel = MagicMock(return_value="+7001")
@@ -2899,8 +2905,10 @@ async def test_collect_channel_logs_when_persisting_rediscovered_phone_fails(cap
     collector = Collector(pool, db, SchedulerConfig())
     with patch.object(collector, "_discover_phone_for_channel", AsyncMock(return_value="+7002")):
         with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
-            # The rediscovery `continue` retries; with no further client the loop ultimately
-            # raises. We only care that the persist failure was logged before that.
+            # Iteration 1 rediscovers +7002 (logging the failed persist), then
+            # `continue`. Iteration 2 finds the preferred phone unavailable and the
+            # #1245 fallback empty, so the loop ultimately raises. We only care that
+            # the persist failure was logged before that.
             with pytest.raises(NoActiveCollectionClientsError):
                 await collector._collect_channel(channel)
 
