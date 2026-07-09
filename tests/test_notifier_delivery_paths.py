@@ -747,3 +747,112 @@ class TestSendViaBotApi:
             result = await _send_via_bot_api("123456:ABC-DEF", 789, "Test message")
 
         assert result is False
+
+
+class TestNotifierSendTimeoutUnconfirmed:
+    """Orphaned-request guard (issues #1267/#1268/#1260, class #1239).
+
+    A client-side timeout around the direct ``client.send_message`` cancels only
+    the local wait — the MTProto request may already have reached Telegram and
+    the message may be delivered. Reporting that as a failure (``notify`` →
+    ``False``) makes callers that retry on ``False``
+    (``notification_matcher`` "will retry next pass",
+    ``draft_notification_service``) re-send an already-delivered message →
+    duplicate. So a send timeout must be treated as an UNCONFIRMED delivery and
+    reported as success. This mirrors the #1239/#1253 fix for ``publish_service``.
+
+    The read-only ``get_me`` around the send is reversible — its timeout stays a
+    plain failure — so a separate guard asserts that path still returns ``False``.
+    """
+
+    @staticmethod
+    def _direct_send_notifier(mock_target_service, mock_client):
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+        return Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=None,  # direct client.send_message path
+        )
+
+    @pytest.mark.anyio
+    async def test_send_timeout_reports_success_so_retry_does_not_duplicate(
+        self, mock_target_service, caplog
+    ):
+        """A timed-out send is an UNCONFIRMED delivery, not a failure: ``notify``
+        returns ``True`` so a retrying caller does not re-send (issue #1239).
+
+        Mutation-proven: dropping the ``except asyncio.TimeoutError`` branch that
+        wraps only the send routes the timeout into the generic
+        ``except Exception → return False`` handler, and this assertion fails.
+        """
+        mock_client = MagicMock()
+        # A timed-out send raises TimeoutError exactly as asyncio.wait_for would
+        # on expiry — the request may already be on its way to Telegram.
+        mock_client.send_message = AsyncMock(side_effect=asyncio.TimeoutError)
+        notifier = self._direct_send_notifier(mock_target_service, mock_client)
+
+        with caplog.at_level("ERROR", logger="src.telegram.notifier"):
+            result = await notifier.notify("Test message")
+
+        assert result is True, (
+            "a send timeout must be reported as an unconfirmed delivery (True), "
+            "not a failure — otherwise a retry re-sends and duplicates (#1239)"
+        )
+        assert any("unconfirmed" in r.message.lower() for r in caplog.records), (
+            "a timed-out send must be logged as an unconfirmed delivery"
+        )
+        # The breaker must NOT treat an unconfirmed delivery as a failure.
+        assert notifier._breaker.fail_counter == 0
+        assert notifier.is_degraded is False
+
+    @pytest.mark.anyio
+    async def test_send_message_not_wrapped_semantics_timeout_is_success(self, mock_target_service):
+        """The timeout is kept as the guard against a forever-hung send
+        (connection_retries=None), but the timed-out send is reported as a
+        success so it is never re-sent. This is the whole approach-B contract.
+        """
+        mock_client = MagicMock()
+        mock_client.send_message = AsyncMock(side_effect=asyncio.TimeoutError)
+        notifier = self._direct_send_notifier(mock_target_service, mock_client)
+
+        # Two consecutive timed-out sends: both unconfirmed → both success →
+        # breaker never opens, so nothing is ever reported to callers as failed.
+        assert await notifier.notify("a") is True
+        assert await notifier.notify("b") is True
+        assert notifier.is_degraded is False
+
+    @pytest.mark.anyio
+    async def test_reversible_get_me_timeout_stays_a_plain_failure(self, mock_target_service):
+        """Regression: a timeout on the read-only ``get_me`` (reversible, nothing
+        dispatched) must remain a plain failure (``notify`` → ``False``), NOT be
+        mislabeled as an unconfirmed delivery. Only the irreversible send is
+        treated as unconfirmed on timeout (#1239). Uses the bundle path so
+        ``get_me`` is reached before any send.
+        """
+        bundle = MagicMock(spec=NotificationBundle)
+        bundle.get_bot = AsyncMock(return_value=None)
+
+        mock_client = MagicMock()
+        mock_client.get_me = AsyncMock(side_effect=asyncio.TimeoutError)
+        mock_client.send_message = AsyncMock(return_value=None)
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=(mock_client, "+70001112233"))
+        mock_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_target_service.use_client.return_value = mock_cm
+
+        notifier = Notifier(
+            target_service=mock_target_service,
+            admin_chat_id=789,
+            notification_bundle=bundle,
+        )
+        notifier._cached_me_id = None  # force the get_me lookup
+
+        result = await notifier.notify("Test message")
+
+        assert result is False, "a get_me timeout is reversible and must stay a plain failure"
+        mock_client.send_message.assert_not_awaited()
+
+        assert result is False
