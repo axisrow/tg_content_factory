@@ -240,7 +240,30 @@ class Notifier:
                         self._cached_me_id,
                     )
                 target = self._admin_chat_id or "me"
-                await asyncio.wait_for(client.send_message(target, text), timeout=30.0)
+                # The direct send is bounded by a 30s timeout (issue #1239). The
+                # timeout is REQUIRED, not optional: with connection_retries=None
+                # (auth.py, backends.py) a send on a dead connection would hang
+                # forever and, because notify() holds _send_lock across the await,
+                # freeze every later notification and strand the breaker. BUT a
+                # client-side timeout cancels only the local wait — the MTProto
+                # request may already have reached Telegram and the message may be
+                # delivered. So a timeout HERE is NOT a known failure: returning
+                # False would report the send as failed, and callers that retry on
+                # False (notification_matcher "will retry next pass",
+                # draft_notification_service) would re-send an already-delivered
+                # message → duplicate. We instead treat the timed-out send as an
+                # UNCONFIRMED delivery and report success so no retry duplicates
+                # it. This mirrors the #1239/#1253 decision for publish_service and
+                # the #795 decision that dropped wait_for from resolve_entity — the
+                # read-only get_me above is reversible and stays a plain failure.
+                try:
+                    await asyncio.wait_for(client.send_message(target, text), timeout=30.0)
+                except asyncio.TimeoutError:
+                    logger.error(
+                        "Timeout sending notification to %s — delivery unconfirmed; "
+                        "not retrying to avoid a duplicate message",
+                        target,
+                    )
             return True
         except asyncio.CancelledError:
             raise
