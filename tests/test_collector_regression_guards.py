@@ -24,7 +24,11 @@ from telethon.errors import FloodWaitError
 
 from src.config import SchedulerConfig
 from src.models import Channel
-from src.telegram.collector import _ACQUIRE_RETRY, Collector
+from src.telegram.collector import (
+    _ACQUIRE_RETRY,
+    Collector,
+    NoActiveCollectionClientsError,
+)
 from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 from tests.helpers import (
     AsyncIterMessages,
@@ -495,6 +499,72 @@ async def test_acquire_flood_during_warm_retries_without_marking_fetched(db):
     pool.release_client.assert_awaited_once_with("+7000")
     # Cache must remain cold so the retry re-warms.
     assert pool.is_dialogs_fetched("+7000") is False
+
+
+@pytest.mark.anyio
+async def test_acquire_falls_back_when_preferred_phone_unavailable(db):
+    """#1245: an unavailable *preferred* phone must rotate to another account, not
+    raise a global unavailability error.
+
+    For a private channel with a known preferred phone the picker calls
+    get_client_by_phone(preferred). On the old code, if that returned None (the
+    preferred phone alone is flood-waited / in-use / gone) the picker fell
+    straight through to _raise_collection_unavailability →
+    NoActiveCollectionClientsError, which drains the ENTIRE in-memory collection
+    queue in collection_queue.py. One busy preferred phone must not wipe every
+    other channel's pending task: the picker must fall back to
+    get_available_client and use whatever account is free.
+    """
+    channel = Channel(channel_id=555006, title="Private", preferred_phone="+7001")
+    session = _warmable_session()
+
+    pool = make_mock_pool(
+        get_client_by_phone=AsyncMock(return_value=None),  # preferred unavailable
+        get_available_client=AsyncMock(return_value=(session, "+7002")),  # rotate here
+    )
+    pool.mark_dialogs_fetched("+7002")  # skip warming; isolate the acquisition branch
+
+    collector = Collector(pool, db, SchedulerConfig())
+    with patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt):
+        result = await collector._acquire_collection_client(channel, set())
+
+    assert result is not _ACQUIRE_RETRY
+    _session, phone, _cache_only = result
+    assert phone == "+7002", "picker must rotate to the available account, not raise"
+    pool.get_client_by_phone.assert_awaited_once_with("+7001")
+    pool.get_available_client.assert_awaited_once()
+
+
+@pytest.mark.anyio
+async def test_acquire_raises_when_preferred_unavailable_and_no_fallback(db):
+    """Companion to #1245: when the preferred phone is unavailable AND no other
+    account is free, the picker must still raise the unavailability error.
+
+    Guards the #1245 fix from over-reaching: the fallback to get_available_client
+    is added, but a genuine "no clients at all" outage must still surface
+    NoActiveCollectionClientsError (the requeue-and-defer path) rather than being
+    silently swallowed.
+    """
+    channel = Channel(channel_id=555007, title="Private", preferred_phone="+7001")
+
+    availability = SimpleNamespace(
+        state="no_connected_active",
+        retry_after_sec=None,
+        next_available_at_utc=None,
+    )
+    pool = make_mock_pool(
+        get_client_by_phone=AsyncMock(return_value=None),  # preferred unavailable
+        get_available_client=AsyncMock(return_value=None),  # nothing else free either
+        get_stats_availability=AsyncMock(return_value=availability),
+    )
+
+    collector = Collector(pool, db, SchedulerConfig())
+    with patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt):
+        with pytest.raises(NoActiveCollectionClientsError):
+            await collector._acquire_collection_client(channel, set())
+
+    pool.get_client_by_phone.assert_awaited_once_with("+7001")
+    pool.get_available_client.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

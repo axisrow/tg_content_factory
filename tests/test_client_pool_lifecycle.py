@@ -354,3 +354,58 @@ async def test_stats_taskgroup_unwraps_database_busy_error():
     # `except DatabaseBusyError` matches it.
     assert isinstance(excinfo.value, DatabaseBusyError)
     assert not isinstance(excinfo.value, BaseExceptionGroup)
+
+
+@pytest.mark.anyio
+async def test_acquire_from_lease_force_native_failure_keeps_pooled_client():
+    """#1242: a failing force_native acquire must NOT evict the healthy pooled
+    session from self.clients.
+
+    force_native sets direct_session=None unconditionally (it uses an ephemeral
+    native client and never touches self.clients). On the old code the except
+    branch popped self.clients whenever `direct_session is None`, which is ALWAYS
+    true under force_native — so any error building the ephemeral lease evicted a
+    live pooled client WITHOUT disconnecting it (session leak). The pooled client
+    must survive untouched; only the ephemeral acquisition failed."""
+    pool = _pool_with_in_use(in_use=set())
+    pooled = object()  # stand-in for the healthy pooled TelegramTransportSession
+    pool.clients = {"+7": pooled}
+    pool._backend_router.acquire_client = AsyncMock(side_effect=RuntimeError("boom"))
+    account_lease = AccountLease(
+        account=Account(phone="+7", session_string="session", is_active=True),
+        shared=True,  # shared: no _in_use release path involved, isolate the pop
+    )
+
+    result = await pool._acquire_from_lease(account_lease, force_native=True)
+
+    assert result is None
+    assert pool.clients.get("+7") is pooled, (
+        "force_native acquire failure evicted the healthy pooled client (#1242)"
+    )
+
+
+@pytest.mark.anyio
+async def test_acquire_from_lease_non_force_fresh_acquire_failure_still_pops():
+    """Companion to #1242: the non-force path must STILL evict on failure.
+
+    When direct_session is genuinely absent (no pooled client, or its
+    reconnect broke) and a fresh non-force backend acquire raises, the stale/
+    missing entry must be popped from self.clients as before. Guards against
+    the #1242 fix over-reaching and suppressing the legitimate eviction."""
+    pool = _pool_with_in_use(in_use=set())
+    stale = object()
+    pool.clients = {"+7": stale}
+    pool._backend_router.acquire_client = AsyncMock(side_effect=RuntimeError("boom"))
+    account_lease = AccountLease(
+        account=Account(phone="+7", session_string="session", is_active=True),
+        shared=True,
+    )
+
+    # No direct session is derivable from a bare object(), so _direct_session()
+    # returns None -> the non-force fresh-acquire path runs and then fails.
+    result = await pool._acquire_from_lease(account_lease, force_native=False)
+
+    assert result is None
+    assert "+7" not in pool.clients, (
+        "non-force fresh-acquire failure must still evict the stale client entry"
+    )
