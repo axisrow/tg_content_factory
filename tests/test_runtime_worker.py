@@ -277,6 +277,49 @@ async def test_worker_loop_continues_after_transient_snapshot_cancel():
     stop_container.assert_awaited_once_with(container)
 
 
+async def test_worker_loop_survives_database_busy_snapshot(caplog):
+    """Regression #1244: a transient DatabaseBusyError from _publish_snapshots
+    (contended split-deploy DB) must NOT kill the standalone worker process — the
+    loop should log and continue to the next heartbeat. Before the fix the while
+    loop only caught CancelledError/TimeoutError, so a busy error propagated out
+    of the loop, hit the finally, stopped the container and exited the process."""
+    from src.config import AppConfig
+    from src.database import DatabaseBusyError
+
+    container = MagicMock()
+    config = AppConfig()
+    publish_calls = 0
+    worker_task: asyncio.Task[None] | None = None
+
+    async def publish_snapshot(_container, *, stop_event=None):
+        nonlocal publish_calls
+        publish_calls += 1
+        if publish_calls == 1:
+            raise DatabaseBusyError("database is locked")
+        # The loop survived the busy error and came round again — now let the
+        # test end deterministically.
+        assert worker_task is not None
+        worker_task.cancel()
+        raise asyncio.CancelledError
+
+    with (
+        patch("src.runtime.worker.build_worker_container", AsyncMock(return_value=container)),
+        patch("src.runtime.worker.start_container", AsyncMock()),
+        patch("src.runtime.worker.stop_container", AsyncMock()) as stop_container,
+        patch("src.runtime.worker._publish_snapshots", new=publish_snapshot),
+        patch("src.runtime.worker.HEARTBEAT_INTERVAL_SEC", 0.001),
+    ):
+        caplog.set_level("WARNING", logger="src.runtime.worker")
+        worker_task = asyncio.create_task(_run_worker_async(config))
+        with pytest.raises(asyncio.CancelledError):
+            await worker_task
+
+    # The loop ran a SECOND time — proof the busy error did not kill it.
+    assert publish_calls == 2
+    assert "DB busy publishing snapshots" in caplog.text
+    stop_container.assert_awaited_once_with(container)
+
+
 async def test_embedded_worker_stop_suppresses_cancelled_snapshot_publish():
     from src.config import AppConfig
 

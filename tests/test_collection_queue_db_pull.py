@@ -105,6 +105,35 @@ class _ResolveBackoffPool:
         return self.remaining_sec
 
 
+class _ReconnectPool:
+    """Pool stub whose reconnect_phone always succeeds, so the queue treats a
+    ConnectionError as recoverable and takes the reconnect-requeue path."""
+
+    def __init__(self):
+        self.clients = {"+1": object()}
+
+    async def reconnect_phone(self, phone: str) -> bool:
+        return True
+
+    def get_resolve_username_backoff_remaining_sec(self) -> int:
+        return 0
+
+
+class _ConnectionErrorCollector(_FakeCollector):
+    """Collector that raises ConnectionError on collect, driving the
+    reconnect-and-requeue recovery path (#1248)."""
+
+    def __init__(self):
+        super().__init__()
+        self._pool = _ReconnectPool()
+
+    async def collect_single_channel(
+        self, channel, *, full=False, progress_callback=None, force=False, cancel_event=None
+    ):
+        self.calls.append(channel.channel_id)
+        raise ConnectionError("connection reset")
+
+
 async def _seed_channel(db: Database, channel_id: int = -1001) -> None:
     await db.add_channel(Channel(channel_id=channel_id, title="t", is_active=True))
 
@@ -675,4 +704,58 @@ async def test_shutdown_while_paused_completes_cleanly(tmp_path):
         assert collector.calls == []
         assert (await db.get_collection_task(task_id)).status == "pending"
     finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_connection_error_queue_full_keeps_task_pending_for_pull_loop(tmp_path):
+    """Regression #1248: on ConnectionError the queue reconnects and tries to
+    re-enqueue; if the in-memory queue is FULL the task must stay PENDING (not be
+    overwritten to FAILED) so the DB pull loop re-picks it. Before the fix the
+    reconnect-requeue returned False on QueueFull and the caller wrote FAILED,
+    losing the retry forever."""
+    db = Database(str(tmp_path / "queue.db"))
+    await db.initialize()
+    try:
+        await _seed_channel(db)
+        channel = (await db.get_channels(active_only=True))[0]
+        collector = _ConnectionErrorCollector()
+        queue = CollectionQueue(collector, db)
+
+        # The task is RUNNING (as it would be when collect raised).
+        task_id = await _create_pending_task(db)
+        await db.repos.tasks.update_collection_task(task_id, "running")
+        queue._known_task_ids.add(task_id)
+
+        # Saturate the in-memory queue so the reconnect requeue hits QueueFull.
+        queue._queue = asyncio.Queue(maxsize=1)
+        queue._queue.put_nowait((999999, channel, False, False))
+
+        keep_known, stop_after = await queue._handle_collection_exception(
+            ConnectionError("connection reset"),
+            task_id=task_id,
+            channel=channel,
+            force=False,
+            full=False,
+        )
+
+        # Caller must NOT overwrite to FAILED and must release the id so the pull
+        # loop can re-pick it.
+        assert keep_known is False
+        assert stop_after is False
+        # Mirror the worker's finally block for keep_known_task_id=False.
+        queue._known_task_ids.discard(task_id)
+
+        task = await db.get_collection_task(task_id)
+        assert task.status == "pending"
+        assert task.error is None
+        assert task_id not in queue._known_task_ids
+
+        # Drain the saturating item; the DB pull loop now re-picks the task.
+        queue._queue.get_nowait()
+        queue._queue.task_done()
+        assert await queue._ingest_pending_tasks() == 1
+        assert task_id in queue._known_task_ids
+    finally:
+        await queue.shutdown()
         await db.close()
