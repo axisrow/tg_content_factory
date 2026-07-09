@@ -1840,9 +1840,80 @@ def test_pipeline_add_json_file(tmp_path, cli_init_patch, capsys):
     verify_db = Database(db_path)
     asyncio.run(verify_db.initialize())
     pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
+    # #1246: the --json-file path built target_refs as dicts but import_json only
+    # accepted "phone|dialog_id" strings, so targets were silently dropped; and
+    # is_active was hard-coded False, so a `pipeline add` without --inactive left
+    # the pipeline inactive. Guard both: targets must survive and be active.
+    targets = asyncio.run(verify_db.repos.content_pipelines.list_targets(pipelines[0].id))
     asyncio.run(verify_db.close())
     assert len(pipelines) == 1
     assert pipelines[0].pipeline_json is not None
+    assert len(targets) == 1
+    assert targets[0].phone == "+100"
+    assert targets[0].dialog_id == 77
+    assert pipelines[0].is_active is True
+
+
+def test_pipeline_add_json_file_inactive(tmp_path, cli_init_patch, capsys):
+    """--json-file with --inactive keeps the imported pipeline inactive (#1246)."""
+    import json
+
+    db_path = str(tmp_path / "cli_pipeline_add_json_inactive.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _add_pipeline_prereqs(db)
+
+    graph_data = {
+        "nodes": [
+            {"id": "s", "type": "source", "name": "src", "config": {}},
+            {"id": "f", "type": "fetch_messages", "name": "fetch", "config": {}},
+            {"id": "p", "type": "publish", "name": "pub", "config": {}},
+        ],
+        "edges": [
+            {"from_node": "s", "to_node": "f"},
+            {"from_node": "f", "to_node": "p"},
+        ],
+    }
+    json_path = str(tmp_path / "graph.json")
+    with open(json_path, "w") as f:
+        json.dump(graph_data, f)
+
+    with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
+        from src.cli.commands.pipeline import run
+
+        run(
+            _ns(
+                pipeline_action="add",
+                name="JsonFileInactive",
+                prompt_template=None,
+                source=[1001],
+                target=["+100|77"],
+                llm_model=None,
+                image_model=None,
+                publish_mode="moderated",
+                generation_backend="chain",
+                interval=60,
+                inactive=True,
+                json_file=json_path,
+                node_specs=None,
+                edge=None,
+                node_configs=None,
+            )
+        )
+
+    asyncio.run(db.close())
+    out = capsys.readouterr().out
+    assert "Added pipeline id=" in out
+
+    verify_db = Database(db_path)
+    asyncio.run(verify_db.initialize())
+    pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
+    targets = asyncio.run(verify_db.repos.content_pipelines.list_targets(pipelines[0].id))
+    asyncio.run(verify_db.close())
+    assert len(pipelines) == 1
+    # Targets still survive even when inactive (bug 1 is independent of --inactive).
+    assert len(targets) == 1
+    assert pipelines[0].is_active is False
 
 
 # ── Issue #463: runs/run-show semantic display ───────────────────────────────

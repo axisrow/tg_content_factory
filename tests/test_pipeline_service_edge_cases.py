@@ -551,6 +551,76 @@ async def test_import_json_with_target_refs(svc, pipeline_id):
 
 
 @pytest.mark.anyio
+async def test_import_json_accepts_dict_target_refs(svc):
+    """#1246 bug 1: target_refs given as dicts (the shape `pipeline add --json-file`
+    builds) must be honoured, not silently dropped. The old string-only filter
+    left the imported pipeline with zero targets."""
+    data = {
+        "name": "DictTargets",
+        "prompt_template": "Summarize {source_messages}",
+        "source_ids": [1001],
+        "target_refs": [{"phone": "+100", "dialog_id": 77}],
+        "generate_interval_minutes": 30,
+    }
+    new_id = await svc.import_json(data)
+    targets = await svc.get_targets(new_id)
+    assert len(targets) == 1
+    assert targets[0].phone == "+100"
+    assert targets[0].dialog_id == 77
+
+
+@pytest.mark.anyio
+async def test_import_json_accepts_string_target_refs(svc):
+    """The legacy 'phone|dialog_id' string form (what export_json emits) still works."""
+    data = {
+        "name": "StringTargets",
+        "prompt_template": "Summarize {source_messages}",
+        "source_ids": [1001],
+        "target_refs": ["+100|77"],
+        "generate_interval_minutes": 30,
+    }
+    new_id = await svc.import_json(data)
+    targets = await svc.get_targets(new_id)
+    assert len(targets) == 1
+    assert targets[0].dialog_id == 77
+
+
+@pytest.mark.anyio
+async def test_import_json_honours_is_active_true(svc):
+    """#1246 bug 2: import_json hard-coded is_active=False, so a payload asking for
+    an active pipeline (the CLI passes is_active=not --inactive) was ignored and
+    the pipeline never ran. It must now honour an explicit is_active."""
+    data = {
+        "name": "ActiveImport",
+        "prompt_template": "Summarize {source_messages}",
+        "source_ids": [1001],
+        "target_refs": [{"phone": "+100", "dialog_id": 77}],
+        "generate_interval_minutes": 30,
+        "is_active": True,
+    }
+    new_id = await svc.import_json(data)
+    imported = await svc.get(new_id)
+    assert imported is not None
+    assert imported.is_active is True
+
+
+@pytest.mark.anyio
+async def test_import_json_is_active_defaults_false(svc):
+    """A payload without is_active (a plain export->import round-trip) stays inactive."""
+    data = {
+        "name": "DefaultInactive",
+        "prompt_template": "Summarize {source_messages}",
+        "source_ids": [1001],
+        "target_refs": [{"phone": "+100", "dialog_id": 77}],
+        "generate_interval_minutes": 30,
+    }
+    new_id = await svc.import_json(data)
+    imported = await svc.get(new_id)
+    assert imported is not None
+    assert imported.is_active is False
+
+
+@pytest.mark.anyio
 async def test_import_json_with_invalid_pipeline_graph(svc, pipeline_id):
     """Import with unparsable pipeline_json field -- should be ignored gracefully."""
     export = await svc.export_json(pipeline_id)

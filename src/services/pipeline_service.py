@@ -52,6 +52,42 @@ class PipelineTargetRef:
     dialog_id: int
 
 
+def _coerce_target_ref(ref: Any) -> PipelineTargetRef | None:
+    """Normalise one exported target ref into a ``PipelineTargetRef``.
+
+    Exports and the CLI/agent surfaces disagree on shape: ``export_json`` emits
+    ``"phone|dialog_id"`` strings, while ``pipeline add --json-file`` builds
+    ``{"phone": ..., "dialog_id": ...}`` dicts. The old import path accepted only
+    the string form, so dict refs were silently dropped and the imported
+    pipeline ended up with zero targets (#1246). Accept both; return ``None`` for
+    anything unparseable so the caller can skip it.
+    """
+    if isinstance(ref, PipelineTargetRef):
+        return ref
+    if isinstance(ref, str):
+        if "|" not in ref:
+            return None
+        phone, _, dialog_id = ref.partition("|")
+        phone = phone.strip()
+        dialog_id = dialog_id.strip()
+        if not phone or not dialog_id:
+            return None
+        try:
+            return PipelineTargetRef(phone=phone, dialog_id=int(dialog_id))
+        except ValueError:
+            return None
+    if isinstance(ref, dict):
+        phone = str(ref.get("phone", "")).strip()
+        raw_dialog = ref.get("dialog_id")
+        if not phone or raw_dialog is None:
+            return None
+        try:
+            return PipelineTargetRef(phone=phone, dialog_id=int(raw_dialog))
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
 @dataclass(frozen=True)
 class PipelineRetrievalScope:
     query: str
@@ -544,9 +580,9 @@ class PipelineService:
         target_refs_raw = payload.get("target_refs", [])
         target_refs: list[PipelineTargetRef] = []
         for ref in target_refs_raw:
-            if isinstance(ref, str) and "|" in ref:
-                phone, _, dialog_id = ref.partition("|")
-                target_refs.append(PipelineTargetRef(phone=phone, dialog_id=int(dialog_id)))
+            coerced = _coerce_target_ref(ref)
+            if coerced is not None:
+                target_refs.append(coerced)
 
         pipeline_json: PipelineGraph | None = None
         if "pipeline_json" in payload:
@@ -563,7 +599,11 @@ class PipelineService:
             publish_mode=payload.get("publish_mode", PipelinePublishMode.MODERATED),
             generation_backend=payload.get("generation_backend", PipelineGenerationBackend.CHAIN),
             generate_interval_minutes=int(payload.get("generate_interval_minutes", 60)),
-            is_active=False,
+            # Honour an explicit is_active from the payload; default False so a
+            # plain export->import round-trip stays inactive (export_json never
+            # emits is_active). The CLI `--json-file` path passes is_active so a
+            # `pipeline add` without --inactive activates the pipeline (#1246).
+            is_active=bool(payload.get("is_active", False)),
             account_phone=payload.get("account_phone"),
         )
         self._inject_runtime_refs(pipeline_json, source_ids, target_refs)
