@@ -46,9 +46,24 @@ class NotificationService:
 
             token = await botfather.create_bot(client, bot_name, bot_username)
 
-            # Send /start to the new bot so it gets initialised
+            # Send /start to the new bot so it gets initialised. The 30s timeout
+            # is REQUIRED, not optional: with connection_retries=None a send on a
+            # dead connection would hang forever and freeze bot setup. BUT a
+            # client-side timeout cancels only the local wait — the MTProto
+            # request may already have reached Telegram, so we cannot say the
+            # /start was NOT delivered. A timeout is therefore logged as an
+            # unconfirmed delivery, distinct from a real send failure, and setup
+            # proceeds (a duplicate /start is harmless — it is idempotent — so we
+            # never re-send it). This mirrors the #1239/#1253 decision for
+            # publish_service; the read-only get_me/get_entity around it are
+            # reversible and keep their plain wait_for.
             try:
                 await asyncio.wait_for(client.send_message(bot_username, "/start"), timeout=30.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Timeout sending /start to @%s — delivery unconfirmed; continuing bot setup",
+                    bot_username,
+                )
             except Exception:
                 logger.warning("Could not send /start to @%s", bot_username, exc_info=True)
 
