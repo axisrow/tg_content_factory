@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -21,6 +22,29 @@ from src.telegram.collector import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Read-path lock errors reach us as a RAW sqlite3.OperationalError, not
+# DatabaseBusyError: repositories read through ReadPoolProxy.execute (src/database/
+# pool.py), which calls conn.execute() directly and never runs _with_busy_retry —
+# the only place that normalises a busy lock into DatabaseBusyError. So a busy read
+# must be matched by BOTH type and message. Messages mirror facade._SQLITE_BUSY_MESSAGES.
+_SQLITE_BUSY_MESSAGES = ("database is locked", "database table is locked", "database is busy")
+
+
+def _is_transient_busy_error(exc: BaseException) -> bool:
+    """True for a transient SQLite lock from either DB path (#1249).
+
+    - ``DatabaseBusyError`` — the normalised write-path busy error.
+    - a raw ``sqlite3.OperationalError`` whose message names a lock — the read path
+      (``ReadPoolProxy``) surfaces this un-normalised.
+    Any other ``OperationalError`` (bad SQL, schema errors) is NOT swallowed.
+    """
+    if isinstance(exc, DatabaseBusyError):
+        return True
+    if isinstance(exc, sqlite3.OperationalError):
+        message = str(exc).lower()
+        return any(part in message for part in _SQLITE_BUSY_MESSAGES)
+    return False
 
 
 class CollectionQueue:
@@ -455,7 +479,9 @@ class CollectionQueue:
         # the worker loop.
         try:
             persisted = await self._channels.get_collection_task(task_id)
-        except DatabaseBusyError:
+        except (DatabaseBusyError, sqlite3.OperationalError) as exc:
+            if not _is_transient_busy_error(exc):
+                raise
             logger.warning(
                 "DB busy reading task %d after successful collect; assuming not cancelled", task_id
             )
@@ -484,7 +510,9 @@ class CollectionQueue:
         if count == 0 and not force and channel.id is not None:
             try:
                 after_ch = await self._channels.get_by_pk(channel.id)
-            except DatabaseBusyError:
+            except (DatabaseBusyError, sqlite3.OperationalError) as exc:
+                if not _is_transient_busy_error(exc):
+                    raise
                 # Busy on the skip-note lookup only costs us the cosmetic
                 # "Пропущен: <reason>" note — never fail the completed task (#1249).
                 logger.warning(
