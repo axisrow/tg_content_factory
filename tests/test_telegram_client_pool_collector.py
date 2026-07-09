@@ -2981,6 +2981,54 @@ async def test_transient_owner_flood_does_not_deactivate_private_channel(caplog)
 
 
 @pytest.mark.anyio
+async def test_kicked_owner_account_still_deactivates_when_no_rediscovery(caplog):
+    """Fix B companion: the legitimate deactivation path must survive.
+
+    When the numeric resolve fails ON THE CHANNEL'S OWN preferred phone (the
+    account was really kicked / the channel is gone) and no other connected
+    account can resolve it either, the channel must STILL be deactivated. Fix B
+    only suppresses clear/deactivate for a miss on a *fallback* account
+    (phone != preferred); a miss on the preferred phone itself is genuine and
+    must flow through to set_channel_active(False).
+
+    Guards Fix B from over-reaching: a mutation making the guard fire on
+    phone == preferred would silently keep dead channels active — this test
+    catches that by asserting the deactivation still happens.
+    """
+    channel = Channel(id=99, channel_id=777, title="Kicked", preferred_phone="+7001")
+    client = AsyncMock()
+    # Resolve on the OWN preferred account fails → genuine "account kicked / gone".
+    client.get_entity = AsyncMock(side_effect=ValueError("not found"))
+
+    pool = make_mock_pool(
+        # The preferred phone IS available; the resolve on it is what fails.
+        get_client_by_phone=AsyncMock(return_value=(client, "+7001")),
+        get_available_client=AsyncMock(return_value=(client, "+7001")),
+    )
+    pool.get_phone_for_channel = MagicMock(return_value=None)
+    pool.clear_channel_phone = MagicMock()
+    pool.register_channel_phone = MagicMock()
+    pool.connected_phones = MagicMock(return_value={"+7001"})
+
+    db = MagicMock()
+    db.get_channel_by_channel_id = AsyncMock(return_value=channel)
+    db.get_channel_stats = AsyncMock(return_value=[])
+    db.get_setting = AsyncMock(return_value=None)
+    db.set_channel_active = AsyncMock()
+    db.repos.channels.update_channel_preferred_phone = AsyncMock()
+
+    collector = Collector(pool, db, SchedulerConfig())
+    # No other account can resolve it → rediscovery finds nothing → deactivate.
+    with patch.object(collector, "_discover_phone_for_channel", AsyncMock(return_value=None)):
+        with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
+            result = await collector._collect_channel(channel)
+
+    assert result == 0
+    # A genuine miss on the OWN preferred phone still deactivates the dead channel.
+    db.set_channel_active.assert_awaited_once_with(99, False)
+
+
+@pytest.mark.anyio
 async def test_collect_channel_cancelled_during_batch():
     """Cancel event set during message streaming breaks the loop."""
     ch = Channel(channel_id=-100999, title="Test", username="test", last_collected_id=0)
