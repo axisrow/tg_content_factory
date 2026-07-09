@@ -97,72 +97,34 @@ class DatabaseRepositories:
     notified_messages: NotifiedMessagesRepository
 
 
-@dataclass(frozen=True)
-class AccountBundle:
-    """Фасад для управления Telegram-аккаунтами пула (CRUD + флаги состояния)."""
+# ---------------------------------------------------------------------------
+# Общие миксины-обёртки. Один и тот же репозиторий нужен нескольким бандлам,
+# и методы-обёртки над ним были продублированы буквально (#1135). Каждый миксин
+# группирует обёртки одного репозитория; бандл подключает миксин, только если
+# уже несёт соответствующее поле-репозиторий. Миксины — обычные классы (НЕ
+# dataclass): аннотации атрибутов в них не становятся полями dataclass-бандлов,
+# поэтому порядок позиционных аргументов конструкторов не меняется.
+# ---------------------------------------------------------------------------
+
+
+class _AccountReadOps:
+    """Read-обёртки над `accounts`: списки аккаунтов и безопасные сводки."""
 
     accounts: AccountsRepository
-
-    @classmethod
-    def from_database(cls, db: "Database") -> "AccountBundle":
-        """Собрать бандл из репозитория аккаунтов общего `Database`."""
-        return cls(db.repos.accounts)
 
     async def list_accounts(self, active_only: bool = False) -> list[Account]:
         """Список аккаунтов (с секретом сессии); `active_only` — только активные."""
         return await self.accounts.get_accounts(active_only)
 
-    async def list_live_usable_accounts(self, active_only: bool = False) -> list[Account]:
-        """Аккаунты, пригодные для живого подключения (валидная читаемая сессия)."""
-        return await self.accounts.get_live_usable_accounts(active_only)
-
     async def list_account_summaries(self, active_only: bool = False) -> list[AccountSummary]:
         """Безопасные для UI сводки аккаунтов (`AccountSummary`, без `session_string`)."""
         return await self.accounts.get_account_summaries(active_only)
 
-    async def add_account(self, account: Account) -> int:
-        """Добавить аккаунт; возвращает его id."""
-        return await self.accounts.add_account(account)
 
-    async def set_active(self, account_id: int, active: bool) -> None:
-        """Включить/выключить аккаунт по id."""
-        await self.accounts.set_account_active(account_id, active)
-
-    async def delete_account(self, account_id: int) -> None:
-        """Удалить аккаунт по id."""
-        await self.accounts.delete_account(account_id)
-
-    async def update_flood(self, phone: str, until) -> None:
-        """Записать `flood_wait_until` для аккаунта (момент окончания FLOOD_WAIT)."""
-        await self.accounts.update_account_flood(phone, until)
-
-    async def update_premium(self, phone: str, is_premium: bool) -> None:
-        """Обновить флаг Premium-статуса аккаунта."""
-        await self.accounts.update_account_premium(phone, is_premium)
-
-
-@dataclass(frozen=True)
-class ChannelBundle:
-    """Фасад управления каналами: сам канал, его статистика и задачи сбора.
-
-    Сводит вместе репозитории `channels`, `channel_stats` и `tasks`, чтобы
-    операции над каналом (CRUD, метаданные, фильтрация) и связанный с ним сбор
-    (создание/обновление collection-задач) жили за одним интерфейсом.
-    """
+class _ChannelOps:
+    """Обёртки над `channels`: чтение каналов и обновление их состояния/метаданных."""
 
     channels: ChannelsRepository
-    channel_stats: ChannelStatsRepository
-    tasks: CollectionTasksRepository
-
-    @classmethod
-    def from_database(cls, db: "Database") -> "ChannelBundle":
-        """Собрать бандл из репозиториев каналов/статистики/задач общего `Database`."""
-        repos = db.repos
-        return cls(repos.channels, repos.channel_stats, repos.tasks)
-
-    async def add_channel(self, channel: Channel) -> int:
-        """Добавить канал; возвращает его pk (первичный ключ БД)."""
-        return await self.channels.add_channel(channel)
 
     async def list_channels(
         self,
@@ -171,14 +133,6 @@ class ChannelBundle:
     ) -> list[Channel]:
         """Список каналов; `active_only` — только активные, `include_filtered` — с отфильтрованными."""
         return await self.channels.get_channels(active_only, include_filtered)
-
-    async def list_channels_with_counts(
-        self,
-        active_only: bool = False,
-        include_filtered: bool = True,
-    ) -> list[Channel]:
-        """Каналы с проставленным `message_count` (число собранных сообщений)."""
-        return await self.channels.get_channels_with_counts(active_only, include_filtered)
 
     async def get_by_pk(self, pk: int) -> Channel | None:
         """Канал по pk (первичный ключ БД), либо None."""
@@ -210,19 +164,6 @@ class ChannelBundle:
         """Обновить базовые метаданные канала — username и title."""
         await self.channels.update_channel_meta(channel_id, username=username, title=title)
 
-    async def update_channel_full_meta(
-        self,
-        channel_id: int,
-        *,
-        about: str | None,
-        linked_chat_id: int | None,
-        has_comments: bool,
-    ) -> None:
-        """Обновить расширенные метаданные: описание, привязанный чат, наличие комментариев."""
-        await self.channels.update_channel_full_meta(
-            channel_id, about=about, linked_chat_id=linked_chat_id, has_comments=has_comments
-        )
-
     async def set_filtered_bulk(
         self,
         updates: list[tuple[int, str]],
@@ -235,6 +176,183 @@ class ChannelBundle:
     async def reset_all_filters(self, *, commit: bool = True) -> int:
         """Снять фильтрацию со всех каналов; вернуть число сброшенных."""
         return await self.channels.reset_all_filters(commit=commit)
+
+
+class _CollectionTaskCreateOps:
+    """Обёртка над `tasks`: создание задачи сбора для канала."""
+
+    tasks: CollectionTasksRepository
+
+    async def create_collection_task(
+        self,
+        channel_id: int,
+        channel_title: str | None,
+        *,
+        channel_username: str | None = None,
+        run_after: datetime | None = None,
+        payload: dict | None = None,
+        parent_task_id: int | None = None,
+    ) -> int:
+        """Создать задачу сбора для канала; возвращает её id."""
+        return await self.tasks.create_collection_task(
+            channel_id,
+            channel_title,
+            channel_username=channel_username,
+            run_after=run_after,
+            payload=payload,
+            parent_task_id=parent_task_id,
+        )
+
+
+class _CollectionTaskReadOps:
+    """Read-обёртки над `tasks`: списки/счётчики задач сбора."""
+
+    tasks: CollectionTasksRepository
+
+    async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
+        """Последние `limit` задач сбора (от новых к старым)."""
+        return await self.tasks.get_collection_tasks(limit)
+
+    async def count_collection_tasks(self, status_filter: str | None = None) -> int:
+        """Число задач сбора, опционально только в статусе `status_filter`."""
+        return await self.tasks.count_collection_tasks(status_filter)
+
+    async def get_collection_tasks_paginated(
+        self, limit: int = 20, offset: int = 0, status_filter: str | None = None
+    ) -> tuple[list[CollectionTask], int]:
+        """Страница задач сбора и общее их число: `(список, total)`."""
+        return await self.tasks.get_collection_tasks_paginated(limit, offset, status_filter)
+
+
+class _SettingsOps:
+    """Обёртки над `settings`: чтение/запись настройки по ключу."""
+
+    settings: SettingsRepository
+
+    async def get_setting(self, key: str) -> str | None:
+        """Прочитать настройку по ключу, либо None."""
+        return await self.settings.get_setting(key)
+
+    async def set_setting(self, key: str, value: str) -> None:
+        """Записать настройку по ключу."""
+        await self.settings.set_setting(key, value)
+
+
+class _NotificationQueriesOps:
+    """Обёртка над `search_queries`: запросы с нотификацией при сборе."""
+
+    search_queries: SearchQueriesRepository
+
+    async def list_notification_queries(self, active_only: bool = True) -> list[SearchQuery]:
+        """Сохранённые поисковые запросы с нотификацией при сборе (`notify_on_collect`)."""
+        return await self.search_queries.get_notification_queries(active_only)
+
+
+class _MessageOps:
+    """Обёртки над `messages`: поиск и пакетная вставка сообщений."""
+
+    messages: MessagesRepository
+
+    async def search_messages(self, params: SearchParams) -> MessageSearchPage:
+        """Поиск сообщений по фильтру `SearchParams`; возвращает страницу результатов."""
+        return await self.messages.search_messages(params)
+
+    async def insert_messages_batch(
+        self, messages: list[Message], premium_search_query: str | None = None
+    ) -> int:
+        """Пакетная вставка сообщений (`INSERT OR IGNORE`); вернуть число реально добавленных."""
+        return await self.messages.insert_messages_batch(messages, premium_search_query)
+
+
+class _SearchLogReadOps:
+    """Read-обёртка над `search_log`: последние записи журнала поисков."""
+
+    search_log: SearchLogRepository
+
+    async def get_recent_searches(self, limit: int = 20) -> list[dict]:
+        """Последние `limit` записей журнала поисков."""
+        return await self.search_log.get_recent_searches(limit)
+
+
+@dataclass(frozen=True)
+class AccountBundle(_AccountReadOps):
+    """Фасад для управления Telegram-аккаунтами пула (CRUD + флаги состояния)."""
+
+    accounts: AccountsRepository
+
+    @classmethod
+    def from_database(cls, db: "Database") -> "AccountBundle":
+        """Собрать бандл из репозитория аккаунтов общего `Database`."""
+        return cls(db.repos.accounts)
+
+    async def list_live_usable_accounts(self, active_only: bool = False) -> list[Account]:
+        """Аккаунты, пригодные для живого подключения (валидная читаемая сессия)."""
+        return await self.accounts.get_live_usable_accounts(active_only)
+
+    async def add_account(self, account: Account) -> int:
+        """Добавить аккаунт; возвращает его id."""
+        return await self.accounts.add_account(account)
+
+    async def set_active(self, account_id: int, active: bool) -> None:
+        """Включить/выключить аккаунт по id."""
+        await self.accounts.set_account_active(account_id, active)
+
+    async def delete_account(self, account_id: int) -> None:
+        """Удалить аккаунт по id."""
+        await self.accounts.delete_account(account_id)
+
+    async def update_flood(self, phone: str, until) -> None:
+        """Записать `flood_wait_until` для аккаунта (момент окончания FLOOD_WAIT)."""
+        await self.accounts.update_account_flood(phone, until)
+
+    async def update_premium(self, phone: str, is_premium: bool) -> None:
+        """Обновить флаг Premium-статуса аккаунта."""
+        await self.accounts.update_account_premium(phone, is_premium)
+
+
+@dataclass(frozen=True)
+class ChannelBundle(_ChannelOps, _CollectionTaskCreateOps, _CollectionTaskReadOps):
+    """Фасад управления каналами: сам канал, его статистика и задачи сбора.
+
+    Сводит вместе репозитории `channels`, `channel_stats` и `tasks`, чтобы
+    операции над каналом (CRUD, метаданные, фильтрация) и связанный с ним сбор
+    (создание/обновление collection-задач) жили за одним интерфейсом.
+    """
+
+    channels: ChannelsRepository
+    channel_stats: ChannelStatsRepository
+    tasks: CollectionTasksRepository
+
+    @classmethod
+    def from_database(cls, db: "Database") -> "ChannelBundle":
+        """Собрать бандл из репозиториев каналов/статистики/задач общего `Database`."""
+        repos = db.repos
+        return cls(repos.channels, repos.channel_stats, repos.tasks)
+
+    async def add_channel(self, channel: Channel) -> int:
+        """Добавить канал; возвращает его pk (первичный ключ БД)."""
+        return await self.channels.add_channel(channel)
+
+    async def list_channels_with_counts(
+        self,
+        active_only: bool = False,
+        include_filtered: bool = True,
+    ) -> list[Channel]:
+        """Каналы с проставленным `message_count` (число собранных сообщений)."""
+        return await self.channels.get_channels_with_counts(active_only, include_filtered)
+
+    async def update_channel_full_meta(
+        self,
+        channel_id: int,
+        *,
+        about: str | None,
+        linked_chat_id: int | None,
+        has_comments: bool,
+    ) -> None:
+        """Обновить расширенные метаданные: описание, привязанный чат, наличие комментариев."""
+        await self.channels.update_channel_full_meta(
+            channel_id, about=about, linked_chat_id=linked_chat_id, has_comments=has_comments
+        )
 
     async def delete_channel(self, pk: int) -> None:
         """Удалить канал по pk."""
@@ -261,26 +379,6 @@ class ChannelBundle:
     ) -> tuple[dict[int, ChannelStats], dict[int, int | None]]:
         """Пара (последние снимки статистики, предыдущие счётчики подписчиков) одним проходом."""
         return await self.channel_stats.get_latest_and_previous_stats()
-
-    async def create_collection_task(
-        self,
-        channel_id: int,
-        channel_title: str | None,
-        *,
-        channel_username: str | None = None,
-        run_after: datetime | None = None,
-        payload: dict | None = None,
-        parent_task_id: int | None = None,
-    ) -> int:
-        """Создать задачу сбора для канала; возвращает её id."""
-        return await self.tasks.create_collection_task(
-            channel_id,
-            channel_title,
-            channel_username=channel_username,
-            run_after=run_after,
-            payload=payload,
-            parent_task_id=parent_task_id,
-        )
 
     async def create_collection_task_if_not_active(
         self,
@@ -364,20 +462,6 @@ class ChannelBundle:
         """Задача сбора по id, либо None."""
         return await self.tasks.get_collection_task(task_id)
 
-    async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
-        """Последние `limit` задач сбора (от новых к старым)."""
-        return await self.tasks.get_collection_tasks(limit)
-
-    async def count_collection_tasks(self, status_filter: str | None = None) -> int:
-        """Число задач сбора, опционально только в статусе `status_filter`."""
-        return await self.tasks.count_collection_tasks(status_filter)
-
-    async def get_collection_tasks_paginated(
-        self, limit: int = 20, offset: int = 0, status_filter: str | None = None
-    ) -> tuple[list[CollectionTask], int]:
-        """Страница задач сбора и общее их число: `(список, total)`."""
-        return await self.tasks.get_collection_tasks_paginated(limit, offset, status_filter)
-
     async def get_active_collection_tasks_for_channel(
         self,
         channel_id: int,
@@ -445,7 +529,13 @@ class ChannelBundle:
 
 
 @dataclass(frozen=True)
-class CollectionBundle:
+class CollectionBundle(
+    _ChannelOps,
+    _CollectionTaskCreateOps,
+    _SettingsOps,
+    _NotificationQueriesOps,
+    _MessageOps,
+):
     """Фасад для процесса сбора: каналы, запись сообщений, фильтры, настройки и задачи.
 
     Используется `Collector`/сервисом сбора: даёт доступ к каналам (чтение/мета),
@@ -475,70 +565,9 @@ class CollectionBundle:
             repos.channel_stats,
         )
 
-    async def list_channels(
-        self,
-        active_only: bool = False,
-        include_filtered: bool = True,
-    ) -> list[Channel]:
-        """Список каналов; `active_only` — только активные, `include_filtered` — с отфильтрованными."""
-        return await self.channels.get_channels(active_only, include_filtered)
-
-    async def get_by_pk(self, pk: int) -> Channel | None:
-        """Канал по pk (первичный ключ БД), либо None."""
-        return await self.channels.get_channel_by_pk(pk)
-
-    async def get_by_channel_id(self, channel_id: int) -> Channel | None:
-        """Канал по Telegram `channel_id`, либо None."""
-        return await self.channels.get_channel_by_channel_id(channel_id)
-
-    async def update_last_id(self, channel_id: int, last_id: int) -> None:
-        """Обновить `last_collected_id` канала (граница инкрементального сбора)."""
-        await self.channels.update_channel_last_id(channel_id, last_id)
-
-    async def update_meta(
-        self,
-        channel_id: int,
-        *,
-        username: str | None,
-        title: str | None,
-    ) -> None:
-        """Обновить базовые метаданные канала — username и title."""
-        await self.channels.update_channel_meta(channel_id, username=username, title=title)
-
-    async def set_active(self, pk: int, active: bool) -> None:
-        """Включить/выключить канал по pk."""
-        await self.channels.set_channel_active(pk, active)
-
-    async def set_type(self, channel_id: int, channel_type: str) -> None:
-        """Задать тип канала по Telegram `channel_id`."""
-        await self.channels.set_channel_type(channel_id, channel_type)
-
-    async def set_filtered_bulk(
-        self,
-        updates: list[tuple[int, str]],
-        *,
-        commit: bool = True,
-    ) -> int:
-        """Пакетно проставить флаги фильтрации каналам `(channel_id, flags_csv)`; вернуть число изменённых."""
-        return await self.channels.set_filtered_bulk(updates, commit=commit)
-
-    async def reset_all_filters(self, *, commit: bool = True) -> int:
-        """Снять фильтрацию со всех каналов; вернуть число сброшенных."""
-        return await self.channels.reset_all_filters(commit=commit)
-
     async def insert_message(self, msg: Message) -> bool:
         """Вставить одно сообщение; True, если строка добавлена (False при дубле)."""
         return await self.messages.insert_message(msg)
-
-    async def insert_messages_batch(
-        self, messages: list[Message], premium_search_query: str | None = None
-    ) -> int:
-        """Пакетная вставка сообщений (`INSERT OR IGNORE`); вернуть число реально добавленных."""
-        return await self.messages.insert_messages_batch(messages, premium_search_query)
-
-    async def search_messages(self, params: SearchParams) -> MessageSearchPage:
-        """Поиск сообщений по фильтру `SearchParams`; возвращает страницу результатов."""
-        return await self.messages.search_messages(params)
 
     async def delete_messages_for_channel(self, channel_id: int) -> int:
         """Удалить все сообщения канала; вернуть число удалённых строк."""
@@ -556,45 +585,13 @@ class CollectionBundle:
         """Сколько раз префиксы сообщений канала встречаются в других каналах (детектор кросс-спама)."""
         return await self.filters.count_matching_prefixes_in_other_channels(channel_id, prefixes)
 
-    async def get_setting(self, key: str) -> str | None:
-        """Прочитать настройку по ключу, либо None."""
-        return await self.settings.get_setting(key)
-
-    async def set_setting(self, key: str, value: str) -> None:
-        """Записать настройку по ключу."""
-        await self.settings.set_setting(key, value)
-
-    async def list_notification_queries(self, active_only: bool = True) -> list[SearchQuery]:
-        """Сохранённые поисковые запросы с нотификацией при сборе (`notify_on_collect`)."""
-        return await self.search_queries.get_notification_queries(active_only)
-
     async def get_channel_stats(self, channel_id: int, limit: int = 1) -> list[ChannelStats]:
         """Последние `limit` снимков статистики канала."""
         return await self.channel_stats.get_channel_stats(channel_id, limit)
 
-    async def create_collection_task(
-        self,
-        channel_id: int,
-        channel_title: str | None,
-        *,
-        channel_username: str | None = None,
-        run_after: datetime | None = None,
-        payload: dict | None = None,
-        parent_task_id: int | None = None,
-    ) -> int:
-        """Создать задачу сбора для канала; возвращает её id."""
-        return await self.tasks.create_collection_task(
-            channel_id,
-            channel_title,
-            channel_username=channel_username,
-            run_after=run_after,
-            payload=payload,
-            parent_task_id=parent_task_id,
-        )
-
 
 @dataclass(frozen=True)
-class NotificationBundle:
+class NotificationBundle(_AccountReadOps, _SettingsOps):
     """Фасад нотификаций: аккаунты-отправители, настройки и персональные боты."""
 
     accounts: AccountsRepository
@@ -606,22 +603,6 @@ class NotificationBundle:
         """Собрать бандл из репозиториев аккаунтов/настроек/ботов общего `Database`."""
         repos = db.repos
         return cls(repos.accounts, repos.settings, repos.notification_bots)
-
-    async def list_accounts(self, active_only: bool = False) -> list[Account]:
-        """Список аккаунтов (с секретом сессии); `active_only` — только активные."""
-        return await self.accounts.get_accounts(active_only)
-
-    async def list_account_summaries(self, active_only: bool = False) -> list[AccountSummary]:
-        """Безопасные для UI сводки аккаунтов (`AccountSummary`, без секрета сессии)."""
-        return await self.accounts.get_account_summaries(active_only)
-
-    async def get_setting(self, key: str) -> str | None:
-        """Прочитать настройку по ключу, либо None."""
-        return await self.settings.get_setting(key)
-
-    async def set_setting(self, key: str, value: str) -> None:
-        """Записать настройку по ключу."""
-        await self.settings.set_setting(key, value)
 
     async def get_bot(self, tg_user_id: int) -> NotificationBot | None:
         """Персональный бот-нотификатор для пользователя Telegram, либо None."""
@@ -798,7 +779,7 @@ class PhotoLoaderBundle:
 
 
 @dataclass(frozen=True)
-class SearchBundle:
+class SearchBundle(_SettingsOps, _MessageOps, _SearchLogReadOps):
     """Фасад поиска: сообщения, журнал поисков, каналы, настройки.
 
     Флаги `vec_available`/`numpy_available` (определяются в `from_database`)
@@ -831,39 +812,17 @@ class SearchBundle:
             numpy_available=numpy_ok,
         )
 
-    async def search_messages(self, params: SearchParams) -> MessageSearchPage:
-        """Поиск сообщений по фильтру `SearchParams`; возвращает страницу результатов."""
-        return await self.messages.search_messages(params)
-
     async def add_channel(self, channel: Channel) -> int:
         """Добавить канал; возвращает его pk."""
         return await self.channels.add_channel(channel)
-
-    async def insert_messages_batch(
-        self, messages: list[Message], premium_search_query: str | None = None
-    ) -> int:
-        """Пакетная вставка сообщений; вернуть число реально добавленных."""
-        return await self.messages.insert_messages_batch(messages, premium_search_query)
 
     async def log_search(self, phone: str, query: str, results_count: int) -> None:
         """Записать факт поиска в журнал (телефон, запрос, число результатов)."""
         await self.search_log.log_search(phone, query, results_count)
 
-    async def get_recent_searches(self, limit: int = 20) -> list[dict]:
-        """Последние `limit` записей журнала поисков."""
-        return await self.search_log.get_recent_searches(limit)
-
-    async def get_setting(self, key: str) -> str | None:
-        """Прочитать настройку по ключу, либо None."""
-        return await self.settings.get_setting(key)
-
-    async def set_setting(self, key: str, value: str) -> None:
-        """Записать настройку по ключу."""
-        await self.settings.set_setting(key, value)
-
 
 @dataclass(frozen=True)
-class SchedulerBundle:
+class SchedulerBundle(_SettingsOps, _NotificationQueriesOps, _CollectionTaskReadOps, _SearchLogReadOps):
     """Фасад шедулера: настройки, нотификационные запросы, задачи сбора и журнал поисков."""
 
     settings: SettingsRepository
@@ -876,36 +835,6 @@ class SchedulerBundle:
         """Собрать бандл из репозиториев, нужных шедулеру, общего `Database`."""
         repos = db.repos
         return cls(repos.settings, repos.search_queries, repos.tasks, repos.search_log)
-
-    async def get_setting(self, key: str) -> str | None:
-        """Прочитать настройку по ключу, либо None."""
-        return await self.settings.get_setting(key)
-
-    async def set_setting(self, key: str, value: str) -> None:
-        """Записать настройку по ключу."""
-        await self.settings.set_setting(key, value)
-
-    async def list_notification_queries(self, active_only: bool = True) -> list[SearchQuery]:
-        """Поисковые запросы с нотификацией при сборе (для периодического прогона шедулером)."""
-        return await self.search_queries.get_notification_queries(active_only)
-
-    async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
-        """Последние `limit` задач сбора."""
-        return await self.tasks.get_collection_tasks(limit)
-
-    async def count_collection_tasks(self, status_filter: str | None = None) -> int:
-        """Число задач сбора, опционально только в статусе `status_filter`."""
-        return await self.tasks.count_collection_tasks(status_filter)
-
-    async def get_collection_tasks_paginated(
-        self, limit: int = 20, offset: int = 0, status_filter: str | None = None
-    ) -> tuple[list[CollectionTask], int]:
-        """Страница задач сбора и общее их число: `(список, total)`."""
-        return await self.tasks.get_collection_tasks_paginated(limit, offset, status_filter)
-
-    async def get_recent_searches(self, limit: int = 20) -> list[dict]:
-        """Последние `limit` записей журнала поисков."""
-        return await self.search_log.get_recent_searches(limit)
 
 
 @dataclass(frozen=True)
@@ -994,7 +923,7 @@ class SearchQueryBundle:
 
 
 @dataclass(frozen=True)
-class PipelineBundle:
+class PipelineBundle(_AccountReadOps):
     """Фасад контент-пайплайнов: сами пайплайны, их источники/цели и справочники.
 
     Помимо CRUD пайплайнов даёт доступ к спискам каналов и аккаунтов (для выбора
@@ -1075,14 +1004,6 @@ class PipelineBundle:
     ):
         """Список каналов (для выбора источников в UI пайплайна)."""
         return await self.channels.get_channels(active_only, include_filtered)
-
-    async def list_accounts(self, active_only: bool = False):
-        """Список аккаунтов (для выбора аккаунта-отправителя пайплайна)."""
-        return await self.accounts.get_accounts(active_only)
-
-    async def list_account_summaries(self, active_only: bool = False):
-        """Безопасные сводки аккаунтов (`AccountSummary`, без секрета сессии)."""
-        return await self.accounts.get_account_summaries(active_only)
 
     async def get_cached_dialog(self, phone: str, dialog_id: int) -> dict | None:
         """Закэшированный диалог `(phone, dialog_id)` для разрешения цели публикации, либо None."""
