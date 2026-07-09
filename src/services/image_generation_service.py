@@ -118,6 +118,7 @@ class ImageGenerationService:
                     retryable=True,
                 )
                 return None
+        result: str | None = None
         try:
             result = await adapter(text, model_id)
         except TimeoutError as exc:
@@ -125,7 +126,6 @@ class ImageGenerationService:
             self._last_failure = ImageGenerationFailure(
                 kind="timeout", provider=provider_name, model=model, message=str(exc),
             )
-            return None
         except Exception as exc:
             # OSError is an expected I/O failure — log calmly without a traceback;
             # anything else is unexpected and warrants the full stack.
@@ -136,10 +136,18 @@ class ImageGenerationService:
             self._last_failure = ImageGenerationFailure(
                 kind="error", provider=provider_name, model=model, message=str(exc),
             )
+        finally:
+            # Settle the budget reserved by acquire() exactly once (#1250): a paid
+            # generation books its cost; a failed/empty one (including cancellation,
+            # which skips the except clauses above) returns the reservation so the
+            # budget isn't held until the day rolls over.
+            if limits is not None:
+                if result:
+                    await limits.record_cost(is_image=True)
+                else:
+                    await limits.release_cost(is_image=True)
+        if result is None:
             return None
-        # The paid generation succeeded → record its cost against the daily cap.
-        if limits is not None and result:
-            await limits.record_cost(is_image=True)
         s3 = getattr(self, "_s3", None)
         if result and s3 is not None:
             if result.startswith("http"):
