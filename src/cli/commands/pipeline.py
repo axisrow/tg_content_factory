@@ -237,6 +237,9 @@ async def _pipeline_add_from_json(
             else []
         ),
         "generate_interval_minutes": args.interval,
+        # Activate unless --inactive was passed; import_json reads is_active from
+        # the payload, so the pipeline is created active in one write (#1246).
+        "is_active": not args.inactive,
         "pipeline_json": graph_data,
     }
     return await svc.import_json(data)
