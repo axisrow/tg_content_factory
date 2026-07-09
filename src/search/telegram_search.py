@@ -552,6 +552,9 @@ class TelegramSearch:
                         )
                         username = ch_record.username if ch_record else None
                         if username:
+                            # _acquire_search_client yields an error result when the
+                            # pool is missing, so a live client implies a live pool.
+                            assert self._pool is not None
                             try:
                                 entity = await self._pool.run_live_username_resolve(
                                     lambda: session.resolve_entity(username),
