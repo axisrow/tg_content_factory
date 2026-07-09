@@ -4,6 +4,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, cast
 
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.telegram.rate_limiter import (
@@ -11,6 +12,16 @@ from src.telegram.rate_limiter import (
     ResolveRateLimiter,
     UsernameResolveRateLimitedError,
 )
+
+if TYPE_CHECKING:
+    from typing import Protocol
+
+    class _SettingsStore(Protocol):
+        """Structural view of the ``db`` argument: only the settings get/set pair."""
+
+        async def get_setting(self, key: str) -> str | None: ...
+        async def set_setting(self, key: str, value: str) -> None: ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -245,8 +256,11 @@ class ResolveGuardMixin:
         backoff is conservatively applied to every known phone, re-persisted
         in the per-phone format, and the legacy key is cleared.
         """
+        # ``db`` stays ``object`` (pool_lifecycle mirrors this signature); the cast
+        # only gives mypy the settings get/set pair actually used here.
+        store = cast("_SettingsStore", db)
         try:
-            value = await db.get_setting(RESOLVE_BACKOFF_BY_PHONE_SETTING)
+            value = await store.get_setting(RESOLVE_BACKOFF_BY_PHONE_SETTING)
         except Exception:
             return
         if value:
@@ -262,7 +276,7 @@ class ResolveGuardMixin:
                 return
         # Legacy single-deadline migration (pre-#790).
         try:
-            legacy_value = await db.get_setting(RESOLVE_BACKOFF_LEGACY_SETTING)
+            legacy_value = await store.get_setting(RESOLVE_BACKOFF_LEGACY_SETTING)
         except Exception:
             return
         if not legacy_value:
@@ -277,11 +291,11 @@ class ResolveGuardMixin:
         for phone in phone_list:
             self._restore_resolve_backoff_entry(phone, until)
         try:
-            await db.set_setting(
+            await store.set_setting(
                 RESOLVE_BACKOFF_BY_PHONE_SETTING,
                 json.dumps({phone: until.isoformat() for phone in phone_list}),
             )
-            await db.set_setting(RESOLVE_BACKOFF_LEGACY_SETTING, "")
+            await store.set_setting(RESOLVE_BACKOFF_LEGACY_SETTING, "")
         except Exception:
             logger.debug("Failed to migrate legacy resolve backoff", exc_info=True)
 

@@ -34,7 +34,8 @@ def _int_value(value: object) -> int | None:
     if value is None or isinstance(value, Mock) or isinstance(value, bool):
         return None
     try:
-        return int(value)
+        # int() raising TypeError on unsupported objects is the handled path below.
+        return int(value)  # type: ignore[call-overload]
     except (TypeError, ValueError):
         return None
 

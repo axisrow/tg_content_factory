@@ -14,7 +14,8 @@ def parse_int_setting(
     if raw_value in (None, ""):
         return default
     try:
-        return int(raw_value)
+        # int() raising TypeError on unsupported objects is the handled path below.
+        return int(raw_value)  # type: ignore[call-overload]
     except (TypeError, ValueError):
         logger.warning("Invalid %s in settings DB (%r), using %d", setting_name, raw_value, default)
         return default
@@ -30,7 +31,8 @@ def parse_float_setting(
     if raw_value in (None, ""):
         return default
     try:
-        value = float(raw_value)
+        # float() raising TypeError on unsupported objects is the handled path below.
+        value = float(raw_value)  # type: ignore[arg-type]
         # float("nan")/float("inf") parse without raising; reject them so callers
         # that int()-coerce or clamp the result don't crash or propagate NaN.
         if not math.isfinite(value):
