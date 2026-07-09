@@ -19,7 +19,16 @@ pytestmark = pytest.mark.anyio
 
 
 def _install_fake_codex(
-    monkeypatch, *, deltas, usage=None, tool=None, tool_error=False, noise_item=False, hang=False
+    monkeypatch,
+    *,
+    deltas,
+    usage=None,
+    tool=None,
+    tool_error=False,
+    noise_item=False,
+    hang=False,
+    turn_status="completed",
+    turn_error_message=None,
 ):
     """Install a fake ``openai_codex`` whose turn streams *deltas* then *usage*.
 
@@ -37,6 +46,10 @@ def _install_fake_codex(
     - ``noise_item=True`` also emits a non-MCP ``item/started`` (a reasoning item
       with no ``tool``/``server``), which the backend must ignore — the real SDK
       emits ``item/*`` for many item types, not just tool calls.
+    - ``turn_status`` / ``turn_error_message`` set the ``turn/completed`` payload's
+      ``turn.status`` and ``turn.error.message`` — ``turn_status="failed"`` with a
+      message models a crashed turn (``Turn.status=failed`` + ``Turn.error``) the
+      backend must surface as an error frame, not a "successful" empty response.
     """
     captured: dict = {}
 
@@ -71,7 +84,15 @@ def _install_fake_codex(
                     "thread/tokenUsage/updated",
                     SimpleNamespace(token_usage=SimpleNamespace(last=usage)),
                 )
-            yield _note("turn/completed", SimpleNamespace())
+            # turn/completed carries the Turn: status ("completed"/"failed"/...)
+            # and error (TurnError-shaped, .message) — only populated on failure.
+            turn_err = (
+                SimpleNamespace(message=turn_error_message)
+                if turn_error_message is not None
+                else None
+            )
+            turn = SimpleNamespace(status=turn_status, error=turn_err)
+            yield _note("turn/completed", SimpleNamespace(turn=turn))
 
     class FakeThread:
         async def turn(self, text):
@@ -270,6 +291,79 @@ async def test_chat_stream_ignores_non_mcp_items(monkeypatch):
     assert not [e for e in events if e.get("type") in ("tool_start", "tool_end")]
     # text still flows and the turn completes normally
     assert [e["text"] for e in events if "text" in e] == ["hi"]
+
+
+async def test_chat_stream_failed_turn_emits_error_not_empty_done(monkeypatch):
+    """A failed turn (turn/completed status=failed) surfaces the error, not a fake success.
+
+    Regression for #1252: the SDK delivers turn failures (auth expiry, model
+    error, MCP-server crash) *inside* turn/completed as ``Turn.status=failed`` +
+    ``Turn.error``. The backend used to ``break`` unconditionally and emit
+    ``{'done': True, 'full_text': ''}`` — a "successful" empty answer with no
+    error indication. It must instead emit an error frame and no done frame.
+    """
+    _install_fake_codex(
+        monkeypatch,
+        deltas=[],
+        turn_status="failed",
+        turn_error_message="authentication expired",
+    )
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="x", system_prompt="", stats={}, model="gpt-5.4", queue=queue
+    )
+
+    events = await _drain(queue)
+    errors = [e for e in events if "error" in e]
+    assert errors, events
+    assert "authentication expired" in errors[0]["error"]
+    # A failed turn must NOT be reported as a successful (empty) done frame.
+    assert not any(e.get("done") for e in events)
+
+
+async def test_chat_stream_failed_turn_without_message_still_errors(monkeypatch):
+    """A failed turn with no Turn.error still yields an error frame, not empty success.
+
+    ``Turn.error`` is only *populated* on failure but is still ``| None``; a
+    failed status with a missing message must fall back to a generic error rather
+    than slip through as an empty done frame.
+    """
+    _install_fake_codex(
+        monkeypatch, deltas=[], turn_status="failed", turn_error_message=None
+    )
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="x", system_prompt="", stats={}, model="gpt-5.4", queue=queue
+    )
+
+    events = await _drain(queue)
+    assert [e for e in events if "error" in e], events
+    assert not any(e.get("done") for e in events)
+
+
+async def test_chat_stream_non_failed_status_still_completes(monkeypatch):
+    """A non-failed terminal status (e.g. completed) still emits a normal done frame.
+
+    Guards the failure check from over-triggering: only ``status=failed`` is an
+    error; ``completed`` (and other non-failure statuses) must still stream the
+    done payload with the collected text.
+    """
+    _install_fake_codex(monkeypatch, deltas=["ok"], turn_status="completed")
+    backend = _make_backend()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    await backend.chat_stream(
+        thread_id=1, prompt="x", system_prompt="", stats={}, model="gpt-5.4", queue=queue
+    )
+
+    events = await _drain(queue)
+    assert not [e for e in events if "error" in e], events
+    done = next(e for e in events if e.get("done"))
+    assert done["full_text"] == "ok"
 
 
 def test_notification_methods_match_sdk_registry():

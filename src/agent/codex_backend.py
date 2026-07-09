@@ -115,9 +115,10 @@ class CodexSdkBackend:
 
         full_text_parts: list[str] = []
         usage: dict | None = None
+        turn_error: str | None = None
 
         async def _drain() -> dict | None:
-            nonlocal usage
+            nonlocal usage, turn_error
             async with AsyncCodex() as codex:
                 thread = await codex.thread_start(
                     base_instructions=system_prompt or None,
@@ -153,7 +154,12 @@ class CodexSdkBackend:
                         usage = _usage_from_payload(payload) or usage
                     elif method == NOTE_TURN_COMPLETED:
                         # Terminal event — stop draining rather than waiting for
-                        # the async iterator to close on its own.
+                        # the async iterator to close on its own. But a failed
+                        # turn (auth expiry, model error, MCP-server crash) is
+                        # delivered *inside* turn/completed as Turn.status=failed
+                        # + Turn.error — record it so the caller surfaces an
+                        # error frame instead of a "successful" empty response.
+                        turn_error = _turn_error_message(payload)
                         break
             return usage
 
@@ -173,6 +179,15 @@ class CodexSdkBackend:
             await queue.put(f"data: {error_payload}\n\n")
             return
 
+        # A failed turn is not a success: surface the error frame the drain
+        # loop captured from turn/completed (status=failed) instead of a done
+        # payload whose full_text would otherwise be an empty "" answer.
+        if turn_error is not None:
+            logger.error("Codex turn failed: %s", turn_error)
+            error_payload = safe_json_dumps({"error": turn_error}, ensure_ascii=False)
+            await queue.put(f"data: {error_payload}\n\n")
+            return
+
         full_text = "".join(full_text_parts)
         done_payload = safe_json_dumps(
             {
@@ -185,6 +200,29 @@ class CodexSdkBackend:
             ensure_ascii=False,
         )
         await queue.put(f"data: {done_payload}\n\n")
+
+
+def _turn_error_message(payload) -> str | None:
+    """Error message when a ``turn/completed`` reports a failed turn, else None.
+
+    Shape (openai_codex ``TurnCompletedNotification``): ``payload.turn`` is a
+    ``Turn`` whose ``status`` is a ``TurnStatus`` enum (``failed`` when the turn
+    crashed — auth expiry, model error, MCP-server crash) and whose ``error`` is
+    a ``TurnError`` (``.message``) populated only on failure. ``status`` is
+    compared via its ``.value`` so a real enum and a plain-string fake both work;
+    any status other than ``failed`` (completed / interrupted / inProgress) is a
+    non-failure and returns None.
+    """
+    turn = getattr(payload, "turn", None)
+    if turn is None:
+        return None
+    status = getattr(turn, "status", None)
+    status_value = getattr(status, "value", status)
+    if status_value != "failed":
+        return None
+    error = getattr(turn, "error", None)
+    message = getattr(error, "message", None)
+    return str(message) if message else "Codex turn failed"
 
 
 def _mcp_tool_item(payload):
