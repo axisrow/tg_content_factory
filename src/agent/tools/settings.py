@@ -9,6 +9,7 @@ from claude_agent_sdk import tool
 
 from src.agent.tools._categories import ToolCategory, ToolMeta
 from src.agent.tools._registry import _text_response, require_confirmation
+from src.services.telegram_command_service import TelegramCommandService
 
 # Permission metadata for this module's tools (#245). Single source of
 # truth: permissions.py derives TOOL_CATEGORIES / MODULE_GROUPS /
@@ -27,7 +28,10 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
 ]
 
 def register(db, client_pool, embedding_service, **kwargs):
-    scheduler_manager = kwargs.get("scheduler_manager")
+    # scheduler_manager (a read-only snapshot shim in web-mode) is no longer used here:
+    # save_scheduler_settings enqueues a scheduler.reconcile command for the worker instead
+    # of calling the no-op shim (#1266). register() still accepts **kwargs for parity with
+    # the other tool modules.
     tools = []
 
     @tool("get_settings", "Get current system settings (scheduler, agent, filters, etc.)", {})
@@ -117,8 +121,18 @@ def register(db, client_pool, embedding_service, **kwargs):
             interval = int(args.get("collect_interval_minutes", 60))
             interval = max(1, min(1440, interval))
             await db.set_setting("collect_interval_minutes", str(interval))
-            if scheduler_manager is not None:
-                scheduler_manager.update_interval(interval)
+            # In web-mode ``scheduler_manager`` is the read-only ``SnapshotSchedulerManager``
+            # shim whose ``update_interval`` is a no-op — the live ``SchedulerManager`` runs in
+            # the separate worker container. Enqueue a ``scheduler.reconcile`` command so the
+            # worker re-reads ``collect_interval_minutes`` and rebuilds its IntervalTrigger,
+            # exactly like the web settings route does (#1266, matching #1236/#1247 via #1257).
+            # ``enqueue`` deduplicates on (type, payload), so repeated reconciles collapse into
+            # one pending command.
+            await TelegramCommandService(db).enqueue(
+                "scheduler.reconcile",
+                payload={},
+                requested_by="agent:save_scheduler_settings",
+            )
             return _text_response(f"Интервал сбора установлен: {interval} мин.")
         except Exception as e:
             return _text_response(f"Ошибка сохранения настроек планировщика: {e}")
