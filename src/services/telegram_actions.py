@@ -619,6 +619,40 @@ class TelegramActionService:
             await client.kick_participant(entity, user)
             return TelegramActionResult(phone=acquired_phone)
 
+    async def _fetch_message_with_flood_wait(
+        self,
+        client,
+        acquired_phone: str,
+        entity,
+        message_id: int,
+        *,
+        operation_prefix: str,
+    ):
+        """Resolve a single message by id under ``run_with_flood_wait``, or raise.
+
+        Shared body of :meth:`download_media` / :meth:`download_media_sized`:
+        fetch the one message via ``iter_messages(ids=...)`` under the flood-wait
+        wrapper, then raise :class:`TelegramActionMessageNotFoundError` when the
+        id no longer exists. Returns the resolved message object.
+        """
+        message = None
+
+        async def _lookup_message() -> None:
+            nonlocal message
+            async for current_message in client.iter_messages(entity, ids=int(message_id)):
+                message = current_message
+                break
+
+        await run_with_flood_wait(
+            _lookup_message(),
+            operation=f"{operation_prefix}_lookup",
+            phone=acquired_phone,
+            pool=self._pool,
+        )
+        if message is None:
+            raise TelegramActionMessageNotFoundError("message_not_found")
+        return message
+
     async def download_media(
         self,
         *,
@@ -631,22 +665,9 @@ class TelegramActionService:
         output_resolved = await asyncio.to_thread(_ensure_resolved_dir, output_dir)
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(client, phone=acquired_phone, identifier=chat_id)
-            message = None
-
-            async def _lookup_message() -> None:
-                nonlocal message
-                async for current_message in client.iter_messages(entity, ids=int(message_id)):
-                    message = current_message
-                    break
-
-            await run_with_flood_wait(
-                _lookup_message(),
-                operation=f"{operation_prefix}_lookup",
-                phone=acquired_phone,
-                pool=self._pool,
+            message = await self._fetch_message_with_flood_wait(
+                client, acquired_phone, entity, message_id, operation_prefix=operation_prefix
             )
-            if message is None:
-                raise TelegramActionMessageNotFoundError("message_not_found")
             path = await run_with_flood_wait(
                 client.download_media(message, file=str(output_resolved)),
                 operation=operation_prefix,
@@ -679,22 +700,9 @@ class TelegramActionService:
         root_resolved = await asyncio.to_thread(_ensure_resolved_dir, output_dir)
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
             entity = await self._resolve_entity(client, phone=acquired_phone, identifier=chat_id)
-            message = None
-
-            async def _lookup_message() -> None:
-                nonlocal message
-                async for current_message in client.iter_messages(entity, ids=int(message_id)):
-                    message = current_message
-                    break
-
-            await run_with_flood_wait(
-                _lookup_message(),
-                operation=f"{operation_prefix}_lookup",
-                phone=acquired_phone,
-                pool=self._pool,
+            message = await self._fetch_message_with_flood_wait(
+                client, acquired_phone, entity, message_id, operation_prefix=operation_prefix
             )
-            if message is None:
-                raise TelegramActionMessageNotFoundError("message_not_found")
             if getattr(message, "media", None) is None:
                 raise TelegramActionNoMediaError("no_media")
 

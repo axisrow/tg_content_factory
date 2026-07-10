@@ -310,12 +310,19 @@ class ChannelAnalyticsService:
             return stats[0].subscriber_count
         return None
 
-    async def _calc_err(self, channel_id: int, last_n: int = 20) -> float | None:
+    async def _engagement_rate(
+        self,
+        channel_id: int,
+        rows: list[dict],
+    ) -> float | None:
+        """ERR (Engagement Rate by Reach), in percent, for a set of message rows.
+
+        Shared body of `_calc_err` / `_calc_err24`: ``sum(engagement) /
+        (rows * subscribers) * 100``. ``None`` when the channel has no
+        subscribers or the message window is empty.
+        """
         sub_count = await self._get_subscriber_count(channel_id)
-        if not sub_count:
-            return None
-        rows = await self._db.repos.messages.get_err_data(channel_id, last_n)
-        if not rows:
+        if not sub_count or not rows:
             return None
         total_engagement = sum(
             (r.get("views") or 0)
@@ -326,18 +333,10 @@ class ChannelAnalyticsService:
         )
         return round(total_engagement / (len(rows) * sub_count) * 100, 2)
 
+    async def _calc_err(self, channel_id: int, last_n: int = 20) -> float | None:
+        rows = await self._db.repos.messages.get_err_data(channel_id, last_n)
+        return await self._engagement_rate(channel_id, rows)
+
     async def _calc_err24(self, channel_id: int) -> float | None:
-        sub_count = await self._get_subscriber_count(channel_id)
-        if not sub_count:
-            return None
         rows = await self._db.repos.messages.get_err24_data(channel_id)
-        if not rows:
-            return None
-        total_engagement = sum(
-            (r.get("views") or 0)
-            + (r.get("forwards") or 0)
-            + (r.get("reply_count") or 0)
-            + r.get("total_reactions", 0)
-            for r in rows
-        )
-        return round(total_engagement / (len(rows) * sub_count) * 100, 2)
+        return await self._engagement_rate(channel_id, rows)
