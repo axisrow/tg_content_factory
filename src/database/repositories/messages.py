@@ -1361,35 +1361,25 @@ class MessagesRepository:
         Returns:
             List of ``{"emoji": str, "count": int}`` dicts ordered by count desc.
         """
+        params: list = []
+        where_extra = ""
         if days is not None:
-            cur = await self._db.execute(
-                """
-                SELECT mr.emoji, SUM(mr.count) AS total
-                FROM message_reactions mr
-                JOIN messages m ON mr.channel_id = m.channel_id AND mr.message_id = m.message_id
-                LEFT JOIN channels c ON m.channel_id = c.channel_id
-                WHERE (c.is_filtered IS NULL OR c.is_filtered = 0)
-                  AND m.collected_at >= datetime('now', ?)
-                GROUP BY mr.emoji
-                ORDER BY total DESC
-                LIMIT ?
-                """,
-                (f"-{days} days", limit),
-            )
-        else:
-            cur = await self._db.execute(
-                """
-                SELECT mr.emoji, SUM(mr.count) AS total
-                FROM message_reactions mr
-                JOIN messages m ON mr.channel_id = m.channel_id AND mr.message_id = m.message_id
-                LEFT JOIN channels c ON m.channel_id = c.channel_id
-                WHERE (c.is_filtered IS NULL OR c.is_filtered = 0)
-                GROUP BY mr.emoji
-                ORDER BY total DESC
-                LIMIT ?
-                """,
-                (limit,),
-            )
+            where_extra = " AND m.collected_at >= datetime('now', ?)"
+            params.append(f"-{days} days")
+        params.append(limit)
+        cur = await self._db.execute(
+            f"""
+            SELECT mr.emoji, SUM(mr.count) AS total
+            FROM message_reactions mr
+            JOIN messages m ON mr.channel_id = m.channel_id AND mr.message_id = m.message_id
+            LEFT JOIN channels c ON m.channel_id = c.channel_id
+            WHERE (c.is_filtered IS NULL OR c.is_filtered = 0){where_extra}
+            GROUP BY mr.emoji
+            ORDER BY total DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        )
         rows = await cur.fetchall()
         return [{"emoji": r["emoji"], "count": r["total"]} for r in rows]
 
