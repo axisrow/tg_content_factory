@@ -474,10 +474,31 @@ class FakeClientPool(ResolveGuardMixin, MagicMock):
         self.connected_phones = lambda: set(self.clients.keys())
         self.get_phone_for_channel = lambda cid: self._channel_phone_map.get(cid)
         self.register_channel_phone = lambda cid, phone: self._channel_phone_map.__setitem__(cid, phone)
+        self.clear_channel_phone = lambda cid: self._channel_phone_map.pop(cid, None)
         self.is_warming = lambda: False
         self.wait_for_warm = AsyncMock()
+        # Lease pool double: only get_account is used by the collect-path liveness
+        # check (collector_resolve._resolve_by_numeric, #1245 dual-review). Default
+        # to a live account so a fallback-account resolve miss is treated as a
+        # transiently-unavailable owner (skip); tests that exercise a DEAD owner
+        # override _lease_pool.get_account to return None.
+        self._lease_pool = MagicMock()
+        self._lease_pool.get_account = AsyncMock(
+            return_value=Account(phone="+0000000000", session_string="s", is_active=True)
+        )
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+    async def forget_channel_phone(self, channel_id, *, only_if_phone=None):
+        # Delegate to the real error-recovery helper (clear map + TOCTOU-safe
+        # conditional DB clear + #676 WARNING on failure) so tests exercise the
+        # production forget path, including its logging, against the fake's
+        # _db/_channel_phone_map state.
+        from src.telegram.client_pool import ClientPool
+
+        return await ClientPool.forget_channel_phone(
+            self, channel_id, only_if_phone=only_if_phone
+        )
 
     @staticmethod
     def _classify_entity(entity) -> tuple[str, bool]:

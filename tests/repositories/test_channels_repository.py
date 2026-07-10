@@ -734,3 +734,39 @@ async def test_get_preferred_phone_roundtrip(channels_repo):
 async def test_get_preferred_phone_unknown_channel(channels_repo):
     """Unknown channel_id yields None, not an error."""
     assert await channels_repo.get_preferred_phone(999) is None
+
+
+async def test_clear_preferred_phone_if_matches_clears_when_equal(channels_repo):
+    """The conditional clear NULLs preferred_phone when it still matches."""
+    await channels_repo.add_channel(make_channel(1))
+    await channels_repo.update_channel_preferred_phone(1, "+7001")
+
+    await channels_repo.clear_preferred_phone_if_matches(1, "+7001")
+
+    assert await channels_repo.get_preferred_phone(1) is None
+
+
+async def test_clear_preferred_phone_if_matches_noop_when_different(channels_repo):
+    """#1245 dual-review — atomic compare-and-clear (interleave guard).
+
+    Models the concurrent-writer race Codex reproduced: a stale error-recovery
+    task holds preferred="+7001", but before it clears, a concurrent task has
+    already persisted a NEW valid owner "+7002". The stale clear
+    (clear_preferred_phone_if_matches(1, "+7001")) must be a no-op — its
+    conditional UPDATE ... WHERE preferred_phone="+7001" matches no row, so it
+    must NOT clobber the valid "+7002" to NULL.
+
+    Regression guard: with a non-atomic clear (SELECT+compare-in-python+
+    unconditional UPDATE, or a plain UPDATE without the AND preferred_phone
+    predicate), the stale task would overwrite "+7002" with None here — the
+    exact routing-state loss the fix closes.
+    """
+    await channels_repo.add_channel(make_channel(1))
+    # Concurrent writer B has installed the new valid owner.
+    await channels_repo.update_channel_preferred_phone(1, "+7002")
+
+    # Stale task A, still referencing the old failed owner, tries to clear.
+    await channels_repo.clear_preferred_phone_if_matches(1, "+7001")
+
+    # B's valid owner must survive — the stale clear matched no row.
+    assert await channels_repo.get_preferred_phone(1) == "+7002"
