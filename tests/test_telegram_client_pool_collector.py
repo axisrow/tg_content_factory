@@ -77,6 +77,7 @@ def mock_db():
     db.repos.dialog_cache.get_dialog = AsyncMock(return_value=None)
     db.repos.channels.get_preferred_phone = AsyncMock(return_value=None)
     db.repos.channels.update_channel_preferred_phone = AsyncMock()
+    db.repos.channels.clear_preferred_phone_if_matches = AsyncMock()
     db.repos.channels.update_channel_created_at = AsyncMock()
     db.set_channel_type = AsyncMock()
     return db
@@ -931,9 +932,13 @@ async def test_fetch_channel_meta_clears_stale_preferred_on_channel_private(pool
 
     assert result is None
     assert pool.get_phone_for_channel(123) is None
-    mock_db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(
-        123, None
+    # forget_channel_phone(only_if_phone="+7001") now clears via the atomic
+    # conditional UPDATE (compare-and-clear at the DB), not SELECT+unconditional
+    # UPDATE — so no valid concurrently-installed owner can be clobbered (#1245).
+    mock_db.repos.channels.clear_preferred_phone_if_matches.assert_awaited_once_with(
+        123, "+7001"
     )
+    mock_db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -978,9 +983,11 @@ async def test_fetch_channel_meta_clears_stale_preferred_on_unresolved(pool, moc
 
     assert result is None
     assert pool.get_phone_for_channel(123) is None
-    mock_db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(
-        123, None
+    # Atomic compare-and-clear against the failed owner "+7001" (#1245).
+    mock_db.repos.channels.clear_preferred_phone_if_matches.assert_awaited_once_with(
+        123, "+7001"
     )
+    mock_db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -2817,15 +2824,24 @@ async def test_collect_channel_private_group_invalidates_bad_phone():
     db.get_channel_stats = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
     db.set_channel_active = AsyncMock()
+    db.repos.channels.clear_preferred_phone_if_matches = AsyncMock()
     db.repos.channels.update_channel_preferred_phone = AsyncMock()
+    # forget_channel_phone (the real error-recovery helper the collect path now
+    # uses for the TOCTOU-safe clear) runs against pool._db.
+    pool._db = db
 
     collector = Collector(pool, db, SchedulerConfig())
-    # This should try the phone, fail, clear it, try to discover, and skip without a traceback.
+    # This should try the phone, fail, clear it via the TOCTOU-safe
+    # forget_channel_phone, try to discover, and skip without a traceback.
     result = await collector._collect_channel(channel)
 
     assert result == 0
+    # The stale mapping is cleared through forget_channel_phone(only_if_phone="+7001"):
+    # the in-memory map is dropped and the DB row is cleared via the ATOMIC
+    # compare-and-clear (conditional UPDATE ... WHERE preferred_phone="+7001"),
+    # not a SELECT+unconditional-UPDATE. Then the dead channel is deactivated.
     pool.clear_channel_phone.assert_called_once_with(123)
-    db.repos.channels.update_channel_preferred_phone.assert_called_once_with(123, None)
+    db.repos.channels.clear_preferred_phone_if_matches.assert_awaited_once_with(123, "+7001")
     db.set_channel_active.assert_awaited_once_with(7, False)
 
 
@@ -2849,22 +2865,29 @@ async def test_collect_channel_logs_when_clearing_preferred_phone_fails(caplog):
     db.get_channel_stats = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
     db.set_channel_active = AsyncMock()
-    db.repos.channels.update_channel_preferred_phone = AsyncMock(
+    # The atomic compare-and-clear is what now fails; #676 still requires the
+    # failure to surface at WARNING.
+    db.repos.channels.clear_preferred_phone_if_matches = AsyncMock(
         side_effect=RuntimeError("db locked")
     )
+    pool._db = db  # forget_channel_phone (the TOCTOU-safe clear) runs against pool._db
 
     collector = Collector(pool, db, SchedulerConfig())
-    with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
+    # The TOCTOU-safe clear now lives in forget_channel_phone; its DB write failure
+    # must still be VISIBLE at WARNING (not silently swallowed at DEBUG) or #676
+    # regresses. Assert the warning surfaces from the forget_channel_phone source.
+    with caplog.at_level(logging.WARNING, logger="src.telegram.pool_dialogs"):
         result = await collector._collect_channel(channel)
 
     # Collection still degrades gracefully (no crash, channel deactivated)...
     assert result == 0
     db.set_channel_active.assert_awaited_once_with(7, False)
-    # ...and the swallowed DB write is now visible in the logs.
+    # ...and the swallowed DB write is now visible at WARNING (invariant #676).
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert any(
         "failed to clear stale preferred_phone" in rec.message and "123" in rec.message
-        for rec in caplog.records
-    )
+        for rec in warnings
+    ), "DB clear failure must stay visible at WARNING (#676), not drop to DEBUG"
 
 
 @pytest.mark.anyio
@@ -2876,10 +2899,16 @@ async def test_collect_channel_logs_when_persisting_rediscovered_phone_fails(cap
     client.get_entity = AsyncMock(side_effect=ValueError("not found"))
 
     pool = make_mock_pool(
-        get_available_client=AsyncMock(return_value=(client, "+7001")),
+        # Second iteration: the preferred phone is unavailable AND no other
+        # account is free either, so the picker's #1245 fallback to
+        # get_available_client() also yields nothing — the loop then legitimately
+        # raises NoActiveCollectionClientsError. (When a fallback account *is*
+        # free, #1245 rotates to it instead of raising; that branch is covered by
+        # test_acquire_falls_back_when_preferred_phone_unavailable.)
+        get_available_client=AsyncMock(return_value=None),
         get_client_by_phone=AsyncMock(side_effect=[
             (client, "+7001"),  # initial resolve attempt on the preferred phone
-            None,  # second iteration after the rediscovery `continue` -> stop the loop
+            None,  # second iteration: preferred phone unavailable -> #1245 fallback
         ]),
     )
     pool.get_phone_for_channel = MagicMock(return_value="+7001")
@@ -2899,8 +2928,10 @@ async def test_collect_channel_logs_when_persisting_rediscovered_phone_fails(cap
     collector = Collector(pool, db, SchedulerConfig())
     with patch.object(collector, "_discover_phone_for_channel", AsyncMock(return_value="+7002")):
         with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
-            # The rediscovery `continue` retries; with no further client the loop ultimately
-            # raises. We only care that the persist failure was logged before that.
+            # Iteration 1 rediscovers +7002 (logging the failed persist), then
+            # `continue`. Iteration 2 finds the preferred phone unavailable and the
+            # #1245 fallback empty, so the loop ultimately raises. We only care that
+            # the persist failure was logged before that.
             with pytest.raises(NoActiveCollectionClientsError):
                 await collector._collect_channel(channel)
 
@@ -2913,6 +2944,163 @@ async def test_collect_channel_logs_when_persisting_rediscovered_phone_fails(cap
         and "+7002" in rec.message
         for rec in caplog.records
     )
+
+
+@pytest.mark.anyio
+async def test_transient_owner_flood_does_not_deactivate_private_channel(caplog):
+    """#1245 regression (cycle-review BLOCK): a private single-owner channel whose
+    only member account is transiently flood-waited must NOT be deactivated, and
+    its preferred_phone must NOT be cleared, just because the #1245 fallback routed
+    the numeric resolve to a non-member account.
+
+    Scenario (empirically the data-loss path the review flagged):
+      1. Private channel (no username), preferred_phone="+7001" — the sole member.
+      2. "+7001" is transiently flooded → get_client_by_phone("+7001") returns None.
+      3. #1245 falls back to get_available_client() → "+7002", a NON-member.
+      4. Numeric PeerChannel resolve on "+7002" raises ValueError (not a member).
+
+    Pre-Fix-B, step 4 was read as "stale preferred" → clear preferred_phone +
+    set_channel_active(False): a temporary owner flood turned into permanent
+    data loss. Fix B guards clear/deactivate on "resolve ran on the channel's OWN
+    preferred phone" — a miss on a fallback account keeps the channel active and
+    its preferred_phone intact, skipping just this pass.
+    """
+    channel = Channel(id=42, channel_id=555, title="Owner Flooded", preferred_phone="+7001")
+    fallback_client = AsyncMock()
+    # Non-member fallback account cannot resolve the numeric PeerChannel.
+    fallback_client.get_entity = AsyncMock(side_effect=ValueError("not found"))
+
+    pool = make_mock_pool(
+        # Owner "+7001" is transiently flooded → None; #1245 fallback picks "+7002".
+        get_client_by_phone=AsyncMock(return_value=None),
+        get_available_client=AsyncMock(return_value=(fallback_client, "+7002")),
+    )
+    # preferred_phone lives on the channel row; the in-memory map is empty.
+    pool.get_phone_for_channel = MagicMock(return_value=None)
+    pool.clear_channel_phone = MagicMock()
+    pool.register_channel_phone = MagicMock()
+    pool.connected_phones = MagicMock(return_value={"+7001", "+7002"})
+
+    db = MagicMock()
+    db.get_channel_by_channel_id = AsyncMock(return_value=channel)
+    db.get_channel_stats = AsyncMock(return_value=[])
+    db.get_setting = AsyncMock(return_value=None)
+    db.set_channel_active = AsyncMock()
+    db.repos.channels.update_channel_preferred_phone = AsyncMock()
+
+    collector = Collector(pool, db, SchedulerConfig())
+    with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
+        result = await collector._collect_channel(channel)
+
+    # This pass collects nothing (owner flooded), but the channel survives intact.
+    assert result == 0
+    # The live channel must NOT be deactivated by a fallback-account miss.
+    db.set_channel_active.assert_not_awaited()
+    # preferred_phone must be preserved, not cleared, in both pool and DB.
+    pool.clear_channel_phone.assert_not_called()
+    db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
+    # No rediscovery is attempted off a non-member miss (would rewrite preferred).
+    pool.register_channel_phone.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_kicked_owner_account_still_deactivates_when_no_rediscovery(caplog):
+    """Fix B companion: the legitimate deactivation path must survive.
+
+    When the numeric resolve fails ON THE CHANNEL'S OWN preferred phone (the
+    account was really kicked / the channel is gone) and no other connected
+    account can resolve it either, the channel must STILL be deactivated. Fix B
+    only suppresses clear/deactivate for a miss on a *fallback* account
+    (phone != preferred); a miss on the preferred phone itself is genuine and
+    must flow through to set_channel_active(False).
+
+    Guards Fix B from over-reaching: a mutation making the guard fire on
+    phone == preferred would silently keep dead channels active — this test
+    catches that by asserting the deactivation still happens.
+    """
+    channel = Channel(id=99, channel_id=777, title="Kicked", preferred_phone="+7001")
+    client = AsyncMock()
+    # Resolve on the OWN preferred account fails → genuine "account kicked / gone".
+    client.get_entity = AsyncMock(side_effect=ValueError("not found"))
+
+    pool = make_mock_pool(
+        # The preferred phone IS available; the resolve on it is what fails.
+        get_client_by_phone=AsyncMock(return_value=(client, "+7001")),
+        get_available_client=AsyncMock(return_value=(client, "+7001")),
+    )
+    pool.get_phone_for_channel = MagicMock(return_value=None)
+    pool.clear_channel_phone = MagicMock()
+    pool.register_channel_phone = MagicMock()
+    pool.connected_phones = MagicMock(return_value={"+7001"})
+
+    db = MagicMock()
+    db.get_channel_by_channel_id = AsyncMock(return_value=channel)
+    db.get_channel_stats = AsyncMock(return_value=[])
+    db.get_setting = AsyncMock(return_value=None)
+    db.set_channel_active = AsyncMock()
+    db.repos.channels.update_channel_preferred_phone = AsyncMock()
+
+    collector = Collector(pool, db, SchedulerConfig())
+    # No other account can resolve it → rediscovery finds nothing → deactivate.
+    with patch.object(collector, "_discover_phone_for_channel", AsyncMock(return_value=None)):
+        with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
+            result = await collector._collect_channel(channel)
+
+    assert result == 0
+    # A genuine miss on the OWN preferred phone still deactivates the dead channel.
+    db.set_channel_active.assert_awaited_once_with(99, False)
+
+
+@pytest.mark.anyio
+async def test_dead_preferred_owner_deactivates_not_sticks_active(caplog):
+    """#1245 dual-review round 2: a DEAD preferred owner must NOT stick the channel
+    forever active-but-uncollectable — it must deactivate (liveness).
+
+    Fix B's guard skips (keeps preferred + active) when a #1245 fallback-account
+    resolve misses, so a transiently-unavailable owner recovers. But if the
+    preferred owner account was REMOVED/deactivated (not merely flooded), skipping
+    forever would leave the channel active yet never collectable, and each pass
+    writes a 0-count COMPLETED — a liveness regression vs pre-#1245. The guard must
+    distinguish "owner alive but unavailable" (skip) from "owner dead" (fall
+    through to rediscovery + deactivation). "Dead" = the owner is no longer a
+    live/usable account, i.e. _lease_pool.get_account(active_only=True) is None.
+
+    Scenario: preferred "+7001" is a removed account (get_account → None); the
+    #1245 fallback lands on non-member "+7002" whose numeric resolve raises
+    ValueError; no other account can rediscover → the channel is deactivated.
+    """
+    channel = Channel(id=88, channel_id=999, title="Dead Owner", preferred_phone="+7001")
+    fallback_client = AsyncMock()
+    fallback_client.get_entity = AsyncMock(side_effect=ValueError("not found"))
+
+    pool = make_mock_pool(
+        get_client_by_phone=AsyncMock(return_value=None),  # preferred gone
+        get_available_client=AsyncMock(return_value=(fallback_client, "+7002")),
+    )
+    pool.get_phone_for_channel = MagicMock(return_value=None)
+    pool.clear_channel_phone = MagicMock()
+    pool.connected_phones = MagicMock(return_value={"+7002"})
+    # The preferred owner "+7001" is NO LONGER a live account (removed/deactivated).
+    pool._lease_pool.get_account = AsyncMock(return_value=None)
+
+    db = MagicMock()
+    db.get_channel_by_channel_id = AsyncMock(return_value=channel)
+    db.get_channel_stats = AsyncMock(return_value=[])
+    db.get_setting = AsyncMock(return_value=None)
+    db.set_channel_active = AsyncMock()
+    db.repos.channels.get_preferred_phone = AsyncMock(return_value="+7001")
+    db.repos.channels.update_channel_preferred_phone = AsyncMock()
+    pool._db = db
+
+    collector = Collector(pool, db, SchedulerConfig())
+    # No live account can rediscover the dead-owner channel → deactivate.
+    with patch.object(collector, "_discover_phone_for_channel", AsyncMock(return_value=None)):
+        with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
+            result = await collector._collect_channel(channel)
+
+    assert result == 0
+    # Dead owner → the channel is deactivated, not left active-but-uncollectable.
+    db.set_channel_active.assert_awaited_once_with(88, False)
 
 
 @pytest.mark.anyio

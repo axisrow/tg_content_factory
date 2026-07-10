@@ -253,12 +253,24 @@ class DialogsMixin:
         self.clear_channel_phone(channel_id)
         try:
             if only_if_phone is not None:
-                existing = await self._db.repos.channels.get_preferred_phone(channel_id)
-                if existing and existing != only_if_phone:
-                    return
-            await self._db.repos.channels.update_channel_preferred_phone(channel_id, None)
+                # Atomic compare-and-clear (single conditional UPDATE, no SELECT):
+                # a concurrent task that persisted a new valid owner between a
+                # read and the write is not clobbered to NULL (#1245 dual-review).
+                await self._db.repos.channels.clear_preferred_phone_if_matches(
+                    channel_id, only_if_phone
+                )
+            else:
+                await self._db.repos.channels.update_channel_preferred_phone(
+                    channel_id, None
+                )
         except Exception:
-            logger.debug(
+            # A failed DB clear of a stale preferred_phone must stay visible at
+            # WARNING, not DEBUG: this is the single point that clears the mirror
+            # during error recovery, and silently swallowing the write failure
+            # would hide a channel pinned to a dead account (#676). The write
+            # failure itself is rare (DB locked/error), so WARNING does not add
+            # routine noise to the other recovery callers.
+            logger.warning(
                 "forget_channel_phone: failed to clear stale preferred_phone "
                 "for channel %d",
                 channel_id,

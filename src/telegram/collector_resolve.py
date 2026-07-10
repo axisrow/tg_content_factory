@@ -211,23 +211,73 @@ async def _resolve_by_numeric(
             flood_wait_operation=exc.info.operation,
         )
     except ValueError:
+        # A numeric-PeerChannel miss means "this account cannot resolve the
+        # channel" — NOT "the channel is gone". It only justifies invalidating
+        # the stored preferred_phone / deactivating the channel when the resolve
+        # ran on the channel's OWN preferred account. When #1245's fallback
+        # routed us to an arbitrary non-member account (because the real owner
+        # was transiently flood-waited), a miss is expected and must not clear
+        # preferred_phone or deactivate a live channel — that would turn a
+        # temporary owner flood into permanent data loss (pool_dialogs.py:516
+        # documents the same "miss on an arbitrary account proves nothing").
+        own_preferred = channel.preferred_phone or collector._pool.get_phone_for_channel(
+            channel_id
+        )
+        # A miss on a #1245 FALLBACK account (phone != own preferred) only means
+        # "this arbitrary account is not a member" — it proves nothing about the
+        # channel. Skip this pass WITHOUT clearing preferred_phone or
+        # deactivating ONLY while the owner account is still alive, so a
+        # transiently-unavailable owner (flooded, in-use, or briefly
+        # disconnected) recovers on a later pass. "Still alive" = the owner is a
+        # live/usable account in the DB (get_account(active_only=True) is not
+        # None — this already covers the flood case, since a flood-waited account
+        # stays active). A DEAD owner (deleted/deactivated → get_account None)
+        # falls through to rediscovery + deactivation below, so a channel whose
+        # sole owner account was removed no longer sticks forever active-but-
+        # uncollectable (liveness regression Fix B first introduced, dual-review).
+        if own_preferred is not None and phone != own_preferred:
+            owner_account = await collector._pool._lease_pool.get_account(
+                own_preferred, active_only=True
+            )
+            if owner_account is not None:
+                logger.warning(
+                    "Channel %d: numeric resolve failed on fallback account %s "
+                    "(owner %s alive but currently unavailable — flood/in-use/"
+                    "disconnected); keeping preferred_phone and channel active, "
+                    "skipping this pass",
+                    channel_id,
+                    mask_phone(phone),
+                    mask_phone(own_preferred),
+                )
+                return ResolveOutcome(action="stop", channel=channel)
+            logger.warning(
+                "Channel %d: preferred owner %s is no longer a live account "
+                "(removed/deactivated); proceeding to rediscovery/deactivation",
+                channel_id,
+                mask_phone(own_preferred),
+            )
         # preferred_phone turned out to be wrong (account was kicked, or channel
         # added before warming finished). Invalidate and rediscover.
-        if channel.preferred_phone or collector._pool.get_phone_for_channel(channel_id):
+        #
+        # Clear against own_preferred — the phone observed at the TOP of this
+        # except block, BEFORE the `await get_account` liveness lookup. Do NOT
+        # re-read the mapping here: a concurrent task may have persisted a new
+        # valid owner during that await, and a re-read would then hand that fresh
+        # owner to forget_channel_phone as if it were the stale one. Passing the
+        # originally-observed phone (plus the atomic conditional UPDATE in
+        # clear_preferred_phone_if_matches) guarantees we only clear the account
+        # that actually failed, never a concurrently-installed replacement
+        # (#1245 dual-review).
+        if own_preferred is not None:
             channel = channel.model_copy(update={"preferred_phone": None})
-            collector._pool.clear_channel_phone(channel_id)
-            try:
-                await collector._db.repos.channels.update_channel_preferred_phone(
-                    channel_id, None
-                )
-            except Exception:
-                # Pool is already cleared; a stale DB value just causes the same
-                # rediscovery next restart. Log so the loop is visible.
-                logger.warning(
-                    "Channel %d: failed to clear stale preferred_phone in DB",
-                    channel_id,
-                    exc_info=True,
-                )
+            # TOCTOU-safe clear: forget_channel_phone drops the in-memory map
+            # unconditionally but only NULLs the DB preferred_phone when it still
+            # matches the account that just failed (only_if_phone). A concurrent
+            # writer that has meanwhile persisted a NEW valid owner must not be
+            # clobbered by this stale error-recovery task (pool_dialogs.py:239).
+            await collector._pool.forget_channel_phone(
+                channel_id, only_if_phone=own_preferred
+            )
         found = await collector._discover_phone_for_channel(channel_id, exclude=phone)
         if found is not None:
             collector._pool.register_channel_phone(channel_id, found)

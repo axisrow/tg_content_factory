@@ -394,6 +394,15 @@ class CollectionMixin:
                 preferred = self._pool.get_phone_for_channel(channel_id)
             if preferred:
                 result = await self._pool.get_client_by_phone(preferred)
+                if result is None:
+                    # The preferred phone alone is unavailable (flood-waited,
+                    # in-use, or gone) — rotate to any other available account
+                    # rather than treating this as a global "no clients" outage.
+                    # Raising here would surface NoActiveCollectionClientsError,
+                    # which drains the entire in-memory collection queue in
+                    # collection_queue.py — one busy preferred phone must not
+                    # wipe every other channel's pending task (#1245).
+                    result = await self._pool.get_available_client()
             else:
                 result = await self._pool.get_available_client()
         elif attempted_resolve_phones:
