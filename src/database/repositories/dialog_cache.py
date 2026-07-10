@@ -120,14 +120,6 @@ class DialogCacheRepository:
         )
         await self._database.execute_write("DELETE FROM dialog_cache WHERE phone = ?", (phone,))
 
-    async def has_dialogs(self, phone: str) -> bool:
-        """True, если для аккаунта есть хотя бы один кэшированный диалог."""
-        cur = await self._db.execute(
-            "SELECT 1 FROM dialog_cache WHERE phone = ? LIMIT 1",
-            (phone,),
-        )
-        return bool(await cur.fetchone())
-
     async def get_cached_at(self, phone: str) -> datetime | None:
         """Время самого свежего кэшированного диалога аккаунта (для оценки устаревания)."""
         cur = await self._db.execute(
