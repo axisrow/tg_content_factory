@@ -6,6 +6,7 @@ import signal
 from dataclasses import asdict
 from datetime import datetime, timezone
 from inspect import isawaitable
+from typing import Any
 
 from src.config import AppConfig
 from src.database import DatabaseBusyError
@@ -251,7 +252,7 @@ async def _publish_collection_queue_status_snapshot(container, now: datetime) ->
 
 async def _notification_target_status_payload(container, stop_event: asyncio.Event | None) -> dict:
     target_status = await container.notification_target_service.describe_target()
-    bot_payload = {"configured": False}
+    bot_payload: dict[str, Any] = {"configured": False}
     if target_status.state == "available":
         try:
             bot = await NotificationService(

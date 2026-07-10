@@ -268,7 +268,9 @@ def connected_phones_from_pool(client_pool: object | None) -> set[str]:
     if isinstance(instance_attrs, dict) and "connected_phones" in instance_attrs:
         connected_phones = instance_attrs["connected_phones"]
     elif callable(getattr(type(client_pool), "connected_phones", None)):
-        connected_phones = client_pool.connected_phones
+        # type(client_pool).connected_phones is callable (a property/method); access it,
+        # giving mypy a typed handle without weakening the duck-typed signature.
+        connected_phones = cast(Any, client_pool).connected_phones
 
     if callable(connected_phones):
         try:
@@ -279,7 +281,7 @@ def connected_phones_from_pool(client_pool: object | None) -> set[str]:
             return {str(phone) for phone in phones}
 
     try:
-        clients = client_pool.clients
+        clients = getattr(client_pool, "clients", {})
     except Exception:
         clients = {}
     if isinstance(clients, dict):
@@ -330,7 +332,7 @@ def _pool_reports_connections(client_pool: object | None) -> bool:
     if callable(getattr(type(client_pool), "connected_phones", None)):
         return True
     try:
-        return isinstance(client_pool.clients, dict)
+        return isinstance(getattr(client_pool, "clients", None), dict)
     except Exception:
         return False
 
