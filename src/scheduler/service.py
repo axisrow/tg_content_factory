@@ -549,8 +549,8 @@ class SchedulerManager:
                 logger.exception("Error fetching search queries for potential jobs")
         if self._pipeline_bundle:
             try:
-                all_active = await self._pipeline_bundle.get_all(active_only=True)
-                for p in all_active:
+                active_pipelines = await self._pipeline_bundle.get_all(active_only=True)
+                for p in active_pipelines:
                     if p.id is not None and p.is_active:
                         # Only content_generate_ is a periodic job now (#835/2). Do NOT advertise
                         # pipeline_run_ as a togglable potential job: sync_pipeline_jobs always

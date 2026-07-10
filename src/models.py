@@ -667,12 +667,14 @@ class PipelineGraph(BaseModel):
         )
 
     @classmethod
-    def from_json(cls, data: str | dict) -> "PipelineGraph":
+    def from_json(cls, data: str | dict[str, Any]) -> "PipelineGraph":
         """Собрать граф из JSON-строки или уже разобранного dict (валидирует узлы
         и рёбра через их модели)."""
         import json
         if isinstance(data, str):
             data = json.loads(data)
+        # json.loads returns Any; the str branch is gone, so narrow to the parsed dict.
+        assert isinstance(data, dict)
         nodes = [PipelineNode.model_validate(n) for n in data.get("nodes", [])]
         edges = [PipelineEdge.model_validate(e) for e in data.get("edges", [])]
         return cls(nodes=nodes, edges=edges)

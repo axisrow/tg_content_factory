@@ -191,7 +191,7 @@ class AppConfig(BaseModel):
     web: WebConfig = WebConfig()
     scheduler: SchedulerConfig = SchedulerConfig()
     notifications: NotificationsConfig = NotificationsConfig()
-    database: DatabaseConfig = DatabaseConfig()
+    database: DatabaseConfig = DatabaseConfig()  # type: ignore[call-arg]  # Field(gt=0) defaults are mis-seen as required
     llm: LLMConfig = LLMConfig()
     agent: AgentConfig = AgentConfig()
     security: SecurityConfig = SecurityConfig()
