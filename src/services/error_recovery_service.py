@@ -144,12 +144,20 @@ class CircuitBreaker:
             return True, self._state.state
 
     async def record_success(self) -> None:
-        """Record a successful execution."""
+        """Record a successful execution.
+
+        In the closed state a success resets ``failure_count`` so the breaker
+        counts CONSECUTIVE failures, not cumulative ones — transient errors
+        that are each recovered by a retry must never add up to the threshold
+        over the breaker's lifetime (issue #1251).
+        """
         async with self._lock:
             if self._state.state == "half_open":
                 self._state.failure_count = 0
                 self._state.half_open_calls = 0
                 self._state.state = "closed"
+            elif self._state.state == "closed":
+                self._state.failure_count = 0
 
     async def record_failure(self) -> None:
         """Record a failed execution."""
