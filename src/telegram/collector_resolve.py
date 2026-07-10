@@ -258,10 +258,17 @@ async def _resolve_by_numeric(
             )
         # preferred_phone turned out to be wrong (account was kicked, or channel
         # added before warming finished). Invalidate and rediscover.
-        stale_preferred = channel.preferred_phone or collector._pool.get_phone_for_channel(
-            channel_id
-        )
-        if stale_preferred is not None:
+        #
+        # Clear against own_preferred — the phone observed at the TOP of this
+        # except block, BEFORE the `await get_account` liveness lookup. Do NOT
+        # re-read the mapping here: a concurrent task may have persisted a new
+        # valid owner during that await, and a re-read would then hand that fresh
+        # owner to forget_channel_phone as if it were the stale one. Passing the
+        # originally-observed phone (plus the atomic conditional UPDATE in
+        # clear_preferred_phone_if_matches) guarantees we only clear the account
+        # that actually failed, never a concurrently-installed replacement
+        # (#1245 dual-review).
+        if own_preferred is not None:
             channel = channel.model_copy(update={"preferred_phone": None})
             # TOCTOU-safe clear: forget_channel_phone drops the in-memory map
             # unconditionally but only NULLs the DB preferred_phone when it still
@@ -269,7 +276,7 @@ async def _resolve_by_numeric(
             # writer that has meanwhile persisted a NEW valid owner must not be
             # clobbered by this stale error-recovery task (pool_dialogs.py:239).
             await collector._pool.forget_channel_phone(
-                channel_id, only_if_phone=stale_preferred
+                channel_id, only_if_phone=own_preferred
             )
         found = await collector._discover_phone_for_channel(channel_id, exclude=phone)
         if found is not None:

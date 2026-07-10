@@ -77,6 +77,7 @@ def mock_db():
     db.repos.dialog_cache.get_dialog = AsyncMock(return_value=None)
     db.repos.channels.get_preferred_phone = AsyncMock(return_value=None)
     db.repos.channels.update_channel_preferred_phone = AsyncMock()
+    db.repos.channels.clear_preferred_phone_if_matches = AsyncMock()
     db.repos.channels.update_channel_created_at = AsyncMock()
     db.set_channel_type = AsyncMock()
     return db
@@ -931,9 +932,13 @@ async def test_fetch_channel_meta_clears_stale_preferred_on_channel_private(pool
 
     assert result is None
     assert pool.get_phone_for_channel(123) is None
-    mock_db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(
-        123, None
+    # forget_channel_phone(only_if_phone="+7001") now clears via the atomic
+    # conditional UPDATE (compare-and-clear at the DB), not SELECT+unconditional
+    # UPDATE — so no valid concurrently-installed owner can be clobbered (#1245).
+    mock_db.repos.channels.clear_preferred_phone_if_matches.assert_awaited_once_with(
+        123, "+7001"
     )
+    mock_db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -978,9 +983,11 @@ async def test_fetch_channel_meta_clears_stale_preferred_on_unresolved(pool, moc
 
     assert result is None
     assert pool.get_phone_for_channel(123) is None
-    mock_db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(
-        123, None
+    # Atomic compare-and-clear against the failed owner "+7001" (#1245).
+    mock_db.repos.channels.clear_preferred_phone_if_matches.assert_awaited_once_with(
+        123, "+7001"
     )
+    mock_db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
 
 
 @pytest.mark.anyio
@@ -2817,7 +2824,7 @@ async def test_collect_channel_private_group_invalidates_bad_phone():
     db.get_channel_stats = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
     db.set_channel_active = AsyncMock()
-    db.repos.channels.get_preferred_phone = AsyncMock(return_value="+7001")
+    db.repos.channels.clear_preferred_phone_if_matches = AsyncMock()
     db.repos.channels.update_channel_preferred_phone = AsyncMock()
     # forget_channel_phone (the real error-recovery helper the collect path now
     # uses for the TOCTOU-safe clear) runs against pool._db.
@@ -2829,11 +2836,12 @@ async def test_collect_channel_private_group_invalidates_bad_phone():
     result = await collector._collect_channel(channel)
 
     assert result == 0
-    # The stale mapping is cleared through forget_channel_phone(only_if_phone=…):
-    # the in-memory map is dropped and, because the DB row still matches "+7001",
-    # the preferred_phone is NULLed. Then the dead channel is deactivated.
+    # The stale mapping is cleared through forget_channel_phone(only_if_phone="+7001"):
+    # the in-memory map is dropped and the DB row is cleared via the ATOMIC
+    # compare-and-clear (conditional UPDATE ... WHERE preferred_phone="+7001"),
+    # not a SELECT+unconditional-UPDATE. Then the dead channel is deactivated.
     pool.clear_channel_phone.assert_called_once_with(123)
-    db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(123, None)
+    db.repos.channels.clear_preferred_phone_if_matches.assert_awaited_once_with(123, "+7001")
     db.set_channel_active.assert_awaited_once_with(7, False)
 
 
@@ -2857,8 +2865,9 @@ async def test_collect_channel_logs_when_clearing_preferred_phone_fails(caplog):
     db.get_channel_stats = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
     db.set_channel_active = AsyncMock()
-    db.repos.channels.get_preferred_phone = AsyncMock(return_value="+7001")
-    db.repos.channels.update_channel_preferred_phone = AsyncMock(
+    # The atomic compare-and-clear is what now fails; #676 still requires the
+    # failure to surface at WARNING.
+    db.repos.channels.clear_preferred_phone_if_matches = AsyncMock(
         side_effect=RuntimeError("db locked")
     )
     pool._db = db  # forget_channel_phone (the TOCTOU-safe clear) runs against pool._db

@@ -445,6 +445,28 @@ class ChannelsRepository:
         row = await cur.fetchone()
         return row["preferred_phone"] if row else None
 
+    async def clear_preferred_phone_if_matches(
+        self, channel_id: int, expected_phone: str
+    ) -> None:
+        """Atomically clear preferred_phone only if it still equals ``expected_phone``.
+
+        A single conditional ``UPDATE ... WHERE preferred_phone = ?`` — no SELECT.
+        The read-then-write form (SELECT current, compare in Python, unconditional
+        UPDATE) has a TOCTOU window: a concurrent task that persisted a NEW valid
+        owner between the SELECT and the UPDATE would be clobbered to NULL. The
+        conditional WHERE makes the compare-and-clear atomic at the DB, so a
+        stale error-recovery task only NULLs the row while it still points at the
+        account that just failed (#1245 dual-review).
+        """
+        assert self._database is not None, (
+            "ChannelsRepository.clear_preferred_phone_if_matches requires a Database reference"
+        )
+        await self._database.execute_write(
+            "UPDATE channels SET preferred_phone = NULL "
+            "WHERE channel_id = ? AND preferred_phone = ?",
+            (channel_id, expected_phone),
+        )
+
     async def update_channel_created_at(self, channel_id: int, created_at) -> None:
         """Set created_at only if currently NULL (backfill from entity.date)."""
         assert self._database is not None, (
