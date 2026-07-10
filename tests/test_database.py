@@ -216,6 +216,106 @@ async def test_agent_message_write_raises_database_busy_after_retries(db, monkey
     assert await db.get_agent_messages(thread_id) == []
 
 
+# --- характеризующие тесты _with_busy_retry (#1132: ручной цикл → tenacity) ---
+# Фиксируют точный контракт retry до/после замены реализации: лестницу задержек,
+# число попыток, сквозной проброс не-busy ошибок и цепочку исключений.
+
+
+@pytest.mark.anyio
+async def test_busy_retry_sleeps_exact_configured_ladder(db, monkeypatch):
+    """При исчерпании попыток спим ровно _busy_retry_delays_sec, по порядку.
+
+    Никакой экспоненты/джиттера: лестница фиксированная, попыток len(delays)+1.
+    """
+    calls = 0
+
+    async def always_locked():
+        nonlocal calls
+        calls += 1
+        raise sqlite3.OperationalError("database is locked")
+
+    slept: list[float] = []
+
+    async def fake_sleep(delay):
+        slept.append(delay)
+
+    db._busy_retry_delays_sec = (0.05, 0.2, 0.7)
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    with pytest.raises(DatabaseBusyError, match="Database is busy"):
+        await db._with_busy_retry("test op", always_locked)
+
+    assert calls == 4
+    assert slept == [0.05, 0.2, 0.7]
+
+
+@pytest.mark.anyio
+async def test_busy_retry_returns_action_result_after_transient_busy(db, monkeypatch):
+    """Успех после transient-busy: результат action возвращается, спали ровно delays[0]."""
+    sentinel = object()
+    calls = 0
+
+    async def flaky():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise sqlite3.OperationalError("database table is locked")
+        return sentinel
+
+    slept: list[float] = []
+
+    async def fake_sleep(delay):
+        slept.append(delay)
+
+    db._busy_retry_delays_sec = (0.05, 0.2)
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    assert await db._with_busy_retry("test op", flaky) is sentinel
+    assert calls == 2
+    assert slept == [0.05]
+
+
+@pytest.mark.anyio
+async def test_busy_retry_reraises_non_busy_operational_error_immediately(db, monkeypatch):
+    """Не-busy OperationalError пробрасывается сразу: без повторов и без sleep."""
+    calls = 0
+
+    async def broken():
+        nonlocal calls
+        calls += 1
+        raise sqlite3.OperationalError("no such table: nope")
+
+    async def fail_sleep(delay):  # pragma: no cover - защита от ложного retry
+        raise AssertionError("non-busy error must not be retried")
+
+    monkeypatch.setattr("asyncio.sleep", fail_sleep)
+
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        await db._with_busy_retry("test op", broken)
+
+    assert calls == 1
+
+
+@pytest.mark.anyio
+async def test_busy_retry_chains_last_busy_error_as_cause(db, monkeypatch):
+    """DatabaseBusyError связан цепочкой (__cause__) с последней busy-ошибкой."""
+    last_error = sqlite3.OperationalError("database is locked")
+
+    async def always_locked():
+        raise last_error
+
+    async def fake_sleep(delay):
+        return None
+
+    db._busy_retry_delays_sec = (0,)
+    monkeypatch.setattr("asyncio.sleep", fake_sleep)
+
+    with pytest.raises(DatabaseBusyError) as exc_info:
+        await db._with_busy_retry("test op", always_locked)
+
+    assert exc_info.value.__cause__ is last_error
+
+
 @pytest.mark.anyio
 async def test_account_session_encrypted_at_rest(tmp_path):
     db_path = str(tmp_path / "encrypted.db")

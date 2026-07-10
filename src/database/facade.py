@@ -9,6 +9,8 @@ from datetime import datetime
 from typing import Any
 
 import aiosqlite
+from tenacity import AsyncRetrying, RetryCallState, RetryError, retry_if_exception, stop_after_attempt
+from tenacity.wait import wait_chain, wait_fixed
 
 from src.database.bundles import DatabaseRepositories
 from src.database.connection import ConnectionTuning, DBConnection
@@ -68,6 +70,26 @@ class DatabaseBusyError(RuntimeError):
 def _is_sqlite_busy_error(exc: BaseException) -> bool:
     message = str(exc).lower()
     return any(part in message for part in _SQLITE_BUSY_MESSAGES)
+
+
+def _is_retryable_busy_error(exc: BaseException) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and _is_sqlite_busy_error(exc)
+
+
+def _wrap_async(
+    action: Callable[[], Awaitable[aiosqlite.Cursor | None]],
+) -> Callable[[], Awaitable[aiosqlite.Cursor | None]]:
+    """Обернуть action в async-fn для tenacity.AsyncRetrying.
+
+    tenacity await'ит результат ``fn()``, но ``action`` — синхронный ``Callable``,
+    возвращающий coroutine; без обёртки coroutine остался бы не-await'нутым и ни
+    одна DDL/DML внутри не выполнилась бы (#1132).
+    """
+
+    async def _runner() -> aiosqlite.Cursor | None:
+        return await action()
+
+    return _runner
 
 
 class Database:
@@ -232,33 +254,43 @@ class Database:
         operation: str,
         action: Callable[[], Awaitable[aiosqlite.Cursor | None]],
     ) -> aiosqlite.Cursor | None:
+        # tenacity вместо ручного цикла (#1132); лестница задержек — ровно
+        # self._busy_retry_delays_sec (wait_chain), попыток len(delays)+1.
         delays = self._busy_retry_delays_sec
-        for attempt in range(len(delays) + 1):
-            try:
-                return await action()
-            except sqlite3.OperationalError as exc:
-                if not _is_sqlite_busy_error(exc):
-                    raise
-                if attempt >= len(delays):
-                    logger.warning(
-                        "Database stayed locked during %s after %d attempts",
-                        operation,
-                        attempt + 1,
-                    )
-                    raise DatabaseBusyError(
-                        "Database is busy. Retry the request in a few seconds."
-                    ) from exc
-                delay = delays[attempt]
-                logger.warning(
-                    "Database locked during %s; retrying in %.2fs (%d/%d)",
-                    operation,
-                    delay,
-                    attempt + 1,
-                    len(delays) + 1,
-                )
-                if delay > 0:
-                    await asyncio.sleep(delay)
-        return None
+
+        def _log_retry(retry_state: RetryCallState) -> None:
+            next_action = retry_state.next_action
+            logger.warning(
+                "Database locked during %s; retrying in %.2fs (%d/%d)",
+                operation,
+                next_action.sleep if next_action is not None else 0.0,
+                retry_state.attempt_number,
+                len(delays) + 1,
+            )
+
+        retryer = AsyncRetrying(
+            retry=retry_if_exception(_is_retryable_busy_error),
+            stop=stop_after_attempt(len(delays) + 1),
+            wait=wait_chain(*(wait_fixed(delay) for delay in delays)),
+            sleep=asyncio.sleep,
+            before_sleep=_log_retry,
+        )
+        try:
+            # Оборачиваем action в async-fn: tenacity AsyncRetrying await'ит
+            # результат fn(), а action — это синхронный Callable, возвращающий
+            # coroutine (lambda: begin_immediate(...)). Без обёртки coroutine
+            # остаётся не-await'нутым и BEGIN не выполняется (#1132).
+            return await retryer(_wrap_async(action))
+        except RetryError as retry_error:
+            last_exc = retry_error.last_attempt.exception()
+            logger.warning(
+                "Database stayed locked during %s after %d attempts",
+                operation,
+                len(delays) + 1,
+            )
+            raise DatabaseBusyError(
+                "Database is busy. Retry the request in a few seconds."
+            ) from last_exc
 
     @asynccontextmanager
     async def transaction(self) -> AsyncIterator[aiosqlite.Connection]:
