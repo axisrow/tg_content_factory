@@ -79,3 +79,4 @@ docs/superpowers/
 
 # Agent Orchestrator runtime artifacts (per-session, not versioned)
 .ao/
+.ao-scratchpad/
