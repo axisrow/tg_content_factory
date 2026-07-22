@@ -35,6 +35,27 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
     }),
 ]
 
+
+def _build_deletion_service(db):
+    """Build FilterDeletionService with a channel_service wired in.
+
+    hard_delete_channels needs a ChannelService to delete channels; purge does
+    not (it only touches messages via db). ChannelService.delete() works with a
+    null pool/queue (pure DB op), matching the CLI's _build_deletion_service
+    (src/cli/commands/filter.py). Without channel_service the tool always
+    raised RuntimeError (#1290).
+    """
+    from typing import cast
+
+    from src.database.bundles import ChannelBundle
+    from src.services.channel_service import ChannelService
+    from src.services.filter_deletion_service import FilterDeletionService
+    from src.telegram.client_pool import ClientPool
+
+    channel_service = ChannelService(ChannelBundle.from_database(db), cast("ClientPool", None), queue=None)
+    return FilterDeletionService(db, channel_service)
+
+
 def register(db, client_pool, embedding_service, **kwargs):
     tools = []
 
@@ -196,9 +217,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         if gate:
             return gate
         try:
-            from src.services.filter_deletion_service import FilterDeletionService
-
-            svc = FilterDeletionService(db)
+            svc = _build_deletion_service(db)
             pks = [int(x.strip()) for x in pks_str.split(",") if x.strip()]
             result = await svc.hard_delete_channels_by_pks(pks)
             msg = f"Удаление завершено: {result.purged_count} каналов удалено безвозвратно."

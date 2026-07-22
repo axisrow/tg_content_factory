@@ -314,6 +314,25 @@ class TestHardDeleteChannelsTool:
             result = await handlers["hard_delete_channels"]({"pks": "1", "confirm": True})
         assert "Ошибка удаления каналов" in _text(result)
 
+    @pytest.mark.anyio
+    async def test_real_service_path_actually_deletes(self, db):
+        """Regression #1290: the tool built FilterDeletionService without
+        channel_service, so every call raised RuntimeError and was reported as
+        'Ошибка удаления'. Uses the real service/DB — mocking the service (as
+        the tests above do) is exactly what hid the bug."""
+        from src.models import Channel
+
+        pk = await db.add_channel(Channel(channel_id=-1001, title="Doomed"))
+        await db.set_channel_filtered(pk, True)
+
+        handlers = _get_tool_handlers(db)
+        result = await handlers["hard_delete_channels"]({"pks": str(pk), "confirm": True})
+
+        text = _text(result)
+        assert "Ошибка удаления каналов" not in text
+        assert "1 каналов удалено безвозвратно" in text
+        assert await db.get_channel_by_pk(pk) is None
+
 
 class TestPurgeChannelMessagesTool:
     @pytest.mark.anyio
