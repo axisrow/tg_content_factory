@@ -376,6 +376,37 @@ class TestClientPoolProperties:
         assert len(result) == 1  # dm filtered out
 
     @pytest.mark.anyio
+    async def test_get_db_cached_dialogs_survives_naive_cached_at(self, tmp_path):
+        """Regression #1291: schema DEFAULT datetime('now') gives naive cached_at;
+        _get_db_cached_dialogs must not raise TypeError on age subtraction."""
+        from src.database import Database
+        from src.telegram.client_pool import ClientPool
+
+        db = Database(str(tmp_path / "test.db"))
+        await db.initialize()
+        try:
+            # Insert a row that relies on the schema DEFAULT for cached_at → naive.
+            await db.execute_write(
+                """
+                INSERT INTO dialog_cache (phone, dialog_id, title, channel_type)
+                VALUES (?, ?, ?, ?)
+                """,
+                ("+1", 1, "Default cached_at", "channel"),
+            )
+
+            pool = ClientPool.__new__(ClientPool)
+            pool._dialogs_cache = {}
+            pool._dialogs_cache_ttl_sec = 300
+            pool._dialogs_db_cache_ttl_sec = 3600.0
+            pool._db = db
+
+            result = await pool._get_db_cached_dialogs("+1", "full")
+            assert result is not None
+            assert len(result) == 1
+        finally:
+            await db.close()
+
+    @pytest.mark.anyio
     async def test_get_cached_dialog_found(self):
         from src.telegram.client_pool import ClientPool
 
