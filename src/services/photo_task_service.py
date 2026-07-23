@@ -50,6 +50,52 @@ class PhotoTaskService:
             return PhotoSendMode.SEPARATE
         return send_mode
 
+    async def _create_send_batch_item(
+        self,
+        *,
+        phone: str,
+        target: PhotoTarget,
+        files: list[str],
+        send_mode: PhotoSendMode,
+        caption: str | None,
+        status: PhotoBatchStatus,
+        schedule_at: datetime | None = None,
+    ) -> tuple[int, int]:
+        """Create the PhotoBatch + its first PhotoBatchItem for an ad-hoc send.
+
+        Shared by :meth:`send_now` (status=RUNNING, stamps ``started_at``) and
+        :meth:`schedule_send` (status=SCHEDULED, stamps ``schedule_at``). Returns
+        ``(batch_id, item_id)``.
+        """
+        batch_id = await self._bundle.create_batch(
+            PhotoBatch(
+                phone=phone,
+                target_dialog_id=target.dialog_id,
+                target_title=target.title,
+                target_type=target.target_type,
+                send_mode=send_mode,
+                caption=caption,
+                status=status,
+            )
+        )
+        item_kwargs: dict = {
+            "batch_id": batch_id,
+            "phone": phone,
+            "target_dialog_id": target.dialog_id,
+            "target_title": target.title,
+            "target_type": target.target_type,
+            "file_paths": files,
+            "send_mode": send_mode,
+            "caption": caption,
+            "status": status,
+        }
+        if status == PhotoBatchStatus.RUNNING:
+            item_kwargs["started_at"] = datetime.now(timezone.utc)
+        elif schedule_at is not None:
+            item_kwargs["schedule_at"] = schedule_at
+        item_id = await self._bundle.create_item(PhotoBatchItem(**item_kwargs))
+        return batch_id, item_id
+
     async def send_now(
         self,
         *,
@@ -61,30 +107,13 @@ class PhotoTaskService:
     ) -> PhotoBatchItem:
         files = self.validate_files(file_paths)
         send_mode = self.normalize_mode(mode, len(files))
-        batch_id = await self._bundle.create_batch(
-            PhotoBatch(
-                phone=phone,
-                target_dialog_id=target.dialog_id,
-                target_title=target.title,
-                target_type=target.target_type,
-                send_mode=send_mode,
-                caption=caption,
-                status=PhotoBatchStatus.RUNNING,
-            )
-        )
-        item_id = await self._bundle.create_item(
-            PhotoBatchItem(
-                batch_id=batch_id,
-                phone=phone,
-                target_dialog_id=target.dialog_id,
-                target_title=target.title,
-                target_type=target.target_type,
-                file_paths=files,
-                send_mode=send_mode,
-                caption=caption,
-                status=PhotoBatchStatus.RUNNING,
-                started_at=datetime.now(timezone.utc),
-            )
+        batch_id, item_id = await self._create_send_batch_item(
+            phone=phone,
+            target=target,
+            files=files,
+            send_mode=send_mode,
+            caption=caption,
+            status=PhotoBatchStatus.RUNNING,
         )
         # Accumulate ids of files already published live on Telegram. In SEPARATE
         # mode send_now publishes file-by-file immediately, so if a later file
@@ -181,30 +210,14 @@ class PhotoTaskService:
     ) -> PhotoBatchItem:
         files = self.validate_files(file_paths)
         send_mode = self.normalize_mode(mode, len(files))
-        batch_id = await self._bundle.create_batch(
-            PhotoBatch(
-                phone=phone,
-                target_dialog_id=target.dialog_id,
-                target_title=target.title,
-                target_type=target.target_type,
-                send_mode=send_mode,
-                caption=caption,
-                status=PhotoBatchStatus.SCHEDULED,
-            )
-        )
-        item_id = await self._bundle.create_item(
-            PhotoBatchItem(
-                batch_id=batch_id,
-                phone=phone,
-                target_dialog_id=target.dialog_id,
-                target_title=target.title,
-                target_type=target.target_type,
-                file_paths=files,
-                send_mode=send_mode,
-                caption=caption,
-                schedule_at=schedule_at,
-                status=PhotoBatchStatus.SCHEDULED,
-            )
+        batch_id, item_id = await self._create_send_batch_item(
+            phone=phone,
+            target=target,
+            files=files,
+            send_mode=send_mode,
+            caption=caption,
+            status=PhotoBatchStatus.SCHEDULED,
+            schedule_at=schedule_at,
         )
         # Accumulate server-scheduled message ids progressively. In SEPARATE mode
         # send_now schedules files one-by-one; if a later file fails, the earlier
