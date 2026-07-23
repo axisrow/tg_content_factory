@@ -14,11 +14,6 @@ ZAI_LEGACY_ANTHROPIC_BASE_URLS = {
     "https://api.z.ai/api/anthropic",
     "https://api.z.ai/api/anthropic/v1",
 }
-ZAI_BASE_URL_REQUIRED_HINT = (
-    "Z.AI Base URL is optional. Empty value defaults to "
-    "https://api.z.ai/api/coding/paas/v4 for the GLM Coding Plan; use "
-    "https://api.z.ai/api/paas/v4 only for pay-per-token PaaS access."
-)
 
 
 def is_zai_legacy_anthropic_base_url(base_url: str = "") -> bool:

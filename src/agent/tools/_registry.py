@@ -208,15 +208,6 @@ def arg_csv_ints(
     return result
 
 
-def require_args(args: dict[str, Any], *names: str) -> dict[str, str]:
-    values = {name: arg_str(args, name) for name in names}
-    missing = [name for name, value in values.items() if not value]
-    if missing:
-        joined = ", ".join(missing)
-        raise ToolInputError(f"{joined} обязательны.")
-    return values
-
-
 def normalize_phone(phone: object) -> str:
     """Ensure phone starts with '+' — models sometimes omit it."""
     if phone is None:
