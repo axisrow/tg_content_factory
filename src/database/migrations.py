@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import aiosqlite
@@ -708,14 +708,21 @@ async def _migrate_vec_to_portable(db: aiosqlite.Connection) -> None:
     _ = db
 
 
-async def _migrate_zai_legacy_base_url(db: aiosqlite.Connection) -> None:
-    """Rewrite legacy Z.AI Anthropic-compatible base_url to the OpenAI-compatible default."""
-    import json
+async def _rewrite_zai_base_urls(
+    db: aiosqlite.Connection,
+    *,
+    should_rewrite: Callable[[str], bool],
+    new_base_url: str,
+    log_message: str,
+) -> None:
+    """Rewrite ``base_url`` of stored Z.AI provider configs matching a predicate.
 
-    from src.agent.provider_registry import (
-        ZAI_GENERAL_BASE_URL,
-        is_zai_legacy_anthropic_base_url,
-    )
+    Shared body of the two Z.AI base_url migrations: load the
+    ``agent_deepagents_providers_v1`` JSON, rewrite ``plain_fields.base_url``
+    (clearing ``last_validation_error``) on every zai item whose current raw
+    value satisfies ``should_rewrite``, and save only when something changed.
+    """
+    import json
 
     cur = await db.execute(
         "SELECT value FROM settings WHERE key = 'agent_deepagents_providers_v1' LIMIT 1"
@@ -738,8 +745,8 @@ async def _migrate_zai_legacy_base_url(db: aiosqlite.Connection) -> None:
         if not isinstance(plain, dict):
             continue
         current = str(plain.get("base_url", "") or "")
-        if is_zai_legacy_anthropic_base_url(current):
-            plain["base_url"] = ZAI_GENERAL_BASE_URL
+        if should_rewrite(current):
+            plain["base_url"] = new_base_url
             item["last_validation_error"] = ""
             changed = True
 
@@ -750,49 +757,34 @@ async def _migrate_zai_legacy_base_url(db: aiosqlite.Connection) -> None:
         "UPDATE settings SET value = ? WHERE key = 'agent_deepagents_providers_v1'",
         (json.dumps(data, ensure_ascii=False),),
     )
-    logger.info("Migrated legacy Z.AI Anthropic-compatible base_url to %s", ZAI_GENERAL_BASE_URL)
+    logger.info(log_message, new_base_url)
+
+
+async def _migrate_zai_legacy_base_url(db: aiosqlite.Connection) -> None:
+    """Rewrite legacy Z.AI Anthropic-compatible base_url to the OpenAI-compatible default."""
+    from src.agent.provider_registry import (
+        ZAI_GENERAL_BASE_URL,
+        is_zai_legacy_anthropic_base_url,
+    )
+
+    await _rewrite_zai_base_urls(
+        db,
+        should_rewrite=is_zai_legacy_anthropic_base_url,
+        new_base_url=ZAI_GENERAL_BASE_URL,
+        log_message="Migrated legacy Z.AI Anthropic-compatible base_url to %s",
+    )
 
 
 async def _migrate_zai_empty_base_url_to_coding(db: aiosqlite.Connection) -> None:
     """Backfill empty Z.AI base_url values to the Coding Plan endpoint."""
-    import json
-
     from src.agent.provider_registry import ZAI_CODING_BASE_URL
 
-    cur = await db.execute(
-        "SELECT value FROM settings WHERE key = 'agent_deepagents_providers_v1' LIMIT 1"
+    await _rewrite_zai_base_urls(
+        db,
+        should_rewrite=lambda current: current.strip().rstrip("/") == "",
+        new_base_url=ZAI_CODING_BASE_URL,
+        log_message="Migrated empty Z.AI base_url to %s",
     )
-    row = await cur.fetchone()
-    if not row or not row["value"]:
-        return
-    try:
-        data = json.loads(row["value"])
-    except (json.JSONDecodeError, TypeError):
-        return
-    if not isinstance(data, list):
-        return
-
-    changed = False
-    for item in data:
-        if not isinstance(item, dict) or item.get("provider") != "zai":
-            continue
-        plain = item.get("plain_fields")
-        if not isinstance(plain, dict):
-            continue
-        current = (str(plain.get("base_url", "") or "")).strip().rstrip("/")
-        if current == "":
-            plain["base_url"] = ZAI_CODING_BASE_URL
-            item["last_validation_error"] = ""
-            changed = True
-
-    if not changed:
-        return
-
-    await db.execute(
-        "UPDATE settings SET value = ? WHERE key = 'agent_deepagents_providers_v1'",
-        (json.dumps(data, ensure_ascii=False),),
-    )
-    logger.info("Migrated empty Z.AI base_url to %s", ZAI_CODING_BASE_URL)
 
 
 async def _migrate_tool_permission_key(
