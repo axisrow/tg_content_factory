@@ -69,6 +69,17 @@ def test_kwargs_forwarded():
     assert result == '{"a":2,"b":1}'
 
 
+def test_ensure_ascii_accepted_for_call_site_compat():
+    # `ensure_ascii` is an intentional no-op kept for call-site compatibility
+    # after the orjson migration (#956): orjson is always UTF-8. Live call
+    # sites pass it (e.g. generation_runs repository), so the parameter must
+    # keep being accepted with either value. Vulture-whitelisted in
+    # pyproject.toml [tool.vulture] — do not remove (#1136).
+    payload = {"text": "привет"}
+    assert safe_json_dumps(payload, ensure_ascii=True) == safe_json_dumps(payload, ensure_ascii=False)
+    assert "привет" in safe_json_dumps(payload, ensure_ascii=True)
+
+
 def test_custom_default_does_not_receive_datetime():
     # With a custom default, datetime must be serialized natively by orjson, NOT
     # routed to the caller's default (which may not handle it) — review on #956.
