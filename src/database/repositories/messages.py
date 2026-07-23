@@ -145,7 +145,7 @@ class MessagesRepository:
     async def get_embedding_dimensions(self) -> int | None:
         """Размерность векторов индекса эмбеддингов (из настроек), либо ``None`` если индекс ещё не создан."""
         raw_value = await self._get_setting(_EMBEDDING_DIMENSIONS_SETTING)
-        if raw_value in (None, ""):
+        if raw_value is None or raw_value == "":
             return None
         try:
             return int(raw_value)
@@ -1217,6 +1217,7 @@ class MessagesRepository:
             union_parts = []
             all_params: list = []
             for sq in chunk:
+                assert sq.id is not None  # ``valid`` filtered out None ids above
                 fts_query = self._build_fts_match(sq.query, sq.is_fts)
                 extra_conds, extra_params = self._build_extra_conditions(sq)
                 where_parts = [

@@ -5,6 +5,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import aiosqlite
 
@@ -177,4 +178,5 @@ class DBConnection:
 
     async def execute_fetchall(self, sql: str, params: tuple = ()) -> list:
         assert self.db is not None
-        return await self.db.execute_fetchall(sql, params)
+        # aiosqlite stubs declare Iterable[Row]; at runtime this is a list.
+        return cast(list, await self.db.execute_fetchall(sql, params))
