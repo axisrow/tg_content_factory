@@ -25,7 +25,9 @@ FACADE_PASSTHROUGH_BASELINE = 88
 # +2 for PhotoLoaderBundle.count_due_items / count_items_by_batch_status (#1152):
 # PhotoTaskService / JobsReadModel consume the bundle, not db.repos, so the
 # progress-count reads must be reachable through the bundle surface.
-BUNDLE_METHOD_BASELINE = 138
+# 138 → 111 after the cross-bundle wrapper dedup into shared mixins (#1135):
+# duplicated pass-throughs collapsed into one definition each.
+BUNDLE_METHOD_BASELINE = 111
 
 # Every facade pass-through opens with `self._require()`; counting it is a
 # robust, signature-shape-independent proxy for the pass-through surface.
