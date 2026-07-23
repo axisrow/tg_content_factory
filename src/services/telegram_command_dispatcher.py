@@ -7,6 +7,9 @@ from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from tenacity import AsyncRetrying, RetryCallState, retry_if_exception_type
+from tenacity.wait import wait_exponential
+
 from src.config import AppConfig
 from src.database import Database, DatabaseBusyError
 from src.live_runtime_pause import LiveRuntimePauseGate
@@ -345,34 +348,54 @@ class TelegramCommandDispatcher(
         **kwargs: Any,
     ) -> None:
         assert command_id is not None
-        delay = COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC
-        while True:
-            try:
-                await self._db.repos.telegram_commands.update_command(
-                    command_id,
-                    status=status,
-                    **kwargs,
-                )
+
+        async def _update() -> None:
+            await self._db.repos.telegram_commands.update_command(
+                command_id,
+                status=status,
+                **kwargs,
+            )
+
+        def _log_busy(retry_state: RetryCallState) -> None:
+            outcome = retry_state.outcome
+            logger.warning(
+                "telegram_command_dispatcher: DB busy while marking command %s %s: %s",
+                command_id,
+                log_action,
+                outcome.exception() if outcome is not None else None,
+            )
+
+        try:
+            if not retry_busy:
+                await _update()
                 return
-            except DatabaseBusyError as exc:
-                logger.warning(
-                    "telegram_command_dispatcher: DB busy while marking command %s %s: %s",
-                    command_id,
-                    log_action,
-                    exc,
-                )
-                if not retry_busy:
-                    return
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, COMMAND_STATUS_UPDATE_BUSY_RETRY_MAX_SEC)
-            except Exception as exc:
-                logger.warning(
-                    "telegram_command_dispatcher: failed to mark command %s %s: %s",
-                    command_id,
-                    log_action,
-                    exc,
-                )
-                return
+            # tenacity вместо ручного цикла (#1132): бесконечный retry на busy с
+            # экспоненциальной лестницей INITIAL, 2×, 4×… и потолком MAX — как раньше.
+            retryer = AsyncRetrying(
+                retry=retry_if_exception_type(DatabaseBusyError),
+                wait=wait_exponential(
+                    multiplier=COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC,
+                    max=COMMAND_STATUS_UPDATE_BUSY_RETRY_MAX_SEC,
+                ),
+                sleep=asyncio.sleep,
+                before_sleep=_log_busy,
+            )
+            await retryer(_update)
+        except DatabaseBusyError as exc:
+            # Достижимо только при retry_busy=False: retryer повторяет busy бесконечно.
+            logger.warning(
+                "telegram_command_dispatcher: DB busy while marking command %s %s: %s",
+                command_id,
+                log_action,
+                exc,
+            )
+        except Exception as exc:
+            logger.warning(
+                "telegram_command_dispatcher: failed to mark command %s %s: %s",
+                command_id,
+                log_action,
+                exc,
+            )
 
     async def _dispatch(self, command_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         handler_name = f"_handle_{command_type.replace('.', '_')}"
