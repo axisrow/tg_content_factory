@@ -296,6 +296,7 @@ class TestHardDeleteChannelsTool:
 
     @pytest.mark.anyio
     async def test_with_pks_and_confirm_deletes(self, mock_db):
+        mock_db.get_setting = AsyncMock(return_value="1")  # agent_dev_mode_enabled
         del_result = _make_purge_result(purged=2, deleted=0)
         with patch("src.services.filter_deletion_service.FilterDeletionService") as mock_svc:
             mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(return_value=del_result)
@@ -308,11 +309,48 @@ class TestHardDeleteChannelsTool:
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
+        mock_db.get_setting = AsyncMock(return_value="1")  # agent_dev_mode_enabled
         with patch("src.services.filter_deletion_service.FilterDeletionService") as mock_svc:
             mock_svc.return_value.hard_delete_channels_by_pks = AsyncMock(side_effect=Exception("err"))
             handlers = _get_tool_handlers(mock_db)
             result = await handlers["hard_delete_channels"]({"pks": "1", "confirm": True})
         assert "Ошибка удаления каналов" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_dev_mode_off_rejects_hard_delete(self, db):
+        """hard_delete is a dev-mode-only op (parity with CLI/web). With
+        agent_dev_mode_enabled unset it must be refused before any deletion."""
+        from src.models import Channel
+
+        pk = await db.add_channel(Channel(channel_id=-1001, title="Doomed"))
+        await db.set_channel_filtered(pk, True)
+
+        handlers = _get_tool_handlers(db)
+        result = await handlers["hard_delete_channels"]({"pks": str(pk), "confirm": True})
+
+        text = _text(result)
+        assert "безвозвратно" not in text  # not deleted
+        assert await db.get_channel_by_pk(pk) is not None  # channel still present
+
+    @pytest.mark.anyio
+    async def test_real_service_path_actually_deletes(self, db):
+        """Regression #1290: the tool built FilterDeletionService without
+        channel_service, so every call raised RuntimeError and was reported as
+        'Ошибка удаления'. Uses the real service/DB — mocking the service (as
+        the tests above do) is exactly what hid the bug."""
+        from src.models import Channel
+
+        pk = await db.add_channel(Channel(channel_id=-1001, title="Doomed"))
+        await db.set_channel_filtered(pk, True)
+        await db.set_setting("agent_dev_mode_enabled", "1")
+
+        handlers = _get_tool_handlers(db)
+        result = await handlers["hard_delete_channels"]({"pks": str(pk), "confirm": True})
+
+        text = _text(result)
+        assert "Ошибка удаления каналов" not in text
+        assert "1 каналов удалено безвозвратно" in text
+        assert await db.get_channel_by_pk(pk) is None
 
 
 class TestPurgeChannelMessagesTool:
