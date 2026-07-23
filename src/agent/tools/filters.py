@@ -216,6 +216,15 @@ def register(db, client_pool, embedding_service, **kwargs):
         gate = require_confirmation(f"БЕЗВОЗВРАТНО удалит каналы pks=[{pks_str}] и все их данные", args)
         if gate:
             return gate
+        # Dev-mode gate — hard-delete is irreversible, match CLI/web which both
+        # require agent_dev_mode_enabled. Without it the tool would permanently
+        # erase channels in production (#1290 acceptance criteria).
+        dev_mode = (await db.get_setting("agent_dev_mode_enabled") or "0") == "1"
+        if not dev_mode:
+            return _text_response(
+                "Hard-delete требует режим разработчика. "
+                "Включите его в Настройки → Режим разработчика."
+            )
         try:
             svc = _build_deletion_service(db)
             pks = [int(x.strip()) for x in pks_str.split(",") if x.strip()]
