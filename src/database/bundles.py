@@ -112,10 +112,6 @@ class AccountBundle:
         """Список аккаунтов (с секретом сессии); `active_only` — только активные."""
         return await self.accounts.get_accounts(active_only)
 
-    async def list_live_usable_accounts(self, active_only: bool = False) -> list[Account]:
-        """Аккаунты, пригодные для живого подключения (валидная читаемая сессия)."""
-        return await self.accounts.get_live_usable_accounts(active_only)
-
     async def list_account_summaries(self, active_only: bool = False) -> list[AccountSummary]:
         """Безопасные для UI сводки аккаунтов (`AccountSummary`, без `session_string`)."""
         return await self.accounts.get_account_summaries(active_only)
@@ -136,9 +132,7 @@ class AccountBundle:
         """Записать `flood_wait_until` для аккаунта (момент окончания FLOOD_WAIT)."""
         await self.accounts.update_account_flood(phone, until)
 
-    async def update_premium(self, phone: str, is_premium: bool) -> None:
-        """Обновить флаг Premium-статуса аккаунта."""
-        await self.accounts.update_account_premium(phone, is_premium)
+
 
 
 @dataclass(frozen=True)
@@ -543,10 +537,6 @@ class CollectionBundle:
     async def delete_messages_for_channel(self, channel_id: int) -> int:
         """Удалить все сообщения канала; вернуть число удалённых строк."""
         return await self.messages.delete_messages_for_channel(channel_id)
-
-    async def get_message_stats(self) -> dict:
-        """Сводная статистика по таблице сообщений (счётчики и т.п.)."""
-        return await self.messages.get_stats()
 
     async def count_matching_prefixes_in_other_channels(
         self,
