@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from src.database.pool import ReadConnection
-from src.utils.datetime import parse_datetime
+from src.utils.datetime import parse_utc_datetime
 
 if TYPE_CHECKING:
     from src.database.facade import Database
@@ -129,7 +129,12 @@ class DialogCacheRepository:
         return bool(await cur.fetchone())
 
     async def get_cached_at(self, phone: str) -> datetime | None:
-        """Время самого свежего кэшированного диалога аккаунта (для оценки устаревания)."""
+        """Время самого свежего кэшированного диалога аккаунта (для оценки устаревания).
+
+        Всегда UTC-aware: строки, вставленные без явного `cached_at`, получают его
+        из схемного DEFAULT `datetime('now')` — naive-значение без офсета, вычитание
+        которого из aware-времени падало бы с TypeError.
+        """
         cur = await self._db.execute(
             "SELECT MAX(cached_at) AS cached_at FROM dialog_cache WHERE phone = ?",
             (phone,),
@@ -137,7 +142,7 @@ class DialogCacheRepository:
         row = await cur.fetchone()
         if not row:
             return None
-        return parse_datetime(row["cached_at"])
+        return parse_utc_datetime(row["cached_at"])
 
     async def get_all_phones(self) -> list[str]:
         """Return all distinct phone numbers that have entries in dialog_cache."""
