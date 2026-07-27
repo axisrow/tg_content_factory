@@ -237,6 +237,20 @@ exclude_lines = [
 [tool.bandit]
 exclude_dirs = ["tests"]
 
+# Dead-code scan whitelist (vulture, #1136). vulture auto-reads this section,
+# so it applies both to `python -m vulture src/` and to scripts/code_health.py.
+# Every name here is a VERIFIED false-positive — do not delete the code it
+# refers to; each entry must say why it is intentionally "unused".
+[tool.vulture]
+ignore_names = [
+    # src/utils/json.py safe_json_dumps(ensure_ascii=...): intentional
+    # call-site-compatibility parameter after the orjson migration (#956) —
+    # orjson is always UTF-8, the flag is accepted so existing
+    # `safe_json_dumps(obj, ensure_ascii=True)` calls don't break, but has
+    # no effect. Removing it would break call sites. See issue #1136.
+    "ensure_ascii",
+]
+
 # Doc-coverage (interrogate, #1072). scripts/doc_coverage.py and the advisory
 # CI step read this. `fail_under` is a SOFT baseline — a ratchet floor that
 # surfaces regressions without forcing a docstring-everything sprint. Raise it
