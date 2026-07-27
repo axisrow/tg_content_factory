@@ -42,51 +42,68 @@ class StatsMixin:
     def is_stats_running(self: "Collector") -> bool:
         return self._stats_running or self._stats_all_running
 
-    def stats_worker_count(self: "Collector") -> int:
-        configured = max(1, int(getattr(self._config, "stats_worker_count", 3) or 1))
+    def _configured_worker_count(
+        self: "Collector", attr: str, default: int
+    ) -> int:
+        """Configured worker count for an attr, clamped to connected clients.
+
+        Shared by :meth:`stats_worker_count` / :meth:`stats_all_worker_count`:
+        ``max(1, min(configured, connected))`` when clients are connected, else
+        the configured value.
+        """
+        configured = max(1, int(getattr(self._config, attr, default) or 1))
         connected = len(getattr(self._pool, "clients", {}) or {})
         if connected <= 0:
             return configured
         return max(1, min(configured, connected))
+
+    def stats_worker_count(self: "Collector") -> int:
+        return self._configured_worker_count("stats_worker_count", 3)
 
     def stats_all_worker_count(self: "Collector") -> int:
-        configured = max(1, int(getattr(self._config, "stats_all_worker_count", 1) or 1))
-        connected = len(getattr(self._pool, "clients", {}) or {})
-        if connected <= 0:
-            return configured
-        return max(1, min(configured, connected))
+        return self._configured_worker_count("stats_all_worker_count", 1)
+
+    async def _available_worker_count(
+        self: "Collector", *, attr: str, default: int, fallback: int, log_label: str
+    ) -> int:
+        """Live-available worker count for an attr, falling back to the configured value.
+
+        Shared by :meth:`available_stats_worker_count` /
+        :meth:`available_stats_all_worker_count`: read
+        ``available_stats_client_count`` from the pool (sync or async), and when
+        positive return ``max(1, min(configured, available))`` (or ``1`` when
+        the pool reports none), else the configured ``fallback``.
+        """
+        configured = max(1, int(getattr(self._config, attr, default) or 1))
+        counter = getattr(self._pool, "available_stats_client_count", None)
+        if callable(counter):
+            try:
+                count = counter()
+                if asyncio.iscoroutine(count):
+                    count = await count
+                available = int(count)
+                if available > 0:
+                    return max(1, min(configured, available))
+                return 1
+            except Exception:
+                logger.debug("Failed to read available %s client count", log_label, exc_info=True)
+        return fallback
 
     async def available_stats_worker_count(self: "Collector") -> int:
-        configured = max(1, int(getattr(self._config, "stats_worker_count", 3) or 1))
-        counter = getattr(self._pool, "available_stats_client_count", None)
-        if callable(counter):
-            try:
-                count = counter()
-                if asyncio.iscoroutine(count):
-                    count = await count
-                available = int(count)
-                if available > 0:
-                    return max(1, min(configured, available))
-                return 1
-            except Exception:
-                logger.debug("Failed to read available stats client count", exc_info=True)
-        return self.stats_worker_count()
+        return await self._available_worker_count(
+            attr="stats_worker_count",
+            default=3,
+            fallback=self.stats_worker_count(),
+            log_label="stats",
+        )
 
     async def available_stats_all_worker_count(self: "Collector") -> int:
-        configured = max(1, int(getattr(self._config, "stats_all_worker_count", 1) or 1))
-        counter = getattr(self._pool, "available_stats_client_count", None)
-        if callable(counter):
-            try:
-                count = counter()
-                if asyncio.iscoroutine(count):
-                    count = await count
-                available = int(count)
-                if available > 0:
-                    return max(1, min(configured, available))
-                return 1
-            except Exception:
-                logger.debug("Failed to read available stats-all client count", exc_info=True)
-        return self.stats_all_worker_count()
+        return await self._available_worker_count(
+            attr="stats_all_worker_count",
+            default=1,
+            fallback=self.stats_all_worker_count(),
+            log_label="stats-all",
+        )
 
     def set_stats_all_running(self: "Collector", running: bool) -> None:
         self._stats_all_running = running
