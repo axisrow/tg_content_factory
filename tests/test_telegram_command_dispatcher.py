@@ -1537,6 +1537,74 @@ async def test_run_loop_cancelled_reraises_when_update_busy():
     db.repos.telegram_commands.update_command.assert_awaited_once()
 
 
+# --- характеризующие тесты _update_command_safely (#1132: ручной цикл → tenacity) ---
+# Фиксируют точный контракт retry до/после замены реализации: экспоненциальную
+# лестницу задержек с потолком, retry_busy=False и заглатывание прочих ошибок.
+
+
+def _busy_error():
+    from src.database import DatabaseBusyError
+
+    return DatabaseBusyError("Database is busy. Retry the request in a few seconds.")
+
+
+async def test_update_command_safely_busy_backoff_doubles_and_caps():
+    """Лестница задержек: INITIAL, 2×, 4×… с потолком MAX; попыток — до успеха."""
+    db = _mock_db()
+    d = _dispatcher(db=db, pool=_mock_pool())
+    failures = 6
+    db.repos.telegram_commands.update_command = AsyncMock(
+        side_effect=[_busy_error()] * failures + [None]
+    )
+
+    with patch.object(mod.asyncio, "sleep", new_callable=AsyncMock) as mock_sleep:
+        await d._update_command_safely(
+            7, status=TelegramCommandStatus.SUCCEEDED, log_action="succeeded"
+        )
+
+    expected = []
+    delay = mod.COMMAND_STATUS_UPDATE_BUSY_RETRY_INITIAL_SEC
+    for _ in range(failures):
+        expected.append(delay)
+        delay = min(delay * 2, mod.COMMAND_STATUS_UPDATE_BUSY_RETRY_MAX_SEC)
+
+    assert [c.args[0] for c in mock_sleep.await_args_list] == expected
+    assert db.repos.telegram_commands.update_command.await_count == failures + 1
+
+
+async def test_update_command_safely_busy_without_retry_is_single_shot():
+    """retry_busy=False: одна попытка, без sleep, busy заглатывается."""
+    db = _mock_db()
+    d = _dispatcher(db=db, pool=_mock_pool())
+    db.repos.telegram_commands.update_command = AsyncMock(side_effect=_busy_error())
+
+    with patch.object(mod.asyncio, "sleep", new_callable=AsyncMock) as mock_sleep:
+        await d._update_command_safely(
+            7,
+            status=TelegramCommandStatus.FAILED,
+            log_action="failed",
+            retry_busy=False,
+        )
+
+    db.repos.telegram_commands.update_command.assert_awaited_once()
+    mock_sleep.assert_not_awaited()
+
+
+async def test_update_command_safely_swallows_generic_error_without_retry():
+    """Не-busy ошибка: одна попытка, без sleep, наружу не пробрасывается."""
+    db = _mock_db()
+    d = _dispatcher(db=db, pool=_mock_pool())
+    db.repos.telegram_commands.update_command = AsyncMock(side_effect=RuntimeError("boom"))
+
+    with patch.object(mod.asyncio, "sleep", new_callable=AsyncMock) as mock_sleep:
+        await d._update_command_safely(
+            7, status=TelegramCommandStatus.SUCCEEDED, log_action="succeeded"
+        )
+
+    db.repos.telegram_commands.update_command.assert_awaited_once()
+    mock_sleep.assert_not_awaited()
+
+
 # ============================================================
 # Additional tests for handler edge paths
 # ============================================================
