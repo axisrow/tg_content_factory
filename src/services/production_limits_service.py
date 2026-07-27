@@ -214,6 +214,10 @@ class CostTracker:
         """
         if now - self._day_start >= _DAY_SECONDS:
             self._daily_cost = 0.0
+            # A reservation that leaked past the day boundary (e.g. a cancelled
+            # acquire whose release raced, or a process crash mid-paid-call) must
+            # not pin the next day's budget — clear the in-flight ledger too.
+            self._reserved = 0.0
             self._day_start = now
             return True
         return False
@@ -401,14 +405,27 @@ class CostTracker:
         """
         async with self._lock:
             estimated = await self.estimate_cost(tokens, is_image)
+            # Settlement must be cancellation-safe (#1250 review): book the spend
+            # BEFORE dropping the reservation, and shield the booking so a
+            # CancelledError mid-settle can't leave the paid call neither reserved
+            # nor recorded (which would let the next caller admit beyond the cap).
+            # Worst case on cancellation: spend booked but reservation not yet
+            # dropped — a conservative over-hold, never an under-accounting.
+            try:
+                if self._db is None:
+                    self._maybe_reset_day(time.time())
+                    self._daily_cost += estimated
+                else:
+                    # DB-authoritative atomic accumulation across instances (#814).
+                    self._daily_cost = await asyncio.shield(self._atomic_increment(estimated))
+                    self._loaded = True
+            except asyncio.CancelledError:
+                # The increment may or may not have landed; treat the spend as
+                # booked optimistically and drop the reservation so the ledger is
+                # never left holding a reservation AND no recorded spend.
+                self._reserved = max(0.0, self._reserved - estimated)
+                raise
             self._reserved = max(0.0, self._reserved - estimated)
-            if self._db is None:
-                self._maybe_reset_day(time.time())
-                self._daily_cost += estimated
-                return estimated
-            # DB-authoritative atomic accumulation across instances (#814).
-            self._daily_cost = await self._atomic_increment(estimated)
-            self._loaded = True
             return estimated
 
     def get_daily_cost(self) -> float:
@@ -492,10 +509,20 @@ class ProductionLimitsService:
         if not cost_allowed:
             return False, f"Daily cost cap exceeded (estimated: ${estimated_cost:.4f})"
 
-        # Check rate limits
-        rate_allowed = await self._rate_limiter.wait_and_acquire(
-            tokens, is_image, max_wait
-        )
+        # Check rate limits. Any failure here — a timeout (rate_allowed False) OR a
+        # cancellation/exception out of wait_and_acquire — means the paid call will
+        # not run, so the reserved budget must be returned. acquire() is called
+        # BEFORE the caller's try/finally (generate(), execute_with_retry()), so
+        # the caller cannot recover the reservation on this path; releasing here is
+        # the only thing that prevents a stranded estimate pinning the budget until
+        # day rollover (#1250 review).
+        try:
+            rate_allowed = await self._rate_limiter.wait_and_acquire(
+                tokens, is_image, max_wait
+            )
+        except BaseException:
+            await self._cost_tracker.release_cost(tokens, is_image)
+            raise
         if not rate_allowed:
             # The paid call won't run — return the reserved budget.
             await self._cost_tracker.release_cost(tokens, is_image)
