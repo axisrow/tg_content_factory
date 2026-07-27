@@ -32,6 +32,26 @@ except ImportError:  # pragma: no cover — handlers import path used without te
 logger = logging.getLogger(__name__)
 
 
+def _build_source_messages(messages: list) -> str:
+    """Render the ``context_messages`` list into the ``[header] text`` block fed to LLM/agent nodes.
+
+    Shared by the LLM-generate and agent-loop handlers — identical rendering of
+    each message (``[channel_title|username] stripped_text (id:.. date:..)``),
+    blank-separated. Empty/whitespace texts are dropped.
+    """
+    from datetime import datetime
+
+    source_parts: list[str] = []
+    for m in messages:
+        text = (m.text or "").strip()
+        if not text:
+            continue
+        header = m.channel_title or m.channel_username or ""
+        when = m.date.isoformat() if isinstance(m.date, datetime) else str(m.date)
+        source_parts.append(f"[{header}] {text} (id:{m.message_id} date:{when})")
+    return "\n\n".join(source_parts)
+
+
 def _current_node_id(services: dict, default: str = "?") -> str:
     """Return the node id for the currently-executing handler.
 
@@ -186,8 +206,6 @@ class LlmGenerateHandler(BaseNodeHandler):
         if provider_callable is None:
             raise RuntimeError("LlmGenerateHandler: no provider_callable in services")
 
-        from datetime import datetime
-
         from src.agent.prompt_template import render_prompt_template
 
         prompt_template = node_config.get("prompt_template") or context.get_global("prompt_template", "")
@@ -197,15 +215,7 @@ class LlmGenerateHandler(BaseNodeHandler):
 
         # Build source messages string from context
         messages = context.get_global("context_messages", [])
-        source_parts = []
-        for m in messages:
-            text = (m.text or "").strip()
-            if not text:
-                continue
-            header = m.channel_title or m.channel_username or ""
-            when = m.date.isoformat() if isinstance(m.date, datetime) else str(m.date)
-            source_parts.append(f"[{header}] {text} (id:{m.message_id} date:{when})")
-        source_messages = "\n\n".join(source_parts)
+        source_messages = _build_source_messages(messages)
 
         rendered = render_prompt_template(
             prompt_template,
@@ -842,8 +852,6 @@ class AgentLoopHandler(BaseNodeHandler):
         if provider_callable is None:
             raise RuntimeError("AgentLoopHandler: no provider_callable in services")
 
-        from datetime import datetime
-
         system_prompt = node_config.get("system_prompt", "Ты полезный ассистент.")
         model = node_config.get("model") or services.get("default_model") or ""
         max_tokens = int(node_config.get("max_tokens", 2000))
@@ -870,18 +878,11 @@ class AgentLoopHandler(BaseNodeHandler):
         full_system = system_prompt + tool_desc + self._REACT_SUFFIX
 
         # Build source messages string from context
-        messages = context.get_global("context_messages", [])
-        source_parts = []
-        for m in messages:
-            text = (m.text or "").strip()
-            if not text:
-                continue
-            header = m.channel_title or m.channel_username or ""
-            when = m.date.isoformat() if isinstance(m.date, datetime) else str(m.date)
-            source_parts.append(f"[{header}] {text} (id:{m.message_id} date:{when})")
-        source_messages = "\n\n".join(source_parts)
+        source_messages = _build_source_messages(context.get_global("context_messages", []))
 
-        user_message = f"Сообщения для анализа:\n\n{source_messages}" if source_parts else "Нет сообщений для анализа."
+        user_message = (
+            f"Сообщения для анализа:\n\n{source_messages}" if source_messages else "Нет сообщений для анализа."
+        )
 
         conversation = [
             {"role": "system", "content": full_system},
