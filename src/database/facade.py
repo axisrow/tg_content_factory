@@ -259,11 +259,16 @@ class Database:
         delays = self._busy_retry_delays_sec
 
         def _log_retry(retry_state: RetryCallState) -> None:
-            next_action = retry_state.next_action
+            # attempt_number — номер только что провалившейся попытки (1-based),
+            # после которой спим delays[attempt_number-1]. Берём задержку из нашей
+            # лестницы, а не из tenacity-internal retry_state.next_action (то поле
+            # недокументировано и может уйти при апгрейте tenacity).
+            idx = retry_state.attempt_number - 1
+            delay = delays[idx] if 0 <= idx < len(delays) else 0.0
             logger.warning(
                 "Database locked during %s; retrying in %.2fs (%d/%d)",
                 operation,
-                next_action.sleep if next_action is not None else 0.0,
+                delay,
                 retry_state.attempt_number,
                 len(delays) + 1,
             )
