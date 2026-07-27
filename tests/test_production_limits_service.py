@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -530,6 +531,324 @@ async def test_cost_cap_blocks_using_other_instances_spend(db):
     await a.record_cost(tokens=2000)  # 2.0 of the 2.5 cap
     allowed, _ = await b.check_cost_cap(tokens=1000)  # would push to 3.0 > 2.5
     assert allowed is False
+
+
+# === #1250: atomic check-and-reserve ===
+
+
+@pytest.mark.anyio
+async def test_reserve_cost_concurrent_admits_exactly_one():
+    """With budget left for exactly one image, N concurrent reservations admit
+    exactly one — the check and the claim happen atomically under one lock (#1250)."""
+    tracker = CostTracker(CostConfig(cost_per_image=1.0, daily_cost_cap=1.0))
+
+    results = await asyncio.gather(*(tracker.reserve_cost(is_image=True) for _ in range(5)))
+
+    admitted = [ok for ok, _ in results]
+    assert admitted.count(True) == 1
+    assert tracker.get_reserved_cost() == pytest.approx(1.0)
+
+
+@pytest.mark.anyio
+async def test_release_cost_returns_reserved_budget():
+    """release_cost frees a reservation whose paid call never happened, so the
+    budget becomes available again instead of being held all day (#1250)."""
+    tracker = CostTracker(CostConfig(cost_per_image=1.0, daily_cost_cap=1.0))
+
+    ok, _ = await tracker.reserve_cost(is_image=True)
+    assert ok is True
+    ok, _ = await tracker.reserve_cost(is_image=True)
+    assert ok is False  # budget fully reserved
+
+    await tracker.release_cost(is_image=True)
+
+    ok, _ = await tracker.reserve_cost(is_image=True)
+    assert ok is True  # released budget is reusable
+    assert tracker.get_reserved_cost() == pytest.approx(1.0)
+
+
+@pytest.mark.anyio
+async def test_record_cost_settles_reservation_without_double_count():
+    """record_cost converts the reservation into booked spend: the reserve is
+    dropped, the actual cost is recorded once, and the cap stays enforced."""
+    tracker = CostTracker(CostConfig(cost_per_image=1.0, daily_cost_cap=1.0))
+
+    ok, _ = await tracker.reserve_cost(is_image=True)
+    assert ok is True
+    await tracker.record_cost(is_image=True)
+
+    assert tracker.get_reserved_cost() == pytest.approx(0.0)
+    assert tracker.get_daily_cost() == pytest.approx(1.0)
+    assert tracker.get_remaining_budget() == pytest.approx(0.0)
+    ok, _ = await tracker.reserve_cost(is_image=True)
+    assert ok is False  # cap consumed by the recorded spend, not double-counted
+
+
+@pytest.mark.anyio
+async def test_check_cost_cap_sees_outstanding_reservations():
+    """The read-only check counts in-flight reservations, not just recorded spend."""
+    tracker = CostTracker(CostConfig(cost_per_image=1.0, daily_cost_cap=1.0))
+
+    ok, _ = await tracker.reserve_cost(is_image=True)
+    assert ok is True
+
+    allowed, _ = await tracker.check_cost_cap(is_image=True)
+    assert allowed is False
+    assert tracker.get_daily_cost() == 0.0  # nothing recorded yet
+
+
+@pytest.mark.anyio
+async def test_concurrent_acquire_admits_only_budgeted_calls():
+    """Regression guard for #1250: N concurrent acquires with budget for exactly
+    one image admit exactly one. On the pre-#1250 check-then-record flow every
+    acquire passed against the same pre-spend total and all N paid calls went out."""
+    service = ProductionLimitsService(
+        db=SimpleNamespace(),
+        rate_config=RateLimitConfig(requests_per_minute=100, tokens_per_minute=100000),
+        cost_config=CostConfig(cost_per_image=1.0, daily_cost_cap=1.0),
+    )
+
+    results = await asyncio.gather(*(service.acquire(is_image=True, max_wait=0.01) for _ in range(5)))
+
+    admitted = [ok for ok, _ in results]
+    assert admitted.count(True) == 1
+    blocked_errors = [error for ok, error in results if not ok]
+    assert all("Daily cost cap exceeded" in error for error in blocked_errors)
+
+
+@pytest.mark.anyio
+async def test_acquire_rate_timeout_releases_cost_reservation():
+    """When acquire reserves budget but then times out on the rate limiter, the
+    reservation is released — the paid call never ran (#1250)."""
+    service = ProductionLimitsService(
+        db=SimpleNamespace(),
+        rate_config=RateLimitConfig(requests_per_minute=0),
+        cost_config=CostConfig(cost_per_image=1.0, daily_cost_cap=1.0),
+    )
+
+    allowed, error = await service.acquire(is_image=True, max_wait=0.01)
+
+    assert allowed is False
+    assert error == "Rate limit timeout"
+    assert service._cost_tracker.get_reserved_cost() == pytest.approx(0.0)
+
+
+@pytest.mark.anyio
+async def test_execute_with_retry_releases_reservation_on_failed_attempt():
+    """A failed attempt must release its reservation before the retry re-acquires;
+    with budget for exactly one call a leaked reservation would block the retry
+    (and every later caller) even though no money was spent (#1250)."""
+    service = ProductionLimitsService(
+        db=SimpleNamespace(),
+        rate_config=RateLimitConfig(requests_per_minute=100, tokens_per_minute=100000),
+        cost_config=CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=1.0),
+    )
+    call_count = 0
+
+    async def flaky():
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("transient")
+        return "recovered"
+
+    with patch("src.services.production_limits_service.asyncio.sleep", new_callable=AsyncMock):
+        result = await service.execute_with_retry(func=flaky, tokens=1000, max_retries=2, base_delay=0.01)
+
+    assert result == "recovered"
+    assert call_count == 2
+    assert service._cost_tracker.get_reserved_cost() == pytest.approx(0.0)
+    assert service._cost_tracker.get_daily_cost() == pytest.approx(1.0)  # only the paid attempt
+
+
+@pytest.mark.anyio
+async def test_execute_with_retry_exhausted_leaves_no_reservation():
+    """When every attempt fails, no budget stays reserved after the raise (#1250)."""
+    service = ProductionLimitsService(
+        db=SimpleNamespace(),
+        rate_config=RateLimitConfig(requests_per_minute=100, tokens_per_minute=100000),
+        cost_config=CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=1.0),
+    )
+
+    with patch("src.services.production_limits_service.asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(RuntimeError, match="always fails"):
+            await service.execute_with_retry(
+                func=AsyncMock(side_effect=RuntimeError("always fails")),
+                tokens=1000,
+                max_retries=2,
+                base_delay=0.01,
+            )
+
+    assert service._cost_tracker.get_reserved_cost() == pytest.approx(0.0)
+    assert service._cost_tracker.get_daily_cost() == pytest.approx(0.0)
+
+
+@pytest.mark.anyio
+async def test_acquire_releases_reservation_when_cancelled_during_rate_wait():
+    """Cancellation during the rate-limit wait must release the cost reservation.
+    acquire() reserves the estimate before awaiting wait_and_acquire(); a
+    CancelledError from its asyncio.sleep propagates out of acquire() — and since
+    acquire() is called BEFORE the caller's try/finally (generate(),
+    execute_with_retry()), the caller cannot recover ownership. The reservation
+    must be released inside acquire() on the cancellation path, not leaked until
+    day rollover (#1250 review, Codex finding)."""
+    service = ProductionLimitsService(
+        db=SimpleNamespace(),
+        # rpm=1 so the second acquire blocks inside wait_and_acquire's sleep;
+        # cap=2 so the second reservation still fits the budget and reaches the
+        # rate-limit wait (rather than being rejected at reserve_cost).
+        rate_config=RateLimitConfig(requests_per_minute=1, tokens_per_minute=100000),
+        cost_config=CostConfig(cost_per_image=1.0, daily_cost_cap=2.0),
+    )
+
+    # First acquire reserves 1.0 and takes the single rate slot.
+    ok, _ = await service.acquire(is_image=True, max_wait=0.01)
+    assert ok is True
+
+    # Second acquire reserves another 1.0 (now _reserved == 2.0 == cap) and then
+    # parks in wait_and_acquire waiting for the rate window. Cancel it mid-wait.
+    task = asyncio.create_task(service.acquire(is_image=True, max_wait=10.0))
+    async def _until_reserved_two():
+        while service._cost_tracker.get_reserved_cost() < 2.0:
+            await asyncio.sleep(0.005)
+    await asyncio.wait_for(_until_reserved_two(), timeout=2.0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # The cancelled acquire released its 1.0 reservation; the first acquire's
+    # reservation stays. Net reserved cost must be back to 1.0.
+    assert service._cost_tracker.get_reserved_cost() == pytest.approx(1.0)
+
+
+@pytest.mark.anyio
+async def test_reserved_cost_is_cleared_on_day_reset():
+    """A leaked reservation must not survive the daily rollover (#1250 review,
+    Codex finding): _maybe_reset_day clears the in-flight reservation ledger
+    alongside the recorded spend, so a stranded estimate does not pin the budget
+    of the next day."""
+    fake_time = 5000.0
+    with patch("src.services.production_limits_service.time.time", return_value=fake_time):
+        tracker = CostTracker(CostConfig(cost_per_image=1.0, daily_cost_cap=1.0))
+        await tracker.reserve_cost(is_image=True)
+        assert tracker.get_reserved_cost() == pytest.approx(1.0)
+
+    # Past 24h — the day reset (triggered via check_cost_cap) must clear _reserved.
+    with patch("src.services.production_limits_service.time.time", return_value=fake_time + 86401):
+        allowed, _ = await tracker.check_cost_cap(is_image=True)
+        assert allowed is True
+        assert tracker.get_reserved_cost() == pytest.approx(0.0)
+
+
+@pytest.mark.anyio
+async def test_record_cost_releases_reservation_even_on_cancellation():
+    """Settlement must be cancellation-safe (#1250 review, Codex finding): if
+    record_cost is cancelled while running, the reservation it owns must still be
+    released — never dropped from _reserved AND not recorded, which would let a
+    paid call go unaccounted and the next caller admit beyond the cap."""
+    tracker = CostTracker(CostConfig(cost_per_image=1.0, daily_cost_cap=1.0))
+    await tracker.reserve_cost(is_image=True)
+    assert tracker.get_reserved_cost() == pytest.approx(1.0)
+
+    # Cancel record_cost while it holds the lock; whatever happens, the reservation
+    # must end up either booked (recorded) or released — not stranded.
+    task = asyncio.create_task(tracker.record_cost(is_image=True))
+    await asyncio.sleep(0)  # let it start
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+
+    # Reservation was settled (booked) — it is no longer held as an in-flight reserve.
+    assert tracker.get_reserved_cost() == pytest.approx(0.0)
+    # And the spend is accounted exactly once (not lost).
+    assert tracker.get_daily_cost() == pytest.approx(1.0)
+
+
+@pytest.mark.anyio
+async def test_record_cost_holds_lock_and_reservation_until_booking_commits():
+    """Cancellation during settlement must NOT drop the reservation or release the
+    lock until the shielded booking commits (#1250 review, cycle 2 — Codex finding).
+
+    With the buggy fix (drop-reservation-then-reraise on CancelledError), a blocked
+    _atomic_increment let a concurrent reserve_cost observe the old daily spend with
+    no reservation and admit a second paid call beyond the cap. The booking task is
+    detached by asyncio.shield, so on cancellation we must await it to completion
+    under the lock before touching the ledger."""
+    fake_db = SimpleNamespace(
+        get_setting=AsyncMock(return_value=None),
+        set_setting=AsyncMock(return_value=None),
+    )
+    # transaction() must exist for _atomic_increment; it does SELECT+INSERT, both
+    # against the fake connection below.
+    gate = asyncio.Event()
+
+    class _FakeConn:
+        async def execute(self, sql, params=()):
+            if "SELECT" in sql:
+                return _FakeCursor(None)
+            # INSERT/UPDATE path — block until the test releases the gate, modelling
+            # a slow DB write during which the outer task is cancelled.
+            await gate.wait()
+            return _FakeCursor(None)
+
+    class _FakeCursor:
+        def __init__(self, row):
+            self._row = row
+
+        async def fetchone(self):
+            return self._row
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    @asynccontextmanager
+    async def _fake_transaction():
+        yield _FakeConn()
+
+    fake_db.transaction = _fake_transaction
+
+    tracker = CostTracker(CostConfig(cost_per_image=1.0, daily_cost_cap=1.0), db=fake_db)
+    await tracker.reserve_cost(is_image=True)
+    assert tracker.get_reserved_cost() == pytest.approx(1.0)
+
+    # record_cost enters the lock, hits the blocked INSERT inside _atomic_increment.
+    settle = asyncio.create_task(tracker.record_cost(is_image=True))
+    await asyncio.sleep(0)  # let it reach the blocked write
+
+    # Cancel the outer settlement task while the booking is still blocked.
+    settle.cancel()
+    cancelled = asyncio.Event()
+
+    async def _capture_cancel():
+        try:
+            await settle
+        except asyncio.CancelledError:
+            cancelled.set()
+
+    asyncio.create_task(_capture_cancel())
+    await asyncio.sleep(0.02)
+
+    # While the booking is still in flight, a concurrent reserve_cost MUST be
+    # blocked on _lock (record_cost still holds it) — it cannot run yet.
+    second = asyncio.create_task(tracker.reserve_cost(is_image=True))
+    await asyncio.sleep(0.02)
+    assert not second.done(), "reserve_cost ran while record_cost still held the lock"
+    second.cancel()
+
+    # Release the blocked booking — the detached increment commits, record_cost
+    # drops the reservation and only then re-raises CancelledError.
+    gate.set()
+    await asyncio.sleep(0.02)
+    assert cancelled.is_set(), "record_cost did not propagate CancelledError after booking committed"
+    # Spend is durably booked; reservation is settled — ledger consistent.
+    assert tracker.get_daily_cost() == pytest.approx(1.0)
+    assert tracker.get_reserved_cost() == pytest.approx(0.0)
 
 
 def test_from_config_disabled_returns_none():
