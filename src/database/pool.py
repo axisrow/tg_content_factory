@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Protocol
+from typing import Any, AsyncIterator, Protocol, cast
 
 import aiosqlite
 
@@ -167,13 +167,14 @@ class ReadPoolProxy:
         _reject_writes(sql)
         async with self._pool.acquire_read() as conn:
             cur = await conn.execute(sql, params)
-            # fetchall() returns a fresh owned list, so BufferedCursor can take it directly.
-            return BufferedCursor(await cur.fetchall())
+            # fetchall() returns a fresh owned list (stubs say Iterable[Row]), so
+            # BufferedCursor can take it directly.
+            return BufferedCursor(cast("list[Any]", await cur.fetchall()))
 
     async def execute_fetchall(self, sql: str, params: Sequence[Any] = ()) -> list[Any]:
         _reject_writes(sql)
         async with self._pool.acquire_read() as conn:
-            return await conn.execute_fetchall(sql, params)
+            return cast("list[Any]", await conn.execute_fetchall(sql, params))
 
     async def create_function(self, name: str, narg: int, func: Any, **kwargs: Any) -> None:
         """Register a UDF on every read connection (filter queries call this lazily)."""
