@@ -342,6 +342,25 @@ class AccountsRepository:
             for row in rows
         ]
 
+    def _account_from_row(self, row, session_string: str) -> Account:
+        """Build an [`Account`][src.models.Account] from a row + pre-resolved session.
+
+        Shared by the listing paths that decrypt every row's session up front
+        (`get_accounts`, `get_live_usable_accounts`); the caller decides whether
+        a decrypt failure aborts the whole list (`get_accounts`) or skips just
+        that account (`get_live_usable_accounts`).
+        """
+        return Account(
+            id=row["id"],
+            phone=row["phone"],
+            session_string=session_string,
+            is_primary=bool(row["is_primary"]),
+            is_active=bool(row["is_active"]),
+            is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
+            flood_wait_until=parse_datetime(row["flood_wait_until"]),
+            created_at=parse_datetime(row["created_at"]),
+        )
+
     async def get_accounts(self, active_only: bool = False) -> list[Account]:
         """Полные [`Account`][src.models.Account] с расшифрованными сессиями для живого использования.
 
@@ -362,19 +381,7 @@ class AccountsRepository:
         for row in rows:
             raw_session = str(row["session_string"] or "")
             session_string = self._decrypt_session_for_live_use(raw_session, str(row["phone"]))
-
-            accounts.append(
-                Account(
-                    id=row["id"],
-                    phone=row["phone"],
-                    session_string=session_string,
-                    is_primary=bool(row["is_primary"]),
-                    is_active=bool(row["is_active"]),
-                    is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
-                    flood_wait_until=parse_datetime(row["flood_wait_until"]),
-                    created_at=parse_datetime(row["created_at"]),
-                )
-            )
+            accounts.append(self._account_from_row(row, session_string))
 
         return accounts
 
@@ -389,21 +396,10 @@ class AccountsRepository:
         ``phone`` must be given. A decrypt failure on the *target* still raises
         :class:`AccountSessionDecryptError` (the caller wants to know).
         """
-        if (account_id is None) == (phone is None):
-            raise ValueError("provide exactly one of account_id / phone")
-        if account_id is not None:
-            cur = await self._db.execute(
-                "SELECT phone, session_string FROM accounts WHERE id = ?", (account_id,)
-            )
-        else:
-            cur = await self._db.execute(
-                "SELECT phone, session_string FROM accounts WHERE phone = ?", (phone,)
-            )
-        row = await cur.fetchone()
-        if row is None:
+        exported = await self.get_session_export(account_id=account_id, phone=phone)
+        if exported is None:
             return None
-        raw_session = str(row["session_string"] or "")
-        return self._decrypt_session_for_live_use(raw_session, str(row["phone"]))
+        return exported[1]
 
     async def get_session_export(
         self, *, account_id: int | None = None, phone: str | None = None
@@ -457,18 +453,7 @@ class AccountsRepository:
                 )
                 continue
 
-            accounts.append(
-                Account(
-                    id=row["id"],
-                    phone=row["phone"],
-                    session_string=session_string,
-                    is_primary=bool(row["is_primary"]),
-                    is_active=bool(row["is_active"]),
-                    is_premium=bool(row["is_premium"]) if row["is_premium"] is not None else False,
-                    flood_wait_until=parse_datetime(row["flood_wait_until"]),
-                    created_at=parse_datetime(row["created_at"]),
-                )
-            )
+            accounts.append(self._account_from_row(row, session_string))
 
         return accounts
 
