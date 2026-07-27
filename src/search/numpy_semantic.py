@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    pass
+    import numpy as np
+    from sklearn.neighbors import NearestNeighbors
 
 
 class NumpySemanticIndex:
@@ -19,8 +20,8 @@ class NumpySemanticIndex:
 
     def __init__(self) -> None:
         self._ids: list[int] = []
-        self._matrix = None  # numpy ndarray, shape (N, dims), lazy import
-        self._index = None  # sklearn.neighbors.NearestNeighbors, lazy import
+        self._matrix: np.ndarray | None = None  # shape (N, dims), lazy import
+        self._index: NearestNeighbors | None = None  # lazy import
 
     def load(self, embeddings: list[tuple[int, list[float]]]) -> None:
         """Load pre-computed embeddings.  ``embeddings`` is a list of (message_id, vector)."""
