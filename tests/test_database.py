@@ -251,7 +251,14 @@ async def test_busy_retry_sleeps_exact_configured_ladder(db, monkeypatch):
 
 @pytest.mark.anyio
 async def test_busy_retry_returns_action_result_after_transient_busy(db, monkeypatch):
-    """Успех после transient-busy: результат action возвращается, спали ровно delays[0]."""
+    """Успех после transient-busy: результат action возвращается, спали ровно delays[0].
+
+    Также неявно защищает ``_wrap_async``: action возвращает ``sentinel`` только если
+    coroutine реально await'нулась. Без адаптера tenacity вернул бы не-await'нутый
+    coroutine объекта ``flaky``, и ``result is sentinel`` упал бы — поэтому этот тест
+    краснеет, если убрать ``_wrap_async`` (#1132). См. ``test_busy_retry_sleeps_...``
+    для тайминга и ``test_busy_retry_chains_last_busy_error_as_cause`` для цепочки.
+    """
     sentinel = object()
     calls = 0
 
