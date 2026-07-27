@@ -405,26 +405,34 @@ class CostTracker:
         """
         async with self._lock:
             estimated = await self.estimate_cost(tokens, is_image)
-            # Settlement must be cancellation-safe (#1250 review): book the spend
-            # BEFORE dropping the reservation, and shield the booking so a
-            # CancelledError mid-settle can't leave the paid call neither reserved
-            # nor recorded (which would let the next caller admit beyond the cap).
-            # Worst case on cancellation: spend booked but reservation not yet
-            # dropped — a conservative over-hold, never an under-accounting.
-            try:
-                if self._db is None:
-                    self._maybe_reset_day(time.time())
-                    self._daily_cost += estimated
-                else:
-                    # DB-authoritative atomic accumulation across instances (#814).
-                    self._daily_cost = await asyncio.shield(self._atomic_increment(estimated))
+            # Settlement must be cancellation-safe (#1250 review, cycle 2): book the
+            # spend BEFORE dropping the reservation, and on cancellation keep holding
+            # the lock AND the reservation until the booking reaches a definite result
+            # — then drop the reservation and re-raise. If we dropped the reservation
+            # (and released _lock) the moment the outer task was cancelled, a
+            # concurrent reserve_cost could observe the old daily spend with no
+            # reservation and admit another paid call beyond the cap.
+            if self._db is None:
+                self._maybe_reset_day(time.time())
+                self._daily_cost += estimated
+            else:
+                # DB-authoritative atomic accumulation across instances (#814).
+                # shield detaches the increment from the outer cancellation; if the
+                # outer task is cancelled, await the shielded task to completion
+                # (raising only a fresh CancelledError afterwards) so the booking
+                # commits and _lock stays held until the ledger is consistent.
+                booking = asyncio.ensure_future(self._atomic_increment(estimated))
+                try:
+                    self._daily_cost = await asyncio.shield(booking)
+                except asyncio.CancelledError:
+                    # Wait for the detached booking to finish before touching the
+                    # ledger or releasing the lock; propagate cancellation only
+                    # once the spend is durably recorded.
+                    self._daily_cost = await booking
                     self._loaded = True
-            except asyncio.CancelledError:
-                # The increment may or may not have landed; treat the spend as
-                # booked optimistically and drop the reservation so the ledger is
-                # never left holding a reservation AND no recorded spend.
-                self._reserved = max(0.0, self._reserved - estimated)
-                raise
+                    self._reserved = max(0.0, self._reserved - estimated)
+                    raise
+                self._loaded = True
             self._reserved = max(0.0, self._reserved - estimated)
             return estimated
 

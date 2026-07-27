@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -764,6 +765,90 @@ async def test_record_cost_releases_reservation_even_on_cancellation():
     assert tracker.get_reserved_cost() == pytest.approx(0.0)
     # And the spend is accounted exactly once (not lost).
     assert tracker.get_daily_cost() == pytest.approx(1.0)
+
+
+@pytest.mark.anyio
+async def test_record_cost_holds_lock_and_reservation_until_booking_commits():
+    """Cancellation during settlement must NOT drop the reservation or release the
+    lock until the shielded booking commits (#1250 review, cycle 2 — Codex finding).
+
+    With the buggy fix (drop-reservation-then-reraise on CancelledError), a blocked
+    _atomic_increment let a concurrent reserve_cost observe the old daily spend with
+    no reservation and admit a second paid call beyond the cap. The booking task is
+    detached by asyncio.shield, so on cancellation we must await it to completion
+    under the lock before touching the ledger."""
+    fake_db = SimpleNamespace(
+        get_setting=AsyncMock(return_value=None),
+        set_setting=AsyncMock(return_value=None),
+    )
+    # transaction() must exist for _atomic_increment; it does SELECT+INSERT, both
+    # against the fake connection below.
+    gate = asyncio.Event()
+
+    class _FakeConn:
+        async def execute(self, sql, params=()):
+            if "SELECT" in sql:
+                return _FakeCursor(None)
+            # INSERT/UPDATE path — block until the test releases the gate, modelling
+            # a slow DB write during which the outer task is cancelled.
+            await gate.wait()
+            return _FakeCursor(None)
+
+    class _FakeCursor:
+        def __init__(self, row):
+            self._row = row
+
+        async def fetchone(self):
+            return self._row
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    @asynccontextmanager
+    async def _fake_transaction():
+        yield _FakeConn()
+
+    fake_db.transaction = _fake_transaction
+
+    tracker = CostTracker(CostConfig(cost_per_image=1.0, daily_cost_cap=1.0), db=fake_db)
+    await tracker.reserve_cost(is_image=True)
+    assert tracker.get_reserved_cost() == pytest.approx(1.0)
+
+    # record_cost enters the lock, hits the blocked INSERT inside _atomic_increment.
+    settle = asyncio.create_task(tracker.record_cost(is_image=True))
+    await asyncio.sleep(0)  # let it reach the blocked write
+
+    # Cancel the outer settlement task while the booking is still blocked.
+    settle.cancel()
+    cancelled = asyncio.Event()
+
+    async def _capture_cancel():
+        try:
+            await settle
+        except asyncio.CancelledError:
+            cancelled.set()
+
+    asyncio.create_task(_capture_cancel())
+    await asyncio.sleep(0.02)
+
+    # While the booking is still in flight, a concurrent reserve_cost MUST be
+    # blocked on _lock (record_cost still holds it) — it cannot run yet.
+    second = asyncio.create_task(tracker.reserve_cost(is_image=True))
+    await asyncio.sleep(0.02)
+    assert not second.done(), "reserve_cost ran while record_cost still held the lock"
+    second.cancel()
+
+    # Release the blocked booking — the detached increment commits, record_cost
+    # drops the reservation and only then re-raises CancelledError.
+    gate.set()
+    await asyncio.sleep(0.02)
+    assert cancelled.is_set(), "record_cost did not propagate CancelledError after booking committed"
+    # Spend is durably booked; reservation is settled — ledger consistent.
+    assert tracker.get_daily_cost() == pytest.approx(1.0)
+    assert tracker.get_reserved_cost() == pytest.approx(0.0)
 
 
 def test_from_config_disabled_returns_none():
