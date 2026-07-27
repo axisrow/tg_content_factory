@@ -34,7 +34,7 @@ class HandledFloodWaitError(RuntimeError):
         self.info = info
 
 
-def coerce_flood_wait_seconds(value: object) -> int:
+def coerce_flood_wait_seconds(value: int | float | str | None) -> int:
     return max(1, int(value or 0))
 
 

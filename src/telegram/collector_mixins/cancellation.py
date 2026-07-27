@@ -32,6 +32,11 @@ logger = logging.getLogger("src.telegram.collector")
 
 
 class CancellationMixin:
+    # Declared here so the runtime Collector's __init__ annotation (which widens the
+    # second element to ``str | int | None`` and allows ``None``) matches the type
+    # mypy would otherwise infer from the assignments in this mixin.
+    _last_unavailability_log: tuple[str, str | int | None, datetime | None] | None
+
     def _get_resolve_username_backoff_remaining_sec(self: "Collector", phone: str | None = None) -> int:
         # The pool owns the single source of truth for the resolve backoff
         # (#785). With ``phone`` — that account's window; without — the
@@ -168,7 +173,9 @@ class CancellationMixin:
         retry_after_sec = getattr(availability, "retry_after_sec", None)
         if getattr(availability, "state", None) != "all_flooded":
             return False
-        if not is_transient_flood_wait_seconds(retry_after_sec):
+        # Explicit None check narrows for the int() below; is_transient_flood_wait_seconds
+        # already returns False for None, so behavior is unchanged.
+        if retry_after_sec is None or not is_transient_flood_wait_seconds(retry_after_sec):
             return False
         await sleep_for_flood_wait_seconds(
             int(retry_after_sec),

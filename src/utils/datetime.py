@@ -1,6 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import overload
+
+
+@overload
+def normalize_utc(value: datetime) -> datetime: ...
+@overload
+def normalize_utc(value: None) -> None: ...
+@overload
+def normalize_utc(value: datetime | None) -> datetime | None: ...
 
 
 def normalize_utc(value: datetime | None) -> datetime | None:
