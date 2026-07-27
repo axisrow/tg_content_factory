@@ -641,15 +641,3 @@ class ChannelsRepository:
                        SELECT ?, id FROM tags WHERE name = ?""",
                     (channel_pk, name),
                 )
-
-    async def get_channels_by_tag(self, tag: str) -> list[Channel]:
-        """Каналы, помеченные данным тегом, по возрастанию pk."""
-        cur = await self._db.execute(
-            """SELECT c.* FROM channels c
-               JOIN channel_tags ct ON ct.channel_pk = c.id
-               JOIN tags t ON t.id = ct.tag_id
-               WHERE t.name = ?
-               ORDER BY c.id""",
-            (tag,),
-        )
-        return [self._map_channel(r) for r in await cur.fetchall()]
