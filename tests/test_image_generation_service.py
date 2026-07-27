@@ -1116,3 +1116,102 @@ async def test_generate_invokes_adapter_once_with_limits_configured():
     result = await svc.generate("together:flux", "a cat")
     assert result == "http://img/result.png"
     assert calls["n"] == 1
+
+
+# ── #1250: atomic check-and-reserve on the daily cost cap ──
+
+
+def _make_limits(cost_config):
+    from src.services.production_limits_service import (
+        ProductionLimitsService,
+        RateLimitConfig,
+    )
+
+    db = MagicMock()
+    db.get_setting = AsyncMock(return_value=None)
+    return ProductionLimitsService(db, RateLimitConfig(), cost_config)
+
+
+def _make_limited_service(adapter, limits):
+    svc = ImageGenerationService.__new__(ImageGenerationService)
+    svc._adapters = {"together": adapter}
+    svc._s3 = None
+    svc._last_failure = None
+    svc._limits = limits
+    return svc
+
+
+@pytest.mark.anyio
+async def test_concurrent_generations_do_not_exceed_cost_cap():
+    """Regression guard for #1250: with budget left for exactly one image, N
+    concurrent generations must produce exactly one paid call — the estimated
+    cost is reserved atomically with the cap check, BEFORE the paid adapter runs.
+
+    On the pre-#1250 check-then-record flow every generation passed the check
+    against the same pre-spend total while the paid calls were still in flight,
+    so all N adapters ran and the cap was exceeded by (N-1) x cost."""
+    from src.services.production_limits_service import CostConfig
+
+    limits = _make_limits(CostConfig(cost_per_image=1.0, daily_cost_cap=1.0))
+
+    release = asyncio.Event()
+    calls = {"n": 0}
+
+    async def slow_paid_adapter(text, model_id):
+        calls["n"] += 1
+        # Park in flight so record_cost lags the cap check, like a real 10-60s call.
+        await release.wait()
+        return "http://img/result.png"
+
+    svc = _make_limited_service(slow_paid_adapter, limits)
+
+    tasks = [asyncio.create_task(svc.generate("together:flux", "a cat")) for _ in range(5)]
+
+    async def all_past_cap_check():
+        # Every task is either finished (blocked by the cap) or parked inside the
+        # paid adapter — i.e. all five made it past the cost-cap check.
+        while sum(t.done() for t in tasks) + calls["n"] < len(tasks):
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(all_past_cap_check(), timeout=5.0)
+    release.set()
+    results = await asyncio.gather(*tasks)
+
+    assert calls["n"] == 1  # only the budgeted paid call went out
+    assert sum(1 for r in results if r) == 1
+    assert limits._cost_tracker.get_daily_cost() == pytest.approx(1.0)  # cap intact
+    assert limits._cost_tracker.get_reserved_cost() == pytest.approx(0.0)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "failure",
+    ["raises_oserror", "raises_timeout", "returns_none"],
+)
+async def test_failed_generation_releases_reserved_budget(failure):
+    """When the paid call fails (error, timeout, or empty result), the budget
+    reserved by acquire() must be released — otherwise it stays claimed all day
+    and blocks later generations (#1250)."""
+    from src.services.production_limits_service import CostConfig
+
+    limits = _make_limits(CostConfig(cost_per_image=1.0, daily_cost_cap=1.0))
+
+    async def failing_adapter(text, model_id):
+        if failure == "raises_oserror":
+            raise OSError("provider down")
+        if failure == "raises_timeout":
+            raise TimeoutError("too slow")
+        return None
+
+    svc = _make_limited_service(failing_adapter, limits)
+    assert await svc.generate("together:flux", "a cat") is None
+    assert limits._cost_tracker.get_reserved_cost() == pytest.approx(0.0)
+    assert limits._cost_tracker.get_daily_cost() == pytest.approx(0.0)
+
+    # The budget is still available: a follow-up generation succeeds.
+    async def ok_adapter(text, model_id):
+        return "http://img/ok.png"
+
+    svc._adapters = {"together": ok_adapter}
+    assert await svc.generate("together:flux", "a cat") == "http://img/ok.png"
+    assert limits._cost_tracker.get_daily_cost() == pytest.approx(1.0)

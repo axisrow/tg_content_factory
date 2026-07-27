@@ -163,6 +163,13 @@ class CostTracker:
     def __init__(self, config: CostConfig | None = None, db: "Database | None" = None):
         self._config = config or CostConfig()
         self._daily_cost = 0.0
+        # Estimated cost claimed by in-flight paid calls: added by reserve_cost
+        # BEFORE the provider call and removed by record_cost/release_cost after
+        # it, so concurrent callers can't all pass the cap check against the same
+        # pre-spend total (#1250). In-memory only — reservations guard concurrency
+        # within this process; cross-instance protection stays at the recorded
+        # spend level (#814).
+        self._reserved = 0.0
         self._day_start = time.time()
         self._lock = asyncio.Lock()
         # When a DB is provided, the daily cost is persisted to the settings table and
@@ -207,6 +214,10 @@ class CostTracker:
         """
         if now - self._day_start >= _DAY_SECONDS:
             self._daily_cost = 0.0
+            # A reservation that leaked past the day boundary (e.g. a cancelled
+            # acquire whose release raced, or a process crash mid-paid-call) must
+            # not pin the next day's budget — clear the in-flight ledger too.
+            self._reserved = 0.0
             self._day_start = now
             return True
         return False
@@ -313,12 +324,24 @@ class CostTracker:
             return self._config.cost_per_image
         return (tokens / 1000) * self._config.cost_per_1k_tokens
 
+    async def _refresh_daily_cost(self, now: float) -> None:
+        """Bring ``self._daily_cost`` up to date. Must be called under self._lock."""
+        if self._db is not None:
+            # Re-read the authoritative total so a sibling instance's spend is
+            # seen before we approve another call against the shared cap (#814).
+            self._daily_cost = await self._read_persisted_cost(now)
+            self._loaded = True
+            return
+        await self._ensure_loaded()
+        if self._maybe_reset_day(now):
+            await self._persist()
+
     async def check_cost_cap(
         self,
         tokens: int = 0,
         is_image: bool = False,
     ) -> tuple[bool, float]:
-        """Check if request is within cost cap.
+        """Check if request is within cost cap (read-only, reserves nothing).
 
         Args:
             tokens: Number of tokens
@@ -328,44 +351,107 @@ class CostTracker:
             Tuple of (allowed, estimated_cost)
         """
         async with self._lock:
-            now = time.time()
-            if self._db is not None:
-                # Re-read the authoritative total so a sibling instance's spend is
-                # seen before we approve another call against the shared cap (#814).
-                self._daily_cost = await self._read_persisted_cost(now)
-                self._loaded = True
-            else:
-                await self._ensure_loaded()
-                if self._maybe_reset_day(now):
-                    await self._persist()
-
+            await self._refresh_daily_cost(time.time())
             estimated = await self.estimate_cost(tokens, is_image)
-
-            if self._daily_cost + estimated > self._config.daily_cost_cap:
+            if self._daily_cost + self._reserved + estimated > self._config.daily_cost_cap:
                 return False, estimated
-
             return True, estimated
 
-    async def record_cost(self, tokens: int = 0, is_image: bool = False) -> float:
-        """Record cost for a request after it actually executes."""
+    async def reserve_cost(
+        self,
+        tokens: int = 0,
+        is_image: bool = False,
+    ) -> tuple[bool, float]:
+        """Atomically check the cap AND reserve the estimated cost (#1250).
+
+        Claims budget under the same lock as the check, BEFORE the paid provider
+        call runs, so N concurrent callers can't all be approved against the same
+        pre-spend total while none of them has recorded anything yet. Every
+        successful reservation MUST be settled with exactly one of ``record_cost``
+        (call succeeded — books the actual spend) or ``release_cost`` (call failed
+        or never ran — returns the budget); otherwise the reserved budget stays
+        claimed until the day rolls over.
+
+        Returns:
+            Tuple of (reserved, estimated_cost)
+        """
+        async with self._lock:
+            await self._refresh_daily_cost(time.time())
+            estimated = await self.estimate_cost(tokens, is_image)
+            if self._daily_cost + self._reserved + estimated > self._config.daily_cost_cap:
+                return False, estimated
+            self._reserved += estimated
+            return True, estimated
+
+    async def release_cost(self, tokens: int = 0, is_image: bool = False) -> float:
+        """Release a reservation whose paid call failed or never ran (#1250).
+
+        Recomputes the same deterministic estimate as ``reserve_cost``, so for the
+        same arguments the released amount always matches the reservation. Clamped
+        at zero so an unpaired release cannot corrupt the ledger.
+        """
         async with self._lock:
             estimated = await self.estimate_cost(tokens, is_image)
+            self._reserved = max(0.0, self._reserved - estimated)
+            return estimated
+
+    async def record_cost(self, tokens: int = 0, is_image: bool = False) -> float:
+        """Record cost for a request after it actually executes.
+
+        Settles the matching ``reserve_cost`` reservation: the reservation (same
+        deterministic estimate for the same arguments) is dropped and the actual
+        cost is booked in its place. Also safe without a prior reservation — the
+        release is clamped at zero and only the spend is recorded.
+        """
+        async with self._lock:
+            estimated = await self.estimate_cost(tokens, is_image)
+            # Settlement must be cancellation-safe (#1250 review, cycle 2/3): book
+            # the spend BEFORE dropping the reservation, and keep holding the lock
+            # AND the reservation until the booking reaches a definite result. Only
+            # then drop the reservation and re-raise a single CancelledError.
+            #
+            # If the reservation were dropped (or _lock released) the moment the
+            # outer task was cancelled, a concurrent reserve_cost could observe the
+            # old daily spend with no reservation and admit another paid call beyond
+            # the cap. The booking is therefore awaited behind asyncio.shield in a
+            # loop that absorbs ANY number of outer cancellation requests — the
+            # booking task itself is never cancelled, so it always commits and the
+            # ledger stays consistent across repeated/nested cancellations.
             if self._db is None:
                 self._maybe_reset_day(time.time())
                 self._daily_cost += estimated
-                return estimated
-            # DB-authoritative atomic accumulation across instances (#814).
-            self._daily_cost = await self._atomic_increment(estimated)
-            self._loaded = True
+            else:
+                # DB-authoritative atomic accumulation across instances (#814).
+                booking = asyncio.ensure_future(self._atomic_increment(estimated))
+                cancelled = False
+                while True:
+                    try:
+                        self._daily_cost = await asyncio.shield(booking)
+                        break
+                    except asyncio.CancelledError:
+                        # Record the cancellation request but keep waiting for the
+                        # detached booking to finish; re-raise exactly once it has.
+                        cancelled = True
+                self._loaded = True
+                if cancelled:
+                    # Drop the reservation and propagate the cancellation only after
+                    # the spend is durably recorded.
+                    self._reserved = max(0.0, self._reserved - estimated)
+                    raise asyncio.CancelledError()
+            self._reserved = max(0.0, self._reserved - estimated)
             return estimated
 
     def get_daily_cost(self) -> float:
         """Get current daily cost."""
         return self._daily_cost
 
+    def get_reserved_cost(self) -> float:
+        """Get the estimated cost currently reserved by in-flight calls (#1250)."""
+        return self._reserved
+
     def get_remaining_budget(self) -> float:
-        """Get remaining daily budget."""
-        return max(0.0, self._config.daily_cost_cap - self._daily_cost)
+        """Get remaining daily budget, net of outstanding reservations."""
+        return max(0.0, self._config.daily_cost_cap - self._daily_cost - self._reserved)
 
 
 class ProductionLimitsService:
@@ -420,21 +506,39 @@ class ProductionLimitsService:
             is_image: Whether this is an image generation
             max_wait: Maximum wait time in seconds
 
+        On success the estimated cost is reserved against the daily cap, so the
+        caller MUST settle with exactly one of ``record_cost`` (paid call
+        succeeded) or ``release_cost`` (paid call failed or never ran) — otherwise
+        the reserved budget stays claimed until the day rolls over (#1250).
+
         Returns:
             Tuple of (allowed, error_message)
         """
-        # Check cost cap first
-        cost_allowed, estimated_cost = await self._cost_tracker.check_cost_cap(
+        # Atomically check the cost cap and reserve the estimated cost, so N
+        # concurrent calls can't all pass against the same pre-spend total (#1250).
+        cost_allowed, estimated_cost = await self._cost_tracker.reserve_cost(
             tokens, is_image
         )
         if not cost_allowed:
             return False, f"Daily cost cap exceeded (estimated: ${estimated_cost:.4f})"
 
-        # Check rate limits
-        rate_allowed = await self._rate_limiter.wait_and_acquire(
-            tokens, is_image, max_wait
-        )
+        # Check rate limits. Any failure here — a timeout (rate_allowed False) OR a
+        # cancellation/exception out of wait_and_acquire — means the paid call will
+        # not run, so the reserved budget must be returned. acquire() is called
+        # BEFORE the caller's try/finally (generate(), execute_with_retry()), so
+        # the caller cannot recover the reservation on this path; releasing here is
+        # the only thing that prevents a stranded estimate pinning the budget until
+        # day rollover (#1250 review).
+        try:
+            rate_allowed = await self._rate_limiter.wait_and_acquire(
+                tokens, is_image, max_wait
+            )
+        except BaseException:
+            await self._cost_tracker.release_cost(tokens, is_image)
+            raise
         if not rate_allowed:
+            # The paid call won't run — return the reserved budget.
+            await self._cost_tracker.release_cost(tokens, is_image)
             return False, "Rate limit timeout"
 
         return True, None
@@ -443,10 +547,19 @@ class ProductionLimitsService:
         """Record the actual cost of a completed call against the daily cap.
 
         Pair with ``acquire`` for call sites that don't use ``execute_with_retry``
-        (e.g. image generation): ``acquire`` reserves the rate slot and checks the
-        cap, ``record_cost`` books the spend once the paid call has succeeded.
+        (e.g. image generation): ``acquire`` reserves the estimated cost and the
+        rate slot, ``record_cost`` settles the reservation into booked spend once
+        the paid call has succeeded.
         """
         return await self._cost_tracker.record_cost(tokens, is_image)
+
+    async def release_cost(self, tokens: int = 0, is_image: bool = False) -> float:
+        """Release the cost reservation taken by ``acquire`` (#1250).
+
+        Call when the paid call failed or never ran, so the reserved budget does
+        not stay claimed (blocking other callers) until the day rolls over.
+        """
+        return await self._cost_tracker.release_cost(tokens, is_image)
 
     async def execute_with_retry(
         self,
@@ -504,7 +617,14 @@ class ProductionLimitsService:
                 if not allowed:
                     raise _AcquireLimitError(error or "Rate limit exceeded")
 
-                result = await func()
+                try:
+                    result = await func()
+                except BaseException:
+                    # The paid call failed — release the budget reserved by
+                    # acquire(), so neither the retry below nor other callers are
+                    # blocked by a reservation with no real spend behind it (#1250).
+                    await self._cost_tracker.release_cost(tokens, is_image)
+                    raise
                 await self._cost_tracker.record_cost(tokens, is_image)
                 return result
 
@@ -516,6 +636,7 @@ class ProductionLimitsService:
             "rate_limits": self._rate_limiter.get_usage(),
             "cost": {
                 "daily_cost": self._cost_tracker.get_daily_cost(),
+                "reserved": self._cost_tracker.get_reserved_cost(),
                 "remaining_budget": self._cost_tracker.get_remaining_budget(),
                 "daily_cap": self._cost_tracker._config.daily_cost_cap,
             },
