@@ -715,3 +715,85 @@ async def test_runtime_snapshots_repository_handles_non_primitive_payload(tmp_pa
         assert stored.payload["blob"] == "deadbeef"
     finally:
         await db.close()
+
+
+@pytest.mark.anyio
+async def test_runtime_snapshots_repository_delete_snapshot(tmp_path):
+    """dialogs_history snapshots hold private message text and are expired by a
+    short TTL at the web layer (cycle-review #1299 round 2); delete_snapshot is
+    how the expired row actually leaves the DB instead of lingering forever."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        snapshot = RuntimeSnapshot(
+            snapshot_type="dialogs_history",
+            scope="dialogs_history:+1:1:0",
+            payload={"messages": [{"text": "private"}]},
+        )
+        await db.repos.runtime_snapshots.upsert_snapshot(snapshot)
+        assert await db.repos.runtime_snapshots.get_snapshot("dialogs_history", "dialogs_history:+1:1:0") is not None
+
+        await db.repos.runtime_snapshots.delete_snapshot("dialogs_history", "dialogs_history:+1:1:0")
+
+        assert await db.repos.runtime_snapshots.get_snapshot("dialogs_history", "dialogs_history:+1:1:0") is None
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_runtime_snapshots_repository_delete_snapshot_missing_is_noop(tmp_path):
+    """Deleting a scope that was never written must not raise."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        await db.repos.runtime_snapshots.delete_snapshot("dialogs_history", "does_not_exist")
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_runtime_snapshots_repository_prune_expired_sweeps_orphans(tmp_path):
+    """A dialogs_history scope nobody ever revisits (so delete_snapshot's
+    read-triggered cleanup never fires for it) must still eventually leave the DB —
+    prune_expired is the proactive sweep for exactly that orphan case
+    (cycle-review #1299 round 3)."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        stale = RuntimeSnapshot(
+            snapshot_type="dialogs_history",
+            scope="dialogs_history:+1:1:0",
+            payload={"messages": [{"text": "old private message"}]},
+            updated_at=datetime.now(timezone.utc) - timedelta(seconds=600),
+        )
+        fresh = RuntimeSnapshot(
+            snapshot_type="dialogs_history",
+            scope="dialogs_history:+1:2:0",
+            payload={"messages": [{"text": "recent private message"}]},
+            updated_at=datetime.now(timezone.utc) - timedelta(seconds=10),
+        )
+        other_type = RuntimeSnapshot(
+            snapshot_type="dialogs_participants",
+            scope="dialogs_participants:+1:1",
+            payload={"participants": []},
+            updated_at=datetime.now(timezone.utc) - timedelta(seconds=600),
+        )
+        for snap in (stale, fresh, other_type):
+            await db.repos.runtime_snapshots.upsert_snapshot(snap)
+
+        deleted = await db.repos.runtime_snapshots.prune_expired("dialogs_history", older_than_seconds=300)
+
+        assert deleted == 1
+        assert await db.repos.runtime_snapshots.get_snapshot("dialogs_history", "dialogs_history:+1:1:0") is None
+        # Fresh dialogs_history row survives — it's within the TTL.
+        assert await db.repos.runtime_snapshots.get_snapshot("dialogs_history", "dialogs_history:+1:2:0") is not None
+        # A different snapshot_type is never touched, however old.
+        assert (
+            await db.repos.runtime_snapshots.get_snapshot("dialogs_participants", "dialogs_participants:+1:1")
+            is not None
+        )
+    finally:
+        await db.close()

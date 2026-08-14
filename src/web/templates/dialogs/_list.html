@@ -60,6 +60,25 @@
     </li>
 </ul>
 
+{% macro dialog_row_actions(d, selected_phone) %}
+<div class="d-flex flex-wrap gap-1">
+    <button type="button" class="btn btn-outline-secondary btn-sm js-open-dialog-history"
+            data-phone="{{ selected_phone }}" data-chat-id="{{ d.channel_id }}" data-title="{{ d.title|e }}">Сообщения</button>
+    <button type="button" class="btn btn-outline-secondary btn-sm js-open-dialog-participants"
+            data-phone="{{ selected_phone }}" data-chat-id="{{ d.channel_id }}" data-title="{{ d.title|e }}">Участники</button>
+    <form method="post" action="/dialogs/mark-read" class="d-inline" data-busy>
+        <input type="hidden" name="phone" value="{{ selected_phone }}">
+        <input type="hidden" name="chat_id" value="{{ d.channel_id }}">
+        <button type="submit" class="btn btn-outline-secondary btn-sm">Прочитано</button>
+    </form>
+    <form method="post" action="/dialogs/archive" class="d-inline" data-busy>
+        <input type="hidden" name="phone" value="{{ selected_phone }}">
+        <input type="hidden" name="chat_id" value="{{ d.channel_id }}">
+        <button type="submit" class="btn btn-outline-secondary btn-sm">В архив</button>
+    </form>
+</div>
+{% endmacro %}
+
 {% macro dialog_pane(items, pane_id, empty_text, with_type=True, active=False) %}
 <div class="tab-pane fade{% if active %} show active{% endif %}" id="pane-{{ pane_id }}" role="tabpanel">
     {% if items %}
@@ -69,7 +88,7 @@
         <thead><tr>
             <th><input type="checkbox" class="form-check-input" id="select-all-{{ pane_id }}"
                        onchange="selectAll('{{ pane_id }}', this.checked)"></th>
-            {% if with_type %}<th>Тип</th>{% endif %}<th>Название</th><th>Username</th>{% if with_type %}<th>В базе</th>{% endif %}
+            {% if with_type %}<th>Тип</th>{% endif %}<th>Название</th><th>Username</th>{% if with_type %}<th>В базе</th>{% endif %}<th>Действия</th>
         </tr></thead>
         <tbody>
         {% for d in items %}
@@ -80,6 +99,7 @@
             <td>{{ d.title }}</td>
             <td>{% if d.username %}<a href="https://t.me/{{ d.username }}" target="_blank" rel="noopener">@{{ d.username }}</a>{% else %}<span class="text-muted">—</span>{% endif %}</td>
             {% if with_type %}<td>{% if d.already_added %}<span class="badge-active">{{ icon("success") }}</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>{% endif %}
+            <td>{{ dialog_row_actions(d, selected_phone) }}</td>
         </tr>
         {% endfor %}
         </tbody>
@@ -98,6 +118,7 @@
                     {% elif d.username %}
                     <small class="text-muted">@{{ d.username }}</small>
                     {% endif %}
+                    <div class="mt-1">{{ dialog_row_actions(d, selected_phone) }}</div>
                 </div>
             </div>
         </div>

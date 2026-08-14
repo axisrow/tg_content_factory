@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import csv
+import io
+import json
 import time
 from collections.abc import Awaitable, Callable
 
@@ -10,10 +13,11 @@ import typer
 from src.cli import runtime
 from src.cli.commands.common import (
     _NEG_ID_POSITIONAL,
+    OutputFormat,
     apply_startup,
     run_async,
 )
-from src.models import TelegramCommandStatus
+from src.models import DialogMessage, TelegramCommandStatus
 from src.services.channel_service import ChannelService
 from src.services.telegram_actions import (
     BROADCAST_STAT_FIELDS,
@@ -30,6 +34,7 @@ from src.telegram.reactions import (
     normalize_outgoing_reaction_emoji,
 )
 from src.utils.datetime import parse_required_datetime
+from src.utils.text_safety import csv_safe_cell
 
 
 def _resolve_phone(pool, args) -> str | None:
@@ -518,6 +523,76 @@ async def _dialogs_download_media(args, db, pool) -> None:
         print(f"Error downloading media: {exc}")
 
 
+def _print_dm_messages(messages: list[DialogMessage], fmt: str) -> None:
+    """Render live dialog history (`DialogMessage`, not the collector's `Message`).
+
+    Mirrors `messages._print_messages`'s text/json/csv structure so `dialogs
+    read` output feels like the rest of the CLI, but maps our own fields —
+    the collector model's `channel_id`/`views`/`reactions_json` don't apply
+    to a live DM/group history read.
+    """
+    if fmt == "json":
+        items = [
+            {
+                "id": m.id,
+                "sender_id": m.sender_id,
+                "sender_name": m.sender_name,
+                "out": m.out,
+                "date": m.date.isoformat() if m.date else None,
+                "text": m.text,
+                "media_type": m.media_type,
+                "reply_to_id": m.reply_to_id,
+                "is_forward": m.is_forward,
+            }
+            for m in messages
+        ]
+        print(json.dumps(items, ensure_ascii=False, indent=2))
+    elif fmt == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["id", "sender_id", "sender_name", "out", "date", "text", "media_type", "is_forward"])
+        for m in messages:
+            writer.writerow([
+                m.id, m.sender_id, csv_safe_cell(m.sender_name or ""), m.out,
+                m.date.isoformat() if m.date else "",
+                csv_safe_cell((m.text or "")[:500]),
+                m.media_type or "", m.is_forward,
+            ])
+        print(buf.getvalue(), end="")
+    else:
+        print(f"Total: {len(messages)} messages\n")
+        for m in messages:
+            date_str = m.date.strftime("%Y-%m-%d %H:%M") if m.date else "—"
+            who = "you" if m.out else (m.sender_name or m.sender_id or "?")
+            text = (m.text or "").strip()
+            preview = text[:200].replace("\n", " ")
+            if len(text) > 200:
+                preview += "..."
+            media_suffix = f" [{m.media_type}]" if m.media_type else ""
+            forward_suffix = " (forward)" if m.is_forward else ""
+            print(f"[{date_str}] #{m.id} {who}{forward_suffix}")
+            print(f"  {preview}{media_suffix}")
+            print()
+
+
+async def _dialogs_read(args, db, pool) -> None:
+    phone = _resolve_phone(pool, args)
+    if phone is None:
+        return
+    try:
+        result = await TelegramActionService(pool).read_history(
+            phone=phone,
+            chat_id=args.chat_id,
+            limit=args.limit,
+            offset_id=args.offset_id,
+        )
+        _print_dm_messages(result.messages, args.format)
+    except TelegramActionClientUnavailableError:
+        print(f"Client for {phone} unavailable.")
+    except Exception as exc:
+        print(f"Error reading history: {exc}")
+
+
 async def _dialogs_participants(args, db, pool) -> None:
     phone = _resolve_phone(pool, args)
     if phone is None:
@@ -868,6 +943,7 @@ _DIALOGS_HANDLERS: dict[str, tuple[Callable[..., Awaitable[None]], bool]] = {
     "pin-message": (_dialogs_pin_message, False),
     "unpin-message": (_dialogs_unpin_message, False),
     "download-media": (_dialogs_download_media, False),
+    "read": (_dialogs_read, False),
     "participants": (_dialogs_participants, False),
     "edit-admin": (_dialogs_edit_admin, False),
     "edit-permissions": (_dialogs_edit_permissions, False),
@@ -1186,6 +1262,21 @@ def dialogs_download_media(
 ) -> None:
     """Download media from a message."""
     _run_dialogs(ctx, "download-media", chat_id=chat_id, message_id=message_id, phone=phone, output_dir=output_dir)
+
+
+@dialogs_app.command("read", context_settings=_NEG_ID_POSITIONAL)
+def dialogs_read(
+    ctx: typer.Context,
+    chat_id: str = typer.Argument(..., help="Chat ID or @username"),
+    phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    limit: int = typer.Option(50, "--limit", help="Max messages to fetch (default: 50)"),
+    offset_id: int = typer.Option(0, "--offset-id", help="Fetch messages older than this message ID"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format", help="Output format (default: text)"),
+) -> None:
+    """Read live message history from a dialog (DM/group/channel), oldest first."""
+    _run_dialogs(
+        ctx, "read", chat_id=chat_id, phone=phone, limit=limit, offset_id=offset_id, format=output_format.value
+    )
 
 
 @dialogs_app.command("participants", context_settings=_NEG_ID_POSITIONAL)

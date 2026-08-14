@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -276,6 +277,73 @@ async def test_dialogs_empty_dialogs(client):
 
     resp = await client.get("/dialogs/?phone=%2B1234567890")
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        # round 1: apostrophe breaking out of a JS string literal in an inline onclick.
+        "x');alert(document.domain);//",
+        # round 3: a bare double quote breaking out of the (double-quoted) HTML
+        # attribute itself — this is what defeated a naive |tojson-inside-onclick fix,
+        # since tojson JS-escapes but does not HTML-attribute-escape its own quotes.
+        'x onmouseover=alert(document.domain)//',
+    ],
+)
+async def test_dialogs_title_cannot_inject_event_handler(client, payload):
+    """No dialog title, however crafted, must be able to inject a NEW HTML attribute
+    or break out of an existing one on the row-action buttons (stored-XSS guard).
+
+    The fix moved off inline onclick="..." entirely: title now only ever lands in
+    a data-title="..." attribute (plain HTML-attribute-escaped, never JS-string- or
+    HTML-attribute-quote-sensitive) that JS reads via .dataset — never re-parsed as
+    markup or script, so no character sequence can escape that context.
+    """
+    db = client._transport.app.state.db
+    await db.repos.dialog_cache.replace_dialogs("+1234567890", [
+        {
+            "channel_id": -100333,
+            "title": payload,
+            "username": None,
+            "channel_type": "channel",
+            "deactivate": 0,
+            "is_own": 0,
+        },
+    ])
+
+    resp = await client.get("/dialogs/fragments/list?phone=%2B1234567890")
+    assert resp.status_code == 200
+    assert "js-open-dialog-history" in resp.text
+    assert "js-open-dialog-participants" in resp.text
+
+    # No inline onclick handler carrying the title at all anymore (other, unrelated
+    # static onclick="clearSelection()"/"selectAll(...)" handlers in the page don't
+    # embed any user data and are out of scope) — the whole class of "title embedded
+    # in an executable attribute" bugs is gone, not just this one payload.
+    assert "openDialogHistory(" not in resp.text
+    assert "openDialogParticipants(" not in resp.text
+
+    # The whole payload, HTML-attribute-escaped, must sit inside ONE data-title="..."
+    # attribute per button — i.e. Jinja's |e is escaping the *right* context here
+    # (a plain HTML attribute), unlike the round-1/round-3 onclick attempts where the
+    # value was embedded in a JS-string or executable-attribute context that |e/tojson
+    # didn't fully protect. re.escape() on the raw payload deliberately makes this
+    # assert FAIL if any character of it ever appears un-escaped (e.g. a literal
+    # un-escaped '"' or "'" breaking out of the attribute boundary).
+    from markupsafe import escape as _html_escape
+
+    # Isolate the data-title attribute's value specifically (not the plain-text
+    # <td>{{ d.title }}</td> cell, where an unescaped-looking payload without HTML
+    # metacharacters is expected and harmless — it's just a text node, not an
+    # attribute boundary). re.escape() would make the wrong assertion fail-open
+    # for exactly the payloads that don't contain quotes, so we anchor on the
+    # attribute's parsed value instead of a raw substring search.
+    escaped_title = str(_html_escape(payload))
+    data_title_calls = re.findall(r'data-title="([^"]*)"', resp.text)
+    assert data_title_calls, "expected at least one data-title attribute"
+    for call in data_title_calls:
+        assert call == escaped_title
 
 
 @pytest.mark.anyio
