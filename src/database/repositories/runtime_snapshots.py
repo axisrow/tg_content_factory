@@ -104,3 +104,31 @@ class RuntimeSnapshotsRepository:
             "DELETE FROM runtime_snapshots WHERE snapshot_type = ? AND scope = ?",
             (snapshot_type, scope),
         )
+
+    async def prune_expired(self, snapshot_type: str, older_than_seconds: int) -> int:
+        """Удалить ВСЕ снимки данного типа старше `older_than_seconds`, независимо
+        от того, читал ли их кто-то повторно.
+
+        `delete_snapshot`/веб-хендлер убирают протухшую строку только когда её
+        снова запрашивают тем же scope — сироты (диалог/страница, к которым
+        больше не возвращались) так и оставались бы в БД навсегда. Вызывается
+        воркером при каждой новой записи dialogs_history, так что приватный
+        текст сообщений не копится дольше TTL, даже если никто не откроет тот
+        же чат снова (cycle-review #1299 round 3).
+        """
+        assert self._database is not None, (
+            "RuntimeSnapshotsRepository.prune_expired requires a Database reference"
+        )
+        # `updated_at` is stored as whatever ISO format the writer used — usually
+        # Python's isoformat() ("...T...+00:00"), which does NOT sort correctly
+        # against SQLite's own datetime('now') ("... " with a space, no offset) by
+        # plain string comparison ('T' > ' ' in ASCII, so a same-instant ISO string
+        # always compares as "later"). julianday() parses both representations into
+        # a comparable numeric value regardless of the 'T'/' ' separator or a
+        # trailing offset.
+        cur = await self._database.execute_write(
+            "DELETE FROM runtime_snapshots "
+            "WHERE snapshot_type = ? AND julianday(updated_at) < julianday('now', ?)",
+            (snapshot_type, f"-{older_than_seconds} seconds"),
+        )
+        return cur.rowcount

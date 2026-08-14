@@ -9,7 +9,7 @@ from typing import cast
 
 from fastapi import Request
 
-from src.models import AccountSessionStatus
+from src.models import DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS, AccountSessionStatus
 from src.telegram.reactions import TelegramReactionInvalidError, normalize_outgoing_reaction_emoji
 from src.web import deps
 from src.web.dialogs.forms import (
@@ -388,16 +388,6 @@ async def get_participants(request: Request) -> DialogJson:
     return DialogJson({"status": "queued", "command_id": command_id}, status_code=202)
 
 
-# dialogs_history snapshots hold DM/private-group message text (unlike
-# dialogs_participants/broadcast_stats, which only cache names and numbers) —
-# DialogMessage documents itself as a one-off, non-persistent snapshot, so
-# runtime_snapshots' usual unlimited retention would quietly turn this cache
-# into a permanent store of private conversation content. A short TTL keeps
-# the "second click is instant" behaviour the PR relies on while bounding how
-# long that content actually sits in the DB (cycle-review #1299 round 2).
-_DIALOGS_HISTORY_SNAPSHOT_TTL = timedelta(minutes=5)
-
-
 async def read_history(request: Request) -> DialogJson:
     db = deps.get_db(request)
     command_service = deps.telegram_command_service(request)
@@ -413,7 +403,7 @@ async def read_history(request: Request) -> DialogJson:
         updated_at = snapshot.updated_at
         if updated_at.tzinfo is None:
             updated_at = updated_at.replace(tzinfo=timezone.utc)
-        if datetime.now(timezone.utc) - updated_at < _DIALOGS_HISTORY_SNAPSHOT_TTL:
+        if datetime.now(timezone.utc) - updated_at < timedelta(seconds=DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS):
             return DialogJson(snapshot.payload)
         # Expired: drop the stored message text now rather than leaving it in
         # the DB until (if ever) the same scope is re-fetched and overwritten.

@@ -182,5 +182,24 @@
             });
         }
     });
+
+    /* Delegated so it also covers rows added later by HTMX (dialog list swaps).
+       Reading via .dataset never re-parses the value as HTML/JS, unlike an
+       inline onclick="..." attribute — the title is just a plain string here,
+       so it cannot break out of any markup/script context regardless of what
+       characters a Telegram-controlled dialog title contains. */
+    document.addEventListener('click', function (event) {
+        var historyBtn = event.target.closest('.js-open-dialog-history');
+        if (historyBtn) {
+            window.openDialogHistory(historyBtn.dataset.phone, historyBtn.dataset.chatId, historyBtn.dataset.title);
+            return;
+        }
+        var participantsBtn = event.target.closest('.js-open-dialog-participants');
+        if (participantsBtn) {
+            window.openDialogParticipants(
+                participantsBtn.dataset.phone, participantsBtn.dataset.chatId, participantsBtn.dataset.title
+            );
+        }
+    });
 })();
 </script>

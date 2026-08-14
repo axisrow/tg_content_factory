@@ -62,10 +62,10 @@
 
 {% macro dialog_row_actions(d, selected_phone) %}
 <div class="d-flex flex-wrap gap-1">
-    <button type="button" class="btn btn-outline-secondary btn-sm"
-            onclick="openDialogHistory('{{ selected_phone }}', '{{ d.channel_id }}', {{ d.title|tojson }})">Сообщения</button>
-    <button type="button" class="btn btn-outline-secondary btn-sm"
-            onclick="openDialogParticipants('{{ selected_phone }}', '{{ d.channel_id }}', {{ d.title|tojson }})">Участники</button>
+    <button type="button" class="btn btn-outline-secondary btn-sm js-open-dialog-history"
+            data-phone="{{ selected_phone }}" data-chat-id="{{ d.channel_id }}" data-title="{{ d.title|e }}">Сообщения</button>
+    <button type="button" class="btn btn-outline-secondary btn-sm js-open-dialog-participants"
+            data-phone="{{ selected_phone }}" data-chat-id="{{ d.channel_id }}" data-title="{{ d.title|e }}">Участники</button>
     <form method="post" action="/dialogs/mark-read" class="d-inline" data-busy>
         <input type="hidden" name="phone" value="{{ selected_phone }}">
         <input type="hidden" name="chat_id" value="{{ d.channel_id }}">

@@ -320,6 +320,15 @@ class RuntimeSnapshot(BaseModel):
     updated_at: datetime | None = None
 
 
+# dialogs_history snapshots carry DM/private-group message text (unlike other
+# runtime_snapshots payloads, which only cache names/statuses/counters), so they
+# get a TTL other snapshot types don't need. Shared by the web-layer cache-hit
+# check (src/web/dialogs/handlers.py) and the worker-layer prune-on-write
+# (src/services/dispatcher/dialogs_mixin.py) so the two stay in lockstep
+# (cycle-review #1299 round 2/3).
+DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS = 300
+
+
 # Channel rating (#966): two-axis verdict (usefulness × genre) for a channel,
 # produced by ChannelAnalysisService (logic ported from the removed ai_detect_tool seed, #781).
 ChannelUsefulness = Literal["useful", "useless"]

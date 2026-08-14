@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from inspect import isawaitable
 from typing import TYPE_CHECKING, Any
 
-from src.models import RuntimeSnapshot
+from src.models import DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS, RuntimeSnapshot
 from src.services.dispatcher._constants import (
     DEFAULT_REACTION_MIN_INTERVAL_SEC,
     REACTION_MIN_INTERVAL_CEILING_SEC,
@@ -409,6 +409,15 @@ class DialogsCommandsMixin(_Base):
                 scope=scope,
                 payload={"messages": data, "total": len(data), "dialog_id": action_result.dialog_id},
             )
+        )
+        # The web-layer cache-hit check only expires a scope when it's read again —
+        # a chat/offset nobody revisits would otherwise keep its private message
+        # text in the DB forever. Piggyback the sweep on every write instead of a
+        # dedicated scheduler job: as long as *any* history read happens, orphaned
+        # expired rows from other chats/offsets get swept too (cycle-review #1299
+        # round 3).
+        await self._db.repos.runtime_snapshots.prune_expired(
+            "dialogs_history", DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS
         )
         return {"phone": action_result.phone, "scope": scope, "total": len(data)}
 
