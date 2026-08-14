@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, timedelta, timezone
 from typing import cast
 
 from fastapi import Request
 
-from src.models import AccountSessionStatus
+from src.models import DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS, AccountSessionStatus
 from src.telegram.reactions import TelegramReactionInvalidError, normalize_outgoing_reaction_emoji
 from src.web import deps
 from src.web.dialogs.forms import (
@@ -350,16 +351,26 @@ async def download_media(request: Request) -> CommandRedirect | DialogRedirect:
     )
 
 
+def _query_int(request: Request, name: str, default: int) -> int:
+    """Non-negative int query param, falling back to ``default``.
+
+    Anything that is not a plain non-negative integer (empty, ``-5``, ``abc``)
+    falls back rather than raising: these are optional paging knobs, not the
+    request's subject, so a malformed one should not 400 a valid read.
+    """
+    raw = request.query_params.get(name, "")
+    return int(raw) if raw.isdigit() else default
+
+
 async def get_participants(request: Request) -> DialogJson:
     db = deps.get_db(request)
     command_service = deps.telegram_command_service(request)
     phone = request.query_params.get("phone", "")
     chat_id = request.query_params.get("chat_id", "")
-    limit_str = request.query_params.get("limit", "")
     search = request.query_params.get("search", "")
-    limit = int(limit_str) if limit_str and limit_str.isdigit() else 200
     if not phone or not chat_id:
         return DialogJson({"error": "phone and chat_id required"}, status_code=400)
+    limit = _query_int(request, "limit", 200)
     scope = f"dialogs_participants:{phone}:{chat_id}"
     # The cached snapshot is keyed only by (phone, chat_id), so it does not
     # reflect a specific search string. When the caller asks for a filtered
@@ -372,6 +383,34 @@ async def get_participants(request: Request) -> DialogJson:
     command_id = await command_service.enqueue(
         "dialogs.participants",
         payload={"phone": phone, "chat_id": chat_id, "limit": limit, "search": search},
+        requested_by="web:dialogs",
+    )
+    return DialogJson({"status": "queued", "command_id": command_id}, status_code=202)
+
+
+async def read_history(request: Request) -> DialogJson:
+    db = deps.get_db(request)
+    command_service = deps.telegram_command_service(request)
+    phone = request.query_params.get("phone", "")
+    chat_id = request.query_params.get("chat_id", "")
+    if not phone or not chat_id:
+        return DialogJson({"error": "phone and chat_id required"}, status_code=400)
+    limit = _query_int(request, "limit", 50)
+    offset_id = _query_int(request, "offset_id", 0)
+    scope = f"dialogs_history:{phone}:{chat_id}:{offset_id}"
+    snapshot = await db.repos.runtime_snapshots.get_snapshot("dialogs_history", scope)
+    if snapshot is not None and snapshot.updated_at is not None:
+        updated_at = snapshot.updated_at
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) - updated_at < timedelta(seconds=DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS):
+            return DialogJson(snapshot.payload)
+        # Expired: drop the stored message text now rather than leaving it in
+        # the DB until (if ever) the same scope is re-fetched and overwritten.
+        await db.repos.runtime_snapshots.delete_snapshot("dialogs_history", scope)
+    command_id = await command_service.enqueue(
+        "dialogs.read_history",
+        payload={"phone": phone, "chat_id": chat_id, "limit": limit, "offset_id": offset_id},
         requested_by="web:dialogs",
     )
     return DialogJson({"status": "queued", "command_id": command_id}, status_code=202)

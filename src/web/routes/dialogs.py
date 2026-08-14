@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse
 from src.web.dialogs import handlers
 from src.web.dialogs.responses import dialog_response
 from src.web.schemas.common import ErrorResponse, QueuedCommandResponse
-from src.web.schemas.dialogs import BroadcastStatsResponse, ParticipantsResponse
+from src.web.schemas.dialogs import BroadcastStatsResponse, DialogHistoryResponse, ParticipantsResponse
 
 router = APIRouter()
 
@@ -148,6 +148,28 @@ async def get_participants(request: Request):
     ``{"status": "queued", "command_id": …}`` body instead.
     """
     return dialog_response(request, await handle_get_participants(request))
+
+
+@router.get(
+    "/history",
+    response_model=DialogHistoryResponse,
+    status_code=200,
+    tags=["dialogs"],
+    summary="Read dialog message history",
+    responses={
+        202: {"model": QueuedCommandResponse, "description": "Fetch enqueued for the worker"},
+        400: {"model": ErrorResponse, "description": "Missing phone or chat_id"},
+    },
+)
+async def read_history(request: Request):
+    """Live dialog history from the cached worker snapshot (parity with CLI `dialogs read`).
+
+    Requires ``phone`` and ``chat_id`` query params; optional ``limit`` (default
+    50) and ``offset_id`` (default 0) for pagination. When no snapshot is cached
+    the endpoint enqueues a worker command and returns HTTP 202 with a
+    ``{"status": "queued", "command_id": …}`` body instead.
+    """
+    return dialog_response(request, await handlers.read_history(request))
 
 
 @router.post("/edit-admin")

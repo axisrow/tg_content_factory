@@ -186,6 +186,35 @@ class Message(BaseModel):
     channel_username: str | None = None
 
 
+class DialogMessage(BaseModel):
+    """Одно сообщение из живой истории диалога (ДМ/группа), не из коллектора.
+
+    В отличие от [[Message]] — не привязано к `channel_id` в БД коллектора и не
+    хранится; это разовый снимок `history()`/`history_since()` из tg_messenger,
+    смаппленный на нашу модель на границе (см. `src/telegram/dm_history.py`),
+    чтобы обновление внешнего пакета не просачивалось в шаблоны/CLI-вывод.
+    """
+
+    id: int
+    dialog_id: int
+    sender_id: int | None = None
+    sender_name: str | None = None
+    out: bool = False
+    date: datetime
+    text: str | None = None
+    media_type: str | None = None
+    reply_to_id: int | None = None
+    is_forward: bool = False
+
+
+class MessagesResult(BaseModel):
+    """Результат чтения истории диалога: сообщения + телефон-исполнитель."""
+
+    phone: str
+    dialog_id: int
+    messages: list[DialogMessage] = Field(default_factory=list)
+
+
 class CollectionTaskStatus(StrEnum):
     """Жизненный цикл фоновой задачи [`CollectionTask`][src.models.CollectionTask]:
     от `PENDING` (в очереди) через `RUNNING` к терминальным
@@ -289,6 +318,15 @@ class RuntimeSnapshot(BaseModel):
     scope: str = "global"
     payload: dict[str, Any] = Field(default_factory=dict)
     updated_at: datetime | None = None
+
+
+# dialogs_history snapshots carry DM/private-group message text (unlike other
+# runtime_snapshots payloads, which only cache names/statuses/counters), so they
+# get a TTL other snapshot types don't need. Shared by the web-layer cache-hit
+# check (src/web/dialogs/handlers.py) and the worker-layer prune-on-write
+# (src/services/dispatcher/dialogs_mixin.py) so the two stay in lockstep
+# (cycle-review #1299 round 2/3).
+DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS = 300
 
 
 # Channel rating (#966): two-axis verdict (usefulness × genre) for a channel,

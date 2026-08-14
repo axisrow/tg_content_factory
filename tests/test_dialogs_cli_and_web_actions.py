@@ -497,6 +497,77 @@ class TestCliParticipants:
         assert "No connected accounts." in capsys.readouterr().out
 
 
+class TestCliRead:
+    """CLI dialogs read — live history via tg_messenger (src/telegram/dm_history.py)."""
+
+    def _client_with_history(self, messages):
+        from src.telegram.auth import TelegramAuth
+
+        pool, client = _mock_pool()
+        pool._auth = TelegramAuth(12345, "fakehash")
+        client.get_entity = AsyncMock(return_value=SimpleNamespace(id=1))
+        client.get_peer_id = AsyncMock(return_value=-100777)
+
+        async def _iter_messages(peer, limit=50, offset_id=0):
+            for m in messages:
+                yield m
+
+        client.iter_messages = MagicMock(side_effect=_iter_messages)
+        return pool, client
+
+    def test_read_ok(self, cli_db, capsys):
+        import datetime as dt
+
+        msg = SimpleNamespace(
+            id=5, sender_id=42, out=False, date=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc),
+            text="hello there", media=None, reply_to=None, forward=None, sender=None,
+        )
+        pool, _ = self._client_with_history([msg])
+        _run_cli("read", pool, cli_db, {
+            "phone": _PHONE, "chat_id": "@ch", "limit": 50, "offset_id": 0, "format": "text",
+        })
+        out = capsys.readouterr().out
+        assert "hello there" in out
+        assert "Total: 1 messages" in out
+
+    def test_read_json_format(self, cli_db, capsys):
+        import datetime as dt
+
+        msg = SimpleNamespace(
+            id=5, sender_id=42, out=True, date=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc),
+            text="hi", media=None, reply_to=None, forward=None, sender=None,
+        )
+        pool, _ = self._client_with_history([msg])
+        _run_cli("read", pool, cli_db, {
+            "phone": _PHONE, "chat_id": "@ch", "limit": 50, "offset_id": 0, "format": "json",
+        })
+        import json as json_mod
+        items = json_mod.loads(capsys.readouterr().out)
+        assert items == [{
+            "id": 5, "sender_id": 42, "sender_name": None, "out": True,
+            "date": "2026-01-01T00:00:00+00:00", "text": "hi",
+            "media_type": None, "reply_to_id": None, "is_forward": False,
+        }]
+
+    def test_read_no_accounts(self, cli_db, capsys):
+        pool, _ = _mock_pool(clients={})
+        _run_cli("read", pool, cli_db, {
+            "phone": None, "chat_id": "@ch", "limit": 50, "offset_id": 0, "format": "text",
+        })
+        assert "No connected accounts." in capsys.readouterr().out
+
+    def test_read_error(self, cli_db, capsys):
+        from src.telegram.auth import TelegramAuth
+
+        pool, client = _mock_pool()
+        pool._auth = TelegramAuth(12345, "fakehash")
+        client.get_entity = AsyncMock(side_effect=RuntimeError("boom"))
+        _run_cli("read", pool, cli_db, {
+            "phone": _PHONE, "chat_id": "@ch", "limit": 50, "offset_id": 0, "format": "text",
+        })
+        assert "Error reading history" in capsys.readouterr().out
+
+
 class TestCliEditAdmin:
     """CLI dialogs edit-admin."""
 
@@ -1205,6 +1276,45 @@ class TestWebParticipants:
         assert body.get("status") == "queued"
         assert "command_id" in body
         await _assert_enqueued(app, "dialogs.participants", {"phone": _PHONE, "chat_id": "@ch"})
+
+
+class TestWebReadHistory:
+    """GET /dialogs/history — queued-command model, snapshot-first like participants."""
+
+    @pytest.mark.anyio
+    async def test_read_history_missing_params(self, web_client):
+        c, app = web_client
+        resp = await c.get("/dialogs/history")
+        assert resp.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_read_history_enqueues_when_no_snapshot(self, web_client):
+        c, app = web_client
+        phone_enc = _PHONE.replace("+", "%2B")
+        resp = await c.get(f"/dialogs/history?phone={phone_enc}&chat_id=@ch")
+        assert resp.status_code == 202
+        body = resp.json()
+        assert body.get("status") == "queued"
+        assert "command_id" in body
+        await _assert_enqueued(app, "dialogs.read_history", {"phone": _PHONE, "chat_id": "@ch"})
+
+    @pytest.mark.anyio
+    async def test_read_history_returns_cached_snapshot(self, web_client):
+        c, app = web_client
+        from src.models import RuntimeSnapshot
+
+        payload = {"messages": [{"id": 1, "text": "hi"}], "total": 1, "dialog_id": -100777}
+        await app.state.db.repos.runtime_snapshots.upsert_snapshot(
+            RuntimeSnapshot(
+                snapshot_type="dialogs_history",
+                scope=f"dialogs_history:{_PHONE}:@ch:0",
+                payload=payload,
+            )
+        )
+        phone_enc = _PHONE.replace("+", "%2B")
+        resp = await c.get(f"/dialogs/history?phone={phone_enc}&chat_id=@ch")
+        assert resp.status_code == 200
+        assert resp.json() == payload
 
 
 class TestWebArchive:

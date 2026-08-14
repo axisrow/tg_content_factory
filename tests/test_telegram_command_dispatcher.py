@@ -1016,6 +1016,40 @@ async def test_dialogs_participants_search_no_cache():
     db.repos.runtime_snapshots.upsert_snapshot.assert_not_awaited()
 
 
+async def test_dialogs_read_history_prunes_expired_snapshots_on_write():
+    """Every dialogs_history write also sweeps expired rows for scopes nobody
+    revisited (orphans that the web-layer's read-triggered delete_snapshot alone
+    would never reach) — cycle-review #1299 round 3."""
+    from datetime import datetime, timezone
+
+    from src.models import DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS
+
+    db = _mock_db()
+    db.repos.runtime_snapshots.prune_expired = AsyncMock(return_value=2)
+    pool = _mock_pool()
+    d = _dispatcher(db=db, pool=pool)
+
+    svc_patch = patch("src.services.dispatcher.dialogs_mixin.TelegramActionService")
+    svc_cls = svc_patch.start()
+    try:
+        message = MagicMock(
+            model_dump=MagicMock(return_value={"id": 1, "text": "hi"}),
+            date=datetime.now(timezone.utc),
+        )
+        svc_cls.return_value.read_history = AsyncMock(
+            return_value=MagicMock(phone="+1", dialog_id=-100, messages=[message])
+        )
+        r = await d._handle_dialogs_read_history({"phone": "+1", "chat_id": -100})
+    finally:
+        svc_patch.stop()
+
+    assert r["total"] == 1
+    db.repos.runtime_snapshots.upsert_snapshot.assert_awaited_once()
+    db.repos.runtime_snapshots.prune_expired.assert_awaited_once_with(
+        "dialogs_history", DIALOGS_HISTORY_SNAPSHOT_TTL_SECONDS
+    )
+
+
 async def test_channels_add_identifier():
     pool = _mock_pool()
     db = _mock_db()

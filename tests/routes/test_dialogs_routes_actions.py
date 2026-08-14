@@ -1,6 +1,7 @@
 """Tests for dialogs route action endpoints and validation paths."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -44,6 +45,70 @@ async def test_participants_cache_hit(route_client, monkeypatch):
     resp = await route_client.get("/dialogs/participants?phone=%2B1234567890&chat_id=-100123")
     assert resp.status_code == 200
     assert resp.json()["participants"]
+
+
+# === read-history ===
+# dialogs_history snapshots hold DM/private-group message text (unlike
+# dialogs_participants, which only caches names/ids), so the cache-hit path
+# additionally enforces a short TTL (cycle-review #1299 round 2) instead of
+# serving the same stored content indefinitely.
+
+
+@pytest.mark.anyio
+async def test_history_missing_fields(route_client):
+    resp = await route_client.get("/dialogs/history?phone=")
+    assert resp.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_history_queues_without_snapshot(route_client):
+    resp = await route_client.get(
+        "/dialogs/history?phone=%2B1234567890&chat_id=-100123",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 202
+    assert resp.json()["command_id"] is not None
+
+
+@pytest.mark.anyio
+async def test_history_cache_hit_within_ttl(route_client, monkeypatch):
+    snapshot = SimpleNamespace(
+        payload={"messages": [{"id": 1, "text": "hi"}], "total": 1},
+        updated_at=datetime.now(timezone.utc) - timedelta(seconds=30),
+    )
+    mock_db = MagicMock()
+    mock_db.repos.runtime_snapshots.get_snapshot = AsyncMock(return_value=snapshot)
+    mock_db.repos.runtime_snapshots.delete_snapshot = AsyncMock()
+    monkeypatch.setattr("src.web.deps.get_db", lambda r: mock_db)
+    resp = await route_client.get("/dialogs/history?phone=%2B1234567890&chat_id=-100123")
+    assert resp.status_code == 200
+    assert resp.json()["messages"]
+    mock_db.repos.runtime_snapshots.delete_snapshot.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_history_expired_snapshot_is_deleted_and_requeued(route_client, monkeypatch):
+    """An expired dialogs_history snapshot must not be served (it holds private
+    message text) and must be deleted rather than left to sit in the DB."""
+    snapshot = SimpleNamespace(
+        payload={"messages": [{"id": 1, "text": "stale private message"}], "total": 1},
+        updated_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+    )
+    mock_db = MagicMock()
+    mock_db.repos.runtime_snapshots.get_snapshot = AsyncMock(return_value=snapshot)
+    mock_db.repos.runtime_snapshots.delete_snapshot = AsyncMock()
+    mock_db.repos.telegram_commands.find_active_by_type = AsyncMock(return_value=None)
+    mock_db.repos.telegram_commands.create_command = AsyncMock(return_value=42)
+    monkeypatch.setattr("src.web.deps.get_db", lambda r: mock_db)
+    resp = await route_client.get(
+        "/dialogs/history?phone=%2B1234567890&chat_id=-100123",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 202
+    assert "stale private message" not in resp.text
+    mock_db.repos.runtime_snapshots.delete_snapshot.assert_awaited_once_with(
+        "dialogs_history", "dialogs_history:+1234567890:-100123:0"
+    )
 
 
 # === edit-admin ===
