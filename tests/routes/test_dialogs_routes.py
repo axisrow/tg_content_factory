@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -276,6 +277,44 @@ async def test_dialogs_empty_dialogs(client):
 
     resp = await client.get("/dialogs/?phone=%2B1234567890")
     assert resp.status_code == 200
+
+
+@pytest.mark.anyio
+async def test_dialogs_title_with_quote_is_js_safe(client):
+    """A dialog title containing a single quote must not break out of the JS string
+    literal in the inline onclick handler (stored-XSS regression guard)."""
+    db = client._transport.app.state.db
+    await db.repos.dialog_cache.replace_dialogs("+1234567890", [
+        {
+            "channel_id": -100333,
+            "title": "x');alert(document.domain);//",
+            "username": None,
+            "channel_type": "channel",
+            "deactivate": 0,
+            "is_own": 0,
+        },
+    ])
+
+    resp = await client.get("/dialogs/fragments/list?phone=%2B1234567890")
+    assert resp.status_code == 200
+    assert "openDialogHistory" in resp.text
+
+    # Isolate the onclick attribute value(s) — the title is expected (and safe) to
+    # appear HTML-escaped elsewhere on the page (e.g. the plain <td>{{ d.title }}</td>
+    # cell); the JS-context break-out only matters inside the inline event handler.
+    # Non-greedy up to the closing `)"` — tojson-escaped values may legitimately
+    # contain literal `"` characters, so we can't stop at the first quote.
+    onclick_calls = re.findall(r'onclick="(openDialog(?:History|Participants)\(.*?\))"', resp.text)
+    assert onclick_calls, "expected at least one openDialogHistory/openDialogParticipants onclick"
+    for call in onclick_calls:
+        # HTML-entity-escaping alone is NOT enough: the browser decodes attribute
+        # entities (e.g. &#39; -> ') before compiling an inline onclick handler as JS,
+        # so an HTML-escaped apostrophe still breaks out of the JS string literal.
+        # The fix must use a JS-string-safe encoder (e.g. |tojson) so the payload
+        # never appears as a bare, HTML-entity-escaped apostrophe sitting inside a
+        # '...' literal within the handler itself.
+        assert "x&#39;);alert(document.domain);//" not in call
+        assert "x');alert(document.domain);//" not in call
 
 
 @pytest.mark.anyio
