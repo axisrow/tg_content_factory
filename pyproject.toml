@@ -69,7 +69,13 @@ dependencies = [
     # and removes the hand-rolled prediction-polling loop. HuggingFace stays on
     # raw aiohttp on purpose — its SDK returns a PIL.Image (a Pillow dependency)
     # whereas the raw path saves the image/* bytes directly.
-    "openai>=2.28.0",
+    # Capped below 3.0 (#1300): openai 3.x replaces the default httpx transport
+    # with httpx2, silently breaking every httpx.Client/AsyncClient monkeypatch
+    # in our test suite (e.g. test_provider_runtime_integration.py) — those
+    # tests stop mocking the real request and hit the live provider instead,
+    # surfacing as a bogus AuthenticationError in CI. Revisit deliberately when
+    # ready to migrate to httpx2.
+    "openai>=2.28.0,<3",
     "replicate>=1.0.7",
     "langchain>=1.3.2",
     "langchain-core>=1.4.0",
