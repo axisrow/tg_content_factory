@@ -715,3 +715,39 @@ async def test_runtime_snapshots_repository_handles_non_primitive_payload(tmp_pa
         assert stored.payload["blob"] == "deadbeef"
     finally:
         await db.close()
+
+
+@pytest.mark.anyio
+async def test_runtime_snapshots_repository_delete_snapshot(tmp_path):
+    """dialogs_history snapshots hold private message text and are expired by a
+    short TTL at the web layer (cycle-review #1299 round 2); delete_snapshot is
+    how the expired row actually leaves the DB instead of lingering forever."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        snapshot = RuntimeSnapshot(
+            snapshot_type="dialogs_history",
+            scope="dialogs_history:+1:1:0",
+            payload={"messages": [{"text": "private"}]},
+        )
+        await db.repos.runtime_snapshots.upsert_snapshot(snapshot)
+        assert await db.repos.runtime_snapshots.get_snapshot("dialogs_history", "dialogs_history:+1:1:0") is not None
+
+        await db.repos.runtime_snapshots.delete_snapshot("dialogs_history", "dialogs_history:+1:1:0")
+
+        assert await db.repos.runtime_snapshots.get_snapshot("dialogs_history", "dialogs_history:+1:1:0") is None
+    finally:
+        await db.close()
+
+
+@pytest.mark.anyio
+async def test_runtime_snapshots_repository_delete_snapshot_missing_is_noop(tmp_path):
+    """Deleting a scope that was never written must not raise."""
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+
+    try:
+        await db.repos.runtime_snapshots.delete_snapshot("dialogs_history", "does_not_exist")
+    finally:
+        await db.close()

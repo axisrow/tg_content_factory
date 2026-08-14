@@ -89,3 +89,18 @@ class RuntimeSnapshotsRepository:
         )
         row = await cur.fetchone()
         return self._to_snapshot(row) if row else None
+
+    async def delete_snapshot(self, snapshot_type: str, scope: str = "global") -> None:
+        """Удалить снимок по паре (snapshot_type, scope), если он есть.
+
+        Нужен снимкам с явным сроком годности (напр. dialogs_history: содержит
+        текст ЛС/групп, а не только имена/статусы, поэтому не должен пережидать
+        свой TTL в БД просто потому, что его никто больше не перезаписал).
+        """
+        assert self._database is not None, (
+            "RuntimeSnapshotsRepository.delete_snapshot requires a Database reference"
+        )
+        await self._database.execute_write(
+            "DELETE FROM runtime_snapshots WHERE snapshot_type = ? AND scope = ?",
+            (snapshot_type, scope),
+        )
