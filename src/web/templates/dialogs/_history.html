@@ -1,0 +1,186 @@
+{# Message history modal + poller for GET /dialogs/history.
+   The endpoint returns a cached JSON snapshot (200) or enqueues a worker
+   command and returns 202 {"command_id": N}; this fragment polls
+   GET /telegram-commands/{id} until the command completes, then re-fetches
+   the snapshot. Loaded once by dialogs.html, reused by every row's button. #}
+<div class="modal fade" id="dialog-history-modal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="dialog-history-title">Сообщения</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="dialog-history-list">Загрузка...</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary btn-sm" id="dialog-history-more" style="display:none">Ещё</button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="dialog-participants-modal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="dialog-participants-title">Участники</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="dialog-participants-list">Загрузка...</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    // Every open modal gets a generation token; closing bumps it so an
+    // in-flight poll for a dismissed modal stops instead of polling forever.
+    var generation = 0;
+    var MAX_POLLS = 60;  // ~60s ceiling, then give up rather than hammer the worker
+
+    function escapeHtml(value) {
+        var div = document.createElement('div');
+        div.textContent = value == null ? '' : String(value);
+        return div.innerHTML;
+    }
+
+    /* Shared snapshot protocol for every queued-command endpoint:
+       200 -> render; 202 -> poll GET /telegram-commands/{id} until the worker
+       finishes, then re-fetch the same URL. Errors land in the caller's own
+       target element, so a failing participants load never writes into the
+       history modal. */
+    function loadSnapshot(url, target, render, failText) {
+        var mine = generation;
+        var polls = 0;
+
+        function fail(text) {
+            if (mine === generation) {
+                target.innerHTML = '<p class="text-danger">' + escapeHtml(text) + '</p>';
+            }
+        }
+
+        function poll(commandId) {
+            if (mine !== generation) { return; }
+            if (++polls > MAX_POLLS) { fail(failText); return; }
+            fetch('/telegram-commands/' + commandId)
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (mine !== generation) { return; }
+                    if (data.status === 'succeeded') {
+                        go();
+                    } else if (data.status === 'failed' || data.status === 'cancelled') {
+                        fail(failText);
+                    } else {
+                        setTimeout(function () { poll(commandId); }, 1000);
+                    }
+                })
+                .catch(function () { fail(failText); });
+        }
+
+        function go() {
+            if (mine !== generation) { return; }
+            fetch(url)
+                .then(function (r) {
+                    return r.json().then(function (data) {
+                        if (mine !== generation) { return; }
+                        if (r.status === 202) { poll(data.command_id); } else { render(data); }
+                    });
+                })
+                .catch(function () { fail(failText); });
+        }
+
+        go();
+    }
+
+    function showModal(id) {
+        generation++;  // invalidate any poll still running for a previous open
+        new bootstrap.Modal(document.getElementById(id)).show();
+    }
+
+    var HISTORY_FAIL = 'Не удалось загрузить сообщения.';
+    var PARTICIPANTS_FAIL = 'Не удалось загрузить участников.';
+
+    function historyUrl(phone, chatId, offsetId) {
+        return '/dialogs/history?phone=' + encodeURIComponent(phone) +
+            '&chat_id=' + encodeURIComponent(chatId) + '&limit=50' +
+            (offsetId ? '&offset_id=' + offsetId : '');
+    }
+
+    function loadHistory(phone, chatId, offsetId, append) {
+        var list = document.getElementById('dialog-history-list');
+        var moreBtn = document.getElementById('dialog-history-more');
+        loadSnapshot(historyUrl(phone, chatId, offsetId), list, function (data) {
+            var messages = data.messages || [];
+            var html = messages.map(function (m) {
+                var who = m.out ? 'Вы' : (m.sender_name || m.sender_id || '');
+                var media = m.media_type ? ' <span class="text-muted">[' + escapeHtml(m.media_type) + ']</span>' : '';
+                return '<div class="mb-2"><small class="text-muted">' + escapeHtml(m.date) + ' &middot; ' + escapeHtml(who) +
+                    '</small><div>' + escapeHtml(m.text || '') + media + '</div></div>';
+            }).join('');
+            if (append) {
+                list.innerHTML = html + list.innerHTML;
+            } else {
+                list.innerHTML = html || '<p class="text-muted">Нет сообщений.</p>';
+            }
+            // Pagination cursor lives on the button that uses it — the oldest id
+            // of the page just rendered. No page left means nothing older to ask for.
+            if (messages.length) {
+                moreBtn.dataset.offsetId = messages[0].id;
+                moreBtn.dataset.phone = phone;
+                moreBtn.dataset.chatId = chatId;
+            }
+            moreBtn.style.display = messages.length ? '' : 'none';
+        }, HISTORY_FAIL);
+    }
+
+    window.openDialogHistory = function (phone, chatId, title) {
+        document.getElementById('dialog-history-title').textContent = 'Сообщения — ' + title;
+        document.getElementById('dialog-history-list').innerHTML = 'Загрузка...';
+        var moreBtn = document.getElementById('dialog-history-more');
+        moreBtn.style.display = 'none';
+        delete moreBtn.dataset.offsetId;
+        showModal('dialog-history-modal');
+        loadHistory(phone, chatId, 0, false);
+    };
+
+    window.openDialogParticipants = function (phone, chatId, title) {
+        document.getElementById('dialog-participants-title').textContent = 'Участники — ' + title;
+        var list = document.getElementById('dialog-participants-list');
+        list.innerHTML = 'Загрузка...';
+        showModal('dialog-participants-modal');
+        var url = '/dialogs/participants?phone=' + encodeURIComponent(phone) +
+            '&chat_id=' + encodeURIComponent(chatId) + '&limit=200';
+        loadSnapshot(url, list, function (data) {
+            var participants = data.participants || [];
+            if (!participants.length) {
+                list.innerHTML = '<p class="text-muted">Нет участников.</p>';
+                return;
+            }
+            list.innerHTML = '<ul class="list-unstyled mb-0">' + participants.map(function (p) {
+                var name = ((p.first_name || '') + ' ' + (p.last_name || '')).trim() || ('id ' + p.id);
+                var username = p.username ? ' (@' + escapeHtml(p.username) + ')' : '';
+                return '<li class="mb-1">' + escapeHtml(name) + username + '</li>';
+            }).join('') + '</ul>';
+        }, PARTICIPANTS_FAIL);
+    };
+
+    document.addEventListener('DOMContentLoaded', function () {
+        var moreBtn = document.getElementById('dialog-history-more');
+        if (moreBtn) {
+            moreBtn.addEventListener('click', function () {
+                var offsetId = moreBtn.dataset.offsetId;
+                if (offsetId) {
+                    loadHistory(moreBtn.dataset.phone, moreBtn.dataset.chatId, offsetId, true);
+                }
+            });
+        }
+    });
+})();
+</script>

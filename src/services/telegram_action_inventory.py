@@ -146,6 +146,12 @@ TELEGRAM_ACTION_INVENTORY: tuple[TelegramActionInventoryItem, ...] = (
         backend_method="edit_folder",
     ),
     TelegramActionInventoryItem(
+        action="read_history",
+        cli="dialogs read",
+        web_command="dialogs.read_history",
+        backend_method="read_history",
+    ),
+    TelegramActionInventoryItem(
         action="get_participants",
         cli="dialogs participants",
         web_command="dialogs.participants",

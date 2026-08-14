@@ -380,6 +380,38 @@ class DialogsCommandsMixin(_Base):
         )
         return {"phone": action_result.phone, "scope": scope}
 
+    async def _handle_dialogs_read_history(self, payload: dict[str, Any]) -> dict[str, Any]:
+        limit = int(payload.get("limit", 50))
+        offset_id = int(payload.get("offset_id", 0))
+        action_result = await TelegramActionService(self._pool).read_history(
+            phone=str(payload["phone"]),
+            chat_id=payload["chat_id"],
+            limit=limit,
+            offset_id=offset_id,
+        )
+        # Dump instead of hand-listing the fields so the payload cannot drift when
+        # DialogMessage gains one. dialog_id is dropped: it is per-snapshot, not
+        # per-message. date is re-serialised with isoformat() because pydantic's
+        # json mode emits "…Z" while snapshots already stored (and the CLI's json
+        # output) use "…+00:00" — keep one format across both.
+        data = []
+        for m in action_result.messages:
+            row = m.model_dump(exclude={"dialog_id"})
+            row["date"] = m.date.isoformat()
+            data.append(row)
+        # Keyed on the raw chat_id (not the resolved dialog_id) so it matches the
+        # scope the web handler builds from query params before enqueueing —
+        # same convention as dialogs_participants / dialogs_broadcast_stats.
+        scope = f"dialogs_history:{action_result.phone}:{payload['chat_id']}:{offset_id}"
+        await self._db.repos.runtime_snapshots.upsert_snapshot(
+            RuntimeSnapshot(
+                snapshot_type="dialogs_history",
+                scope=scope,
+                payload={"messages": data, "total": len(data), "dialog_id": action_result.dialog_id},
+            )
+        )
+        return {"phone": action_result.phone, "scope": scope, "total": len(data)}
+
     async def _handle_dialogs_archive(self, payload: dict[str, Any]) -> dict[str, Any]:
         return await self._set_dialog_folder(payload, folder_id=1)
 

@@ -32,6 +32,32 @@ class ParticipantsResponse(BaseModel):
     total: int = 0
 
 
+class DialogHistoryMessage(BaseModel):
+    """A single message from a dialog's live history."""
+
+    id: int
+    sender_id: int | None = None
+    sender_name: str | None = None
+    out: bool = False
+    date: str
+    text: str | None = None
+    media_type: str | None = None
+    reply_to_id: int | None = None
+    is_forward: bool = False
+
+
+class DialogHistoryResponse(BaseModel):
+    """Dialog message history snapshot (``GET /dialogs/history``, HTTP 200).
+
+    When no snapshot is cached the endpoint instead returns HTTP 202 with a
+    ``QueuedCommandResponse`` body.
+    """
+
+    messages: list[DialogHistoryMessage] = Field(default_factory=list)
+    total: int = 0
+    dialog_id: int | None = None
+
+
 class BroadcastStatsResponse(BaseModel):
     """Channel broadcast statistics snapshot (``GET /dialogs/broadcast-stats``, HTTP 200).
 

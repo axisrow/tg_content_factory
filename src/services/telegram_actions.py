@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from src.models import MessagesResult
 from src.telegram.client_pool import ClientPool
+from src.telegram.dm_history import read_dialog_history
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
 from src.utils.introspection import explicit_pool_method
 
@@ -553,6 +555,38 @@ class TelegramActionService:
             entity = await self._resolve_entity(client, phone=acquired_phone, identifier=chat_id)
             participants = await client.get_participants(entity, limit=int(limit), search=search)
             return ParticipantsResult(phone=acquired_phone, participants=list(participants))
+
+    async def read_history(
+        self,
+        *,
+        phone: str,
+        chat_id: Any,
+        limit: int = 50,
+        offset_id: int = 0,
+    ) -> MessagesResult:
+        """Read live dialog history via tg_messenger, reusing the pool's own client.
+
+        See `src/telegram/dm_history.py` for why this never opens a second
+        Telethon connection on the same session.
+        """
+        async with self._client(phone=phone, native=True) as (client, acquired_phone):
+            entity = await self._resolve_entity(client, phone=acquired_phone, identifier=chat_id)
+            peer = await client.get_peer_id(entity)
+            # ClientPool.__init__ always sets _auth, and api_id/api_hash are
+            # public properties on it — a getattr chain with 0/"" fallbacks would
+            # only defer the failure into tg_messenger's credential validation.
+            auth = self._pool._auth
+            api_id = auth.api_id
+            api_hash = auth.api_hash
+            messages = await read_dialog_history(
+                client,
+                api_id=api_id,
+                api_hash=api_hash,
+                peer=peer,
+                limit=limit,
+                offset_id=offset_id,
+            )
+            return MessagesResult(phone=acquired_phone, dialog_id=peer, messages=messages)
 
     async def get_broadcast_stats(
         self,

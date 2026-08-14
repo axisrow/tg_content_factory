@@ -27,6 +27,13 @@ classifiers = [
 dependencies = [
     "telethon>=1.43.2",
     "telethon-cli>=0.1.1",
+    # Live dialog history reads (`dialogs read` / GET /dialogs/history, #1234
+    # follow-up) reuse tg_messenger's StandaloneTelegramClient.history() for its
+    # model mapping and flood-wait retry — see src/telegram/dm_history.py for why
+    # it never opens a second connection. Note its per-instance history TTL cache
+    # does NOT apply here: we build a throwaway client per call, so every read
+    # hits Telegram. Caching happens one level up, in runtime_snapshots.
+    "tg-messenger>=0.1.0",
     "fastapi>=0.136.3,<0.139",
     "uvicorn[standard]>=0.48.0",
     "jinja2>=3.1.6",
