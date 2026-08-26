@@ -180,12 +180,13 @@ class CollectionTasksRepository:
             "CollectionTasksRepository.create_collection_task requires a Database reference"
         )
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
+        created_at = datetime.now(timezone.utc).isoformat()
         payload_json = self._serialize_payload(payload)
         cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, task_type,"
-            " run_after, payload, parent_task_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " run_after, payload, parent_task_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 channel_id,
                 channel_title,
@@ -194,6 +195,7 @@ class CollectionTasksRepository:
                 run_after_iso,
                 payload_json,
                 parent_task_id,
+                created_at,
             ),
         )
         return cur.lastrowid or 0
@@ -216,12 +218,13 @@ class CollectionTasksRepository:
             "CollectionTasksRepository.create_collection_task_if_not_active requires a Database reference"
         )
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
+        created_at = datetime.now(timezone.utc).isoformat()
         payload_json = self._serialize_payload(payload)
         cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, task_type,"
-            " run_after, payload, parent_task_id) "
-            "SELECT ?, ?, ?, ?, ?, ?, ? "
+            " run_after, payload, parent_task_id, created_at) "
+            "SELECT ?, ?, ?, ?, ?, ?, ?, ? "
             "WHERE NOT EXISTS ("
             "  SELECT 1 FROM collection_tasks "
             "  WHERE channel_id = ? AND task_type = ? AND status IN (?, ?)"
@@ -234,6 +237,7 @@ class CollectionTasksRepository:
                 run_after_iso,
                 payload_json,
                 parent_task_id,
+                created_at,
                 channel_id,
                 CollectionTaskType.CHANNEL_COLLECT.value,
                 CollectionTaskStatus.PENDING.value,
@@ -256,11 +260,12 @@ class CollectionTasksRepository:
             "CollectionTasksRepository.create_stats_task requires a Database reference"
         )
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
+        created_at = datetime.now(timezone.utc).isoformat()
         cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, task_type,"
-            " run_after, payload, parent_task_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " run_after, payload, parent_task_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 None,
                 "Обновление статистики",
@@ -269,6 +274,7 @@ class CollectionTasksRepository:
                 run_after_iso,
                 self._serialize_payload(payload),
                 parent_task_id,
+                created_at,
             ),
         )
         return cur.lastrowid or 0
@@ -283,10 +289,11 @@ class CollectionTasksRepository:
         assert self._database is not None, (
             "CollectionTasksRepository.create_filter_analyze_task requires a Database reference"
         )
+        created_at = datetime.now(timezone.utc).isoformat()
         cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
-            "(channel_id, channel_title, channel_username, task_type, payload) "
-            "SELECT ?, ?, ?, ?, ? "
+            "(channel_id, channel_title, channel_username, task_type, payload, created_at) "
+            "SELECT ?, ?, ?, ?, ?, ? "
             "WHERE NOT EXISTS ("
             "  SELECT 1 FROM collection_tasks WHERE task_type = ? AND status IN (?, ?)"
             ")",
@@ -296,6 +303,7 @@ class CollectionTasksRepository:
                 None,
                 CollectionTaskType.FILTER_ANALYZE.value,
                 self._serialize_payload(payload),
+                created_at,
                 CollectionTaskType.FILTER_ANALYZE.value,
                 CollectionTaskStatus.PENDING.value,
                 CollectionTaskStatus.RUNNING.value,
@@ -769,11 +777,12 @@ class CollectionTasksRepository:
         tt = task_type
         task_type_value = tt.value if isinstance(tt, CollectionTaskType) else tt
         run_after_iso = run_after.astimezone(timezone.utc).isoformat() if run_after else None
+        created_at = datetime.now(timezone.utc).isoformat()
         cur = await self._database.execute_write(
             "INSERT INTO collection_tasks "
             "(channel_id, channel_title, channel_username, task_type,"
-            " run_after, payload, parent_task_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " run_after, payload, parent_task_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 None,
                 title or task_type_value,
@@ -782,6 +791,7 @@ class CollectionTasksRepository:
                 run_after_iso,
                 self._serialize_payload(payload),
                 parent_task_id,
+                created_at,
             ),
         )
         return cur.lastrowid or 0
