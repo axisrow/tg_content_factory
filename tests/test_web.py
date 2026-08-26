@@ -1927,6 +1927,18 @@ async def test_web_login_rate_limits_repeated_invalid_passwords(unauth_client):
 
 
 @pytest.mark.anyio
+async def test_web_login_rate_limit_reserves_concurrent_attempts(unauth_client):
+    responses = await asyncio.gather(
+        *(
+            unauth_client.post("/login", data={"password": "wrong"}, follow_redirects=False)
+            for _ in range(6)
+        )
+    )
+    assert [response.status_code for response in responses].count(401) == 5
+    assert [response.status_code for response in responses].count(429) == 1
+
+
+@pytest.mark.anyio
 async def test_basic_auth_rate_limits_repeated_invalid_passwords(unauth_client):
     headers = {"Authorization": "Basic YWRtaW46d3Jvbmc="}
     for _ in range(5):
