@@ -61,7 +61,8 @@ exclude = ["tests", "scripts", "build", "dist", "site"]
 
 ## CI
 
-Шаг `Doc-coverage report (advisory)` в `static-checks` (`.github/workflows/ci.yml`)
-прогоняет отчёт. Он **advisory** (`continue-on-error: true`), как `pip-audit` и
-`bandit`: показывает регрессии, но сам по себе не «краснит» CI. Когда покрытие
-вырастет — можно сделать гейт блокирующим и поднять baseline.
+Doc-coverage **не запускается в CI** (#1097): GitHub Actions не вызывает
+`scripts/doc_coverage.py` или `interrogate`. Запускайте отчёт локально; при
+необходимости явный `--fail-under` превращает его в локальный гейт. В CI
+остаются отдельные advisory-проверки зависимостей и безопасности (`pip-audit`
+и `bandit`).
