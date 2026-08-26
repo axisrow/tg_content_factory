@@ -53,7 +53,7 @@ def _add_pipeline_prereqs(db: Database) -> None:
 
 def test_pipeline_add_and_list(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -84,7 +84,7 @@ def test_pipeline_add_and_list(tmp_path, cli_init_patch, capsys):
 
 def test_pipeline_show_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_not_found.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -98,7 +98,7 @@ def test_pipeline_show_not_found(tmp_path, cli_init_patch, capsys):
 
 def test_pipeline_queue_approve_reject_and_publish(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_actions.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -155,7 +155,7 @@ def test_pipeline_queue_approve_reject_and_publish(tmp_path, cli_init_patch, cap
     assert f"Published run id={run_id} to 1 target(s)" in out
     assert f"Rejected run id={run_id}" in out
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     run_after = asyncio.run(verify_db.repos.generation_runs.get(run_id))
     asyncio.run(verify_db.close())
@@ -165,7 +165,7 @@ def test_pipeline_queue_approve_reject_and_publish(tmp_path, cli_init_patch, cap
 
 def test_pipeline_publish_not_found(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_publish_not_found.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -179,7 +179,7 @@ def test_pipeline_publish_not_found(tmp_path, cli_init_patch, capsys):
 
 def test_pipeline_generate_prints_draft_preview(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_generate.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -286,7 +286,7 @@ def _make_simple_dag_pipeline(db: Database, name: str = "React DAG") -> int:
 
 def test_pipeline_filter_set_show_clear(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_filter.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = _make_simple_dag_pipeline(db)
@@ -317,7 +317,7 @@ def test_pipeline_filter_set_show_clear(tmp_path, cli_init_patch, capsys):
     assert "service_actions=join" in out
     assert f"Cleared filter for pipeline id={pipeline_id}" in out
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     stored = asyncio.run(verify_db.repos.content_pipelines.get_by_id(pipeline_id))
     asyncio.run(verify_db.close())
@@ -331,7 +331,7 @@ def test_pipeline_filter_set_show_clear(tmp_path, cli_init_patch, capsys):
 
 def test_pipeline_show_includes_filter_summary(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_show_filter.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = _make_simple_dag_pipeline(db, name="Show Filter")
@@ -364,7 +364,7 @@ def test_pipeline_show_includes_filter_summary(tmp_path, cli_init_patch, capsys)
 
 def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_generate_deep_agents.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -438,7 +438,7 @@ def test_pipeline_generate_wires_agent_manager_for_deep_agents(tmp_path, cli_ini
 
 def test_pipeline_runs_and_run_show(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_runs.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -479,7 +479,7 @@ def test_pipeline_runs_and_run_show(tmp_path, cli_init_patch, capsys):
 def test_pipeline_show_found(tmp_path, cli_init_patch, capsys):
     """Test show action with existing pipeline."""
     db_path = str(tmp_path / "cli_pipeline_show.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -521,7 +521,7 @@ def test_pipeline_show_found(tmp_path, cli_init_patch, capsys):
 def test_pipeline_edit_found(tmp_path, cli_init_patch, capsys):
     """Test edit action with existing pipeline."""
     db_path = str(tmp_path / "cli_pipeline_edit.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -571,7 +571,7 @@ def test_pipeline_edit_found(tmp_path, cli_init_patch, capsys):
 def test_pipeline_edit_not_found(tmp_path, cli_init_patch, capsys):
     """Test edit action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_edit_nf.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -601,7 +601,7 @@ def test_pipeline_edit_not_found(tmp_path, cli_init_patch, capsys):
 def test_pipeline_toggle_found(tmp_path, cli_init_patch, capsys):
     """Test toggle action with existing pipeline."""
     db_path = str(tmp_path / "cli_pipeline_toggle.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -637,7 +637,7 @@ def test_pipeline_toggle_found(tmp_path, cli_init_patch, capsys):
 def test_pipeline_toggle_not_found(tmp_path, cli_init_patch, capsys):
     """Test toggle action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_toggle_nf.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -652,7 +652,7 @@ def test_pipeline_toggle_not_found(tmp_path, cli_init_patch, capsys):
 def test_pipeline_delete(tmp_path, cli_init_patch, capsys):
     """Test delete action."""
     db_path = str(tmp_path / "cli_pipeline_delete.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -692,7 +692,7 @@ def test_pipeline_run_with_preview(tmp_path, cli_init_patch, capsys):
     _run_generation directly to return a deterministic payload.
     """
     db_path = str(tmp_path / "cli_pipeline_run_preview.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -760,7 +760,7 @@ def test_pipeline_run_with_preview(tmp_path, cli_init_patch, capsys):
 def test_pipeline_run_not_found(tmp_path, cli_init_patch, capsys):
     """Test run action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_run_nf.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -775,7 +775,7 @@ def test_pipeline_run_not_found(tmp_path, cli_init_patch, capsys):
 def test_pipeline_runs_with_status_filter(tmp_path, cli_init_patch, capsys):
     """Test runs action with status filter."""
     db_path = str(tmp_path / "cli_pipeline_runs_filter.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -813,7 +813,7 @@ def test_pipeline_runs_with_status_filter(tmp_path, cli_init_patch, capsys):
 def test_pipeline_runs_not_found(tmp_path, cli_init_patch, capsys):
     """Test runs action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_runs_nf.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -828,7 +828,7 @@ def test_pipeline_runs_not_found(tmp_path, cli_init_patch, capsys):
 def test_pipeline_queue_empty(tmp_path, cli_init_patch, capsys):
     """Test queue action when no pending runs."""
     db_path = str(tmp_path / "cli_pipeline_queue_empty.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -863,7 +863,7 @@ def test_pipeline_queue_empty(tmp_path, cli_init_patch, capsys):
 def test_pipeline_queue_not_found(tmp_path, cli_init_patch, capsys):
     """Test queue action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_queue_nf.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -878,7 +878,7 @@ def test_pipeline_queue_not_found(tmp_path, cli_init_patch, capsys):
 def test_pipeline_publish_no_clients(tmp_path, cli_init_patch, capsys):
     """Test publish action when no Telegram clients available."""
     db_path = str(tmp_path / "cli_pipeline_publish_no_clients.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -924,7 +924,7 @@ def test_pipeline_publish_no_clients(tmp_path, cli_init_patch, capsys):
 def test_pipeline_run_show_not_found(tmp_path, cli_init_patch, capsys):
     """Test run-show action with non-existent run."""
     db_path = str(tmp_path / "cli_pipeline_runshow_nf.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -938,7 +938,7 @@ def test_pipeline_run_show_not_found(tmp_path, cli_init_patch, capsys):
 
 def test_pipeline_run_show_prints_result_semantics(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_runshow_result.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     import src.cli.runtime  # noqa: F401
@@ -983,7 +983,7 @@ def test_pipeline_run_show_prints_result_semantics(tmp_path, cli_init_patch, cap
 
 def test_pipeline_runs_prints_result_columns(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_pipeline_runs_result.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -1020,7 +1020,7 @@ def test_pipeline_runs_prints_result_columns(tmp_path, cli_init_patch, capsys):
 def test_pipeline_approve_not_found(tmp_path, cli_init_patch, capsys):
     """Test approve action with non-existent run."""
     db_path = str(tmp_path / "cli_pipeline_approve_nf.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -1035,7 +1035,7 @@ def test_pipeline_approve_not_found(tmp_path, cli_init_patch, capsys):
 def test_pipeline_reject_not_found(tmp_path, cli_init_patch, capsys):
     """Test reject action with non-existent run."""
     db_path = str(tmp_path / "cli_pipeline_reject_nf.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -1050,7 +1050,7 @@ def test_pipeline_reject_not_found(tmp_path, cli_init_patch, capsys):
 def test_pipeline_generate_not_found(tmp_path, cli_init_patch, capsys):
     """Test generate action with non-existent pipeline."""
     db_path = str(tmp_path / "cli_pipeline_generate_nf.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -1065,7 +1065,7 @@ def test_pipeline_generate_not_found(tmp_path, cli_init_patch, capsys):
 def test_pipeline_generate_exception(tmp_path, cli_init_patch, capsys):
     """Test generate action handles exception."""
     db_path = str(tmp_path / "cli_pipeline_generate_exc.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -1111,7 +1111,7 @@ def test_pipeline_generate_exception(tmp_path, cli_init_patch, capsys):
 def test_pipeline_list_empty(tmp_path, cli_init_patch, capsys):
     """Test list action when no pipelines exist."""
     db_path = str(tmp_path / "cli_pipeline_list_empty.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -1131,7 +1131,7 @@ def test_pipeline_list_empty(tmp_path, cli_init_patch, capsys):
 def test_pipeline_add_dag_with_node(tmp_path, cli_init_patch, capsys):
     """DAG mode: pipeline add with --node creates a DAG pipeline."""
     db_path = str(tmp_path / "cli_pipeline_dag_add.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -1162,7 +1162,7 @@ def test_pipeline_add_dag_with_node(tmp_path, cli_init_patch, capsys):
     assert "React Pipeline" in out
 
     # Verify graph was stored
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
     asyncio.run(verify_db.close())
@@ -1179,7 +1179,7 @@ def test_pipeline_add_dag_with_node(tmp_path, cli_init_patch, capsys):
 def test_pipeline_add_dag_invalid_spec(tmp_path, cli_init_patch, capsys):
     """DAG mode: invalid node spec prints error."""
     db_path = str(tmp_path / "cli_pipeline_dag_invalid.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -1211,7 +1211,7 @@ def test_pipeline_add_dag_invalid_spec(tmp_path, cli_init_patch, capsys):
 def test_pipeline_add_legacy_requires_prompt_template(tmp_path, cli_init_patch, capsys):
     """Legacy mode without --prompt-template prints error."""
     db_path = str(tmp_path / "cli_pipeline_legacy_no_prompt.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -1243,7 +1243,7 @@ def test_pipeline_add_legacy_requires_prompt_template(tmp_path, cli_init_patch, 
 def test_pipeline_add_dag_with_edges(tmp_path, cli_init_patch, capsys):
     """DAG mode: --edge adds explicit edges on top of linear chain."""
     db_path = str(tmp_path / "cli_pipeline_dag_edges.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -1272,7 +1272,7 @@ def test_pipeline_add_dag_with_edges(tmp_path, cli_init_patch, capsys):
     out = capsys.readouterr().out
     assert "Added pipeline id=" in out
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
     asyncio.run(verify_db.close())
@@ -1284,7 +1284,7 @@ def test_pipeline_add_dag_with_edges(tmp_path, cli_init_patch, capsys):
 def test_pipeline_graph_cmd(tmp_path, cli_init_patch, capsys):
     """pipeline graph shows ASCII visualization."""
     db_path = str(tmp_path / "cli_pipeline_graph_cmd.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -1323,7 +1323,7 @@ def test_pipeline_graph_cmd(tmp_path, cli_init_patch, capsys):
 def test_pipeline_graph_legacy_pipeline(tmp_path, cli_init_patch, capsys):
     """pipeline graph on legacy pipeline shows 'has no graph' message."""
     db_path = str(tmp_path / "cli_pipeline_graph_legacy.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
     pipeline_id = asyncio.run(
@@ -1354,7 +1354,7 @@ def test_pipeline_graph_legacy_pipeline(tmp_path, cli_init_patch, capsys):
 def test_pipeline_node_add(tmp_path, cli_init_patch, capsys):
     """pipeline node add adds a node to existing graph."""
     db_path = str(tmp_path / "cli_pipeline_node_add.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -1381,7 +1381,7 @@ def test_pipeline_node_add(tmp_path, cli_init_patch, capsys):
     out = capsys.readouterr().out
     assert "Added node" in out
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     p = asyncio.run(verify_db.repos.content_pipelines.get_by_id(pid))
     asyncio.run(verify_db.close())
@@ -1391,7 +1391,7 @@ def test_pipeline_node_add(tmp_path, cli_init_patch, capsys):
 def test_pipeline_node_remove(tmp_path, cli_init_patch, capsys):
     """pipeline node remove removes a node and its edges."""
     db_path = str(tmp_path / "cli_pipeline_node_rm.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     from src.models import PipelineEdge, PipelineGraph, PipelineNode, PipelineNodeType
@@ -1424,7 +1424,7 @@ def test_pipeline_node_remove(tmp_path, cli_init_patch, capsys):
 def test_pipeline_node_replace(tmp_path, cli_init_patch, capsys):
     """pipeline node replace swaps a node's type and config."""
     db_path = str(tmp_path / "cli_pipeline_node_replace.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     from src.models import PipelineGraph, PipelineNode, PipelineNodeType
@@ -1461,7 +1461,7 @@ def test_pipeline_node_replace(tmp_path, cli_init_patch, capsys):
     out = capsys.readouterr().out
     assert "Replaced node" in out
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     p = asyncio.run(verify_db.repos.content_pipelines.get_by_id(pid))
     asyncio.run(verify_db.close())
@@ -1473,7 +1473,7 @@ def test_pipeline_node_replace(tmp_path, cli_init_patch, capsys):
 def test_pipeline_edge_add_remove(tmp_path, cli_init_patch, capsys):
     """pipeline edge add and remove work correctly."""
     db_path = str(tmp_path / "cli_pipeline_edge.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     from src.models import PipelineGraph, PipelineNode, PipelineNodeType
@@ -1613,7 +1613,7 @@ def test_pipeline_add_legacy_integration(tmp_path, cli_init_patch, capsys):
 def test_pipeline_add_legacy_requires_source(tmp_path, cli_init_patch, capsys):
     """Legacy mode without --source prints error."""
     db_path = str(tmp_path / "cli_pipeline_add_no_source.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
 
     with cli_init_patch(db, *_PIPELINE_INIT_DB_TARGETS):
@@ -1646,7 +1646,7 @@ def test_pipeline_add_legacy_requires_source(tmp_path, cli_init_patch, capsys):
 def test_pipeline_add_legacy_requires_target(tmp_path, cli_init_patch, capsys):
     """Legacy mode without --target prints error."""
     db_path = str(tmp_path / "cli_pipeline_add_no_target.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -1685,7 +1685,7 @@ def test_pipeline_add_legacy_requires_target(tmp_path, cli_init_patch, capsys):
 def test_pipeline_add_inactive_flag(tmp_path, cli_init_patch, capsys):
     """--inactive creates a pipeline with is_active=False."""
     db_path = str(tmp_path / "cli_pipeline_add_inactive.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -1716,7 +1716,7 @@ def test_pipeline_add_inactive_flag(tmp_path, cli_init_patch, capsys):
     assert "InactivePipeline" in out
 
     asyncio.run(db.close())
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
     asyncio.run(verify_db.close())
@@ -1732,7 +1732,7 @@ def test_pipeline_add_inactive_flag(tmp_path, cli_init_patch, capsys):
 def test_pipeline_add_run_after(tmp_path, cli_init_patch, capsys):
     """--run-after enqueues a pipeline run immediately after creation."""
     db_path = str(tmp_path / "cli_pipeline_add_run_after.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -1790,7 +1790,7 @@ def test_pipeline_add_json_file(tmp_path, cli_init_patch, capsys):
     import json
 
     db_path = str(tmp_path / "cli_pipeline_add_json.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -1837,7 +1837,7 @@ def test_pipeline_add_json_file(tmp_path, cli_init_patch, capsys):
     assert "Added pipeline id=" in out
     assert "JsonFilePipeline" in out
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
     # #1246: the --json-file path built target_refs as dicts but import_json only
@@ -1859,7 +1859,7 @@ def test_pipeline_add_json_file_inactive(tmp_path, cli_init_patch, capsys):
     import json
 
     db_path = str(tmp_path / "cli_pipeline_add_json_inactive.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -1905,7 +1905,7 @@ def test_pipeline_add_json_file_inactive(tmp_path, cli_init_patch, capsys):
     out = capsys.readouterr().out
     assert "Added pipeline id=" in out
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     pipelines = asyncio.run(verify_db.repos.content_pipelines.get_all())
     targets = asyncio.run(verify_db.repos.content_pipelines.list_targets(pipelines[0].id))
@@ -1951,7 +1951,7 @@ def _seed_generation_run(db: Database, *, pipeline_id: int, generated_text: str,
 
 def test_pipeline_runs_shows_semantic_result_for_generation(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_runs_gen.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     pipeline_id = _add_pipeline_and_return_id(db, name="Gen")
     _seed_generation_run(
@@ -1966,7 +1966,7 @@ def test_pipeline_runs_shows_semantic_result_for_generation(tmp_path, cli_init_p
     )
     asyncio.run(db.close())
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -1981,7 +1981,7 @@ def test_pipeline_runs_shows_semantic_result_for_generation(tmp_path, cli_init_p
 
 def test_pipeline_runs_shows_semantic_result_for_action_only(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_runs_act.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     pipeline_id = _add_pipeline_and_return_id(db, name="ActOnly")
     _seed_generation_run(
@@ -1997,7 +1997,7 @@ def test_pipeline_runs_shows_semantic_result_for_action_only(tmp_path, cli_init_
     )
     asyncio.run(db.close())
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run
@@ -2014,7 +2014,7 @@ def test_pipeline_run_show_prints_semantic_fields_when_text_empty(tmp_path, cli_
     generated_text is empty (action-only run).
     """
     db_path = str(tmp_path / "cli_show_empty.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     pipeline_id = _add_pipeline_and_return_id(db, name="ShowEmpty")
     run_id = _seed_generation_run(
@@ -2030,7 +2030,7 @@ def test_pipeline_run_show_prints_semantic_fields_when_text_empty(tmp_path, cli_
     )
     asyncio.run(db.close())
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run as cli_run
@@ -2050,7 +2050,7 @@ def test_pipeline_run_show_prints_node_errors(tmp_path, cli_init_patch, capsys):
     can diagnose why an action-only pipeline produced result_count=0.
     """
     db_path = str(tmp_path / "cli_show_errs.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     pipeline_id = _add_pipeline_and_return_id(db, name="Errs")
     run_id = _seed_generation_run(
@@ -2078,7 +2078,7 @@ def test_pipeline_run_show_prints_node_errors(tmp_path, cli_init_patch, capsys):
     )
     asyncio.run(db.close())
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run as cli_run
@@ -2097,7 +2097,7 @@ def test_pipeline_run_show_prints_node_errors(tmp_path, cli_init_patch, capsys):
 def test_pipeline_run_show_no_errors_section_when_clean(tmp_path, cli_init_patch, capsys):
     """A clean run must not print an empty Ошибки нод: section."""
     db_path = str(tmp_path / "cli_show_clean.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     pipeline_id = _add_pipeline_and_return_id(db, name="Clean")
     run_id = _seed_generation_run(
@@ -2112,7 +2112,7 @@ def test_pipeline_run_show_no_errors_section_when_clean(tmp_path, cli_init_patch
     )
     asyncio.run(db.close())
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run as cli_run
@@ -2126,7 +2126,7 @@ def test_pipeline_run_show_no_errors_section_when_clean(tmp_path, cli_init_patch
 
 def test_pipeline_run_show_generation_case_shows_text_preview(tmp_path, cli_init_patch, capsys):
     db_path = str(tmp_path / "cli_show_gen.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     pipeline_id = _add_pipeline_and_return_id(db, name="ShowGen")
     run_id = _seed_generation_run(
@@ -2141,7 +2141,7 @@ def test_pipeline_run_show_generation_case_shows_text_preview(tmp_path, cli_init
     )
     asyncio.run(db.close())
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     with cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS):
         from src.cli.commands.pipeline import run as cli_run
@@ -2171,7 +2171,7 @@ def test_pipeline_run_action_only_records_result_count(tmp_path, cli_init_patch,
     from src.services.pipeline_result import increment_action_count
 
     db_path = str(tmp_path / "cli_run_action.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -2217,7 +2217,7 @@ def test_pipeline_run_action_only_records_result_count(tmp_path, cli_init_patch,
         h.execute.side_effect = _execute
         return h
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     with (
         cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS),
@@ -2241,7 +2241,7 @@ def test_pipeline_run_action_only_records_result_count(tmp_path, cli_init_patch,
         )
     asyncio.run(verify_db.close())
 
-    verify_db2 = Database(db_path)
+    verify_db2 = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db2.initialize())
     runs = asyncio.run(
         verify_db2.repos.generation_runs.list_by_pipeline(pipeline_id, limit=10)
@@ -2271,7 +2271,7 @@ def test_pipeline_run_generation_pipeline_preserves_result_metadata(
     from unittest.mock import AsyncMock, patch
 
     db_path = str(tmp_path / "cli_run_gen.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     _add_pipeline_prereqs(db)
 
@@ -2318,7 +2318,7 @@ def test_pipeline_run_generation_pipeline_preserves_result_metadata(
         h.execute.side_effect = _execute
         return h
 
-    verify_db = Database(db_path)
+    verify_db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db.initialize())
     with (
         cli_init_patch(verify_db, *_PIPELINE_INIT_DB_TARGETS),
@@ -2346,7 +2346,7 @@ def test_pipeline_run_generation_pipeline_preserves_result_metadata(
         )
     asyncio.run(verify_db.close())
 
-    verify_db2 = Database(db_path)
+    verify_db2 = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(verify_db2.initialize())
     runs = asyncio.run(
         verify_db2.repos.generation_runs.list_by_pipeline(pipeline_id, limit=10)

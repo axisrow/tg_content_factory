@@ -16,7 +16,7 @@ async def test_cli_send_code_saves_hash_to_db(tmp_path):
 
     from src.database import Database
 
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
 
     from src.telegram.auth import TelegramAuth
@@ -138,7 +138,7 @@ def test_cli_verify_code_persists_account_before_pool_warmup(tmp_path, capsys):
     async def fake_init_db(_config_path):
         from src.database import Database
 
-        db = Database(str(tmp_path / "verify.db"))
+        db = Database(str(tmp_path / "verify.db"), session_encryption_secret="test-session-encryption-key")
         await db.initialize()
         await db.set_setting("auth_pending:+1", json.dumps({"phone_code_hash": "h"}))
         original_add = db.add_account
