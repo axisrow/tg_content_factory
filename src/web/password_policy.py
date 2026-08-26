@@ -11,6 +11,7 @@ _COMMON_PASSWORDS = {
 # Enough to reject short/common guesses while retaining compatibility with
 # existing deployments such as the eight-character ``testpass`` test secret.
 _MIN_ENTROPY_BITS = 32.0
+_MIN_PASSWORD_LENGTH = 8
 
 
 def estimated_entropy_bits(password: str) -> float:
@@ -22,12 +23,17 @@ def estimated_entropy_bits(password: str) -> float:
     bits = len(password) * math.log2(max(alphabet, 1))
     if len(set(password)) <= 2 or re.fullmatch(r"(.)\1+|(.{1,4})\2+", password):
         return 0.0
-    if re.search(r"(?i)(0123456789|9876543210|abcdefghijklmnopqrstuvwxyz|zyxwvutsrqponmlkjihgfedcba)", password):
+    lowered = password.casefold()
+    if any(
+        all(ord(b) - ord(a) == delta for a, b in zip(run, run[1:], strict=False))
+        for run in (lowered[index : index + 4] for index in range(len(lowered) - 3))
+        for delta in (1, -1)
+    ):
         return min(bits, 10.0)
     return bits
 
 
 def is_strong_password(password: str) -> bool:
-    if password.casefold() in _COMMON_PASSWORDS or password.isspace():
+    if len(password) < _MIN_PASSWORD_LENGTH or password.casefold() in _COMMON_PASSWORDS or password.isspace():
         return False
     return estimated_entropy_bits(password) >= _MIN_ENTROPY_BITS
