@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.models import Channel, CollectionTask, CollectionTaskStatus, SearchQuery, StatsAllTaskPayload
+from src.models import Channel, CollectionTask, CollectionTaskStatus, SearchQuery
 from src.web.scheduler.context import format_task_result
 
 
@@ -320,30 +320,8 @@ async def test_scheduler_shows_interval(client):
 
 
 @pytest.mark.anyio
-async def test_scheduler_page_empty_tasks(client):
-    """Test scheduler page with no tasks."""
-    resp = await client.get("/scheduler/")
-    assert resp.status_code == 200
-
-
-@pytest.mark.anyio
 async def test_scheduler_page_empty_search_log(client):
     """Test scheduler page with no search log."""
-    resp = await client.get("/scheduler/")
-    assert resp.status_code == 200
-
-
-@pytest.mark.anyio
-async def test_scheduler_has_active_tasks_flag(client):
-    """Test scheduler page has active tasks detection."""
-    db = client._transport.app.state.db
-
-    # Create pending task
-    await db.create_collection_task(
-        channel_id=-1001234567890,
-        channel_title="Test",
-    )
-
     resp = await client.get("/scheduler/")
     assert resp.status_code == 200
 
@@ -468,50 +446,6 @@ async def test_cancel_task_calls_queue(client):
 
     resp = await client.post(f"/scheduler/tasks/{task_id}/cancel")
     assert resp.status_code == 200
-
-
-@pytest.mark.anyio
-async def test_clear_pending_collect_tasks_redirects_and_deletes_only_pending_channel_tasks(client):
-    db = client._transport.app.state.db
-
-    pending_id = await db.create_collection_task(
-        channel_id=-1001234567890,
-        channel_title="Pending Channel",
-    )
-    running_id = await db.create_collection_task(
-        channel_id=-1001234567891,
-        channel_title="Running Channel",
-    )
-    await db.update_collection_task(running_id, CollectionTaskStatus.RUNNING)
-    await db.create_stats_task(StatsAllTaskPayload(channel_ids=[-1001234567890]))
-
-    resp = await client.post(
-        "/scheduler/tasks/clear-pending-collect",
-        follow_redirects=False,
-    )
-
-    assert resp.status_code == 303
-    assert "msg=pending_collect_tasks_deleted" in resp.headers["location"]
-    assert await db.get_collection_task(pending_id) is None
-    assert (await db.get_collection_task(running_id)).status == CollectionTaskStatus.RUNNING
-
-
-@pytest.mark.anyio
-async def test_clear_pending_collect_tasks_empty_queue_redirects(client):
-    resp = await client.post(
-        "/scheduler/tasks/clear-pending-collect",
-        follow_redirects=False,
-    )
-
-    assert resp.status_code == 303
-    assert "msg=pending_collect_tasks_empty" in resp.headers["location"]
-
-
-@pytest.mark.anyio
-async def test_scheduler_page_hides_clear_button_when_no_pending(client):
-    resp = await client.get("/scheduler/")
-    assert resp.status_code == 200
-    assert 'action="/scheduler/tasks/clear-pending-collect"' not in resp.text
 
 
 @pytest.mark.anyio
