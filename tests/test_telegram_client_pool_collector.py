@@ -2257,6 +2257,7 @@ async def test_maybe_auto_delete_enabled():
     pool = make_mock_pool()
     db = MagicMock()
     db.get_setting = AsyncMock(return_value="1")
+    db.get_channel_by_channel_id = AsyncMock(return_value=None)
     db.delete_messages_for_channel = AsyncMock(return_value=42)
     collector = Collector(pool, db, SchedulerConfig())
 
@@ -2266,15 +2267,52 @@ async def test_maybe_auto_delete_enabled():
 
 
 @pytest.mark.anyio
+async def test_maybe_auto_delete_skips_manual_filter_flag():
+    pool = make_mock_pool()
+    db = MagicMock()
+    db.get_setting = AsyncMock(return_value="1")
+    db.get_channel_by_channel_id = AsyncMock(
+        return_value=Channel(channel_id=123, title="Manual", filter_flags="low_subscriber,manual")
+    )
+    db.delete_messages_for_channel = AsyncMock(return_value=42)
+    collector = Collector(pool, db, SchedulerConfig())
+
+    result = await collector._maybe_auto_delete(123)
+
+    assert result is False
+    db.delete_messages_for_channel.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_maybe_auto_delete_error():
     pool = make_mock_pool()
     db = MagicMock()
     db.get_setting = AsyncMock(return_value="1")
+    db.get_channel_by_channel_id = AsyncMock(return_value=None)
     db.delete_messages_for_channel = AsyncMock(side_effect=RuntimeError("fail"))
     collector = Collector(pool, db, SchedulerConfig())
 
     result = await collector._maybe_auto_delete(123)
     assert result is False
+
+
+@pytest.mark.anyio
+async def test_stats_entity_lookup_quarantines_uncertain_channel():
+    pool = make_mock_pool()
+    pool.resolve_entity_with_warm = AsyncMock(side_effect=ValueError("temporary miss"))
+    db = MagicMock()
+    db.set_channel_active = AsyncMock()
+    db.repos.channels.set_channel_review = AsyncMock()
+    collector = Collector(pool, db, SchedulerConfig())
+    channel = Channel(id=5, channel_id=123, title="Channel")
+
+    result = await collector._resolve_stats_entity_or_deactivate(
+        object(), "+7000", channel, "stats_resolve"
+    )
+
+    assert result is None
+    db.set_channel_active.assert_not_awaited()
+    db.repos.channels.set_channel_review.assert_awaited_once_with(5, "stats_entity_unresolved")
 
 
 # ---------------------------------------------------------------------------
@@ -2825,6 +2863,7 @@ async def test_collect_channel_private_group_invalidates_bad_phone():
     db.get_channel_stats = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
     db.set_channel_active = AsyncMock()
+    db.repos.channels.set_channel_review = AsyncMock()
     db.repos.channels.clear_preferred_phone_if_matches = AsyncMock()
     db.repos.channels.update_channel_preferred_phone = AsyncMock()
     # forget_channel_phone (the real error-recovery helper the collect path now
@@ -2843,7 +2882,8 @@ async def test_collect_channel_private_group_invalidates_bad_phone():
     # not a SELECT+unconditional-UPDATE. Then the dead channel is deactivated.
     pool.clear_channel_phone.assert_called_once_with(123)
     db.repos.channels.clear_preferred_phone_if_matches.assert_awaited_once_with(123, "+7001")
-    db.set_channel_active.assert_awaited_once_with(7, False)
+    db.set_channel_active.assert_not_awaited()
+    db.repos.channels.set_channel_review.assert_awaited_once_with(7, "resolve_account_unavailable")
 
 
 @pytest.mark.anyio
@@ -2866,6 +2906,7 @@ async def test_collect_channel_logs_when_clearing_preferred_phone_fails(caplog):
     db.get_channel_stats = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
     db.set_channel_active = AsyncMock()
+    db.repos.channels.set_channel_review = AsyncMock()
     # The atomic compare-and-clear is what now fails; #676 still requires the
     # failure to surface at WARNING.
     db.repos.channels.clear_preferred_phone_if_matches = AsyncMock(
@@ -2880,9 +2921,10 @@ async def test_collect_channel_logs_when_clearing_preferred_phone_fails(caplog):
     with caplog.at_level(logging.WARNING, logger="src.telegram.pool_dialogs"):
         result = await collector._collect_channel(channel)
 
-    # Collection still degrades gracefully (no crash, channel deactivated)...
+    # Collection still degrades gracefully (no crash, channel quarantined)...
     assert result == 0
-    db.set_channel_active.assert_awaited_once_with(7, False)
+    db.set_channel_active.assert_not_awaited()
+    db.repos.channels.set_channel_review.assert_awaited_once_with(7, "resolve_account_unavailable")
     # ...and the swallowed DB write is now visible at WARNING (invariant #676).
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert any(
@@ -3098,19 +3140,12 @@ async def test_transient_owner_flood_does_not_deactivate_private_channel(caplog)
 
 
 @pytest.mark.anyio
-async def test_kicked_owner_account_still_deactivates_when_no_rediscovery(caplog):
-    """Fix B companion: the legitimate deactivation path must survive.
+async def test_kicked_owner_account_is_quarantined_when_no_rediscovery(caplog):
+    """A failed resolve with no rediscovery is quarantined for operator review.
 
     When the numeric resolve fails ON THE CHANNEL'S OWN preferred phone (the
-    account was really kicked / the channel is gone) and no other connected
-    account can resolve it either, the channel must STILL be deactivated. Fix B
-    only suppresses clear/deactivate for a miss on a *fallback* account
-    (phone != preferred); a miss on the preferred phone itself is genuine and
-    must flow through to set_channel_active(False).
-
-    Guards Fix B from over-reaching: a mutation making the guard fire on
-    phone == preferred would silently keep dead channels active — this test
-    catches that by asserting the deactivation still happens.
+    account can resolve it either, the channel remains active and is marked for
+    review rather than being silently removed from collection.
     """
     channel = Channel(id=99, channel_id=777, title="Kicked", preferred_phone="+7001")
     client = AsyncMock()
@@ -3132,17 +3167,19 @@ async def test_kicked_owner_account_still_deactivates_when_no_rediscovery(caplog
     db.get_channel_stats = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
     db.set_channel_active = AsyncMock()
+    db.repos.channels.set_channel_review = AsyncMock()
     db.repos.channels.update_channel_preferred_phone = AsyncMock()
 
     collector = Collector(pool, db, SchedulerConfig())
-    # No other account can resolve it → rediscovery finds nothing → deactivate.
+    # No other account can resolve it → rediscovery finds nothing → quarantine.
     with patch.object(collector, "_discover_phone_for_channel", AsyncMock(return_value=None)):
         with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
             result = await collector._collect_channel(channel)
 
     assert result == 0
-    # A genuine miss on the OWN preferred phone still deactivates the dead channel.
-    db.set_channel_active.assert_awaited_once_with(99, False)
+    # The channel remains active pending an operator decision.
+    db.set_channel_active.assert_not_awaited()
+    db.repos.channels.set_channel_review.assert_awaited_once_with(99, "resolve_account_unavailable")
 
 
 @pytest.mark.anyio
@@ -3182,19 +3219,21 @@ async def test_dead_preferred_owner_deactivates_not_sticks_active(caplog):
     db.get_channel_stats = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
     db.set_channel_active = AsyncMock()
+    db.repos.channels.set_channel_review = AsyncMock()
     db.repos.channels.get_preferred_phone = AsyncMock(return_value="+7001")
     db.repos.channels.update_channel_preferred_phone = AsyncMock()
     pool._db = db
 
     collector = Collector(pool, db, SchedulerConfig())
-    # No live account can rediscover the dead-owner channel → deactivate.
+    # No live account can rediscover the dead-owner channel, but this remains
+    # an uncertain collection state rather than an operator deactivation.
     with patch.object(collector, "_discover_phone_for_channel", AsyncMock(return_value=None)):
         with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
             result = await collector._collect_channel(channel)
 
     assert result == 0
-    # Dead owner → the channel is deactivated, not left active-but-uncollectable.
-    db.set_channel_active.assert_awaited_once_with(88, False)
+    db.set_channel_active.assert_not_awaited()
+    db.repos.channels.set_channel_review.assert_awaited_once_with(88, "resolve_account_unavailable")
 
 
 @pytest.mark.anyio
