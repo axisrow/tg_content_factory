@@ -18,6 +18,8 @@ from src.telegram.auth import TelegramAuth
 from src.telegram.session_materializer import SessionMaterializer
 from tests.helpers import RealPoolHarness
 
+os.environ.setdefault("SESSION_ENCRYPTION_KEY", "test-session-encryption-key")
+
 
 @pytest.fixture(scope="session")
 def anyio_backend() -> str:
