@@ -900,9 +900,10 @@ class Database:
         The PRAGMAs are constant-time metadata lookups and do not scan the DB.
         """
         assert self._db is not None
+        db = self._db
 
         async def _pragma_int(name: str) -> int:
-            cursor = await self._db.execute(f"PRAGMA {name}")
+            cursor = await db.execute(f"PRAGMA {name}")
             row = await cursor.fetchone()
             return int(row[0]) if row else 0
 
@@ -910,7 +911,7 @@ class Database:
         page_count = await _pragma_int("page_count")
         freelist_count = await _pragma_int("freelist_count")
         auto_vacuum = await _pragma_int("auto_vacuum")
-        cursor = await self._db.execute("PRAGMA journal_mode")
+        cursor = await db.execute("PRAGMA journal_mode")
         row = await cursor.fetchone()
         journal_mode = str(row[0]) if row else None
         file_size = None
