@@ -1291,12 +1291,17 @@ class DialogsMixin:
                 raise
             if stale_cached is not None:
                 logger.warning(
-                    "get_dialogs_for_phone: degraded stale cache for %s mode=%s after %s",
+                    "get_dialogs_for_phone: degraded stale cache for %s mode=%s after %s "
+                    "-- dialog_cache was NOT updated",
                     phone,
                     cache_mode,
                     type(exc).__name__,
                 )
-                return stale_cached
+                # The live fetch died (FloodWait, network, ...) and we are handing
+                # back a STALE snapshot. Flag it exactly like a partial refresh so
+                # callers never report "refreshed: N total" over untouched cache
+                # (#1350: the flood path bypassed the partial flag and stayed silent).
+                return DialogFetchResult(stale_cached, partial=True)
             if isinstance(exc, RuntimeError) and str(exc) == "no_client":
                 return []
             raise

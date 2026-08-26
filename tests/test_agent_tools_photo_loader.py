@@ -205,6 +205,49 @@ class TestListPhotoItems:
         assert "item_id=10" in text
 
 
+class TestRefreshPhotoDialogs:
+    @pytest.mark.anyio
+    async def test_partial_sweep_is_not_reported_as_updated(self, mock_db):
+        """The agent must not assert the cache was updated when it wasn't (#1350).
+
+        This surface returned "Кэш диалогов обновлён: N диалогов." unconditionally,
+        so a FloodWait-degraded stale snapshot was announced to the user as a
+        successful refresh — the same silent success #1350 fixed in the CLI.
+        """
+        from src.telegram.pool_dialogs import DialogFetchResult
+
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+
+        with patch("src.services.channel_service.ChannelService.get_my_dialogs") as gmd:
+            gmd.return_value = DialogFetchResult([{"channel_id": 1}], partial=True)
+            result = await handlers["refresh_photo_dialogs"](
+                {"phone": "+79001234567", "confirm": True}
+            )
+
+        text = _text(result)
+        assert "НЕ обновлён" in text
+        assert "обновлён:" not in text
+
+    @pytest.mark.anyio
+    async def test_complete_sweep_still_reports_success(self, mock_db):
+        """The happy path must keep reporting success (guards against over-warning)."""
+        mock_pool, _ = _make_mock_pool()
+        mock_db.get_accounts = AsyncMock(return_value=[_make_account()])
+        handlers = _get_tool_handlers(mock_db, client_pool=mock_pool)
+
+        with patch("src.services.channel_service.ChannelService.get_my_dialogs") as gmd:
+            gmd.return_value = [{"channel_id": 1}, {"channel_id": 2}]
+            result = await handlers["refresh_photo_dialogs"](
+                {"phone": "+79001234567", "confirm": True}
+            )
+
+        text = _text(result)
+        assert "Кэш диалогов обновлён: 2 диалогов." in text
+        assert "НЕ обновлён" not in text
+
+
 class TestSendPhotosNow:
     @pytest.mark.anyio
     async def test_no_pool_returns_gate(self, mock_db):

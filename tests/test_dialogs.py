@@ -1031,6 +1031,39 @@ async def test_get_dialogs_for_phone_failed_refresh_keeps_existing_db_cache(db):
 
 
 @pytest.mark.anyio
+async def test_get_dialogs_for_phone_flood_stale_cache_is_flagged_partial(db):
+    """A FloodWait that falls back to the stale cache must be flagged partial.
+
+    #1350: the flood path returned the stale snapshot as a plain list, so callers
+    printed "Dialogs refreshed: N total" over a cache that was never updated —
+    the exact silent-success the partial flag exists to prevent.
+    """
+    from src.telegram.client_pool import ClientPool
+
+    await db.repos.dialog_cache.replace_dialogs("+1234567890", list(_FAKE_DIALOGS))
+
+    pool = MagicMock(spec=ClientPool)
+    pool._db = db
+    pool.get_client_by_phone = AsyncMock(side_effect=RuntimeError("boom"))
+    pool.release_client = AsyncMock()
+    _bind_dialog_cache_methods(pool)
+
+    result = await ClientPool.get_dialogs_for_phone(
+        pool,
+        "+1234567890",
+        include_dm=True,
+        mode="full",
+        refresh=True,
+    )
+
+    assert result.partial is True
+    # The stale snapshot is still handed back — degraded, not empty.
+    assert _strip_extra_dialog_fields(list(result)) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
+    cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
+    assert _strip_extra_dialog_fields(cached) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
+
+
+@pytest.mark.anyio
 async def test_get_dialogs_for_phone_partial_timeout_keeps_existing_db_cache(db):
     from src.telegram.client_pool import ClientPool
 
