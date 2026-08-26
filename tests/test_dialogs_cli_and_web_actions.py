@@ -170,8 +170,8 @@ class TestCliRefresh:
         assert "WARNING" in out
         # #1359: partial progress IS saved now, so the warning reports what was
         # kept rather than claiming the cache went untouched.
-        assert "did not complete" in out
-        assert "stale entries kept" in out
+        assert "завершился частично" in out
+        assert "устаревшие записи не удалялись" in out
         assert "Dialogs refreshed:" not in out
 
 
