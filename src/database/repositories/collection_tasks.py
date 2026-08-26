@@ -559,15 +559,14 @@ class CollectionTasksRepository:
         # #1304: for status=active, sort running first, then pending, ascending by id
         # (execution order) — so what's happening now sits at the top of page 1 instead
         # of on the last page of a large batch. status=completed keeps id DESC (newest first).
+        order_params: tuple[Any, ...] = ()
         if status_filter == "active":
-            order_by = (
-                f" ORDER BY CASE status WHEN '{CollectionTaskStatus.RUNNING.value}' "
-                "THEN 0 ELSE 1 END, id ASC"
-            )
+            order_by = " ORDER BY CASE status WHEN ? THEN 0 ELSE 1 END, id ASC"
+            order_params = (CollectionTaskStatus.RUNNING.value,)
         else:
             order_by = " ORDER BY id DESC"
         query = f"SELECT * FROM collection_tasks{where}{order_by} LIMIT ? OFFSET ?"
-        cur = await self._db.execute(query, (*base_params, limit, offset))
+        cur = await self._db.execute(query, (*base_params, *order_params, limit, offset))
         rows = await cur.fetchall()
 
         return [self._to_task(r) for r in rows], total
