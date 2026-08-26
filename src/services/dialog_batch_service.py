@@ -36,7 +36,11 @@ class DialogBatchService:
             owner = uuid4().hex
             if not await self._repo.acquire_lease(batch_id, owner, datetime.now(timezone.utc)):
                 return batch
-            await self._repo.recover_running(batch_id)
+            try:
+                await self._repo.recover_running(batch_id)
+            except asyncio.CancelledError:
+                await self._repo.release_lease(batch_id, owner)
+                raise
             stop_heartbeat = asyncio.Event()
             lease_lost = asyncio.Event()
 
