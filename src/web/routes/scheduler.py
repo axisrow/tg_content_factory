@@ -1,7 +1,8 @@
 import logging
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from src.web import deps  # noqa: F401  (re-export: tests patch src.web.routes.scheduler.deps.*)
 from src.web.routes.channel_collection import bulk_enqueue_msg  # noqa: F401  (test monkeypatch target)
@@ -34,6 +35,19 @@ from src.web.scheduler.responses import scheduler_response
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_LEGACY_TASK_QUERY_KEYS = ("status", "page", "limit")
+
+
+def _legacy_tasks_redirect(request: Request) -> RedirectResponse:
+    """Redirect the retired scheduler task list to its new /jobs home."""
+    query = {
+        key: request.query_params[key]
+        for key in _LEGACY_TASK_QUERY_KEYS
+        if key in request.query_params
+    }
+    suffix = f"?{urlencode(query)}" if query else ""
+    return RedirectResponse(url=f"/jobs{suffix}", status_code=303)
 
 # Re-exported for backward compatibility (importers/tests reach these via
 # src.web.routes.scheduler). Listed here so the imports above are not flagged
@@ -70,14 +84,12 @@ async def clear_pending_collect_tasks(request: Request):
 
 
 @router.get("/", response_class=HTMLResponse)
-async def scheduler_page(
-    request: Request,
-    page: int = Query(1),
-    status: str = Query("all"),
-    limit: int = Query(50),
-):
+async def scheduler_page(request: Request):
+    # The retired task tabs/pagination produced full-page scheduler URLs.
+    if any(key in request.query_params for key in _LEGACY_TASK_QUERY_KEYS):
+        return _legacy_tasks_redirect(request)
     try:
-        result = await handlers.render_scheduler_page(request, page, status, limit)
+        result = await handlers.render_scheduler_page(request)
     except Exception:
         logger.exception("scheduler_page failed")
         raise
@@ -90,27 +102,13 @@ async def scheduler_health_fragment(request: Request):
 
 
 @router.get("/fragments/jobs", response_class=HTMLResponse)
-async def scheduler_jobs_fragment(
-    request: Request,
-    page: int = Query(1),
-    status: str = Query("all"),
-    limit: int = Query(50),
-):
-    return scheduler_response(
-        request, await handlers.render_scheduler_jobs_fragment(request, page, status, limit)
-    )
+async def scheduler_jobs_fragment(request: Request):
+    return scheduler_response(request, await handlers.render_scheduler_jobs_fragment(request))
 
 
 @router.get("/fragments/tasks", response_class=HTMLResponse)
-async def scheduler_tasks_fragment(
-    request: Request,
-    page: int = Query(1),
-    status: str = Query("all"),
-    limit: int = Query(50),
-):
-    return scheduler_response(
-        request, await handlers.render_scheduler_tasks_fragment(request, page, status, limit)
-    )
+async def scheduler_tasks_fragment(request: Request):
+    return _legacy_tasks_redirect(request)
 
 
 @router.post("/jobs/{job_id}/toggle")
