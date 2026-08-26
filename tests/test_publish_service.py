@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from src.models import ContentPipeline, GenerationRun, PipelinePublishMode, PipelineTarget
@@ -841,65 +843,45 @@ async def test_publish_service_db_failure_on_second_write_bounds_loss_to_one_tar
     ]
 
 
-# === issue #1239: a send that outruns the timeout may already have reached
-# Telegram. The timeout MUST stay (clients run with connection_retries=None, so
-# a send on a dead connection would otherwise hang forever and freeze the
-# sequential publish dispatcher), but a timed-out send is UNCONFIRMED, not
-# known-failed: it is recorded in metadata.unconfirmed_targets and a retry must
-# NOT re-send it blindly (would duplicate) — it surfaces it for a manual check.
-#
-# The fake send below actually BLOCKS past the (patched-tiny) timeout so the
-# real asyncio.wait_for fires — this reproduces the true timeout-vs-delivery
-# race, not a `sleep(0)` stand-in. ===
+# === issue #1383: the irreversible send must not be wrapped in
+# asyncio.wait_for. Cancelling the local wait does not cancel an MTProto request
+# already accepted by Telegram, so a retry can otherwise publish a duplicate.
+# The fake send below completes slowly and proves that the service awaits the
+# actual delivery before recording published_targets. ===
 
 
-class _HangingSendClient(FakeClient):
-    """A client whose send blocks longer than the (patched) send timeout, so the
-    real asyncio.wait_for around the send actually fires — modelling a send that
-    is in flight to Telegram when the local wait is cancelled. It still records
-    the send (the request left the process) to mirror a possibly-delivered post.
-    """
+class _SlowSendClient(FakeClient):
+    """A client whose send completes after a short delay."""
 
     async def send_message(self, entity, text, **kwargs):
-        import asyncio
-
         await super().send_message(entity, text, **kwargs)  # record the attempt
-        await asyncio.sleep(1.0)  # outlast the patched tiny timeout → wait_for fires
+        await asyncio.sleep(0.02)
         return FakeMessage()
 
     async def send_file(self, entity, files, caption=None, schedule=None):
-        import asyncio
-
         await super().send_file(entity, files, caption=caption, schedule=schedule)
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.02)
         return FakeMessage()
 
 
-class _HangingSendPool(FakeClientPool):
+class _SlowSendPool(FakeClientPool):
     async def get_client_by_phone(self, phone, *, wait_for_flood=False):
         if not self._should_succeed or phone in self._fail_phones:
             return None
-        client = self._clients.setdefault(phone, _HangingSendClient())
+        client = self._clients.setdefault(phone, _SlowSendClient())
         return (client, phone)
 
 
 @pytest.mark.anyio
-async def test_publish_service_send_timeout_marks_unconfirmed_not_failed():
-    """A send that outruns SEND_TIMEOUT_SEC returns uncertain=True and is recorded
-    in unconfirmed_targets, NOT published_targets and NOT a plain failure (#1239).
-
-    The timeout fires for real (the fake send blocks past it), proving the guard
-    against a forever-hung send is intact — no vertical freeze of the dispatcher.
-    """
+async def test_publish_service_slow_send_is_recorded_as_delivered():
+    """A slow send is awaited and recorded as delivered, rather than cancelled."""
     from unittest.mock import patch
-
-    import src.services.publish_service as ps
 
     db = FakeDB()
     db.repos.content_pipelines.set_targets(
         [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
     )
-    pool = _HangingSendPool(should_succeed=True)
+    pool = _SlowSendPool(should_succeed=True)
     service = PublishService(db, pool)
 
     run = GenerationRun(
@@ -910,39 +892,26 @@ async def test_publish_service_send_timeout_marks_unconfirmed_not_failed():
         status="completed",
     )
 
-    # Tiny timeout so the blocking send trips it fast; the whole test still ends
-    # (the guard works — the send does NOT hang forever).
-    with patch.object(ps, "SEND_TIMEOUT_SEC", 0.02):
+    # Mutation guard: reintroducing wait_for around the send must fail this test.
+    with patch("src.services.publish_service.asyncio.wait_for", side_effect=AssertionError):
         results = await service.publish_run(run, make_pipeline())
 
-    assert results[0].success is False
-    assert results[0].uncertain is True
-    assert "unconfirmed" in results[0].error.lower()
-    # Recorded as unconfirmed, NOT delivered → run is not marked published.
+    assert results[0].success is True
+    assert results[0].uncertain is False
     md = db.repos.generation_runs.metadata_by_id[1]
-    assert md["unconfirmed_targets"] == ["+1234567890:-1001234567890"]
-    assert md.get("published_targets", []) == []
-    assert 1 not in db.repos.generation_runs.published_ids
+    assert md["published_targets"] == ["+1234567890:-1001234567890"]
+    assert md.get("unconfirmed_targets", []) == []
+    assert 1 in db.repos.generation_runs.published_ids
 
 
 @pytest.mark.anyio
-async def test_publish_service_unconfirmed_target_not_resent_on_retry():
-    """The core #1239 fix: a target left UNCONFIRMED by a timed-out send is NOT
-    re-sent on retry — no duplicate post — and is surfaced for a manual check.
-
-    This is the exact production scenario: attempt 1 times out mid-send (post may
-    already be live), the run stays retry-eligible, the operator hits publish
-    again; the retry must not blindly re-send that target.
-    """
-    from unittest.mock import patch
-
-    import src.services.publish_service as ps
-
+async def test_publish_service_slow_send_not_resent_on_retry():
+    """A slow-but-completed send is not repeated on a subsequent publish."""
     db = FakeDB()
     db.repos.content_pipelines.set_targets(
         [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
     )
-    pool = _HangingSendPool(should_succeed=True)
+    pool = _SlowSendPool(should_succeed=True)
     service = PublishService(db, pool)
 
     run = GenerationRun(
@@ -953,17 +922,14 @@ async def test_publish_service_unconfirmed_target_not_resent_on_retry():
         status="completed",
     )
 
-    # Attempt 1: the send times out → target recorded unconfirmed, one send tried.
-    with patch.object(ps, "SEND_TIMEOUT_SEC", 0.02):
-        await service.publish_run(run, make_pipeline())
+    first_results = await service.publish_run(run, make_pipeline())
+    assert first_results[0].success is True
     assert len(pool._clients["+1234567890"].sent_messages) == 1
-    assert db.repos.generation_runs.metadata_by_id[1]["unconfirmed_targets"] == [
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
         "+1234567890:-1001234567890"
     ]
 
-    # Attempt 2 (retry): reload from persisted metadata like the dispatcher does.
-    # No new timeout patch needed — the target must be skipped WITHOUT sending.
-    retry_pool = _HangingSendPool(should_succeed=True)
+    retry_pool = _SlowSendPool(should_succeed=True)
     retry_service = PublishService(db, retry_pool)
     retry_run = GenerationRun(
         id=1,
@@ -975,29 +941,19 @@ async def test_publish_service_unconfirmed_target_not_resent_on_retry():
     )
     retry_results = await retry_service.publish_run(retry_run, make_pipeline())
 
-    # NOT re-sent — no client was even acquired for the unconfirmed target → no
-    # duplicate. It is surfaced as an unconfirmed failure for a manual check.
     assert retry_pool._clients == {}
-    assert retry_results[0].success is False
-    assert retry_results[0].uncertain is True
-    assert "manual check" in retry_results[0].error.lower()
-    # Still not marked published — a human must confirm/re-drive it.
-    assert 1 not in db.repos.generation_runs.published_ids
+    assert retry_results[0].success is True
+    assert 1 in db.repos.generation_runs.published_ids
 
 
 @pytest.mark.anyio
-async def test_publish_service_image_send_timeout_marks_unconfirmed():
-    """The image branch (publish_files) gets the same unconfirmed handling as the
-    text branch — both irreversible sends are covered (#1239, Codex review)."""
-    from unittest.mock import patch
-
-    import src.services.publish_service as ps
-
+async def test_publish_service_slow_image_send_is_recorded_as_delivered():
+    """The image send is also awaited before progress is persisted (#1383)."""
     db = FakeDB()
     db.repos.content_pipelines.set_targets(
         [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
     )
-    pool = _HangingSendPool(should_succeed=True)
+    pool = _SlowSendPool(should_succeed=True)
     service = PublishService(db, pool)
 
     run = GenerationRun(
@@ -1009,17 +965,15 @@ async def test_publish_service_image_send_timeout_marks_unconfirmed():
         status="completed",
     )
 
-    with patch.object(ps, "SEND_TIMEOUT_SEC", 0.02):
-        results = await service.publish_run(run, make_pipeline())
+    results = await service.publish_run(run, make_pipeline())
 
-    assert results[0].success is False
-    assert results[0].uncertain is True
-    # The image send (send_file) was attempted, then recorded unconfirmed.
+    assert results[0].success is True
+    assert results[0].uncertain is False
     assert len(pool._clients["+1234567890"].sent_files) == 1
-    assert db.repos.generation_runs.metadata_by_id[1]["unconfirmed_targets"] == [
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
         "+1234567890:-1001234567890"
     ]
-    assert 1 not in db.repos.generation_runs.published_ids
+    assert 1 in db.repos.generation_runs.published_ids
 
 
 @pytest.mark.anyio

@@ -11,14 +11,6 @@ from src.telegram.backends import adapt_transport_session
 
 logger = logging.getLogger(__name__)
 
-# Upper bound on a single send to Telegram. Kept as the ONLY guard against an
-# in-flight request hanging forever on a dead connection — clients run with
-# connection_retries=None so nothing at the transport layer bounds it, and the
-# publish dispatcher awaits targets sequentially, so one hung send blocks every
-# later publish permanently. On timeout the request may already have reached
-# Telegram, so the target is marked UNCONFIRMED (not failed) — see publish_run.
-SEND_TIMEOUT_SEC = 120.0
-
 
 class _PublishClientPool(Protocol):
     async def get_client_by_phone(
@@ -135,14 +127,11 @@ class PublishService:
             # targets that already succeeded, duplicating messages (issue #633).
             metadata = dict(run.metadata or {})
             delivered: set[str] = set(metadata.get("published_targets") or [])
-            # Targets whose send timed out AFTER the request may have reached
+            # A transport-level send timeout may happen AFTER the request reached
             # Telegram (issue #1239). The delivery is UNCONFIRMED — neither known-
             # delivered nor known-failed. A retry must NOT re-send these blindly (it
             # would duplicate the post if the send actually landed); instead they are
-            # surfaced for a manual check. The timeout is kept as the ONLY guard
-            # against a send hanging forever on a dead connection (clients run with
-            # connection_retries=None, so nothing else bounds an in-flight request)
-            # and blocking the sequential publish dispatcher for good.
+            # surfaced for a manual check.
             unconfirmed: set[str] = set(metadata.get("unconfirmed_targets") or [])
 
             results: list[PublishResult] = []
@@ -269,24 +258,18 @@ class PublishService:
                 def _send() -> Any:
                     return session.send_message(entity, run.generated_text, **send_kwargs)
 
-            # The send is bounded by SEND_TIMEOUT_SEC (issue #1239). The timeout
-            # is REQUIRED, not optional: with connection_retries=None a send on a
-            # dead connection would otherwise hang forever and, because the
-            # publish dispatcher awaits targets sequentially, freeze all later
-            # publishes permanently. BUT a client-side timeout cancels only the
-            # local wait — the MTProto request may already have reached Telegram
-            # and the post may be delivered. So a timeout HERE — scoped to ONLY
-            # the send, with every pre-send step (acquire, resolve, S3 re-sign)
-            # kept above — is NOT a known failure: it returns uncertain=True and
-            # publish_run records the target as UNCONFIRMED, so a retry surfaces it
-            # for a manual check instead of re-sending a possibly-delivered post.
+            # Await the irreversible send directly. Wrapping it in
+            # asyncio.wait_for cancels the local coroutine on timeout, while an
+            # already-dispatched MTProto request can still be delivered. That
+            # leaves published_targets empty and lets a retry send a duplicate
+            # (issue #1383). A transport-level TimeoutError is still treated as
+            # unconfirmed below, but this service must not cancel the send itself.
             try:
-                msg = await asyncio.wait_for(_send(), timeout=SEND_TIMEOUT_SEC)
+                msg = await _send()
             except asyncio.TimeoutError:
-                # The send outran the timeout: the request may already be on its
-                # way to Telegram, so we cannot say whether the post was
-                # delivered. Mark the target uncertain so publish_run records it
-                # as UNCONFIRMED and a retry does NOT re-send it blindly (#1239).
+                # A transport timeout gives no delivery guarantee: the request may
+                # already be on its way to Telegram. Mark the target unconfirmed
+                # so a retry does not blindly send a possible duplicate.
                 logger.error(
                     "Timeout sending to %s:%s — delivery unconfirmed, target needs a manual check",
                     target.phone,
