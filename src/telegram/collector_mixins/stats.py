@@ -323,9 +323,18 @@ class StatsMixin:
                     await self._db.set_channel_active(channel.id, False)
                     return None
 
+                fetch_full = (
+                    session.fetch_full_chat(entity.id)
+                    if channel.channel_type == "group"
+                    else session.fetch_full_channel(entity)
+                )
                 full = await run_with_flood_wait(
-                    session.fetch_full_channel(entity),
-                    operation="collect_channel_stats_fetch_full_channel",
+                    fetch_full,
+                    operation=(
+                        "collect_channel_stats_fetch_full_chat"
+                        if channel.channel_type == "group"
+                        else "collect_channel_stats_fetch_full_channel"
+                    ),
                     phone=phone,
                     pool=self._pool,
                     logger_=logger,
