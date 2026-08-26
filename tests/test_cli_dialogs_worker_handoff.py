@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.cli.commands.dialogs import run_with_dependencies
+from src.cli.worker_handoff import serve_is_running as _real_serve_is_running
 from src.config import AppConfig
 from tests.helpers import cli_ns as _ns
 
@@ -223,6 +224,137 @@ def test_edit_admin_handoff_preserves_demotion(cli_db):
     assert payload["is_admin"] is False
 
 
+def test_edit_permissions_handoff_includes_all_fields(cli_db):
+    """The worker handler requires user_id — a missing key is a guaranteed crash.
+
+    Regression (Codex, PR #1324 round 2): `_HANDOFF_COMMANDS["edit-permissions"]`
+    forwarded only `chat_id`, though the Typer command also collects `user_id`,
+    `until_date`, `send_messages`, and `send_media`. The worker's
+    `_handle_dialogs_edit_permissions` does `payload["user_id"]` — a direct
+    subscript, no default — so every handed-off invocation failed with a
+    KeyError instead of applying the permission change.
+    """
+    _run(
+        _ns(
+            dialogs_action="edit-permissions",
+            phone="+1234567890",
+            chat_id="-100123",
+            user_id="555",
+            until_date="2027-01-01T00:00:00",
+            send_messages=True,
+            send_media=False,
+            yes=True,
+            direct=False,
+        ),
+        cli_db,
+        serve_running=True,
+    )
+
+    commands = _commands(cli_db)
+    assert [c.command_type for c in commands] == ["dialogs.edit_permissions"]
+    payload = commands[0].payload
+    assert payload["chat_id"] == "-100123"
+    assert payload["user_id"] == "555"
+    assert payload["until_date"] == "2027-01-01T00:00:00"
+    assert payload["send_messages"] is True
+    assert payload["send_media"] is False
+
+
+def test_mark_read_handoff_includes_max_id(cli_db):
+    """A bounded mark-read must not silently mark the whole dialog read.
+
+    Regression (Codex, PR #1324 round 2): `_HANDOFF_COMMANDS["mark-read"]`
+    forwarded only `chat_id`, dropping `--max-id`. The worker handler reads a
+    missing `max_id` as ``None``, which marks every message in the dialog as
+    read instead of only those up to the requested id.
+    """
+    _run(
+        _ns(
+            dialogs_action="mark-read",
+            phone="+1234567890",
+            chat_id="-100123",
+            max_id=999,
+            direct=False,
+        ),
+        cli_db,
+        serve_running=True,
+    )
+
+    commands = _commands(cli_db)
+    assert [c.command_type for c in commands] == ["dialogs.mark_read"]
+    assert commands[0].payload["max_id"] == 999
+
+
+def test_mark_read_handoff_does_not_require_confirmation(cli_db):
+    """mark-read must not need `args.yes` — the in-process handler never asks either.
+
+    Regression (Codex, PR #1324 round 2): `dialogs.mark_read` was listed in
+    `_HANDOFF_NEEDS_CONFIRMATION`, but `dialogs_mark_read` never builds its
+    Namespace with a `yes` attribute (unlike every other confirmed action).
+    `_confirm_or_abort` does `if args.yes:` with no default, so every
+    handed-off `mark-read` crashed with AttributeError before ever reaching
+    the queue — and the in-process `_dialogs_mark_read` handler doesn't
+    prompt for confirmation at all, so gating the hand-off path was a
+    behavior mismatch, not a deliberate safety net.
+    """
+    # No `yes` attribute on the Namespace at all — mirrors the real CLI
+    # command, which never builds one for mark-read.
+    _run(
+        _ns(dialogs_action="mark-read", phone="+1234567890", chat_id="-100123", max_id=None, direct=False),
+        cli_db,
+        serve_running=True,
+    )
+
+    commands = _commands(cli_db)
+    assert [c.command_type for c in commands] == ["dialogs.mark_read"]
+
+
+def test_archive_and_unarchive_handoff_do_not_require_confirmation(cli_db):
+    """Same AttributeError-on-missing-yes gap as mark-read, for archive/unarchive.
+
+    Regression (Codex, PR #1324 round 2 audit): `dialogs_archive` and
+    `dialogs_unarchive` also never build a `yes` attribute, and their
+    in-process handlers don't prompt either — so they were removed from
+    `_HANDOFF_NEEDS_CONFIRMATION` alongside mark-read.
+    """
+    for action in ("archive", "unarchive"):
+        if cli_db._connection.db is None:
+            asyncio.run(cli_db.initialize())
+        _run(
+            _ns(dialogs_action=action, phone="+1234567890", chat_id="-100123", direct=False),
+            cli_db,
+            serve_running=True,
+        )
+
+    commands = _commands(cli_db)
+    assert {c.command_type for c in commands} == {"dialogs.archive", "dialogs.unarchive"}
+
+
+def test_handoff_resolves_phone_when_not_given(cli_db):
+    """Omitting --phone must not queue an empty phone the worker will reject.
+
+    Regression (Codex, PR #1324 round 2): the hand-off path built
+    `payload["phone"]` from `getattr(args, "phone", "") or ""`, never
+    resolving a default the way `_resolve_phone` does for the in-process
+    path (first connected account, sorted). `TelegramActionService._client`
+    rejects an empty, non-``allow_any`` phone outright, so every handed-off
+    action run without `--phone` broke only while `serve` was running.
+    """
+    from src.models import Account
+
+    asyncio.run(cli_db.add_account(Account(phone="+70000000002", session_string="sess-b")))
+    asyncio.run(cli_db.add_account(Account(phone="+70000000001", session_string="sess-a")))
+
+    _run(
+        _ns(dialogs_action="join", phone=None, target="@somechannel", yes=True, direct=False),
+        cli_db,
+        serve_running=True,
+    )
+
+    commands = _commands(cli_db)
+    assert commands[0].payload["phone"] == "+70000000001"
+
+
 def test_confirmation_is_still_required_before_enqueue(cli_db):
     """Declining the prompt must not queue anything.
 
@@ -271,3 +403,50 @@ def test_serve_is_running_survives_a_broken_pid_file(tmp_path, monkeypatch):
     monkeypatch.setattr(worker_handoff, "pid_file_path", lambda _config: bad_pid)
 
     assert worker_handoff.serve_is_running(config) is False
+
+
+def test_serve_is_running_is_false_for_no_worker_split_deployment(tmp_path, monkeypatch):
+    """`serve --no-worker` must not look like a valid hand-off target.
+
+    Regression (Codex, PR #1324 round 2): `serve_is_running` only checked the
+    command line for `src.main serve`, not whether `--no-worker` was passed.
+    In the documented split-deployment mode ("For split deployments (Docker/k8s)
+    pass --no-worker and run `worker` separately" — CLAUDE.md), a CLI process
+    that hands off while only a workerless `serve` is running would queue
+    commands nothing ever picks up, silently reporting success. Fail safe:
+    treat this as "no reliable worker" so the caller falls back to the direct
+    path instead of enqueuing into a black hole.
+
+    Uses the real function (`_real_serve_is_running`, imported at module load
+    before the autouse `no_running_server` fixture patches the module
+    attribute) — that fixture exists precisely to stop tests from exercising
+    this logic by accident, so it must be bypassed here on purpose.
+    """
+    from src.cli import process_control, worker_handoff
+
+    config = AppConfig()
+    pid_path = tmp_path / "serve.pid"
+    pid_path.write_text("4321\n", encoding="utf-8")
+    monkeypatch.setattr(worker_handoff, "pid_file_path", lambda _config: pid_path)
+
+    with (
+        patch.object(process_control, "is_process_alive", return_value=True),
+        patch.object(process_control, "_process_command", return_value="python -m src.main serve --no-worker"),
+    ):
+        assert _real_serve_is_running(config) is False
+
+
+def test_serve_is_running_is_true_for_plain_serve(tmp_path, monkeypatch):
+    """Plain `serve` (the documented default: web + embedded worker) still hands off."""
+    from src.cli import process_control, worker_handoff
+
+    config = AppConfig()
+    pid_path = tmp_path / "serve.pid"
+    pid_path.write_text("4321\n", encoding="utf-8")
+    monkeypatch.setattr(worker_handoff, "pid_file_path", lambda _config: pid_path)
+
+    with (
+        patch.object(process_control, "is_process_alive", return_value=True),
+        patch.object(process_control, "_process_command", return_value="python -m src.main serve"),
+    ):
+        assert _real_serve_is_running(config) is True

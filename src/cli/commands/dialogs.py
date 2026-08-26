@@ -944,12 +944,15 @@ _HANDOFF_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "download-media": ("dialogs.download_media", ("chat_id", "message_id")),
     "participants": ("dialogs.participants", ("chat_id", "limit", "search")),
     "edit-admin": ("dialogs.edit_admin", ("chat_id", "user_id", "is_admin", "title")),
-    "edit-permissions": ("dialogs.edit_permissions", ("chat_id",)),
+    "edit-permissions": (
+        "dialogs.edit_permissions",
+        ("chat_id", "user_id", "until_date", "send_messages", "send_media"),
+    ),
     "kick": ("dialogs.kick", ("chat_id", "user_id")),
     "broadcast-stats": ("dialogs.broadcast_stats", ("chat_id",)),
     "archive": ("dialogs.archive", ("chat_id",)),
     "unarchive": ("dialogs.unarchive", ("chat_id",)),
-    "mark-read": ("dialogs.mark_read", ("chat_id",)),
+    "mark-read": ("dialogs.mark_read", ("chat_id", "max_id")),
     "refresh": ("dialogs.refresh", ()),
     "cache-clear": ("dialogs.cache_clear", ()),
 }
@@ -958,6 +961,12 @@ _HANDOFF_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
 # Mutating commands whose in-process handlers prompt before acting. The
 # hand-off path bypasses those handlers, so it must prompt for the same set —
 # otherwise "no" would still queue the action.
+#
+# archive/unarchive/mark-read are deliberately absent: their in-process
+# handlers (_dialogs_archive, _dialogs_unarchive, _dialogs_mark_read) never
+# call _confirm_or_abort either, and their Typer commands don't build a `yes`
+# Namespace attribute — including them here made every hand-off crash with
+# AttributeError before reaching the queue (Codex, PR #1324 round 2).
 _HANDOFF_NEEDS_CONFIRMATION = frozenset(
     {
         "dialogs.send",
@@ -971,11 +980,27 @@ _HANDOFF_NEEDS_CONFIRMATION = frozenset(
         "dialogs.edit_admin",
         "dialogs.edit_permissions",
         "dialogs.kick",
-        "dialogs.archive",
-        "dialogs.unarchive",
-        "dialogs.mark_read",
     }
 )
+
+
+async def _resolve_handoff_phone(args, db) -> str:
+    """Pick the default phone for a hand-off payload, mirroring `_resolve_phone`.
+
+    The in-process path resolves an omitted ``--phone`` to the first connected
+    account via ``pool.clients``; the hand-off path has no pool (that's the
+    point — it must not open a second connection), so it falls back to the
+    first active account on record in the DB, sorted the same way. Queuing an
+    empty phone made the worker's ``TelegramActionService._client`` reject the
+    command outright with "client unavailable" for every hand-off run without
+    an explicit ``--phone`` (Codex, PR #1324 round 2).
+    """
+    explicit = getattr(args, "phone", None)
+    if explicit:
+        return explicit
+    accounts = await db.repos.accounts.get_accounts(active_only=True)
+    phones = sorted(account.phone for account in accounts)
+    return phones[0] if phones else ""
 
 
 async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
@@ -990,7 +1015,7 @@ async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
         return False
 
     command_type, fields = entry
-    payload: dict = {"phone": getattr(args, "phone", "") or ""}
+    payload: dict = {"phone": await _resolve_handoff_phone(args, db)}
     for field in fields:
         value = getattr(args, field, None)
         if value is not None:
