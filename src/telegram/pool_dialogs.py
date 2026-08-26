@@ -30,7 +30,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 
 from telethon.errors import (
     ChannelInvalidError,
@@ -65,6 +65,11 @@ logger = logging.getLogger(__name__)
 WARM_SINGLE_PHONE_TIMEOUT_SEC = 30.0
 WARM_ALL_PHONES_TOTAL_SEC = 150.0
 WARM_STAGGER_DELAY_SEC = 1.0
+
+
+class _ChannelEntity(Protocol):
+    id: int
+    title: str
 
 
 @dataclass
@@ -779,9 +784,10 @@ class DialogsMixin:
                     await self.remember_channel_phone(
                         bare_channel_id(int(identifier)), phone, force=not used_owner
                     )
+                channel_entity = cast(_ChannelEntity, entity)
                 return {
-                    "channel_id": entity.id,
-                    "title": entity.title,
+                    "channel_id": channel_entity.id,
+                    "title": channel_entity.title,
                     "username": getattr(entity, "username", None),
                     "channel_type": channel_type,
                     "deactivate": deactivate,
