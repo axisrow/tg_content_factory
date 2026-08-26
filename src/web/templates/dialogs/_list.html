@@ -9,6 +9,7 @@
 <small class="text-muted d-block mb-2">
     Показан сохранённый список диалогов{% if dialogs_cached_at %} от {{ dialogs_cached_at|local_dt }}{% endif %}. Кнопка «Обновить диалоги» заново загружает данные из Telegram.
 </small>
+{% if dialogs_partial %}<div class="alert alert-warning py-2">Не удалось полностью загрузить диалоги из Telegram. Список может быть неполным.</div>{% endif %}
 {# Refresh lives inside the fragment so its phone always matches the shown account,
    even after an HTMX account switch (the static page selector swaps only this div). #}
 <form method="post" action="/dialogs/refresh" class="mb-3" data-busy>
