@@ -1,3 +1,4 @@
+import asyncio
 from contextlib import contextmanager
 
 import pytest
@@ -375,3 +376,22 @@ async def test_set_metadata_persists_without_changing_status(db):
     # Status and publication state are untouched.
     assert run.moderation_status == "approved"
     assert run.published_at is None
+
+
+@pytest.mark.anyio
+async def test_set_metadata_merges_concurrent_target_progress(db):
+    """Independent target-progress writes must not replace each other."""
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt-template")
+
+    await asyncio.gather(
+        repo.set_metadata(run_id, {"published_targets": ["+1:-1001"]}),
+        repo.set_metadata(run_id, {"unconfirmed_targets": ["+2:-1002"]}),
+    )
+
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.metadata == {
+        "published_targets": ["+1:-1001"],
+        "unconfirmed_targets": ["+2:-1002"],
+    }

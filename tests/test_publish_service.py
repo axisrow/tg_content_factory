@@ -56,7 +56,7 @@ class FakeGenerationRunsRepo:
             raise RuntimeError("simulated DB failure during publish progress write")
         # Store a copy: the run's metadata is mutated in place across attempts,
         # so without copying every persisted snapshot would alias the same dict.
-        self.metadata_by_id[run_id] = dict(metadata)
+        self.metadata_by_id.setdefault(run_id, {}).update(metadata)
 
 
 class FakeClientPool:

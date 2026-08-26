@@ -254,18 +254,25 @@ class GenerationRunsRepository:
         )
 
     async def set_metadata(self, run_id: int, metadata: dict) -> None:
-        """Persist the run metadata JSON without touching status or published_at.
+        """Merge metadata into the run JSON without touching other fields.
 
-        Used to record incremental publish progress (per-target delivery) so a
-        retry does not re-send to targets already published.
+        The read and write happen in one transaction. Callers recording
+        publish progress pass only the changed key, avoiding stale whole-blob
+        writes that could lose a concurrent target update.
         """
         assert self._database is not None, (
             "GenerationRunsRepository.set_metadata requires a Database reference"
         )
-        await self._database.execute_write(
-            "UPDATE generation_runs SET metadata = ?, updated_at = datetime('now') WHERE id = ?",
-            (safe_json_dumps(metadata, ensure_ascii=False), run_id),
-        )
+        async with self._database.transaction() as conn:
+            cur = await conn.execute("SELECT metadata FROM generation_runs WHERE id = ?", (run_id,))
+            row = await cur.fetchone()
+            current = safe_json_loads(row[0]) if row else None
+            merged = dict(current) if isinstance(current, dict) else {}
+            merged.update(metadata)
+            await conn.execute(
+                "UPDATE generation_runs SET metadata = ?, updated_at = datetime('now') WHERE id = ?",
+                (safe_json_dumps(merged, ensure_ascii=False), run_id),
+            )
 
     async def set_quality_score(
         self, run_id: int, score: float, issues: list[str] | None = None
