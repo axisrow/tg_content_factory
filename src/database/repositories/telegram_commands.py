@@ -329,6 +329,26 @@ class TelegramCommandsRepository:
         )
         return cur.rowcount or 0
 
+    async def requeue_running_dialogs_on_startup(self) -> int:
+        """Requeue interrupted idempotent dialogs delete/leave commands."""
+        assert self._database is not None, (
+            "TelegramCommandsRepository.requeue_running_dialogs_on_startup requires a Database reference"
+        )
+        cur = await self._database.execute_write(
+            """
+            UPDATE telegram_commands
+            SET status = ?, started_at = NULL
+            WHERE status = ? AND command_type IN (?, ?)
+            """,
+            (
+                TelegramCommandStatus.PENDING.value,
+                TelegramCommandStatus.RUNNING.value,
+                "dialogs.delete",
+                "dialogs.leave",
+            ),
+        )
+        return cur.rowcount or 0
+
     async def claim_next_command(self) -> TelegramCommand | None:
         """Атомарно забрать следующую готовую команду: PENDING → RUNNING.
 

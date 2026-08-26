@@ -120,8 +120,10 @@ async def dialogs_list_fragment(
     selected_phone = phone if phone in accounts else None
     dialogs = []
     dialogs_cached_at = None
+    dialogs_partial = False
     if selected_phone:
         dialogs = await channel_service.get_my_dialogs(selected_phone)
+        dialogs_partial = bool(getattr(dialogs, "partial", False))
         dialogs_cached_at = await db.repos.dialog_cache.get_cached_at(selected_phone)
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
     logger.info(
@@ -137,6 +139,7 @@ async def dialogs_list_fragment(
             "selected_phone": selected_phone,
             "dialogs": dialogs,
             "dialogs_cached_at": dialogs_cached_at,
+            "dialogs_partial": dialogs_partial,
             "left": left,
             "failed": failed,
         },

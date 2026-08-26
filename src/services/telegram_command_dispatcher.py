@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from datetime import timedelta
@@ -136,6 +137,10 @@ class TelegramCommandDispatcher(
         if self._task and not self._task.done():
             return
         self._stop_event.clear()
+        recovery = self._db.repos.telegram_commands.requeue_running_dialogs_on_startup()
+        recovered = await recovery if inspect.isawaitable(recovery) else 0
+        if recovered:
+            logger.warning("Recovered %d interrupted dialogs commands on startup", recovered)
         self._task = asyncio.create_task(self._run_loop(), name="telegram_command_dispatcher")
 
     async def stop(self) -> None:

@@ -120,6 +120,20 @@ class DialogCacheRepository:
         )
         await self._database.execute_write("DELETE FROM dialog_cache WHERE phone = ?", (phone,))
 
+    async def remove_dialogs(self, phone: str, dialog_ids: list[int] | set[int]) -> None:
+        """Remove only the specified dialogs from an account's cache."""
+        assert self._database is not None, (
+            "DialogCacheRepository.remove_dialogs requires a Database reference"
+        )
+        ids = [int(dialog_id) for dialog_id in dialog_ids]
+        if not ids:
+            return
+        placeholders = ", ".join("?" for _ in ids)
+        await self._database.execute_write(
+            f"DELETE FROM dialog_cache WHERE phone = ? AND dialog_id IN ({placeholders})",
+            (phone, *ids),
+        )
+
     async def get_cached_at(self, phone: str) -> datetime | None:
         """Время самого свежего кэшированного диалога аккаунта (для оценки устаревания).
 
