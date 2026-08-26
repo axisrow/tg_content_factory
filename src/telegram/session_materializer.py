@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import re
 import sqlite3
+import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
-if os.name == "nt":
+if sys.platform == "win32":
     import msvcrt
 else:
     import fcntl
@@ -38,22 +38,22 @@ class SessionMaterializer:
     def _phone_lock(self, phone: str):
         lock_path = self._cache_dir / f"{self._base_path(phone).name}.lock"
         with lock_path.open("a+b") as lock_file:
-            if os.name == "nt":
+            if sys.platform == "win32":
                 # msvcrt.locking requires a byte to exist at the current
                 # position and locks from that position.
                 lock_file.seek(0)
                 lock_file.write(b"\0")
                 lock_file.flush()
                 lock_file.seek(0)
-                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
             else:
                 fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
             try:
                 yield
             finally:
-                if os.name == "nt":
+                if sys.platform == "win32":
                     lock_file.seek(0)
-                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)  # type: ignore[attr-defined]
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
                 else:
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
