@@ -22,27 +22,22 @@ class DialogBatchService:
     async def _release_lease(self, batch_id: int, owner: str) -> None:
         """Persist cancellation cleanup even through transient SQLite contention."""
         async def release_with_retries() -> None:
-            for attempt in range(5):
+            while True:
                 try:
                     await self._repo.release_lease(batch_id, owner)
                     return
                 except Exception:
-                    if attempt == 4:
-                        raise
                     await asyncio.sleep(1)
 
         task = asyncio.create_task(release_with_retries())
-        cancelled = False
         while not task.done():
             try:
                 await asyncio.shield(task)
             except asyncio.CancelledError:
                 # Keep waiting: the retry loop is intentionally detached from
                 # repeated cancellation of the worker task.
-                cancelled = True
+                continue
         await task
-        if cancelled:
-            return
 
     async def create(self, *, phone: str, op_type: str, dialogs: list[tuple[int, str]]) -> int:
         """Persist the complete input before any Telegram request is made."""
