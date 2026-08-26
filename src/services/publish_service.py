@@ -166,8 +166,9 @@ class PublishService:
                 # incremental-write discipline as delivered targets (#1116) — so a
                 # retry skips it instead of re-sending a possibly-delivered post.
                 unconfirmed.add(key)
-                metadata["unconfirmed_targets"] = sorted(unconfirmed)
-                await self._db.repos.generation_runs.set_metadata(run.id, metadata)
+                await self._db.repos.generation_runs.set_metadata(
+                    run.id, {"unconfirmed_targets": sorted(unconfirmed)}
+                )
                 continue
             if not result.success:
                 continue
@@ -182,8 +183,9 @@ class PublishService:
             # longer remember what we delivered, so the raised exception must stop
             # the loop rather than keep sending to targets we cannot track.
             delivered.add(key)
-            metadata["published_targets"] = sorted(delivered)
-            await self._db.repos.generation_runs.set_metadata(run.id, metadata)
+            await self._db.repos.generation_runs.set_metadata(
+                run.id, {"published_targets": sorted(delivered)}
+            )
 
         if all(r.success for r in results):
             await self._db.repos.generation_runs.set_published_at(run.id)
