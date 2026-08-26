@@ -1714,7 +1714,7 @@ class MessagesRepository:
                       COUNT(*) AS message_count,
                       COALESCE(AVG(m.views), 0) AS avg_views
                FROM messages m
-               WHERE m.channel_id = ? AND datetime(m.date) >= datetime('now', ?)
+               WHERE m.channel_id = ? AND m.date >= strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', ?)
                GROUP BY day
                ORDER BY day ASC""",
             (channel_id, f"-{days} days"),
@@ -1728,7 +1728,7 @@ class MessagesRepository:
         cur = await self._db.execute(
             """SELECT date(m.date) AS day, COUNT(*) AS count
                FROM messages m
-               WHERE m.channel_id = ? AND datetime(m.date) >= datetime('now', ?)
+               WHERE m.channel_id = ? AND m.date >= strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', ?)
                GROUP BY day
                ORDER BY day ASC""",
             (channel_id, f"-{days} days"),
@@ -1778,7 +1778,7 @@ class MessagesRepository:
                                 WHERE mr.channel_id = m.channel_id
                                 AND mr.message_id = m.message_id), 0) AS total_reactions
                FROM messages m
-               WHERE m.channel_id = ? AND datetime(m.date) >= datetime('now', '-1 day')
+               WHERE m.channel_id = ? AND m.date >= strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', '-1 day')
                ORDER BY m.date DESC""",
             (channel_id,),
         )
@@ -1814,7 +1814,7 @@ class MessagesRepository:
                       CAST(strftime('%w', m.date) AS INTEGER) AS weekday,
                       COUNT(*) AS count
                FROM messages m
-               WHERE m.channel_id = ? AND datetime(m.date) >= datetime('now', ?)
+               WHERE m.channel_id = ? AND m.date >= strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', ?)
                GROUP BY hour, weekday
                ORDER BY weekday, hour""",
             (channel_id, f"-{days} days"),
@@ -1839,7 +1839,7 @@ class MessagesRepository:
                LEFT JOIN channels c ON c.channel_id = m.forward_from_channel_id
                WHERE m.channel_id = ?
                  AND m.forward_from_channel_id IS NOT NULL
-                 AND datetime(m.date) >= datetime('now', ?)
+                 AND m.date >= strftime('%Y-%m-%dT%H:%M:%f+00:00', 'now', ?)
                GROUP BY m.forward_from_channel_id
                ORDER BY citation_count DESC
                LIMIT ?""",
