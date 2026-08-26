@@ -1465,7 +1465,7 @@ async def test_settings_page_blocks_agent_provider_writes_without_encryption_sec
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
+    db = Database(config.database.path, session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     app.state.db = db
     app.state.pool = type(
@@ -2097,7 +2097,7 @@ async def test_settings_shows_accounts(tmp_path):
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
+    db = Database(config.database.path, session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     app.state.db = db
 
@@ -2326,7 +2326,7 @@ async def test_resolve_channel_fail(tmp_path):
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
+    db = Database(config.database.path, session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     app.state.db = db
 
@@ -2515,7 +2515,7 @@ async def test_add_scam_channel_is_inactive(tmp_path):
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
+    db = Database(config.database.path, session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     app.state.db = db
 
@@ -2586,7 +2586,7 @@ async def test_bulk_add_scam_dialog_is_inactive(tmp_path):
     config.web.password = "testpass"
     app = create_app(config)
 
-    db = Database(config.database.path)
+    db = Database(config.database.path, session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     app.state.db = db
     await db.repos.dialog_cache.replace_dialogs(
