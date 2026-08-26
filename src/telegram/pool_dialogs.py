@@ -40,7 +40,7 @@ from telethon.errors import (
     UsernameNotOccupiedError,
 )
 from telethon.tl.types import Channel as TLChannel
-from telethon.tl.types import ChannelForbidden, Chat, PeerChannel, PeerChat, PeerUser
+from telethon.tl.types import ChannelForbidden, Chat, PeerChannel, PeerChat, PeerUser, TypeInputPeer
 
 from src.database.live_accounts import load_live_usable_accounts
 from src.parsers import bare_channel_id
@@ -49,6 +49,7 @@ from src.telegram.backends import (
     adapt_transport_session,
 )
 from src.telegram.flood_wait import (
+    TRANSIENT_FLOOD_WAIT_RETRY_BUDGET_SEC,
     HandledFloodWaitError,
     is_blocking_flood_wait_until,
     is_transient_flood_wait_seconds,
@@ -148,10 +149,9 @@ def _advance_cursor(cursor: _DialogCursor, dialog: Any) -> None:
     tests, which fail loudly rather than silently drifting.
     """
     input_entity = getattr(dialog, "input_entity", None)
-    if input_entity is None or type(input_entity).__module__.startswith("unittest.mock"):
-        # An unconfigured MagicMock auto-creates any attribute, so it would
-        # anchor the cursor on a meaningless object and silently disable resume
-        # in tests. Refuse it, so such tests fail loudly instead of drifting.
+    if not isinstance(input_entity, TypeInputPeer):
+        # Telethon requires a real InputPeer as the offset anchor. Refuse
+        # untyped/test doubles rather than silently sending an unusable cursor.
         return
     # Advances for every dialog, exactly like Telethon's buffer[-1].
     cursor.offset_peer = input_entity
@@ -1376,7 +1376,25 @@ class DialogsMixin:
         else:
             logger.info("get_dialogs_for_phone: joining in-flight refresh for %s mode=%s", phone, cache_mode)
         try:
-            return await task
+            result = await task
+            # A flood/rate-limit can stop the first pass before Telegram yields
+            # any dialogs. In that case the fetch returns an empty partial
+            # result, so hand back the stale snapshot rather than making a
+            # previously populated account look empty (#1379).
+            if (
+                isinstance(result, DialogFetchResult)
+                and result.partial
+                and not result
+                and stale_cached is not None
+            ):
+                logger.warning(
+                    "get_dialogs_for_phone: degraded stale cache for %s mode=%s after empty partial sweep "
+                    "-- dialog_cache was NOT updated",
+                    phone,
+                    cache_mode,
+                )
+                return DialogFetchResult(stale_cached, partial=True, saved=result.saved)
+            return result
         except Exception as exc:
             # Flood waits must reach the command dispatcher so it can persist
             # the deadline and retry the refresh, rather than recording a
@@ -1533,19 +1551,39 @@ class DialogsMixin:
 
             deadline = started_at + DIALOG_FETCH_TOTAL_BUDGET_SEC
             while True:
+                remaining_budget = deadline - time.perf_counter()
+                if remaining_budget <= 0:
+                    stats.partial = True
+                    logger.warning(
+                        "get_dialogs_for_phone: sweep budget exhausted for %s before pass (%d dialogs)",
+                        acquired_phone,
+                        len(items),
+                    )
+                    break
                 stats.passes += 1
                 seen_before = len(seen_ids)
                 try:
                     # _iter is passed as a FACTORY (via _guarded_pass): a retried
                     # pass restarts from the cursor, not from the beginning.
-                    await run_with_flood_wait_retry(
-                        _guarded_pass,
-                        operation="get_dialogs_for_phone",
-                        phone=acquired_phone,
-                        pool=self,
-                        logger_=logger,
-                        timeout=DIALOG_FETCH_PASS_TIMEOUT_SEC,
+                    # The retry helper's timeout and transient-wait budget are
+                    # per invocation. Bound the whole invocation as well, so a
+                    # retry cannot spend another pass timeout plus its wait
+                    # budget after the sweep's total deadline (#1379).
+                    pass_timeout = min(DIALOG_FETCH_PASS_TIMEOUT_SEC, remaining_budget)
+                    retry_budget = min(
+                        TRANSIENT_FLOOD_WAIT_RETRY_BUDGET_SEC,
+                        max(0, int(remaining_budget)),
                     )
+                    async with asyncio.timeout(remaining_budget):
+                        await run_with_flood_wait_retry(
+                            _guarded_pass,
+                            operation="get_dialogs_for_phone",
+                            phone=acquired_phone,
+                            pool=self,
+                            logger_=logger,
+                            timeout=pass_timeout,
+                            transient_wait_budget_sec=retry_budget,
+                        )
                     if stats.passes > 1 and len(seen_ids) == seen_before:
                         # A resumed pass that yields nothing new has not proven
                         # the sweep is complete -- it only proves this pass got
