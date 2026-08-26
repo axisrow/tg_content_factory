@@ -32,6 +32,7 @@ async def base_app(tmp_path):
     config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
+    config.security.session_encryption_key = "test-session-encryption-key"
     config.web.password = "testpass"
     config.security.session_encryption_key = "test-session-encryption-key"
 
