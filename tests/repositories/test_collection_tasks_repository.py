@@ -755,6 +755,44 @@ async def test_delete_pending_channel_tasks_only_removes_pending_channel_collect
     assert (await collection_tasks_repo.get_collection_task(stats_id)).task_type == CollectionTaskType.STATS_ALL
 
 
+# get_collection_tasks_paginated ordering tests (#1304)
+
+
+async def test_get_collection_tasks_paginated_active_running_first(collection_tasks_repo):
+    """#1304: for status=active, running tasks must sort before pending ones.
+
+    Within each status group, order is ascending id (execution order) — not id DESC —
+    so the currently-running/next-up work is at the top of page 1, not buried on the
+    last page of a large batch.
+    """
+    pending1_id = await collection_tasks_repo.create_collection_task(1, "Pending1")
+    pending2_id = await collection_tasks_repo.create_collection_task(2, "Pending2")
+    running_id = await collection_tasks_repo.create_collection_task(3, "Running")
+    await collection_tasks_repo.update_collection_task(running_id, CollectionTaskStatus.RUNNING)
+
+    tasks, total = await collection_tasks_repo.get_collection_tasks_paginated(
+        limit=20, offset=0, status_filter="active"
+    )
+
+    assert total == 3
+    assert [t.id for t in tasks] == [running_id, pending1_id, pending2_id]
+
+
+async def test_get_collection_tasks_paginated_completed_newest_first(collection_tasks_repo):
+    """#1304: status=completed keeps the existing "newest first" (id DESC) ordering."""
+    completed1_id = await collection_tasks_repo.create_collection_task(1, "Completed1")
+    await collection_tasks_repo.update_collection_task(completed1_id, CollectionTaskStatus.COMPLETED)
+    completed2_id = await collection_tasks_repo.create_collection_task(2, "Completed2")
+    await collection_tasks_repo.update_collection_task(completed2_id, CollectionTaskStatus.COMPLETED)
+
+    tasks, total = await collection_tasks_repo.get_collection_tasks_paginated(
+        limit=20, offset=0, status_filter="completed"
+    )
+
+    assert total == 2
+    assert [t.id for t in tasks] == [completed2_id, completed1_id]
+
+
 # _to_task tests
 
 
