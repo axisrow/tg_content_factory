@@ -1213,6 +1213,11 @@ class DialogsMixin:
         try:
             return await task
         except Exception as exc:
+            # Flood waits must reach the command dispatcher so it can persist
+            # the deadline and retry the refresh, rather than recording a
+            # successful empty result while leaving the cache stale.
+            if isinstance(exc, (HandledFloodWaitError, TelegramRateLimitedError)):
+                raise
             if stale_cached is not None:
                 logger.warning(
                     "get_dialogs_for_phone: degraded stale cache for %s mode=%s after %s",
