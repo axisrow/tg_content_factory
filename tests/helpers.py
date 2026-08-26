@@ -489,6 +489,17 @@ class FakeClientPool(ResolveGuardMixin, MagicMock):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    async def remember_channel_phone(self, channel_id, phone, *, known_preferred=None, force=False):
+        # Delegate to the real self-heal helper (in-memory map + "write only if
+        # unset / force when a fallback confirmably resolved" DB persist, #1327)
+        # so tests exercise the production remember path against the fake's
+        # _db/_channel_phone_map state, mirroring forget_channel_phone below.
+        from src.telegram.client_pool import ClientPool
+
+        return await ClientPool.remember_channel_phone(
+            self, channel_id, phone, known_preferred=known_preferred, force=force
+        )
+
     async def forget_channel_phone(self, channel_id, *, only_if_phone=None):
         # Delegate to the real error-recovery helper (clear map + TOCTOU-safe
         # conditional DB clear + #676 WARNING on failure) so tests exercise the

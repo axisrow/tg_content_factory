@@ -310,6 +310,22 @@ async def _resolve_by_numeric(
         if channel.id:
             await collector._db.set_channel_active(channel.id, False)
         return ResolveOutcome(action="stop", channel=channel)
+    # Self-heal on success (#1327): remember which account resolved this channel
+    # so the NEXT pass routes there directly instead of rolling the dice on
+    # get_available_client() again. Mirrors fetch_channel_meta's same pattern
+    # (pool_dialogs.py, #808) — write only if preferred_phone is unset, or force
+    # an overwrite when the resolve happened on a DIFFERENT account than the
+    # stored preferred (that stored value was stale/unavailable and this account
+    # just confirmably worked).
+    own_preferred = channel.preferred_phone or collector._pool.get_phone_for_channel(
+        channel_id
+    )
+    await collector._pool.remember_channel_phone(
+        channel_id,
+        phone,
+        known_preferred=own_preferred,
+        force=phone != own_preferred,
+    )
     return ResolveOutcome(entity=entity)
 
 

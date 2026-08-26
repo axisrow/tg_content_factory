@@ -49,6 +49,7 @@ from src.telegram.collector import (
     NoActiveCollectionClientsError,
     NoActiveStatsClientsError,
 )
+from src.telegram.collector_resolve import _resolve_by_numeric
 from src.telegram.flood_wait import HandledFloodWaitError
 from tests.helpers import (
     AsyncIterEmpty,
@@ -2944,6 +2945,94 @@ async def test_collect_channel_logs_when_persisting_rediscovered_phone_fails(cap
         and "+7002" in rec.message
         for rec in caplog.records
     )
+
+
+@pytest.mark.anyio
+async def test_resolve_by_numeric_success_on_random_account_persists_preferred_phone():
+    """#1327: a successful numeric resolve on an arbitrary (non-preferred) account
+    must persist that account as preferred_phone, so the NEXT collection pass
+    targets it directly instead of rolling the dice on get_available_client()
+    again.
+
+    Before this fix, _resolve_by_numeric only wrote preferred_phone from the
+    rediscovery branch (after a ValueError on the current account) — a resolve
+    that succeeds on the first try, on whatever account get_available_client()
+    happened to hand out, never stuck. Reproduced in production: a private
+    channel collected 15k+ messages historically with preferred_phone=NULL, so
+    every future pass re-rolled the account and usually missed.
+    """
+    channel = Channel(id=42, channel_id=555, title="No Preferred Yet", preferred_phone=None)
+    entity = SimpleNamespace(id=555, title="No Preferred Yet")
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=entity)
+
+    pool = make_mock_pool()
+    pool.get_phone_for_channel = MagicMock(return_value=None)
+    pool._db = MagicMock()
+    pool._db.repos.channels.get_preferred_phone = AsyncMock(return_value=None)
+    pool._db.repos.channels.update_channel_preferred_phone = AsyncMock()
+
+    collector = Collector(pool, MagicMock(), SchedulerConfig())
+    result = await _resolve_by_numeric(collector, channel, client, "+7002", 555)
+
+    assert result.entity is entity
+    assert pool._channel_phone_map[555] == "+7002"
+    pool._db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(555, "+7002")
+
+
+@pytest.mark.anyio
+async def test_resolve_by_numeric_success_on_stored_preferred_is_noop():
+    """Companion: when the resolve succeeds on the ALREADY-stored preferred
+    account, persisting must be a no-op (the DB value is already correct) — no
+    redundant write on every single successful collection pass, and no redundant
+    read either: ``channel.preferred_phone`` is already known here, so it must
+    be passed through as ``known_preferred`` rather than dropped (a mutant that
+    always passes ``known_preferred=None`` would force a needless
+    ``get_preferred_phone`` SELECT on every successful pass without breaking the
+    no-op write assertion below — assert the read is skipped too)."""
+    channel = Channel(id=42, channel_id=555, title="Has Preferred", preferred_phone="+7001")
+    entity = SimpleNamespace(id=555, title="Has Preferred")
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=entity)
+
+    pool = make_mock_pool()
+    pool.get_phone_for_channel = MagicMock(return_value=None)
+    pool._db = MagicMock()
+    pool._db.repos.channels.get_preferred_phone = AsyncMock(return_value="+7001")
+    pool._db.repos.channels.update_channel_preferred_phone = AsyncMock()
+
+    collector = Collector(pool, MagicMock(), SchedulerConfig())
+    result = await _resolve_by_numeric(collector, channel, client, "+7001", 555)
+
+    assert result.entity is entity
+    assert pool._channel_phone_map[555] == "+7001"
+    pool._db.repos.channels.update_channel_preferred_phone.assert_not_awaited()
+    pool._db.repos.channels.get_preferred_phone.assert_not_awaited()
+
+
+@pytest.mark.anyio
+async def test_resolve_by_numeric_fallback_success_overwrites_stale_preferred():
+    """Companion: a stale preferred_phone that no longer resolves (owner kicked,
+    channel moved) must be overwritten once a DIFFERENT account confirmably
+    resolves the channel — without going through the ValueError/rediscovery
+    branch at all (this is the direct-success fallback path)."""
+    channel = Channel(id=42, channel_id=555, title="Stale Preferred", preferred_phone="+7001")
+    entity = SimpleNamespace(id=555, title="Stale Preferred")
+    client = AsyncMock()
+    client.get_entity = AsyncMock(return_value=entity)
+
+    pool = make_mock_pool()
+    pool.get_phone_for_channel = MagicMock(return_value=None)
+    pool._db = MagicMock()
+    pool._db.repos.channels.get_preferred_phone = AsyncMock(return_value="+7001")
+    pool._db.repos.channels.update_channel_preferred_phone = AsyncMock()
+
+    collector = Collector(pool, MagicMock(), SchedulerConfig())
+    result = await _resolve_by_numeric(collector, channel, client, "+7002", 555)
+
+    assert result.entity is entity
+    assert pool._channel_phone_map[555] == "+7002"
+    pool._db.repos.channels.update_channel_preferred_phone.assert_awaited_once_with(555, "+7002")
 
 
 @pytest.mark.anyio
