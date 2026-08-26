@@ -88,6 +88,7 @@ class AccountSummary(BaseModel):
     phone: str
     is_primary: bool = False
     is_active: bool = True
+    active_origin: str = "auto"
     is_premium: bool = False
     flood_wait_until: datetime | None = None
     created_at: datetime | None = None

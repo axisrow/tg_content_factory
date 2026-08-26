@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from src.models import Account
+
 
 @pytest.mark.anyio
 async def test_record_history_and_last_human_decision(db):
@@ -85,6 +87,20 @@ async def test_keyless_setting_decision_can_be_queried_by_name(db):
     )
     assert last_human is not None
     assert last_human.id == decision_id
+
+
+@pytest.mark.anyio
+async def test_account_active_origin_round_trips_through_both_read_apis(db):
+    account_id = await db.add_account(Account(phone="+100", session_string="session"))
+    await db.execute_write(
+        "UPDATE accounts SET active_origin = 'human' WHERE id = ?",
+        (account_id,),
+    )
+
+    accounts = await db.get_accounts()
+    summaries = await db.get_account_summaries()
+    assert accounts[0].active_origin == "human"
+    assert summaries[0].active_origin == "human"
 
 
 @pytest.mark.anyio
