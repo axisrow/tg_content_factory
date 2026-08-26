@@ -81,7 +81,7 @@ async def test_upsert_dialogs_preserves_previous_snapshot_rows(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_upsert_dialogs_preserves_stale_snapshot_age(tmp_path):
+async def test_upsert_dialogs_keeps_the_snapshot_stale(tmp_path):
     db = Database(str(tmp_path / "test.db"))
     await db.initialize()
     try:
@@ -97,9 +97,14 @@ async def test_upsert_dialogs_preserves_stale_snapshot_age(tmp_path):
             [{"channel_id": 2, "title": "Reached", "channel_type": "group"}],
         )
 
+        # A partial walk leaves the snapshot INCOMPLETE, so it must not read as
+        # fresh. Previously the prior timestamp was preserved, which was enough
+        # only while that predecessor was itself stale; a partial walk over a
+        # still-fresh snapshot then inherited its freshness (#1359). The whole
+        # phone is now aged unconditionally.
         cached_at = await db.repos.dialog_cache.get_cached_at("+70004")
         assert cached_at is not None
-        assert cached_at.year == 2020
+        assert cached_at.year <= 2020
     finally:
         await db.close()
 

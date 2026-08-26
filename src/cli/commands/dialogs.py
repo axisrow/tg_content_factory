@@ -94,8 +94,9 @@ async def _dialogs_refresh(args, db, pool, *, channel_service_cls) -> None:
     dialogs = await svc.get_my_dialogs(phone, refresh=True)
     if getattr(dialogs, "partial", False):
         print(
-            f"WARNING: Dialog refresh did not complete ({len(dialogs)} dialogs shown); "
-            "dialog_cache was not updated."
+            f"WARNING: Dialog sweep did not complete; "
+            f"{getattr(dialogs, 'saved', 0)} dialogs saved, stale entries kept. "
+            "Run refresh again to continue."
         )
     else:
         print(f"Dialogs refreshed: {len(dialogs)} total.")

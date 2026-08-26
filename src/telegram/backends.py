@@ -281,8 +281,15 @@ class TelegramTransportSession:
     async def get_dialogs(self) -> Any:
         return await self.warm_dialog_cache()
 
-    def stream_dialogs(self) -> AsyncIterator[Any]:
-        return self._stream("telegram_stream_dialogs", self._client.iter_dialogs())
+    def stream_dialogs(self, **kwargs: Any) -> AsyncIterator[Any]:
+        """Stream dialogs, optionally resuming from an offset.
+
+        ``kwargs`` are forwarded to Telethon's ``iter_dialogs`` so a caller can
+        resume a truncated sweep (``offset_date`` / ``offset_id`` /
+        ``offset_peer``).  Passing none of them keeps the original behaviour:
+        every dialog from the start, archived ones included (``folder=None``).
+        """
+        return self._stream("telegram_stream_dialogs", self._client.iter_dialogs(**kwargs))
 
     def iter_dialogs(self) -> AsyncIterator[Any]:
         return self.stream_dialogs()

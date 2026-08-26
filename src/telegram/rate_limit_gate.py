@@ -13,6 +13,13 @@ from typing import Callable
 
 from src.telegram.rate_limiter import ResolveRateLimiter
 
+# One sweep = the initial pass plus its resumptions. Kept in step with
+# DIALOG_FETCH_MAX_PASSES in pool_dialogs (12) so the gate can never be the
+# thing that truncates a sweep the loop is still willing to continue; the
+# loop's own limiters (max passes, total time budget, no-progress check) and
+# the flood breaker are what bound it.
+DIALOG_SWEEP_MAX_CALLS = 12
+
 
 @dataclass(frozen=True)
 class RateLimitSpec:
@@ -33,7 +40,12 @@ class TelegramRateLimitedError(RuntimeError):
 
 _OPERATION_CATEGORIES = {
     "telegram_warm_dialog_cache": "dialogs",
-    "telegram_stream_dialogs": "dialogs",
+    # A sweep is ONE user-facing operation that Telethon splits into ~N/100
+    # paginated requests under a single reservation, and a flood mid-pagination
+    # means "slow down", not "stop" (Telethon documents this outright). Sharing
+    # the warm-up's 1/min bucket meant the second pass was always refused, so
+    # the resumable sweep could never resume (#1359).
+    "telegram_stream_dialogs": "dialog_sweep",
     # Live username resolution is already protected by ResolveGuardMixin.
     # Cached entity lookups share these operation tags, so generic throttling
     # must stay disabled for the whole transport operation rather than risk a
@@ -72,7 +84,9 @@ def _category_for_operation(operation: str) -> str:
     exact = _OPERATION_CATEGORIES.get(operation)
     if exact is not None:
         return exact
-    if operation.endswith("_warm_dialog_cache") or operation.endswith("_stream_dialogs"):
+    if operation.endswith("_stream_dialogs"):
+        return "dialog_sweep"
+    if operation.endswith("_warm_dialog_cache"):
         return "dialogs"
     return "default"
 
@@ -84,6 +98,15 @@ class TelegramRateLimitGate:
     # #1330 showed repeated getDialogs floods even with multi-minute pauses.
     # Keep this deliberately low until production logs calibrate the value.
     DIALOGS_SPEC = RateLimitSpec(max_calls=1, window_sec=60.0)
+    # A dialog sweep is one operation continued across passes, not repeated
+    # calls: each pass resumes from the cursor with DIFFERENT offsets, which is
+    # not the "same method, same parameters" shape error 420 is defined
+    # against. It needs room for the initial pass plus resumptions after the
+    # transient floods Telegram uses to pace pagination (27-30s in our logs,
+    # inside this window). Still bounded -- a sweep that makes no progress is
+    # stopped by the flood breaker (#1372) and the loop's own no-progress
+    # check, not by starving it here.
+    DIALOG_SWEEP_SPEC = RateLimitSpec(max_calls=DIALOG_SWEEP_MAX_CALLS, window_sec=60.0)
     # Phase 2 calibration.  These are intentionally permissive for normal
     # workloads and should be revisited when a larger production sample is
     # available; they are not Telegram's documented quotas.
@@ -100,6 +123,7 @@ class TelegramRateLimitGate:
     ) -> None:
         specs = {
             "dialogs": self.DIALOGS_SPEC,
+            "dialog_sweep": self.DIALOG_SWEEP_SPEC,
             "history": self.HISTORY_SPEC,
             "admin_action": self.ADMIN_ACTION_SPEC,
             "send": self.SEND_SPEC,

@@ -168,7 +168,10 @@ class TestCliRefresh:
             _run_cli("refresh", pool, cli_db, {"phone": _PHONE})
         out = capsys.readouterr().out
         assert "WARNING" in out
-        assert "dialog_cache was not updated" in out
+        # #1359: partial progress IS saved now, so the warning reports what was
+        # kept rather than claiming the cache went untouched.
+        assert "did not complete" in out
+        assert "stale entries kept" in out
         assert "Dialogs refreshed:" not in out
 
 
@@ -996,7 +999,7 @@ async def _build_web_app(db, real_pool_harness_factory, *, with_account=True):
         harness.queue_cli_client(
             phone=_PHONE,
             client=FakeCliTelethonClient(
-                iter_dialogs_factory=lambda: AsyncIterMessages([]),
+                iter_dialogs_factory=lambda *a, **kw: AsyncIterMessages([]),
                 entity_resolver=lambda _peer: MagicMock(),
             ),
         )
