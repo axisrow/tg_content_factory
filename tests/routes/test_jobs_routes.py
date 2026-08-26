@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from bs4 import BeautifulSoup
 
 pytestmark = pytest.mark.anyio
 
@@ -78,13 +79,32 @@ async def test_jobs_api_ignores_unknown_filter_tokens(route_client):
     assert resp.status_code == 200
 
 
-async def test_jobs_fragment_renders(route_client):
+def _desktop_job_summaries(html: str) -> list[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    return [
+        cells[2].get_text(" ", strip=True)
+        for row in soup.select("div.table-responsive tbody tr")
+        if len(cells := row.find_all("td")) >= 3
+    ]
+
+
+async def test_jobs_fragment_shows_tasks(route_client):
     db = route_client._transport_app.state.db
     await _seed_jobs(db)
     resp = await route_client.get("/jobs/fragments/list")
     assert resp.status_code == 200
     assert "Jobs Chan" in resp.text
     assert 'hx-target="#jobs-table"' in resp.text
+
+
+async def test_jobs_fragment_empty_tasks(route_client):
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&page=1&limit=100"
+    )
+
+    assert resp.status_code == 200
+    assert "Нет задач с выбранным фильтром." in resp.text
+    assert _desktop_job_summaries(resp.text) == []
 
 
 async def test_jobs_fragment_accepts_page(route_client):
@@ -173,6 +193,127 @@ async def test_jobs_fragment_shows_status_tabs_counts_and_pagination(route_clien
     assert 'class="d-lg-none mobile-cards p-2"' in resp.text
 
 
+@pytest.mark.parametrize(
+    ("status", "expected_label", "error"),
+    [
+        ("completed", "Завершено", None),
+        ("failed", "Ошибка", "Test failure"),
+        ("cancelled", "Отменена", None),
+    ],
+)
+async def test_jobs_fragment_renders_terminal_collection_task_statuses(
+    route_client,
+    status,
+    expected_label,
+    error,
+):
+    db = route_client._transport_app.state.db
+    title = f"{status.title()} Task"
+    task_id = await db.repos.tasks.create_collection_task(700905, title)
+    await db.repos.tasks.update_collection_task(task_id, status, error=error)
+
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=completed&page=1&limit=100"
+    )
+
+    assert resp.status_code == 200
+    assert title in resp.text
+    assert expected_label in resp.text
+    if error:
+        assert error in resp.text
+
+
+@pytest.mark.parametrize(
+    ("status_filter", "visible_title", "hidden_title"),
+    [
+        ("active", "Active Filter Task", "Completed Filter Task"),
+        ("completed", "Completed Filter Task", "Active Filter Task"),
+    ],
+)
+async def test_jobs_fragment_status_filter(
+    route_client,
+    status_filter,
+    visible_title,
+    hidden_title,
+):
+    db = route_client._transport_app.state.db
+    await db.repos.tasks.create_collection_task(700906, "Active Filter Task")
+    completed_id = await db.repos.tasks.create_collection_task(
+        700907,
+        "Completed Filter Task",
+    )
+    await db.repos.tasks.update_collection_task(completed_id, "completed")
+
+    resp = await route_client.get(
+        f"/jobs/fragments/list?source=collection_task&status={status_filter}&page=1&limit=100"
+    )
+
+    assert resp.status_code == 200
+    assert visible_title in resp.text
+    assert hidden_title not in resp.text
+
+
+async def test_jobs_fragment_invalid_status_filter_falls_back_to_all(route_client):
+    db = route_client._transport_app.state.db
+    await db.repos.tasks.create_collection_task(700908, "Active Invalid Filter Task")
+    completed_id = await db.repos.tasks.create_collection_task(
+        700909,
+        "Completed Invalid Filter Task",
+    )
+    await db.repos.tasks.update_collection_task(completed_id, "completed")
+
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=invalid&page=1&limit=100"
+    )
+
+    assert resp.status_code == 200
+    assert "Active Invalid Filter Task" in resp.text
+    assert "Completed Invalid Filter Task" in resp.text
+
+
+async def test_jobs_fragment_with_pagination(route_client):
+    db = route_client._transport_app.state.db
+    for index in range(7):
+        await db.repos.tasks.create_collection_task(701000 + index, f"Paged Task {index}")
+
+    first = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=all&page=1&limit=3"
+    )
+    second = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=all&page=2&limit=3"
+    )
+
+    assert first.status_code == second.status_code == 200
+    first_summaries = _desktop_job_summaries(first.text)
+    second_summaries = _desktop_job_summaries(second.text)
+    assert len(first_summaries) == len(second_summaries) == 3
+    assert set(first_summaries).isdisjoint(second_summaries)
+    assert "Страница 2 из 3" in second.text
+    pagination_links = [
+        link["href"]
+        for link in BeautifulSoup(second.text, "html.parser").select(
+            "ul.pagination a.page-link"
+        )
+    ]
+    assert len(pagination_links) == 2
+    assert "page=" not in pagination_links[0]  # page=1 is intentionally canonicalised away
+    assert "page=3" in pagination_links[1]
+
+
+async def test_jobs_fragment_page_exceeds_total_clamps_to_last_page(route_client):
+    db = route_client._transport_app.state.db
+    for index in range(3):
+        await db.repos.tasks.create_collection_task(701100 + index, f"Clamp Task {index}")
+
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=all&page=999&limit=2"
+    )
+
+    assert resp.status_code == 200
+    assert "Страница 2 из 2" in resp.text
+    assert len(_desktop_job_summaries(resp.text)) == 1
+
+
 async def test_jobs_fragment_collection_actions_are_source_scoped(route_client):
     db = route_client._transport_app.state.db
     await _seed_jobs(db)
@@ -230,6 +371,62 @@ async def test_jobs_clear_pending_route_deletes_only_pending_collect(route_clien
     assert await db.repos.tasks.get_collection_task(pending_id) is None
     assert (await db.repos.tasks.get_collection_task(running_id)).status == CollectionTaskStatus.RUNNING
     assert await db.repos.tasks.get_collection_task(stats_id) is not None
+
+
+async def test_jobs_clear_pending_route_handles_empty_queue(route_client):
+    resp = await route_client.post(
+        "/jobs/tasks/clear-pending-collect",
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/jobs?msg=pending_collect_tasks_empty"
+
+
+async def test_jobs_fragment_shows_clear_pending_collect_button(route_client):
+    db = route_client._transport_app.state.db
+    await db.repos.tasks.create_collection_task(701200, "Pending Clear Button")
+
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=active&page=1&limit=100"
+    )
+
+    assert resp.status_code == 200
+    assert 'action="/jobs/tasks/clear-pending-collect' in resp.text
+    assert "Очистить очередь загрузки (1)" in resp.text
+
+
+async def test_jobs_fragment_hides_clear_button_when_no_pending_collect(route_client):
+    db = route_client._transport_app.state.db
+    task_id = await db.repos.tasks.create_collection_task(701201, "Completed Only")
+    await db.repos.tasks.update_collection_task(task_id, "completed")
+
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=completed&page=1&limit=100"
+    )
+
+    assert resp.status_code == 200
+    assert 'action="/jobs/tasks/clear-pending-collect' not in resp.text
+    assert "Очистить очередь загрузки" not in resp.text
+
+
+async def test_jobs_fragment_with_many_pending_tasks(route_client):
+    db = route_client._transport_app.state.db
+    for index in range(10):
+        await db.repos.tasks.create_collection_task(
+            701300 + index,
+            f"Pending Channel {index}",
+        )
+
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=active&page=1&limit=5"
+    )
+
+    assert resp.status_code == 200
+    assert len(_desktop_job_summaries(resp.text)) == 5
+    assert "Активные (10)" in resp.text
+    assert "Очистить очередь загрузки (10)" in resp.text
+    assert "Страница 1 из 2" in resp.text
 
 
 async def test_jobs_fragment_renders_collection_result_and_type_label(route_client):
