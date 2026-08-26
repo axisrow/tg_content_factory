@@ -316,13 +316,12 @@ async def test_collect_channel_stats_warms_cache_for_uncached_numeric_id(
 
 
 @pytest.mark.anyio
-async def test_collect_channel_stats_deactivates_unresolvable_numeric_id(
+async def test_collect_channel_stats_marks_unresolvable_numeric_id_for_review(
     db,
     real_pool_harness_factory,
 ):
-    """A channel without username that cannot be resolved even after warming
-    the dialog cache must be deactivated — not left active without stats,
-    which makes the "Обновить фильтры" button loop forever (#794 regression).
+    """A channel without username that cannot be resolved is kept active and
+    marked for review rather than silently discarded (#1348).
     """
     await db.add_channel(Channel(channel_id=-100666, title="Ghost"))
     channel = (await db.get_channels())[0]
@@ -346,20 +345,21 @@ async def test_collect_channel_stats_deactivates_unresolvable_numeric_id(
     assert result is None
 
     updated = (await db.get_channels())[0]
-    assert updated.is_active is False
+    assert updated.is_active is True
+    assert updated.needs_review is True
+    assert updated.review_reason == "stats_entity_unresolved"
 
     saved = await db.get_channel_stats(-100666)
     assert len(saved) == 0
 
 
 @pytest.mark.anyio
-async def test_collect_channel_stats_deactivates_on_username_fallback_failure(
+async def test_collect_channel_stats_marks_username_fallback_failure_for_review(
     db,
     real_pool_harness_factory,
 ):
-    """When a channel's username is stale (UsernameNotOccupiedError) AND the
-    numeric-id fallback also fails, the channel must be deactivated — not
-    left in eternal "no stats" limbo (#794 regression, username-fallback path).
+    """When username and numeric-id resolution fail, keep the channel active
+    and mark it for review rather than silently discarding it (#1348).
     """
     await db.add_channel(Channel(channel_id=-100555, title="Stale", username="old_name"))
     channel = (await db.get_channels())[0]
@@ -389,7 +389,9 @@ async def test_collect_channel_stats_deactivates_on_username_fallback_failure(
     assert result is None
 
     updated = (await db.get_channels())[0]
-    assert updated.is_active is False
+    assert updated.is_active is True
+    assert updated.needs_review is True
+    assert updated.review_reason == "stats_entity_unresolved"
 
     saved = await db.get_channel_stats(-100555)
     assert len(saved) == 0

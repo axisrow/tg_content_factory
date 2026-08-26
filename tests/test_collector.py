@@ -911,7 +911,7 @@ async def test_collect_channel_marks_username_changed_when_numeric_fallback_succ
 
 @pytest.mark.anyio
 async def test_collect_channel_no_username_no_cache_skips_without_error(db):
-    """Channel with no username and empty cache -> skipped/deactivated, 0 messages."""
+    """Channel with no username and empty cache -> skipped for review, 0 messages."""
     ch = Channel(channel_id=1970788983, title="Private Group")
     await db.add_channel(ch)
 
@@ -926,7 +926,9 @@ async def test_collect_channel_no_username_no_cache_skips_without_error(db):
     assert stats["messages"] == 0
     updated = await db.get_channel_by_channel_id(ch.channel_id)
     assert updated is not None
-    assert updated.is_active is False
+    assert updated.is_active is True
+    assert updated.needs_review is True
+    assert updated.review_reason == "resolve_account_unavailable"
 
 
 @pytest.mark.anyio
@@ -993,7 +995,7 @@ async def test_collect_private_group_discovers_access_phone(db):
 
 
 @pytest.mark.anyio
-async def test_collect_private_group_without_resolvable_entity_deactivates_without_error(db):
+async def test_collect_private_group_without_resolvable_entity_skips_for_review_without_error(db):
     ch = Channel(channel_id=1877929309, title="Private Group")
     await db.add_channel(ch)
 
@@ -1012,7 +1014,9 @@ async def test_collect_private_group_without_resolvable_entity_deactivates_witho
     assert stats["errors"] == 0
     channel = await db.get_channel_by_channel_id(1877929309)
     assert channel is not None
-    assert channel.is_active is False
+    assert channel.is_active is True
+    assert channel.needs_review is True
+    assert channel.review_reason == "resolve_account_unavailable"
 
 
 @pytest.mark.anyio
@@ -3326,8 +3330,8 @@ async def test_username_changed_marks_filtered(db):
 
 
 @pytest.mark.anyio
-async def test_username_not_found_deactivates(db):
-    """Both username and PeerChannel lookups fail → channel deactivated, returns 0."""
+async def test_username_not_found_marks_for_review(db):
+    """Both username and PeerChannel lookups fail → channel is reviewed, returns 0."""
     ch = Channel(channel_id=3645212410, title="Old Title", username="gone_username")
     await db.add_channel(ch)
     ch = (await db.get_channels())[0]
@@ -3344,4 +3348,6 @@ async def test_username_not_found_deactivates(db):
     assert result == 0
     stored = await db.get_channel_by_pk(ch.id)
     assert stored is not None
-    assert stored.is_active is False
+    assert stored.is_active is True
+    assert stored.needs_review is True
+    assert stored.review_reason == "resolve_transient_error"
