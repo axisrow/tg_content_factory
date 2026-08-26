@@ -78,6 +78,26 @@ def _future(dt: datetime | None, now: datetime) -> bool:
     return dt is not None and dt > now
 
 
+def _collection_result_summary(task: CollectionTask) -> str:
+    """Build the compact result previously rendered only on /scheduler."""
+    collected = int(task.messages_collected or 0)
+    payload = task.payload.model_dump() if hasattr(task.payload, "model_dump") else task.payload
+    payload = payload if isinstance(payload, dict) else {}
+    if task.task_type.value == "channel_collect":
+        raw_total = payload.get("messages_total")
+        try:
+            total = int(raw_total) if raw_total is not None else None
+        except (TypeError, ValueError):
+            total = None
+        if total is not None and total >= collected:
+            return f"{collected}/{total}"
+    if task.task_type.value == "stats_all":
+        channel_ids = payload.get("channel_ids")
+        if isinstance(channel_ids, list):
+            return f"{collected}/{len(channel_ids)}"
+    return str(collected)
+
+
 # Per-source fetch bound used when a runtime_state filter is active (see list_jobs).
 _FILTER_FETCH_CAP = 500
 _PAGINATION_FETCH_BATCH = 500
@@ -410,6 +430,7 @@ class JobsReadModel:
             finished_at=task.completed_at,
             error=task.error,
             note=task.note,
+            result_summary=_collection_result_summary(task),
         )
 
     @staticmethod

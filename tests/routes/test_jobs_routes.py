@@ -157,3 +157,182 @@ async def test_jobs_api_sorts_mixed_null_and_naive_timestamps(route_client):
     # channel_title surfaces via the JobView ``summary`` field.
     summaries = {j["summary"] for j in resp.json()}
     assert {"Has Timestamp", "Null Timestamp"} <= summaries
+
+
+async def test_jobs_fragment_shows_status_tabs_counts_and_pagination(route_client):
+    db = route_client._transport_app.state.db
+    await _seed_jobs(db)
+
+    resp = await route_client.get("/jobs/fragments/list?page=1&limit=1")
+
+    assert resp.status_code == 200
+    assert "Все (2)" in resp.text
+    assert "Активные (1)" in resp.text
+    assert "Завершённые (1)" in resp.text
+    assert "Страница 1 из 2" in resp.text
+    assert 'class="d-lg-none mobile-cards p-2"' in resp.text
+
+
+async def test_jobs_fragment_collection_actions_are_source_scoped(route_client):
+    db = route_client._transport_app.state.db
+    await _seed_jobs(db)
+
+    collection = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&page=1&limit=100"
+    )
+    telegram = await route_client.get(
+        "/jobs/fragments/list?source=telegram_command&page=1&limit=100"
+    )
+
+    assert 'action="/jobs/tasks/clear-pending-collect' in collection.text
+    assert "/cancel" in collection.text
+    assert 'action="/jobs/tasks/clear-pending-collect' not in telegram.text
+    assert "/cancel" not in telegram.text
+
+
+async def test_jobs_cancel_route_delegates_and_preserves_filters(route_client):
+    from src.models import CollectionTaskStatus
+
+    db = route_client._transport_app.state.db
+    task_id = await db.repos.tasks.create_collection_task(700910, "Cancel Me")
+
+    resp = await route_client.post(
+        f"/jobs/tasks/{task_id}/cancel?source=collection_task&status=active&page=2&limit=25",
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert resp.headers["location"].startswith("/jobs?")
+    assert "source=collection_task" in resp.headers["location"]
+    assert "status=active" in resp.headers["location"]
+    assert "page=2" in resp.headers["location"]
+    assert "limit=25" in resp.headers["location"]
+    assert "msg=task_cancelled" in resp.headers["location"]
+    assert (await db.repos.tasks.get_collection_task(task_id)).status == CollectionTaskStatus.CANCELLED
+
+
+async def test_jobs_clear_pending_route_deletes_only_pending_collect(route_client):
+    from src.models import CollectionTaskStatus, StatsAllTaskPayload
+
+    db = route_client._transport_app.state.db
+    pending_id = await db.repos.tasks.create_collection_task(700920, "Pending")
+    running_id = await db.repos.tasks.create_collection_task(700921, "Running")
+    await db.repos.tasks.update_collection_task(running_id, CollectionTaskStatus.RUNNING)
+    stats_id = await db.repos.tasks.create_stats_task(StatsAllTaskPayload(channel_ids=[700920]))
+
+    resp = await route_client.post(
+        "/jobs/tasks/clear-pending-collect?status=active&page=1&limit=100",
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 303
+    assert "msg=pending_collect_tasks_deleted" in resp.headers["location"]
+    assert await db.repos.tasks.get_collection_task(pending_id) is None
+    assert (await db.repos.tasks.get_collection_task(running_id)).status == CollectionTaskStatus.RUNNING
+    assert await db.repos.tasks.get_collection_task(stats_id) is not None
+
+
+async def test_jobs_fragment_renders_collection_result_and_type_label(route_client):
+    from src.models import CollectionTaskStatus
+
+    db = route_client._transport_app.state.db
+    task_id = await db.repos.tasks.create_collection_task(
+        700930,
+        "Progress Channel",
+        payload={"messages_total": 5000},
+    )
+    await db.repos.tasks.update_collection_task(
+        task_id,
+        CollectionTaskStatus.RUNNING,
+        messages_collected=1000,
+    )
+
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&page=1&limit=100"
+    )
+
+    assert resp.status_code == 200
+    assert "Сбор канала" in resp.text
+    assert "1000/5000" in resp.text
+    assert "Выполняется" in resp.text
+
+
+async def test_jobs_fragment_renders_pipeline_result_metadata(route_client):
+    from src.models import CollectionTaskStatus, ContentPipeline
+
+    db = route_client._transport_app.state.db
+    pipeline_id = await db.repos.content_pipelines.add(
+        pipeline=ContentPipeline(
+            name="Reaction Pipeline",
+            prompt_template=".",
+            publish_mode="moderated",
+        ),
+        source_channel_ids=[],
+        targets=[],
+    )
+    run_id = await db.repos.generation_runs.create_run(pipeline_id, ".")
+    await db.repos.generation_runs.save_result(
+        run_id,
+        "",
+        {
+            "result_kind": "processed_messages",
+            "result_count": 3,
+            "action_counts": {"react": 3},
+        },
+    )
+    task_id = await db.repos.tasks.create_generic_task(
+        task_type="pipeline_run",
+        title="Reaction Pipeline",
+        payload={
+            "task_kind": "pipeline_run",
+            "pipeline_id": pipeline_id,
+            "dry_run": False,
+            "since_hours": 24.0,
+        },
+    )
+    await db.repos.tasks.update_collection_task(
+        task_id,
+        CollectionTaskStatus.COMPLETED,
+        messages_collected=3,
+        note=f"Pipeline run id={run_id}",
+    )
+
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=completed&page=1&limit=100"
+    )
+
+    assert resp.status_code == 200
+    assert "Обработано" in resp.text
+    assert "Обработано: 3" in resp.text
+
+
+async def test_jobs_fragment_renders_stats_progress_counter(route_client):
+    from src.models import CollectionTaskStatus, StatsAllTaskPayload
+
+    db = route_client._transport_app.state.db
+    task_id = await db.repos.tasks.create_stats_task(
+        StatsAllTaskPayload(channel_ids=[101, 102, 103])
+    )
+    await db.repos.tasks.update_collection_task(
+        task_id,
+        CollectionTaskStatus.RUNNING,
+        messages_collected=2,
+    )
+
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=active&page=1&limit=100"
+    )
+
+    assert resp.status_code == 200
+    assert "Статистика" in resp.text
+    assert "2/3" in resp.text
+
+
+async def test_jobs_page_preserves_filters_in_lazy_fragment_url(route_client):
+    resp = await route_client.get("/jobs?source=collection_task&status=active&page=2&limit=25")
+
+    assert resp.status_code == 200
+    assert (
+        'hx-get="/jobs/fragments/list?source=collection_task&amp;status=active&amp;page=2&amp;limit=25"'
+        in resp.text
+    )

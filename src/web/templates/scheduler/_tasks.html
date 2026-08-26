@@ -1,15 +1,5 @@
 {% from "_macros.html" import icon %}
-{% from "_macros_ui.html" import empty_state, task_status_badge, task_status_text, scheduler_filter_qs %}
-
-{% macro task_type_label(t) %}
-    {% if t.task_type.value == 'channel_collect' %}Сбор канала
-    {% elif t.task_type.value == 'stats_all' %}Статистика
-    {% elif t.task_type.value == 'sq_stats' %}Статистика запроса
-    {% elif t.task_type.value == 'photo_due' %}Фото
-    {% elif t.task_type.value == 'photo_auto' %}Автофото
-    {% else %}{{ t.task_type.value }}
-    {% endif %}
-{% endmacro %}
+{% from "_macros_ui.html" import empty_state, task_status_badge, task_status_text, scheduler_filter_qs, task_type_label %}
 
 {# Preserve the current filter/page/limit on every POST (cancel etc.), same as the page (#457 round 3). #}
 {% set filter_qs = scheduler_filter_qs(status_filter, page, limit) %}
@@ -67,7 +57,7 @@
             <tbody>
                 {% for t in tasks %}
                 <tr>
-                    <td><span class="badge text-bg-info">{{ task_type_label(t) }}</span></td>
+                    <td><span class="badge text-bg-info">{{ task_type_label(t.task_type) }}</span></td>
                     <td>
                         {{ t.channel_title or t.channel_id or '—' }}
                         {% if t.channel_username %}
@@ -117,7 +107,7 @@
                 <div class="card-body">
                     <div class="d-flex justify-content-between align-items-start mb-1">
                         <div>
-                            <span class="badge text-bg-info me-1">{{ task_type_label(t) }}</span>
+                            <span class="badge text-bg-info me-1">{{ task_type_label(t.task_type) }}</span>
                             <strong>{{ t.channel_title or t.channel_id or '—' }}</strong>
                             {% if t.channel_username %}<br><small class="text-muted">@{{ t.channel_username }}</small>{% endif %}
                         </div>

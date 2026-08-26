@@ -1,57 +1,216 @@
-{# Unified jobs table fragment (#964). Rendered by GET /jobs/fragments/list and
-   swapped into the dashboard (#965). Filter form reloads the same fragment. #}
-<form method="get" class="row g-2 align-items-end mb-3"
-      hx-get="/jobs/fragments/list" hx-target="#jobs-table" hx-swap="innerHTML">
-    <div class="col-auto">
+{# Unified jobs fragment with collection-task controls ported from scheduler/_tasks.html (#1318). #}
+{% from "_macros_ui.html" import empty_state, jobs_filter_qs, task_type_label %}
+
+{% macro state_badge(job) %}
+{% if job.runtime_state == 'running' %}<span class="badge text-bg-primary">Выполняется</span>
+{% elif job.runtime_state == 'completed' %}<span class="badge text-bg-success">Завершено</span>
+{% elif job.runtime_state == 'failed' %}<span class="badge text-bg-danger">Ошибка</span>
+{% elif job.runtime_state == 'cancelled' %}<span class="badge text-bg-secondary">Отменена</span>
+{% elif job.runtime_state == 'pause_gate' %}<span class="badge text-bg-warning">Пауза</span>
+{% elif job.runtime_state == 'flood_wait' %}<span class="badge text-bg-warning">Flood wait</span>
+{% elif job.runtime_state == 'scheduled' %}<span class="badge text-bg-info">Запланирована</span>
+{% elif job.runtime_state == 'inactive' %}<span class="badge text-bg-secondary">Отключена</span>
+{% else %}<span class="badge text-bg-warning">Ожидание</span>
+{% endif %}
+{% endmacro %}
+
+{% set filter_qs = jobs_filter_qs(selected_source, selected_status, page, limit) %}
+
+<div class="card mb-4">
+  <div class="card-header fw-semibold">Задачи</div>
+  <div class="card-body p-0">
+    <p class="px-3 pt-3 mb-2"><small class="text-muted">Все фоновые задачи из единой очереди.</small></p>
+
+    {% if pending_collect_count > 0 %}
+    <div class="px-3 pb-2">
+      <form method="post" action="/jobs/tasks/clear-pending-collect{{ filter_qs }}" data-busy>
+        <button type="submit" class="btn btn-outline-danger btn-sm">
+          Очистить очередь загрузки ({{ pending_collect_count }})
+        </button>
+      </form>
+    </div>
+    {% endif %}
+
+    {% if has_active_tasks %}
+    <div id="jobs-autoreload-paused" class="alert alert-warning mx-3" style="display:none">
+      Автообновление приостановлено. Обновите страницу вручную, чтобы продолжить.
+    </div>
+    {% endif %}
+
+    <div class="px-3 pb-2">
+      <div class="btn-group flex-wrap scheduler-filter-group" role="tablist">
+        <a href="/jobs{{ jobs_filter_qs(selected_source, 'all', 1, limit) }}"
+           class="btn btn-sm {% if selected_status in ['', 'all'] %}btn-primary{% else %}btn-outline-primary{% endif %}">
+          Все ({{ all_count }})
+        </a>
+        <a href="/jobs{{ jobs_filter_qs(selected_source, 'active', 1, limit) }}"
+           class="btn btn-sm {% if selected_status == 'active' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+          Активные ({{ active_count }})
+        </a>
+        <a href="/jobs{{ jobs_filter_qs(selected_source, 'completed', 1, limit) }}"
+           class="btn btn-sm {% if selected_status == 'completed' %}btn-primary{% else %}btn-outline-primary{% endif %}">
+          Завершённые ({{ completed_count }})
+        </a>
+      </div>
+    </div>
+
+    <form method="get" class="row g-2 align-items-end px-3 pb-3"
+          hx-get="/jobs/fragments/list" hx-target="#jobs-table" hx-swap="innerHTML">
+      <input type="hidden" name="page" value="1">
+      <input type="hidden" name="limit" value="{{ limit }}">
+      <div class="col-auto">
         <label class="form-label">Источник</label>
         <select name="source" class="form-select form-select-sm">
-            <option value="">Все</option>
-            {% for s in sources %}
-            <option value="{{ s }}" {{ 'selected' if selected_source == s else '' }}>{{ s }}</option>
-            {% endfor %}
+          <option value="">Все</option>
+          {% for source in sources %}
+          <option value="{{ source }}" {{ 'selected' if selected_source == source else '' }}>{{ source }}</option>
+          {% endfor %}
         </select>
-    </div>
-    <div class="col-auto">
+      </div>
+      <div class="col-auto">
         <label class="form-label">Статус</label>
         <select name="status" class="form-select form-select-sm">
-            <option value="">Все</option>
-            {% for st in states %}
-            <option value="{{ st }}" {{ 'selected' if selected_status == st else '' }}>{{ st }}</option>
-            {% endfor %}
+          <option value="all" {{ 'selected' if selected_status in ['', 'all'] else '' }}>Все</option>
+          <option value="active" {{ 'selected' if selected_status == 'active' else '' }}>Активные</option>
+          <option value="completed" {{ 'selected' if selected_status == 'completed' else '' }}>Завершённые</option>
+          {% for state in states %}
+          <option value="{{ state }}" {{ 'selected' if selected_status == state else '' }}>{{ state }}</option>
+          {% endfor %}
         </select>
-    </div>
-    <div class="col-auto">
-        <button type="submit" class="btn btn-primary btn-sm">Фильтр</button>
-    </div>
-</form>
+      </div>
+      <div class="col-auto"><button type="submit" class="btn btn-primary btn-sm">Фильтр</button></div>
+    </form>
 
-{% if jobs %}
-<div class="table-responsive">
-<table class="tga-table-striped-hover">
-    <thead>
-        <tr>
-            <th>Источник</th>
-            <th>Тип</th>
-            <th>Состояние</th>
-            <th>Описание</th>
-            <th>Создано</th>
-            <th>Ошибка</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for j in jobs %}
-        <tr>
-            <td class="text-nowrap">{{ j.source }}</td>
-            <td>{{ j.job_type }}</td>
-            <td><span class="badge bg-{% if j.runtime_state in ['failed'] %}danger{% elif j.runtime_state in ['running'] %}primary{% elif j.runtime_state in ['completed'] %}success{% elif j.runtime_state in ['pause_gate','flood_wait'] %}warning{% else %}secondary{% endif %}">{{ j.runtime_state }}</span></td>
-            <td>{{ (j.summary or '')[:60] }}</td>
-            <td class="text-nowrap text-muted" style="font-size:0.8rem">{{ j.created_at|local_dt if j.created_at else '—' }}</td>
-            <td class="text-danger" style="font-size:0.8rem">{{ (j.error or '')[:60] }}</td>
-        </tr>
+    {% if jobs %}
+    <div class="table-responsive d-none d-lg-block">
+      <table class="tga-table-striped mb-0">
+        <thead><tr>
+          <th>Источник</th><th>Тип</th><th>Описание</th><th>Статус</th>
+          <th>{{ result_column_title }}</th><th>Создана</th><th>Завершена</th><th>Действие</th>
+        </tr></thead>
+        <tbody>
+        {% for job in jobs %}
+          <tr>
+            <td class="text-nowrap">{{ job.source }}</td>
+            <td><span class="badge text-bg-info">{{ task_type_label(job.job_type) }}</span></td>
+            <td>{{ job.summary or '—' }}</td>
+            <td>
+              {{ state_badge(job) }}
+              {% if job.note %}<br><small class="text-muted">{{ job.note }}</small>{% endif %}
+              {% if job.error %}<br><small class="text-danger">{{ job.error[:100] }}</small>{% endif %}
+            </td>
+            <td>
+              {% set pipeline_meta = pipeline_result_meta.get(job.raw_id) if pipeline_result_meta else None %}
+              {% if job.source == 'collection_task' and job.job_type == 'pipeline_run' and pipeline_meta %}
+                <small class="text-muted d-block">{{ pipeline_meta.label }}</small>
+                {{ pipeline_meta.count }}
+                {% if pipeline_meta.errors_count %}
+                <span class="badge text-bg-warning pipe-run-warning ms-1"
+                      title="{{ pipeline_meta.first_error_detail or '' }}">⚠ {{ pipeline_meta.errors_count }}</span>
+                {% endif %}
+              {% elif job.source == 'collection_task' %}{{ job.result_summary or '0' }}
+              {% else %}—{% endif %}
+            </td>
+            <td class="text-nowrap">{{ job.created_at|local_dt if job.created_at else '—' }}</td>
+            <td class="text-nowrap">{{ job.finished_at|local_dt if job.finished_at else '—' }}</td>
+            <td>
+              {% if job.source == 'collection_task' and job.status in ['running', 'pending'] %}
+              <form method="post" action="/jobs/tasks/{{ job.raw_id }}/cancel{{ filter_qs }}" class="mb-0" data-busy>
+                <button type="submit" class="btn btn-outline-secondary btn-sm">
+                  {{ 'Отменить' if job.status == 'running' else 'Удалить' }}
+                </button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
         {% endfor %}
-    </tbody>
-</table>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="d-lg-none mobile-cards p-2">
+      {% for job in jobs %}
+      <div class="card mb-2"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-1">
+          <div>
+            <span class="badge text-bg-info me-1">{{ task_type_label(job.job_type) }}</span>
+            <strong>{{ job.summary or '—' }}</strong>
+            <br><small class="text-muted">{{ job.source }}</small>
+          </div>
+          <span>{{ state_badge(job) }}</span>
+        </div>
+        <small class="text-muted">
+          {% set pipeline_meta = pipeline_result_meta.get(job.raw_id) if pipeline_result_meta else None %}
+          {% if job.source == 'collection_task' and job.job_type == 'pipeline_run' and pipeline_meta %}
+            {{ pipeline_meta.label }}: {{ pipeline_meta.count }}
+            {% if pipeline_meta.errors_count %}
+            <span class="badge text-bg-warning pipe-run-warning ms-1"
+                  title="{{ pipeline_meta.first_error_detail or '' }}">⚠ {{ pipeline_meta.errors_count }}</span>
+            {% endif %}
+          {% elif job.source == 'collection_task' %}Результат: {{ job.result_summary or '0' }}
+          {% endif %}
+          {% if job.created_at %}&middot; {{ job.created_at|local_dt }}{% endif %}
+        </small>
+        {% if job.error %}<div><small class="text-danger">{{ job.error[:100] }}</small></div>{% endif %}
+        {% if job.source == 'collection_task' and job.status in ['running', 'pending'] %}
+        <div class="mt-1">
+          <form method="post" action="/jobs/tasks/{{ job.raw_id }}/cancel{{ filter_qs }}" class="mb-0" data-busy>
+            <button type="submit" class="btn btn-outline-secondary btn-sm">
+              {{ 'Отменить' if job.status == 'running' else 'Удалить' }}
+            </button>
+          </form>
+        </div>
+        {% endif %}
+      </div></div>
+      {% endfor %}
+    </div>
+
+    {% if total_pages > 1 %}
+    <nav><ul class="pagination justify-content-center mb-0 pb-3">
+      {% if page > 1 %}
+      <li class="page-item"><a class="page-link" href="/jobs{{ jobs_filter_qs(selected_source, selected_status, page - 1, limit) }}">Назад</a></li>
+      {% endif %}
+      <li class="page-item disabled"><span class="page-link">Страница {{ page }} из {{ total_pages }}</span></li>
+      {% if page < total_pages %}
+      <li class="page-item"><a class="page-link" href="/jobs{{ jobs_filter_qs(selected_source, selected_status, page + 1, limit) }}">Далее</a></li>
+      {% endif %}
+    </ul></nav>
+    {% endif %}
+    {% else %}
+    <div class="px-3 pb-3">{{ empty_state("Нет задач с выбранным фильтром.") }}</div>
+    {% endif %}
+  </div>
 </div>
-{% else %}
-<div class="alert alert-info">Нет фоновых задач.</div>
+
+{% if has_active_tasks %}
+<div id="jobs-autoreload-trigger"
+     hx-get="/jobs/fragments/list{{ jobs_filter_qs(selected_source, selected_status, page, limit) }}"
+     hx-target="#jobs-table" hx-swap="innerHTML" hx-trigger="jobsAutoReload"></div>
+<script>
+(function() {
+  var maxReloads = 60;
+  var key = 'jobs-autoreload-count';
+  var trigger = document.getElementById('jobs-autoreload-trigger');
+  if (!trigger) { return; }
+  var count;
+  try {
+    var raw = parseInt(sessionStorage.getItem(key), 10);
+    count = isNaN(raw) ? 0 : raw;
+  } catch (e) {
+    var unavailable = document.getElementById('jobs-autoreload-paused');
+    if (unavailable) { unavailable.style.display = ''; }
+    return;
+  }
+  if (count >= maxReloads) {
+    var paused = document.getElementById('jobs-autoreload-paused');
+    if (paused) { paused.style.display = ''; }
+    try { sessionStorage.removeItem(key); } catch (e) {}
+    return;
+  }
+  setTimeout(function() {
+    try { sessionStorage.setItem(key, String(count + 1)); } catch (e) {}
+    if (window.htmx) { window.htmx.trigger(trigger, 'jobsAutoReload'); }
+  }, 5000);
+})();
+</script>
 {% endif %}
