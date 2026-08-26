@@ -32,12 +32,10 @@ async def base_app(tmp_path):
     config.database.path = str(tmp_path / "test.db")
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
-    config.security.session_encryption_key = "test-session-encryption-key"
     config.web.password = "testpass"
-    config.security.session_encryption_key = "test-session-encryption-key"
 
     app = create_app(config)
-    db = Database(config.database.path, session_encryption_secret=config.security.session_encryption_key)
+    db = Database(config.database.path, session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     app.state.db = db
     app.state.config = config
@@ -182,6 +180,7 @@ async def web_mode_app(tmp_path):
     config.web.password = _WEB_MODE_PASSWORD
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
+    config.security.session_encryption_key = "test-session-encryption-key"
 
     container = await build_container_with_templates(
         config,
