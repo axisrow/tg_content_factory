@@ -247,13 +247,63 @@ class ErrorRedirectLogMiddleware(BaseHTTPMiddleware):
 
 
 class BasicAuthMiddleware(BaseHTTPMiddleware):
+    max_failures = 5
+    lockout_seconds = 60
+
     def __init__(self, app, password: str):
         super().__init__(app)
         self.password = password
+        self._failures: dict[str, tuple[int, float]] = {}
+
+    @staticmethod
+    def _client_key(request: Request) -> str:
+        return request.client.host if request.client else "unknown"
+
+    def _blocked(self, key: str) -> int:
+        entry = self._failures.get(key)
+        if not entry:
+            return 0
+        failures, until = entry
+        now = time.monotonic()
+        if until > now:
+            return max(1, int(until - now))
+        if failures >= self.max_failures:
+            self._failures.pop(key, None)
+        return 0
+
+    def _record_failure(self, key: str) -> None:
+        failures, _ = self._failures.get(key, (0, 0.0))
+        failures += 1
+        until = time.monotonic() + self.lockout_seconds if failures >= self.max_failures else 0.0
+        self._failures[key] = (failures, until)
+
+    @staticmethod
+    def _rate_limited(retry_after: int) -> Response:
+        return Response(
+            "Too many authentication attempts",
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
 
     async def dispatch(self, request, call_next):
-        if is_public_path(request.url.path):
+        key = self._client_key(request)
+        retry_after = self._blocked(key)
+        if retry_after:
+            return self._rate_limited(retry_after)
+
+        # GET /login remains public. POST failures are counted after the route
+        # returns, so form credentials never need to be logged or buffered here.
+        if is_public_path(request.url.path) and request.url.path != "/login":
             return await call_next(request)
+
+        if request.url.path == "/login":
+            response = await call_next(request)
+            if request.method == "POST":
+                if response.status_code == 401:
+                    self._record_failure(key)
+                elif response.status_code < 400:
+                    self._failures.pop(key, None)
+            return response
 
         if get_cookie_user(request):
             return await call_next(request)
@@ -267,6 +317,7 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                 decoded = ""
             _, _, pwd = decoded.partition(":")
             if secrets.compare_digest(pwd.encode(), self.password.encode()):
+                self._failures.pop(key, None)
                 response = await call_next(request)
                 # Don't hand a panel session cookie to Basic-auth API clients
                 # (/api/*): a cookie-jar client (httpx.Client/requests.Session)
@@ -275,6 +326,8 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                 if not request.url.path.startswith("/api/"):
                     set_session_cookie(response, request)
                 return response
+
+        self._record_failure(key)
 
         target = login_redirect_url(redirect_target_from_request(request))
         if request.headers.get("HX-Request") == "true":
