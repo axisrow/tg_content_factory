@@ -282,6 +282,14 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         blocked_until = now + self.lockout_seconds if failures >= self.max_failures else 0.0
         self._failures[key] = (failures, blocked_until, now + self.lockout_seconds)
 
+    def _reserve_attempt(self, key: str) -> int:
+        """Atomically reject a lockout or reserve the next form attempt."""
+        retry_after = self._blocked(key)
+        if retry_after:
+            return retry_after
+        self._record_failure(key)
+        return 0
+
     @staticmethod
     def _rate_limited(retry_after: int) -> Response:
         return Response(
@@ -300,14 +308,15 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
 
         if request.url.path == "/login":
             if request.method == "POST":
-                retry_after = self._blocked(key)
+                # Reserve before awaiting the route: otherwise concurrent
+                # form submissions can all pass the check before failures are
+                # recorded when the response returns.
+                retry_after = self._reserve_attempt(key)
                 if retry_after:
                     return self._rate_limited(retry_after)
             response = await call_next(request)
             if request.method == "POST":
-                if response.status_code == 401:
-                    self._record_failure(key)
-                elif response.status_code < 400:
+                if response.status_code < 400:
                     self._failures.pop(key, None)
             return response
 
