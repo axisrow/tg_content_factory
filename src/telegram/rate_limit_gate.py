@@ -1,8 +1,10 @@
 """Proactive, per-account Telegram operation rate limiting.
 
-The limits are intentionally conservative only for ``dialogs``.  The other
-categories are registered for future calibration, but use a broad default in
-Phase 1 (see issue #1331).
+The category values below are deliberately boring guardrails rather than a
+claim that Telegram publishes quotas (it does not).  They are calibrated to
+the observed production shape: history is a high-volume read path, while
+admin and channel-lifecycle calls are sparse writes.  Keep them configurable
+so a new production sample can be applied without changing call sites.
 """
 from __future__ import annotations
 
@@ -50,9 +52,26 @@ _OPERATION_CATEGORIES = {
     # _ensure_reaction_can_run remains the sole reaction gate in Phase 1.
     "telegram_send_reaction": "reaction",
     "telegram_create_channel": "channel_lifecycle",
+    "telegram_update_channel_username": "channel_lifecycle",
     "telegram_join_channel": "channel_lifecycle",
     "telegram_delete_channel": "channel_lifecycle",
 }
+
+
+def _category_for_operation(operation: str) -> str:
+    """Return a category for both canonical and decorated operation tags.
+
+    Warm operations are decorated with the caller name (for example
+    ``resolve_channel_warm_dialog_cache``) so that flood diagnostics retain
+    their useful context.  Matching the stable suffix prevents those paths
+    from silently falling back to the broad default bucket.
+    """
+    exact = _OPERATION_CATEGORIES.get(operation)
+    if exact is not None:
+        return exact
+    if operation.endswith("_warm_dialog_cache") or operation.endswith("_stream_dialogs"):
+        return "dialogs"
+    return "default"
 
 
 class TelegramRateLimitGate:
@@ -62,6 +81,13 @@ class TelegramRateLimitGate:
     # #1330 showed repeated getDialogs floods even with multi-minute pauses.
     # Keep this deliberately low until production logs calibrate the value.
     DIALOGS_SPEC = RateLimitSpec(max_calls=1, window_sec=60.0)
+    # Phase 2 calibration.  These are intentionally permissive for normal
+    # workloads and should be revisited when a larger production sample is
+    # available; they are not Telegram's documented quotas.
+    HISTORY_SPEC = RateLimitSpec(max_calls=600, window_sec=60.0)
+    ADMIN_ACTION_SPEC = RateLimitSpec(max_calls=10, window_sec=60.0)
+    SEND_SPEC = RateLimitSpec(max_calls=30, window_sec=60.0)
+    CHANNEL_LIFECYCLE_SPEC = RateLimitSpec(max_calls=3, window_sec=300.0)
 
     def __init__(
         self,
@@ -71,10 +97,10 @@ class TelegramRateLimitGate:
     ) -> None:
         specs = {
             "dialogs": self.DIALOGS_SPEC,
-            "history": self.DEFAULT_SPEC,
-            "admin_action": self.DEFAULT_SPEC,
-            "send": self.DEFAULT_SPEC,
-            "channel_lifecycle": self.DEFAULT_SPEC,
+            "history": self.HISTORY_SPEC,
+            "admin_action": self.ADMIN_ACTION_SPEC,
+            "send": self.SEND_SPEC,
+            "channel_lifecycle": self.CHANNEL_LIFECYCLE_SPEC,
             "default": self.DEFAULT_SPEC,
         }
         specs.update(category_limits or {})
@@ -91,7 +117,7 @@ class TelegramRateLimitGate:
     @staticmethod
     def category_for(operation: str) -> str:
         # resolve is explicitly a no-op category: ResolveGuardMixin owns it.
-        return _OPERATION_CATEGORIES.get(operation, "default")
+        return _category_for_operation(operation)
 
     def try_acquire(self, phone: str, category: str) -> float:
         if category in {"resolve", "reaction"}:
