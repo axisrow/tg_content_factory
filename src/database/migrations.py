@@ -63,6 +63,10 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "run_after": "run_after TEXT",
         "payload": "payload TEXT",
         "parent_task_id": "parent_task_id INTEGER",
+        # Required before SCHEMA_SQL creates the jobs-pagination index on legacy
+        # collection_tasks tables. Nullable because SQLite cannot ADD COLUMN with
+        # the canonical non-constant datetime('now') default in place.
+        "created_at": "created_at TEXT",
         "last_progress_at": "last_progress_at TEXT",
         # Interop tasks (#961): result written back by an external worker.
         "result_payload": "result_payload TEXT",
@@ -174,8 +178,20 @@ SCHEMA_REPAIR_INDEXES: Sequence[str] = (
     ON collection_tasks(task_type, status, run_after)
     """,
     """
+    CREATE INDEX IF NOT EXISTS idx_collection_tasks_created_id
+    ON collection_tasks(created_at DESC, id DESC)
+    """,
+    """
     CREATE INDEX IF NOT EXISTS idx_telegram_commands_status_run_after_id
     ON telegram_commands(status, run_after, id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_telegram_commands_created_id
+    ON telegram_commands(created_at DESC, id DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS idx_photo_batch_items_created_id
+    ON photo_batch_items(created_at DESC, id DESC)
     """,
     """
     CREATE INDEX IF NOT EXISTS idx_generation_runs_pipeline_status

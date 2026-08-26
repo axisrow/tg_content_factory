@@ -35,12 +35,29 @@ def _parse_enum_csv(raw: str | None, enum_cls):
     return [enum_cls(s) for s in raw.split(",") if s in valid] or None
 
 
-async def _list(request: Request, source: str | None, status: str | None, limit: int):
-    return await _jobs_model(request).list_jobs(
-        sources=_parse_enum_csv(source, JobSource),
-        statuses=_parse_enum_csv(status, JobRuntimeState),
-        limit=max(1, min(limit, _MAX_JOBS_LIMIT)),
+async def _list(
+    request: Request,
+    source: str | None,
+    status: str | None,
+    limit: int,
+    page: int | None,
+):
+    model = _jobs_model(request)
+    sources = _parse_enum_csv(source, JobSource)
+    statuses = _parse_enum_csv(status, JobRuntimeState)
+    limit = max(1, min(limit, _MAX_JOBS_LIMIT))
+    if page is None:
+        jobs = await model.list_jobs(sources=sources, statuses=statuses, limit=limit)
+        return jobs, None, None, limit
+
+    page = max(1, page)
+    jobs, total = await model.list_jobs_paginated(
+        sources=sources,
+        statuses=statuses,
+        page=page,
+        limit=limit,
     )
+    return jobs, total, page, limit
 
 
 @router.get("", response_class=HTMLResponse)
@@ -60,9 +77,19 @@ async def api_jobs_list(
     source: str | None = None,
     status: str | None = None,
     limit: int = 100,
+    page: int | None = None,
 ):
     """Unified jobs as JSON (filters: comma-separated source / status)."""
-    jobs = await _list(request, source, status, limit)
+    jobs, total, page, limit = await _list(request, source, status, limit, page)
+    if page is not None:
+        return JSONResponse(
+            {
+                "jobs": [j.model_dump(mode="json") for j in jobs],
+                "total_count": total,
+                "page": page,
+                "limit": limit,
+            }
+        )
     return JSONResponse([j.model_dump(mode="json") for j in jobs])
 
 
@@ -72,9 +99,10 @@ async def jobs_table_fragment(
     source: str | None = None,
     status: str | None = None,
     limit: int = 100,
+    page: int | None = None,
 ):
     """Unified jobs table fragment (consumed by the lazyloaded dashboard, #965)."""
-    jobs = await _list(request, source, status, limit)
+    jobs, total, page, limit = await _list(request, source, status, limit, page)
     return deps.get_templates(request).TemplateResponse(
         request,
         "jobs_table.html",
@@ -84,5 +112,8 @@ async def jobs_table_fragment(
             "states": [s.value for s in JobRuntimeState],
             "selected_source": source or "",
             "selected_status": status or "",
+            "page": page,
+            "limit": limit,
+            "total_count": total,
         },
     )
