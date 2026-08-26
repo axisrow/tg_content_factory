@@ -67,6 +67,27 @@ async def test_record_can_join_callers_transaction(db):
 
 
 @pytest.mark.anyio
+async def test_keyless_setting_decision_can_be_queried_by_name(db):
+    repo = db.repos.decisions
+    decision_id = await repo.record(
+        entity="setting",
+        entity_name="publish_mode",
+        field="value",
+        new_value="moderated",
+        origin="human",
+    )
+
+    history = await repo.history("setting", None, entity_name="publish_mode")
+    assert len(history) == 1
+    assert history[0].id == decision_id
+    last_human = await repo.last_human_decision(
+        "setting", None, "value", entity_name="publish_mode"
+    )
+    assert last_human is not None
+    assert last_human.id == decision_id
+
+
+@pytest.mark.anyio
 async def test_provenance_columns_have_noop_defaults(db):
     await db.execute_write(
         "INSERT INTO channels (channel_id, title) VALUES (?, ?)",

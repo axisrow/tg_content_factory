@@ -100,13 +100,27 @@ class DecisionsRepository:
     async def history(
         self,
         entity: str,
-        entity_key: int,
+        entity_key: int | None,
         field: str | None = None,
         limit: int = 50,
+        entity_name: str | None = None,
     ) -> list[Decision]:
-        """Return newest decisions for an entity, optionally limited to a field."""
-        conditions = ["entity = ?", "entity_key = ?"]
-        params: list[object] = [entity, entity_key]
+        """Return newest decisions for an entity, optionally limited to a field.
+
+        Settings use a keyless journal entry and identify themselves by
+        ``entity_name``.  Keep the nullable key lookup explicit because SQL's
+        ``= NULL`` predicate never matches.
+        """
+        conditions = ["entity = ?"]
+        params: list[object] = [entity]
+        if entity_key is None:
+            conditions.append("entity_key IS NULL")
+        else:
+            conditions.append("entity_key = ?")
+            params.append(entity_key)
+        if entity_name is not None:
+            conditions.append("entity_name = ?")
+            params.append(entity_name)
         if field is not None:
             conditions.append("field = ?")
             params.append(field)
@@ -122,15 +136,30 @@ class DecisionsRepository:
     async def last_human_decision(
         self,
         entity: str,
-        entity_key: int,
+        entity_key: int | None,
         field: str,
+        entity_name: str | None = None,
     ) -> Decision | None:
-        """Return the newest human decision for an entity field, if any."""
+        """Return the newest human decision for an entity field, if any.
+
+        The nullable ``entity_key`` and optional ``entity_name`` mirror
+        :meth:`history` so keyless setting decisions remain queryable.
+        """
+        conditions = ["entity = ?", "field = ?", "origin = 'human'"]
+        params: list[object] = [entity, field]
+        if entity_key is None:
+            conditions.append("entity_key IS NULL")
+        else:
+            conditions.append("entity_key = ?")
+            params.append(entity_key)
+        if entity_name is not None:
+            conditions.append("entity_name = ?")
+            params.append(entity_name)
         cur = await self._db.execute(
-            "SELECT * FROM decisions "
-            "WHERE entity = ? AND entity_key = ? AND field = ? AND origin = 'human' "
-            "ORDER BY id DESC LIMIT 1",
-            (entity, entity_key, field),
+            "SELECT * FROM decisions WHERE "
+            + " AND ".join(conditions)
+            + " ORDER BY id DESC LIMIT 1",
+            tuple(params),
         )
         row = await cur.fetchone()
         return self._to_decision(row) if row else None
