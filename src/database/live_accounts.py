@@ -22,3 +22,14 @@ async def load_live_usable_accounts(db: Any, *, active_only: bool = False) -> li
     if isawaitable(result):
         result = await result
     return list(result or [])
+
+
+async def account_row_exists(db: Any, phone: str) -> bool:
+    """Return whether an account row exists without decrypting its session."""
+    getter = explicit_pool_method(db, "get_account_summaries")
+    if getter is None:
+        return False
+    result = getter(active_only=False)
+    if isawaitable(result):
+        result = await result
+    return any(account.phone == phone for account in result or [])
