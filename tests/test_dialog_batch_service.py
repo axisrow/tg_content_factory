@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from src.models import DialogBatchOperation, DialogBatchStatus
 from src.services.dialog_batch_service import DialogBatchService
 
 
@@ -78,3 +80,19 @@ async def test_heartbeat_stop_survives_double_cancellation():
     stop_task.cancel()
     await stop_task
     assert heartbeat_task.cancelled()
+
+
+@pytest.mark.anyio
+async def test_repository_claims_and_fences_items(db):
+    repository = db.repos.dialog_batch
+    batch_id = await repository.create_batch(
+        DialogBatchOperation(phone="+1", op_type="delete"), [(7, "channel")]
+    )
+    owner = "test-owner"
+    assert await repository.acquire_lease(batch_id, owner, datetime.now(timezone.utc))
+    item = await repository.claim_next(batch_id, owner)
+    assert item is not None and item.dialog_id == 7 and item.attempts == 1
+    await repository.update_item(item.id, DialogBatchStatus.COMPLETED, owner=owner)
+    await repository.finish_batch(batch_id, DialogBatchStatus.COMPLETED, owner)
+    stored = await repository.get_batch(batch_id)
+    assert stored is not None and stored.status == DialogBatchStatus.COMPLETED
