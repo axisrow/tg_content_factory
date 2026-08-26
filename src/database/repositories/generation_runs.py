@@ -379,20 +379,14 @@ class GenerationRunsRepository:
         return [self._to_generation_run(row) for row in rows]
 
     async def reset_running_on_startup(self) -> int:
-        """Reset generation runs left in-flight by a terminated worker."""
+        """Reset generation_runs stuck in 'running' state to 'failed' on server startup."""
         assert self._database is not None, (
             "GenerationRunsRepository.reset_running_on_startup requires a Database reference"
         )
-        async with self._database.transaction() as conn:
-            cur = await conn.execute(
-                "UPDATE generation_runs SET status = 'failed', updated_at = datetime('now') WHERE status = 'running'"
-            )
-            recovered = cur.rowcount or 0
-            cur = await conn.execute(
-                "UPDATE generation_runs SET moderation_status = 'approved', updated_at = datetime('now') "
-                "WHERE moderation_status = 'publishing'"
-            )
-            return recovered + (cur.rowcount or 0)
+        cur = await self._database.execute_write(
+            "UPDATE generation_runs SET status = 'failed', updated_at = datetime('now') WHERE status = 'running'",
+        )
+        return cur.rowcount or 0
 
     async def get(self, run_id: int) -> GenerationRun | None:
         """Один запуск по id, либо ``None`` если такого нет."""
