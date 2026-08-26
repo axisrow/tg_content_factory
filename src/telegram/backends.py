@@ -119,9 +119,10 @@ class TelegramTransportSession:
         )
         return HandledFloodWaitError(info)
 
-    async def _run(self, operation: str, awaitable: Any) -> Any:
+    async def _run(self, operation: str, awaitable: Any, *, gate_reserved: bool = False) -> Any:
         try:
-            self._reserve_gate_slot(operation)
+            if not gate_reserved:
+                self._reserve_gate_slot(operation)
         except Exception:
             close = getattr(awaitable, "close", None)
             if close is not None:
@@ -170,7 +171,7 @@ class TelegramTransportSession:
         except Exception as exc:
             raise await self._translate_flood_wait(exc, operation) from exc
 
-    def _reserve_gate_slot(self, operation: str) -> None:
+    def _reserve_gate_slot(self, operation: str, *, slots: int = 1) -> None:
         """Reserve a proactive slot; unbound adapter sessions remain no-op safe."""
         if self._pool is None or self._phone is None:
             return
@@ -178,9 +179,16 @@ class TelegramTransportSession:
         if not isinstance(gate, TelegramRateLimitGate):
             return
         category = gate.category_for(operation)
-        retry_after = gate.try_acquire(self._phone, category)
+        if slots == 1:
+            retry_after = gate.try_acquire(self._phone, category)
+        else:
+            retry_after = gate.try_acquire(self._phone, category, slots=slots)
         if retry_after > 0:
             raise TelegramRateLimitedError(self._phone, category, retry_after)
+
+    def reserve_rate_limit_slots(self, operation: str, *, slots: int = 1) -> None:
+        """Atomically reserve slots before a compound Telegram operation."""
+        self._reserve_gate_slot(operation, slots=slots)
 
     async def close(self) -> None:
         if self._disconnect_on_close:
@@ -333,6 +341,7 @@ class TelegramTransportSession:
         about: str = "",
         broadcast: bool = True,
         megagroup: bool = False,
+        _rate_limit_reserved: bool = False,
     ) -> Any:
         """Create a Telegram channel/chat using the Telethon raw API."""
         from telethon.tl.functions.channels import CreateChannelRequest
@@ -347,15 +356,23 @@ class TelegramTransportSession:
                     megagroup=megagroup,
                 )
             ),
+            gate_reserved=_rate_limit_reserved,
         )
 
-    async def update_channel_username(self, channel: Any, username: str) -> Any:
+    async def update_channel_username(
+        self,
+        channel: Any,
+        username: str,
+        *,
+        _rate_limit_reserved: bool = False,
+    ) -> Any:
         """Set a public username for a channel using the Telethon raw API."""
         from telethon.tl.functions.channels import UpdateUsernameRequest
 
         return await self._run(
             "telegram_update_channel_username",
             self._client(UpdateUsernameRequest(channel, username)),
+            gate_reserved=_rate_limit_reserved,
         )
 
     async def join_channel(self, channel: Any) -> Any:

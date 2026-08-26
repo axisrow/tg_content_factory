@@ -103,10 +103,20 @@ class ResolveRateLimiter:
         returns the number of seconds to defer before retrying — the window is
         full and no slot is consumed.
         """
+        return self.try_acquire_many(phone, 1)
+
+    def try_acquire_many(self, phone: str, slots: int) -> float:
+        """Atomically reserve ``slots`` calls for one compound operation."""
+        slots = int(slots)
+        if slots < 1:
+            raise ValueError("slots must be at least 1")
+        if slots > self._max_calls:
+            raise ValueError("slots cannot exceed max_calls")
+
         now = self._time()
         window = self._prune(phone, now)
-        if len(window) < self._max_calls:
-            window.append(now)
+        if len(window) + slots <= self._max_calls:
+            window.extend([now] * slots)
             return 0.0
         # Window full: the oldest call falls out of the window at
         # ``oldest + window_sec``. Defer until then, plus jitter.

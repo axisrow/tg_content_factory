@@ -119,10 +119,12 @@ class TelegramRateLimitGate:
         # resolve is explicitly a no-op category: ResolveGuardMixin owns it.
         return _category_for_operation(operation)
 
-    def try_acquire(self, phone: str, category: str) -> float:
+    def try_acquire(self, phone: str, category: str, *, slots: int = 1) -> float:
         if category in {"resolve", "reaction"}:
             return 0.0
-        return self._limiters.get(category, self._limiters["default"]).try_acquire(phone)
+        return self._limiters.get(category, self._limiters["default"]).try_acquire_many(
+            phone, slots
+        )
 
     def reset(self, phone: str | None = None, category: str | None = None) -> None:
         limiters = self._limiters.values() if category is None else [self._limiters[category]]

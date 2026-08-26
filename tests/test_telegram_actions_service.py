@@ -86,6 +86,36 @@ async def test_create_channel_sets_username_and_returns_link():
 
 
 @pytest.mark.anyio
+async def test_create_public_channel_reserves_both_lifecycle_writes_first():
+    events: list[str] = []
+    channel = SimpleNamespace(id=123, username="")
+
+    class Client:
+        def reserve_rate_limit_slots(self, operation: str, *, slots: int = 1) -> None:
+            events.append(f"reserve:{operation}:{slots}")
+
+        async def create_channel(self, **kwargs):
+            events.append("create")
+            assert kwargs.pop("_rate_limit_reserved") is True
+            return SimpleNamespace(chats=[channel])
+
+        async def update_channel_username(self, target, username, **kwargs):
+            events.append("username")
+            assert target is channel
+            assert username == "public_name"
+            assert kwargs == {"_rate_limit_reserved": True}
+
+    result = await TelegramActionService(_pool_with_client(Client())).create_channel(
+        phone="+1",
+        title="Title",
+        username="public_name",
+    )
+
+    assert result.channel_username == "public_name"
+    assert events == ["reserve:telegram_create_channel:2", "create", "username"]
+
+
+@pytest.mark.anyio
 async def test_create_group_passes_megagroup_flags_without_username_update():
     client = AsyncMock()
     group = SimpleNamespace(id=456, username="")

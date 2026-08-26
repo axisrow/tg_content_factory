@@ -82,6 +82,16 @@ def test_phase_two_categories_are_separately_calibrated() -> None:
     assert gate.try_acquire("+1", "send") == 0.0
 
 
+def test_compound_slot_reservation_is_atomic() -> None:
+    clock = _Clock()
+    gate = TelegramRateLimitGate(time_func=clock)
+
+    assert gate.try_acquire("+1", "channel_lifecycle", slots=2) == 0.0
+    assert gate.try_acquire("+1", "channel_lifecycle", slots=2) == 300.0
+    # The rejected two-slot reservation must not consume the one remaining slot.
+    assert gate.try_acquire("+1", "channel_lifecycle") == 0.0
+
+
 @pytest.mark.asyncio
 async def test_issue_1330_repeated_get_dialogs_is_stopped_before_telegram() -> None:
     calls = 0
