@@ -831,24 +831,39 @@ class TelegramActionService:
         megagroup: bool = False,
     ) -> CreateChannelResult:
         async with self._client(phone=phone, native=True) as (client, acquired_phone):
+            requested_username = (username or "").strip()
+            slots_reserved = False
+            reserve_slots = inspect.getattr_static(client, "reserve_rate_limit_slots", None)
+            if requested_username and callable(reserve_slots):
+                # Creating a public channel is one logical action backed by two
+                # irreversible Telegram writes. Reserve both before creating so
+                # a rate-limit boundary cannot leave an unintended private channel.
+                client.reserve_rate_limit_slots("telegram_create_channel", slots=2)
+                slots_reserved = True
+
             create_channel = self._require_explicit_operation(client, "create_channel")
+            create_kwargs: dict[str, Any] = {
+                "title": title,
+                "about": about or "",
+                "broadcast": broadcast,
+                "megagroup": megagroup,
+            }
+            if slots_reserved:
+                create_kwargs["_rate_limit_reserved"] = True
             result = await create_channel(
-                title=title,
-                about=about or "",
-                broadcast=broadcast,
-                megagroup=megagroup,
+                **create_kwargs,
             )
             channel = result.chats[0] if getattr(result, "chats", None) else None
             if channel is None:
                 raise RuntimeError("Telegram returned empty response")
             channel_id = getattr(channel, "id", None)
             channel_username = getattr(channel, "username", None) or ""
-            requested_username = (username or "").strip()
             username_error: str | None = None
             if requested_username and channel_id:
                 try:
                     update_channel_username = self._require_explicit_operation(client, "update_channel_username")
-                    await update_channel_username(channel, requested_username)
+                    update_kwargs = {"_rate_limit_reserved": True} if slots_reserved else {}
+                    await update_channel_username(channel, requested_username, **update_kwargs)
                     channel_username = requested_username
                 except Exception as exc:
                     username_error = str(exc)
