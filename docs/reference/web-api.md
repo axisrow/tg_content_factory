@@ -240,4 +240,4 @@
 | GET | `/debug/logs` | Логи |
 | GET | `/debug/timing` | Тайминги запросов |
 | GET | `/debug/timing/rows` | Строки тайминга |
-| GET | `/debug/memory` | Статистика памяти |
+| GET | `/debug/memory` | Статистика памяти и SQLite (`page_count`, `freelist_count`, `freelist_percent`, `auto_vacuum`) |
