@@ -82,17 +82,25 @@ async def dialogs_page(
     phone: str | None = None,
     left: int = 0,
     failed: int = 0,
+    command_id: str | None = None,
 ) -> DialogTemplate:
     """Skeleton — account selector only. The dialog list (a network/cache fetch) loads
     lazily via the fragment, so changing accounts no longer reloads the whole page (#756)."""
     db = deps.get_db(request)
     accounts = await _ok_accounts(db)
     selected_phone = phone if phone in accounts else None
+    command = await _get_command_state(request, command_id)
+    refresh_warning = None
+    if command and (command.result_payload or {}).get("partial"):
+        refresh_warning = (command.result_payload or {}).get(
+            "warning", "Обновление диалогов завершилось частично; кеш не обновлён."
+        )
     return DialogTemplate(
         "dialogs.html",
         {
             "accounts": accounts,
             "selected_phone": selected_phone,
+            "refresh_warning": refresh_warning,
         },
     )
 

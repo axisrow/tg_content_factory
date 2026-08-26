@@ -28,8 +28,9 @@ async def dialogs_page(
     phone: str | None = None,
     left: int = 0,
     failed: int = 0,
+    command_id: str | None = None,
 ):
-    return dialog_response(request, await handlers.dialogs_page(request, phone, left, failed))
+    return dialog_response(request, await handlers.dialogs_page(request, phone, left, failed, command_id))
 
 
 @router.get("/fragments/list", response_class=HTMLResponse)

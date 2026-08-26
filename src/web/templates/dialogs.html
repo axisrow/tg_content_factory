@@ -3,6 +3,9 @@
 {% from "_macros_ui.html" import loading %}
 {% block title %}Диалоги — TG Agent{% endblock %}
 {% block content %}
+{% if refresh_warning %}
+<div class="alert alert-warning" role="alert">{{ refresh_warning }}</div>
+{% endif %}
 <div class="d-flex align-items-center gap-3 mb-1">
     <h1 class="mb-0">Диалоги</h1>
     <a href="/dialogs/create-channel" class="btn btn-outline-primary btn-sm">+ Создать канал</a>
