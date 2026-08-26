@@ -991,9 +991,17 @@ async def test_publish_service_slow_image_send_is_recorded_as_delivered():
 
 
 class _StalledSendClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.cancelled = False
+
     async def send_message(self, entity, text, **kwargs):
         await super().send_message(entity, text, **kwargs)
-        await asyncio.Event().wait()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
 
 
 class _StalledSendPool(FakeClientPool):
@@ -1033,6 +1041,43 @@ async def test_publish_service_stalled_send_is_bounded_and_unconfirmed():
 
     assert results[0].success is False
     assert results[0].uncertain is True
+    assert db.repos.generation_runs.metadata_by_id[1]["unconfirmed_targets"] == [
+        "+1234567890:-1001234567890"
+    ]
+    assert pool._clients["+1234567890"].cancelled is True
+    assert 1 not in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
+async def test_publish_service_cancelled_send_is_persisted_unconfirmed():
+    """Cancellation during a send must preserve retry-safe uncertainty."""
+    from contextlib import suppress
+    from unittest.mock import patch
+
+    import src.services.publish_service as ps
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = _StalledSendPool(should_succeed=True)
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    with patch.object(ps, "SEND_TIMEOUT_SEC", 30.0):
+        task = asyncio.create_task(service.publish_run(run, make_pipeline()))
+        while not pool._clients:
+            await asyncio.sleep(0)
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
     assert db.repos.generation_runs.metadata_by_id[1]["unconfirmed_targets"] == [
         "+1234567890:-1001234567890"
     ]

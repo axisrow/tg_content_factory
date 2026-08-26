@@ -12,18 +12,23 @@ from src.telegram.backends import adapt_transport_session
 logger = logging.getLogger(__name__)
 
 
-# Bound the time the sequential publish dispatcher waits for a send, without
-# cancelling the send task itself. After the first bound, give the request a
-# short confirmation window; if it still does not complete, record it as
-# unconfirmed rather than retrying a possibly delivered post.
+# Bound the time the sequential publish dispatcher waits for a send without
+# cancelling it at the first deadline. After a short confirmation window, stop
+# and drain the local task before recording an unconfirmed delivery.
 SEND_TIMEOUT_SEC = 120.0
 SEND_CONFIRMATION_GRACE_SEC = 5.0
 
 
-def _consume_task_result(task: asyncio.Task[Any]) -> None:
-    """Consume a detached send task's result so late failures are not warnings."""
-    if not task.cancelled():
-        task.exception()
+async def _stop_send_task(task: asyncio.Task[Any]) -> None:
+    """Cancel and drain a send task before its target can be manually retried."""
+    if not task.done():
+        task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        # The send is already classified as unconfirmed; its eventual local
+        # exception must not replace that result or produce an unhandled warning.
+        pass
 
 
 class _PublishClientPool(Protocol):
@@ -290,10 +295,10 @@ class PublishService:
                     )
                 except asyncio.TimeoutError:
                     # A transport timeout gives no delivery guarantee: the
-                    # request may already be on its way to Telegram. Keep the
-                    # task alive, consume any eventual exception, and mark the
-                    # target unconfirmed so a retry cannot send a duplicate.
-                    send_task.add_done_callback(_consume_task_result)
+                    # request may already be on its way to Telegram. Stop and
+                    # drain the local task before exposing the target as
+                    # unconfirmed, so a manual retry cannot race a detached send.
+                    await _stop_send_task(send_task)
                     logger.error(
                         "Timeout sending to %s:%s — delivery unconfirmed, target needs a manual check",
                         target.phone,
@@ -306,6 +311,23 @@ class PublishService:
                         phone=acquired_phone,
                         dialog_id=target.dialog_id,
                     )
+
+            except asyncio.CancelledError:
+                # Dispatcher shutdown can cancel either shielded wait while the
+                # request is still in flight. Persist uncertainty before the
+                # publish claim is released, then propagate cancellation.
+                await _stop_send_task(send_task)
+                try:
+                    await self._db.repos.generation_runs.set_metadata(
+                        run.id, {"unconfirmed_targets": [_target_key(target)]}
+                    )
+                except Exception:
+                    logger.exception(
+                        "Could not persist cancelled send for %s:%s",
+                        target.phone,
+                        target.dialog_id,
+                    )
+                raise
 
             return PublishResult(
                 success=True,
