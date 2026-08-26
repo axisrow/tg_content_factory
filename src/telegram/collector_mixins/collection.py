@@ -44,7 +44,6 @@ from src.telegram.flood_wait import (
     coerce_flood_wait_seconds,
     is_transient_flood_wait_seconds,
     run_with_flood_wait,
-    run_with_flood_wait_retry,
     sleep_for_flood_wait_seconds,
 )
 from src.telegram.rate_limit_gate import TelegramRateLimitedError
@@ -459,8 +458,8 @@ class CollectionMixin:
         # the in-memory cache persists.
         if not channel.username and not self._pool.is_dialogs_fetched(phone):
             try:
-                await run_with_flood_wait_retry(
-                    lambda: session.warm_dialog_cache(),
+                await run_with_flood_wait(
+                    session.warm_dialog_cache(),
                     operation="collect_channel_warm_dialog_cache",
                     phone=phone,
                     pool=self._pool,
