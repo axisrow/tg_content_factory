@@ -341,21 +341,22 @@ class CostTracker:
         tokens: int = 0,
         is_image: bool = False,
     ) -> tuple[bool, float]:
-        """Check if request is within cost cap (read-only, reserves nothing).
+        """Check the cap and reserve the estimate for the pending paid call.
+
+        The successful result owns a reservation and must be paired with either
+        ``record_cost`` (the call ran) or ``release_cost`` (it did not run).
+        Keeping the check and reservation in one locked operation prevents
+        concurrent callers from all being approved against the same pre-spend
+        total.
 
         Args:
             tokens: Number of tokens
             is_image: Whether this is an image generation
 
         Returns:
-            Tuple of (allowed, estimated_cost)
+            Tuple of (reserved, estimated_cost)
         """
-        async with self._lock:
-            await self._refresh_daily_cost(time.time())
-            estimated = await self.estimate_cost(tokens, is_image)
-            if self._daily_cost + self._reserved + estimated > self._config.daily_cost_cap:
-                return False, estimated
-            return True, estimated
+        return await self.reserve_cost(tokens, is_image)
 
     async def reserve_cost(
         self,
