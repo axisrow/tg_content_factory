@@ -1320,6 +1320,14 @@ class DialogsMixin:
                     cache_mode,
                     len(items),
                 )
+            except HandledFloodWaitError:
+                # Preserve the progress made before Telegram throttled the
+                # iterator.  The exception still reaches the dispatcher so it
+                # can schedule a later continuation.
+                if cache_mode == "full" and items:
+                    await self._db.repos.dialog_cache.upsert_dialogs(acquired_phone, items)
+                    self.invalidate_dialogs_cache(acquired_phone)
+                raise
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             logger.info(
                 "get_dialogs_for_phone: phone=%s mode=%s duration_ms=%d "
@@ -1337,9 +1345,13 @@ class DialogsMixin:
                 len(items),
             )
             if stats.partial:
+                if cache_mode == "full" and items:
+                    await self._db.repos.dialog_cache.upsert_dialogs(acquired_phone, items)
+                    self.invalidate_dialogs_cache(acquired_phone)
                 logger.warning(
-                    "get_dialogs_for_phone: cache was not updated for %s because the result is partial",
+                    "get_dialogs_for_phone: cache incrementally updated for %s with %d partial results",
                     acquired_phone,
+                    len(items),
                 )
             else:
                 self.invalidate_dialogs_cache(acquired_phone)
