@@ -734,6 +734,18 @@ async def test_stats(db):
 
 
 @pytest.mark.anyio
+async def test_storage_stats_reports_sqlite_page_health(db):
+    storage = await db.get_storage_stats()
+    assert storage["page_size"] > 0
+    assert storage["page_count"] >= 1
+    assert storage["freelist_count"] >= 0
+    assert 0 <= storage["freelist_percent"] <= 100
+    assert storage["vacuum_recommended"] is False
+    assert storage["auto_vacuum"] == 0
+    assert storage["journal_mode"] in {"wal", "memory"}
+
+
+@pytest.mark.anyio
 async def test_get_set_setting(db):
     assert await db.get_setting("nonexistent") is None
     await db.set_setting("tg_api_id", "12345")
