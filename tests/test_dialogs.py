@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -788,16 +788,29 @@ async def test_get_dialogs_for_phone_partial_on_timeout():
 
 
 @pytest.mark.anyio
-async def test_get_dialogs_for_phone_flood_upserts_progress_and_invalidates_cache():
+async def test_get_dialogs_for_phone_transient_flood_is_retried_not_propagated(db):
+    """A short flood must be waited out and the sweep completed (#1359).
+
+    Before this change the same 23s flood propagated to the caller and an outer
+    handler wrote the partial progress. Now run_with_flood_wait_retry waits the
+    short flood out and re-runs the pass from the cursor, so the sweep finishes
+    normally (partial=False) instead of surfacing an error.
+
+    Note the retry happens INSIDE one pass, not by starting another one — the
+    multi-pass loop is for floods/timeouts that survive the retry. A BLOCKING
+    flood still ends the sweep partial: see
+    test_sweep_keeps_progress_on_blocking_flood.
+    """
     from datetime import datetime, timezone
 
     from src.telegram.client_pool import ClientPool
     from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
 
-    pool = MagicMock(spec=ClientPool)
-    partial_dialog = _make_channel_dialog(-100999, title="Partial Channel", username="partial")
+    pool = _sweep_pool(db)
+    partial_dialog = _make_channel_dialog(-100999, title="Partial Channel", message_id=7)
+    rest = _make_channel_dialog(-100888, title="Rest", message_id=8)
 
-    async def _iter():
+    async def _floods_once():
         yield partial_dialog
         raise HandledFloodWaitError(
             FloodWaitInfo(
@@ -810,39 +823,31 @@ async def test_get_dialogs_for_phone_flood_upserts_progress_and_invalidates_cach
         )
 
     mock_client = MagicMock()
-    mock_client.iter_dialogs.return_value = _iter()
+    mock_client.iter_dialogs.side_effect = [_floods_once(), _dialog_stream([rest])]
     pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
-    pool.release_client = AsyncMock()
-    pool._classify_entity = MagicMock(return_value=("channel", False))
-    pool._db = MagicMock()
-    pool._db.repos.dialog_cache.list_dialogs = AsyncMock(return_value=[])
-    pool._db.repos.dialog_cache.upsert_dialogs = AsyncMock()
-    _bind_dialog_cache_methods(pool)
 
-    with pytest.raises(HandledFloodWaitError):
-        await ClientPool.get_dialogs_for_phone(
-            pool,
-            "+1234567890",
-            include_dm=True,
-            mode="full",
-            refresh=True,
+    slept: list[int] = []
+
+    async def _record_sleep(info, *, logger_=None):
+        # Don't actually wait out the 23s flood — record that we would have.
+        slept.append(info.wait_seconds)
+
+    with patch("src.telegram.flood_wait.sleep_for_handled_flood_wait", _record_sleep):
+        result = await ClientPool._fetch_dialogs_for_phone(
+            pool, "+1234567890", True, "full", "full"
         )
 
-    pool._db.repos.dialog_cache.upsert_dialogs.assert_awaited_once_with(
-        "+1234567890",
-        [
-            {
-                "channel_id": -100999,
-                "title": "Partial Channel",
-                "username": "partial",
-                "channel_type": "channel",
-                "deactivate": False,
-                "is_own": False,
-                "created_at": ANY,
-            }
-        ],
-    )
-    assert pool._dialogs_cache == {}
+    # The short flood was waited out (not propagated, not treated as blocking).
+    assert slept == [23]
+
+    # Decisive: the flood was waited out and the pass re-run from the cursor,
+    # so the sweep completed rather than ending partial at the flood.
+    assert mock_client.iter_dialogs.call_count == 2
+    assert result.partial is False
+    # The flood did not reach the caller, and both passes' dialogs are present.
+    assert [row["channel_id"] for row in result] == [-100999, -100888]
+    cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
+    assert -100999 in {row["channel_id"] for row in cached}
 
 
 @pytest.mark.anyio
