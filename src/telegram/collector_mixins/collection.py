@@ -420,7 +420,7 @@ class CollectionMixin:
 
         session, phone = result
         self._reset_collection_unavailability_log()
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
 
         # Per-account resolve backoff (#552/#790): while this phone is in a
         # flood backoff the channel runs in cache-only mode on it — a cached
@@ -1147,7 +1147,7 @@ class CollectionMixin:
             if result is None:
                 continue
             session, p = result
-            session = adapt_transport_session(session, disconnect_on_close=False)
+            session = adapt_transport_session(session, disconnect_on_close=False, phone=p, pool=self._pool)
             try:
                 if not self._pool.is_dialogs_fetched(p):
                     await session.warm_dialog_cache()
@@ -1162,12 +1162,8 @@ class CollectionMixin:
                 )
                 continue
             except FloodWaitError as exc:
-                # adapt_transport_session() binds neither phone nor pool here, so the
-                # transport re-raises the raw FloodWaitError instead of reporting it
-                # (handle_flood_wait short-circuits when phone is None). Report it
-                # ourselves so the flooded account is marked and rotated out (#495);
-                # dropping this — as the "dead branch" cleanup did — silently lost the
-                # flood signal on private-group discovery (audit #835/16 regression).
+                # Keep this compatibility branch for sessions supplied by tests or
+                # external callers that bypass the bound transport adapter.
                 wait_seconds = coerce_flood_wait_seconds(getattr(exc, "seconds", 0))
                 await self._pool.report_flood(p, wait_seconds)
                 logger.warning(
@@ -1308,7 +1304,7 @@ class CollectionMixin:
             return []
 
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
         try:
             if not self._pool.is_dialogs_fetched(phone):
                 try:

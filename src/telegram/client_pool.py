@@ -73,6 +73,7 @@ from src.telegram.pool_dialogs import (
 )
 from src.telegram.pool_flood import FloodRotationMixin
 from src.telegram.pool_lifecycle import ClientLifecycleMixin
+from src.telegram.rate_limit_gate import TelegramRateLimitGate
 from src.telegram.rate_limiter import ResolveRateLimiter
 from src.telegram.resolve_guard import ResolveGuardMixin
 from src.telegram.session_materializer import SessionMaterializer
@@ -165,6 +166,10 @@ class ClientPool(
         self._dialog_refresh_tasks: dict[tuple[str, str], asyncio.Task[list[dict]]] = {}
         self._premium_flood_wait_until: dict[str, datetime] = {}
         self._resolve_rate_limiter = ResolveRateLimiter()
+        # Central proactive gate. ``dialogs`` is intentionally conservative and
+        # requires calibration against production logs; other categories remain
+        # broad defaults in Phase 1 (#1331).
+        self._rate_limit_gate = TelegramRateLimitGate()
         self._resolve_username_backoff_until_utc: dict[str, datetime] = {}
         self._resolve_ramp_up_until_utc: dict[str, datetime] = {}
         self._resolve_ramp_up_last_call_utc: dict[str, datetime] = {}

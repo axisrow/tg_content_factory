@@ -250,7 +250,7 @@ class StatsMixin:
                 raise NoActiveStatsClientsError("No active connected clients")
 
             session, phone = result
-            session = adapt_transport_session(session, disconnect_on_close=False)
+            session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
             try:
                 if channel.username:
                     try:
