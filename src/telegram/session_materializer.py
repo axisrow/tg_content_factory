@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sqlite3
 from pathlib import Path
 
 from telethon.sessions import SQLiteSession, StringSession
@@ -29,6 +30,7 @@ class SessionMaterializer:
             and hash_path.exists()
             and hash_path.read_text(encoding="ascii").strip() == digest
         ):
+            self._enable_wal(session_file)
             return str(base_path)
 
         source = StringSession(session_string)
@@ -48,6 +50,7 @@ class SessionMaterializer:
         finally:
             target.close()
 
+        self._enable_wal(session_file)
         hash_path.write_text(digest, encoding="ascii")
         return str(base_path)
 
@@ -57,6 +60,33 @@ class SessionMaterializer:
         if not env_path.exists():
             env_path.write_text("", encoding="ascii")
         return str(env_path)
+
+    @staticmethod
+    def _enable_wal(session_file: Path) -> None:
+        """Switch a session file to WAL so several processes can share it.
+
+        Telethon opens session files with a bare ``sqlite3.connect`` and sets no
+        pragmas, so they default to the rollback journal — under which a reader
+        holding an open transaction locks out every writer. `serve` (web plus the
+        embedded worker) and any separate CLI process resolve the *same*
+        ``<cache_dir>/<phone>.session`` path, so the second one died with
+        ``database is locked`` inside telethon's ``process_entities``.
+
+        WAL lives in the file header, so setting it once here applies to every
+        later open by any process. Failures are non-fatal: a locked or unreadable
+        file must not break session materialization, which is the caller's
+        actual job.
+        """
+        try:
+            conn = sqlite3.connect(session_file, timeout=1)
+        except sqlite3.Error:
+            return
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.Error:
+            pass
+        finally:
+            conn.close()
 
     def _base_path(self, phone: str) -> Path:
         safe_phone = re.sub(r"[^A-Za-z0-9_.-]+", "_", phone).strip("._-") or "account"
