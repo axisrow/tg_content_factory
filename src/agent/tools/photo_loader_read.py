@@ -162,6 +162,12 @@ def register_dialog_tools(db: Any, ctx: Any, client_pool: Any) -> list[Any]:
 
             svc = ChannelService(db, client_pool, None)
             dialogs = await svc.get_my_dialogs(phone, refresh=True)
+            if getattr(dialogs, "partial", False):
+                # #1350: never tell the user the cache was updated when it wasn't.
+                return _text_response(
+                    f"Обход не завершён: показано {len(dialogs)} диалогов, "
+                    "кэш диалогов НЕ обновлён."
+                )
             return _text_response(f"Кэш диалогов обновлён: {len(dialogs)} диалогов.")
         except Exception as exc:
             return _text_response(f"Ошибка обновления кэша диалогов: {exc}")
