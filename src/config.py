@@ -36,7 +36,7 @@ class WebConfig(BaseModel):
     (по умолчанию `admin`), а не захардкожено — см. `src/web/panel_auth.py`.
     """
 
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 8080
     password: str = ""
 

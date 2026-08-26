@@ -131,7 +131,7 @@ Supports `${ENV_VAR}` substitution. Empty env vars are dropped (defaults apply).
 | Section | Description |
 |---|---|
 | `telegram` | API credentials (`api_id`, `api_hash`) |
-| `web` | Host, port, password (default: `0.0.0.0:8080`) |
+| `web` | Host, port, password (default: `127.0.0.1:8080`; non-loopback host requires a strong `WEB_PASS`) |
 | `scheduler` | Collection interval, delays, limits, max flood wait |
 | `notifications` | `admin_chat_id` for keyword match alerts |
 | `database` | SQLite path (default: `data/tg_search.db`) |

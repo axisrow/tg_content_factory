@@ -7,6 +7,15 @@ services:
       - ./data:/app/data
       - ./config.yaml:/app/config.yaml:ro
     env_file: .env
+    environment:
+      # Docker forwards the published port to the container's network
+      # interface, not to its loopback — config.yaml's 127.0.0.1 default
+      # (#1303) would make the panel unreachable via the "8080:8080" mapping
+      # below despite the healthcheck (run from inside the container) still
+      # passing. The container's own network namespace is already the
+      # exposure boundary here, so binding wider than loopback is safe;
+      # a strong WEB_PASS is still required (`serve` fails fast otherwise).
+      - WEB_HOST=0.0.0.0
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]

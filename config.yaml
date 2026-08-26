@@ -3,7 +3,7 @@ telegram:
   api_hash: ${TG_API_HASH}
 
 web:
-  host: "0.0.0.0"
+  host: "${WEB_HOST}"
   port: 8080
   password: ${WEB_PASS}
 
