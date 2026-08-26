@@ -224,9 +224,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: pytest tests -q -m "not aiosqlite_serial" -n auto --durations=25 --cov=src --cov-report=
 
-      - name: Pytest (aiosqlite serial)
+      # Keep each SQLite-backed test file together, but let independent files
+      # run on separate workers. This preserves within-file SQLite assumptions;
+      # the old single-process command left all 986 tests serialized.
+      - name: Pytest (aiosqlite serial, per-file parallel)
         if: ${{ !cancelled() }}
-        run: pytest tests -q -m aiosqlite_serial --cov=src --cov-append --cov-report=
+        run: pytest tests -q -m aiosqlite_serial -n auto --dist=loadfile --cov=src --cov-append --cov-report=
 
       # Report the combined parallel + serial coverage. pytest-cov already merged
       # the per-worker datafiles into a single `.coverage` at the end of each run
