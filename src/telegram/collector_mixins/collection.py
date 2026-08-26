@@ -46,6 +46,7 @@ from src.telegram.flood_wait import (
     run_with_flood_wait_retry,
     sleep_for_flood_wait_seconds,
 )
+from src.telegram.rate_limit_gate import TelegramRateLimitedError
 from src.telegram.rate_limiter import (
     GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC,
     UsernameResolveFloodWaitDeferredError,
@@ -420,7 +421,7 @@ class CollectionMixin:
 
         session, phone = result
         self._reset_collection_unavailability_log()
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
 
         # Per-account resolve backoff (#552/#790): while this phone is in a
         # flood backoff the channel runs in cache-only mode on it — a cached
@@ -461,6 +462,13 @@ class CollectionMixin:
                 logger.warning("Failed to prefetch dialogs for %s: %s", phone, exc.info.detail)
                 await self._pool.release_client(phone)
                 return _ACQUIRE_RETRY
+            except TelegramRateLimitedError as exc:
+                logger.info(
+                    "Proactive %s rate limit prefetching dialogs for %s; retry in %.1fs",
+                    exc.category,
+                    phone,
+                    exc.retry_after_sec,
+                )
             except Exception as e:
                 logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
 
@@ -1147,7 +1155,7 @@ class CollectionMixin:
             if result is None:
                 continue
             session, p = result
-            session = adapt_transport_session(session, disconnect_on_close=False)
+            session = adapt_transport_session(session, disconnect_on_close=False, phone=p, pool=self._pool)
             try:
                 if not self._pool.is_dialogs_fetched(p):
                     await session.warm_dialog_cache()
@@ -1162,12 +1170,8 @@ class CollectionMixin:
                 )
                 continue
             except FloodWaitError as exc:
-                # adapt_transport_session() binds neither phone nor pool here, so the
-                # transport re-raises the raw FloodWaitError instead of reporting it
-                # (handle_flood_wait short-circuits when phone is None). Report it
-                # ourselves so the flooded account is marked and rotated out (#495);
-                # dropping this — as the "dead branch" cleanup did — silently lost the
-                # flood signal on private-group discovery (audit #835/16 regression).
+                # Keep this compatibility branch for sessions supplied by tests or
+                # external callers that bypass the bound transport adapter.
                 wait_seconds = coerce_flood_wait_seconds(getattr(exc, "seconds", 0))
                 await self._pool.report_flood(p, wait_seconds)
                 logger.warning(
@@ -1308,7 +1312,7 @@ class CollectionMixin:
             return []
 
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
         try:
             if not self._pool.is_dialogs_fetched(phone):
                 try:
@@ -1322,6 +1326,14 @@ class CollectionMixin:
                     )
                     self._pool.mark_dialogs_fetched(phone)
                 except HandledFloodWaitError:
+                    return []
+                except TelegramRateLimitedError as exc:
+                    logger.info(
+                        "sample_channel: proactive %s rate limit prefetching dialogs for %s; retry in %.1fs",
+                        exc.category,
+                        phone,
+                        exc.retry_after_sec,
+                    )
                     return []
                 except Exception as e:
                     logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
