@@ -734,6 +734,48 @@ async def test_stats(db):
 
 
 @pytest.mark.anyio
+async def test_storage_stats_reports_sqlite_page_health(db):
+    storage = await db.get_storage_stats()
+    assert storage["page_size"] > 0
+    assert storage["page_count"] >= 1
+    assert storage["freelist_count"] >= 0
+    assert 0 <= storage["freelist_percent"] <= 100
+    assert storage["vacuum_recommended"] is False
+    assert storage["auto_vacuum"] == 0
+    assert storage["journal_mode"] in {"wal", "memory"}
+
+
+@pytest.mark.anyio
+async def test_storage_stats_flags_a_large_freelist(tmp_path):
+    file_db = Database(str(tmp_path / "storage.db"), read_pool_size=1)
+    await file_db.initialize()
+    try:
+        assert file_db._db is not None
+        await file_db._db.execute("CREATE TABLE vacuum_probe (payload BLOB)")
+        await file_db._db.execute("INSERT INTO vacuum_probe VALUES (?)", (b"x" * 1024 * 1024,))
+        await file_db._db.execute("DELETE FROM vacuum_probe")
+        storage = await file_db.get_storage_stats()
+        assert storage["file_size_bytes"] is not None
+        assert storage["vacuum_recommended"] is True
+    finally:
+        await file_db.close()
+
+
+@pytest.mark.anyio
+async def test_storage_stats_handles_missing_file(tmp_path, monkeypatch):
+    file_db = Database(str(tmp_path / "storage.db"), read_pool_size=1)
+    await file_db.initialize()
+    try:
+        def _missing_file(_path):
+            raise OSError("gone")
+
+        monkeypatch.setattr("src.database.facade.os.path.getsize", _missing_file)
+        assert (await file_db.get_storage_stats())["file_size_bytes"] is None
+    finally:
+        await file_db.close()
+
+
+@pytest.mark.anyio
 async def test_get_set_setting(db):
     assert await db.get_setting("nonexistent") is None
     await db.set_setting("tg_api_id", "12345")
