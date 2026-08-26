@@ -74,7 +74,8 @@ class DialogsCommandsMixin(_Base):
                 "dialogs_count": len(dialogs),
                 "partial": True,
                 "warning": (
-                    f"Обход диалогов завершился частично: сохранено {len(dialogs)}, "
+                    "Обход диалогов завершился частично: сохранено "
+                    f"{getattr(dialogs, 'saved', 0)}, "
                     "устаревшие записи не удалялись."
                 ),
             }

@@ -92,6 +92,10 @@ class DialogFetchStats:
     partial: bool = False
     passes: int = 0
     resumed: bool = False
+    # Rows actually written to dialog_cache, as opposed to how many dialogs the
+    # caller happens to be holding: a channels_only sweep writes none, and a
+    # degraded result carries the previous snapshot (#1350).
+    saved: int = 0
 
 
 @dataclass
@@ -165,9 +169,16 @@ def _advance_cursor(cursor: _DialogCursor, dialog: Any) -> None:
 class DialogFetchResult(list[dict]):
     """Dialogs returned by a live fetch, including whether it was complete."""
 
-    def __init__(self, dialogs: list[dict], *, partial: bool = False) -> None:
+    def __init__(
+        self, dialogs: list[dict], *, partial: bool = False, saved: int = 0
+    ) -> None:
         super().__init__(dialogs)
         self.partial = partial
+        # Rows actually persisted by this fetch. Callers must report THIS, not
+        # len(self): a channels_only sweep persists nothing, and a degraded
+        # result is the previous snapshot, so announcing its length as "saved"
+        # is the same misleading success #1350 was filed against.
+        self.saved = saved
 
 
 @dataclass
@@ -1392,18 +1403,24 @@ class DialogsMixin:
             if self._dialog_refresh_tasks.get(key) is task and task.done():
                 self._dialog_refresh_tasks.pop(key, None)
 
-    async def _flush_dialog_chunk(self, phone: str, pending: list[dict]) -> None:
+    async def _flush_dialog_chunk(self, phone: str, pending: list[dict]) -> int:
         """Persist accumulated dialogs mid-sweep so progress survives an abort.
+
+        Returns how many rows were actually written, so callers can report the
+        truth rather than the length of whatever list they happen to hold: a
+        ``channels_only`` sweep never fills ``pending`` at all, and a degraded
+        result carries the OLD cache. Both used to be announced as "saved".
 
         Failures are logged, never raised: losing a chunk is bad, losing the
         whole sweep because the write failed is worse.
         """
         if not pending:
-            return
+            return 0
         chunk = list(pending)
         pending.clear()
         try:
             await self._db.repos.dialog_cache.upsert_dialogs(phone, chunk)
+            return len(chunk)
         except Exception:
             logger.warning(
                 "_flush_dialog_chunk: upsert failed for %s (%d rows)",
@@ -1411,6 +1428,7 @@ class DialogsMixin:
                 len(chunk),
                 exc_info=True,
             )
+            return 0
 
     async def _fetch_dialogs_for_phone(
         self,
@@ -1445,7 +1463,7 @@ class DialogsMixin:
                     return
                 pending.append(item)
                 if len(pending) >= DIALOG_FETCH_UPSERT_CHUNK:
-                    await self._flush_dialog_chunk(acquired_phone, pending)
+                    stats.saved += await self._flush_dialog_chunk(acquired_phone, pending)
 
             async def _iter() -> None:
                 async for dialog in session.stream_dialogs(**cursor.as_kwargs()):
@@ -1619,9 +1637,13 @@ class DialogsMixin:
                 stats.partial,
                 len(items),
             )
-            await self._flush_dialog_chunk(acquired_phone, pending)
             self.invalidate_dialogs_cache(acquired_phone)
             if stats.partial:
+                # Only the partial path needs this: the success path below
+                # rewrites the whole snapshot with replace_dialogs, so flushing
+                # the tail first would upsert ~N rows and then immediately
+                # DELETE+INSERT them again (#1365: the DB is already 45 GB).
+                stats.saved += await self._flush_dialog_chunk(acquired_phone, pending)
                 # The sweep was cut short. What did arrive is already persisted
                 # by the chunk flushes above, so the cache moves forward instead
                 # of staying frozen (#1359) -- but nothing is deleted, since an
@@ -1632,7 +1654,7 @@ class DialogsMixin:
                     "get_dialogs_for_phone: partial sweep for %s -- %d dialogs saved, "
                     "stale rows kept",
                     acquired_phone,
-                    len(items),
+                    stats.saved,
                 )
             else:
                 self._store_cached_dialogs(acquired_phone, cache_mode, items)
@@ -1640,7 +1662,7 @@ class DialogsMixin:
                     self.mark_dialogs_fetched(acquired_phone)
                     # A completed sweep is a trustworthy full snapshot.
                     await self._db.repos.dialog_cache.replace_dialogs(acquired_phone, items)
-            return DialogFetchResult(items, partial=stats.partial)
+            return DialogFetchResult(items, partial=stats.partial, saved=stats.saved)
         finally:
             # Persist whatever the sweep reached even when it is unwinding on an
             # exception the pass loop does not handle (network error, cancel).
@@ -1650,7 +1672,7 @@ class DialogsMixin:
             # the original exception.
             if pending:
                 try:
-                    await self._flush_dialog_chunk(acquired_phone, pending)
+                    stats.saved += await self._flush_dialog_chunk(acquired_phone, pending)
                 except Exception:  # pragma: no cover - never mask the real error
                     logger.warning(
                         "get_dialogs_for_phone: could not flush %d pending dialogs for %s",

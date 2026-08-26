@@ -1173,13 +1173,25 @@ async def test_partial_sweep_is_not_served_as_a_fresh_cache(db):
 
 
 def _sweep_pool(db, phone: str = "+1234567890"):
-    """MagicMock pool wired for _fetch_dialogs_for_phone sweeps."""
+    """MagicMock pool wired for _fetch_dialogs_for_phone sweeps.
+
+    The pool carries a REAL rate-limit gate. ``_rate_limit_gate`` is set in
+    ``ClientPool.__init__``, so it is not part of ``spec=ClientPool`` and a bare
+    MagicMock silently answers None — which makes ``_reserve_gate_slot`` return
+    early and every sweep test run in a world where the gate does not exist.
+    That blind spot is exactly why the gate refusing pass 2 went unnoticed
+    (#1359): the multi-pass tests passed while the feature was inert in
+    production. Wiring the real gate keeps these tests honest.
+    """
     from src.telegram.client_pool import ClientPool
+    from src.telegram.rate_limit_gate import TelegramRateLimitGate
 
     pool = MagicMock(spec=ClientPool)
     pool._db = db
     pool.release_client = AsyncMock()
     pool._classify_entity = MagicMock(return_value=("channel", False))
+    pool._rate_limit_gate = TelegramRateLimitGate()
+    pool._flood_breaker = None
     _bind_dialog_cache_methods(pool)
     return pool
 
@@ -1271,6 +1283,93 @@ async def test_sweep_progress_survives_an_unhandled_error(db):
     assert -1001 in {row["channel_id"] for row in cached}
     # The lease is released on this path too (finally), not only on success.
     pool.release_client.assert_awaited_once_with("+1234567890")
+
+
+@pytest.mark.anyio
+async def test_multi_pass_sweep_survives_the_rate_limit_gate(db):
+    """The resume loop must not be strangled by our own proactive gate (#1359).
+
+    A sweep is ONE user-facing operation that Telethon splits into ~N/100
+    paginated requests under a single reservation, and a flood mid-pagination
+    means "slow down", not "stop". While the sweep shared the warm-up's 1/min
+    bucket, pass 2 was refused on every account with enough dialogs to need
+    one, so the feature was inert in production while the tests — which never
+    wired a gate onto the pool — reported success.
+    """
+    from src.telegram.client_pool import ClientPool
+    from src.telegram.rate_limit_gate import TelegramRateLimitGate
+
+    pool = _sweep_pool(db)
+    assert isinstance(pool._rate_limit_gate, TelegramRateLimitGate), (
+        "the fixture must carry a real gate, otherwise this proves nothing"
+    )
+
+    first = _make_channel_dialog(-1001, title="First", message_id=11)
+    second = _make_channel_dialog(-1002, title="Second", message_id=22)
+
+    async def _stalling():
+        yield first
+        await asyncio.sleep(120)
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.side_effect = [_stalling(), _dialog_stream([second])]
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+
+    original_wait_for = asyncio.wait_for
+
+    async def fast_wait_for(coro, timeout):
+        return await original_wait_for(coro, timeout=min(timeout, 0.05))
+
+    with patch("src.telegram.pool_dialogs.asyncio.wait_for", fast_wait_for):
+        result = await ClientPool._fetch_dialogs_for_phone(
+            pool, "+1234567890", True, "full", "full"
+        )
+
+    # Decisive: pass 2 actually ran and the sweep completed.
+    assert mock_client.iter_dialogs.call_count == 2
+    assert result.partial is False
+    assert [row["channel_id"] for row in result] == [-1001, -1002]
+
+
+@pytest.mark.anyio
+async def test_partial_sweep_reports_rows_actually_written(db):
+    """"Saved N" must count persisted rows, not the length of the result.
+
+    A channels_only sweep never fills the write buffer, so it persists nothing
+    — yet the warning used to announce the whole result as saved, which is the
+    same misleading success #1350 exists to remove.
+    """
+    from src.telegram.client_pool import ClientPool
+    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
+
+    pool = _sweep_pool(db)
+    reached = _make_channel_dialog(-1001, title="Reached", message_id=11)
+
+    async def _floods():
+        yield reached
+        raise HandledFloodWaitError(
+            FloodWaitInfo(
+                operation="get_dialogs_for_phone",
+                phone="+1234567890",
+                wait_seconds=3600,
+                next_available_at_utc=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                detail="blocking",
+            )
+        )
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.side_effect = [_floods()]
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+
+    result = await ClientPool._fetch_dialogs_for_phone(
+        pool, "+1234567890", False, "channels_only", "channels_only"
+    )
+
+    assert result.partial is True
+    assert len(result) == 1
+    # Nothing was written for channels_only, so nothing may be claimed as saved.
+    assert result.saved == 0
+    assert await db.repos.dialog_cache.list_dialogs("+1234567890") == []
 
 
 async def test_sweep_keeps_progress_on_blocking_flood(db):
