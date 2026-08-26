@@ -215,7 +215,7 @@ class TrendService:
             rows = await self._db.execute_fetchall(
                 """
                 SELECT text FROM messages
-                WHERE date >= date('now', ?)
+                WHERE date >= datetime('now', ?)
                   AND COALESCE(TRIM(text), '') <> ''
                 ORDER BY date DESC, id DESC
                 LIMIT ? OFFSET ?
@@ -325,7 +325,7 @@ class TrendService:
                    COUNT(m.id) AS message_count
             FROM messages m
             JOIN channels c ON m.channel_id = c.channel_id
-            WHERE m.date >= date('now', ?)
+            WHERE m.date >= datetime('now', ?)
               AND m.views IS NOT NULL
               AND (c.is_filtered IS NULL OR c.is_filtered = 0)
             GROUP BY c.channel_id, c.title, c.username
@@ -356,7 +356,7 @@ class TrendService:
             """
             SELECT emoji, SUM(count) AS total
             FROM message_reactions
-            WHERE date >= date('now', ?)
+            WHERE date >= datetime('now', ?)
             GROUP BY emoji
             ORDER BY total DESC
             LIMIT ?
@@ -377,7 +377,7 @@ class TrendService:
             f"""
             SELECT date(m.date) AS day, COUNT(*) AS cnt
             FROM messages m
-            WHERE m.date >= date('now', ?)
+            WHERE m.date >= datetime('now', ?)
               {channel_filter}
             GROUP BY day
             ORDER BY day ASC
@@ -398,7 +398,7 @@ class TrendService:
             f"""
             SELECT CAST(strftime('%H', m.date) AS INTEGER) AS hour, COUNT(*) AS cnt
             FROM messages m
-            WHERE m.date >= date('now', ?)
+            WHERE m.date >= datetime('now', ?)
               {channel_filter}
             GROUP BY hour
             ORDER BY hour ASC
