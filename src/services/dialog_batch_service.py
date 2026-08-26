@@ -91,6 +91,9 @@ class DialogBatchService:
                           else DialogBatchStatus.COMPLETED)
                 await self._repo.finish_batch(batch_id, status, owner)
                 return (await self._repo.get_batch(batch_id)) or batch
+            except asyncio.CancelledError:
+                await self._repo.release_lease(batch_id, owner)
+                raise
             finally:
                 stop_heartbeat.set()
                 heartbeat_task.cancel()

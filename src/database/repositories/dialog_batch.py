@@ -74,6 +74,14 @@ class DialogBatchRepository:
         )
         return bool(cur.rowcount)
 
+    async def release_lease(self, batch_id: int, owner: str) -> None:
+        """Make an interrupted owner's running items immediately recoverable."""
+        expired = datetime.now(timezone.utc).isoformat()
+        await self._database.execute_write(
+            "UPDATE dialog_batch_operations SET lease_until = ? WHERE id = ? AND lease_owner = ?",
+            (expired, batch_id, owner),
+        )
+
     async def list_items(self, batch_id: int) -> list[DialogBatchItem]:
         cur = await self._db.execute("SELECT * FROM dialog_batch_items WHERE batch_id = ? ORDER BY id", (batch_id,))
         return [self._item(row) for row in await cur.fetchall()]

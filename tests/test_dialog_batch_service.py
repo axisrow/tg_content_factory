@@ -44,3 +44,6 @@ async def test_run_cancellation_cancels_executor(db):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert cancelled.is_set()
+
+    await service.run(batch_id, lambda _item: asyncio.sleep(0))
+    assert (await db.repos.dialog_batch.get_batch(batch_id)).status.value == "completed"
