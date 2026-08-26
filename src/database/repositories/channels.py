@@ -88,7 +88,10 @@ class ChannelsRepository:
             username=row["username"],
             channel_type=row["channel_type"],
             is_active=bool(row["is_active"]),
+            active_origin=row["active_origin"] if "active_origin" in keys else "auto",
             is_filtered=bool(row["is_filtered"]) if "is_filtered" in keys else False,
+            filtered_origin=row["filtered_origin"] if "filtered_origin" in keys else "auto",
+            approval_state=row["approval_state"] if "approval_state" in keys else "approved",
             filter_flags=(
                 row["filter_flags"] if "filter_flags" in keys and row["filter_flags"] else ""
             ),
