@@ -557,6 +557,19 @@ async def test_end_takeout():
     session.raw_client.end_takeout.assert_awaited_once_with(True)
 
 
+@pytest.mark.anyio
+async def test_delete_chat_uses_legacy_chat_request():
+    session = _session(invoke_side_effect=lambda request: request)
+
+    await session.delete_chat(333)
+
+    from telethon.tl.functions.messages import DeleteChatRequest
+
+    request = session.raw_client.invoke.await_args.args[0]
+    assert isinstance(request, DeleteChatRequest)
+    assert request.chat_id == 333
+
+
 # --- stats (invoke_request) ---
 
 
