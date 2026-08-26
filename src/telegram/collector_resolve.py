@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
-from telethon.tl.types import PeerChannel
+from telethon.tl.types import PeerChannel, PeerChat
 
 from src.database.live_accounts import account_row_exists
 from src.models import Channel
@@ -40,6 +40,23 @@ RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
 TRANSIENT_REVIEW_REASONS = frozenset(
     {"resolve_transient_error", "resolve_account_unavailable", "stats_entity_unresolved"}
 )
+
+
+def _peer_for_channel_type(channel_type: str | None, channel_id: int):
+    """Build the MTProto peer matching a stored channel type."""
+    if channel_type == "group":
+        return PeerChat(abs(channel_id))
+    return PeerChannel(channel_id)
+
+
+def _channel_peer(channel: Channel, channel_id: int):
+    """Build the MTProto peer matching the stored channel type.
+
+    Legacy basic groups are represented by ``PeerChat``.  Sending their id as
+    ``PeerChannel`` raises ``ValueError`` even when the account is a member,
+    which incorrectly enters the preferred-phone recovery path.
+    """
+    return _peer_for_channel_type(channel.channel_type, channel_id)
 
 
 class ResolveOutcome:
@@ -155,7 +172,7 @@ async def _resolve_by_username(
             fallback_entity = await collector._pool.resolve_entity_with_warm(
                 session,
                 phone,
-                PeerChannel(channel_id),
+                _channel_peer(channel, channel_id),
                 operation="collect_channel_resolve_channel_id",
             )
         except HandledFloodWaitError as exc:
@@ -202,7 +219,7 @@ async def _resolve_by_numeric(
         entity = await collector._pool.resolve_entity_with_warm(
             session,
             phone,
-            PeerChannel(channel_id),
+            _channel_peer(channel, channel_id),
             operation="collect_channel_resolve_numeric",
         )
     except asyncio.TimeoutError:
@@ -292,7 +309,9 @@ async def _resolve_by_numeric(
             await collector._pool.forget_channel_phone(
                 channel_id, only_if_phone=own_preferred
             )
-        found = await collector._discover_phone_for_channel(channel_id, exclude=phone)
+        found = await collector._discover_phone_for_channel(
+            channel_id, exclude=phone, channel_type=channel.channel_type
+        )
         if found is not None:
             collector._pool.register_channel_phone(channel_id, found)
             try:

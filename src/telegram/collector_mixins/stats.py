@@ -9,11 +9,10 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
-from telethon.tl.types import PeerChannel
 
 from src.models import Channel, ChannelStats
 from src.telegram.backends import adapt_transport_session
-from src.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS
+from src.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS, _channel_peer
 from src.telegram.collector_types import (
     AllStatsClientsFloodedError,
     NoActiveStatsClientsError,
@@ -147,7 +146,7 @@ class StatsMixin:
             entity = await self._pool.resolve_entity_with_warm(
                 session,
                 phone,
-                PeerChannel(channel.channel_id),
+                _channel_peer(channel, channel.channel_id),
                 operation=operation,
             )
             if channel.id and channel.review_reason in TRANSIENT_REVIEW_REASONS:
@@ -324,15 +323,29 @@ class StatsMixin:
                     await self._db.set_channel_active(channel.id, False)
                     return None
 
+                fetch_full = (
+                    session.fetch_full_chat(entity.id)
+                    if channel.channel_type == "group"
+                    else session.fetch_full_channel(entity)
+                )
                 full = await run_with_flood_wait(
-                    session.fetch_full_channel(entity),
-                    operation="collect_channel_stats_fetch_full_channel",
+                    fetch_full,
+                    operation=(
+                        "collect_channel_stats_fetch_full_chat"
+                        if channel.channel_type == "group"
+                        else "collect_channel_stats_fetch_full_channel"
+                    ),
                     phone=phone,
                     pool=self._pool,
                     logger_=logger,
                     timeout=30.0,
                 )
-                subscriber_count = getattr(full.full_chat, "participants_count", None)
+                if channel.channel_type == "group":
+                    participants = getattr(full.full_chat, "participants", None)
+                    participant_list = getattr(participants, "participants", None)
+                    subscriber_count = len(participant_list) if participant_list is not None else None
+                else:
+                    subscriber_count = getattr(full.full_chat, "participants_count", None)
 
                 views_list, reactions_list, forwards_list = await self._collect_stats_metrics(
                     session, entity, phone, channel.channel_id
