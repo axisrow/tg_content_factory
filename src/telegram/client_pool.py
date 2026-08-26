@@ -34,6 +34,12 @@ target the module that owns the call site (``pool_dialogs`` / ``pool_lifecycle``
 (``run_with_flood_wait``, ``adapt_transport_session``,
 ``load_live_usable_accounts``, ``ChannelForbidden``) keep the historical
 ``from src.telegram.client_pool import <name>`` imports working.
+
+Lease lifecycle contract: a phone has either an exclusive lease or shared
+leases, never both; popping ``_active_leases`` and clearing ``_in_use`` is one
+critical section with lock order ``ClientPool._lock`` then
+``AccountLeasePool._lock``; every successful acquire is released by its owner;
+and no client operation may start after ``disconnect_all`` begins teardown.
 """
 
 from __future__ import annotations
