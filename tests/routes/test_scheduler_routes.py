@@ -84,6 +84,22 @@ async def test_legacy_tasks_fragment_redirects_to_jobs_with_filters(client):
 
 
 @pytest.mark.anyio
+async def test_legacy_tasks_fragment_navigates_htmx_requests_to_jobs(client):
+    resp = await client.get(
+        "/scheduler/fragments/tasks?status=active&page=3&limit=25",
+        headers={"HX-Request": "true"},
+        follow_redirects=False,
+    )
+
+    assert resp.status_code == 200
+    assert resp.headers["hx-redirect"] == (
+        "/jobs?source=collection_task&status=active&page=3&limit=25"
+    )
+    assert "location" not in resp.headers
+    assert resp.content == b""
+
+
+@pytest.mark.anyio
 async def test_legacy_scheduler_page_bookmark_redirects_to_jobs(client):
     resp = await client.get(
         "/scheduler/?status=completed&page=2&limit=50",

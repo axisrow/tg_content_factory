@@ -2,7 +2,7 @@ import logging
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from src.web import deps  # noqa: F401  (re-export: tests patch src.web.routes.scheduler.deps.*)
 from src.web.routes.channel_collection import bulk_enqueue_msg  # noqa: F401  (test monkeypatch target)
@@ -39,7 +39,7 @@ router = APIRouter()
 _LEGACY_TASK_QUERY_KEYS = ("status", "page", "limit")
 
 
-def _legacy_tasks_redirect(request: Request) -> RedirectResponse:
+def _legacy_tasks_redirect(request: Request) -> Response:
     """Redirect the retired scheduler task list to its new /jobs home."""
     query = {"source": "collection_task"}
     query.update(
@@ -50,7 +50,10 @@ def _legacy_tasks_redirect(request: Request) -> RedirectResponse:
         }
     )
     suffix = f"?{urlencode(query)}" if query else ""
-    return RedirectResponse(url=f"/jobs{suffix}", status_code=303)
+    target = f"/jobs{suffix}"
+    if request.headers.get("HX-Request") == "true":
+        return Response(status_code=200, headers={"HX-Redirect": target})
+    return RedirectResponse(url=target, status_code=303)
 
 # Re-exported for backward compatibility (importers/tests reach these via
 # src.web.routes.scheduler). Listed here so the imports above are not flagged
