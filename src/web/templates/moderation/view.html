@@ -97,6 +97,26 @@
                 </div>
             </div>
             {% endif %}
+
+            {% set unconfirmed_targets = (run.metadata or {}).get('unconfirmed_targets', []) %}
+            {% if unconfirmed_targets %}
+            <div class="card mt-3 border-warning">
+                <div class="card-header">Неподтверждённые доставки</div>
+                <div class="card-body">
+                    <p class="small text-muted">Проверьте цель вручную, затем выберите результат.</p>
+                    {% for target in unconfirmed_targets %}
+                    <div class="mb-3">
+                        <code>{{ target }}</code>
+                        <form method="post" action="/moderation/{{ run.id }}/resolve-unconfirmed" class="mt-2 d-flex gap-2" data-busy>
+                            <input type="hidden" name="target" value="{{ target }}">
+                            <button type="submit" name="action" value="delivered" class="btn btn-success btn-sm">Подтверждено</button>
+                            <button type="submit" name="action" value="failed" class="btn btn-warning btn-sm">Не доставлено (повторить)</button>
+                        </form>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>

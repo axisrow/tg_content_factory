@@ -47,6 +47,7 @@ _REQUIRED_ARGS_BY_TOOL: dict[str, frozenset[str]] = {
     "list_pipeline_runs": frozenset({"pipeline_id"}),
     "get_pipeline_run": frozenset({"run_id"}),
     "publish_pipeline_run": frozenset({"run_id"}),
+    "resolve_unconfirmed_target": frozenset({"run_id", "target", "action"}),
     "set_refinement_steps": frozenset({"pipeline_id", "steps_json"}),
     "export_pipeline_json": frozenset({"pipeline_id"}),
     "import_pipeline_json": frozenset({"json_text"}),

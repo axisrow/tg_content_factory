@@ -887,6 +887,21 @@ async def _pipeline_reject(args: argparse.Namespace, db, config, svc: PipelineSe
     print(f"Rejected run id={args.run_id}")
 
 
+async def _pipeline_resolve_unconfirmed(args: argparse.Namespace, db, config, svc: PipelineService) -> None:
+    run = await db.repos.generation_runs.get(args.run_id)
+    if run is None:
+        print(f"Run id={args.run_id} not found")
+        return
+    delivered = args.action == "delivered"
+    ok = await db.repos.generation_runs.resolve_unconfirmed_target(
+        args.run_id, args.target, delivered=delivered
+    )
+    if ok:
+        print(f"Resolved unconfirmed target {args.target} as {args.action} for run id={args.run_id}")
+    else:
+        print(f"Target {args.target} is not unconfirmed for run id={args.run_id}")
+
+
 
 async def _pipeline_bulk_approve(args: argparse.Namespace, db, config, svc: PipelineService) -> None:
     # Atomic batch (#1041): resolve which ids exist (preserving the
@@ -1233,6 +1248,7 @@ _PIPELINE_HANDLERS = {
     "moderation-view": _pipeline_moderation_view,
     "approve": _pipeline_approve,
     "reject": _pipeline_reject,
+    "resolve-unconfirmed": _pipeline_resolve_unconfirmed,
     "bulk-approve": _pipeline_bulk_approve,
     "bulk-reject": _pipeline_bulk_reject,
     "publish": _pipeline_publish,
@@ -1552,6 +1568,19 @@ def pipeline_approve(ctx: typer.Context, run_id: int = typer.Argument(..., help=
 def pipeline_reject(ctx: typer.Context, run_id: int = typer.Argument(..., help="Run id")) -> None:
     """Reject a generation run."""
     _run_pipeline(ctx, "reject", run_id=run_id)
+
+
+@pipeline_app.command("resolve-unconfirmed")
+def pipeline_resolve_unconfirmed(
+    ctx: typer.Context,
+    run_id: int = typer.Argument(..., help="Run id"),
+    target: str = typer.Argument(..., help="Target key PHONE:DIALOG_ID"),
+    action: str = typer.Option("delivered", "--action", help="Resolution: delivered or failed"),
+) -> None:
+    """Resolve a manually checked unconfirmed delivery target."""
+    if action not in {"delivered", "failed"}:
+        raise typer.BadParameter("must be delivered or failed", param_hint="--action")
+    _run_pipeline(ctx, "resolve-unconfirmed", run_id=run_id, target=target, action=action)
 
 
 @pipeline_app.command("bulk-approve")

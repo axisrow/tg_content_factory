@@ -127,6 +127,27 @@ async def publish_run(request: Request, run_id: int):
     return RedirectResponse(url=f"/moderation?command_id={command_id}", status_code=303)
 
 
+@router.post("/{run_id}/resolve-unconfirmed")
+async def resolve_unconfirmed_run(
+    request: Request,
+    run_id: int,
+    target: str = Form(...),
+    action: str = Form(...),
+):
+    db = deps.get_db(request)
+    if action not in {"delivered", "failed"}:
+        return _moderation_redirect("invalid_resolution", error=True)
+    run = await db.repos.generation_runs.get(run_id)
+    if run is None:
+        return _moderation_redirect("run_not_found", error=True)
+    changed = await db.repos.generation_runs.resolve_unconfirmed_target(
+        run_id, target, delivered=action == "delivered"
+    )
+    if not changed:
+        return _moderation_redirect("target_not_unconfirmed", error=True)
+    return _moderation_redirect("target_resolved")
+
+
 @router.post("/bulk-approve")
 async def bulk_approve(request: Request, run_ids: list[int] = Form(default=[])):
     db = deps.get_db(request)

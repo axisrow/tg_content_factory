@@ -414,6 +414,36 @@ async def test_set_metadata_unions_stale_updates_to_same_target_key(db):
 
 
 @pytest.mark.anyio
+async def test_resolve_unconfirmed_target_moves_delivered_target(db):
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt-template")
+    await repo.set_metadata(run_id, {
+        "unconfirmed_targets": ["+1:-1001", "+2:-1002"],
+        "published_targets": ["+3:-1003"],
+    })
+
+    assert await repo.resolve_unconfirmed_target(run_id, "+1:-1001", delivered=True)
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.metadata["unconfirmed_targets"] == ["+2:-1002"]
+    assert run.metadata["published_targets"] == ["+1:-1001", "+3:-1003"]
+
+
+@pytest.mark.anyio
+async def test_resolve_unconfirmed_target_failed_target_becomes_retryable(db):
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt-template")
+    await repo.set_metadata(run_id, {"unconfirmed_targets": ["+1:-1001"]})
+
+    assert await repo.resolve_unconfirmed_target(run_id, "+1:-1001", delivered=False)
+    assert not await repo.resolve_unconfirmed_target(run_id, "+1:-1001", delivered=False)
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.metadata["unconfirmed_targets"] == []
+    assert "published_targets" not in run.metadata
+
+
+@pytest.mark.anyio
 async def test_publish_claim_allows_only_one_caller(db):
     repo = db.repos.generation_runs
     run_id = await repo.create_run(42, "prompt-template")
