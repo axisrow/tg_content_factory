@@ -37,18 +37,32 @@ class DialogBatchService:
             if not await self._repo.acquire_lease(batch_id, owner, datetime.now(timezone.utc)):
                 return batch
             await self._repo.recover_running(batch_id)
-            while (item := await self._repo.claim_next(batch_id)) is not None:
-                try:
-                    await executor(item)
-                except Exception as exc:
-                    await self._repo.update_item(item.id, DialogBatchStatus.FAILED, str(exc))  # type: ignore[arg-type]
-                else:
-                    await self._repo.update_item(item.id, DialogBatchStatus.COMPLETED)  # type: ignore[arg-type]
-            items = await self._repo.list_items(batch_id)
-            status = (DialogBatchStatus.FAILED if any(i.status == DialogBatchStatus.FAILED for i in items)
-                      else DialogBatchStatus.COMPLETED)
-            await self._repo.finish_batch(batch_id, status, owner)
-            return (await self._repo.get_batch(batch_id)) or batch
+            stop_heartbeat = asyncio.Event()
+
+            async def heartbeat() -> None:
+                while not stop_heartbeat.is_set():
+                    await asyncio.sleep(30)
+                    if not await self._repo.renew_lease(batch_id, owner, datetime.now(timezone.utc)):
+                        return
+
+            heartbeat_task = asyncio.create_task(heartbeat())
+            try:
+                while (item := await self._repo.claim_next(batch_id, owner)) is not None:
+                    try:
+                        await executor(item)
+                    except Exception as exc:
+                        await self._repo.update_item(item.id, DialogBatchStatus.FAILED, str(exc), owner)  # type: ignore[arg-type]
+                    else:
+                        await self._repo.update_item(item.id, DialogBatchStatus.COMPLETED, owner=owner)  # type: ignore[arg-type]
+                items = await self._repo.list_items(batch_id)
+                status = (DialogBatchStatus.FAILED if any(i.status == DialogBatchStatus.FAILED for i in items)
+                          else DialogBatchStatus.COMPLETED)
+                await self._repo.finish_batch(batch_id, status, owner)
+                return (await self._repo.get_batch(batch_id)) or batch
+            finally:
+                stop_heartbeat.set()
+                heartbeat_task.cancel()
+                await asyncio.gather(heartbeat_task, return_exceptions=True)
 
     async def resume(self, batch_id: int, executor: DialogExecutor) -> DialogBatchOperation:
         return await self.run(batch_id, executor)

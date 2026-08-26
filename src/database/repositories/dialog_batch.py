@@ -60,9 +60,17 @@ class DialogBatchRepository:
         cur = await self._database.execute_write(
             """UPDATE dialog_batch_operations
                SET status = ?, lease_owner = ?, lease_until = ?
-               WHERE id = ? AND (status = ? OR (status = ? AND lease_until < ?))""",
+               WHERE id = ? AND (status = ? OR (status = ? AND (lease_until IS NULL OR lease_until < ?)))""",
             (DialogBatchStatus.RUNNING.value, owner, until, batch_id,
              DialogBatchStatus.PENDING.value, DialogBatchStatus.RUNNING.value, now_iso),
+        )
+        return bool(cur.rowcount)
+
+    async def renew_lease(self, batch_id: int, owner: str, now: datetime, lease_seconds: int = 3600) -> bool:
+        until = datetime.fromtimestamp(now.timestamp() + lease_seconds, timezone.utc).isoformat()
+        cur = await self._database.execute_write(
+            "UPDATE dialog_batch_operations SET lease_until = ? WHERE id = ? AND lease_owner = ? AND status = ?",
+            (until, batch_id, owner, DialogBatchStatus.RUNNING.value),
         )
         return bool(cur.rowcount)
 
@@ -70,27 +78,37 @@ class DialogBatchRepository:
         cur = await self._db.execute("SELECT * FROM dialog_batch_items WHERE batch_id = ? ORDER BY id", (batch_id,))
         return [self._item(row) for row in await cur.fetchall()]
 
-    async def claim_next(self, batch_id: int) -> DialogBatchItem | None:
+    async def claim_next(self, batch_id: int, owner: str | None = None) -> DialogBatchItem | None:
         """Claim exactly one pending item; safe when multiple workers race."""
         async with self._database.transaction() as conn:
+            owner_clause = (
+                " AND EXISTS (SELECT 1 FROM dialog_batch_operations WHERE id = ? AND lease_owner = ?)"
+                if owner else ""
+            )
+            params: tuple[object, ...] = (DialogBatchStatus.RUNNING.value, batch_id, DialogBatchStatus.PENDING.value)
+            if owner:
+                params += (batch_id, owner)
             cur = await conn.execute(
-                """UPDATE dialog_batch_items SET status = ?, attempts = attempts + 1
+                f"""UPDATE dialog_batch_items SET status = ?, attempts = attempts + 1
                    WHERE id = (SELECT id FROM dialog_batch_items
                                WHERE batch_id = ? AND status = ? ORDER BY id LIMIT 1)
-                   RETURNING *""",
-                (DialogBatchStatus.RUNNING.value, batch_id, DialogBatchStatus.PENDING.value),
+                   {owner_clause} RETURNING *""",
+                params,
             )
             row = await cur.fetchone()
         return self._item(row) if row else None
 
-    async def update_item(self, item_id: int, status: DialogBatchStatus, error: str | None = None) -> None:
+    async def update_item(self, item_id: int, status: DialogBatchStatus, error: str | None = None,
+                          owner: str | None = None) -> None:
         finished = datetime.now(timezone.utc).isoformat() if status in {
             DialogBatchStatus.COMPLETED, DialogBatchStatus.FAILED
         } else None
-        await self._database.execute_write(
-            "UPDATE dialog_batch_items SET status = ?, error = ?, finished_at = ? WHERE id = ?",
-            (status.value, error, finished, item_id),
-        )
+        sql = "UPDATE dialog_batch_items SET status = ?, error = ?, finished_at = ? WHERE id = ?"
+        params: tuple[object, ...] = (status.value, error, finished, item_id)
+        if owner:
+            sql += " AND EXISTS (SELECT 1 FROM dialog_batch_operations o WHERE o.id = batch_id AND o.lease_owner = ?)"
+            params += (owner,)
+        await self._database.execute_write(sql, params)
 
     async def recover_running(self, batch_id: int) -> int:
         cur = await self._database.execute_write(
