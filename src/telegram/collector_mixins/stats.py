@@ -340,7 +340,11 @@ class StatsMixin:
                     logger_=logger,
                     timeout=30.0,
                 )
-                subscriber_count = getattr(full.full_chat, "participants_count", None)
+                if channel.channel_type == "group":
+                    participants = getattr(full.full_chat, "participants", None)
+                    subscriber_count = len(getattr(participants, "participants", None) or [])
+                else:
+                    subscriber_count = getattr(full.full_chat, "participants_count", None)
 
                 views_list, reactions_list, forwards_list = await self._collect_stats_metrics(
                     session, entity, phone, channel.channel_id
