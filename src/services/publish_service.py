@@ -121,77 +121,93 @@ class PublishService:
             logger.warning("Pipeline %s has no targets", pipeline.id)
             return [PublishResult(success=False, error="No targets configured")]
 
-        # Track per-target delivery across attempts: on a partial failure the run
-        # stays eligible for retry, so without this a re-publish would re-send to
-        # targets that already succeeded, duplicating messages (issue #633).
-        metadata = dict(run.metadata or {})
-        delivered: set[str] = set(metadata.get("published_targets") or [])
-        # Targets whose send timed out AFTER the request may have reached
-        # Telegram (issue #1239). The delivery is UNCONFIRMED — neither known-
-        # delivered nor known-failed. A retry must NOT re-send these blindly (it
-        # would duplicate the post if the send actually landed); instead they are
-        # surfaced for a manual check. The timeout is kept as the ONLY guard
-        # against a send hanging forever on a dead connection (clients run with
-        # connection_retries=None, so nothing else bounds an in-flight request)
-        # and blocking the sequential publish dispatcher for good.
-        unconfirmed: set[str] = set(metadata.get("unconfirmed_targets") or [])
+        previous_moderation_status = run.moderation_status
+        claimed = await self._db.repos.generation_runs.claim_for_publish(
+            run.id, previous_moderation_status
+        )
+        if not claimed:
+            return [PublishResult(success=False, error="Run is already being published")]
 
-        results: list[PublishResult] = []
-        for target in targets:
-            key = _target_key(target)
-            if key in delivered:
-                # Already published on a previous attempt — skip to avoid a duplicate.
-                results.append(PublishResult(success=True))
-                continue
-            if key in unconfirmed:
-                # A prior attempt timed out mid-send: the post may already be in
-                # the channel. Re-sending blindly risks a duplicate, so this
-                # target is NOT auto-retried — it needs a human to confirm whether
-                # it was delivered. Report failure without contacting Telegram.
-                results.append(
-                    PublishResult(
-                        success=False,
-                        error="Unconfirmed delivery — manual check required",
-                        uncertain=True,
-                        phone=target.phone,
-                        dialog_id=target.dialog_id,
+        claim_active = True
+        try:
+            # Track per-target delivery across attempts: on a partial failure the run
+            # stays eligible for retry, so without this a re-publish would re-send to
+            # targets that already succeeded, duplicating messages (issue #633).
+            metadata = dict(run.metadata or {})
+            delivered: set[str] = set(metadata.get("published_targets") or [])
+            # Targets whose send timed out AFTER the request may have reached
+            # Telegram (issue #1239). The delivery is UNCONFIRMED — neither known-
+            # delivered nor known-failed. A retry must NOT re-send these blindly (it
+            # would duplicate the post if the send actually landed); instead they are
+            # surfaced for a manual check. The timeout is kept as the ONLY guard
+            # against a send hanging forever on a dead connection (clients run with
+            # connection_retries=None, so nothing else bounds an in-flight request)
+            # and blocking the sequential publish dispatcher for good.
+            unconfirmed: set[str] = set(metadata.get("unconfirmed_targets") or [])
+
+            results: list[PublishResult] = []
+            for target in targets:
+                key = _target_key(target)
+                if key in delivered:
+                    # Already published on a previous attempt — skip to avoid a duplicate.
+                    results.append(PublishResult(success=True))
+                    continue
+                if key in unconfirmed:
+                    # A prior attempt timed out mid-send: the post may already be in
+                    # the channel. Re-sending blindly risks a duplicate, so this
+                    # target is NOT auto-retried — it needs a human to confirm whether
+                    # it was delivered. Report failure without contacting Telegram.
+                    results.append(
+                        PublishResult(
+                            success=False,
+                            error="Unconfirmed delivery — manual check required",
+                            uncertain=True,
+                            phone=target.phone,
+                            dialog_id=target.dialog_id,
+                        )
                     )
-                )
-                continue
-            result = await self._publish_to_target(run, target)
-            results.append(result)
-            if result.uncertain:
-                # Send timed out after the request may have been dispatched.
-                # Record the target as unconfirmed — persisted immediately, same
-                # incremental-write discipline as delivered targets (#1116) — so a
-                # retry skips it instead of re-sending a possibly-delivered post.
-                unconfirmed.add(key)
+                    continue
+                result = await self._publish_to_target(run, target)
+                results.append(result)
+                if result.uncertain:
+                    # Send timed out after the request may have been dispatched.
+                    # Record the target as unconfirmed — persisted immediately, same
+                    # incremental-write discipline as delivered targets (#1116) — so a
+                    # retry skips it instead of re-sending a possibly-delivered post.
+                    unconfirmed.add(key)
+                    await self._db.repos.generation_runs.set_metadata(
+                        run.id, {"unconfirmed_targets": sorted(unconfirmed)}
+                    )
+                    continue
+                if not result.success:
+                    continue
+                # Persist progress immediately after EACH delivery — never batched to a
+                # single end-of-loop write (issue #1116). A send to Telegram is
+                # irreversible and there is no transaction spanning send + DB write, so
+                # if this write fails the run goes FAILED and is retried. Recording the
+                # delivered target right now bounds the worst case to re-sending the one
+                # in-flight target on retry; a batched write would instead lose every
+                # target delivered in this attempt and duplicate them all. The write is
+                # deliberately NOT wrapped in try/except: a failed write means we can no
+                # longer remember what we delivered, so the raised exception must stop
+                # the loop rather than keep sending to targets we cannot track.
+                delivered.add(key)
                 await self._db.repos.generation_runs.set_metadata(
-                    run.id, {"unconfirmed_targets": sorted(unconfirmed)}
+                    run.id, {"published_targets": sorted(delivered)}
                 )
-                continue
-            if not result.success:
-                continue
-            # Persist progress immediately after EACH delivery — never batched to a
-            # single end-of-loop write (issue #1116). A send to Telegram is
-            # irreversible and there is no transaction spanning send + DB write, so
-            # if this write fails the run goes FAILED and is retried. Recording the
-            # delivered target right now bounds the worst case to re-sending the one
-            # in-flight target on retry; a batched write would instead lose every
-            # target delivered in this attempt and duplicate them all. The write is
-            # deliberately NOT wrapped in try/except: a failed write means we can no
-            # longer remember what we delivered, so the raised exception must stop
-            # the loop rather than keep sending to targets we cannot track.
-            delivered.add(key)
-            await self._db.repos.generation_runs.set_metadata(
-                run.id, {"published_targets": sorted(delivered)}
-            )
 
-        if all(r.success for r in results):
-            await self._db.repos.generation_runs.set_published_at(run.id)
-            logger.info("Published run %s to %d targets", run.id, len(targets))
+            if all(r.success for r in results):
+                await self._db.repos.generation_runs.set_published_at(run.id)
+                claim_active = False
+                logger.info("Published run %s to %d targets", run.id, len(targets))
 
-        return results
+            return results
+
+        finally:
+            if claim_active:
+                await self._db.repos.generation_runs.release_publish_claim(
+                    run.id, previous_moderation_status
+                )
 
     async def _publish_to_target(
         self,
