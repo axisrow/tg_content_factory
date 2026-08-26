@@ -1916,6 +1916,17 @@ async def test_web_login_post_rejects_invalid_password(unauth_client):
 
 
 @pytest.mark.anyio
+async def test_web_login_rate_limits_repeated_invalid_passwords(unauth_client):
+    for _ in range(5):
+        resp = await unauth_client.post("/login", data={"password": "wrong"}, follow_redirects=False)
+        assert resp.status_code == 401
+
+    resp = await unauth_client.post("/login", data={"password": "testpass"}, follow_redirects=False)
+    assert resp.status_code == 429
+    assert resp.headers["retry-after"]
+
+
+@pytest.mark.anyio
 async def test_web_login_post_blocks_open_redirect(unauth_client):
     resp = await unauth_client.post(
         "/login",
