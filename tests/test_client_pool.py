@@ -636,3 +636,144 @@ async def test_warm_stagger_between_phones(real_pool_harness_factory, monkeypatc
     # But no stagger before the first phone — total ~ 2*stagger, not 3
     total_elapsed = timestamps[-1] - timestamps[0]
     assert total_elapsed < 3 * stagger, f"total={total_elapsed:.2f}s, should be ~2*stagger"
+
+
+# ---------------------------------------------------------------------------
+# warm_all_dialogs: skip phones whose full sweep is already cached
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_warm_skips_phone_with_a_completed_sweep(real_pool_harness_factory, monkeypatch, db):
+    """An account whose full sweep is already cached must not be swept again (#1330).
+
+    The in-process "already warmed" flag is lost on restart, so the warm-up
+    re-ran on every start: 67 times in one day, which flood-waited an account
+    into a 14.8h ban. dialog_cache records a completed sweep persistently.
+    """
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+
+    harness = real_pool_harness_factory()
+    swept_client = FakeCliTelethonClient(dialogs=[])
+    fresh_client = FakeCliTelethonClient(dialogs=[])
+
+    await _setup_warm_harness(harness, {
+        "+70000000001": swept_client,
+        "+70000000002": fresh_client,
+    })
+
+    # Only the first phone has a recent full snapshot on record.
+    await db.repos.dialog_cache.replace_dialogs(
+        "+70000000001",
+        [{"channel_id": -100777, "channel_type": "channel", "title": "Known"}],
+    )
+
+    await harness.pool.warm_all_dialogs(skip_already_swept=True)
+
+    swept_client.get_dialogs.assert_not_awaited()
+    fresh_client.get_dialogs.assert_awaited()
+    assert harness.pool.is_dialogs_fetched("+70000000001")
+    # Skipping must not lose the channel->phone mapping the sweep would build:
+    # it is replayed from the cache, without a Telegram call.
+    assert harness.pool._channel_phone_map.get(-100777) == "+70000000001"
+
+
+@pytest.mark.anyio
+async def test_warm_runs_for_a_fresh_session_holding_only_its_self_entity(
+    real_pool_harness_factory, monkeypatch, db
+):
+    """A brand-new session must still be swept (#1330).
+
+    Pool init calls fetch_me before this task runs and Telethon persists that
+    self-user, so a fresh session's entity table is NOT empty. Inferring "warm"
+    from table non-emptiness skipped discovery exactly where it is needed most.
+    """
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+
+    harness = real_pool_harness_factory()
+    client = FakeCliTelethonClient(dialogs=[])
+    await _setup_warm_harness(harness, {"+70000000001": client})
+
+    # No snapshot on record for this phone, whatever its entity cache holds.
+    assert await db.repos.dialog_cache.get_cached_at("+70000000001") is None
+
+    await harness.pool.warm_all_dialogs(skip_already_swept=True)
+    client.get_dialogs.assert_awaited()
+
+
+def test_startup_opts_into_the_skip_but_the_scheduler_does_not():
+    """Wiring guard: only the startup call passes skip_already_swept.
+
+    The skip is what stops the warm-up re-running on every restart, so bootstrap
+    must opt in — and the scheduler must not, or the periodic refresh silently
+    becomes a no-op (#1043/#1330).
+    """
+    import inspect
+
+    from src.scheduler import service as scheduler_service
+    from src.web import bootstrap
+
+    bootstrap_src = inspect.getsource(bootstrap)
+    assert "warm_all_dialogs(skip_already_swept=True)" in bootstrap_src
+
+    scheduler_src = inspect.getsource(scheduler_service)
+    assert "skip_already_swept" not in scheduler_src
+
+
+@pytest.mark.anyio
+async def test_periodic_warm_never_skips_even_with_a_fresh_snapshot(
+    real_pool_harness_factory, monkeypatch, db
+):
+    """The scheduled refresh must sweep unconditionally (#1043).
+
+    The periodic job exists to re-warm a long-lived worker's stale entity cache
+    and to pick up newly joined channels. If it honoured the startup skip, the
+    refresh would become a permanent no-op for every account that has a cached
+    snapshot — silently disabling the very job that keeps routing current. Only
+    the startup call passes skip_already_swept.
+    """
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+
+    harness = real_pool_harness_factory()
+    client = FakeCliTelethonClient(dialogs=[])
+    await _setup_warm_harness(harness, {"+70000000001": client})
+
+    await db.repos.dialog_cache.replace_dialogs(
+        "+70000000001",
+        [{"channel_id": -100777, "channel_type": "channel", "title": "Known"}],
+    )
+    # Startup would skip this phone ...
+    await harness.pool.warm_all_dialogs(skip_already_swept=True)
+    client.get_dialogs.assert_not_awaited()
+
+    # ... but the periodic job (default args, as the scheduler calls it) must not.
+    await harness.pool.warm_all_dialogs()
+    client.get_dialogs.assert_awaited()
+
+
+@pytest.mark.anyio
+async def test_warm_runs_again_after_a_partial_sweep(real_pool_harness_factory, monkeypatch, db):
+    """A truncated sweep must not count as a finished one.
+
+    upsert_dialogs deliberately keeps the previous cached_at (#1360/#1347), so a
+    fragment written over an old snapshot stays stale — and the warm-up must
+    still run instead of treating the incomplete rows as a done sweep.
+    """
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+
+    harness = real_pool_harness_factory()
+    client = FakeCliTelethonClient(dialogs=[])
+    await _setup_warm_harness(harness, {"+70000000001": client})
+
+    # An OLD snapshot, then a partial walk that reaches only one new dialog.
+    await db.execute_write(
+        "INSERT INTO dialog_cache (phone, dialog_id, title, channel_type, cached_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("+70000000001", -100777, "A", "channel", "2026-01-01T00:00:00+00:00"),
+    )
+    await db.repos.dialog_cache.upsert_dialogs(
+        "+70000000001", [{"channel_id": -100778, "channel_type": "channel", "title": "B"}]
+    )
+
+    await harness.pool.warm_all_dialogs(skip_already_swept=True)
+    client.get_dialogs.assert_awaited()
