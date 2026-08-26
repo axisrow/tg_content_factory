@@ -1028,6 +1028,39 @@ class PhotoBatchItem(BaseModel):
     completed_at: datetime | None = None
 
 
+class DialogBatchStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class DialogBatchOperation(BaseModel):
+    """Durable group record for a resumable dialog operation."""
+
+    id: int | None = None
+    phone: str
+    op_type: str
+    status: DialogBatchStatus = DialogBatchStatus.PENDING
+    created_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class DialogBatchItem(BaseModel):
+    """One independently claimable dialog operation."""
+
+    id: int | None = None
+    batch_id: int
+    phone: str
+    dialog_id: int
+    channel_type: str
+    status: DialogBatchStatus = DialogBatchStatus.PENDING
+    error: str | None = None
+    attempts: int = 0
+    created_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
 class GeneratedImage(BaseModel):
     """Сгенерированная картинка: `prompt` и `model`, которыми создана, плюс ссылка
     `image_url` и/или локальный путь `local_path`."""

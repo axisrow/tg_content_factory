@@ -22,6 +22,7 @@ from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.content_pipelines import ContentPipelinesRepository
+from src.database.repositories.dialog_batch import DialogBatchRepository
 from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.generated_images import GeneratedImagesRepository
@@ -86,6 +87,7 @@ class DatabaseRepositories:
     search_queries: SearchQueriesRepository
     photo_loader: PhotoLoaderRepository
     dialog_cache: DialogCacheRepository
+    dialog_batch: DialogBatchRepository
     content_pipelines: ContentPipelinesRepository
     generation_runs: GenerationRunsRepository
     generated_images: GeneratedImagesRepository
