@@ -100,6 +100,9 @@ def test_tests_job_runs_full_suite(ci_config: dict) -> None:
     assert parallel, "tests job must run the parallel-safe leg with -n auto"
     assert serial, "tests job must run the aiosqlite_serial leg"
     assert all("--cov=src" in r for r in parallel + serial), "both test legs must measure coverage"
+    assert any("-n auto" in r and "--dist=loadfile" in r for r in serial), (
+        "aiosqlite_serial files must run in parallel while each file stays on one worker"
+    )
 
 
 def test_tests_job_does_not_use_testmon(ci_config: dict) -> None:

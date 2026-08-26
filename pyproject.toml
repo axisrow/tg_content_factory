@@ -223,7 +223,7 @@ markers = [
     "telegram_unit: pure unit test that does not verify backend transport wiring",
     "real_materializer: test uses real SessionMaterializer instead of the fake stub",
     "real_provider_smoke: opt-in live provider API smoke test",
-    "aiosqlite_serial: test must run without xdist parallelism because it exercises aiosqlite-backed database paths",
+    "aiosqlite_serial: tests in one file must stay together while independent files may use xdist workers",
     "codex_image_live: opt-in live Codex SDK image generation test; gate: RUN_CODEX_IMAGE_LIVE=1",
     "codex_cli_live: opt-in live Codex CLI smoke (image + agent backend via real MCP); gate: RUN_CODEX_CLI_LIVE=1",
     "e2e: end-to-end browser test using Playwright",
