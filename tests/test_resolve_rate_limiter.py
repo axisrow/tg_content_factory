@@ -53,6 +53,24 @@ def test_window_slides_and_frees_slots():
     assert limiter.try_acquire("+1") == 0.0
 
 
+def test_multi_slot_retry_waits_until_all_required_slots_are_free():
+    clock = _FakeClock()
+    limiter = _limiter(clock, max_calls=3, window=300.0)
+
+    assert limiter.try_acquire("+1") == 0.0  # t=1000
+    clock.advance(100)
+    assert limiter.try_acquire("+1") == 0.0  # t=1100
+    clock.advance(100)
+    assert limiter.try_acquire("+1") == 0.0  # t=1200
+    clock.advance(50)
+
+    # Two calls must expire (at t=1300 and t=1400), so retrying after only
+    # the oldest call expires would still be rejected.
+    assert limiter.try_acquire_many("+1", 2) == 150.0
+    clock.advance(150)
+    assert limiter.try_acquire_many("+1", 2) == 0.0
+
+
 def test_limit_is_per_account():
     clock = _FakeClock()
     limiter = _limiter(clock, max_calls=1, window=60.0)

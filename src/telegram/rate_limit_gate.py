@@ -46,6 +46,7 @@ _OPERATION_CATEGORIES = {
     "telegram_kick_participant": "admin_action",
     "telegram_edit_folder": "admin_action",
     "telegram_send_message": "send",
+    "telegram_publish_files": "send",
     "telegram_edit_message": "send",
     "telegram_forward_messages": "send",
     "telegram_pin_message": "send",

@@ -118,9 +118,10 @@ class ResolveRateLimiter:
         if len(window) + slots <= self._max_calls:
             window.extend([now] * slots)
             return 0.0
-        # Window full: the oldest call falls out of the window at
-        # ``oldest + window_sec``. Defer until then, plus jitter.
-        retry_after = (window[0] + self._window_sec) - now
+        # Wait until enough calls have expired for the whole atomic request,
+        # not merely until the oldest call leaves the window.
+        calls_to_expire = len(window) + slots - self._max_calls
+        retry_after = (window[calls_to_expire - 1] + self._window_sec) - now
         if self._jitter_sec:
             retry_after += self._jitter(0.0, self._jitter_sec)
         return max(retry_after, 0.0)

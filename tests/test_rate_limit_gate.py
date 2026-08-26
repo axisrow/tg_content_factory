@@ -75,6 +75,7 @@ def test_phase_two_categories_are_separately_calibrated() -> None:
     assert gate.category_for("telegram_stream_messages") == "history"
     assert gate.category_for("telegram_edit_admin") == "admin_action"
     assert gate.category_for("telegram_send_message") == "send"
+    assert gate.category_for("telegram_publish_files") == "send"
     assert gate.category_for("telegram_create_channel") == "channel_lifecycle"
     assert gate.category_for("telegram_import_chat_invite") == "channel_lifecycle"
 
