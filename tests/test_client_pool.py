@@ -458,6 +458,35 @@ async def test_warm_flood_wait_fail_fast(real_pool_harness_factory, monkeypatch,
 
 
 @pytest.mark.anyio
+async def test_warm_rate_limit_gate_skips_phone_and_continues(real_pool_harness_factory, monkeypatch, caplog):
+    """#1330: a proactive dialogs rejection must rotate without calling Telegram."""
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+    harness = real_pool_harness_factory()
+    limited_client = FakeCliTelethonClient(dialogs=[])
+    ok_client = FakeCliTelethonClient(dialogs=[])
+    limited_phone = "+70000000001"
+
+    await _setup_warm_harness(
+        harness,
+        {
+            limited_phone: limited_client,
+            "+70000000002": ok_client,
+        },
+    )
+    # Consume this phone's sole dialogs slot before the pool-wide warm pass.
+    await harness.pool.clients[limited_phone].warm_dialog_cache()
+    assert limited_client.get_dialogs.await_count == 1
+
+    caplog.clear()
+    with caplog.at_level("INFO", logger="src.telegram.pool_dialogs"):
+        await harness.pool.warm_all_dialogs()
+
+    assert limited_client.get_dialogs.await_count == 1
+    ok_client.get_dialogs.assert_awaited_once()
+    assert "proactive dialogs rate limit" in caplog.text
+
+
+@pytest.mark.anyio
 async def test_warm_single_phone_timeout(real_pool_harness_factory, monkeypatch):
     """A hanging get_dialogs should time out and not block other phones."""
     import asyncio
