@@ -411,3 +411,21 @@ async def test_set_metadata_unions_stale_updates_to_same_target_key(db):
     run = await repo.get(run_id)
     assert run is not None
     assert run.metadata["published_targets"] == ["+1:-1001", "+2:-1002"]
+
+
+@pytest.mark.anyio
+async def test_publish_claim_allows_only_one_caller(db):
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt-template")
+    await repo.set_moderation_status(run_id, "approved")
+
+    claims = await asyncio.gather(
+        repo.claim_for_publish(run_id, "approved"),
+        repo.claim_for_publish(run_id, "approved"),
+    )
+
+    assert sorted(claims) == [False, True]
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.moderation_status == "publishing"
+    await repo.release_publish_claim(run_id, "approved")

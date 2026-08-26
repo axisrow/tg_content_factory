@@ -130,6 +130,29 @@ class GenerationRunsRepository:
             (status, run_id),
         )
 
+    async def claim_for_publish(self, run_id: int, expected_status: str) -> bool:
+        """Atomically claim a run so concurrent publishers cannot both send it."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.claim_for_publish requires a Database reference"
+        )
+        cur = await self._database.execute_write(
+            ("UPDATE generation_runs SET moderation_status = 'publishing', updated_at = datetime('now') "
+             "WHERE id = ? AND moderation_status = ?"),
+            (run_id, expected_status),
+        )
+        return cur.rowcount == 1
+
+    async def release_publish_claim(self, run_id: int, previous_status: str) -> None:
+        """Release a failed publish claim without overwriting a later state."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.release_publish_claim requires a Database reference"
+        )
+        await self._database.execute_write(
+            ("UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') "
+             "WHERE id = ? AND moderation_status = 'publishing'"),
+            (previous_status, run_id),
+        )
+
     async def set_moderation_status_bulk(self, run_ids: list[int], status: str) -> None:
         """Atomically set ``moderation_status`` for many runs (issue #1041).
 
