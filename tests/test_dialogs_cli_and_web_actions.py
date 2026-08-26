@@ -157,6 +157,20 @@ class TestCliRefresh:
             _run_cli("refresh", pool, cli_db, {"phone": _PHONE})
         assert "Dialogs refreshed: 2 total." in capsys.readouterr().out
 
+    def test_refresh_partial_warns_instead_of_reporting_success(self, cli_db, capsys):
+        pool, _ = _mock_pool()
+        partial_result = type("PartialDialogs", (list,), {"partial": True})([{"channel_id": 1}])
+        with patch(
+            "src.services.channel_service.ChannelService.get_my_dialogs",
+            new_callable=AsyncMock,
+            return_value=partial_result,
+        ):
+            _run_cli("refresh", pool, cli_db, {"phone": _PHONE})
+        out = capsys.readouterr().out
+        assert "WARNING" in out
+        assert "cache was not updated" in out
+        assert "Dialogs refreshed:" not in out
+
 
 class TestCliCacheClear:
     """CLI dialogs cache-clear."""

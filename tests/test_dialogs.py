@@ -1008,5 +1008,6 @@ async def test_get_dialogs_for_phone_partial_timeout_keeps_existing_db_cache(db)
         )
 
     assert result[0]["title"] == "Partial Channel"
+    assert result.partial is True
     cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
     assert _strip_extra_dialog_fields(cached) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
