@@ -6,6 +6,46 @@
 {% if refresh_warning %}
 <div class="alert alert-warning" role="alert">{{ refresh_warning }}</div>
 {% endif %}
+{% if refresh_command_id %}
+<div id="dialog-refresh-status" class="alert alert-info" role="status">Обновление диалогов выполняется…</div>
+<script>
+(function () {
+    var status = document.getElementById('dialog-refresh-status');
+    var commandId = '{{ refresh_command_id|e }}';
+    var polls = 0;
+    function poll() {
+        if (++polls > 70) {
+            status.className = 'alert alert-warning';
+            status.textContent = 'Не удалось дождаться результата обновления диалогов.';
+            return;
+        }
+        fetch('/telegram-commands/' + encodeURIComponent(commandId))
+            .then(function (response) { return response.json(); })
+            .then(function (command) {
+                if (command.status === 'succeeded') {
+                    if (command.result_payload && command.result_payload.partial) {
+                        status.className = 'alert alert-warning';
+                        status.textContent = command.result_payload.warning ||
+                            'Обновление диалогов завершилось частично; кеш не обновлён.';
+                    } else {
+                        status.remove();
+                        history.replaceState(null, '', '/dialogs/?phone=' + encodeURIComponent('{{ selected_phone|e }}'));
+                        var list = document.getElementById('dialogs-list');
+                        if (list && window.htmx) { htmx.trigger(list, 'load'); }
+                    }
+                } else if (command.status === 'failed' || command.status === 'cancelled') {
+                    status.className = 'alert alert-danger';
+                    status.textContent = command.error || 'Обновление диалогов не удалось.';
+                } else {
+                    setTimeout(poll, 1000);
+                }
+            })
+            .catch(function () { setTimeout(poll, 1000); });
+    }
+    setTimeout(poll, 1000);
+})();
+</script>
+{% endif %}
 <div class="d-flex align-items-center gap-3 mb-1">
     <h1 class="mb-0">Диалоги</h1>
     <a href="/dialogs/create-channel" class="btn btn-outline-primary btn-sm">+ Создать канал</a>

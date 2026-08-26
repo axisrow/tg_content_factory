@@ -101,6 +101,7 @@ async def dialogs_page(
             "accounts": accounts,
             "selected_phone": selected_phone,
             "refresh_warning": refresh_warning,
+            "refresh_command_id": command_id if command and not refresh_warning else None,
         },
     )
 
