@@ -148,7 +148,7 @@ class ChannelStatsRepository:
         cur = await self._db.execute(
             "SELECT collected_at, subscriber_count "
             "FROM channel_stats "
-            "WHERE channel_id = ? AND collected_at >= datetime('now', ?) "
+            "WHERE channel_id = ? AND datetime(collected_at) >= datetime('now', ?) "
             "ORDER BY collected_at ASC, id ASC",
             (channel_id, f"-{days} days"),
         )
