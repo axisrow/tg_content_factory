@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -72,7 +73,7 @@ def _dialog_from_spec(spec: dict) -> MagicMock:
 def _make_dialog_client(dialogs: list[dict]) -> FakeCliTelethonClient:
     prepared = [_dialog_from_spec(dialog) for dialog in dialogs]
     return FakeCliTelethonClient(
-        iter_dialogs_factory=lambda: AsyncIterMessages(prepared),
+        iter_dialogs_factory=lambda *a, **kw: AsyncIterMessages(prepared),
         entity_resolver=lambda _peer: MagicMock(),
     )
 
@@ -96,6 +97,9 @@ def _bind_dialog_cache_methods(pool):
     pool._mark_degraded_cached_dialogs = ClientPool._mark_degraded_cached_dialogs.__get__(
         pool, ClientPool
     )
+    # #1359 added the resumable-sweep collaborators; bind them for the same
+    # reason as above, or the sweep silently runs against mocks.
+    pool._flush_dialog_chunk = ClientPool._flush_dialog_chunk.__get__(pool, ClientPool)
     pool._dialog_refresh_tasks = {}
 
 
@@ -103,6 +107,10 @@ def _make_channel_dialog(
     channel_id: int,
     title: str = "Cached Channel",
     username: str = "cachedchan",
+    *,
+    message_id: int | None = None,
+    message_date: datetime | None = None,
+    with_message: bool = True,
 ):
     channel_entity = MagicMock()
     channel_entity.id = channel_id
@@ -114,6 +122,18 @@ def _make_channel_dialog(
     dialog.title = title
     dialog.is_channel = True
     dialog.is_group = False
+    # Real values (not MagicMock) so the resume cursor can actually anchor on
+    # this dialog -- _advance_cursor deliberately ignores non-int/non-datetime
+    # attributes, so a bare MagicMock would silently disable resume in tests.
+    if with_message:
+        dialog.message = SimpleNamespace(
+            id=message_id if message_id is not None else abs(channel_id) % 100000,
+            date=message_date or datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+        dialog.input_entity = f"input:{channel_id}"
+    else:
+        dialog.message = None
+        dialog.input_entity = f"input:{channel_id}"
     return dialog
 
 
@@ -1064,26 +1084,165 @@ async def test_get_dialogs_for_phone_flood_stale_cache_is_flagged_partial(db):
 
 
 @pytest.mark.anyio
-async def test_get_dialogs_for_phone_partial_timeout_keeps_existing_db_cache(db):
+async def test_partial_sweep_is_not_served_as_a_fresh_cache(db):
+    """A resumed fragment must not read back as a fresh snapshot (#1359).
+
+    If a partial walk stamped the touched rows with a current timestamp, the
+    freshness check (MAX(cached_at) vs the TTL) would hand that truncated set
+    to every later non-refresh caller as an ordinary current cache. That is a
+    worse failure than the frozen cache this PR fixes: incomplete AND looking
+    current. upsert_dialogs therefore keeps the PREVIOUS cached_at
+    (#1360/#1347), so the fragment stays stale and is re-fetched.
+    """
     from src.telegram.client_pool import ClientPool
 
-    await db.repos.dialog_cache.replace_dialogs("+1234567890", list(_FAKE_DIALOGS))
+    phone = "+1234567890"
+    # An OLD complete snapshot, well past the TTL.
+    await db.execute_write(
+        "INSERT INTO dialog_cache (phone, dialog_id, title, channel_type, cached_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (phone, 1, "one", "channel", "2026-01-01T00:00:00+00:00"),
+    )
+    # A resumed sweep reaches only part of the picture.
+    await db.repos.dialog_cache.upsert_dialogs(
+        phone, [{"channel_id": 2, "channel_type": "channel", "title": "two"}]
+    )
+
+    # The fragment must NOT have made the snapshot look current.
+    cached_at = await db.repos.dialog_cache.get_cached_at(phone)
+    assert cached_at.year == 2026 and cached_at.month == 1, (
+        f"partial sweep refreshed the snapshot timestamp: {cached_at}"
+    )
 
     pool = MagicMock(spec=ClientPool)
-
-    mock_client = MagicMock()
-    partial_dialog = _make_channel_dialog(-100999, title="Partial Channel", username="partial")
-
-    async def _iter():
-        yield partial_dialog
-        await asyncio.sleep(120)
-
-    mock_client.iter_dialogs.return_value = _iter()
     pool._db = db
-    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool._dialogs_db_cache_ttl_sec = 3600.0
+    pool._dialogs_cache = {}
+    _bind_dialog_cache_methods(pool)
+
+    # Stale beyond the TTL -> refuse the cache and force a fresh fetch.
+    assert await ClientPool._get_db_cached_dialogs(pool, phone, "full") is None
+
+
+# --- #1359: resumable dialog sweep -------------------------------------------
+
+
+def _sweep_pool(db, phone: str = "+1234567890"):
+    """MagicMock pool wired for _fetch_dialogs_for_phone sweeps."""
+    from src.telegram.client_pool import ClientPool
+
+    pool = MagicMock(spec=ClientPool)
+    pool._db = db
     pool.release_client = AsyncMock()
     pool._classify_entity = MagicMock(return_value=("channel", False))
     _bind_dialog_cache_methods(pool)
+    return pool
+
+
+def _dialog_stream(dialogs):
+    async def _iter():
+        for dialog in dialogs:
+            yield dialog
+
+    return _iter()
+
+
+async def test_stream_dialogs_forwards_offset_kwargs():
+    """Offsets reach Telethon; a plain sweep still calls it with none (#1359)."""
+    from src.telegram.backends import TelegramTransportSession
+
+    client = MagicMock()
+    client.iter_dialogs.return_value = _dialog_stream([])
+    session = MagicMock(spec=TelegramTransportSession)
+    session._client = client
+    session._stream = MagicMock(side_effect=lambda _op, it: it)
+
+    TelegramTransportSession.stream_dialogs(session)
+    assert client.iter_dialogs.call_args.kwargs == {}
+
+    client.iter_dialogs.return_value = _dialog_stream([])
+    TelegramTransportSession.stream_dialogs(session, offset_id=42, offset_peer="peer")
+    assert client.iter_dialogs.call_args.kwargs == {"offset_id": 42, "offset_peer": "peer"}
+
+
+def test_advance_cursor_mirrors_telethon_split_offsets():
+    """offset_peer advances per dialog; offset_id/date only on message-bearing ones.
+
+    Telethon's `_DialogsIter._load_next_chunk` takes offset_id/offset_date from
+    the last dialog that HAS a message, but offset_peer from `buffer[-1]` — the
+    last dialog regardless. Advancing all three together left offset_peer behind
+    whenever a chunk ended with message-less dialogs, so the resumed request
+    replayed a seen tail, made no progress, and stopped the sweep early (#1359).
+    """
+    from src.telegram.pool_dialogs import _advance_cursor, _DialogCursor
+
+    cursor = _DialogCursor()
+
+    # A bare MagicMock has no usable input_entity anchor at all.
+    _advance_cursor(cursor, MagicMock())
+    assert cursor.is_start
+
+    _advance_cursor(cursor, _make_channel_dialog(-1002, message_id=77))
+    assert cursor.offset_id == 77
+    assert cursor.offset_peer == "input:-1002"
+    assert not cursor.is_start
+
+    # A trailing message-less dialog still moves the peer (Telethon's buffer[-1])
+    # while keeping the last real message id/date.
+    _advance_cursor(cursor, _make_channel_dialog(-1003, with_message=False))
+    assert cursor.offset_peer == "input:-1003"
+    assert cursor.offset_id == 77
+
+
+async def test_sweep_keeps_progress_on_blocking_flood(db):
+    """A long flood ends the sweep partial, but what arrived is persisted."""
+    from src.telegram.client_pool import ClientPool
+    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
+
+    pool = _sweep_pool(db)
+    kept = _make_channel_dialog(-1001, title="Kept", message_id=11)
+
+    async def _floods():
+        yield kept
+        raise HandledFloodWaitError(
+            FloodWaitInfo(
+                operation="get_dialogs_for_phone",
+                phone="+1234567890",
+                wait_seconds=3600,
+                next_available_at_utc=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                detail="blocking",
+            )
+        )
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.side_effect = [_floods(), _dialog_stream([])]
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+
+    result = await ClientPool._fetch_dialogs_for_phone(
+        pool, "+1234567890", True, "full", "full"
+    )
+
+    assert result.partial is True
+    # A blocking flood must not be retried, and the progress must be saved.
+    assert mock_client.iter_dialogs.call_count == 1
+    cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
+    assert [row["channel_id"] for row in cached] == [-1001]
+
+
+async def test_sweep_stops_when_a_resumed_pass_adds_nothing(db):
+    """No new dialogs on resume means stop -- and stay honest about it."""
+    from src.telegram.client_pool import ClientPool
+
+    pool = _sweep_pool(db)
+    only = _make_channel_dialog(-1001, title="Only", message_id=11)
+
+    async def _stalling():
+        yield only
+        await asyncio.sleep(120)
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.side_effect = [_stalling(), _dialog_stream([])]
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
 
     original_wait_for = asyncio.wait_for
 
@@ -1091,17 +1250,127 @@ async def test_get_dialogs_for_phone_partial_timeout_keeps_existing_db_cache(db)
         return await original_wait_for(coro, timeout=min(timeout, 0.05))
 
     with patch("src.telegram.pool_dialogs.asyncio.wait_for", fast_wait_for):
-        result = await ClientPool.get_dialogs_for_phone(
-            pool,
-            "+1234567890",
-            include_dm=True,
-            mode="full",
-            refresh=True,
+        result = await ClientPool._fetch_dialogs_for_phone(
+            pool, "+1234567890", True, "full", "full"
         )
 
-    assert result[0]["title"] == "Partial Channel"
+    assert mock_client.iter_dialogs.call_count == 2
+    # An empty resumed pass proves nothing about completeness -> stays partial,
+    # so a truncated snapshot can never overwrite the cache as if it were full.
     assert result.partial is True
+
+
+async def test_sweep_dedupes_overlapping_boundary_page(db):
+    """Resuming re-reads the boundary dialog; it must appear once."""
+    from src.telegram.client_pool import ClientPool
+
+    pool = _sweep_pool(db)
+    first = _make_channel_dialog(-1001, title="First", message_id=11)
+    overlap = _make_channel_dialog(-1001, title="First again", message_id=11)
+    fresh = _make_channel_dialog(-1002, title="Second", message_id=22)
+
+    async def _stalling():
+        yield first
+        await asyncio.sleep(120)
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.side_effect = [_stalling(), _dialog_stream([overlap, fresh])]
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+
+    original_wait_for = asyncio.wait_for
+
+    async def fast_wait_for(coro, timeout):
+        return await original_wait_for(coro, timeout=min(timeout, 0.05))
+
+    with patch("src.telegram.pool_dialogs.asyncio.wait_for", fast_wait_for):
+        result = await ClientPool._fetch_dialogs_for_phone(
+            pool, "+1234567890", True, "full", "full"
+        )
+
+    assert [row["channel_id"] for row in result] == [-1001, -1002]
+
+
+async def test_partial_sweep_does_not_poison_the_memory_cache(db):
+    """A partial snapshot must not be served as complete for the whole TTL."""
+    from src.telegram.client_pool import ClientPool
+
+    pool = _sweep_pool(db)
+    only = _make_channel_dialog(-1001, title="Only", message_id=11)
+
+    async def _stalling():
+        yield only
+        await asyncio.sleep(120)
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.side_effect = [_stalling(), _dialog_stream([])]
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+
+    original_wait_for = asyncio.wait_for
+
+    async def fast_wait_for(coro, timeout):
+        return await original_wait_for(coro, timeout=min(timeout, 0.05))
+
+    with patch("src.telegram.pool_dialogs.asyncio.wait_for", fast_wait_for):
+        result = await ClientPool._fetch_dialogs_for_phone(
+            pool, "+1234567890", True, "full", "full"
+        )
+
+    assert result.partial is True
+    assert pool._get_cached_dialogs("+1234567890", "full") is None
+
+
+async def test_upsert_dialogs_updates_in_place_and_isolates_phones(db):
+    """upsert refreshes a row without duplicating it or touching other phones."""
+    repo = db.repos.dialog_cache
+    await repo.replace_dialogs("+1111111111", [dict(_FAKE_DIALOGS[0])])
+    await repo.replace_dialogs("+2222222222", [dict(_FAKE_DIALOGS[1])])
+
+    renamed = dict(_FAKE_DIALOGS[0])
+    renamed["title"] = "Renamed"
+    added = {
+        "channel_id": -100777,
+        "title": "Added",
+        "username": "added",
+        "channel_type": "channel",
+        "deactivate": False,
+        "is_own": False,
+    }
+    await repo.upsert_dialogs("+1111111111", [renamed, added])
+
+    rows = {row["channel_id"]: row for row in await repo.list_dialogs("+1111111111")}
+    assert len(rows) == 2
+    assert rows[_FAKE_DIALOGS[0]["channel_id"]]["title"] == "Renamed"
+    assert rows[-100777]["title"] == "Added"
+
+    other = await repo.list_dialogs("+2222222222")
+    assert [row["channel_id"] for row in other] == [_FAKE_DIALOGS[1]["channel_id"]]
+
+
+async def test_sweep_ends_partial_when_the_gate_refuses_the_next_pass(db):
+    """Our own gate stops the sweep; progress is kept, not discarded (#1359).
+
+    DIALOGS_SPEC allows one stream_dialogs per minute and the limiter refuses
+    reservations beyond max_calls, so a second pass is genuinely unavailable.
+    """
+    from src.telegram.client_pool import ClientPool
+    from src.telegram.rate_limit_gate import TelegramRateLimitedError
+
+    pool = _sweep_pool(db)
+    kept = _make_channel_dialog(-1001, title="Kept", message_id=11)
+
+    async def _then_refused():
+        yield kept
+        raise TelegramRateLimitedError("+1234567890", "dialogs", 42.0)
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.side_effect = [_then_refused(), _dialog_stream([])]
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+
+    result = await ClientPool._fetch_dialogs_for_phone(
+        pool, "+1234567890", True, "full", "full"
+    )
+
+    assert result.partial is True
+    assert mock_client.iter_dialogs.call_count == 1
     cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
-    cached_by_id = {dialog["channel_id"]: dialog for dialog in cached}
-    assert set(cached_by_id) == {-100111, -100222, 999, 888, -100999}
-    assert cached_by_id[-100999]["title"] == "Partial Channel"
+    assert [row["channel_id"] for row in cached] == [-1001]

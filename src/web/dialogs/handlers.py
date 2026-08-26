@@ -93,7 +93,9 @@ async def dialogs_page(
     refresh_warning = None
     if command and (command.result_payload or {}).get("partial"):
         refresh_warning = (command.result_payload or {}).get(
-            "warning", "Обновление диалогов завершилось частично; кеш не обновлён."
+            "warning",
+            "Обход диалогов завершился частично; сохранено то, что успело прийти, "
+            "устаревшие записи не удалялись.",
         )
     return DialogTemplate(
         "dialogs.html",
