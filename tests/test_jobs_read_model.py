@@ -222,6 +222,44 @@ async def test_active_collection_feed_keeps_running_first_execution_order(db):
     assert [job.raw_id for job in legacy_list] == [running, pending_first]
 
 
+async def test_completed_collection_feed_uses_filtered_sql_page(db):
+    completed_first = await db.repos.tasks.create_collection_task(411, "Completed first")
+    await db.repos.tasks.update_collection_task(
+        completed_first, CollectionTaskStatus.COMPLETED
+    )
+    completed_second = await db.repos.tasks.create_collection_task(412, "Completed second")
+    await db.repos.tasks.update_collection_task(
+        completed_second, CollectionTaskStatus.FAILED
+    )
+    await db.repos.tasks.create_collection_task(413, "Still pending")
+
+    completed_states = [
+        JobRuntimeState.COMPLETED,
+        JobRuntimeState.FAILED,
+        JobRuntimeState.CANCELLED,
+        JobRuntimeState.INACTIVE,
+    ]
+    model = JobsReadModel(db)
+
+    first_page, total = await model.list_jobs_paginated(
+        sources=[JobSource.COLLECTION_TASK],
+        statuses=completed_states,
+        page=1,
+        limit=1,
+        now=NOW,
+    )
+    legacy_list = await model.list_jobs(
+        sources=[JobSource.COLLECTION_TASK],
+        statuses=completed_states,
+        limit=1,
+        now=NOW,
+    )
+
+    assert total == 2
+    assert [job.raw_id for job in first_page] == [completed_second]
+    assert [job.raw_id for job in legacy_list] == [completed_second]
+
+
 async def test_list_jobs_paginated_keeps_source_fetches_bounded(db, monkeypatch):
     tasks = [
         CollectionTask(
