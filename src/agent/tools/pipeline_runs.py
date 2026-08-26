@@ -13,6 +13,7 @@ from src.agent.tools.pipeline_schemas import (
     GET_PIPELINE_RUN_SCHEMA,
     LIST_PIPELINE_RUNS_SCHEMA,
     PUBLISH_PIPELINE_RUN_SCHEMA,
+    RESOLVE_UNCONFIRMED_SCHEMA,
     RUN_PIPELINE_SCHEMA,
     SELECT_VARIANT_SCHEMA,
 )
@@ -183,6 +184,10 @@ def register_pipeline_run_tools(db: Any, client_pool: Any, config: Any, ctx: Any
                 f"  Качество: "
                 f"{run.quality_score if hasattr(run, 'quality_score') and run.quality_score else 'n/a'}",
             ]
+            metadata = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+            unconfirmed_targets = metadata.get("unconfirmed_targets") or []
+            if unconfirmed_targets:
+                lines.append(f"  Неподтверждённые цели: {', '.join(unconfirmed_targets)}")
             result_kind = getattr(run, "result_kind", None)
             result_count = getattr(run, "result_count", None)
             if result_kind is not None and result_count is not None:
@@ -249,6 +254,36 @@ def register_pipeline_run_tools(db: Any, client_pool: Any, config: Any, ctx: Any
             return _text_response(f"Ошибка публикации: {exc}")
 
     tools.append(publish_pipeline_run)
+
+    @tool(
+        "resolve_unconfirmed_target",
+        "Resolve a Telegram target stuck in unconfirmed delivery. Use delivered after manually confirming the post, "
+        "or failed when it did not arrive so publishing may retry. Requires confirm=true.",
+        RESOLVE_UNCONFIRMED_SCHEMA,
+    )
+    async def resolve_unconfirmed_target(args):
+        gate = require_confirmation("изменит статус неподтверждённой доставки", args)
+        if gate:
+            return gate
+        run_id = args.get("run_id")
+        target = args.get("target")
+        action = args.get("action")
+        if run_id is None or not target or action not in {"delivered", "failed"}:
+            return _text_response("Ошибка: run_id, target и action (delivered/failed) обязательны.")
+        try:
+            run = await db.repos.generation_runs.get(int(run_id))
+            if run is None:
+                return _text_response(f"Run id={run_id} не найден.")
+            changed = await db.repos.generation_runs.resolve_unconfirmed_target(
+                int(run_id), str(target), delivered=action == "delivered"
+            )
+            if not changed:
+                return _text_response(f"Цель {target} не найдена среди unconfirmed для run id={run_id}.")
+            return _text_response(f"Цель {target} отмечена как {action} для run id={run_id}.")
+        except Exception as exc:
+            return _text_response(f"Ошибка разрешения unconfirmed delivery: {exc}")
+
+    tools.append(resolve_unconfirmed_target)
 
     @tool(
         "get_ab_variants",
