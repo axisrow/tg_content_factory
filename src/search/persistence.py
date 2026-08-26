@@ -61,11 +61,14 @@ class SearchPersistence:
         for ch in channels:
             existing = await self._search.channels.get_channel_by_channel_id(ch.channel_id)
             channel = ch
-            if existing is None and ch.is_active:
-                channel = channel_with_meta(ch, await self._fetch_meta(ch))
+            if existing is None:
+                if ch.is_active:
+                    channel = channel_with_meta(ch, await self._fetch_meta(ch))
+                # Search discovers channels, but is not an operator approval
+                # to collect them. Keep the row for message FKs while making
+                # new discoveries opt-in to collection.
+                channel = channel.model_copy(update={"is_active": False})
             await self._search.add_channel(channel)
-            if existing is None and channel.is_active:
-                new_channel_ids.append(channel.channel_id)
         return new_channel_ids
 
     async def _fetch_meta(self, channel: Channel) -> dict | None:

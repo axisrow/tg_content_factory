@@ -13,6 +13,7 @@ from telethon.tl.types import PeerChannel
 
 from src.models import Channel, ChannelStats
 from src.telegram.backends import adapt_transport_session
+from src.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS
 from src.telegram.collector_types import (
     AllStatsClientsFloodedError,
     NoActiveStatsClientsError,
@@ -138,31 +139,33 @@ class StatsMixin:
         """Resolve a channel entity by numeric ID for the stats path.
 
         Returns the resolved entity, or ``None`` when the caller should stop
-        and return ``None`` itself: either the channel was deactivated after a
-        permanent lookup failure (``ValueError``/``TypeError``) or the run is
-        skipped after a transient failure (timeout/connection drop, #815).
+        and return ``None`` itself. Uncertain lookup failures quarantine the
+        channel for review rather than changing its active state.
         Re-raises :class:`HandledFloodWaitError` so flood handling propagates.
         """
         try:
-            return await self._pool.resolve_entity_with_warm(
+            entity = await self._pool.resolve_entity_with_warm(
                 session,
                 phone,
                 PeerChannel(channel.channel_id),
                 operation=operation,
             )
+            if channel.id and channel.review_reason in TRANSIENT_REVIEW_REASONS:
+                await self._db.repos.channels.clear_channel_review(channel.id)
+            return entity
         except HandledFloodWaitError:
             raise
         except (ValueError, TypeError):
             logger.warning(
-                "Stats: channel %d all entity lookups failed, deactivating",
+                "Stats: channel %d entity lookup is uncertain, marking for review",
                 channel.channel_id,
             )
             if channel.id:
                 try:
-                    await self._db.set_channel_active(channel.id, False)
+                    await self._db.repos.channels.set_channel_review(channel.id, "stats_entity_unresolved")
                 except Exception:
                     logger.debug(
-                        "Stats: failed to deactivate channel %d",
+                        "Stats: failed to mark channel %d for review",
                         channel.channel_id,
                         exc_info=True,
                     )

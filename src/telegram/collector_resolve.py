@@ -37,6 +37,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
+TRANSIENT_REVIEW_REASONS = frozenset(
+    {"resolve_transient_error", "resolve_account_unavailable", "stats_entity_unresolved"}
+)
 
 
 class ResolveOutcome:
@@ -47,7 +50,7 @@ class ResolveOutcome:
     - ``entity`` set → proceed (run pre-filters + stream);
     - ``action == "retry"`` → ``continue`` the loop (account rotation / preferred-
       phone rediscovery), adopting ``channel`` when it was updated;
-    - ``action == "stop"`` → ``return total_collected`` (resolve timeout / deactivation);
+    - ``action == "stop"`` → ``return total_collected`` (resolve timeout / review quarantine);
     - ``flood_wait_sec`` set → record the flood wait and fall through to the
       ``finally`` + post-collection flood handler. The operation label is
       preserved exactly: ``RESOLVE_USERNAME_OPERATION`` for the username resolve,
@@ -162,11 +165,11 @@ async def _resolve_by_username(
             )
         except Exception:
             logger.warning(
-                "Channel %d: all entity lookups failed, " "deactivating",
+                "Channel %d: all entity lookups failed transiently, marking for review",
                 channel_id,
             )
             if channel.id:
-                await collector._db.set_channel_active(channel.id, False)
+                await collector._db.repos.channels.set_channel_review(channel.id, "resolve_transient_error")
             return ResolveOutcome(action="stop")
         new_username = getattr(fallback_entity, "username", None)
         new_title = (
@@ -182,6 +185,8 @@ async def _resolve_by_username(
             log_prefix="Channel",
         )
         return ResolveOutcome(action="stop")
+    if channel.id and channel.review_reason in TRANSIENT_REVIEW_REASONS:
+        await collector._db.repos.channels.clear_channel_review(channel.id)
     return ResolveOutcome(entity=entity)
 
 
@@ -213,9 +218,9 @@ async def _resolve_by_numeric(
         )
     except ValueError:
         # A numeric-PeerChannel miss means "this account cannot resolve the
-        # channel" — NOT "the channel is gone". It only justifies invalidating
-        # the stored preferred_phone / deactivating the channel when the resolve
-        # ran on the channel's OWN preferred account. When #1245's fallback
+        # channel" — NOT "the channel is gone". It may justify invalidating
+        # the stored preferred_phone when the resolve ran on the channel's OWN
+        # preferred account. When #1245's fallback
         # routed us to an arbitrary non-member account (because the real owner
         # was transiently flood-waited), a miss is expected and must not clear
         # preferred_phone or deactivate a live channel — that would turn a
@@ -233,7 +238,7 @@ async def _resolve_by_numeric(
         # live/usable account in the DB (get_account(active_only=True) is not
         # None — this already covers the flood case, since a flood-waited account
         # stays active). A DEAD owner (deleted/deactivated → get_account None)
-        # falls through to rediscovery + deactivation below, so a channel whose
+        # falls through to rediscovery + review quarantine below, so a channel whose
         # sole owner account was removed no longer sticks forever active-but-
         # uncollectable (liveness regression Fix B first introduced, dual-review).
         if own_preferred is not None and phone != own_preferred:
@@ -261,7 +266,7 @@ async def _resolve_by_numeric(
                 return ResolveOutcome(action="stop", channel=channel)
             logger.warning(
                 "Channel %d: preferred owner %s is no longer a live account "
-                "(removed/deactivated); proceeding to rediscovery/deactivation",
+                "(removed/deactivated); proceeding to rediscovery/review",
                 channel_id,
                 mask_phone(own_preferred),
             )
@@ -312,12 +317,12 @@ async def _resolve_by_numeric(
             return ResolveOutcome(action="retry", channel=channel)
         logger.warning(
             "Channel %d (%s): no connected account can resolve entity; "
-            "deactivating and skipping collection",
+            "marking for review and skipping this pass",
             channel_id,
             channel.title or channel.username or "no title",
         )
         if channel.id:
-            await collector._db.set_channel_active(channel.id, False)
+            await collector._db.repos.channels.set_channel_review(channel.id, "resolve_account_unavailable")
         return ResolveOutcome(action="stop", channel=channel)
     # Self-heal on success (#1327): remember which account resolved this channel
     # so the NEXT pass routes there directly instead of rolling the dice on
@@ -329,6 +334,8 @@ async def _resolve_by_numeric(
     own_preferred = channel.preferred_phone or collector._pool.get_phone_for_channel(
         channel_id
     )
+    if channel.id and channel.review_reason in TRANSIENT_REVIEW_REASONS:
+        await collector._db.repos.channels.clear_channel_review(channel.id)
     await collector._pool.remember_channel_phone(
         channel_id,
         phone,
