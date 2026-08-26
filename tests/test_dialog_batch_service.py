@@ -63,3 +63,18 @@ async def test_lease_release_retries_through_double_cancellation():
     await task
 
     assert repository.release_lease.await_count == 3
+
+
+@pytest.mark.anyio
+async def test_heartbeat_stop_survives_double_cancellation():
+    async def heartbeat():
+        await asyncio.Event().wait()
+
+    heartbeat_task = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0)
+    stop_task = asyncio.create_task(DialogBatchService._stop_heartbeat(heartbeat_task))
+    await asyncio.sleep(0)
+    stop_task.cancel()
+    stop_task.cancel()
+    await stop_task
+    assert heartbeat_task.cancelled()

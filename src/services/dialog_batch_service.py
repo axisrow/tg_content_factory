@@ -19,6 +19,20 @@ class DialogBatchService:
     def __init__(self, repository: DialogBatchRepository):
         self._repo = repository
 
+    @staticmethod
+    async def _stop_heartbeat(task: asyncio.Task[None]) -> None:
+        task.cancel()
+        async def wait_for_heartbeat() -> None:
+            await asyncio.gather(task, return_exceptions=True)
+
+        waiting = asyncio.create_task(wait_for_heartbeat())
+        while not waiting.done():
+            try:
+                await asyncio.shield(waiting)
+            except asyncio.CancelledError:
+                continue
+        await waiting
+
     async def _release_lease(self, batch_id: int, owner: str) -> None:
         """Persist cancellation cleanup even through transient SQLite contention."""
         async def release_with_retries() -> None:
@@ -122,8 +136,7 @@ class DialogBatchService:
                 return (await self._repo.get_batch(batch_id)) or batch
             except asyncio.CancelledError:
                 stop_heartbeat.set()
-                heartbeat_task.cancel()
-                await asyncio.gather(heartbeat_task, return_exceptions=True)
+                await self._stop_heartbeat(heartbeat_task)
                 await self._release_lease(batch_id, owner)
                 raise
             finally:
