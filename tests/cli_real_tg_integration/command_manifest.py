@@ -224,6 +224,7 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("pipeline", "ai-edit"): "provider spend/write operation",
     ("pipeline", "auto-select"): "provider spend (quality scoring) + local run mutation",
     ("pipeline", "bulk-approve"): "local moderation mutation",
+    ("pipeline", "resolve-unconfirmed"): "local moderation mutation",
     ("pipeline", "bulk-reject"): "local moderation mutation",
     ("pipeline", "delete"): "local pipeline delete mutation",
     ("pipeline", "edge", "add"): "local pipeline graph write",

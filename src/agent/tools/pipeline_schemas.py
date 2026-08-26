@@ -76,6 +76,12 @@ LIST_PIPELINE_RUNS_SCHEMA = {
 
 GET_PIPELINE_RUN_SCHEMA = {"run_id": RUN_ID_ARG}
 PUBLISH_PIPELINE_RUN_SCHEMA = {"run_id": RUN_ID_ARG, "confirm": CONFIRM_ARG}
+RESOLVE_UNCONFIRMED_SCHEMA = {
+    "run_id": RUN_ID_ARG,
+    "target": Annotated[str, "Цель PHONE:DIALOG_ID из unconfirmed_targets"],
+    "action": Annotated[str, "Решение: delivered или failed"],
+    "confirm": CONFIRM_ARG,
+}
 
 EXPORT_PIPELINE_JSON_SCHEMA = {"pipeline_id": PIPELINE_ID_ARG}
 

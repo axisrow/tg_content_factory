@@ -109,6 +109,7 @@
 | Детали запуска | `pipeline run-show` | `GET /pipelines/{id}/runs/{run_id}` | `get_pipeline_run` |
 | Очередь модерации | `pipeline queue` | `GET /pipelines/{id}/queue` | `get_pipeline_queue` |
 | Опубликовать | `pipeline publish` | `POST /pipelines/{id}/publish` | `publish_pipeline_run` |
+| Разрешить неподтверждённую доставку | `pipeline resolve-unconfirmed` | `POST /moderation/{id}/resolve-unconfirmed` | `resolve_unconfirmed_target` |
 | A/B варианты: список | `pipeline variants` | `GET /pipelines/{id}/variants/{run_id}` | `get_ab_variants` |
 | A/B варианты: выбрать | `pipeline select-variant` | `POST /pipelines/{id}/select-variant` | `select_variant` |
 | A/B варианты: авто-выбор | `pipeline auto-select` | `POST /pipelines/{id}/auto-select-best` | `auto_select_best` |

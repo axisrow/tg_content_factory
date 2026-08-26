@@ -27,6 +27,7 @@ TOOL_GROUPS: list[tuple[str, dict[str, ToolMeta]]] = [
         "list_pipeline_runs": ToolMeta(ToolCategory.READ),
         "get_pipeline_run": ToolMeta(ToolCategory.READ),
         "publish_pipeline_run": ToolMeta(ToolCategory.WRITE),
+        "resolve_unconfirmed_target": ToolMeta(ToolCategory.WRITE),
         "get_ab_variants": ToolMeta(ToolCategory.READ),
         "select_variant": ToolMeta(ToolCategory.WRITE),
         "auto_select_best": ToolMeta(ToolCategory.WRITE),

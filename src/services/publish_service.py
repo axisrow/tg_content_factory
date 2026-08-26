@@ -176,8 +176,11 @@ class PublishService:
                     # incremental-write discipline as delivered targets (#1116) — so a
                     # retry skips it instead of re-sending a possibly-delivered post.
                     unconfirmed.add(key)
+                    # Pass only this target: set_metadata unions target-progress
+                    # lists with the current DB value, avoiding resurrection of
+                    # targets resolved concurrently by an operator.
                     await self._db.repos.generation_runs.set_metadata(
-                        run.id, {"unconfirmed_targets": sorted(unconfirmed)}
+                        run.id, {"unconfirmed_targets": [key]}
                     )
                     continue
                 if not result.success:

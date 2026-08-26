@@ -316,6 +316,36 @@ class GenerationRunsRepository:
                 (safe_json_dumps(merged, ensure_ascii=False), run_id),
             )
 
+    async def resolve_unconfirmed_target(self, run_id: int, target: str, *, delivered: bool) -> bool:
+        """Resolve one manually checked target from ``unconfirmed_targets``.
+
+        Returns ``False`` when the run/target is not currently unconfirmed.  The
+        read-modify-write is atomic so two operators cannot lose a resolution.
+        """
+        assert self._database is not None, (
+            "GenerationRunsRepository.resolve_unconfirmed_target requires a Database reference"
+        )
+        async with self._database.transaction() as conn:
+            cur = await conn.execute("SELECT metadata FROM generation_runs WHERE id = ?", (run_id,))
+            row = await cur.fetchone()
+            current = safe_json_loads(row[0]) if row else None
+            if not isinstance(current, dict):
+                return False
+            unconfirmed = set(current.get("unconfirmed_targets") or [])
+            if target not in unconfirmed:
+                return False
+            unconfirmed.remove(target)
+            current["unconfirmed_targets"] = sorted(unconfirmed)
+            if delivered:
+                published = set(current.get("published_targets") or [])
+                published.add(target)
+                current["published_targets"] = sorted(published)
+            await conn.execute(
+                "UPDATE generation_runs SET metadata = ?, updated_at = datetime('now') WHERE id = ?",
+                (safe_json_dumps(current, ensure_ascii=False), run_id),
+            )
+            return True
+
     async def set_quality_score(
         self, run_id: int, score: float, issues: list[str] | None = None
     ) -> None:
