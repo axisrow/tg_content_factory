@@ -168,7 +168,7 @@ class TestCliRefresh:
             _run_cli("refresh", pool, cli_db, {"phone": _PHONE})
         out = capsys.readouterr().out
         assert "WARNING" in out
-        assert "reached dialogs were saved" in out
+        assert "dialog_cache was not updated" in out
         assert "Dialogs refreshed:" not in out
 
 
