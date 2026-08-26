@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 
 import typer
 
-from src.cli import runtime
+from src.cli import runtime, worker_handoff
 from src.cli.commands.common import (
     _NEG_ID_POSITIONAL,
     OutputFormat,
@@ -925,6 +925,97 @@ async def _dialogs_queue(args, db, pool) -> None:
         print(f"Cancelled pending commands: {cancelled}.")
 
 
+# action -> (queue command_type, argparse attrs forming its payload).
+#
+# Mirrors what the web UI enqueues in src/web/dialogs/handlers.py, so a CLI
+# hand-off produces a row the worker's TelegramCommandDispatcher already knows
+# how to execute. Actions absent here have no queue equivalent (local views such
+# as `cache-status`, or the `queue` group itself) and keep running in-process.
+_HANDOFF_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "send": ("dialogs.send", ("recipient", "text")),
+    "join": ("dialogs.join", ("target",)),
+    "resolve": ("dialogs.resolve", ("identifier",)),
+    "edit-message": ("dialogs.edit_message", ("chat_id", "message_id", "text")),
+    "delete-message": ("dialogs.delete_message", ("chat_id", "message_ids")),
+    "forward": ("dialogs.forward_messages", ("from_chat", "to_chat", "message_ids")),
+    "pin-message": ("dialogs.pin_message", ("chat_id", "message_id", "notify")),
+    "unpin-message": ("dialogs.unpin_message", ("chat_id", "message_id")),
+    "react": ("dialogs.react", ("chat_id", "message_id", "emoji")),
+    "download-media": ("dialogs.download_media", ("chat_id", "message_id")),
+    "participants": ("dialogs.participants", ("chat_id", "limit", "search")),
+    "edit-admin": ("dialogs.edit_admin", ("chat_id", "user_id")),
+    "edit-permissions": ("dialogs.edit_permissions", ("chat_id",)),
+    "kick": ("dialogs.kick", ("chat_id", "user_id")),
+    "broadcast-stats": ("dialogs.broadcast_stats", ("chat_id",)),
+    "archive": ("dialogs.archive", ("chat_id",)),
+    "unarchive": ("dialogs.unarchive", ("chat_id",)),
+    "mark-read": ("dialogs.mark_read", ("chat_id",)),
+    "refresh": ("dialogs.refresh", ()),
+    "cache-clear": ("dialogs.cache_clear", ()),
+}
+
+
+# Mutating commands whose in-process handlers prompt before acting. The
+# hand-off path bypasses those handlers, so it must prompt for the same set —
+# otherwise "no" would still queue the action.
+_HANDOFF_NEEDS_CONFIRMATION = frozenset(
+    {
+        "dialogs.send",
+        "dialogs.join",
+        "dialogs.edit_message",
+        "dialogs.delete_message",
+        "dialogs.forward_messages",
+        "dialogs.pin_message",
+        "dialogs.unpin_message",
+        "dialogs.react",
+        "dialogs.edit_admin",
+        "dialogs.edit_permissions",
+        "dialogs.kick",
+        "dialogs.archive",
+        "dialogs.unarchive",
+        "dialogs.mark_read",
+    }
+)
+
+
+async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
+    """Queue a dialogs action for the running worker; True when handed off.
+
+    Returns False when the action has no queue equivalent, so the caller falls
+    back to running it in-process. The payload mirrors the web UI's, which is
+    what ``TelegramCommandDispatcher`` expects.
+    """
+    entry = _HANDOFF_COMMANDS.get(args.dialogs_action)
+    if entry is None:
+        return False
+
+    command_type, fields = entry
+    payload: dict = {"phone": getattr(args, "phone", "") or ""}
+    for field in fields:
+        value = getattr(args, field, None)
+        if value is not None:
+            payload[field] = value
+
+    # Confirmation normally lives inside each in-process handler, which the
+    # hand-off path skips — re-gate here so answering "no" never queues work.
+    if command_type in _HANDOFF_NEEDS_CONFIRMATION:
+        details = ", ".join(f"{key}={value}" for key, value in payload.items() if value != "")
+        if not _confirm_or_abort(
+            args,
+            f"Queue {command_type} for the running worker:",
+            f"  {details}",
+        ):
+            return True
+
+    command_id = await TelegramCommandService(db).enqueue(
+        command_type,
+        payload=payload,
+        requested_by="cli:dialogs",
+    )
+    print(f"Сервер запущен: команда {command_type} #{command_id} поставлена в очередь воркера.")
+    return True
+
+
 # action -> (handler, needs_channel_service_cls). Depth-2 `queue` dispatches on
 # args.queue_action inside its own handler.
 _DIALOGS_HANDLERS: dict[str, tuple[Callable[..., Awaitable[None]], bool]] = {
@@ -976,6 +1067,20 @@ async def _dispatch(
     so the two entry points execute byte-identical logic.
     """
     config, db = await runtime_mod.init_db(args.config)
+
+    # A live `serve` owns the Telegram session files; opening a second pool here
+    # risks `database is locked`. Actions with a queue equivalent go to the
+    # worker instead, unless --direct was passed.
+    if not getattr(args, "direct", False) and worker_handoff.serve_is_running(config):
+        try:
+            handed_off = await _handoff_dialog_action(args, db)
+        except Exception:
+            await db.close()
+            raise
+        if handed_off:
+            await db.close()
+            return
+
     _, pool = await runtime_mod.init_pool(config, db)
     try:
         entry = _DIALOGS_HANDLERS.get(args.dialogs_action)
@@ -1047,7 +1152,10 @@ def _run_dialogs(ctx: typer.Context, dialogs_action: str, **ns_kwargs) -> None:
     """
     apply_startup(ctx)
     ns = argparse.Namespace(
-        config=ctx.obj.config, dialogs_action=dialogs_action, **ns_kwargs
+        config=ctx.obj.config,
+        dialogs_action=dialogs_action,
+        direct=worker_handoff.direct_requested(),
+        **ns_kwargs,
     )
     run_async(_dispatch(ns))
 
