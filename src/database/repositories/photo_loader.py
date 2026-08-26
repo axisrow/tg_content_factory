@@ -243,14 +243,46 @@ class PhotoLoaderRepository:
         row = await cur.fetchone()
         return self._to_item(row) if row else None
 
-    async def list_items(self, limit: int = 100, offset: int = 0) -> list[PhotoBatchItem]:
+    async def list_items(self, limit: int = 100) -> list[PhotoBatchItem]:
         """Последние ``limit`` элементов по всем батчам, новые первыми."""
         cur = await self._db.execute(
-            "SELECT * FROM photo_batch_items "
-            "ORDER BY created_at IS NULL ASC, created_at DESC, id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            "SELECT * FROM photo_batch_items ORDER BY id DESC LIMIT ?",
+            (limit,),
         )
         return [self._to_item(row) for row in await cur.fetchall()]
+
+    async def list_items_for_jobs_page(
+        self,
+        *,
+        limit: int,
+        cursor: tuple[str | None, int] | None = None,
+    ) -> tuple[list[PhotoBatchItem], tuple[str | None, int] | None]:
+        """Read one created-at ordered jobs page using an indexed keyset cursor."""
+        rows = []
+        if cursor is None or cursor[0] is not None:
+            where = "WHERE created_at IS NOT NULL"
+            params: tuple[object, ...] = ()
+            if cursor is not None:
+                where += " AND (created_at, id) < (?, ?)"
+                params = cursor
+            cur = await self._db.execute(
+                f"SELECT * FROM photo_batch_items {where} ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*params, limit),
+            )
+            rows.extend(await cur.fetchall())
+        if len(rows) < limit:
+            null_params: tuple[int, ...] = ()
+            null_where = "WHERE created_at IS NULL"
+            if cursor is not None and cursor[0] is None:
+                null_where += " AND id < ?"
+                null_params = (cursor[1],)
+            cur = await self._db.execute(
+                f"SELECT * FROM photo_batch_items {null_where} ORDER BY id DESC LIMIT ?",
+                (*null_params, limit - len(rows)),
+            )
+            rows.extend(await cur.fetchall())
+        next_cursor = (rows[-1]["created_at"], rows[-1]["id"]) if len(rows) == limit else None
+        return [self._to_item(row) for row in rows], next_cursor
 
     async def count_items(self) -> int:
         """Count all photo items for unified read-model pagination."""

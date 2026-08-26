@@ -104,10 +104,14 @@ CREATE TABLE IF NOT EXISTS telegram_commands (
     result_payload TEXT
 );
 
+CREATE INDEX IF NOT EXISTS idx_collection_tasks_created_id
+    ON collection_tasks(created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_telegram_commands_status_id
     ON telegram_commands(status, id);
 CREATE INDEX IF NOT EXISTS idx_telegram_commands_status_run_after_id
     ON telegram_commands(status, run_after, id);
+CREATE INDEX IF NOT EXISTS idx_telegram_commands_created_id
+    ON telegram_commands(created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS runtime_snapshots (
     snapshot_type TEXT NOT NULL,
@@ -277,6 +281,8 @@ CREATE INDEX IF NOT EXISTS idx_photo_batch_items_status_schedule
     ON photo_batch_items(status, schedule_at);
 CREATE INDEX IF NOT EXISTS idx_photo_batch_items_batch_id
     ON photo_batch_items(batch_id);
+CREATE INDEX IF NOT EXISTS idx_photo_batch_items_created_id
+    ON photo_batch_items(created_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS photo_auto_upload_jobs (
     id INTEGER PRIMARY KEY,

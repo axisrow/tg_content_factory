@@ -218,43 +218,43 @@ class JobsReadModel:
         paused: bool,
         active_ids: set[int],
     ) -> AsyncIterator[JobView]:
-        offset = 0
+        cursor: tuple[str | None, int] | None = None
         while True:
-            rows = await self._db.repos.tasks.get_collection_tasks(
+            rows, next_cursor = await self._db.repos.tasks.get_collection_tasks_for_jobs_page(
                 limit=_PAGINATION_FETCH_BATCH,
-                offset=offset,
+                cursor=cursor,
             )
             for task in rows:
                 yield self._from_collection_task(task, now, paused, active_ids)
-            if len(rows) < _PAGINATION_FETCH_BATCH:
+            if next_cursor is None:
                 return
-            offset += len(rows)
+            cursor = next_cursor
 
     async def _iter_telegram_jobs(self, now: datetime) -> AsyncIterator[JobView]:
-        offset = 0
+        cursor: tuple[str | None, int] | None = None
         while True:
-            rows = await self._db.repos.telegram_commands.list_commands(
+            rows, next_cursor = await self._db.repos.telegram_commands.list_commands_for_jobs_page(
                 limit=_PAGINATION_FETCH_BATCH,
-                offset=offset,
+                cursor=cursor,
             )
             for command in rows:
                 yield self._from_telegram_command(command, now)
-            if len(rows) < _PAGINATION_FETCH_BATCH:
+            if next_cursor is None:
                 return
-            offset += len(rows)
+            cursor = next_cursor
 
     async def _iter_photo_item_jobs(self) -> AsyncIterator[JobView]:
-        offset = 0
+        cursor: tuple[str | None, int] | None = None
         while True:
-            rows = await self._db.repos.photo_loader.list_items(
+            rows, next_cursor = await self._db.repos.photo_loader.list_items_for_jobs_page(
                 limit=_PAGINATION_FETCH_BATCH,
-                offset=offset,
+                cursor=cursor,
             )
             for item in rows:
                 yield self._from_photo_item(item)
-            if len(rows) < _PAGINATION_FETCH_BATCH:
+            if next_cursor is None:
                 return
-            offset += len(rows)
+            cursor = next_cursor
 
     async def _iter_photo_auto_jobs(self) -> AsyncIterator[JobView]:
         jobs = [self._from_photo_auto(job) for job in await self._db.repos.photo_loader.list_auto_jobs()]

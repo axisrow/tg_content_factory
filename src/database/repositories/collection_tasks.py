@@ -505,18 +505,49 @@ class CollectionTasksRepository:
             return None
         return self._to_task(row)
 
-    async def get_collection_tasks(self, limit: int = 20, offset: int = 0) -> list[CollectionTask]:
+    async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
         """Последние ``limit`` задач любого типа, новые первыми.
 
         Без постраничности — для неё см. :meth:`get_collection_tasks_paginated`.
         """
         cur = await self._db.execute(
-            "SELECT * FROM collection_tasks "
-            "ORDER BY created_at IS NULL ASC, created_at DESC, id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            "SELECT * FROM collection_tasks ORDER BY id DESC LIMIT ?", (limit,)
         )
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
+
+    async def get_collection_tasks_for_jobs_page(
+        self,
+        *,
+        limit: int,
+        cursor: tuple[str | None, int] | None = None,
+    ) -> tuple[list[CollectionTask], tuple[str | None, int] | None]:
+        """Read one created-at ordered jobs page using an indexed keyset cursor."""
+        rows = []
+        if cursor is None or cursor[0] is not None:
+            where = "WHERE created_at IS NOT NULL"
+            params: tuple[Any, ...] = ()
+            if cursor is not None:
+                where += " AND (created_at, id) < (?, ?)"
+                params = cursor
+            cur = await self._db.execute(
+                f"SELECT * FROM collection_tasks {where} ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*params, limit),
+            )
+            rows.extend(await cur.fetchall())
+        if len(rows) < limit:
+            null_params: tuple[int, ...] = ()
+            null_where = "WHERE created_at IS NULL"
+            if cursor is not None and cursor[0] is None:
+                null_where += " AND id < ?"
+                null_params = (cursor[1],)
+            cur = await self._db.execute(
+                f"SELECT * FROM collection_tasks {null_where} ORDER BY id DESC LIMIT ?",
+                (*null_params, limit - len(rows)),
+            )
+            rows.extend(await cur.fetchall())
+        next_cursor = (rows[-1]["created_at"], rows[-1]["id"]) if len(rows) == limit else None
+        return [self._to_task(row) for row in rows], next_cursor
 
     @staticmethod
     def _status_where(status_filter: str | None) -> tuple[str, tuple[Any, ...]]:

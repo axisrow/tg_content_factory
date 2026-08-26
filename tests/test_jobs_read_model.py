@@ -198,17 +198,20 @@ async def test_list_jobs_paginated_keeps_source_fetches_bounded(db, monkeypatch)
         )
         for index in range(501)
     ]
-    fetches: list[tuple[int, int]] = []
+    fetches: list[tuple[int, tuple[str | None, int] | None]] = []
 
-    async def fake_list_tasks(limit: int = 20, offset: int = 0):
-        fetches.append((limit, offset))
-        return tasks[offset : offset + limit]
+    async def fake_list_tasks(*, limit: int, cursor=None):
+        fetches.append((limit, cursor))
+        offset = 0 if cursor is None else 500
+        rows = tasks[offset : offset + limit]
+        next_cursor = (rows[-1].created_at.isoformat(), rows[-1].id) if len(rows) == limit else None
+        return rows, next_cursor
 
     async def fake_count_tasks(status_filter=None):
         assert status_filter is None
         return len(tasks)
 
-    monkeypatch.setattr(db.repos.tasks, "get_collection_tasks", fake_list_tasks)
+    monkeypatch.setattr(db.repos.tasks, "get_collection_tasks_for_jobs_page", fake_list_tasks)
     monkeypatch.setattr(db.repos.tasks, "count_collection_tasks", fake_count_tasks)
     model = JobsReadModel(db)
 
@@ -217,7 +220,7 @@ async def test_list_jobs_paginated_keeps_source_fetches_bounded(db, monkeypatch)
     )
     assert len(page) == 1
     assert total == 501
-    assert fetches == [(500, 0)]
+    assert fetches == [(500, None)]
 
     fetches.clear()
     filtered, filtered_total = await model.list_jobs_paginated(
@@ -229,7 +232,70 @@ async def test_list_jobs_paginated_keeps_source_fetches_bounded(db, monkeypatch)
     )
     assert len(filtered) == 10
     assert filtered_total == 501
-    assert fetches == [(500, 0), (500, 500)]
+    assert fetches[0] == (500, None)
+    assert fetches[1][0] == 500
+    assert fetches[1][1] is not None
+
+
+async def test_jobs_source_keyset_pages_are_ordered_and_complete(db):
+    task_ids = [
+        await db.repos.tasks.create_collection_task(300 + index, f"Task {index}")
+        for index in range(3)
+    ]
+    command_ids = [
+        await db.repos.telegram_commands.create_command(
+            TelegramCommand(command_type=f"command_{index}", payload={})
+        )
+        for index in range(3)
+    ]
+    item_ids = [
+        await db.repos.photo_loader.create_item(
+            PhotoBatchItem(phone="+1", target_dialog_id=10, file_paths=[f"{index}.jpg"])
+        )
+        for index in range(3)
+    ]
+    for table, ids in (
+        ("collection_tasks", task_ids),
+        ("telegram_commands", command_ids),
+        ("photo_batch_items", item_ids),
+    ):
+        await db.execute_write(
+            f"UPDATE {table} SET created_at = ? WHERE id = ?",
+            ("2026-06-22 10:00:00", ids[0]),
+        )
+        await db.execute_write(
+            f"UPDATE {table} SET created_at = ? WHERE id = ?",
+            ("2026-06-22 12:00:00", ids[1]),
+        )
+        await db.execute_write(f"UPDATE {table} SET created_at = NULL WHERE id = ?", (ids[2],))
+
+    async def assert_two_pages(fetch_page, expected_ids):
+        first, cursor = await fetch_page(limit=2)
+        second, final_cursor = await fetch_page(limit=2, cursor=cursor)
+        assert [row.id for row in [*first, *second]] == expected_ids
+        assert final_cursor is None
+
+    await assert_two_pages(
+        db.repos.tasks.get_collection_tasks_for_jobs_page,
+        [task_ids[1], task_ids[0], task_ids[2]],
+    )
+    await assert_two_pages(
+        db.repos.telegram_commands.list_commands_for_jobs_page,
+        [command_ids[1], command_ids[0], command_ids[2]],
+    )
+    await assert_two_pages(
+        db.repos.photo_loader.list_items_for_jobs_page,
+        [item_ids[1], item_ids[0], item_ids[2]],
+    )
+
+    cur = await db.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%_created_id'"
+    )
+    assert {row["name"] for row in await cur.fetchall()} >= {
+        "idx_collection_tasks_created_id",
+        "idx_telegram_commands_created_id",
+        "idx_photo_batch_items_created_id",
+    }
 
 
 async def test_photo_batch_read_model_counts_progress(db):
