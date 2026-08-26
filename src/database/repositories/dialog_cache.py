@@ -126,8 +126,17 @@ class DialogCacheRepository:
         )
         if not dialogs:
             return
-        cached_at = datetime.now(timezone.utc).isoformat()
         async with self._database.transaction() as conn:
+            # Keep a partial snapshot stale when it was already stale.  The
+            # cache freshness check uses MAX(cached_at) for the whole phone;
+            # stamping only the rows reached in this pass would incorrectly
+            # make the untouched tail look fresh.
+            cur = await conn.execute(
+                "SELECT MAX(cached_at) AS cached_at FROM dialog_cache WHERE phone = ?",
+                (phone,),
+            )
+            row = await cur.fetchone()
+            cached_at = row["cached_at"] or datetime.now(timezone.utc).isoformat()
             await conn.executemany(
                 """
                 INSERT INTO dialog_cache (
