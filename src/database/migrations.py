@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -263,7 +264,16 @@ async def ensure_columns(db: aiosqlite.Connection, table: str, columns: ColumnSp
         return
     for column_name, column_sql in columns.items():
         if column_name not in existing:
-            await db.execute(f"ALTER TABLE {table} ADD COLUMN {column_sql}")
+            try:
+                await db.execute(f"ALTER TABLE {table} ADD COLUMN {column_sql}")
+            except sqlite3.OperationalError as exc:
+                # Two split-deployment processes can both observe the old schema
+                # before either ALTER commits. The first ALTER wins; the second
+                # should treat the resulting duplicate-column error as the same
+                # idempotent end state rather than aborting startup.
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+                logger.debug("Column %s.%s was added concurrently", table, column_name)
 
 
 async def ensure_indexes(db: aiosqlite.Connection, index_statements: Sequence[str]) -> None:
