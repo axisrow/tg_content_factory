@@ -899,7 +899,6 @@ class Database:
         pages to the filesystem until a VACUUM (or incremental vacuum) is run.
         The PRAGMAs are constant-time metadata lookups and do not scan the DB.
         """
-        self._require()
         assert self._db is not None
 
         async def _pragma_int(name: str) -> int:
