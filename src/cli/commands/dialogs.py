@@ -1049,11 +1049,10 @@ async def _wait_for_handoff_command(db, command_id: int, action: str) -> None:
             if action in {"participants", "broadcast-stats"} and result.get("scope"):
                 snapshot_type = f"dialogs_{'participants' if action == 'participants' else 'broadcast_stats'}"
                 snapshot = await db.repos.runtime_snapshots.get_snapshot(snapshot_type, result["scope"])
-                if snapshot:
-                    if action == "participants":
-                        result = {**result, **snapshot.payload}
-                    else:
-                        result = {**result, **snapshot.payload}
+                # Filtered participant results are returned inline and must not
+                # be replaced by the shared unfiltered snapshot for this chat.
+                if snapshot and not (action == "participants" and "participants" in result):
+                    result = {**result, **snapshot.payload}
             _print_handoff_result(action, result)
             return
         if asyncio.get_running_loop().time() >= deadline:
@@ -1093,7 +1092,10 @@ def _print_handoff_result(action: str, result: dict) -> None:
         for key, value in (result.get("stats") or {}).items():
             print(f"  {key}: {value}")
     elif action == "refresh":
-        print(f"Dialogs refreshed: {result.get('dialogs_count', 0)} total.")
+        if result.get("partial"):
+            print(result.get("warning") or "Dialog refresh was incomplete; dialog cache was not updated.")
+        else:
+            print(f"Dialogs refreshed: {result.get('dialogs_count', 0)} total.")
 
 
 async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
