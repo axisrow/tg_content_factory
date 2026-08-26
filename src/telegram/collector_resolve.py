@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
 from telethon.tl.types import PeerChannel
 
+from src.database.live_accounts import account_row_exists
 from src.models import Channel
 from src.telegram.flood_wait import HandledFloodWaitError
 from src.telegram.rate_limiter import UsernameResolveRateLimitedError
@@ -247,6 +248,14 @@ async def _resolve_by_numeric(
                     "skipping this pass",
                     channel_id,
                     mask_phone(phone),
+                    mask_phone(own_preferred),
+                )
+                return ResolveOutcome(action="stop", channel=channel)
+            if await account_row_exists(collector._db, own_preferred):
+                logger.warning(
+                    "Channel %d: preferred owner %s exists but is temporarily "
+                    "unusable; keeping preferred_phone and channel active",
+                    channel_id,
                     mask_phone(own_preferred),
                 )
                 return ResolveOutcome(action="stop", channel=channel)
