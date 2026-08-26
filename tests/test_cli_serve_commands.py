@@ -92,6 +92,64 @@ def test_serve_with_web_pass_override():
     assert cfg.web.password == "newpass"
 
 
+# ---------------------------------------------------------------------------
+# serve — #1303 non-loopback host + weak password fail-fast
+# ---------------------------------------------------------------------------
+
+
+def test_serve_non_loopback_with_weak_password_exits():
+    """A non-loopback host with a known-weak password must refuse to start."""
+    from src.cli.commands.serve import run
+    cfg = make_app_config()
+    cfg.web.host = "0.0.0.0"
+    cfg.web.password = "changeme"
+    with patch("src.cli.commands.serve.load_config", return_value=cfg), \
+         patch("src.cli.commands.serve.create_app") as mock_create_app, \
+         patch("src.cli.commands.serve.uvicorn") as mock_uv:
+        with pytest.raises(SystemExit):
+            run(_args(web_pass=None))
+    mock_create_app.assert_not_called()
+    mock_uv.run.assert_not_called()
+
+
+def test_serve_loopback_with_weak_password_still_starts():
+    """Local dev on 127.0.0.1 must keep working even with a weak password."""
+    from src.cli.commands.serve import run
+    cfg = make_app_config()
+    cfg.web.host = "127.0.0.1"
+    cfg.web.password = "changeme"
+    app = MagicMock()
+    with patch("src.cli.commands.serve.load_config", return_value=cfg), \
+         patch("src.cli.commands.serve.create_app", return_value=app), \
+         patch("src.cli.commands.serve.register_current_process"), \
+         patch("src.cli.commands.serve.uvicorn") as mock_uv, \
+         patch("src.cli.commands.serve.unregister_current_process") as mock_unreg:
+        mock_uv.run = MagicMock(side_effect=KeyboardInterrupt)
+        run(_args(web_pass=None))
+    assert app.state.embed_worker is True
+    mock_unreg.assert_called_once()
+
+
+def test_serve_non_loopback_with_strong_password_starts_with_warning(caplog):
+    """A non-loopback host with a strong password should start but warn."""
+    from src.cli.commands.serve import run
+    cfg = make_app_config()
+    cfg.web.host = "0.0.0.0"
+    cfg.web.password = "a-strong-unique-password"
+    app = MagicMock()
+    with patch("src.cli.commands.serve.load_config", return_value=cfg), \
+         patch("src.cli.commands.serve.create_app", return_value=app), \
+         patch("src.cli.commands.serve.register_current_process"), \
+         patch("src.cli.commands.serve.uvicorn") as mock_uv, \
+         patch("src.cli.commands.serve.unregister_current_process") as mock_unreg:
+        mock_uv.run = MagicMock(side_effect=KeyboardInterrupt)
+        with caplog.at_level("WARNING"):
+            run(_args(web_pass=None))
+    assert app.state.embed_worker is True
+    mock_unreg.assert_called_once()
+    assert any("not localhost" in record.message for record in caplog.records)
+
+
 def test_worker_starts_runtime():
     from src.cli.commands.worker import run
 
