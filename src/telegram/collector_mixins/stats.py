@@ -138,9 +138,8 @@ class StatsMixin:
         """Resolve a channel entity by numeric ID for the stats path.
 
         Returns the resolved entity, or ``None`` when the caller should stop
-        and return ``None`` itself: either the channel was deactivated after a
-        permanent lookup failure (``ValueError``/``TypeError``) or the run is
-        skipped after a transient failure (timeout/connection drop, #815).
+        and return ``None`` itself. Uncertain lookup failures quarantine the
+        channel for review rather than changing its active state.
         Re-raises :class:`HandledFloodWaitError` so flood handling propagates.
         """
         try:
@@ -154,15 +153,15 @@ class StatsMixin:
             raise
         except (ValueError, TypeError):
             logger.warning(
-                "Stats: channel %d all entity lookups failed, deactivating",
+                "Stats: channel %d entity lookup is uncertain, marking for review",
                 channel.channel_id,
             )
             if channel.id:
                 try:
-                    await self._db.set_channel_active(channel.id, False)
+                    await self._db.repos.channels.set_channel_review(channel.id, "stats_entity_unresolved")
                 except Exception:
                     logger.debug(
-                        "Stats: failed to deactivate channel %d",
+                        "Stats: failed to mark channel %d for review",
                         channel.channel_id,
                         exc_info=True,
                     )
