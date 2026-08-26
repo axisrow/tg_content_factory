@@ -36,6 +36,36 @@ class TelegramSearch:
         self._pool = pool
         self._persistence = persistence
 
+    @staticmethod
+    async def _collect_search_messages(
+        session,
+        entity,
+        *,
+        query: str,
+        limit: int,
+        operation: str,
+    ) -> tuple[list[Message], dict[int, Channel]]:
+        """Collect and transform messages for the live search variants."""
+        collected: list[Message] = []
+        seen: dict[int, Channel] = {}
+        async for msg in session.stream_messages(entity, search=query, limit=limit):
+            converted = TelegramMessageTransformer.convert_telethon_message(msg)
+            if converted is None:
+                logger.debug(
+                    "Skipping message in %s: id=%s has no chat context",
+                    operation,
+                    getattr(msg, "id", None),
+                )
+                continue
+            collected.append(converted)
+            if converted.channel_id not in seen:
+                seen[converted.channel_id] = Channel(
+                    channel_id=converted.channel_id,
+                    title=converted.channel_title,
+                    username=converted.channel_username,
+                )
+        return collected, seen
+
     async def _warm_dialog_cache_if_needed(self, session, phone: str) -> None:
         cache_ready = False
         cache_checker = getattr(self._pool, "is_dialogs_fetched", None)
@@ -490,29 +520,15 @@ class TelegramSearch:
                 return acquired
             session, phone = acquired
 
-            async def _collect_my_chats() -> tuple[list[Message], dict[int, Channel]]:
-                collected: list[Message] = []
-                seen: dict[int, Channel] = {}
-                async for msg in session.stream_messages(None, search=query, limit=limit):
-                    converted = TelegramMessageTransformer.convert_telethon_message(msg)
-                    if converted is None:
-                        logger.debug(
-                            "Skipping message in search_my_chats: id=%s has no chat context",
-                            getattr(msg, "id", None),
-                        )
-                        continue
-                    collected.append(converted)
-                    if converted.channel_id not in seen:
-                        seen[converted.channel_id] = Channel(
-                            channel_id=converted.channel_id,
-                            title=converted.channel_title,
-                            username=converted.channel_username,
-                        )
-                return collected, seen
-
             try:
                 messages, seen_channels = await run_with_flood_wait(
-                    _collect_my_chats(),
+                    self._collect_search_messages(
+                        session,
+                        None,
+                        query=query,
+                        limit=limit,
+                        operation="search_my_chats",
+                    ),
                     operation="search_my_chats",
                     phone=phone,
                     pool=self._pool,
@@ -595,28 +611,14 @@ class TelegramSearch:
                                 f"Не удалось найти канал {channel_id} (нет username для fallback)",
                             )
 
-                async def _collect_in_channel() -> tuple[list[Message], dict[int, Channel]]:
-                    collected: list[Message] = []
-                    seen: dict[int, Channel] = {}
-                    async for msg in session.stream_messages(entity, search=query, limit=limit):
-                        converted = TelegramMessageTransformer.convert_telethon_message(msg)
-                        if converted is None:
-                            logger.debug(
-                                "Skipping message in search_in_channel: id=%s has no chat context",
-                                getattr(msg, "id", None),
-                            )
-                            continue
-                        collected.append(converted)
-                        if converted.channel_id not in seen:
-                            seen[converted.channel_id] = Channel(
-                                channel_id=converted.channel_id,
-                                title=converted.channel_title,
-                                username=converted.channel_username,
-                            )
-                    return collected, seen
-
                 messages, seen_channels = await run_with_flood_wait(
-                    _collect_in_channel(),
+                    self._collect_search_messages(
+                        session,
+                        entity,
+                        query=query,
+                        limit=limit,
+                        operation="search_in_channel",
+                    ),
                     operation="search_in_channel",
                     phone=phone,
                     pool=self._pool,
