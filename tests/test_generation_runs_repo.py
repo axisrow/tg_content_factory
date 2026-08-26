@@ -430,3 +430,18 @@ async def test_publish_claim_allows_only_one_caller(db):
     assert run.moderation_status == "publishing"
     await repo.release_publish_claim(run_id, "approved")
 
+
+@pytest.mark.anyio
+async def test_reset_running_on_startup_recovers_expired_publish_claim(db):
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt-template")
+    await repo.set_moderation_status(run_id, "publishing")
+    await db.execute_write(
+        "UPDATE generation_runs SET updated_at = datetime('now', '-11 minutes') WHERE id = ?",
+        (run_id,),
+    )
+
+    assert await repo.reset_running_on_startup() == 1
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.moderation_status == "approved"

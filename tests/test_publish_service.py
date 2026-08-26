@@ -56,6 +56,9 @@ class FakeGenerationRunsRepo:
     async def release_publish_claim(self, run_id, previous_status):
         pass
 
+    async def refresh_publish_claim(self, run_id):
+        pass
+
     async def set_metadata(self, run_id, metadata):
         self.set_metadata_calls += 1
         if self._fail_after is not None and self.set_metadata_calls > self._fail_after:

@@ -147,6 +147,7 @@ class PublishService:
 
             results: list[PublishResult] = []
             for target in targets:
+                await self._db.repos.generation_runs.refresh_publish_claim(run.id)
                 key = _target_key(target)
                 if key in delivered:
                     # Already published on a previous attempt — skip to avoid a duplicate.
