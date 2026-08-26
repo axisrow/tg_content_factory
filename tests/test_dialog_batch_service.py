@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -47,3 +48,18 @@ async def test_run_cancellation_cancels_executor(db):
 
     await service.run(batch_id, lambda _item: asyncio.sleep(0))
     assert (await db.repos.dialog_batch.get_batch(batch_id)).status.value == "completed"
+
+
+@pytest.mark.anyio
+async def test_lease_release_retries_through_double_cancellation():
+    repository = MagicMock()
+    repository.release_lease = AsyncMock(side_effect=[RuntimeError("busy"), RuntimeError("busy"), None])
+    service = DialogBatchService(repository)
+
+    task = asyncio.create_task(service._release_lease(1, "owner"))
+    await asyncio.sleep(0)
+    task.cancel()
+    task.cancel()
+    await task
+
+    assert repository.release_lease.await_count == 3
