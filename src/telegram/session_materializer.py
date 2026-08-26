@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import logging
 import re
 import sqlite3
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from telethon.sessions import SQLiteSession, StringSession
@@ -24,6 +26,20 @@ class SessionMaterializer:
 
     def materialize(self, phone: str, session_string: str) -> str:
         self._cache_dir.mkdir(parents=True, exist_ok=True)
+        with self._phone_lock(phone):
+            return self._materialize_locked(phone, session_string)
+
+    @contextmanager
+    def _phone_lock(self, phone: str):
+        lock_path = self._cache_dir / f"{self._base_path(phone).name}.lock"
+        with lock_path.open("a+") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _materialize_locked(self, phone: str, session_string: str) -> str:
         digest = hashlib.sha256(session_string.encode("utf-8")).hexdigest()
         base_path = self._base_path(phone)
         hash_path = self._hash_path(phone)
