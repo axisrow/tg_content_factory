@@ -52,7 +52,7 @@ REAL_TG_OPTIONAL_ENV_VARS = (
 @pytest.fixture
 async def db(anyio_backend):
     """In-memory test database."""
-    database = Database(":memory:")
+    database = Database(":memory:", session_encryption_secret="test-session-encryption-key")
     await database.initialize()
     yield database
     await database.close()
@@ -62,7 +62,7 @@ async def db(anyio_backend):
 def cli_db(tmp_path):
     """Sync fixture: real SQLite for CLI tests."""
     db_path = str(tmp_path / "cli_test.db")
-    database = Database(db_path)
+    database = Database(db_path, session_encryption_secret="test-session-encryption-key")
     loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(database.initialize())

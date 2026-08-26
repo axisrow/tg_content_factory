@@ -135,7 +135,7 @@ async def test_add_account_if_absent_never_overwrites(tmp_path):
     read and the second overwrite the first. `add_account_if_absent` makes the DB
     the source of truth (ON CONFLICT DO NOTHING), so the window is closed.
     """
-    db = Database(str(tmp_path / "atomic.db"))
+    db = Database(str(tmp_path / "atomic.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         first_id = await db.repos.accounts.add_account_if_absent(
