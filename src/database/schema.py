@@ -284,6 +284,37 @@ CREATE INDEX IF NOT EXISTS idx_photo_batch_items_batch_id
 CREATE INDEX IF NOT EXISTS idx_photo_batch_items_created_id
     ON photo_batch_items(created_at DESC, id DESC);
 
+CREATE TABLE IF NOT EXISTS dialog_batch_operations (
+    id INTEGER PRIMARY KEY,
+    phone TEXT NOT NULL,
+    op_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT DEFAULT (datetime('now')),
+    finished_at TEXT,
+    lease_owner TEXT,
+    lease_until TEXT
+);
+
+CREATE TABLE IF NOT EXISTS dialog_batch_items (
+    id INTEGER PRIMARY KEY,
+    batch_id INTEGER NOT NULL,
+    phone TEXT NOT NULL,
+    dialog_id INTEGER NOT NULL,
+    channel_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    error TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    finished_at TEXT,
+    lease_owner TEXT,
+    lease_until TEXT,
+    FOREIGN KEY (batch_id) REFERENCES dialog_batch_operations(id)
+);
+CREATE INDEX IF NOT EXISTS idx_dialog_batch_items_claim
+    ON dialog_batch_items(status, id);
+CREATE INDEX IF NOT EXISTS idx_dialog_batch_items_batch
+    ON dialog_batch_items(batch_id, id);
+
 CREATE TABLE IF NOT EXISTS photo_auto_upload_jobs (
     id INTEGER PRIMARY KEY,
     phone TEXT NOT NULL,
