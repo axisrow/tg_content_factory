@@ -260,6 +260,72 @@ def test_edit_permissions_handoff_includes_all_fields(cli_db):
     assert payload["send_media"] is False
 
 
+def test_edit_permissions_handoff_normalizes_string_false_to_bool_false(cli_db):
+    """`bool("false")` is `True` in Python — a raw string must never reach the worker.
+
+    Regression (Codex, PR #1324 round 3): `dialogs_edit_permissions` declares
+    `send_messages`/`send_media` as `str | None` Typer options (free-text
+    "true/false", not a paired boolean flag), so the real CLI hands
+    `_handoff_dialog_action` the literal string "false" for
+    `--send-messages false`. Without normalization the payload stored that
+    string verbatim, and the worker's `bool(payload["send_messages"])`
+    evaluated any non-empty string — including "false" — as `True`. A command
+    meant to forbid sending messages/media was silently enqueued as allowing
+    it. Uses raw strings (as the real Typer parse produces), not the
+    `_ns()`-default Python bools other tests use — those mask this exact bug.
+    """
+    _run(
+        _ns(
+            dialogs_action="edit-permissions",
+            phone="+1234567890",
+            chat_id="-100123",
+            user_id="555",
+            until_date=None,
+            send_messages="false",
+            send_media="true",
+            yes=True,
+            direct=False,
+        ),
+        cli_db,
+        serve_running=True,
+    )
+
+    commands = _commands(cli_db)
+    payload = commands[0].payload
+    assert payload["send_messages"] is False
+    assert payload["send_media"] is True
+
+
+def test_react_clear_handoff_preserves_clear_flag(cli_db):
+    """`dialogs react --clear` must clear the reaction, not error out.
+
+    Regression (Codex, PR #1324 round 3): `_HANDOFF_COMMANDS["react"]` omitted
+    `clear`, so the queued payload carried `emoji=None` with no signal that
+    the caller wanted to *clear* the reaction rather than set an (invalid,
+    empty) one. The worker handler always called
+    `normalize_outgoing_reaction_emoji("")`, which raises for an empty/missing
+    emoji instead of taking the clear path the in-process handler already has.
+    """
+    _run(
+        _ns(
+            dialogs_action="react",
+            phone="+1234567890",
+            chat_id="-100123",
+            message_id=42,
+            emoji=None,
+            clear=True,
+            yes=True,
+            direct=False,
+        ),
+        cli_db,
+        serve_running=True,
+    )
+
+    commands = _commands(cli_db)
+    assert [c.command_type for c in commands] == ["dialogs.react"]
+    assert commands[0].payload["clear"] is True
+
+
 def test_mark_read_handoff_includes_max_id(cli_db):
     """A bounded mark-read must not silently mark the whole dialog read.
 

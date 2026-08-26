@@ -940,8 +940,14 @@ _HANDOFF_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "forward": ("dialogs.forward_messages", ("from_chat", "to_chat", "message_ids")),
     "pin-message": ("dialogs.pin_message", ("chat_id", "message_id", "notify")),
     "unpin-message": ("dialogs.unpin_message", ("chat_id", "message_id")),
-    "react": ("dialogs.react", ("chat_id", "message_id", "emoji")),
-    "download-media": ("dialogs.download_media", ("chat_id", "message_id")),
+    "react": ("dialogs.react", ("chat_id", "message_id", "emoji", "clear")),
+    # download-media is deliberately absent: --output-dir names a path on the
+    # CLI's own machine, but the worker (possibly a different machine/container
+    # in a split deployment) always saves to its own data/downloads/ — the same
+    # contract the web UI already uses (it never sends output_dir either). A
+    # user-supplied path silently going nowhere the worker can see would be
+    # worse than staying in-process, where --output-dir is honored exactly
+    # (Codex, PR #1324 round 3 audit).
     "participants": ("dialogs.participants", ("chat_id", "limit", "search")),
     "edit-admin": ("dialogs.edit_admin", ("chat_id", "user_id", "is_admin", "title")),
     "edit-permissions": (
@@ -1003,6 +1009,16 @@ async def _resolve_handoff_phone(args, db) -> str:
     return phones[0] if phones else ""
 
 
+# Typer options that are declared `str | None` (free-text "true/false", since
+# they need a third "not specified" state that a paired boolean flag can't
+# express) but the worker handler does `bool(payload[field])`. In Python
+# bool("false") is True, so a raw string here would let e.g. "deny sending
+# messages" silently enqueue as "allow" — normalize to a real bool the same
+# way `_dialogs_edit_permissions` (the in-process handler) already does
+# (Codex, PR #1324 round 3).
+_HANDOFF_STRING_BOOL_FIELDS = frozenset({"send_messages", "send_media"})
+
+
 async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
     """Queue a dialogs action for the running worker; True when handed off.
 
@@ -1018,8 +1034,11 @@ async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
     payload: dict = {"phone": await _resolve_handoff_phone(args, db)}
     for field in fields:
         value = getattr(args, field, None)
-        if value is not None:
-            payload[field] = value
+        if value is None:
+            continue
+        if field in _HANDOFF_STRING_BOOL_FIELDS and isinstance(value, str):
+            value = value.lower() in ("1", "true", "on")
+        payload[field] = value
 
     # Confirmation normally lives inside each in-process handler, which the
     # hand-off path skips — re-gate here so answering "no" never queues work.
