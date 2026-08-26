@@ -346,13 +346,37 @@ async def test_account_session_encrypted_at_rest(tmp_path):
 
 
 @pytest.mark.anyio
+async def test_account_session_write_requires_encryption_key(tmp_path):
+    database = Database(str(tmp_path / "encryption_required.db"))
+    await database.initialize()
+
+    account = Account(phone="+71230000002", session_string="session_plain")
+    with pytest.raises(RuntimeError, match="SESSION_ENCRYPTION_KEY"):
+        await database.add_account(account)
+    with pytest.raises(RuntimeError, match="SESSION_ENCRYPTION_KEY"):
+        await database.repos.accounts.add_account_if_absent(account)
+
+    cur = await database.execute(
+        "SELECT session_string FROM accounts WHERE phone = ?",
+        (account.phone,),
+    )
+    assert await cur.fetchone() is None
+    await database.close()
+
+
+@pytest.mark.anyio
 async def test_plaintext_sessions_migrate_on_init(tmp_path):
     """Plaintext sessions are encrypted during initialize(), not get_accounts()."""
     db_path = str(tmp_path / "plaintext_migration.db")
 
-    legacy_db = Database(db_path)
+    legacy_db = Database(db_path, session_encryption_secret="migration-secret")
     await legacy_db.initialize()
     await legacy_db.add_account(Account(phone="+71230000001", session_string="legacy_plaintext"))
+    await legacy_db.execute(
+        "UPDATE accounts SET session_string = ? WHERE phone = ?",
+        ("legacy_plaintext", "+71230000001"),
+    )
+    await legacy_db.db.commit()
     await legacy_db.close()
 
     encrypted_db = Database(db_path, session_encryption_secret="migration-secret")
@@ -379,7 +403,7 @@ async def test_migrate_sessions_skips_bad_row_without_blocking_readonly_startup(
     """Unsupported encrypted rows stay visible through the metadata API."""
     db_path = str(tmp_path / "rollback_migration.db")
 
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="migration-secret")
     await db.initialize()
     await db.add_account(Account(phone="+71230000010", session_string="good_session"))
     # Insert a bad row directly — unsupported enc version
