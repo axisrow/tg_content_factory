@@ -130,6 +130,40 @@ class GenerationRunsRepository:
             (status, run_id),
         )
 
+    async def claim_for_publish(self, run_id: int, expected_status: str) -> bool:
+        """Atomically claim a run so concurrent publishers cannot both send it."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.claim_for_publish requires a Database reference"
+        )
+        cur = await self._database.execute_write(
+            ("UPDATE generation_runs SET moderation_status = 'publishing', updated_at = datetime('now') "
+             "WHERE id = ? AND moderation_status IN ('approved', 'published') AND moderation_status = ?"),
+            (run_id, expected_status),
+        )
+        return cur.rowcount == 1
+
+    async def release_publish_claim(self, run_id: int, previous_status: str) -> None:
+        """Release a failed publish claim without overwriting a later state."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.release_publish_claim requires a Database reference"
+        )
+        await self._database.execute_write(
+            ("UPDATE generation_runs SET moderation_status = ?, updated_at = datetime('now') "
+             "WHERE id = ? AND moderation_status = 'publishing'"),
+            (previous_status, run_id),
+        )
+
+    async def refresh_publish_claim(self, run_id: int) -> None:
+        """Renew the publish lease while a long-running send is in progress."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.refresh_publish_claim requires a Database reference"
+        )
+        await self._database.execute_write(
+            "UPDATE generation_runs SET updated_at = datetime('now') "
+            "WHERE id = ? AND moderation_status = 'publishing'",
+            (run_id,),
+        )
+
     async def set_moderation_status_bulk(self, run_ids: list[int], status: str) -> None:
         """Atomically set ``moderation_status`` for many runs (issue #1041).
 
@@ -254,18 +288,33 @@ class GenerationRunsRepository:
         )
 
     async def set_metadata(self, run_id: int, metadata: dict) -> None:
-        """Persist the run metadata JSON without touching status or published_at.
+        """Merge metadata into the run JSON without touching other fields.
 
-        Used to record incremental publish progress (per-target delivery) so a
-        retry does not re-send to targets already published.
+        The read and write happen in one transaction. Callers recording
+        publish progress pass only the changed key, avoiding stale whole-blob
+        writes that could lose a concurrent target update. Target progress
+        lists are unioned as well: two publishers may have stale snapshots of
+        the same key and both deliveries must remain recorded.
         """
         assert self._database is not None, (
             "GenerationRunsRepository.set_metadata requires a Database reference"
         )
-        await self._database.execute_write(
-            "UPDATE generation_runs SET metadata = ?, updated_at = datetime('now') WHERE id = ?",
-            (safe_json_dumps(metadata, ensure_ascii=False), run_id),
-        )
+        async with self._database.transaction() as conn:
+            cur = await conn.execute("SELECT metadata FROM generation_runs WHERE id = ?", (run_id,))
+            row = await cur.fetchone()
+            current = safe_json_loads(row[0]) if row else None
+            merged = dict(current) if isinstance(current, dict) else {}
+            merged.update(metadata)
+            for key in ("published_targets", "unconfirmed_targets"):
+                if key not in metadata or not metadata[key]:
+                    continue
+                existing = current.get(key) if isinstance(current, dict) else None
+                if isinstance(existing, list):
+                    merged[key] = sorted(set(existing) | set(metadata[key]))
+            await conn.execute(
+                "UPDATE generation_runs SET metadata = ?, updated_at = datetime('now') WHERE id = ?",
+                (safe_json_dumps(merged, ensure_ascii=False), run_id),
+            )
 
     async def set_quality_score(
         self, run_id: int, score: float, issues: list[str] | None = None
@@ -348,7 +397,16 @@ class GenerationRunsRepository:
         cur = await self._database.execute_write(
             "UPDATE generation_runs SET status = 'failed', updated_at = datetime('now') WHERE status = 'running'",
         )
-        return cur.rowcount or 0
+        # A claim is a lease, not an unconditional reset: a replacement worker
+        # must not release a live publisher during an overlapping rollout. The
+        # publish loop renews updated_at before each target; ten minutes is well
+        # above the 120-second Telegram send timeout.
+        abandoned = await self._database.execute_write(
+            "UPDATE generation_runs SET moderation_status = 'approved', updated_at = datetime('now') "
+            "WHERE moderation_status = 'publishing' "
+            "AND updated_at < datetime('now', '-10 minutes')",
+        )
+        return (cur.rowcount or 0) + (abandoned.rowcount or 0)
 
     async def get(self, run_id: int) -> GenerationRun | None:
         """Один запуск по id, либо ``None`` если такого нет."""

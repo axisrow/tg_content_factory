@@ -50,13 +50,22 @@ class FakeGenerationRunsRepo:
     async def set_published_at(self, run_id):
         self.published_ids.append(run_id)
 
+    async def claim_for_publish(self, run_id, expected_status):
+        return True
+
+    async def release_publish_claim(self, run_id, previous_status):
+        pass
+
+    async def refresh_publish_claim(self, run_id):
+        pass
+
     async def set_metadata(self, run_id, metadata):
         self.set_metadata_calls += 1
         if self._fail_after is not None and self.set_metadata_calls > self._fail_after:
             raise RuntimeError("simulated DB failure during publish progress write")
         # Store a copy: the run's metadata is mutated in place across attempts,
         # so without copying every persisted snapshot would alias the same dict.
-        self.metadata_by_id[run_id] = dict(metadata)
+        self.metadata_by_id.setdefault(run_id, {}).update(metadata)
 
 
 class FakeClientPool:
