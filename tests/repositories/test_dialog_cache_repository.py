@@ -58,3 +58,23 @@ async def test_get_cached_at_preserves_aware_value_from_normal_write_path(tmp_pa
         assert abs((datetime.now(timezone.utc) - cached_at).total_seconds()) < 60
     finally:
         await db.close()
+
+
+@pytest.mark.anyio
+async def test_upsert_dialogs_preserves_previous_snapshot_rows(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        await db.repos.dialog_cache.replace_dialogs(
+            "+70003",
+            [{"channel_id": 1, "title": "Existing", "channel_type": "channel"}],
+        )
+        await db.repos.dialog_cache.upsert_dialogs(
+            "+70003",
+            [{"channel_id": 2, "title": "Reached before timeout", "channel_type": "group"}],
+        )
+
+        cached = await db.repos.dialog_cache.list_dialogs("+70003")
+        assert {dialog["channel_id"] for dialog in cached} == {1, 2}
+    finally:
+        await db.close()
