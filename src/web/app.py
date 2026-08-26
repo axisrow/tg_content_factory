@@ -253,7 +253,7 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, password: str):
         super().__init__(app)
         self.password = password
-        self._failures: dict[str, tuple[int, float]] = {}
+        self._failures: dict[str, tuple[int, float, float]] = {}
 
     @staticmethod
     def _client_key(request: Request) -> str:
@@ -263,19 +263,24 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         entry = self._failures.get(key)
         if not entry:
             return 0
-        failures, until = entry
+        failures, blocked_until, stale_at = entry
         now = time.monotonic()
-        if until > now:
-            return max(1, int(until - now))
-        if failures >= self.max_failures:
+        if blocked_until > now:
+            return max(1, int(blocked_until - now))
+        if stale_at <= now:
             self._failures.pop(key, None)
         return 0
 
     def _record_failure(self, key: str) -> None:
-        failures, _ = self._failures.get(key, (0, 0.0))
+        now = time.monotonic()
+        if key not in self._failures and len(self._failures) >= 4096:
+            self._failures.pop(next(iter(self._failures)))
+        failures, _, stale_at = self._failures.get(key, (0, 0.0, 0.0))
+        if stale_at <= now:
+            failures = 0
         failures += 1
-        until = time.monotonic() + self.lockout_seconds if failures >= self.max_failures else 0.0
-        self._failures[key] = (failures, until)
+        blocked_until = now + self.lockout_seconds if failures >= self.max_failures else 0.0
+        self._failures[key] = (failures, blocked_until, now + self.lockout_seconds)
 
     @staticmethod
     def _rate_limited(retry_after: int) -> Response:
@@ -287,9 +292,6 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         key = self._client_key(request)
-        retry_after = self._blocked(key)
-        if retry_after:
-            return self._rate_limited(retry_after)
 
         # GET /login remains public. POST failures are counted after the route
         # returns, so form credentials never need to be logged or buffered here.
@@ -297,6 +299,10 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         if request.url.path == "/login":
+            if request.method == "POST":
+                retry_after = self._blocked(key)
+                if retry_after:
+                    return self._rate_limited(retry_after)
             response = await call_next(request)
             if request.method == "POST":
                 if response.status_code == 401:
@@ -330,6 +336,9 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         # A browser request without credentials is an unauthenticated visit,
         # not a failed Basic-auth attempt. Only throttle supplied credentials.
         if auth:
+            retry_after = self._blocked(key)
+            if retry_after:
+                return self._rate_limited(retry_after)
             self._record_failure(key)
 
         target = login_redirect_url(redirect_target_from_request(request))
