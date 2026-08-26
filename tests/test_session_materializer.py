@@ -187,3 +187,59 @@ def test_materialize_warns_when_wal_upgrade_blocked_by_live_transaction(tmp_path
     # still be in DELETE mode, and that must be visible in the logs.
     assert _journal_mode(session_path) == "delete"
     assert any("WAL" in record.message and "70000000001" in record.message for record in caplog.records)
+
+
+def test_materialize_retries_wal_upgrade_after_transaction_releases(tmp_path):
+    """A short-lived blocker must not permanently doom the caller to DELETE mode.
+
+    Regression (Codex, PR #1323 round 2): round 1 only logged the failure but
+    still handed the caller a path that was silently left in DELETE mode, so a
+    caller connecting right after materialize() returned could still hit the
+    exact ``database is locked`` bug this PR exists to fix. Since the blocking
+    transaction that caused the first attempt to fail is normally short-lived
+    (a `serve` request, not a long-held lock), a few bounded retries with a
+    short backoff should let the upgrade succeed before materialize() returns,
+    closing the gap between "we logged it" and "we prevented it".
+    """
+    import threading
+
+    materializer = SessionMaterializer(tmp_path / "sessions")
+    session_string = _make_session_string(dc_id=2, ip="149.154.167.51", port=443, fill=5)
+    session_path = materializer.materialize("+70000000001", session_string)
+    session_file = f"{session_path}.session"
+
+    conn = sqlite3.connect(session_file)
+    try:
+        conn.execute("PRAGMA journal_mode=DELETE")
+    finally:
+        conn.close()
+    assert _journal_mode(session_path) == "delete"
+
+    # Hold the write lock for a moment on a background thread, then release it —
+    # mirrors a live `serve` process finishing a short transaction while
+    # materialize() is retrying. The blocker connection is created and used
+    # entirely within the thread: sqlite3 connections are not shareable across
+    # threads by default.
+    held = threading.Event()
+
+    def _hold_then_release():
+        blocker = sqlite3.connect(session_file)
+        blocker.execute("BEGIN IMMEDIATE")
+        held.set()
+        import time
+
+        time.sleep(0.05)
+        blocker.rollback()
+        blocker.close()
+
+    thread = threading.Thread(target=_hold_then_release)
+    thread.start()
+    held.wait(1.0)
+    try:
+        # Same string → hash matches → early-return (cache-hit) branch.
+        result = materializer.materialize("+70000000001", session_string)
+    finally:
+        thread.join()
+
+    assert result == session_path
+    assert _journal_mode(session_path) == "wal"
