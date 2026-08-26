@@ -41,11 +41,10 @@ def serve_web(config_path: str, *, web_pass: str | None = None, no_worker: bool 
     is_loopback = config.web.host in _LOOPBACK_HOSTS
     if not is_loopback and config.web.password.lower() in _WEAK_PASSWORDS:
         logging.error(
-            "Refusing to bind web panel to %s with a weak WEB_PASS ('%s'). "
+            "Refusing to bind web panel to %s with a known-weak WEB_PASS. "
             "Set a strong WEB_PASS, or use --web-pass, before exposing the "
             "panel beyond localhost.",
             config.web.host,
-            config.web.password,
         )
         sys.exit(1)
     if not is_loopback:

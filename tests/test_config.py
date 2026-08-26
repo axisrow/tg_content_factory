@@ -1,3 +1,7 @@
+from pathlib import Path
+
+import yaml
+
 from src.config import AppConfig, load_config, resolve_session_encryption_secret
 
 
@@ -89,6 +93,37 @@ def test_load_config_warns_on_invalid_agent_fallback_model(monkeypatch, tmp_path
 
     assert config.agent.fallback_model == "llama3"
     assert "Invalid AGENT_FALLBACK_MODEL" in caplog.text
+
+
+def test_shipped_config_yaml_web_host_overridable_via_env(monkeypatch):
+    """The repo's own config.yaml must let WEB_HOST override the loopback
+    default, or Docker (which bind-mounts this exact file) can never expose
+    the panel outside its network namespace (#1305 follow-up)."""
+    monkeypatch.setenv("WEB_HOST", "0.0.0.0")
+    config = load_config("config.yaml")
+    assert config.web.host == "0.0.0.0"
+
+
+def test_shipped_config_yaml_web_host_defaults_to_loopback(monkeypatch):
+    """Without WEB_HOST set, native execution keeps the safe loopback default."""
+    monkeypatch.delenv("WEB_HOST", raising=False)
+    config = load_config("config.yaml")
+    assert config.web.host == "127.0.0.1"
+
+
+def test_docker_compose_overrides_web_host_for_container_network():
+    """docker-compose.yml must set WEB_HOST=0.0.0.0 — otherwise the shared
+    config.yaml's loopback default (#1303) makes the panel unreachable via
+    the published port, while the in-container healthcheck still passes and
+    masks the outage (#1305 follow-up)."""
+    compose_path = Path(__file__).resolve().parent.parent / "docker-compose.yml"
+    compose = yaml.safe_load(compose_path.read_text())
+    service = next(iter(compose["services"].values()))
+    env = service.get("environment", [])
+    assert "WEB_HOST=0.0.0.0" in env, (
+        "docker-compose.yml must export WEB_HOST=0.0.0.0 or the mounted "
+        "config.yaml's loopback default breaks the published port mapping"
+    )
 
 
 def test_resolve_session_encryption_secret_prefers_explicit_key():
