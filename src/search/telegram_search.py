@@ -82,7 +82,7 @@ class TelegramSearch:
             return
 
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
         try:
             try:
                 await self._warm_dialog_cache_if_needed(session, phone)
@@ -139,7 +139,7 @@ class TelegramSearch:
             return None
 
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
         try:
             return await self._load_search_quota_with_flood_handling(
                 session,
@@ -233,7 +233,7 @@ class TelegramSearch:
             return SearchResult(messages=[], total=0, query=query, error=reason)
 
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
         masked_phone = mask_phone(phone)
         logger.info(
             "premium_search acquired phone=%s limit=%d query_hash=%s",

@@ -500,7 +500,7 @@ class DialogsMixin:
         run_with_flood_wait. Set use_input_entity=True to return an InputPeer
         (resolve_input_entity) instead of a full entity.
         """
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         resolver = session.resolve_input_entity if use_input_entity else session.resolve_entity
         is_live_username = self._is_live_username_peer(peer)
 
@@ -544,7 +544,7 @@ class DialogsMixin:
         dialog_id: int,
         target_type: str | None = None,
     ):
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         if target_type is None:
             dialog = await self._get_cached_dialog(phone, dialog_id)
             cached_type = str(dialog.get("channel_type") or "") if dialog else ""
@@ -974,7 +974,7 @@ class DialogsMixin:
             return None
 
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         try:
             # Pre-warm the entity cache when routing through a preferred account
             # whose dialogs haven't been fetched this process (StringSession loses
@@ -1172,7 +1172,7 @@ class DialogsMixin:
         if not result:
             raise RuntimeError("no_client")
         session, acquired_phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=acquired_phone, pool=self)
         started_at = time.perf_counter()
         try:
             items: list[dict] = []
@@ -1291,7 +1291,7 @@ class DialogsMixin:
         if not result:
             return {cid: False for cid, _ in dialogs}
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         outcomes: dict[int, bool] = {}
         try:
             for cid, ctype in dialogs:
@@ -1359,7 +1359,7 @@ class DialogsMixin:
         if not result:
             return {cid: False for cid, _ in dialogs}
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         outcomes: dict[int, bool] = {}
         try:
             for cid, ctype in dialogs:
@@ -1428,7 +1428,7 @@ class DialogsMixin:
             logger.warning("get_forum_topics: no available client for channel %d", channel_id)
             return []
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         try:
             # Try direct entity lookup first (works when entity is already cached)
             try:

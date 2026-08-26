@@ -17,6 +17,7 @@ from src.models import Account
 from src.telegram.auth import TelegramAuth
 from src.telegram.flood_wait import HandledFloodWaitError, handle_flood_wait
 from src.telegram.mtproto_watchdog import bind_telethon_base_logger
+from src.telegram.rate_limit_gate import TelegramRateLimitedError, TelegramRateLimitGate
 from src.telegram.reactions import normalize_outgoing_reaction_emoji
 from src.telegram.session_materializer import SessionMaterializer
 
@@ -120,6 +121,13 @@ class TelegramTransportSession:
 
     async def _run(self, operation: str, awaitable: Any) -> Any:
         try:
+            self._reserve_gate_slot(operation)
+        except Exception:
+            close = getattr(awaitable, "close", None)
+            if close is not None:
+                close()
+            raise
+        try:
             return await awaitable
         except HandledFloodWaitError:
             raise
@@ -127,6 +135,15 @@ class TelegramTransportSession:
             raise await self._translate_flood_wait(exc, operation) from exc
 
     async def _stream(self, operation: str, iterator: AsyncIterator[Any]) -> AsyncIterator[Any]:
+        try:
+            self._reserve_gate_slot(operation)
+        except Exception:
+            close = getattr(iterator, "aclose", None)
+            if close is not None:
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
+            raise
         try:
             try:
                 async for item in iterator:
@@ -152,6 +169,18 @@ class TelegramTransportSession:
             raise
         except Exception as exc:
             raise await self._translate_flood_wait(exc, operation) from exc
+
+    def _reserve_gate_slot(self, operation: str) -> None:
+        """Reserve a proactive slot; unbound adapter sessions remain no-op safe."""
+        if self._pool is None or self._phone is None:
+            return
+        gate = getattr(self._pool, "_rate_limit_gate", None)
+        if not isinstance(gate, TelegramRateLimitGate):
+            return
+        category = gate.category_for(operation)
+        retry_after = gate.try_acquire(self._phone, category)
+        if retry_after > 0:
+            raise TelegramRateLimitedError(self._phone, category, retry_after)
 
     async def close(self) -> None:
         if self._disconnect_on_close:
@@ -609,10 +638,24 @@ def adapt_transport_session(
     candidate: Any,
     *,
     disconnect_on_close: bool = False,
+    phone: str | None = None,
+    pool: Any | None = None,
 ) -> TelegramTransportSession:
     if isinstance(candidate, TelegramTransportSession):
+        # Preserve the object identity: callers and tests may instrument the
+        # leased session methods.  Binding is per leased account, so updating
+        # this adapter is safe and avoids losing those wrappers.
+        if phone is not None:
+            candidate._phone = phone
+        if pool is not None:
+            candidate._pool = pool
         return candidate
-    return TelegramTransportSession(candidate, disconnect_on_close=disconnect_on_close)
+    return TelegramTransportSession(
+        candidate,
+        disconnect_on_close=disconnect_on_close,
+        phone=phone,
+        pool=pool,
+    )
 
 
 @dataclass
