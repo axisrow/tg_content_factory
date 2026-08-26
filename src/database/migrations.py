@@ -63,6 +63,10 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "run_after": "run_after TEXT",
         "payload": "payload TEXT",
         "parent_task_id": "parent_task_id INTEGER",
+        # Required before SCHEMA_SQL creates the jobs-pagination index on legacy
+        # collection_tasks tables. Nullable because SQLite cannot ADD COLUMN with
+        # the canonical non-constant datetime('now') default in place.
+        "created_at": "created_at TEXT",
         "last_progress_at": "last_progress_at TEXT",
         # Interop tasks (#961): result written back by an external worker.
         "result_payload": "result_payload TEXT",
