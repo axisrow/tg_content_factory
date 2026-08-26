@@ -13,6 +13,7 @@ from telethon.tl.types import PeerChannel
 
 from src.models import Channel, ChannelStats
 from src.telegram.backends import adapt_transport_session
+from src.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS
 from src.telegram.collector_types import (
     AllStatsClientsFloodedError,
     NoActiveStatsClientsError,
@@ -143,12 +144,15 @@ class StatsMixin:
         Re-raises :class:`HandledFloodWaitError` so flood handling propagates.
         """
         try:
-            return await self._pool.resolve_entity_with_warm(
+            entity = await self._pool.resolve_entity_with_warm(
                 session,
                 phone,
                 PeerChannel(channel.channel_id),
                 operation=operation,
             )
+            if channel.id and channel.review_reason in TRANSIENT_REVIEW_REASONS:
+                await self._db.repos.channels.clear_channel_review(channel.id)
+            return entity
         except HandledFloodWaitError:
             raise
         except (ValueError, TypeError):
