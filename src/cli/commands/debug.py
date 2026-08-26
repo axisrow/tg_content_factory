@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import os
 import resource
 from collections import deque
@@ -63,6 +64,18 @@ async def memory_impl(config_path: str) -> None:
         size_mb = await asyncio.to_thread(_db_file_size_mb, db_path)
         if size_mb is not None:
             print(f"  DB file size: {size_mb:.1f} MB")
+
+        storage_method = getattr(db, "get_storage_stats", None)
+        if inspect.iscoroutinefunction(storage_method):
+            storage = await storage_method()
+            print("\nSQLite storage:")
+            for key in (
+                "page_size", "page_count", "freelist_count", "freelist_percent",
+                "auto_vacuum", "journal_mode",
+            ):
+                print(f"  {key}: {storage[key]}")
+            if storage["vacuum_recommended"]:
+                print("  WARNING: freelist is at least 25%; schedule a maintenance VACUUM.")
     finally:
         await db.close()
 

@@ -109,6 +109,7 @@ async def debug_memory(request: Request):
     pool = deps.get_pool(request)
     agent_manager = deps.get_agent_manager(request)
     collection_queue = getattr(request.app.state, "collection_queue", None)
+    storage = await deps.get_db(request).get_storage_stats()
 
     runtime_mode = getattr(request.app.state, "runtime_mode", "web")
     pool_counters_source = "live"
@@ -153,4 +154,5 @@ async def debug_memory(request: Request):
         "runtime_mode": runtime_mode,
         "agent_active_tasks": len(agent_manager._active_tasks) if agent_manager else 0,
         "collection_retried_tasks": len(collection_queue._retried_tasks) if collection_queue else 0,
+        "database": storage,
     }

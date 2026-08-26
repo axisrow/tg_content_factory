@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
@@ -890,6 +891,46 @@ class Database:
             "Database.get_stats requires initialized MessagesRepository"
         )
         return await self._messages.get_stats()
+
+    async def get_storage_stats(self) -> dict[str, int | float | str | None]:
+        """Return cheap SQLite file/page statistics for operator diagnostics.
+
+        ``freelist_count`` is deliberately exposed: SQLite does not return those
+        pages to the filesystem until a VACUUM (or incremental vacuum) is run.
+        The PRAGMAs are constant-time metadata lookups and do not scan the DB.
+        """
+        self._require()
+        assert self._db is not None
+
+        async def _pragma_int(name: str) -> int:
+            cursor = await self._db.execute(f"PRAGMA {name}")
+            row = await cursor.fetchone()
+            return int(row[0]) if row else 0
+
+        page_size = await _pragma_int("page_size")
+        page_count = await _pragma_int("page_count")
+        freelist_count = await _pragma_int("freelist_count")
+        auto_vacuum = await _pragma_int("auto_vacuum")
+        cursor = await self._db.execute("PRAGMA journal_mode")
+        row = await cursor.fetchone()
+        journal_mode = str(row[0]) if row else None
+        file_size = None
+        if self._db_path != ":memory:":
+            try:
+                file_size = await asyncio.to_thread(os.path.getsize, self._db_path)
+            except OSError:
+                pass
+        return {
+            "path": self._db_path,
+            "file_size_bytes": file_size,
+            "page_size": page_size,
+            "page_count": page_count,
+            "freelist_count": freelist_count,
+            "freelist_percent": round(freelist_count * 100 / page_count, 2) if page_count else 0.0,
+            "vacuum_recommended": freelist_count * 100 >= page_count * 25 if page_count else False,
+            "auto_vacuum": auto_vacuum,
+            "journal_mode": journal_mode,
+        }
 
     async def get_trending_emojis(self, limit: int = 10, days: int | None = None) -> list[dict]:
         self._require()
