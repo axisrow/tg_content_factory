@@ -593,12 +593,19 @@ async def _notification_snapshot_payload(request: Request) -> dict[str, object]:
 async def _load_pipeline_run_result_meta(db, tasks) -> dict[int, dict[str, object]]:
     run_ids_by_task_id: dict[int, int] = {}
     for task in tasks:
-        if task.id is None or task.task_type.value != "pipeline_run" or not task.note:
+        task_id = getattr(task, "raw_id", None)
+        if task_id is None:
+            task_id = getattr(task, "id", None)
+        task_type = getattr(task, "job_type", None)
+        if task_type is None:
+            raw_task_type = getattr(task, "task_type", None)
+            task_type = getattr(raw_task_type, "value", raw_task_type)
+        if not isinstance(task_id, int) or task_type != "pipeline_run" or not task.note:
             continue
         match = _PIPELINE_RUN_NOTE_RE.search(task.note)
         if match is None:
             continue
-        run_ids_by_task_id[task.id] = int(match.group(1))
+        run_ids_by_task_id[task_id] = int(match.group(1))
     if not run_ids_by_task_id:
         return {}
 

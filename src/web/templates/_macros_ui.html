@@ -23,6 +23,31 @@
 {{- ('?' ~ _parts|join('&')) if _parts else '' -}}
 {%- endmacro %}
 
+{% macro jobs_filter_qs(source_filter, status_filter, page, limit) -%}
+{%- set _parts = [] -%}
+{%- if source_filter %}{% set _ = _parts.append('source=' ~ source_filter) %}{% endif -%}
+{%- if status_filter and status_filter != 'all' %}{% set _ = _parts.append('status=' ~ status_filter) %}{% endif -%}
+{%- if page and page != 1 %}{% set _ = _parts.append('page=' ~ page) %}{% endif -%}
+{%- if limit and limit != 100 %}{% set _ = _parts.append('limit=' ~ limit) %}{% endif -%}
+{{- ('?' ~ _parts|join('&')) if _parts else '' -}}
+{%- endmacro %}
+
+{% macro task_type_label(value) -%}
+{%- set kind = value.value if value.value is defined else value -%}
+{%- if kind == 'channel_collect' %}Сбор канала
+{%- elif kind == 'stats_all' %}Статистика
+{%- elif kind == 'sq_stats' %}Статистика запроса
+{%- elif kind == 'photo_due' %}Фото
+{%- elif kind == 'photo_auto' %}Автофото
+{%- elif kind == 'pipeline_run' %}Пайплайн
+{%- elif kind == 'content_generate' %}Генерация контента
+{%- elif kind == 'content_publish' %}Публикация контента
+{%- elif kind == 'translate_batch' %}Перевод
+{%- elif kind == 'filter_analyze' %}Анализ фильтров
+{%- else %}{{ kind }}
+{%- endif -%}
+{%- endmacro %}
+
 {% macro card(title) %}
 <div class="card mb-3">
   <div class="card-header fw-semibold">{{ title }}</div>

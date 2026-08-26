@@ -12,9 +12,12 @@
    shell loads instantly on large databases (#756 lazyload pattern, #965). The
    fragment route renders the filter form too, so filtering re-swaps in place. #}
 <div id="jobs-table"
-     hx-get="/jobs/fragments/list"
+     hx-get="{{ fragment_url }}"
      hx-trigger="load"
      hx-swap="innerHTML">
   {{ loading() }}
 </div>
+<script>
+try { sessionStorage.removeItem('jobs-autoreload-count'); } catch (e) {}
+</script>
 {% endblock %}

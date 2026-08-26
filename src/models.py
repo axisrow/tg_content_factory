@@ -414,6 +414,9 @@ class JobView(BaseModel):
     finished_at: datetime | None = None
     error: str | None = None
     note: str | None = None
+    # Compact, source-specific result prepared by the read-model for presentation.
+    # Keeping this normalized avoids re-reading collection_tasks in the web layer.
+    result_summary: str | None = None
 
 
 class ContentGenerateTaskPayload(BaseModel):
