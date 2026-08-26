@@ -350,6 +350,19 @@ class DialogsMixin:
                 continue
             session, p = result
             try:
+                # The warm-up exists to fill the session's entity cache, and
+                # that cache is persisted in the materialised SQLite session --
+                # so it survives restarts even though the in-process
+                # "already warmed" flag does not. Without this check the
+                # warm-up re-ran on every start: 67 times in one day, which is
+                # what flood-waited an account into a 14.8h ban (#1330/#1368).
+                has_cached = getattr(session, "has_cached_entities", None)
+                if callable(has_cached) and has_cached():
+                    self.mark_dialogs_fetched(p)
+                    logger.info(
+                        "warm_all_dialogs: skip %s, session entity cache is already warm", p
+                    )
+                    continue
                 dialogs = await run_with_flood_wait(
                     session.warm_dialog_cache(),
                     operation="telegram_warm_dialog_cache",

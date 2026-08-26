@@ -636,3 +636,109 @@ async def test_warm_stagger_between_phones(real_pool_harness_factory, monkeypatc
     # But no stagger before the first phone — total ~ 2*stagger, not 3
     total_elapsed = timestamps[-1] - timestamps[0]
     assert total_elapsed < 3 * stagger, f"total={total_elapsed:.2f}s, should be ~2*stagger"
+
+
+# ---------------------------------------------------------------------------
+# warm_all_dialogs: skip phones whose session entity cache is already warm
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_warm_skips_phone_with_warm_session_cache(real_pool_harness_factory, monkeypatch):
+    """A session that already has entities must not be warmed again (#1330).
+
+    The warm-up exists to fill the session entity cache. That cache lives in the
+    materialised SQLite session and survives restarts, while the in-process
+    "already warmed" flag does not -- which is why the warm-up re-ran 67 times
+    in one day and flood-waited an account into a 14.8h ban.
+    """
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+
+    harness = real_pool_harness_factory()
+    warm_client = FakeCliTelethonClient(dialogs=[])
+    cold_client = FakeCliTelethonClient(dialogs=[])
+
+    await _setup_warm_harness(harness, {
+        "+70000000001": warm_client,
+        "+70000000002": cold_client,
+    })
+
+    real_has_cached = None
+
+    def _fake_has_cached(self):
+        # Only the first phone's session is warm.
+        return getattr(self, "_phone", None) == "+70000000001"
+
+    from src.telegram.backends import TelegramTransportSession
+
+    real_has_cached = TelegramTransportSession.has_cached_entities
+    monkeypatch.setattr(TelegramTransportSession, "has_cached_entities", _fake_has_cached)
+    assert real_has_cached is not None  # sanity: the method exists to patch
+
+    await harness.pool.warm_all_dialogs()
+
+    warm_client.get_dialogs.assert_not_awaited()
+    cold_client.get_dialogs.assert_awaited()
+    # The skipped phone still counts as warmed, so collection does not re-warm it.
+    assert harness.pool.is_dialogs_fetched("+70000000001")
+
+
+@pytest.mark.anyio
+async def test_warm_still_runs_when_session_cache_is_cold(real_pool_harness_factory, monkeypatch):
+    """A genuinely cold session (new account) must still be warmed."""
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+
+    harness = real_pool_harness_factory()
+    client = FakeCliTelethonClient(dialogs=[])
+    await _setup_warm_harness(harness, {"+70000000001": client})
+
+    from src.telegram.backends import TelegramTransportSession
+
+    monkeypatch.setattr(
+        TelegramTransportSession, "has_cached_entities", lambda self: False
+    )
+
+    await harness.pool.warm_all_dialogs()
+    client.get_dialogs.assert_awaited()
+
+
+def test_has_cached_entities_reads_the_real_session_table(tmp_path):
+    """Answers from the session's entity table, not a constant.
+
+    Asserting only the False case would let a mutation that always returns True
+    pass -- and that mutation would skip warming a genuinely cold session,
+    leaving collection unable to resolve anything.
+    """
+    from telethon.sessions import SQLiteSession
+
+    from src.telegram.backends import TelegramTransportSession
+
+    db_path = tmp_path / "probe"
+    sqlite_session = SQLiteSession(str(db_path))
+    try:
+        client = FakeCliTelethonClient(dialogs=[])
+        client.session = sqlite_session
+        cold = TelegramTransportSession(client)
+        assert cold.has_cached_entities() is False, "empty entities table must read cold"
+
+        sqlite_session._execute(
+            "insert or replace into entities (id, hash, username, phone, name) "
+            "values (?, ?, ?, ?, ?)",
+            -1001877929309,
+            123456789,
+            None,
+            None,
+            "probe",
+        )
+        warm = TelegramTransportSession(client)
+        assert warm.has_cached_entities() is True, "populated entities table must read warm"
+    finally:
+        sqlite_session.close()
+
+
+def test_has_cached_entities_is_false_without_sqlite_session():
+    """Unknown means cold: warm up rather than silently skipping."""
+    from src.telegram.backends import TelegramTransportSession
+
+    session = TelegramTransportSession(FakeCliTelethonClient(dialogs=[]))
+    assert session.has_cached_entities() is False
