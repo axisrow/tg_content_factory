@@ -136,6 +136,9 @@ class DialogCacheRepository:
                 (phone,),
             )
             row = await cur.fetchone()
+            # MAX() without GROUP BY always yields one row, even for an empty
+            # phone snapshot; keep that invariant explicit for type checkers.
+            assert row is not None
             # A first partial snapshot is not complete/fresh.  Use an old
             # marker so the next ordinary read retries Telegram instead of
             # treating incomplete rows as authoritative.
