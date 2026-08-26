@@ -751,6 +751,7 @@ async def test_get_dialogs_for_phone_partial_on_timeout():
     pool._db = MagicMock()
     pool._db.repos.dialog_cache.list_dialogs = AsyncMock(return_value=[])
     pool._db.repos.dialog_cache.replace_dialogs = AsyncMock()
+    pool._db.repos.dialog_cache.upsert_dialogs = AsyncMock()
     _bind_dialog_cache_methods(pool)
 
     # Patch wait_for to use a tiny timeout so we don't wait 60 s in tests
@@ -1010,4 +1011,6 @@ async def test_get_dialogs_for_phone_partial_timeout_keeps_existing_db_cache(db)
     assert result[0]["title"] == "Partial Channel"
     assert result.partial is True
     cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
-    assert _strip_extra_dialog_fields(cached) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
+    cached_by_id = {dialog["channel_id"]: dialog for dialog in cached}
+    assert set(cached_by_id) == {-100111, -100222, 999, 888, -100999}
+    assert cached_by_id[-100999]["title"] == "Partial Channel"
