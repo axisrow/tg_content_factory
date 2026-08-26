@@ -23,6 +23,7 @@ from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.content_pipelines import ContentPipelinesRepository
+from src.database.repositories.dialog_batch import DialogBatchRepository
 from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
 from src.database.repositories.generated_images import GeneratedImagesRepository
@@ -136,6 +137,7 @@ class Database:
         self._search_queries: SearchQueriesRepository | None = None
         self._photo_loader: PhotoLoaderRepository | None = None
         self._dialog_cache: DialogCacheRepository | None = None
+        self._dialog_batch: DialogBatchRepository | None = None
         self._content_pipelines: ContentPipelinesRepository | None = None
         self._telegram_commands: TelegramCommandsRepository | None = None
         self._runtime_snapshots: RuntimeSnapshotsRepository | None = None
@@ -187,6 +189,7 @@ class Database:
         self._search_queries = SearchQueriesRepository(read_db, database=self)
         self._photo_loader = PhotoLoaderRepository(read_db, database=self)
         self._dialog_cache = DialogCacheRepository(read_db, database=self)
+        self._dialog_batch = DialogBatchRepository(read_db, database=self)
         self._content_pipelines = ContentPipelinesRepository(read_db, database=self)
         self._telegram_commands = TelegramCommandsRepository(read_db, database=self)
         self._runtime_snapshots = RuntimeSnapshotsRepository(read_db, database=self)
@@ -209,6 +212,7 @@ class Database:
             search_queries=self._search_queries,
             photo_loader=self._photo_loader,
             dialog_cache=self._dialog_cache,
+            dialog_batch=self._dialog_batch,
             content_pipelines=self._content_pipelines,
             generation_runs=self._generation_runs,
             generated_images=self._generated_images,

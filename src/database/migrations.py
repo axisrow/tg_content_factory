@@ -157,6 +157,24 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "content": "content TEXT",
         "created_at": "created_at TEXT",
     },
+    "dialog_batch_operations": {
+        "phone": "phone TEXT",
+        "op_type": "op_type TEXT",
+        "status": "status TEXT DEFAULT 'pending'",
+        "created_at": "created_at TEXT",
+        "finished_at": "finished_at TEXT",
+    },
+    "dialog_batch_items": {
+        "batch_id": "batch_id INTEGER",
+        "phone": "phone TEXT",
+        "dialog_id": "dialog_id INTEGER",
+        "channel_type": "channel_type TEXT DEFAULT 'channel'",
+        "status": "status TEXT DEFAULT 'pending'",
+        "error": "error TEXT",
+        "attempts": "attempts INTEGER DEFAULT 0",
+        "created_at": "created_at TEXT",
+        "finished_at": "finished_at TEXT",
+    },
 }
 
 
