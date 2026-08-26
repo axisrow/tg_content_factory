@@ -1089,6 +1089,45 @@ async def test_get_dialogs_for_phone_flood_stale_cache_is_flagged_partial(db):
 
 
 @pytest.mark.anyio
+async def test_partial_sweep_over_a_still_fresh_snapshot_is_not_fresh(db):
+    """A partial walk must age the snapshot even when it was just refreshed.
+
+    Freshness is MAX(cached_at) over the whole phone. If a partial walk inherits
+    a still-fresh predecessor, the truncated union — stale rows plus whatever the
+    interrupted pass never reached — is served as a complete current snapshot for
+    the rest of the TTL. The stale-predecessor case alone does not cover this:
+    the dangerous one is a manual refresh started while the cache is still fresh.
+    """
+    from src.telegram.client_pool import ClientPool
+
+    phone = "+79995550000"
+    # A snapshot written just now — comfortably inside the TTL.
+    await db.repos.dialog_cache.replace_dialogs(
+        phone,
+        [
+            {"channel_id": 1, "channel_type": "channel", "title": "one"},
+            {"channel_id": 2, "channel_type": "channel", "title": "two"},
+        ],
+    )
+    fresh_at = await db.repos.dialog_cache.get_cached_at(phone)
+    assert (datetime.now(timezone.utc) - fresh_at).total_seconds() < 60
+
+    # A refresh starts and is cut short after reaching one dialog.
+    await db.repos.dialog_cache.upsert_dialogs(
+        phone, [{"channel_id": 3, "channel_type": "channel", "title": "three"}]
+    )
+
+    pool = MagicMock(spec=ClientPool)
+    pool._db = db
+    pool._dialogs_db_cache_ttl_sec = 3600.0
+    pool._dialogs_cache = {}
+    _bind_dialog_cache_methods(pool)
+
+    # Must refuse the cache and force a fresh fetch, not serve the union.
+    assert await ClientPool._get_db_cached_dialogs(pool, phone, "full") is None
+
+
+@pytest.mark.anyio
 async def test_partial_sweep_is_not_served_as_a_fresh_cache(db):
     """A resumed fragment must not read back as a fresh snapshot (#1359).
 
@@ -1113,10 +1152,11 @@ async def test_partial_sweep_is_not_served_as_a_fresh_cache(db):
         phone, [{"channel_id": 2, "channel_type": "channel", "title": "two"}]
     )
 
-    # The fragment must NOT have made the snapshot look current.
+    # The fragment must NOT have made the snapshot look current: an incomplete
+    # snapshot is aged unconditionally, so it can never read as fresh.
     cached_at = await db.repos.dialog_cache.get_cached_at(phone)
-    assert cached_at.year == 2026 and cached_at.month == 1, (
-        f"partial sweep refreshed the snapshot timestamp: {cached_at}"
+    assert (datetime.now(timezone.utc) - cached_at).total_seconds() > 3600, (
+        f"partial sweep left the snapshot looking current: {cached_at}"
     )
 
     pool = MagicMock(spec=ClientPool)
@@ -1197,6 +1237,40 @@ def test_advance_cursor_mirrors_telethon_split_offsets():
     _advance_cursor(cursor, _make_channel_dialog(-1003, with_message=False))
     assert cursor.offset_peer == "input:-1003"
     assert cursor.offset_id == 77
+
+
+@pytest.mark.anyio
+async def test_sweep_progress_survives_an_unhandled_error(db):
+    """Progress must be persisted even when the sweep dies on an error it does
+    not handle (#1359).
+
+    The pass loop only catches timeout / rate-limit / flood. A network error or
+    a cancellation unwinds straight past it, so without a flush on the way out
+    everything the chunk flushes had accumulated since the last chunk boundary
+    is discarded — exactly the loss this PR exists to prevent.
+    """
+    from src.telegram.client_pool import ClientPool
+
+    pool = _sweep_pool(db)
+    seen = _make_channel_dialog(-1001, title="Seen", message_id=11)
+
+    async def _boom():
+        yield seen
+        raise ConnectionError("network died mid-sweep")
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.side_effect = [_boom()]
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+
+    with pytest.raises(ConnectionError):
+        await ClientPool._fetch_dialogs_for_phone(
+            pool, "+1234567890", True, "full", "full"
+        )
+
+    cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
+    assert -1001 in {row["channel_id"] for row in cached}
+    # The lease is released on this path too (finally), not only on success.
+    pool.release_client.assert_awaited_once_with("+1234567890")
 
 
 async def test_sweep_keeps_progress_on_blocking_flood(db):

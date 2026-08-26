@@ -1642,6 +1642,22 @@ class DialogsMixin:
                     await self._db.repos.dialog_cache.replace_dialogs(acquired_phone, items)
             return DialogFetchResult(items, partial=stats.partial)
         finally:
+            # Persist whatever the sweep reached even when it is unwinding on an
+            # exception the pass loop does not handle (network error, cancel).
+            # The loop only catches timeout/rate-limit/flood, so without this a
+            # mid-sweep failure would discard the progress the chunk flushes
+            # exist to keep (#1359). Best-effort: a failure here must not mask
+            # the original exception.
+            if pending:
+                try:
+                    await self._flush_dialog_chunk(acquired_phone, pending)
+                except Exception:  # pragma: no cover - never mask the real error
+                    logger.warning(
+                        "get_dialogs_for_phone: could not flush %d pending dialogs for %s",
+                        len(pending),
+                        acquired_phone,
+                        exc_info=True,
+                    )
             await self.release_client(acquired_phone)
 
     async def leave_channels(self, phone: str, dialogs: list[tuple[int, str]]) -> dict[int, bool]:
