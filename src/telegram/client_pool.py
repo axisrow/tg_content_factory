@@ -126,6 +126,7 @@ class ClientPool(
         self.clients: dict[str, object] = {}
         self.init_timeout: float = 45.0
         self._lock = asyncio.Lock()
+        self._disconnecting = False
         self._in_use: set[str] = set()
         self._lease_pool = AccountLeasePool(db, self._in_use)
         self._session_overrides: dict[str, str] = {}
