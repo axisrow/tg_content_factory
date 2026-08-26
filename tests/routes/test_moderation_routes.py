@@ -148,6 +148,27 @@ async def test_view_run_not_found(client):
 
 
 @pytest.mark.anyio
+async def test_resolve_unconfirmed_target(client):
+    db = client._transport_app.state.db
+    _, run_id = await _create_pipeline_and_run(db)
+    await db.repos.generation_runs.set_metadata(run_id, {
+        "unconfirmed_targets": ["+1234567890:-200"],
+    })
+
+    resp = await client.post(
+        f"/moderation/{run_id}/resolve-unconfirmed",
+        data={"target": "+1234567890:-200", "action": "delivered"},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "msg=target_resolved" in resp.headers["location"]
+    run = await db.repos.generation_runs.get(run_id)
+    assert run is not None
+    assert run.metadata["published_targets"] == ["+1234567890:-200"]
+    assert run.metadata["unconfirmed_targets"] == []
+
+
+@pytest.mark.anyio
 async def test_approve_run(client):
     """Test approve run sets status."""
     db = client._transport_app.state.db
