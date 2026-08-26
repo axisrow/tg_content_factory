@@ -383,6 +383,23 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 @pytest.fixture(autouse=True)
+def no_running_server(request, monkeypatch):
+    """Pin ``serve_is_running`` to False so tests never read the real PID file.
+
+    ``AppConfig()`` defaults point at the production ``data/tg_search.pid``, so
+    without this a developer running ``serve`` locally would flip CLI commands
+    onto the worker hand-off path while CI (no server) took the direct path —
+    the same suite passing or failing depending on what else is running on the
+    machine. Tests that exercise the hand-off patch this per-test.
+    """
+    if any(fixture in request.fixturenames for fixture in REAL_TG_LIVE_FIXTURES):
+        return
+    monkeypatch.setattr(
+        "src.cli.worker_handoff.serve_is_running", lambda _config: False, raising=False
+    )
+
+
+@pytest.fixture(autouse=True)
 def _enforce_cli_transport(
     monkeypatch,
     request,

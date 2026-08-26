@@ -8,13 +8,14 @@ from pathlib import Path
 
 import typer
 
-from src.cli import runtime
+from src.cli import runtime, worker_handoff
 from src.cli.commands.common import (
     _NEG_ID_POSITIONAL,
     apply_startup,
     resolve_channel,
     run_async,
 )
+from src.database.bundles import ChannelBundle
 from src.models import Channel, CollectionTaskStatus
 from src.parsers import deduplicate_identifiers, parse_file, parse_identifiers
 from src.services.channel_onboarding import (
@@ -24,6 +25,7 @@ from src.services.channel_onboarding import (
     fetch_channel_meta,
 )
 from src.services.channel_service import ChannelService
+from src.services.collection_service import CollectionService
 from src.telegram.backends import adapt_transport_session
 from src.telegram.collector import (
     RESOLVE_USERNAME_BACKOFF_BUFFER_SEC,
@@ -704,9 +706,132 @@ async def list_for_import_impl(config_path: str, *, as_json: bool) -> None:
         await db.close()
 
 
-async def collect_impl(config_path: str, *, identifier: str, full: bool) -> None:
-    """``channel collect`` — one-shot collection of a single channel."""
+_HANDOFF_POLL_INTERVAL_SEC = 2.0
+_HANDOFF_WAIT_TIMEOUT_SEC = 900.0
+_TERMINAL_TASK_STATUSES = (
+    CollectionTaskStatus.COMPLETED,
+    CollectionTaskStatus.FAILED,
+    CollectionTaskStatus.CANCELLED,
+)
+
+
+async def _handoff_collect_to_worker(
+    db,
+    *,
+    identifier: str,
+    full: bool,
+    wait: bool,
+) -> None:
+    """Enqueue a channel for the running worker instead of collecting here.
+
+    Uses ``CollectionService`` with no in-process queue, which is the same
+    DB-only path the web container takes: a PENDING row the worker's pull loop
+    ingests within seconds. The collector is never touched on that path, so no
+    Telegram connection — and therefore no session file — is opened at all.
+    """
+    channels = await db.get_channels()
+    ch = resolve_channel(channels, identifier)
+    if not ch:
+        print(f"Channel '{identifier}' not found")
+        return
+
+    service = CollectionService(ChannelBundle.from_database(db), None, collection_queue=None)
+    result = await service.enqueue_channel_by_pk(ch.id, force=True, full=full)
+
+    if result == "already_active":
+        print(f"Канал '{ch.title}' уже стоит в очереди или собирается — новая задача не создана.")
+        return
+    if result == "not_found":
+        print(f"Channel '{identifier}' not found")
+        return
+    if result == "filtered":
+        print(f"Канал '{ch.title}' отфильтрован; снимите фильтр или используйте --direct.")
+        return
+
+    task = await _latest_task_for_channel(db, ch.channel_id)
+    task_label = f" #{task.id}" if task else ""
+    print(f"Сервер запущен: задача{task_label} поставлена в очередь воркера ('{ch.title}').")
+
+    if wait and task is not None:
+        await _wait_for_task(db, task.id)
+
+
+async def _latest_task_for_channel(db, channel_id: int):
+    """Return the newest collection task for *channel_id*, if any.
+
+    ``CollectionService`` reports only whether a row was created, so the id is
+    read back here to show the user something they can follow.
+    """
+    tasks = await db.get_collection_tasks(limit=50)
+    for task in tasks:
+        if task.channel_id == channel_id:
+            return task
+    return None
+
+
+async def _wait_for_task(db, task_id: int) -> None:
+    """Poll a queued task until it reaches a terminal status.
+
+    The worker writes incremental progress via ``update_collection_task_progress``,
+    so the count moves while collection runs. A deferred task (FloodWait) carries
+    its reason in ``note``; that is surfaced rather than silently waiting.
+    """
+    deadline = asyncio.get_running_loop().time() + _HANDOFF_WAIT_TIMEOUT_SEC
+    last_note: str | None = None
+
+    while True:
+        task = await db.get_collection_task(task_id)
+        if task is None:
+            print(f"Задача #{task_id} исчезла из очереди.")
+            return
+
+        if task.note and task.note != last_note:
+            last_note = task.note
+            print(f"  {task.note}")
+
+        if task.status in _TERMINAL_TASK_STATUSES:
+            if task.status == CollectionTaskStatus.COMPLETED:
+                print(f"Собрано {task.messages_collected} сообщений.")
+            elif task.status == CollectionTaskStatus.FAILED:
+                print(f"Задача #{task_id} завершилась ошибкой: {task.error}")
+            else:
+                print(f"Задача #{task_id} отменена.")
+            return
+
+        if asyncio.get_running_loop().time() >= deadline:
+            print(
+                f"Задача #{task_id} всё ещё в статусе '{task.status}' "
+                f"после {int(_HANDOFF_WAIT_TIMEOUT_SEC)}с ожидания; "
+                "она продолжит выполняться в воркере."
+            )
+            return
+
+        await asyncio.sleep(_HANDOFF_POLL_INTERVAL_SEC)
+
+
+async def collect_impl(
+    config_path: str,
+    *,
+    identifier: str,
+    full: bool,
+    direct: bool = False,
+    wait: bool = False,
+) -> None:
+    """``channel collect`` — one-shot collection of a single channel.
+
+    When a managed ``serve`` process is live it owns the Telegram session files,
+    so collecting here would open them a second time and hit ``database is
+    locked``. In that case the channel is handed to the running worker through
+    the collection queue instead; ``--direct`` forces the in-process path anyway.
+    """
     config, db = await runtime.init_db(config_path)
+    if not direct and worker_handoff.serve_is_running(config):
+        try:
+            await _handoff_collect_to_worker(db, identifier=identifier, full=full, wait=wait)
+        finally:
+            await db.close()
+        return
+
     pool = None
     try:
         _, pool = await runtime.init_pool(config, db)
@@ -846,6 +971,8 @@ def run(args: argparse.Namespace) -> None:
             config_path,
             identifier=args.identifier,
             full=bool(getattr(args, "full", False)),
+            direct=bool(getattr(args, "direct", False)),
+            wait=bool(getattr(args, "wait", False)),
         )
     else:
         coro = list_impl(config_path)
@@ -910,10 +1037,24 @@ def channel_collect(
     ctx: typer.Context,
     identifier: str = typer.Argument(..., help="Channel pk, channel_id, or @username"),
     full: bool = typer.Option(False, "--full", help="Explicitly backfill the full channel history"),
+    direct: bool = typer.Option(
+        False,
+        "--direct",
+        help="Collect in this process even while a server is running (may hit session locks)",
+    ),
+    wait: bool = typer.Option(
+        False, "--wait", help="When handed to the worker, poll until the task finishes"
+    ),
 ) -> None:
-    """Collect a single channel one-shot."""
+    """Collect a single channel one-shot.
+
+    Hands the channel to a running ``serve`` worker when one is live, since that
+    process owns the Telegram session files.
+    """
     apply_startup(ctx)
-    run_async(collect_impl(ctx.obj.config, identifier=identifier, full=full))
+    run_async(
+        collect_impl(ctx.obj.config, identifier=identifier, full=full, direct=direct, wait=wait)
+    )
 
 
 @channel_app.command("stats", context_settings=_NEG_ID_POSITIONAL)
