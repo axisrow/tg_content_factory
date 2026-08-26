@@ -53,6 +53,14 @@ class DialogBatchRepository:
         row = await cur.fetchone()
         return self._operation(row) if row else None
 
+    async def mark_running(self, batch_id: int) -> bool:
+        """Mark a new batch running without racing another starter."""
+        cur = await self._database.execute_write(
+            "UPDATE dialog_batch_operations SET status = ? WHERE id = ? AND status = ?",
+            (DialogBatchStatus.RUNNING.value, batch_id, DialogBatchStatus.PENDING.value),
+        )
+        return bool(cur.rowcount)
+
     async def list_items(self, batch_id: int) -> list[DialogBatchItem]:
         cur = await self._db.execute("SELECT * FROM dialog_batch_items WHERE batch_id = ? ORDER BY id", (batch_id,))
         return [self._item(row) for row in await cur.fetchall()]
@@ -88,6 +96,13 @@ class DialogBatchRepository:
         return cur.rowcount or 0
 
     async def finish_batch(self, batch_id: int, status: DialogBatchStatus) -> None:
+        cur = await self._db.execute(
+            "SELECT COUNT(*) AS n FROM dialog_batch_items WHERE batch_id = ? AND status = ?",
+            (batch_id, DialogBatchStatus.RUNNING.value),
+        )
+        row = await cur.fetchone()
+        if row and row["n"]:
+            return
         await self._database.execute_write(
             "UPDATE dialog_batch_operations SET status = ?, finished_at = ? WHERE id = ?",
             (status.value, datetime.now(timezone.utc).isoformat(), batch_id),

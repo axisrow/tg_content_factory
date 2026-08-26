@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 
 from src.database.repositories.dialog_batch import DialogBatchRepository
@@ -11,6 +12,8 @@ DialogExecutor = Callable[[DialogBatchItem], Awaitable[None]]
 
 
 class DialogBatchService:
+    _locks: dict[tuple[int, int], asyncio.Lock] = {}
+
     def __init__(self, repository: DialogBatchRepository):
         self._repo = repository
 
@@ -23,22 +26,28 @@ class DialogBatchService:
         )
 
     async def run(self, batch_id: int, executor: DialogExecutor) -> DialogBatchOperation:
-        batch = await self._repo.get_batch(batch_id)
-        if batch is None:
-            raise ValueError(f"Unknown dialog batch: {batch_id}")
-        await self._repo.recover_running(batch_id)
-        while (item := await self._repo.claim_next(batch_id)) is not None:
-            try:
-                await executor(item)
-            except Exception as exc:
-                await self._repo.update_item(item.id, DialogBatchStatus.FAILED, str(exc))  # type: ignore[arg-type]
-            else:
-                await self._repo.update_item(item.id, DialogBatchStatus.COMPLETED)  # type: ignore[arg-type]
-        items = await self._repo.list_items(batch_id)
-        status = (DialogBatchStatus.FAILED if any(i.status == DialogBatchStatus.FAILED for i in items)
-                  else DialogBatchStatus.COMPLETED)
-        await self._repo.finish_batch(batch_id, status)
-        return (await self._repo.get_batch(batch_id)) or batch
+        lock = self._locks.setdefault((id(self._repo), batch_id), asyncio.Lock())
+        async with lock:
+            batch = await self._repo.get_batch(batch_id)
+            if batch is None:
+                raise ValueError(f"Unknown dialog batch: {batch_id}")
+            # A RUNNING row may be a crash orphan. The per-process lock prevents
+            # a second caller in this process from reclaiming a live item.
+            if batch.status != DialogBatchStatus.RUNNING:
+                await self._repo.mark_running(batch_id)
+            await self._repo.recover_running(batch_id)
+            while (item := await self._repo.claim_next(batch_id)) is not None:
+                try:
+                    await executor(item)
+                except Exception as exc:
+                    await self._repo.update_item(item.id, DialogBatchStatus.FAILED, str(exc))  # type: ignore[arg-type]
+                else:
+                    await self._repo.update_item(item.id, DialogBatchStatus.COMPLETED)  # type: ignore[arg-type]
+            items = await self._repo.list_items(batch_id)
+            status = (DialogBatchStatus.FAILED if any(i.status == DialogBatchStatus.FAILED for i in items)
+                      else DialogBatchStatus.COMPLETED)
+            await self._repo.finish_batch(batch_id, status)
+            return (await self._repo.get_batch(batch_id)) or batch
 
     async def resume(self, batch_id: int, executor: DialogExecutor) -> DialogBatchOperation:
         return await self.run(batch_id, executor)
