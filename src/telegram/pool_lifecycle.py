@@ -579,6 +579,14 @@ class ClientLifecycleMixin:
                     await lease.session.raw_client.disconnect()
                 except Exception:
                     logger.debug("Failed to disconnect abandoned client for %s", phone, exc_info=True)
+            elif lease is not None and direct_session is not None and getattr(self, "_disconnecting", False):
+                # A direct session may finish reconnecting after teardown has
+                # removed it from ``clients``.  It is a borrowed lease, so
+                # backend release is a no-op; disconnect the raw client here.
+                try:
+                    await direct_session.raw_client.disconnect()
+                except Exception:
+                    logger.debug("Failed to disconnect reconnected client for %s", phone, exc_info=True)
             # Only evict the pooled session when a *pooled* acquisition failed:
             # either its direct session was reconnect-broken above (direct_session
             # set to None on line ~485) or a fresh non-force acquire raised. A

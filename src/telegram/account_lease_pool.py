@@ -32,7 +32,7 @@ class AccountLeasePool:
         self._last_phone: str | None = None
 
     async def acquire_available(self, connected_phones: set[str]) -> AccountLease | None:
-        """Acquire one account without mixing shared and exclusive leases."""
+        """Acquire an account with at most one exclusive reservation per phone."""
         async with self._lock:
             now = datetime.now(timezone.utc)
             accounts = await load_live_usable_accounts(self._db, active_only=True)
