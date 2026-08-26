@@ -94,8 +94,8 @@ async def _dialogs_refresh(args, db, pool, *, channel_service_cls) -> None:
     dialogs = await svc.get_my_dialogs(phone, refresh=True)
     if getattr(dialogs, "partial", False):
         print(
-            f"WARNING: Dialog refresh timed out after {len(dialogs)} dialogs; "
-            "dialog_cache was not updated."
+            f"WARNING: Dialog refresh was incomplete after {len(dialogs)} dialogs; "
+            "reached dialogs were saved, but the snapshot remains incomplete."
         )
     else:
         print(f"Dialogs refreshed: {len(dialogs)} total.")
