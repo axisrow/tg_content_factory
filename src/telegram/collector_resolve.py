@@ -32,7 +32,11 @@ from src.telegram.rate_limiter import UsernameResolveRateLimitedError
 from src.utils.safe_logging import mask_phone
 
 if TYPE_CHECKING:
-    from src.telegram.collector import Collector
+    from typing import Any, Protocol
+
+    class Collector(Protocol):
+        def __getattribute__(self, name: str) -> Any: ...
+        def __setattr__(self, name: str, value: Any) -> None: ...
 
 logger = logging.getLogger(__name__)
 
