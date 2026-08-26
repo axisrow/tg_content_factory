@@ -82,12 +82,13 @@ class DialogBatchRepository:
         """Claim exactly one pending item; safe when multiple workers race."""
         async with self._database.transaction() as conn:
             owner_clause = (
-                " AND EXISTS (SELECT 1 FROM dialog_batch_operations WHERE id = ? AND lease_owner = ?)"
+                " AND EXISTS (SELECT 1 FROM dialog_batch_operations "
+                "WHERE id = ? AND lease_owner = ? AND lease_until > ?)"
                 if owner else ""
             )
             params: tuple[object, ...] = (DialogBatchStatus.RUNNING.value, batch_id, DialogBatchStatus.PENDING.value)
             if owner:
-                params += (batch_id, owner)
+                params += (batch_id, owner, datetime.now(timezone.utc).isoformat())
             cur = await conn.execute(
                 f"""UPDATE dialog_batch_items SET status = ?, attempts = attempts + 1
                    WHERE id = (SELECT id FROM dialog_batch_items
@@ -106,8 +107,11 @@ class DialogBatchRepository:
         sql = "UPDATE dialog_batch_items SET status = ?, error = ?, finished_at = ? WHERE id = ?"
         params: tuple[object, ...] = (status.value, error, finished, item_id)
         if owner:
-            sql += " AND EXISTS (SELECT 1 FROM dialog_batch_operations o WHERE o.id = batch_id AND o.lease_owner = ?)"
-            params += (owner,)
+            sql += (
+                " AND EXISTS (SELECT 1 FROM dialog_batch_operations o "
+                "WHERE o.id = batch_id AND o.lease_owner = ? AND o.lease_until > ?)"
+            )
+            params += (owner, datetime.now(timezone.utc).isoformat())
         await self._database.execute_write(sql, params)
 
     async def recover_running(self, batch_id: int) -> int:

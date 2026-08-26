@@ -38,16 +38,28 @@ class DialogBatchService:
                 return batch
             await self._repo.recover_running(batch_id)
             stop_heartbeat = asyncio.Event()
+            lease_lost = asyncio.Event()
 
             async def heartbeat() -> None:
                 while not stop_heartbeat.is_set():
                     await asyncio.sleep(30)
-                    if not await self._repo.renew_lease(batch_id, owner, datetime.now(timezone.utc)):
+                    for _ in range(3):
+                        try:
+                            renewed = await self._repo.renew_lease(batch_id, owner, datetime.now(timezone.utc))
+                        except Exception:
+                            await asyncio.sleep(1)
+                            continue
+                        if renewed:
+                            break
+                        lease_lost.set()
+                        return
+                    else:
+                        lease_lost.set()
                         return
 
             heartbeat_task = asyncio.create_task(heartbeat())
             try:
-                while (item := await self._repo.claim_next(batch_id, owner)) is not None:
+                while not lease_lost.is_set() and (item := await self._repo.claim_next(batch_id, owner)) is not None:
                     try:
                         await executor(item)
                     except Exception as exc:
