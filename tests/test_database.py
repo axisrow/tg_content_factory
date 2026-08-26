@@ -347,7 +347,7 @@ async def test_account_session_encrypted_at_rest(tmp_path):
 
 @pytest.mark.anyio
 async def test_account_session_write_requires_encryption_key(tmp_path):
-    database = Database(str(tmp_path / "encryption_required.db"))
+    database = Database(str(tmp_path / "encryption_required.db"), session_encryption_secret=None)
     await database.initialize()
 
     account = Account(phone="+71230000002", session_string="session_plain")
@@ -442,7 +442,7 @@ async def test_initialize_without_key_reports_encrypted_sessions_as_degraded(tmp
     await encrypted_db.add_account(Account(phone="+71230000003", session_string="encrypted"))
     await encrypted_db.close()
 
-    db_without_key = Database(db_path)
+    db_without_key = Database(db_path, session_encryption_secret=None)
     try:
         await db_without_key.initialize()
         summaries = await db_without_key.get_account_summaries()
