@@ -92,7 +92,13 @@ async def _dialogs_refresh(args, db, pool, *, channel_service_cls) -> None:
         return
     svc = channel_service_cls(db, pool, None)  # type: ignore[arg-type]
     dialogs = await svc.get_my_dialogs(phone, refresh=True)
-    print(f"Dialogs refreshed: {len(dialogs)} total.")
+    if getattr(dialogs, "partial", False):
+        print(
+            f"WARNING: Dialog refresh timed out after {len(dialogs)} dialogs; "
+            "dialog_cache was not updated."
+        )
+    else:
+        print(f"Dialogs refreshed: {len(dialogs)} total.")
 
 
 async def _dialogs_list(args, db, pool, *, channel_service_cls) -> None:
