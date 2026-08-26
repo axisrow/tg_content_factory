@@ -508,6 +508,7 @@ class ClientLifecycleMixin:
                 direct_session = None
 
         lease: BackendClientLease | None = None
+        installed_pooled_session = False
         try:
             if direct_session is not None:
                 context_session = direct_session.with_flood_context(
@@ -551,6 +552,7 @@ class ClientLifecycleMixin:
                         pool=self,
                         logger_=logger,
                     )
+                    installed_pooled_session = True
                     lease.disconnect_on_release = False
 
             async with self._lock:
@@ -568,6 +570,15 @@ class ClientLifecycleMixin:
                     await self._backend_router.release(lease)
                 except Exception:
                     logger.debug("Failed to release broken lease for %s", phone, exc_info=True)
+            elif lease is not None and installed_pooled_session:
+                # The pool may begin teardown after installing a replacement
+                # session but before the lease-stack append.  The persistent
+                # flag is already false in this branch, so backend release
+                # alone would leave the raw client and its tasks alive.
+                try:
+                    await lease.session.raw_client.disconnect()
+                except Exception:
+                    logger.debug("Failed to disconnect abandoned client for %s", phone, exc_info=True)
             # Only evict the pooled session when a *pooled* acquisition failed:
             # either its direct session was reconnect-broken above (direct_session
             # set to None on line ~485) or a fresh non-force acquire raised. A
