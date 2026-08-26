@@ -48,6 +48,7 @@ class FakeGenerationRunsRepo:
         # would read back.
         self._fail_after = fail_set_metadata_after
         self.set_metadata_calls = 0
+        self.release_calls = []
 
     async def set_published_at(self, run_id):
         self.published_ids.append(run_id)
@@ -56,7 +57,7 @@ class FakeGenerationRunsRepo:
         return True
 
     async def release_publish_claim(self, run_id, previous_status):
-        pass
+        self.release_calls.append((run_id, previous_status))
 
     async def refresh_publish_claim(self, run_id):
         pass
@@ -1082,6 +1083,38 @@ async def test_publish_service_cancelled_send_is_persisted_unconfirmed():
         "+1234567890:-1001234567890"
     ]
     assert 1 not in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
+async def test_publish_service_cancelled_send_persistence_failure_holds_claim():
+    """If uncertainty cannot be persisted, the run stays fail-closed."""
+    from unittest.mock import patch
+
+    import src.services.publish_service as ps
+
+    db = FakeDB(fail_set_metadata_after=0)
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = _StalledSendPool(should_succeed=True)
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    with patch.object(ps, "SEND_TIMEOUT_SEC", 30.0):
+        task = asyncio.create_task(service.publish_run(run, make_pipeline()))
+        while not pool._clients:
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(ps._PublishUncertaintyPersistenceError):
+            await task
+
+    assert db.repos.generation_runs.release_calls == []
 
 
 @pytest.mark.anyio

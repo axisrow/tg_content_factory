@@ -19,6 +19,10 @@ SEND_TIMEOUT_SEC = 120.0
 SEND_CONFIRMATION_GRACE_SEC = 5.0
 
 
+class _PublishUncertaintyPersistenceError(RuntimeError):
+    """The publish claim must remain held when cancellation cannot be recorded."""
+
+
 async def _stop_send_task(task: asyncio.Task[Any]) -> None:
     """Cancel and drain a send task before its target can be manually retried."""
     if not task.done():
@@ -215,6 +219,12 @@ class PublishService:
 
             return results
 
+        except _PublishUncertaintyPersistenceError:
+            # Releasing the claim after losing the uncertainty marker would make
+            # the next publish retry a possibly delivered message. Leave the
+            # claim held so the run fails closed until an operator repairs it.
+            claim_active = False
+            raise
         finally:
             if claim_active:
                 await self._db.repos.generation_runs.release_publish_claim(
@@ -321,12 +331,15 @@ class PublishService:
                     await self._db.repos.generation_runs.set_metadata(
                         run.id, {"unconfirmed_targets": [_target_key(target)]}
                     )
-                except Exception:
+                except Exception as exc:
                     logger.exception(
                         "Could not persist cancelled send for %s:%s",
                         target.phone,
                         target.dialog_id,
                     )
+                    raise _PublishUncertaintyPersistenceError(
+                        f"Could not persist cancelled send for {target.phone}:{target.dialog_id}"
+                    ) from exc
                 raise
 
             return PublishResult(
@@ -336,6 +349,8 @@ class PublishService:
                 dialog_id=target.dialog_id,
             )
 
+        except _PublishUncertaintyPersistenceError:
+            raise
         except asyncio.TimeoutError:
             # A timeout BEFORE the send (client acquisition / flood wait / entity
             # resolution). Nothing was dispatched, so this is a plain failure the
