@@ -516,3 +516,28 @@ def test_serve_is_running_is_true_for_plain_serve(tmp_path, monkeypatch):
         patch.object(process_control, "_process_command", return_value="python -m src.main serve"),
     ):
         assert _real_serve_is_running(config) is True
+
+
+def test_serve_is_running_survives_process_command_raising(tmp_path, monkeypatch):
+    """`_process_command` raising (e.g. PermissionError reading /proc) must not crash the command.
+
+    Regression (Claude's built-in /review, PR #1324 post-audit re-review):
+    the try/except in `serve_is_running` only wrapped `read_pid(...)`, not
+    the `process_control._process_command(pid).split()` call added in
+    round 2 — an unexpected exception there (the underlying `os.kill`/
+    `/proc` read/`ps` subprocess call is not guaranteed exception-free on
+    every platform) would propagate uncaught, contradicting the
+    docstring's "Never raises" guarantee.
+    """
+    from src.cli import process_control, worker_handoff
+
+    config = AppConfig()
+    pid_path = tmp_path / "serve.pid"
+    pid_path.write_text("4321\n", encoding="utf-8")
+    monkeypatch.setattr(worker_handoff, "pid_file_path", lambda _config: pid_path)
+
+    with (
+        patch.object(process_control, "is_process_alive", return_value=True),
+        patch.object(process_control, "_process_command", side_effect=PermissionError("denied")),
+    ):
+        assert _real_serve_is_running(config) is False

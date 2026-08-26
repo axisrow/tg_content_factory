@@ -58,8 +58,8 @@ def serve_is_running(config: AppConfig) -> bool:
     """
     try:
         pid = read_pid(pid_file_path(config))
+        if pid is None or not is_expected_server_process(pid):
+            return False
+        return "--no-worker" not in process_control._process_command(pid).split()
     except Exception:
         return False
-    if pid is None or not is_expected_server_process(pid):
-        return False
-    return "--no-worker" not in process_control._process_command(pid).split()
