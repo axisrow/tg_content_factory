@@ -247,18 +247,87 @@ class ErrorRedirectLogMiddleware(BaseHTTPMiddleware):
 
 
 class BasicAuthMiddleware(BaseHTTPMiddleware):
+    max_failures = 5
+    lockout_seconds = 60
+
     def __init__(self, app, password: str):
         super().__init__(app)
         self.password = password
+        self._failures: dict[str, tuple[int, float, float]] = {}
+
+    @staticmethod
+    def _client_key(request: Request) -> str:
+        return request.client.host if request.client else "unknown"
+
+    def _blocked(self, key: str) -> int:
+        entry = self._failures.get(key)
+        if not entry:
+            return 0
+        failures, blocked_until, stale_at = entry
+        now = time.monotonic()
+        if blocked_until > now:
+            return max(1, int(blocked_until - now))
+        if stale_at <= now:
+            self._failures.pop(key, None)
+        return 0
+
+    def _record_failure(self, key: str) -> None:
+        now = time.monotonic()
+        if key not in self._failures and len(self._failures) >= 4096:
+            self._failures.pop(next(iter(self._failures)))
+        failures, _, stale_at = self._failures.get(key, (0, 0.0, 0.0))
+        if stale_at <= now:
+            failures = 0
+        failures += 1
+        blocked_until = now + self.lockout_seconds if failures >= self.max_failures else 0.0
+        self._failures[key] = (failures, blocked_until, now + self.lockout_seconds)
+
+    def _reserve_attempt(self, key: str) -> int:
+        """Atomically reject a lockout or reserve the next form attempt."""
+        retry_after = self._blocked(key)
+        if retry_after:
+            return retry_after
+        self._record_failure(key)
+        return 0
+
+    @staticmethod
+    def _rate_limited(retry_after: int) -> Response:
+        return Response(
+            "Too many authentication attempts",
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
 
     async def dispatch(self, request, call_next):
-        if is_public_path(request.url.path):
+        key = self._client_key(request)
+
+        # GET /login remains public. POST failures are counted after the route
+        # returns, so form credentials never need to be logged or buffered here.
+        if is_public_path(request.url.path) and request.url.path != "/login":
             return await call_next(request)
+
+        if request.url.path == "/login":
+            if request.method == "POST":
+                # Reserve before awaiting the route: otherwise concurrent
+                # form submissions can all pass the check before failures are
+                # recorded when the response returns.
+                retry_after = self._reserve_attempt(key)
+                if retry_after:
+                    return self._rate_limited(retry_after)
+            response = await call_next(request)
+            if request.method == "POST":
+                if response.status_code < 400:
+                    self._failures.pop(key, None)
+            return response
 
         if get_cookie_user(request):
             return await call_next(request)
 
         auth = request.headers.get("Authorization", "")
+        if auth:
+            retry_after = self._blocked(key)
+            if retry_after:
+                return self._rate_limited(retry_after)
         if auth.startswith("Basic "):
             try:
                 decoded = base64.b64decode(auth[6:]).decode()
@@ -267,6 +336,7 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                 decoded = ""
             _, _, pwd = decoded.partition(":")
             if secrets.compare_digest(pwd.encode(), self.password.encode()):
+                self._failures.pop(key, None)
                 response = await call_next(request)
                 # Don't hand a panel session cookie to Basic-auth API clients
                 # (/api/*): a cookie-jar client (httpx.Client/requests.Session)
@@ -275,6 +345,11 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                 if not request.url.path.startswith("/api/"):
                     set_session_cookie(response, request)
                 return response
+
+        # A browser request without credentials is an unauthenticated visit,
+        # not a failed Basic-auth attempt. Only throttle supplied credentials.
+        if auth:
+            self._record_failure(key)
 
         target = login_redirect_url(redirect_target_from_request(request))
         if request.headers.get("HX-Request") == "true":
