@@ -8,8 +8,6 @@ from pathlib import Path
 
 import pytest
 
-from src.telegram.account_lease_pool import AccountLease
-
 _LEASE_OWNERSHIP_ALLOWLIST = {
     # These helpers deliberately return the borrowed result to a caller that
     # owns the finally/release boundary.
@@ -80,13 +78,15 @@ async def test_failed_backend_acquire_rolls_back_exclusive_reservation(real_pool
     """An exception after reservation cannot leak _in_use or an active lease."""
     harness = real_pool_harness_factory()
     phone = "+71230000002"
-    account = await harness.add_account(phone, session_string="lease-failure")
+    await harness.add_account(phone, session_string="lease-failure")
+    lease = await harness.pool._lease_pool.acquire_by_phone(phone, {phone})
+    assert lease is not None and not lease.shared
 
     async def fail_acquire(*_args, **_kwargs):
         raise RuntimeError("backend unavailable")
 
     harness.pool._backend_router.acquire_client = fail_acquire
-    result = await harness.pool._acquire_from_lease(AccountLease(account=account, shared=False))
+    result = await harness.pool._acquire_from_lease(lease)
 
     assert result is None
     assert phone not in harness.pool._in_use
@@ -109,6 +109,47 @@ async def test_disconnect_all_clears_live_lease_state(real_pool_harness_factory)
     assert harness.pool._in_use == set()
     assert dict(harness.pool._active_leases) == {}
     assert client.disconnect.await_count == 1
+
+
+@pytest.mark.anyio
+async def test_acquisition_started_during_teardown_is_rejected(real_pool_harness_factory):
+    """A lease that reaches the pool after teardown starts cannot be returned."""
+    harness = real_pool_harness_factory()
+    phone = "+71230000004"
+    harness.queue_cli_client(phone=phone)
+    await harness.add_account(phone, session_string="lease-race")
+    await harness.initialize_connected_accounts()
+
+    acquire_entered = asyncio.Event()
+    allow_acquire = asyncio.Event()
+    teardown_started = asyncio.Event()
+    original_acquire = harness.pool._lease_pool.acquire_by_phone
+
+    async def blocked_acquire(*args, **kwargs):
+        acquire_entered.set()
+        await allow_acquire.wait()
+        return await original_acquire(*args, **kwargs)
+
+    harness.pool._lease_pool.acquire_by_phone = blocked_acquire
+
+    original_disconnect = harness.pool.disconnect_all
+
+    async def tracked_disconnect():
+        teardown_started.set()
+        await original_disconnect()
+
+    harness.pool.disconnect_all = tracked_disconnect
+    acquire_task = asyncio.create_task(harness.pool.get_client_by_phone(phone))
+    await acquire_entered.wait()
+    teardown_task = asyncio.create_task(harness.pool.disconnect_all())
+    await teardown_started.wait()
+    allow_acquire.set()
+    result = await acquire_task
+    await teardown_task
+
+    assert result is None
+    assert harness.pool._in_use == set()
+    assert harness.pool._active_leases == {}
 
 
 @pytest.mark.anyio
