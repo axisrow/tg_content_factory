@@ -3075,7 +3075,12 @@ async def test_transient_owner_flood_does_not_deactivate_private_channel(caplog)
     db.get_channel_stats = AsyncMock(return_value=[])
     db.get_setting = AsyncMock(return_value=None)
     db.set_channel_active = AsyncMock()
+    # The owner row still exists but is not live-usable (for example, its
+    # session cannot currently be decrypted or the admin paused it).  Liveness
+    # must distinguish this recoverable state from a deleted row.
+    db.get_account_summaries = AsyncMock(return_value=[SimpleNamespace(phone="+7001")])
     db.repos.channels.update_channel_preferred_phone = AsyncMock()
+    pool._lease_pool.get_account = AsyncMock(return_value=None)
 
     collector = Collector(pool, db, SchedulerConfig())
     with caplog.at_level(logging.WARNING, logger="src.telegram.collector"):
