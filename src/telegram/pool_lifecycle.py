@@ -244,6 +244,11 @@ class ClientLifecycleMixin:
     async def release_client(self, phone: str) -> None:
         """Mark client as no longer in active use.
 
+        Ownership ends at this method: callers invoke it in ``finally`` after
+        every successful pool acquisition. The active-lease pop and
+        exclusive-marker release stay under ``ClientPool._lock``; do not move
+        the nested lease-pool call outside that critical section.
+
         When the lease stack mixes an ephemeral native lease
         (disconnect_on_release=True) and a direct-pool lease, prefer releasing the
         disconnect-on-release one so the native client/connection is torn down
@@ -441,6 +446,11 @@ class ClientLifecycleMixin:
     async def _acquire_phone_lease(
         self, phone: str, *, wait_for_flood: bool = False
     ) -> AccountLease | None:
+        """Acquire a phone atomically across lease-pool and pool fallback paths.
+
+        No caller may reverse the lease-pool-lock then pool-lock order or
+        inspect ``_in_use`` between the two phases.
+        """
         if wait_for_flood:
             await self._await_transient_flood(phone)
 
