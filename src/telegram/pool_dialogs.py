@@ -82,6 +82,14 @@ class DialogFetchStats:
     partial: bool = False
 
 
+class DialogFetchResult(list[dict]):
+    """Dialogs returned by a live fetch, including whether it was complete."""
+
+    def __init__(self, dialogs: list[dict], *, partial: bool = False) -> None:
+        super().__init__(dialogs)
+        self.partial = partial
+
+
 @dataclass
 class DialogCacheEntry:
     fetched_at_monotonic: float
@@ -1323,13 +1331,18 @@ class DialogsMixin:
                 stats.partial,
                 len(items),
             )
-            if not stats.partial:
+            if stats.partial:
+                logger.warning(
+                    "get_dialogs_for_phone: cache was not updated for %s because the result is partial",
+                    acquired_phone,
+                )
+            else:
                 self.invalidate_dialogs_cache(acquired_phone)
                 self._store_cached_dialogs(acquired_phone, cache_mode, items)
                 if cache_mode == "full":
                     self.mark_dialogs_fetched(acquired_phone)
                     await self._db.repos.dialog_cache.replace_dialogs(acquired_phone, items)
-            return items
+            return DialogFetchResult(items, partial=stats.partial)
         finally:
             await self.release_client(acquired_phone)
 

@@ -64,6 +64,13 @@ class DialogsCommandsMixin(_Base):
     async def _handle_dialogs_refresh(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])
         dialogs = await self._pool.get_dialogs_for_phone(phone, include_dm=True, mode="full", refresh=True)
+        if getattr(dialogs, "partial", False):
+            return {
+                "phone": phone,
+                "dialogs_count": len(dialogs),
+                "partial": True,
+                "warning": "Dialog refresh timed out; dialog_cache was not updated.",
+            }
         await self._db.repos.dialog_cache.replace_dialogs(phone, dialogs)
         return {"phone": phone, "dialogs_count": len(dialogs)}
 
