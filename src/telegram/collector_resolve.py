@@ -37,7 +37,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 RESOLVE_USERNAME_OPERATION = "collect_channel_resolve_username"
-TRANSIENT_REVIEW_REASONS = frozenset({"resolve_transient_error", "resolve_account_unavailable"})
+TRANSIENT_REVIEW_REASONS = frozenset(
+    {"resolve_transient_error", "resolve_account_unavailable", "stats_entity_unresolved"}
+)
 
 
 class ResolveOutcome:
@@ -183,6 +185,8 @@ async def _resolve_by_username(
             log_prefix="Channel",
         )
         return ResolveOutcome(action="stop")
+    if channel.id and channel.review_reason in TRANSIENT_REVIEW_REASONS:
+        await collector._db.repos.channels.clear_channel_review(channel.id)
     return ResolveOutcome(entity=entity)
 
 
