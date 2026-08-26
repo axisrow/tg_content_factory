@@ -60,12 +60,28 @@ class DialogBatchService:
             heartbeat_task = asyncio.create_task(heartbeat())
             try:
                 while not lease_lost.is_set() and (item := await self._repo.claim_next(batch_id, owner)) is not None:
+                    execution = asyncio.create_task(executor(item))
+                    lost_waiter = asyncio.create_task(lease_lost.wait())
                     try:
-                        await executor(item)
+                        done, _ = await asyncio.wait(
+                            (execution, lost_waiter), return_when=asyncio.FIRST_COMPLETED
+                        )
+                        if lost_waiter in done and execution not in done:
+                            execution.cancel()
+                            await asyncio.gather(execution, return_exceptions=True)
+                            break
+                        await execution
                     except Exception as exc:
                         await self._repo.update_item(item.id, DialogBatchStatus.FAILED, str(exc), owner)  # type: ignore[arg-type]
                     else:
                         await self._repo.update_item(item.id, DialogBatchStatus.COMPLETED, owner=owner)  # type: ignore[arg-type]
+                    finally:
+                        lost_waiter.cancel()
+                        await asyncio.gather(lost_waiter, return_exceptions=True)
+                if lease_lost.is_set():
+                    # Do not finalize: pending work must remain resumable by a
+                    # fresh owner after the lease is recovered.
+                    return (await self._repo.get_batch(batch_id)) or batch
                 items = await self._repo.list_items(batch_id)
                 status = (DialogBatchStatus.FAILED if any(i.status == DialogBatchStatus.FAILED for i in items)
                           else DialogBatchStatus.COMPLETED)
