@@ -358,7 +358,7 @@ async def test_stats_taskgroup_unwraps_database_busy_error():
 
 @pytest.mark.anyio
 async def test_acquire_from_lease_force_native_failure_keeps_pooled_client():
-    """#1242: a failing force_native acquire must NOT evict the healthy pooled
+    """#1385 (originally #1242): a failing force_native acquire must NOT evict the healthy pooled
     session from self.clients.
 
     force_native sets direct_session=None unconditionally (it uses an ephemeral
@@ -382,6 +382,31 @@ async def test_acquire_from_lease_force_native_failure_keeps_pooled_client():
     assert pool.clients.get("+7") is pooled, (
         "force_native acquire failure evicted the healthy pooled client (#1242)"
     )
+
+
+@pytest.mark.anyio
+async def test_acquire_from_lease_force_native_post_acquire_failure_keeps_pooled_client():
+    """#1385: failures after creating the ephemeral lease must preserve the pool entry."""
+    pool = _pool_with_in_use(in_use=set())
+    pooled = object()
+    pool.clients = {"+7": pooled}
+
+    ephemeral_lease = SimpleNamespace(
+        session=MagicMock(),
+        disconnect_on_release=True,
+    )
+    ephemeral_lease.session.with_flood_context.side_effect = RuntimeError("context setup failed")
+    pool._backend_router.acquire_client = AsyncMock(return_value=ephemeral_lease)
+    account_lease = AccountLease(
+        account=Account(phone="+7", session_string="session", is_active=True),
+        shared=True,
+    )
+
+    result = await pool._acquire_from_lease(account_lease, force_native=True)
+
+    assert result is None
+    assert pool.clients.get("+7") is pooled
+    pool._backend_router.release.assert_awaited_once_with(ephemeral_lease)
 
 
 @pytest.mark.anyio
