@@ -127,22 +127,24 @@ class DialogCacheRepository:
         if not dialogs:
             return
         async with self._database.transaction() as conn:
-            # Keep a partial snapshot stale when it was already stale.  The
-            # cache freshness check uses MAX(cached_at) for the whole phone;
-            # stamping only the rows reached in this pass would incorrectly
-            # make the untouched tail look fresh.
-            cur = await conn.execute(
-                "SELECT MAX(cached_at) AS cached_at FROM dialog_cache WHERE phone = ?",
-                (phone,),
-            )
-            row = await cur.fetchone()
-            # MAX() without GROUP BY always yields one row, even for an empty
-            # phone snapshot; keep that invariant explicit for type checkers.
-            assert row is not None
-            # A first partial snapshot is not complete/fresh.  Use an old
-            # marker so the next ordinary read retries Telegram instead of
+            # A partial walk makes the snapshot INCOMPLETE, so it must never
+            # read as fresh — regardless of what it was before. Stamping only
+            # the reached rows would make the untouched tail look fresh; and
+            # inheriting a still-fresh predecessor would serve the truncated
+            # union (stale rows + missing later changes) as a complete snapshot
+            # for the rest of the TTL (#1359). Both are the same lie, so the
+            # whole phone is marked stale here and re-fetched on the next read.
+            # An incomplete snapshot is never fresh, so use a marker in the
+            # past: the next ordinary read then retries Telegram instead of
             # treating incomplete rows as authoritative.
-            cached_at = row["cached_at"] or "1970-01-01T00:00:00+00:00"
+            cached_at = "1970-01-01T00:00:00+00:00"
+            # Freshness is MAX(cached_at) over the WHOLE phone, so the rows this
+            # pass did not reach must be aged too — otherwise a partial walk over
+            # a still-fresh snapshot would keep reading as complete (#1359).
+            await conn.execute(
+                "UPDATE dialog_cache SET cached_at = ? WHERE phone = ?",
+                (cached_at, phone),
+            )
             await conn.executemany(
                 """
                 INSERT INTO dialog_cache (

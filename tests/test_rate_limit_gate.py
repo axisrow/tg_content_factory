@@ -63,11 +63,43 @@ def test_resolve_and_reaction_keep_their_existing_dedicated_gates() -> None:
         "search_warm_dialog_cache",
         "leave_channels:123_warm_dialog_cache",
         "delete_dialogs:123_warm_dialog_cache",
-        "telegram_stream_dialogs",
     ),
 )
 def test_decorated_dialog_operations_use_the_dialogs_bucket(operation: str) -> None:
     assert TelegramRateLimitGate.category_for(operation) == "dialogs"
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ("telegram_stream_dialogs", "resume_stream_dialogs"),
+)
+def test_dialog_sweep_has_its_own_bucket(operation: str) -> None:
+    """A sweep is one operation continued across passes, not repeated calls.
+
+    Sharing the warm-up's 1/min bucket meant the second pass of a resumable
+    sweep was always refused, so the sweep could never resume (#1359). The
+    warm-up keeps its own strict bucket — that is what #1330 needs.
+    """
+    assert TelegramRateLimitGate.category_for(operation) == "dialog_sweep"
+    assert TelegramRateLimitGate.category_for("telegram_warm_dialog_cache") == "dialogs"
+
+
+def test_sweep_budget_covers_every_pass_the_loop_will_attempt() -> None:
+    """The gate must never be the thing that truncates a resumable sweep.
+
+    Its budget is kept in step with the sweep loop's own pass limit, so the
+    loop's limiters (max passes, time budget, no-progress check) and the flood
+    breaker are what bound a sweep — not a starved bucket.
+    """
+    from src.telegram.pool_dialogs import DIALOG_FETCH_MAX_PASSES
+    from src.telegram.rate_limit_gate import DIALOG_SWEEP_MAX_CALLS
+
+    assert DIALOG_SWEEP_MAX_CALLS >= DIALOG_FETCH_MAX_PASSES
+
+    clock = _Clock()
+    gate = TelegramRateLimitGate(time_func=clock)
+    for _ in range(DIALOG_FETCH_MAX_PASSES):
+        assert gate.try_acquire("+1", "dialog_sweep") == 0.0
 
 
 def test_phase_two_categories_are_separately_calibrated() -> None:

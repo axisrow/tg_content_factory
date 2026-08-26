@@ -70,7 +70,7 @@ def _make_photo_dialog_client(
         )
     ]
 
-    def _iter_dialogs():
+    def _iter_dialogs(*args, **kwargs):
         if dialogs_error is None:
             return AsyncIterMessages(prepared)
 

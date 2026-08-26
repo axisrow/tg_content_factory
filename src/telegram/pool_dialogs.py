@@ -30,7 +30,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from telethon.errors import (
     ChannelInvalidError,
@@ -51,6 +51,7 @@ from src.telegram.backends import (
 from src.telegram.flood_wait import (
     HandledFloodWaitError,
     is_blocking_flood_wait_until,
+    is_transient_flood_wait_seconds,
     run_with_flood_wait,
     run_with_flood_wait_retry,
 )
@@ -66,6 +67,15 @@ WARM_SINGLE_PHONE_TIMEOUT_SEC = 30.0
 WARM_ALL_PHONES_TOTAL_SEC = 150.0
 WARM_STAGGER_DELAY_SEC = 1.0
 
+# Resumable dialog sweep (#1359).  A full sweep over a few thousand dialogs does
+# not finish in one pass: Telegram throttles it mid-way regardless of how much
+# time we allow.  So the pass timeout only bounds a SINGLE pass, and the sweep
+# resumes from the last position until one of the three limits below trips.
+DIALOG_FETCH_PASS_TIMEOUT_SEC = 180.0
+DIALOG_FETCH_TOTAL_BUDGET_SEC = 300.0
+DIALOG_FETCH_MAX_PASSES = 12
+DIALOG_FETCH_UPSERT_CHUNK = 200
+
 
 class _ChannelEntity(Protocol):
     id: int
@@ -80,14 +90,95 @@ class DialogFetchStats:
     dms: int = 0
     bots: int = 0
     partial: bool = False
+    passes: int = 0
+    resumed: bool = False
+    # Rows actually written to dialog_cache, as opposed to how many dialogs the
+    # caller happens to be holding: a channels_only sweep writes none, and a
+    # degraded result carries the previous snapshot (#1350).
+    saved: int = 0
+
+
+@dataclass
+class _DialogCursor:
+    """Position of a dialog sweep, so a truncated pass can be resumed.
+
+    Mirrors what Telethon's ``_DialogsIter`` tracks internally: the top message
+    of the last dialog seen plus that dialog's input peer.
+    """
+
+    offset_date: Any = None
+    offset_id: int = 0
+    offset_peer: Any = None
+
+    @property
+    def is_start(self) -> bool:
+        return self.offset_peer is None
+
+    def as_kwargs(self) -> dict[str, Any]:
+        if self.is_start:
+            return {}
+        return {
+            "offset_date": self.offset_date,
+            "offset_id": self.offset_id,
+            "offset_peer": self.offset_peer,
+            # Pinned dialogs are returned ahead of the offset on every request;
+            # Telethon excludes them once it starts paginating, and so must we.
+            "ignore_pinned": True,
+        }
+
+
+def _advance_cursor(cursor: _DialogCursor, dialog: Any) -> None:
+    """Record the sweep position from a dialog, mirroring Telethon exactly.
+
+    Telethon splits the cursor across two different dialogs
+    (``_DialogsIter._load_next_chunk``)::
+
+        offset_id   = last_message.id     # last dialog that HAS a message
+        offset_date = last_message.date   #   (found by scanning in reverse)
+        offset_peer = self.buffer[-1].input_entity   # last dialog, period
+
+    So ``offset_peer`` advances for EVERY dialog, while ``offset_id``/
+    ``offset_date`` advance only for message-bearing ones. Updating all three
+    together (only on message-bearing dialogs) leaves offset_peer behind
+    Telethon's whenever a chunk ends with message-less dialogs: the resumed
+    request replays an already-seen tail, makes no progress, and the sweep
+    stops early -- defeating the resumption this exists for.
+
+    The strict isinstance checks keep this a no-op against MagicMock dialogs in
+    tests, which fail loudly rather than silently drifting.
+    """
+    input_entity = getattr(dialog, "input_entity", None)
+    if input_entity is None or type(input_entity).__module__.startswith("unittest.mock"):
+        # An unconfigured MagicMock auto-creates any attribute, so it would
+        # anchor the cursor on a meaningless object and silently disable resume
+        # in tests. Refuse it, so such tests fail loudly instead of drifting.
+        return
+    # Advances for every dialog, exactly like Telethon's buffer[-1].
+    cursor.offset_peer = input_entity
+    message = getattr(dialog, "message", None)
+    message_id = getattr(message, "id", None)
+    message_date = getattr(message, "date", None)
+    if not isinstance(message_id, int) or not isinstance(message_date, datetime):
+        # No message here: keep the previous id/date, like Telethon's reverse
+        # scan for the last message-bearing dialog.
+        return
+    cursor.offset_id = message_id
+    cursor.offset_date = message_date
 
 
 class DialogFetchResult(list[dict]):
     """Dialogs returned by a live fetch, including whether it was complete."""
 
-    def __init__(self, dialogs: list[dict], *, partial: bool = False) -> None:
+    def __init__(
+        self, dialogs: list[dict], *, partial: bool = False, saved: int = 0
+    ) -> None:
         super().__init__(dialogs)
         self.partial = partial
+        # Rows actually persisted by this fetch. Callers must report THIS, not
+        # len(self): a channels_only sweep persists nothing, and a degraded
+        # result is the previous snapshot, so announcing its length as "saved"
+        # is the same misleading success #1350 was filed against.
+        self.saved = saved
 
 
 @dataclass
@@ -488,6 +579,9 @@ class DialogsMixin:
         full_dialogs = await self._db.repos.dialog_cache.list_dialogs(phone)
         if not full_dialogs:
             return None
+        # A partial sweep deliberately keeps the PREVIOUS cached_at
+        # (#1360/#1347), so a truncated fragment reads as stale here and is
+        # re-fetched instead of being served as a fresh complete snapshot.
         cached_at = await self._db.repos.dialog_cache.get_cached_at(phone)
         age_sec = None
         if cached_at is not None:
@@ -1309,6 +1403,33 @@ class DialogsMixin:
             if self._dialog_refresh_tasks.get(key) is task and task.done():
                 self._dialog_refresh_tasks.pop(key, None)
 
+    async def _flush_dialog_chunk(self, phone: str, pending: list[dict]) -> int:
+        """Persist accumulated dialogs mid-sweep so progress survives an abort.
+
+        Returns how many rows were actually written, so callers can report the
+        truth rather than the length of whatever list they happen to hold: a
+        ``channels_only`` sweep never fills ``pending`` at all, and a degraded
+        result carries the OLD cache. Both used to be announced as "saved".
+
+        Failures are logged, never raised: losing a chunk is bad, losing the
+        whole sweep because the write failed is worse.
+        """
+        if not pending:
+            return 0
+        chunk = list(pending)
+        pending.clear()
+        try:
+            await self._db.repos.dialog_cache.upsert_dialogs(phone, chunk)
+            return len(chunk)
+        except Exception:
+            logger.warning(
+                "_flush_dialog_chunk: upsert failed for %s (%d rows)",
+                phone,
+                len(chunk),
+                exc_info=True,
+            )
+            return 0
+
     async def _fetch_dialogs_for_phone(
         self,
         phone: str,
@@ -1325,16 +1446,38 @@ class DialogsMixin:
         try:
             items: list[dict] = []
             stats = DialogFetchStats()
+            cursor = _DialogCursor()
+            seen_ids: set[int] = set()
+            pending: list[dict] = []
             try:
                 me = await session.fetch_me()
                 my_id: int | None = me.id
             except Exception:
                 my_id = None
 
+            async def _record(item: dict) -> None:
+                items.append(item)
+                if cache_mode != "full":
+                    # channels_only carries no dm/bot rows; flushing it would
+                    # look like those dialogs vanished.
+                    return
+                pending.append(item)
+                if len(pending) >= DIALOG_FETCH_UPSERT_CHUNK:
+                    stats.saved += await self._flush_dialog_chunk(acquired_phone, pending)
+
             async def _iter() -> None:
-                async for dialog in session.stream_dialogs():
+                async for dialog in session.stream_dialogs(**cursor.as_kwargs()):
                     stats.raw_dialogs += 1
                     entity = dialog.entity
+                    # Advance BEFORE any filtering: the sweep position must not
+                    # depend on whether this dialog ends up in ``items``.
+                    _advance_cursor(cursor, dialog)
+                    entity_id = getattr(entity, "id", None)
+                    if entity_id in seen_ids:
+                        # Resuming re-reads the boundary page; drop the overlap.
+                        continue
+                    if isinstance(entity_id, int):
+                        seen_ids.add(entity_id)
                     if dialog.is_channel or dialog.is_group:
                         channel_type, deactivate = self._classify_entity(entity)
                         if channel_type in (
@@ -1347,7 +1490,7 @@ class DialogsMixin:
                             stats.channels += 1
                         if channel_type in ("supergroup", "group", "gigagroup", "forum"):
                             stats.groups += 1
-                        items.append(
+                        await _record(
                             {
                                 "channel_id": entity.id,
                                 "title": dialog.title,
@@ -1365,7 +1508,7 @@ class DialogsMixin:
                             stats.bots += 1
                         else:
                             stats.dms += 1
-                        items.append(
+                        await _record(
                             {
                                 "channel_id": entity.id,
                                 "title": "Избранное (Saved Messages)" if is_saved else dialog.title,
@@ -1377,38 +1520,110 @@ class DialogsMixin:
                             }
                         )
 
-            iter_coro = _iter()
-            try:
-                await run_with_flood_wait(
-                    iter_coro,
-                    operation="get_dialogs_for_phone",
-                    phone=acquired_phone,
-                    pool=self,
-                    logger_=logger,
-                    timeout=60.0,
-                )
-            except asyncio.TimeoutError:
-                iter_coro.close()
-                stats.partial = True
-                logger.warning(
-                    "get_dialogs_for_phone: timed out for %s mode=%s, returning %d partial results",
+            def _guarded_pass() -> Any:
+                """Build one pass as a Task rather than a bare coroutine.
+
+                run_with_flood_wait_retry evaluates the factory as a call
+                ARGUMENT, so anything raising before the await -- the rate-limit
+                gate, or a patched wait_for -- would leave a bare coroutine
+                unawaited ("coroutine was never awaited"). A Task is always
+                owned by the loop and gets cancelled instead of leaking.
+                """
+                return asyncio.ensure_future(_iter())
+
+            deadline = started_at + DIALOG_FETCH_TOTAL_BUDGET_SEC
+            while True:
+                stats.passes += 1
+                seen_before = len(seen_ids)
+                try:
+                    # _iter is passed as a FACTORY (via _guarded_pass): a retried
+                    # pass restarts from the cursor, not from the beginning.
+                    await run_with_flood_wait_retry(
+                        _guarded_pass,
+                        operation="get_dialogs_for_phone",
+                        phone=acquired_phone,
+                        pool=self,
+                        logger_=logger,
+                        timeout=DIALOG_FETCH_PASS_TIMEOUT_SEC,
+                    )
+                    if stats.passes > 1 and len(seen_ids) == seen_before:
+                        # A resumed pass that yields nothing new has not proven
+                        # the sweep is complete -- it only proves this pass got
+                        # nowhere. Claiming success here would let a truncated
+                        # snapshot overwrite the cache as if it were full.
+                        logger.warning(
+                            "get_dialogs_for_phone: resumed pass returned nothing new for %s; "
+                            "keeping the sweep partial (%d dialogs)",
+                            acquired_phone,
+                            len(items),
+                        )
+                        break
+                    stats.partial = False
+                    break
+                except asyncio.TimeoutError:
+                    stats.partial = True
+                    reason = "timeout"
+                except TelegramRateLimitedError as exc:
+                    # Our own gate refused the next pass. DIALOGS_SPEC allows a
+                    # single stream_dialogs per minute and slots cannot be
+                    # reserved beyond max_calls, so this is expected once the
+                    # sweep needs a second pass. Stop and keep what we have --
+                    # the caller reruns refresh, which is why the partial
+                    # warning says exactly that.
+                    stats.partial = True
+                    logger.info(
+                        "get_dialogs_for_phone: next pass rate-limited for %s "
+                        "(retry in %.1fs); keeping %d dialogs",
+                        acquired_phone,
+                        exc.retry_after_sec,
+                        len(items),
+                    )
+                    break
+                except HandledFloodWaitError as exc:
+                    stats.partial = True
+                    reason = f"flood_wait:{exc.info.wait_seconds}s"
+                    if not is_transient_flood_wait_seconds(exc.info.wait_seconds):
+                        logger.warning(
+                            "get_dialogs_for_phone: blocking %s for %s after %d dialogs; "
+                            "keeping partial progress",
+                            reason,
+                            acquired_phone,
+                            len(items),
+                        )
+                        break
+
+                if cursor.is_start or len(seen_ids) == seen_before:
+                    # Nothing new came back — resuming again would spin forever.
+                    logger.warning(
+                        "get_dialogs_for_phone: no progress after %s for %s (%d dialogs)",
+                        reason,
+                        acquired_phone,
+                        len(items),
+                    )
+                    break
+                if stats.passes >= DIALOG_FETCH_MAX_PASSES or time.perf_counter() >= deadline:
+                    logger.warning(
+                        "get_dialogs_for_phone: sweep budget exhausted for %s after %s "
+                        "(passes=%d, %d dialogs)",
+                        acquired_phone,
+                        reason,
+                        stats.passes,
+                        len(items),
+                    )
+                    break
+                stats.resumed = True
+                logger.info(
+                    "get_dialogs_for_phone: resuming %s after %s (pass %d, %d dialogs so far)",
                     acquired_phone,
-                    cache_mode,
+                    reason,
+                    stats.passes,
                     len(items),
                 )
-            except HandledFloodWaitError:
-                # Preserve the progress made before Telegram throttled the
-                # iterator.  The exception still reaches the dispatcher so it
-                # can schedule a later continuation.
-                if cache_mode == "full" and items:
-                    await self._db.repos.dialog_cache.upsert_dialogs(acquired_phone, items)
-                    self.invalidate_dialogs_cache(acquired_phone)
-                raise
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             logger.info(
                 "get_dialogs_for_phone: phone=%s mode=%s duration_ms=%d "
                 "raw=%d channels=%d groups=%d dms=%d bots=%d "
-                "partial=%s result=%d",
+                "passes=%d resumed=%s partial=%s result=%d",
                 acquired_phone,
                 cache_mode,
                 elapsed_ms,
@@ -1417,26 +1632,54 @@ class DialogsMixin:
                 stats.groups,
                 stats.dms,
                 stats.bots,
+                stats.passes,
+                stats.resumed,
                 stats.partial,
                 len(items),
             )
+            self.invalidate_dialogs_cache(acquired_phone)
             if stats.partial:
-                if cache_mode == "full" and items:
-                    await self._db.repos.dialog_cache.upsert_dialogs(acquired_phone, items)
-                    self.invalidate_dialogs_cache(acquired_phone)
+                # Only the partial path needs this: the success path below
+                # rewrites the whole snapshot with replace_dialogs, so flushing
+                # the tail first would upsert ~N rows and then immediately
+                # DELETE+INSERT them again (#1365: the DB is already 45 GB).
+                stats.saved += await self._flush_dialog_chunk(acquired_phone, pending)
+                # The sweep was cut short. What did arrive is already persisted
+                # by the chunk flushes above, so the cache moves forward instead
+                # of staying frozen (#1359) -- but nothing is deleted, since an
+                # incomplete sweep is no evidence a dialog is gone. The
+                # in-memory cache is deliberately NOT filled: a partial snapshot
+                # would be served as complete for the whole TTL.
                 logger.warning(
-                    "get_dialogs_for_phone: cache incrementally updated for %s with %d partial results",
+                    "get_dialogs_for_phone: partial sweep for %s -- %d dialogs saved, "
+                    "stale rows kept",
                     acquired_phone,
-                    len(items),
+                    stats.saved,
                 )
             else:
-                self.invalidate_dialogs_cache(acquired_phone)
                 self._store_cached_dialogs(acquired_phone, cache_mode, items)
                 if cache_mode == "full":
                     self.mark_dialogs_fetched(acquired_phone)
+                    # A completed sweep is a trustworthy full snapshot.
                     await self._db.repos.dialog_cache.replace_dialogs(acquired_phone, items)
-            return DialogFetchResult(items, partial=stats.partial)
+            return DialogFetchResult(items, partial=stats.partial, saved=stats.saved)
         finally:
+            # Persist whatever the sweep reached even when it is unwinding on an
+            # exception the pass loop does not handle (network error, cancel).
+            # The loop only catches timeout/rate-limit/flood, so without this a
+            # mid-sweep failure would discard the progress the chunk flushes
+            # exist to keep (#1359). Best-effort: a failure here must not mask
+            # the original exception.
+            if pending:
+                try:
+                    stats.saved += await self._flush_dialog_chunk(acquired_phone, pending)
+                except Exception:  # pragma: no cover - never mask the real error
+                    logger.warning(
+                        "get_dialogs_for_phone: could not flush %d pending dialogs for %s",
+                        len(pending),
+                        acquired_phone,
+                        exc_info=True,
+                    )
             await self.release_client(acquired_phone)
 
     async def leave_channels(self, phone: str, dialogs: list[tuple[int, str]]) -> dict[int, bool]:

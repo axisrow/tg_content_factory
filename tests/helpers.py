@@ -265,7 +265,7 @@ class FakeCliTelethonClient:
         self._entity_resolver = entity_resolver or (lambda arg: SimpleNamespace())
         self._input_entity_resolver = input_entity_resolver or self._entity_resolver
         self._dialogs = [] if dialogs is None else dialogs
-        self._iter_dialogs_factory = iter_dialogs_factory or (lambda: AsyncIterEmpty())
+        self._iter_dialogs_factory = iter_dialogs_factory or (lambda *a, **kw: AsyncIterEmpty())
         self._iter_messages_factory = iter_messages_factory or (lambda *a, **kw: AsyncIterEmpty())
         self._invoke_side_effect = invoke_side_effect
         self._profile_photo_result = profile_photo_result
@@ -388,8 +388,8 @@ class FakeCliTelethonClient:
             raise self._dialogs
         return self._dialogs
 
-    def _iter_dialogs(self):
-        return self._iter_dialogs_factory()
+    def _iter_dialogs(self, *args, **kwargs):
+        return self._iter_dialogs_factory(*args, **kwargs)
 
     def _iter_messages(self, *args, **kwargs):
         return self._iter_messages_factory(*args, **kwargs)

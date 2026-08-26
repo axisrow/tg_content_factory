@@ -64,14 +64,21 @@ class DialogsCommandsMixin(_Base):
     async def _handle_dialogs_refresh(self, payload: dict[str, Any]) -> dict[str, Any]:
         phone = str(payload["phone"])
         dialogs = await self._pool.get_dialogs_for_phone(phone, include_dm=True, mode="full", refresh=True)
+        # The pool persists the sweep itself (incrementally while it runs, as a
+        # full snapshot when it completes), so writing here would only duplicate
+        # the work -- and re-writing every row resets the insertion order that
+        # list_dialogs sorts by.
         if getattr(dialogs, "partial", False):
             return {
                 "phone": phone,
                 "dialogs_count": len(dialogs),
                 "partial": True,
-                "warning": "Dialog refresh did not complete; dialog_cache was not updated.",
+                "warning": (
+                    "Обход диалогов завершился частично: сохранено "
+                    f"{getattr(dialogs, 'saved', 0)}, "
+                    "устаревшие записи не удалялись."
+                ),
             }
-        await self._db.repos.dialog_cache.replace_dialogs(phone, dialogs)
         return {"phone": phone, "dialogs_count": len(dialogs)}
 
     async def _handle_dialogs_cache_clear(self, payload: dict[str, Any]) -> dict[str, Any]:
