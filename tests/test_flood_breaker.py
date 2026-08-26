@@ -86,6 +86,58 @@ def test_cooldown_allows_exactly_one_trial_call():
     breaker.check(OP, PHONE)
 
 
+def test_trial_call_in_flight_blocks_everyone_else():
+    """Exactly ONE trial may be in flight, not one per coroutine.
+
+    The trial spans an await (check -> Telegram call -> record_*). A second
+    coroutine arriving in that window used to see HALF_OPEN rather than OPEN and
+    return early from check() with no gate at all, so the entire backlog hit an
+    account Telegram was actively throttling — the failure mode #955 hit on the
+    notifier breaker.
+    """
+    clock = _Clock()
+    breaker = _breaker(clock)
+    for _ in range(3):
+        breaker.record_flood(OP, PHONE)
+
+    clock.advance(301.0)
+    breaker.check(OP, PHONE)  # first caller claims the trial slot
+
+    # Second caller, while the trial is still awaiting its Telegram call.
+    with pytest.raises(TelegramOperationSuspendedError):
+        breaker.check(OP, PHONE)
+
+    # The trial reports back: the slot is released and the breaker decides.
+    breaker.record_success(OP, PHONE)
+    breaker.check(OP, PHONE)
+
+
+def test_flooded_trial_reopens_and_a_later_trial_still_runs():
+    """A flooded trial must reopen the breaker without wedging later trials.
+
+    The in-flight slot is claimed by check() and released by record_success();
+    a flooded trial reopens the breaker instead, and the next cooldown grants a
+    fresh trial. This asserts the pair cannot deadlock the operation.
+    """
+    clock = _Clock()
+    breaker = _breaker(clock)
+    for _ in range(3):
+        breaker.record_flood(OP, PHONE)
+
+    clock.advance(301.0)
+    breaker.check(OP, PHONE)
+    breaker.record_flood(OP, PHONE)  # trial flooded -> breaker reopens
+
+    with pytest.raises(TelegramOperationSuspendedError):
+        breaker.check(OP, PHONE)
+
+    # A later cooldown grants a fresh trial, which succeeds and closes it.
+    clock.advance(301.0)
+    breaker.check(OP, PHONE)
+    breaker.record_success(OP, PHONE)
+    breaker.check(OP, PHONE)
+
+
 def test_failed_trial_reopens_the_breaker():
     clock = _Clock()
     breaker = _breaker(clock)

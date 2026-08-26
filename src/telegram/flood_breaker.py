@@ -123,6 +123,12 @@ class FloodCircuitBreaker:
         self._time = time_func or time.monotonic
         self._breakers: dict[tuple[str, str], pybreaker.CircuitBreaker] = {}
         self._open_until: dict[tuple[str, str], float] = {}
+        # Keys whose half-open trial call has been granted but not yet resolved.
+        # The trial spans an ``await`` (check -> Telegram call -> record_*), so
+        # without this a second coroutine arriving mid-flight sees HALF_OPEN,
+        # not OPEN, and sails past the check entirely -- the whole point of the
+        # cooldown being a *single* probe (#955).
+        self._probe_in_flight: set[tuple[str, str]] = set()
 
     def _breaker_for(self, key: tuple[str, str]) -> pybreaker.CircuitBreaker:
         breaker = self._breakers.get(key)
@@ -148,7 +154,18 @@ class FloodCircuitBreaker:
             return
         key = (operation, phone)
         breaker = self._breakers.get(key)
-        if breaker is None or breaker.current_state != pybreaker.STATE_OPEN:
+        if breaker is None:
+            return
+        state = breaker.current_state
+        if state != pybreaker.STATE_OPEN:
+            # A trial granted to someone else is still awaiting its Telegram
+            # call. Until it reports back, this operation is still suspended:
+            # letting everyone through on HALF_OPEN would send the whole backlog
+            # at an account Telegram is actively throttling.
+            if state == pybreaker.STATE_HALF_OPEN and key in self._probe_in_flight:
+                raise TelegramOperationSuspendedError(
+                    operation, phone, self._cooldown_seconds
+                )
             return
         open_until = self._open_until.get(key)
         now = self._time()
@@ -156,8 +173,10 @@ class FloodCircuitBreaker:
             raise TelegramOperationSuspendedError(operation, phone, open_until - now)
         # Cooldown elapsed: flip to half-open directly rather than through the
         # open state's before_call, which would spend the trial slot on a no-op
-        # probe. The upcoming real call becomes the genuine trial.
+        # probe. The upcoming real call becomes the genuine trial -- claimed
+        # here, released by record_flood/record_success.
         breaker.half_open()
+        self._probe_in_flight.add(key)
 
     def record_flood(self, operation: str, phone: str | None) -> None:
         """Count a flood wait against this (operation, phone)."""
@@ -180,6 +199,11 @@ class FloodCircuitBreaker:
         if not phone:
             return
         key = (operation, phone)
+        # The trial reported back, so release the slot. This is bookkeeping
+        # hygiene rather than a guard: check() re-claims the key on every grant,
+        # so a leftover entry is never consulted (no test can fail on its
+        # absence). Kept so the set means what its name says.
+        self._probe_in_flight.discard(key)
         breaker = self._breakers.get(key)
         if breaker is None or breaker.fail_counter == 0:
             # Nothing to reset. Skipping the no-op keeps the hot path free of
@@ -198,10 +222,12 @@ class FloodCircuitBreaker:
         if operation is None and phone is None:
             self._breakers.clear()
             self._open_until.clear()
+            self._probe_in_flight.clear()
             return
         for key in [k for k in self._breakers if _matches(k, operation, phone)]:
             self._breakers.pop(key, None)
             self._open_until.pop(key, None)
+            self._probe_in_flight.discard(key)
 
     @staticmethod
     def _raise_probe() -> None:
