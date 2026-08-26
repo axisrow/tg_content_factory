@@ -57,6 +57,7 @@ _OPERATION_CATEGORIES = {
     "telegram_join_channel": "channel_lifecycle",
     "telegram_import_chat_invite": "channel_lifecycle",
     "telegram_delete_channel": "channel_lifecycle",
+    "telegram_delete_chat": "channel_lifecycle",
 }
 
 
