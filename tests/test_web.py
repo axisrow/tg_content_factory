@@ -2992,7 +2992,7 @@ async def test_collect_all_htmx_returns_scheduler_link_and_creates_tasks(client,
     )
     assert resp.status_code == 200
     assert "Добавлено задач: 2." in resp.text
-    assert 'href="/scheduler"' in resp.text
+    assert 'href="/jobs?source=collection_task&amp;status=active"' in resp.text
     assert "Собрать все каналы" in resp.text
 
     tasks = await db.get_collection_tasks()
