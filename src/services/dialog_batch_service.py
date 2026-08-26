@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
+from uuid import uuid4
 
 from src.database.repositories.dialog_batch import DialogBatchRepository
 from src.models import DialogBatchItem, DialogBatchOperation, DialogBatchStatus
@@ -31,10 +33,9 @@ class DialogBatchService:
             batch = await self._repo.get_batch(batch_id)
             if batch is None:
                 raise ValueError(f"Unknown dialog batch: {batch_id}")
-            # A RUNNING row may be a crash orphan. The per-process lock prevents
-            # a second caller in this process from reclaiming a live item.
-            if batch.status != DialogBatchStatus.RUNNING:
-                await self._repo.mark_running(batch_id)
+            owner = uuid4().hex
+            if not await self._repo.acquire_lease(batch_id, owner, datetime.now(timezone.utc)):
+                return batch
             await self._repo.recover_running(batch_id)
             while (item := await self._repo.claim_next(batch_id)) is not None:
                 try:
@@ -46,7 +47,7 @@ class DialogBatchService:
             items = await self._repo.list_items(batch_id)
             status = (DialogBatchStatus.FAILED if any(i.status == DialogBatchStatus.FAILED for i in items)
                       else DialogBatchStatus.COMPLETED)
-            await self._repo.finish_batch(batch_id, status)
+            await self._repo.finish_batch(batch_id, status, owner)
             return (await self._repo.get_batch(batch_id)) or batch
 
     async def resume(self, batch_id: int, executor: DialogExecutor) -> DialogBatchOperation:

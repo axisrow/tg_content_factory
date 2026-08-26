@@ -163,6 +163,8 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "status": "status TEXT DEFAULT 'pending'",
         "created_at": "created_at TEXT",
         "finished_at": "finished_at TEXT",
+        "lease_owner": "lease_owner TEXT",
+        "lease_until": "lease_until TEXT",
     },
     "dialog_batch_items": {
         "batch_id": "batch_id INTEGER",
@@ -174,6 +176,8 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "attempts": "attempts INTEGER DEFAULT 0",
         "created_at": "created_at TEXT",
         "finished_at": "finished_at TEXT",
+        "lease_owner": "lease_owner TEXT",
+        "lease_until": "lease_until TEXT",
     },
 }
 

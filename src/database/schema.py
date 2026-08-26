@@ -290,7 +290,9 @@ CREATE TABLE IF NOT EXISTS dialog_batch_operations (
     op_type TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     created_at TEXT DEFAULT (datetime('now')),
-    finished_at TEXT
+    finished_at TEXT,
+    lease_owner TEXT,
+    lease_until TEXT
 );
 
 CREATE TABLE IF NOT EXISTS dialog_batch_items (
@@ -304,6 +306,8 @@ CREATE TABLE IF NOT EXISTS dialog_batch_items (
     attempts INTEGER NOT NULL DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now')),
     finished_at TEXT,
+    lease_owner TEXT,
+    lease_until TEXT,
     FOREIGN KEY (batch_id) REFERENCES dialog_batch_operations(id)
 );
 CREATE INDEX IF NOT EXISTS idx_dialog_batch_items_claim

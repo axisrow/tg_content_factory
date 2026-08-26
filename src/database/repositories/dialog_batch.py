@@ -53,11 +53,16 @@ class DialogBatchRepository:
         row = await cur.fetchone()
         return self._operation(row) if row else None
 
-    async def mark_running(self, batch_id: int) -> bool:
-        """Mark a new batch running without racing another starter."""
+    async def acquire_lease(self, batch_id: int, owner: str, now: datetime, lease_seconds: int = 3600) -> bool:
+        """Atomically start a batch or take over a genuinely stale worker."""
+        now_iso = now.astimezone(timezone.utc).isoformat()
+        until = datetime.fromtimestamp(now.timestamp() + lease_seconds, timezone.utc).isoformat()
         cur = await self._database.execute_write(
-            "UPDATE dialog_batch_operations SET status = ? WHERE id = ? AND status = ?",
-            (DialogBatchStatus.RUNNING.value, batch_id, DialogBatchStatus.PENDING.value),
+            """UPDATE dialog_batch_operations
+               SET status = ?, lease_owner = ?, lease_until = ?
+               WHERE id = ? AND (status = ? OR (status = ? AND lease_until < ?))""",
+            (DialogBatchStatus.RUNNING.value, owner, until, batch_id,
+             DialogBatchStatus.PENDING.value, DialogBatchStatus.RUNNING.value, now_iso),
         )
         return bool(cur.rowcount)
 
@@ -95,7 +100,7 @@ class DialogBatchRepository:
         )
         return cur.rowcount or 0
 
-    async def finish_batch(self, batch_id: int, status: DialogBatchStatus) -> None:
+    async def finish_batch(self, batch_id: int, status: DialogBatchStatus, owner: str | None = None) -> None:
         cur = await self._db.execute(
             "SELECT COUNT(*) AS n FROM dialog_batch_items WHERE batch_id = ? AND status = ?",
             (batch_id, DialogBatchStatus.RUNNING.value),
@@ -103,7 +108,12 @@ class DialogBatchRepository:
         row = await cur.fetchone()
         if row and row["n"]:
             return
-        await self._database.execute_write(
-            "UPDATE dialog_batch_operations SET status = ?, finished_at = ? WHERE id = ?",
-            (status.value, datetime.now(timezone.utc).isoformat(), batch_id),
+        sql = (
+            "UPDATE dialog_batch_operations SET status = ?, finished_at = ?, "
+            "lease_owner = NULL, lease_until = NULL WHERE id = ?"
         )
+        params: tuple[object, ...] = (status.value, datetime.now(timezone.utc).isoformat(), batch_id)
+        if owner is not None:
+            sql += " AND lease_owner = ?"
+            params += (owner,)
+        await self._database.execute_write(sql, params)
