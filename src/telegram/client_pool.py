@@ -71,6 +71,7 @@ from src.telegram.backends import (
     TelethonCliBackend,
     adapt_transport_session,  # noqa: F401
 )
+from src.telegram.flood_breaker import FloodCircuitBreaker
 from src.telegram.flood_wait import run_with_flood_wait  # noqa: F401
 from src.telegram.mtproto_watchdog import MTProtoSecurityWatchdog
 from src.telegram.pool_dialogs import (
@@ -178,6 +179,10 @@ class ClientPool(
         # defaults calibrated from the available production signals; keep the
         # registry injectable for future recalibration (#1331).
         self._rate_limit_gate = TelegramRateLimitGate()
+        # Reactive counterpart to the gate (#1330/#1368): the gate paces calls
+        # against guessed limits, the breaker stops an (operation, phone) pair
+        # that Telegram is already flood-waiting instead of hammering on.
+        self._flood_breaker = FloodCircuitBreaker()
         self._resolve_username_backoff_until_utc: dict[str, datetime] = {}
         self._resolve_ramp_up_until_utc: dict[str, datetime] = {}
         self._resolve_ramp_up_last_call_utc: dict[str, datetime] = {}
