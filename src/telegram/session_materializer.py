@@ -2,10 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 import sqlite3
 import time
+from contextlib import contextmanager
 from pathlib import Path
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 from telethon.sessions import SQLiteSession, StringSession
 
@@ -24,6 +31,33 @@ class SessionMaterializer:
 
     def materialize(self, phone: str, session_string: str) -> str:
         self._cache_dir.mkdir(parents=True, exist_ok=True)
+        with self._phone_lock(phone):
+            return self._materialize_locked(phone, session_string)
+
+    @contextmanager
+    def _phone_lock(self, phone: str):
+        lock_path = self._cache_dir / f"{self._base_path(phone).name}.lock"
+        with lock_path.open("a+b") as lock_file:
+            if os.name == "nt":
+                # msvcrt.locking requires a byte to exist at the current
+                # position and locks from that position.
+                lock_file.seek(0)
+                lock_file.write(b"\0")
+                lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                if os.name == "nt":
+                    lock_file.seek(0)
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _materialize_locked(self, phone: str, session_string: str) -> str:
         digest = hashlib.sha256(session_string.encode("utf-8")).hexdigest()
         base_path = self._base_path(phone)
         hash_path = self._hash_path(phone)

@@ -12,13 +12,16 @@ them inside the worker. These tests pin the CLI to that same queue.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.cli.commands import dialogs as dialogs_cli
 from src.cli.commands.dialogs import run_with_dependencies
 from src.cli.worker_handoff import serve_is_running as _real_serve_is_running
 from src.config import AppConfig
+from src.models import TelegramCommandStatus
 from tests.helpers import cli_ns as _ns
 
 pytestmark = pytest.mark.aiosqlite_serial
@@ -60,6 +63,37 @@ def _commands(db):
     if db._connection.db is None:
         asyncio.run(db.initialize())
     return asyncio.run(db.repos.telegram_commands.list_commands(limit=10))
+
+
+def test_wait_keeps_inline_filtered_participants(capsys):
+    """A cached full list must not overwrite a worker's filtered result."""
+    command = SimpleNamespace(
+        status=TelegramCommandStatus.SUCCEEDED,
+        result_payload={
+            "scope": "dialogs_participants:+1:-100",
+            "participants": [{"id": 2, "first_name": "Filtered", "last_name": "", "username": ""}],
+        },
+        error=None,
+    )
+    snapshot = SimpleNamespace(
+        payload={"participants": [{"id": 1, "first_name": "Stale", "last_name": "", "username": ""}]}
+    )
+    db = SimpleNamespace(
+        repos=SimpleNamespace(runtime_snapshots=SimpleNamespace(get_snapshot=AsyncMock(return_value=snapshot)))
+    )
+    with patch.object(dialogs_cli.TelegramCommandService, "get", new=AsyncMock(return_value=command)):
+        asyncio.run(dialogs_cli._wait_for_handoff_command(db, 1, "participants"))
+
+    output = capsys.readouterr().out
+    assert "Filtered" in output
+    assert "Stale" not in output
+
+
+def test_wait_reports_partial_refresh(capsys):
+    dialogs_cli._print_handoff_result(
+        "refresh", {"partial": True, "warning": "Dialog refresh timed out; dialog_cache was not updated."}
+    )
+    assert "timed out" in capsys.readouterr().out
 
 
 def test_send_enqueues_command_when_serve_is_running(cli_db, capsys):

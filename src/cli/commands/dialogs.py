@@ -1023,6 +1023,79 @@ async def _resolve_handoff_phone(args, db) -> str:
 # way `_dialogs_edit_permissions` (the in-process handler) already does
 # (Codex, PR #1324 round 3).
 _HANDOFF_STRING_BOOL_FIELDS = frozenset({"send_messages", "send_media"})
+_HANDOFF_WAIT_ACTIONS = frozenset({"resolve", "participants", "broadcast-stats", "refresh"})
+_HANDOFF_WAIT_TIMEOUT_SEC = 900.0
+_HANDOFF_POLL_INTERVAL_SEC = 1.0
+
+
+async def _wait_for_handoff_command(db, command_id: int, action: str) -> None:
+    """Wait for a read hand-off and print the worker's persisted result."""
+    terminal = {
+        TelegramCommandStatus.SUCCEEDED,
+        TelegramCommandStatus.FAILED,
+        TelegramCommandStatus.CANCELLED,
+    }
+    deadline = asyncio.get_running_loop().time() + _HANDOFF_WAIT_TIMEOUT_SEC
+    while True:
+        command = await TelegramCommandService(db).get(command_id)
+        if command is None:
+            print(f"Команда #{command_id} исчезла из очереди.")
+            return
+        if command.status in terminal:
+            if command.status != TelegramCommandStatus.SUCCEEDED:
+                print(f"Команда #{command_id} завершилась ошибкой: {command.error or command.status.value}")
+                return
+            result = command.result_payload or {}
+            if action in {"participants", "broadcast-stats"} and result.get("scope"):
+                snapshot_type = f"dialogs_{'participants' if action == 'participants' else 'broadcast_stats'}"
+                snapshot = await db.repos.runtime_snapshots.get_snapshot(snapshot_type, result["scope"])
+                # Filtered participant results are returned inline and must not
+                # be replaced by the shared unfiltered snapshot for this chat.
+                if snapshot and not (action == "participants" and "participants" in result):
+                    result = {**result, **snapshot.payload}
+            _print_handoff_result(action, result)
+            return
+        if asyncio.get_running_loop().time() >= deadline:
+            print(
+                f"Команда #{command_id} всё ещё в статусе '{command.status}' "
+                f"после {int(_HANDOFF_WAIT_TIMEOUT_SEC)}с ожидания; она продолжит выполняться в воркере."
+            )
+            return
+        await asyncio.sleep(_HANDOFF_POLL_INTERVAL_SEC)
+
+
+def _print_handoff_result(action: str, result: dict) -> None:
+    if action == "resolve":
+        entity = result.get("entity") or {}
+        print(f"Title: {entity.get('title', '')}")
+        print(f"Type: {entity.get('channel_type', '')}")
+        print(f"ID: {entity.get('channel_id', '')}")
+        if entity.get("username"):
+            print(f"Username: @{entity['username']}")
+    elif action == "participants":
+        participants = result.get("participants") or []
+        if not participants:
+            print("No participants found.")
+            return
+        print("ID           First name                Last name                 Username")
+        print("-" * 90)
+        for participant in participants:
+            print(
+                f"{str(participant.get('id', '')):<12} "
+                f"{str(participant.get('first_name', ''))[:25]:<25} "
+                f"{str(participant.get('last_name', ''))[:25]:<25} "
+                f"{('@' + participant['username']) if participant.get('username') else '':<25}"
+            )
+        print(f"\nTotal: {len(participants)}")
+    elif action == "broadcast-stats":
+        print("Broadcast stats:")
+        for key, value in (result.get("stats") or {}).items():
+            print(f"  {key}: {value}")
+    elif action == "refresh":
+        if result.get("partial"):
+            print(result.get("warning") or "Dialog refresh was incomplete; dialog cache was not updated.")
+        else:
+            print(f"Dialogs refreshed: {result.get('dialogs_count', 0)} total.")
 
 
 async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
@@ -1063,6 +1136,8 @@ async def _handoff_dialog_action(args: argparse.Namespace, db) -> bool:
         requested_by="cli:dialogs",
     )
     print(f"Сервер запущен: команда {command_type} #{command_id} поставлена в очередь воркера.")
+    if getattr(args, "wait", False) and args.dialogs_action in _HANDOFF_WAIT_ACTIONS:
+        await _wait_for_handoff_command(db, command_id, args.dialogs_action)
     return True
 
 
@@ -1223,9 +1298,10 @@ def dialogs_list(
 def dialogs_refresh(
     ctx: typer.Context,
     phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """Refresh dialog cache from Telegram."""
-    _run_dialogs(ctx, "refresh", phone=phone)
+    _run_dialogs(ctx, "refresh", phone=phone, wait=wait)
 
 
 @dialogs_app.command("resolve", context_settings=_NEG_ID_POSITIONAL)
@@ -1233,9 +1309,10 @@ def dialogs_resolve(
     ctx: typer.Context,
     identifier: str = typer.Argument(..., help="Identifier to resolve"),
     phone: str | None = typer.Option(None, "--phone", help="Preferred account phone"),
+    wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """Resolve @username, t.me link, or numeric ID."""
-    _run_dialogs(ctx, "resolve", identifier=identifier, phone=phone)
+    _run_dialogs(ctx, "resolve", identifier=identifier, phone=phone, wait=wait)
 
 
 @dialogs_app.command("leave", context_settings=_NEG_ID_POSITIONAL)
@@ -1444,9 +1521,10 @@ def dialogs_participants(
     phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
     limit: int = typer.Option(200, "--limit", help="Max participants to fetch (default: 200)"),
     search: str = typer.Option("", "--search", help="Search query to filter participants"),
+    wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """List participants of a channel/group."""
-    _run_dialogs(ctx, "participants", chat_id=chat_id, phone=phone, limit=limit, search=search)
+    _run_dialogs(ctx, "participants", chat_id=chat_id, phone=phone, limit=limit, search=search, wait=wait)
 
 
 @dialogs_app.command("edit-admin", context_settings=_NEG_ID_POSITIONAL)
@@ -1503,9 +1581,10 @@ def dialogs_broadcast_stats(
     ctx: typer.Context,
     chat_id: str = typer.Argument(..., help="Channel ID or @username"),
     phone: str | None = typer.Option(None, "--phone", help="Account phone (default: first connected)"),
+    wait: bool = typer.Option(False, "--wait", help="When handed to the worker, wait and print the result"),
 ) -> None:
     """Get broadcast statistics for a channel."""
-    _run_dialogs(ctx, "broadcast-stats", chat_id=chat_id, phone=phone)
+    _run_dialogs(ctx, "broadcast-stats", chat_id=chat_id, phone=phone, wait=wait)
 
 
 @dialogs_app.command("archive", context_settings=_NEG_ID_POSITIONAL)
