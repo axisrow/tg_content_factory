@@ -143,3 +143,47 @@ def test_materialize_upgrades_preexisting_session_to_wal(tmp_path):
     # Same string → hash matches → early-return branch.
     assert materializer.materialize("+70000000001", session_string) == session_path
     assert _journal_mode(session_path) == "wal"
+
+
+def test_materialize_warns_when_wal_upgrade_blocked_by_live_transaction(tmp_path, caplog):
+    """A concurrent writer holding the file must not make the upgrade look silent.
+
+    Regression (Codex, PR #1323 round 1): if a live `serve` process already holds
+    an open write transaction on a legacy DELETE-journal session at the exact
+    moment materialize() attempts the upgrade, `PRAGMA journal_mode=WAL` cannot
+    get the exclusive lock it needs. The previous code swallowed that failure and
+    still returned the session path as if the upgrade had succeeded, giving the
+    caller no signal that the file is still in DELETE mode and will hit
+    ``database is locked`` again. This must now be logged so operators can see it.
+    """
+    import logging
+
+    materializer = SessionMaterializer(tmp_path / "sessions")
+    session_string = _make_session_string(dc_id=2, ip="149.154.167.51", port=443, fill=5)
+    session_path = materializer.materialize("+70000000001", session_string)
+    session_file = f"{session_path}.session"
+
+    conn = sqlite3.connect(session_file)
+    try:
+        conn.execute("PRAGMA journal_mode=DELETE")
+    finally:
+        conn.close()
+    assert _journal_mode(session_path) == "delete"
+
+    # Simulate a live process (e.g. `serve`) holding an open write transaction —
+    # this is what blocks `PRAGMA journal_mode=WAL` from acquiring its exclusive lock.
+    blocker = sqlite3.connect(session_file)
+    blocker.execute("BEGIN IMMEDIATE")
+    try:
+        with caplog.at_level(logging.WARNING, logger="src.telegram.session_materializer"):
+            # Same string → hash matches → early-return (cache-hit) branch.
+            result = materializer.materialize("+70000000001", session_string)
+    finally:
+        blocker.rollback()
+        blocker.close()
+
+    assert result == session_path
+    # The upgrade attempt failed while the blocker held the lock — file must
+    # still be in DELETE mode, and that must be visible in the logs.
+    assert _journal_mode(session_path) == "delete"
+    assert any("WAL" in record.message and "70000000001" in record.message for record in caplog.records)

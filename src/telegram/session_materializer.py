@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import sqlite3
 from pathlib import Path
 
 from telethon.sessions import SQLiteSession, StringSession
+
+logger = logging.getLogger(__name__)
 
 
 class SessionMaterializer:
@@ -30,7 +33,7 @@ class SessionMaterializer:
             and hash_path.exists()
             and hash_path.read_text(encoding="ascii").strip() == digest
         ):
-            self._enable_wal(session_file)
+            self._enable_wal(session_file, phone)
             return str(base_path)
 
         source = StringSession(session_string)
@@ -50,7 +53,7 @@ class SessionMaterializer:
         finally:
             target.close()
 
-        self._enable_wal(session_file)
+        self._enable_wal(session_file, phone)
         hash_path.write_text(digest, encoding="ascii")
         return str(base_path)
 
@@ -62,7 +65,7 @@ class SessionMaterializer:
         return str(env_path)
 
     @staticmethod
-    def _enable_wal(session_file: Path) -> None:
+    def _enable_wal(session_file: Path, phone: str) -> None:
         """Switch a session file to WAL so several processes can share it.
 
         Telethon opens session files with a bare ``sqlite3.connect`` and sets no
@@ -75,16 +78,32 @@ class SessionMaterializer:
         WAL lives in the file header, so setting it once here applies to every
         later open by any process. Failures are non-fatal: a locked or unreadable
         file must not break session materialization, which is the caller's
-        actual job.
+        actual job. But a failure must not be silent either — ``PRAGMA
+        journal_mode=WAL`` itself needs an exclusive lock, so it can lose the
+        race against a live process (e.g. `serve`) already holding an open
+        transaction on this same file. When that happens the file is left in the
+        old locking mode with no exception raised, so we log a warning instead of
+        just swallowing it — the caller has no other way to know the upgrade
+        didn't happen.
         """
         try:
             conn = sqlite3.connect(session_file, timeout=1)
         except sqlite3.Error:
+            logger.warning("Could not open session file for %s to enable WAL: %s", phone, session_file)
             return
         try:
-            conn.execute("PRAGMA journal_mode=WAL")
+            mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()
+            if not mode or str(mode[0]).lower() != "wal":
+                logger.warning(
+                    "Session file for %s did not switch to WAL (still %s) — likely a live "
+                    "process holds an open transaction on %s; it will keep the old locking "
+                    "mode until a future materialization succeeds.",
+                    phone,
+                    mode[0] if mode else "unknown",
+                    session_file,
+                )
         except sqlite3.Error:
-            pass
+            logger.warning("Failed to enable WAL for %s on %s", phone, session_file)
         finally:
             conn.close()
 
