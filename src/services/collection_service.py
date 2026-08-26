@@ -26,9 +26,16 @@ class CollectionService:
     def __init__(
         self,
         channels: ChannelBundle | Database,
-        collector: Collector,
+        collector: Collector | None,
         collection_queue: CollectionQueue | None = None,
     ):
+        """Wire the service to its channel store, collector and optional queue.
+
+        ``collector`` may be ``None`` for callers that only enqueue work — the
+        pure hand-off path (a CLI process deferring to a running worker) has no
+        Telegram connection to build one from. The stats and direct-collect
+        methods below do require it and raise if it is missing.
+        """
         if isinstance(channels, Database):
             channels = ChannelBundle.from_database(channels)
         self._channels = channels
@@ -118,7 +125,7 @@ class CollectionService:
         if cancelled and task.task_type == CollectionTaskType.STATS_ALL:
             # Stats-only stop signal — must not abort unrelated in-flight channel
             # collection that shares the collector (audit #835/6).
-            await self._collector.cancel_stats()
+            await self._require_collector().cancel_stats()
         return cancelled
 
     async def clear_pending_collect_tasks(self) -> int:
@@ -133,11 +140,26 @@ class CollectionService:
             return await self._queue.clear_pending_tasks()
         return await self._channels.delete_pending_channel_tasks()
 
+    def _require_collector(self) -> Collector:
+        """Return the collector, or explain why this call needs one.
+
+        Enqueue-only callers legitimately construct the service without a
+        collector; reaching a collecting method from there is a wiring bug, and
+        this turns it into a readable error instead of an ``AttributeError`` on
+        ``None``.
+        """
+        if self._collector is None:
+            raise RuntimeError(
+                "CollectionService was built without a Collector; "
+                "this operation needs a live Telegram connection"
+            )
+        return self._collector
+
     async def collect_channel_stats(self, channel: Channel) -> None:
-        await self._collector.collect_channel_stats(channel)
+        await self._require_collector().collect_channel_stats(channel)
 
     async def collect_all_stats(self) -> None:
-        await self._collector.collect_all_stats()
+        await self._require_collector().collect_all_stats()
 
     async def collect_single_channel_full(self, channel: Channel) -> int:
-        return await self._collector.collect_single_channel(channel, full=True)
+        return await self._require_collector().collect_single_channel(channel, full=True)

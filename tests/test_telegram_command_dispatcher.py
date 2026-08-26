@@ -499,6 +499,31 @@ async def test_dialogs_forward():
     assert r["forwarded"] == 1
 
 
+async def test_dialogs_react_clear_passes_none_emoji_instead_of_normalizing_empty_string():
+    """`clear: True` must clear the reaction (emoji=None), not error out.
+
+    Regression (Codex, PR #1324 round 3): before this fix, the handler always
+    called `normalize_outgoing_reaction_emoji(str(payload.get("emoji") or ""))`
+    regardless of a `clear` flag; an empty string is not a supported reaction
+    emoji, so `dialogs react --clear` handed off to a running worker always
+    raised instead of clearing, even though the in-process handler already
+    special-cases `clear` to pass `emoji=None`.
+    """
+    db = _react_db()
+    pool = _mock_pool()
+    pool.is_warming = MagicMock(return_value=False)
+    d = _dispatcher(db=db, pool=pool)
+
+    svc_patch, send_reaction = _patch_reaction_service(acquired_phone="+1")
+    try:
+        payload = {"phone": "+1", "chat_id": -100, "message_id": 1, "emoji": None, "clear": True}
+        await d._handle_dialogs_react(payload)
+        send_reaction.assert_awaited_once()
+        assert send_reaction.await_args.kwargs["emoji"] is None
+    finally:
+        svc_patch.stop()
+
+
 async def test_dialogs_react_waits_while_pool_is_warming():
     pool = _mock_pool()
     pool.is_warming = MagicMock(return_value=True)
