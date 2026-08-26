@@ -1517,7 +1517,7 @@ def test_pipeline_edge_add_remove(tmp_path, cli_init_patch, capsys):
 
 
 def _make_db(tmp_path, name):
-    db = Database(str(tmp_path / name))
+    db = Database(str(tmp_path / name), session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     return db
 
