@@ -166,9 +166,9 @@ class ClientPool(
         self._dialog_refresh_tasks: dict[tuple[str, str], asyncio.Task[list[dict]]] = {}
         self._premium_flood_wait_until: dict[str, datetime] = {}
         self._resolve_rate_limiter = ResolveRateLimiter()
-        # Central proactive gate. ``dialogs`` is intentionally conservative and
-        # requires calibration against production logs; other categories remain
-        # broad defaults in Phase 1 (#1331).
+        # Central proactive gate.  Category limits are conservative operating
+        # defaults calibrated from the available production signals; keep the
+        # registry injectable for future recalibration (#1331).
         self._rate_limit_gate = TelegramRateLimitGate()
         self._resolve_username_backoff_until_utc: dict[str, datetime] = {}
         self._resolve_ramp_up_until_utc: dict[str, datetime] = {}
