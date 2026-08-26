@@ -29,6 +29,7 @@ from src.telegram.collector_message_parse import get_media_type_for
 from src.telegram.collector_resolve import (
     RESOLVE_USERNAME_OPERATION,
     ResolveOutcome,
+    _peer_for_channel_type,
     resolve_channel_entity,
 )
 from src.telegram.collector_types import (
@@ -1151,7 +1152,7 @@ class CollectionMixin:
         return True
 
     async def _discover_phone_for_channel(
-        self: "Collector", channel_id: int, exclude: str
+        self: "Collector", channel_id: int, exclude: str, channel_type: str | None = None
     ) -> str | None:
         """Try all connected phones (except `exclude`) to find one with access to channel_id.
 
@@ -1169,7 +1170,7 @@ class CollectionMixin:
                 if not self._pool.is_dialogs_fetched(p):
                     await session.warm_dialog_cache()
                     self._pool.mark_dialogs_fetched(p)
-                await session.resolve_entity(PeerChannel(channel_id))
+                await session.resolve_entity(_peer_for_channel_type(channel_type, channel_id))
                 return p
             except HandledFloodWaitError as exc:
                 # Transport already reported the flood (phone+pool were bound on the
