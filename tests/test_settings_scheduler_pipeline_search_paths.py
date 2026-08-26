@@ -29,7 +29,7 @@ from tests.helpers import cli_ns as _ns
 def _pipeline_fake_init_db(db_path: str):
     async def _inner(_config_path: str):
         config = AppConfig()
-        database = Database(db_path)
+        database = Database(db_path, session_encryption_secret="test-session-encryption-key")
         await database.initialize()
         return config, database
 
@@ -38,7 +38,7 @@ def _pipeline_fake_init_db(db_path: str):
 
 def _make_pipeline_db(tmp_path, db_name="pipeline7.db"):
     db_path = str(tmp_path / db_name)
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     asyncio.run(db.add_account(Account(phone="+100", session_string="sess")))
     asyncio.run(db.add_channel(Channel(channel_id=2001, title="Source")))
@@ -67,7 +67,7 @@ async def base_app(tmp_path):
     config.web.password = "testpass"
 
     app = create_app(config)
-    db = Database(config.database.path)
+    db = Database(config.database.path, session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     app.state.db = db
     app.state.config = config
@@ -611,7 +611,7 @@ class TestCLIPipelineList:
     def test_list_empty(self, tmp_path, capsys):
         """list with no pipelines prints 'No pipelines found'."""
         db_path = str(tmp_path / "list_empty7.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -654,7 +654,7 @@ class TestCLIPipelineShow:
     def test_show_not_found(self, tmp_path, capsys):
         """show for missing id prints 'not found'."""
         db_path = str(tmp_path / "show_nf7.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -685,7 +685,7 @@ class TestCLIPipelineShow:
                 inactive=False,
             ))
 
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         pipelines = asyncio.run(db.repos.content_pipelines.get_all())
         pid = pipelines[0].id
@@ -722,7 +722,7 @@ class TestCLIPipelineDeleteToggle:
                 inactive=False,
             ))
 
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         pipelines = asyncio.run(db.repos.content_pipelines.get_all())
         pid = pipelines[0].id
@@ -738,7 +738,7 @@ class TestCLIPipelineDeleteToggle:
     def test_toggle_not_found(self, tmp_path, capsys):
         """toggle on missing pipeline prints 'not found'."""
         db_path = str(tmp_path / "toggle_nf7.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -769,7 +769,7 @@ class TestCLIPipelineDeleteToggle:
                 inactive=False,
             ))
 
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         pipelines = asyncio.run(db.repos.content_pipelines.get_all())
         pid = pipelines[0].id
