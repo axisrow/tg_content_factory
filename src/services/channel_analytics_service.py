@@ -233,7 +233,7 @@ class ChannelAnalyticsService:
             """SELECT CAST(strftime('%H', m.date) AS INTEGER) AS hour,
                       COUNT(*) AS count
                FROM messages m
-               WHERE m.channel_id = ? AND m.date >= datetime('now', ?)
+               WHERE m.channel_id = ? AND datetime(m.date) >= datetime('now', ?)
                GROUP BY hour
                ORDER BY hour""",
             (channel_id, f"-{days} days"),
