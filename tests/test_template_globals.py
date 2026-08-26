@@ -5,9 +5,16 @@ from markupsafe import Markup
 
 from src.web.template_globals import (
     FILTER_FLAG_EMOJI,
+    FLASH_MESSAGES,
     configure_template_globals,
     local_dt_filter,
 )
+
+
+def test_collection_flash_messages_link_to_active_jobs():
+    target = 'href="/jobs?source=collection_task&amp;status=active"'
+    assert target in FLASH_MESSAGES["collect_all_queued"]
+    assert target in FLASH_MESSAGES["collect_all_noop"]
 
 
 def test_none_returns_dash():
