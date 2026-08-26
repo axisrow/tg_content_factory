@@ -17,7 +17,13 @@ class AccountLease:
 
 
 class AccountLeasePool:
-    """Own account selection and in-use tracking independently from the client backend."""
+    """Own account selection and in-use tracking independently from the client backend.
+
+    ``_lock`` serializes the at-most-one exclusive reservation; shared leases
+    are allowed concurrently for pinned read paths. Callers must release every
+    lease; ``ClientPool`` holds its lock before calling :meth:`release` so the
+    exclusive marker is never half-released.
+    """
 
     def __init__(self, db: Database, in_use: set[str]):
         self._db = db
@@ -26,6 +32,7 @@ class AccountLeasePool:
         self._last_phone: str | None = None
 
     async def acquire_available(self, connected_phones: set[str]) -> AccountLease | None:
+        """Acquire an account with at most one exclusive reservation per phone."""
         async with self._lock:
             now = datetime.now(timezone.utc)
             accounts = await load_live_usable_accounts(self._db, active_only=True)
@@ -83,6 +90,7 @@ class AccountLeasePool:
             return count
 
     async def acquire_by_phone(self, phone: str, connected_phones: set[str]) -> AccountLease | None:
+        """Acquire ``phone`` atomically; an existing marker yields shared."""
         async with self._lock:
             account = await self._get_account(phone)
             if account is None or account.phone not in connected_phones:
@@ -135,6 +143,7 @@ class AccountLeasePool:
         return None
 
     async def release(self, phone: str) -> None:
+        """Clear the exclusive marker for ``phone`` under the lease-pool lock."""
         async with self._lock:
             self._in_use.discard(phone)
 
