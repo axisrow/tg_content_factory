@@ -258,7 +258,9 @@ class GenerationRunsRepository:
 
         The read and write happen in one transaction. Callers recording
         publish progress pass only the changed key, avoiding stale whole-blob
-        writes that could lose a concurrent target update.
+        writes that could lose a concurrent target update. Target progress
+        lists are unioned as well: two publishers may have stale snapshots of
+        the same key and both deliveries must remain recorded.
         """
         assert self._database is not None, (
             "GenerationRunsRepository.set_metadata requires a Database reference"
@@ -269,6 +271,12 @@ class GenerationRunsRepository:
             current = safe_json_loads(row[0]) if row else None
             merged = dict(current) if isinstance(current, dict) else {}
             merged.update(metadata)
+            for key in ("published_targets", "unconfirmed_targets"):
+                if key not in metadata or not metadata[key]:
+                    continue
+                existing = current.get(key) if isinstance(current, dict) else None
+                if isinstance(existing, list):
+                    merged[key] = sorted(set(existing) | set(metadata[key]))
             await conn.execute(
                 "UPDATE generation_runs SET metadata = ?, updated_at = datetime('now') WHERE id = ?",
                 (safe_json_dumps(merged, ensure_ascii=False), run_id),
