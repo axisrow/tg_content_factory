@@ -488,18 +488,20 @@ async def test_resolve_channel_entity_numeric_rediscover_retry(collector, mock_p
 
 
 @pytest.mark.anyio
-async def test_resolve_channel_entity_numeric_no_rediscovery_deactivates(collector, mock_pool, mock_db):
+async def test_resolve_channel_entity_numeric_no_rediscovery_is_quarantined(collector, mock_pool, mock_db):
     """Numeric resolve ValueError with no other account able to resolve →
-    'stop' outcome and the channel is deactivated."""
+        'stop' outcome and the channel is quarantined."""
     channel = Channel(id=5, channel_id=123, title="Ch", preferred_phone="+7999")
     mock_pool.resolve_entity_with_warm = AsyncMock(side_effect=ValueError("bad peer"))
     mock_pool.get_phone_for_channel = MagicMock(return_value=None)
     mock_pool.clear_channel_phone = MagicMock()
     mock_db.repos.channels.update_channel_preferred_phone = AsyncMock()
+    mock_db.repos.channels.set_channel_review = AsyncMock()
     collector._discover_phone_for_channel = AsyncMock(return_value=None)
 
     outcome = await collector._resolve_channel_entity(
         channel, MagicMock(), "+7999", 123, False, set()
     )
     assert outcome.action == "stop"
-    mock_db.set_channel_active.assert_called_once_with(5, False)
+    mock_db.set_channel_active.assert_not_awaited()
+    mock_db.repos.channels.set_channel_review.assert_awaited_once_with(5, "resolve_account_unavailable")

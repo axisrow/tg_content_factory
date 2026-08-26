@@ -191,6 +191,15 @@ class CollectionMixin:
         """Purge messages from filtered channel if auto_delete_on_collect is enabled."""
         if not await self._is_auto_delete_enabled():
             return False
+        channel_lookup = self._db.get_channel_by_channel_id(channel_id)
+        channel = await channel_lookup if isawaitable(channel_lookup) else channel_lookup
+        if not isinstance(channel, Channel):
+            channel = None
+        if channel and "manual" in {
+            flag.strip() for flag in (channel.filter_flags or "").split(",") if flag.strip()
+        }:
+            logger.info("Skipping auto-purge for manually filtered channel %d", channel_id)
+            return False
         try:
             deleted = await self._db.delete_messages_for_channel(channel_id)
             logger.info(

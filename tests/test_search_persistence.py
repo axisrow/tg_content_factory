@@ -19,7 +19,7 @@ def _msg(channel_id: int, message_id: int) -> Message:
 
 
 @pytest.mark.anyio
-async def test_cache_search_results_enqueues_stats_for_new_channels():
+async def test_cache_search_results_does_not_activate_new_channels():
     bundle = MagicMock()
     bundle.channels.get_channel_by_channel_id = AsyncMock(return_value=None)
     bundle.add_channel = AsyncMock(return_value=1)
@@ -41,10 +41,9 @@ async def test_cache_search_results_enqueues_stats_for_new_channels():
         "query",
     )
 
-    create_stats_task.assert_awaited_once()
-    payload = create_stats_task.await_args.args[0]
-    assert payload.channel_ids == [100, 200]
+    create_stats_task.assert_not_awaited()
     added_channels = [call.args[0] for call in bundle.add_channel.await_args_list]
+    assert [channel.is_active for channel in added_channels] == [False, False]
     assert [channel.about for channel in added_channels] == ["about text", "about text"]
     assert [channel.linked_chat_id for channel in added_channels] == [123, 123]
 
