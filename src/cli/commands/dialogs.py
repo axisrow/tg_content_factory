@@ -943,7 +943,7 @@ _HANDOFF_COMMANDS: dict[str, tuple[str, tuple[str, ...]]] = {
     "react": ("dialogs.react", ("chat_id", "message_id", "emoji")),
     "download-media": ("dialogs.download_media", ("chat_id", "message_id")),
     "participants": ("dialogs.participants", ("chat_id", "limit", "search")),
-    "edit-admin": ("dialogs.edit_admin", ("chat_id", "user_id")),
+    "edit-admin": ("dialogs.edit_admin", ("chat_id", "user_id", "is_admin", "title")),
     "edit-permissions": ("dialogs.edit_permissions", ("chat_id",)),
     "kick": ("dialogs.kick", ("chat_id", "user_id")),
     "broadcast-stats": ("dialogs.broadcast_stats", ("chat_id",)),

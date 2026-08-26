@@ -166,6 +166,63 @@ def test_read_only_actions_still_run_locally(cli_db):
     assert _commands(cli_db) == []
 
 
+def test_edit_admin_handoff_preserves_is_admin_and_title(cli_db):
+    """Promotion must not turn into demotion when handed off to the worker.
+
+    Regression (Codex, PR #1324 round 1): `_HANDOFF_COMMANDS["edit-admin"]`
+    previously forwarded only `chat_id` and `user_id`. The CLI defaults
+    `is_admin=True` (promote), but the worker's `_handle_dialogs_edit_admin`
+    reads a missing `is_admin` key as `False` (demote) via
+    `payload.get("is_admin", False)`. So a confirmed promotion, queued while
+    `serve` is running, was silently executed as a demotion, and any `--title`
+    was discarded outright.
+    """
+    _run(
+        _ns(
+            dialogs_action="edit-admin",
+            phone="+1234567890",
+            chat_id="-100123",
+            user_id="555",
+            title="Moderator",
+            is_admin=True,
+            yes=True,
+            direct=False,
+        ),
+        cli_db,
+        serve_running=True,
+    )
+
+    commands = _commands(cli_db)
+    assert [c.command_type for c in commands] == ["dialogs.edit_admin"]
+    payload = commands[0].payload
+    assert payload["chat_id"] == "-100123"
+    assert payload["user_id"] == "555"
+    assert payload["is_admin"] is True
+    assert payload["title"] == "Moderator"
+
+
+def test_edit_admin_handoff_preserves_demotion(cli_db):
+    """The inverse must also round-trip: --no-admin must not vanish either."""
+    _run(
+        _ns(
+            dialogs_action="edit-admin",
+            phone="+1234567890",
+            chat_id="-100123",
+            user_id="555",
+            title=None,
+            is_admin=False,
+            yes=True,
+            direct=False,
+        ),
+        cli_db,
+        serve_running=True,
+    )
+
+    commands = _commands(cli_db)
+    payload = commands[0].payload
+    assert payload["is_admin"] is False
+
+
 def test_confirmation_is_still_required_before_enqueue(cli_db):
     """Declining the prompt must not queue anything.
 
