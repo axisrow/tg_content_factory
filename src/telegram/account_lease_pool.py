@@ -19,9 +19,10 @@ class AccountLease:
 class AccountLeasePool:
     """Own account selection and in-use tracking independently from the client backend.
 
-    ``_lock`` serializes exclusive acquisition and shared fallback. Callers
-    must release every lease; ``ClientPool`` holds its lock before calling
-    :meth:`release` so the exclusive marker is never half-released.
+    ``_lock`` serializes the at-most-one exclusive reservation; shared leases
+    are allowed concurrently for pinned read paths. Callers must release every
+    lease; ``ClientPool`` holds its lock before calling :meth:`release` so the
+    exclusive marker is never half-released.
     """
 
     def __init__(self, db: Database, in_use: set[str]):
