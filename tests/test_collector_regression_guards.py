@@ -714,49 +714,31 @@ async def test_all_accounts_flooded_after_multiple_rotations_preserves_cursor(db
 
 
 @pytest.mark.anyio
-async def test_transient_warm_dialog_flood_is_retried_in_place(db):
-    """A transient (<60s) FloodWait while warming the dialog cache is retried in
-    place by run_with_flood_wait_retry — a distinct path from a stream/resolve
-    flood. The second warm succeeds, the phone is marked fetched, and the picker
-    returns a usable client (no _ACQUIRE_RETRY, no client release).
+async def test_transient_warm_dialog_flood_releases_phone_for_rotation(db):
+    """A transient FloodWait while warming must release the phone immediately.
+
+    Retrying in place repeatedly hit the same account and could escalate a
+    series of short waits into a long account ban. The pool's flood report makes
+    the account unavailable, so the outer collection loop can rotate instead.
     """
     channel = Channel(channel_id=606001, title="Private")  # no username
     session = _warmable_session()
-    sleeps: list[float] = []
-
-    async def _fake_sleep(seconds):
-        sleeps.append(seconds)
-
-    warm_calls = {"n": 0}
-
-    async def _warm():
-        warm_calls["n"] += 1
-        if warm_calls["n"] == 1:
-            info = FloodWaitInfo(
-                operation="collect_channel_warm_dialog_cache",
-                phone="+7000",
-                wait_seconds=3,  # transient → retried in place
-                next_available_at_utc=datetime(2026, 1, 1, tzinfo=timezone.utc),
-                detail="flood 3s",
-            )
-            raise HandledFloodWaitError(info)
-
-    session.warm_dialog_cache = AsyncMock(side_effect=_warm)
+    info = FloodWaitInfo(
+        operation="collect_channel_warm_dialog_cache",
+        phone="+7000",
+        wait_seconds=3,
+        next_available_at_utc=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        detail="flood 3s",
+    )
+    session.warm_dialog_cache = AsyncMock(side_effect=HandledFloodWaitError(info))
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=(session, "+7000")))
     pool.release_client = AsyncMock()
 
     collector = Collector(pool, db, SchedulerConfig(delay_between_requests_sec=0))
-    with (
-        patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt),
-        patch("src.telegram.flood_wait.asyncio.sleep", _fake_sleep),
-    ):
+    with patch("src.telegram.collector_mixins.collection.adapt_transport_session", _identity_adapt):
         result = await collector._acquire_collection_client(channel, set())
 
-    assert warm_calls["n"] == 2  # first warm flooded, retry succeeded
-    assert result is not _ACQUIRE_RETRY
-    assert pool.is_dialogs_fetched("+7000") is True
-    pool.release_client.assert_not_awaited()
-    # The transient flood was slept off exactly once before the retry (the
-    # flood-wait helper adds a small safety buffer on top of the 3s wait).
-    assert len(sleeps) == 1
-    assert sleeps[0] >= 3
+    assert result is _ACQUIRE_RETRY
+    session.warm_dialog_cache.assert_awaited_once()
+    pool.release_client.assert_awaited_once_with("+7000")
+    assert pool.is_dialogs_fetched("+7000") is False
