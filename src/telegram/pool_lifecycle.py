@@ -594,7 +594,9 @@ class ClientLifecycleMixin:
             # direct_session=None unconditionally (line ~474) WITHOUT touching
             # self.clients, so popping here would evict a healthy pooled client
             # (and leak it, since it never gets disconnected) — #1242.
-            if direct_session is None and not force_native:
+            # Native leases are ephemeral and never own ``self.clients``;
+            # preserve the pooled session on every force_native failure (#1385).
+            if not force_native and direct_session is None:
                 self.clients.pop(phone, None)
             return None
 
