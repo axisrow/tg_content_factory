@@ -395,3 +395,19 @@ async def test_set_metadata_merges_concurrent_target_progress(db):
         "published_targets": ["+1:-1001"],
         "unconfirmed_targets": ["+2:-1002"],
     }
+
+
+@pytest.mark.anyio
+async def test_set_metadata_unions_stale_updates_to_same_target_key(db):
+    """Stale writers cannot erase a delivery recorded by another publisher."""
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt-template")
+
+    await asyncio.gather(
+        repo.set_metadata(run_id, {"published_targets": ["+1:-1001"]}),
+        repo.set_metadata(run_id, {"published_targets": ["+2:-1002"]}),
+    )
+
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.metadata["published_targets"] == ["+1:-1001", "+2:-1002"]
