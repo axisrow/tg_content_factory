@@ -41,11 +41,14 @@ _LEGACY_TASK_QUERY_KEYS = ("status", "page", "limit")
 
 def _legacy_tasks_redirect(request: Request) -> RedirectResponse:
     """Redirect the retired scheduler task list to its new /jobs home."""
-    query = {
-        key: request.query_params[key]
-        for key in _LEGACY_TASK_QUERY_KEYS
-        if key in request.query_params
-    }
+    query = {"source": "collection_task"}
+    query.update(
+        {
+            key: request.query_params[key]
+            for key in _LEGACY_TASK_QUERY_KEYS
+            if key in request.query_params
+        }
+    )
     suffix = f"?{urlencode(query)}" if query else ""
     return RedirectResponse(url=f"/jobs{suffix}", status_code=303)
 

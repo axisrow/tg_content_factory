@@ -187,6 +187,41 @@ async def test_list_jobs_paginated_handles_page_boundaries(db):
     assert total == last_total == beyond_total == 21
 
 
+async def test_active_collection_feed_keeps_running_first_execution_order(db):
+    pending_first = await db.repos.tasks.create_collection_task(401, "Pending first")
+    running = await db.repos.tasks.create_collection_task(402, "Running")
+    await db.repos.tasks.update_collection_task(running, CollectionTaskStatus.RUNNING)
+    await db.repos.tasks.create_collection_task(403, "Pending second")
+    await db.repos.tasks.create_collection_task(404, "Pending third")
+
+    active_states = [
+        JobRuntimeState.RUNNING,
+        JobRuntimeState.PENDING,
+        JobRuntimeState.SCHEDULED,
+        JobRuntimeState.PAUSE_GATE,
+        JobRuntimeState.FLOOD_WAIT,
+    ]
+    model = JobsReadModel(db)
+
+    first_page, total = await model.list_jobs_paginated(
+        sources=[JobSource.COLLECTION_TASK],
+        statuses=active_states,
+        page=1,
+        limit=2,
+        now=NOW,
+    )
+    legacy_list = await model.list_jobs(
+        sources=[JobSource.COLLECTION_TASK],
+        statuses=active_states,
+        limit=2,
+        now=NOW,
+    )
+
+    assert total == 4
+    assert [job.raw_id for job in first_page] == [running, pending_first]
+    assert [job.raw_id for job in legacy_list] == [running, pending_first]
+
+
 async def test_list_jobs_paginated_keeps_source_fetches_bounded(db, monkeypatch):
     tasks = [
         CollectionTask(

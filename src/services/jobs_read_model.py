@@ -68,6 +68,15 @@ _PHOTO_TERMINAL_STATUSES = frozenset(
     for status, state in _PHOTO_ITEM_STATE.items()
     if state in {JobRuntimeState.COMPLETED, JobRuntimeState.FAILED, JobRuntimeState.CANCELLED}
 )
+_COLLECTION_ACTIVE_STATES = frozenset(
+    {
+        JobRuntimeState.RUNNING,
+        JobRuntimeState.PENDING,
+        JobRuntimeState.SCHEDULED,
+        JobRuntimeState.PAUSE_GATE,
+        JobRuntimeState.FLOOD_WAIT,
+    }
+)
 
 # UTC-aware floor for jobs without a timestamp (e.g. scheduler jobs) so they sort
 # last; kept aware to match ``normalize_utc`` keys in the sort below.
@@ -116,10 +125,19 @@ class JobsReadModel:
         now: datetime | None = None,
     ) -> list[JobView]:
         """Return the newest jobs up to ``limit`` (legacy non-paginated API)."""
+        wanted_sources = set(sources) if sources is not None else None
+        wanted_states = set(statuses) if statuses is not None else None
+        if self._is_active_collection_feed(wanted_sources, wanted_states):
+            jobs, _ = await self._list_active_collection_jobs(
+                page=1,
+                limit=limit,
+                now=now or datetime.now(timezone.utc),
+            )
+            return jobs
         fetch_limit = limit if statuses is None else max(limit, _FILTER_FETCH_CAP)
         jobs = await self._collect_jobs(
-            sources=sources,
-            statuses=statuses,
+            sources=wanted_sources,
+            statuses=wanted_states,
             fetch_limit=fetch_limit,
             now=now,
         )
@@ -141,6 +159,9 @@ class JobsReadModel:
         wanted_sources = set(sources) if sources is not None else None
         wanted_states = set(statuses) if statuses is not None else None
         offset = (page - 1) * limit
+
+        if self._is_active_collection_feed(wanted_sources, wanted_states):
+            return await self._list_active_collection_jobs(page=page, limit=limit, now=now)
 
         paused, active_ids = await self._queue_runtime()
         scheduler_jobs = (
@@ -187,6 +208,35 @@ class JobsReadModel:
                 break
 
         return jobs, total if total is not None else matched
+
+    @staticmethod
+    def _is_active_collection_feed(
+        wanted_sources: set[JobSource] | None,
+        wanted_states: set[JobRuntimeState] | None,
+    ) -> bool:
+        return (
+            wanted_sources == {JobSource.COLLECTION_TASK}
+            and wanted_states == _COLLECTION_ACTIVE_STATES
+        )
+
+    async def _list_active_collection_jobs(
+        self,
+        *,
+        page: int,
+        limit: int,
+        now: datetime,
+    ) -> tuple[list[JobView], int]:
+        """Keep the retired scheduler feed's running-first execution order."""
+        tasks, total = await self._db.repos.tasks.get_collection_tasks_paginated(
+            limit=limit,
+            offset=(page - 1) * limit,
+            status_filter="active",
+        )
+        paused, active_ids = await self._queue_runtime()
+        return (
+            [self._from_collection_task(task, now, paused, active_ids) for task in tasks],
+            total,
+        )
 
     @staticmethod
     def _job_sort_key(job: JobView | None) -> datetime:

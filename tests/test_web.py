@@ -1559,7 +1559,7 @@ async def test_jobs_filter_active(client):
 async def test_scheduler_filter_invalid_status_redirects_to_jobs(client):
     resp = await client.get("/scheduler/?status=bogus", follow_redirects=False)
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/jobs?status=bogus"
+    assert resp.headers["location"] == "/jobs?source=collection_task&status=bogus"
 
 
 @pytest.mark.anyio

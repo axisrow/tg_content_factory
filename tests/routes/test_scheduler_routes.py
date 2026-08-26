@@ -78,7 +78,9 @@ async def test_legacy_tasks_fragment_redirects_to_jobs_with_filters(client):
     )
 
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/jobs?status=active&page=3&limit=25"
+    assert resp.headers["location"] == (
+        "/jobs?source=collection_task&status=active&page=3&limit=25"
+    )
 
 
 @pytest.mark.anyio
@@ -89,7 +91,9 @@ async def test_legacy_scheduler_page_bookmark_redirects_to_jobs(client):
     )
 
     assert resp.status_code == 303
-    assert resp.headers["location"] == "/jobs?status=completed&page=2&limit=50"
+    assert resp.headers["location"] == (
+        "/jobs?source=collection_task&status=completed&page=2&limit=50"
+    )
 
 
 @pytest.mark.anyio
