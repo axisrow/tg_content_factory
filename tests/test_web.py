@@ -1927,6 +1927,17 @@ async def test_web_login_rate_limits_repeated_invalid_passwords(unauth_client):
 
 
 @pytest.mark.anyio
+async def test_basic_auth_rate_limits_repeated_invalid_passwords(unauth_client):
+    headers = {"Authorization": "Basic YWRtaW46d3Jvbmc="}
+    for _ in range(5):
+        resp = await unauth_client.get("/channels/", headers=headers, follow_redirects=False)
+        assert resp.status_code == 401
+
+    resp = await unauth_client.get("/channels/", headers=headers, follow_redirects=False)
+    assert resp.status_code == 429
+
+
+@pytest.mark.anyio
 async def test_web_login_post_blocks_open_redirect(unauth_client):
     resp = await unauth_client.post(
         "/login",

@@ -327,7 +327,10 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                     set_session_cookie(response, request)
                 return response
 
-        self._record_failure(key)
+        # A browser request without credentials is an unauthenticated visit,
+        # not a failed Basic-auth attempt. Only throttle supplied credentials.
+        if auth:
+            self._record_failure(key)
 
         target = login_redirect_url(redirect_target_from_request(request))
         if request.headers.get("HX-Request") == "true":
