@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -765,6 +765,64 @@ async def test_get_dialogs_for_phone_partial_on_timeout():
 
     assert len(result) == 1
     assert result[0]["channel_id"] == -100999
+
+
+@pytest.mark.anyio
+async def test_get_dialogs_for_phone_flood_upserts_progress_and_invalidates_cache():
+    from datetime import datetime, timezone
+
+    from src.telegram.client_pool import ClientPool
+    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
+
+    pool = MagicMock(spec=ClientPool)
+    partial_dialog = _make_channel_dialog(-100999, title="Partial Channel", username="partial")
+
+    async def _iter():
+        yield partial_dialog
+        raise HandledFloodWaitError(
+            FloodWaitInfo(
+                operation="get_dialogs_for_phone",
+                phone="+1234567890",
+                wait_seconds=23,
+                next_available_at_utc=datetime.now(timezone.utc),
+                detail="Flood wait 23s",
+            )
+        )
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.return_value = _iter()
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    pool.release_client = AsyncMock()
+    pool._classify_entity = MagicMock(return_value=("channel", False))
+    pool._db = MagicMock()
+    pool._db.repos.dialog_cache.list_dialogs = AsyncMock(return_value=[])
+    pool._db.repos.dialog_cache.upsert_dialogs = AsyncMock()
+    _bind_dialog_cache_methods(pool)
+
+    with pytest.raises(HandledFloodWaitError):
+        await ClientPool.get_dialogs_for_phone(
+            pool,
+            "+1234567890",
+            include_dm=True,
+            mode="full",
+            refresh=True,
+        )
+
+    pool._db.repos.dialog_cache.upsert_dialogs.assert_awaited_once_with(
+        "+1234567890",
+        [
+            {
+                "channel_id": -100999,
+                "title": "Partial Channel",
+                "username": "partial",
+                "channel_type": "channel",
+                "deactivate": False,
+                "is_own": False,
+                "created_at": ANY,
+            }
+        ],
+    )
+    assert pool._dialogs_cache == {}
 
 
 @pytest.mark.anyio

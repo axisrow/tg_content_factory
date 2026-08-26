@@ -1326,6 +1326,7 @@ class DialogsMixin:
                 # can schedule a later continuation.
                 if cache_mode == "full" and items:
                     await self._db.repos.dialog_cache.upsert_dialogs(acquired_phone, items)
+                    self.invalidate_dialogs_cache(acquired_phone)
                 raise
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             logger.info(
