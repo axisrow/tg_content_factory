@@ -8,6 +8,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Install dev dependencies
 pip install -e ".[dev]"
 
+# Verify that the project is installed (required by isolated tooling such as
+# mutmut; the distribution name is tg-agent, not the repository name).
+python -m pip show tg-agent
+
 # Run the web server — spawns the embedded Telegram worker by default so a
 # single command gives you UI + actual collection (#457 round 4). For split
 # deployments (Docker/k8s) pass --no-worker and run `worker` separately.
@@ -34,6 +38,9 @@ pytest tests/test_web.py::test_health_endpoint -v
 
 # Benchmark serial vs safe mixed-mode suite execution
 python -m src.main test benchmark
+
+# Mutation testing (run only after the editable install above)
+mutmut run
 ```
 
 Full CLI reference:

@@ -18,9 +18,18 @@ pip install tg-agent
 git clone https://github.com/axisrow/tg_content_factory.git
 cd tg_content_factory
 pip install -e ".[dev]"
+# Confirm the editable install; isolated tools such as mutmut need this.
+python -m pip show tg-agent
 ```
 
 ## Опциональные зависимости
+
+> **Важно для инструментов разработки.** Команда `pip install -e ".[dev]"` обязательна
+> перед запуском инструментов, которые копируют исходники в отдельный каталог
+> (например, `mutmut`). Запуск таких инструментов из корня репозитория может
+> случайно работать за счёт текущего каталога, но не проверяет, что пакет
+> импортируется в изолированном окружении. Распространяемое имя пакета —
+> `tg-agent`, поэтому проверяйте установку командой `python -m pip show tg-agent`.
 
 ```bash
 # Семантический поиск (numpy-based KNN)
