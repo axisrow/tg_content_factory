@@ -19,6 +19,12 @@ from src.web.app import create_app
 # intentional "expose to the network" choice and demands a real password.
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _WEAK_PASSWORDS = {"changeme", "admin", "password"}
+# Denylist alone only caught the 3 literal defaults above — a review (#1305
+# round 2) found that once the panel is actually network-reachable (e.g. the
+# Docker deployment), anything else ("123456", "x", ...) sailed through as
+# "strong". A minimum length keeps the fail-fast guarantee honest without
+# turning this into a full entropy/strength policy, which stays out of scope.
+_MIN_PASSWORD_LENGTH = 8
 
 
 def serve_web(config_path: str, *, web_pass: str | None = None, no_worker: bool = False) -> None:
@@ -39,12 +45,16 @@ def serve_web(config_path: str, *, web_pass: str | None = None, no_worker: bool 
         sys.exit(1)
 
     is_loopback = config.web.host in _LOOPBACK_HOSTS
-    if not is_loopback and config.web.password.lower() in _WEAK_PASSWORDS:
+    is_weak_password = (
+        config.web.password.lower() in _WEAK_PASSWORDS or len(config.web.password) < _MIN_PASSWORD_LENGTH
+    )
+    if not is_loopback and is_weak_password:
         logging.error(
-            "Refusing to bind web panel to %s with a known-weak WEB_PASS. "
-            "Set a strong WEB_PASS, or use --web-pass, before exposing the "
-            "panel beyond localhost.",
+            "Refusing to bind web panel to %s with a weak WEB_PASS (a known-weak "
+            "default, or shorter than %d characters). Set a strong WEB_PASS, or "
+            "use --web-pass, before exposing the panel beyond localhost.",
             config.web.host,
+            _MIN_PASSWORD_LENGTH,
         )
         sys.exit(1)
     if not is_loopback:

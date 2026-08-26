@@ -88,8 +88,8 @@ def test_serve_with_web_pass_override():
          patch("src.cli.commands.serve.uvicorn") as mock_uv, \
          patch("src.cli.commands.serve.unregister_current_process"):
         mock_uv.run = MagicMock()
-        run(_args(web_pass="newpass"))
-    assert cfg.web.password == "newpass"
+        run(_args(web_pass="newpass-strong-enough"))
+    assert cfg.web.password == "newpass-strong-enough"
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +128,25 @@ def test_serve_loopback_with_weak_password_still_starts():
         run(_args(web_pass=None))
     assert app.state.embed_worker is True
     mock_unreg.assert_called_once()
+
+
+def test_serve_non_loopback_with_short_password_exits():
+    """A short password outside the 3-word denylist must still fail fast.
+
+    Round-2 review finding (#1305): the denylist alone let '123456', 'x',
+    etc. through as "strong" once the panel is actually network-reachable.
+    """
+    from src.cli.commands.serve import run
+    cfg = make_app_config()
+    cfg.web.host = "0.0.0.0"
+    cfg.web.password = "1234567"  # 7 chars — below the minimum, not in the denylist
+    with patch("src.cli.commands.serve.load_config", return_value=cfg), \
+         patch("src.cli.commands.serve.create_app") as mock_create_app, \
+         patch("src.cli.commands.serve.uvicorn") as mock_uv:
+        with pytest.raises(SystemExit):
+            run(_args(web_pass=None))
+    mock_create_app.assert_not_called()
+    mock_uv.run.assert_not_called()
 
 
 def test_serve_non_loopback_with_strong_password_starts_with_warning(caplog):
