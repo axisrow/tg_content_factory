@@ -353,6 +353,45 @@ async def test_resolve_channel_flood_rotates(real_pool_harness_factory):
 
 
 @pytest.mark.anyio
+async def test_resolve_channel_rate_limit_rotates(real_pool_harness_factory, monkeypatch):
+    """#1330/#1334 follow-up: a proactive rate-limit deferral during the
+    resolve_entity_with_warm warm-fallback must rotate to the next client,
+    exactly like a real FloodWaitError does (test_resolve_channel_flood_rotates)
+    — not crash resolve_channel or leak a bare TelegramRateLimitedError."""
+    harness = real_pool_harness_factory()
+    # First get_entity call raises ValueError (cache miss) so resolve_entity_with_warm
+    # takes the warm_dialog_cache() fallback branch — that's where the gate is checked.
+    limited_client = FakeCliTelethonClient(
+        entity_resolver=lambda _peer: ValueError("Could not find the input entity"),
+    )
+    ok_client = FakeCliTelethonClient(
+        entity_resolver=lambda _peer: _channel_entity(123456, title="Test", username="test"),
+    )
+    harness.queue_cli_client(phone="+70001111111", client=limited_client)
+    harness.queue_cli_client(phone="+70002222222", client=ok_client)
+    await harness.add_account("+70001111111", session_string="s1", is_primary=True)
+    await harness.add_account("+70002222222", session_string="s2")
+    await harness.initialize_connected_accounts()
+
+    real_try_acquire = harness.pool._rate_limit_gate.try_acquire
+
+    def try_acquire_limited(phone, category):
+        if phone == "+70001111111":
+            return 45.0
+        return real_try_acquire(phone, category)
+
+    monkeypatch.setattr(harness.pool._rate_limit_gate, "try_acquire", try_acquire_limited)
+
+    result = await harness.pool.resolve_channel("@test")
+
+    assert result is not None
+    assert result["channel_id"] == 123456
+    # The limited client's get_dialogs() (behind warm_dialog_cache()) must never
+    # actually run — the gate should have deferred it before hitting Telegram.
+    limited_client.get_dialogs.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_resolve_channel_user_returns_none(real_pool_harness_factory):
     harness = real_pool_harness_factory()
     harness.queue_cli_client(
@@ -455,6 +494,35 @@ async def test_warm_flood_wait_fail_fast(real_pool_harness_factory, monkeypatch,
     assert elapsed < 5.0, f"warm took {elapsed:.1f}s, expected fail-fast < 5s"
     # Second phone should still be processed
     ok_client.get_dialogs.assert_awaited()
+
+
+@pytest.mark.anyio
+async def test_warm_rate_limit_gate_skips_phone_and_continues(real_pool_harness_factory, monkeypatch, caplog):
+    """#1330: a proactive dialogs rejection must rotate without calling Telegram."""
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+    harness = real_pool_harness_factory()
+    limited_client = FakeCliTelethonClient(dialogs=[])
+    ok_client = FakeCliTelethonClient(dialogs=[])
+    limited_phone = "+70000000001"
+
+    await _setup_warm_harness(
+        harness,
+        {
+            limited_phone: limited_client,
+            "+70000000002": ok_client,
+        },
+    )
+    # Consume this phone's sole dialogs slot before the pool-wide warm pass.
+    await harness.pool.clients[limited_phone].warm_dialog_cache()
+    assert limited_client.get_dialogs.await_count == 1
+
+    caplog.clear()
+    with caplog.at_level("INFO", logger="src.telegram.pool_dialogs"):
+        await harness.pool.warm_all_dialogs()
+
+    assert limited_client.get_dialogs.await_count == 1
+    ok_client.get_dialogs.assert_awaited_once()
+    assert "proactive dialogs rate limit" in caplog.text
 
 
 @pytest.mark.anyio

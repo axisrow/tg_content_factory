@@ -13,6 +13,7 @@ from src.search.transformers import TelegramMessageTransformer
 from src.telegram.backends import adapt_transport_session
 from src.telegram.client_pool import ClientPool
 from src.telegram.flood_wait import HandledFloodWaitError, run_with_flood_wait
+from src.telegram.rate_limit_gate import TelegramRateLimitedError
 from src.utils.safe_logging import elapsed_ms, mask_phone, query_log_fields
 
 try:
@@ -82,7 +83,7 @@ class TelegramSearch:
             return
 
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
         try:
             try:
                 await self._warm_dialog_cache_if_needed(session, phone)
@@ -91,6 +92,18 @@ class TelegramSearch:
                 # the per-method try/except before the prelude was extracted; keep
                 # that contract instead of letting the exception escape `async with`.
                 yield self._error_result(query, exc.info.detail, flood_wait=exc.info)
+                return
+            except TelegramRateLimitedError as exc:
+                logger.info(
+                    "Telegram dialog cache warm-up proactively rate-limited "
+                    "(%s, retry in %.1fs) query_hash=%s",
+                    exc.category,
+                    exc.retry_after_sec,
+                    query_log_fields(query)["query_hash"],
+                )
+                yield self._error_result(
+                    query, f"Telegram временно ограничил запросы, повторите через {exc.retry_after_sec:.0f}с."
+                )
                 return
             except Exception as exc:
                 # Non-flood warm-up failures (RPC/network/timeout) were likewise
@@ -139,7 +152,7 @@ class TelegramSearch:
             return None
 
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
         try:
             return await self._load_search_quota_with_flood_handling(
                 session,
@@ -233,7 +246,7 @@ class TelegramSearch:
             return SearchResult(messages=[], total=0, query=query, error=reason)
 
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self._pool)
         masked_phone = mask_phone(phone)
         logger.info(
             "premium_search acquired phone=%s limit=%d query_hash=%s",

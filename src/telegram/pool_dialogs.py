@@ -54,6 +54,7 @@ from src.telegram.flood_wait import (
     run_with_flood_wait,
     run_with_flood_wait_retry,
 )
+from src.telegram.rate_limit_gate import TelegramRateLimitedError
 from src.telegram.utils import normalize_utc
 
 if TYPE_CHECKING:
@@ -357,6 +358,13 @@ class DialogsMixin:
                 logger.info(
                     "warm_all_dialogs: warmed %s (%d dialogs)", p, len(dialogs or [])
                 )
+            except TelegramRateLimitedError as exc:
+                logger.info(
+                    "warm_all_dialogs: proactive %s rate limit on %s; retry in %.1fs, moving to next phone",
+                    exc.category,
+                    p,
+                    exc.retry_after_sec,
+                )
             except Exception as e:
                 logger.warning("warm_all_dialogs: failed for %s: %s", p, e)
             finally:
@@ -500,7 +508,7 @@ class DialogsMixin:
         run_with_flood_wait. Set use_input_entity=True to return an InputPeer
         (resolve_input_entity) instead of a full entity.
         """
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         resolver = session.resolve_input_entity if use_input_entity else session.resolve_entity
         is_live_username = self._is_live_username_peer(peer)
 
@@ -526,14 +534,24 @@ class DialogsMixin:
         try:
             return await _resolve(operation)
         except (ValueError, TypeError):
-            await run_with_flood_wait(
-                session.warm_dialog_cache(),
-                operation=f"{operation}_warm_dialog_cache",
-                phone=phone,
-                pool=self,
-                logger_=logger,
-                timeout=warm_timeout,
-            )
+            try:
+                await run_with_flood_wait(
+                    session.warm_dialog_cache(),
+                    operation=f"{operation}_warm_dialog_cache",
+                    phone=phone,
+                    pool=self,
+                    logger_=logger,
+                    timeout=warm_timeout,
+                )
+            except TelegramRateLimitedError as exc:
+                logger.info(
+                    "resolve_entity_with_warm(%s): proactive %s rate limit on %s; retry in %.1fs",
+                    operation,
+                    exc.category,
+                    phone,
+                    exc.retry_after_sec,
+                )
+                raise
             self.mark_dialogs_fetched(phone)
             return await _resolve(f"{operation}_after_warm")
 
@@ -544,7 +562,7 @@ class DialogsMixin:
         dialog_id: int,
         target_type: str | None = None,
     ):
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         if target_type is None:
             dialog = await self._get_cached_dialog(phone, dialog_id)
             cached_type = str(dialog.get("channel_type") or "") if dialog else ""
@@ -808,6 +826,15 @@ class DialogsMixin:
                 if gone_trusted:
                     return gone
                 return review if numeric_peer else None
+            except TelegramRateLimitedError as exc:
+                logger.info(
+                    "resolve_channel: proactive %s rate limit for '%s' on %s; retry in %.1fs, rotating client",
+                    exc.category,
+                    identifier,
+                    phone,
+                    exc.retry_after_sec,
+                )
+                continue
             except Exception as e:
                 logger.warning("resolve_channel: failed to resolve '%s': %s", identifier, e)
                 return None
@@ -872,6 +899,15 @@ class DialogsMixin:
             except (UsernameNotOccupiedError, UsernameInvalidError) as e:
                 logger.warning("resolve_any_entity: username not found '%s': %s", identifier, e)
                 return None
+            except TelegramRateLimitedError as exc:
+                logger.info(
+                    "resolve_any_entity: proactive %s rate limit for '%s' on %s; retry in %.1fs, rotating client",
+                    exc.category,
+                    identifier,
+                    used_phone,
+                    exc.retry_after_sec,
+                )
+                continue
             except Exception as e:
                 logger.warning("resolve_any_entity: failed to resolve '%s': %s", identifier, e)
                 return None
@@ -974,7 +1010,7 @@ class DialogsMixin:
             return None
 
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         try:
             # Pre-warm the entity cache when routing through a preferred account
             # whose dialogs haven't been fetched this process (StringSession loses
@@ -996,6 +1032,15 @@ class DialogsMixin:
                         phone,
                         channel_id,
                         exc.info.detail,
+                    )
+                    return None
+                except TelegramRateLimitedError as exc:
+                    logger.info(
+                        "fetch_channel_meta: proactive %s rate limit warming %s for channel_id %s; retry in %.1fs",
+                        exc.category,
+                        phone,
+                        channel_id,
+                        exc.retry_after_sec,
                     )
                     return None
 
@@ -1072,6 +1117,14 @@ class DialogsMixin:
             # Clear the DB only if it still matches the failed account.
             if used_preferred:
                 await self.forget_channel_phone(channel_id, only_if_phone=phone)
+            return None
+        except TelegramRateLimitedError as exc:
+            logger.info(
+                "fetch_channel_meta: proactive %s rate limit for channel_id %s; retry in %.1fs",
+                exc.category,
+                channel_id,
+                exc.retry_after_sec,
+            )
             return None
         except Exception as e:
             logger.warning(
@@ -1172,7 +1225,7 @@ class DialogsMixin:
         if not result:
             raise RuntimeError("no_client")
         session, acquired_phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=acquired_phone, pool=self)
         started_at = time.perf_counter()
         try:
             items: list[dict] = []
@@ -1291,7 +1344,7 @@ class DialogsMixin:
         if not result:
             return {cid: False for cid, _ in dialogs}
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         outcomes: dict[int, bool] = {}
         try:
             for cid, ctype in dialogs:
@@ -1359,7 +1412,7 @@ class DialogsMixin:
         if not result:
             return {cid: False for cid, _ in dialogs}
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         outcomes: dict[int, bool] = {}
         try:
             for cid, ctype in dialogs:
@@ -1428,7 +1481,7 @@ class DialogsMixin:
             logger.warning("get_forum_topics: no available client for channel %d", channel_id)
             return []
         session, phone = result
-        session = adapt_transport_session(session, disconnect_on_close=False)
+        session = adapt_transport_session(session, disconnect_on_close=False, phone=phone, pool=self)
         try:
             # Try direct entity lookup first (works when entity is already cached)
             try:
@@ -1503,6 +1556,14 @@ class DialogsMixin:
             ]
         except ChannelInvalidError as e:
             logger.info("get_forum_topics unavailable for channel %d: %s", channel_id, e)
+            return []
+        except TelegramRateLimitedError as exc:
+            logger.info(
+                "get_forum_topics: proactive %s rate limit for channel %d; retry in %.1fs",
+                exc.category,
+                channel_id,
+                exc.retry_after_sec,
+            )
             return []
         except Exception as e:
             logger.warning(
