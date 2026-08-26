@@ -153,6 +153,17 @@ class GenerationRunsRepository:
             (previous_status, run_id),
         )
 
+    async def refresh_publish_claim(self, run_id: int) -> None:
+        """Renew the publish lease while a long-running send is in progress."""
+        assert self._database is not None, (
+            "GenerationRunsRepository.refresh_publish_claim requires a Database reference"
+        )
+        await self._database.execute_write(
+            "UPDATE generation_runs SET updated_at = datetime('now') "
+            "WHERE id = ? AND moderation_status = 'publishing'",
+            (run_id,),
+        )
+
     async def set_moderation_status_bulk(self, run_ids: list[int], status: str) -> None:
         """Atomically set ``moderation_status`` for many runs (issue #1041).
 
@@ -386,7 +397,16 @@ class GenerationRunsRepository:
         cur = await self._database.execute_write(
             "UPDATE generation_runs SET status = 'failed', updated_at = datetime('now') WHERE status = 'running'",
         )
-        return cur.rowcount or 0
+        # A claim is a lease, not an unconditional reset: a replacement worker
+        # must not release a live publisher during an overlapping rollout. The
+        # publish loop renews updated_at before each target; ten minutes is well
+        # above the 120-second Telegram send timeout.
+        abandoned = await self._database.execute_write(
+            "UPDATE generation_runs SET moderation_status = 'approved', updated_at = datetime('now') "
+            "WHERE moderation_status = 'publishing' "
+            "AND updated_at < datetime('now', '-10 minutes')",
+        )
+        return (cur.rowcount or 0) + (abandoned.rowcount or 0)
 
     async def get(self, run_id: int) -> GenerationRun | None:
         """Один запуск по id, либо ``None`` если такого нет."""
