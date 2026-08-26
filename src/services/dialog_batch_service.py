@@ -71,6 +71,10 @@ class DialogBatchService:
                             await asyncio.gather(execution, return_exceptions=True)
                             break
                         await execution
+                    except asyncio.CancelledError:
+                        execution.cancel()
+                        await asyncio.gather(execution, return_exceptions=True)
+                        raise
                     except Exception as exc:
                         await self._repo.update_item(item.id, DialogBatchStatus.FAILED, str(exc), owner)  # type: ignore[arg-type]
                     else:
