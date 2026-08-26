@@ -721,6 +721,7 @@ def make_test_config(
     config.telegram.api_id = 12345
     config.telegram.api_hash = "test_hash"
     config.web.password = password
+    config.security.session_encryption_key = "test-session-encryption-key"
     return config
 
 
@@ -734,7 +735,10 @@ async def build_web_app(
 ) -> tuple[FastAPI, Database]:
     app = create_app(config)
     if db is None:
-        db = Database(config.database.path)
+        db = Database(
+            config.database.path,
+            session_encryption_secret=config.security.session_encryption_key,
+        )
         await db.initialize()
     app.state.db = db
     app.state.auth = harness.auth
