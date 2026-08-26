@@ -184,6 +184,10 @@ def register_pipeline_run_tools(db: Any, client_pool: Any, config: Any, ctx: Any
                 f"  Качество: "
                 f"{run.quality_score if hasattr(run, 'quality_score') and run.quality_score else 'n/a'}",
             ]
+            metadata = run.metadata if isinstance(getattr(run, "metadata", None), dict) else {}
+            unconfirmed_targets = metadata.get("unconfirmed_targets") or []
+            if unconfirmed_targets:
+                lines.append(f"  Неподтверждённые цели: {', '.join(unconfirmed_targets)}")
             result_kind = getattr(run, "result_kind", None)
             result_count = getattr(run, "result_count", None)
             if result_kind is not None and result_count is not None:

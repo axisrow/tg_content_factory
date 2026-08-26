@@ -748,6 +748,9 @@ async def _pipeline_run_show(args: argparse.Namespace, db, config, svc: Pipeline
     if run.published_at:
         print(f"published_at={run.published_at}")
     metadata = run.metadata if isinstance(run.metadata, dict) else {}
+    unconfirmed_targets = metadata.get("unconfirmed_targets") or []
+    if unconfirmed_targets:
+        print(f"unconfirmed_targets={','.join(unconfirmed_targets)}")
     node_errors = metadata.get("node_errors")
     if isinstance(node_errors, list) and node_errors:
         print(f"Ошибки нод: {len(node_errors)}")
