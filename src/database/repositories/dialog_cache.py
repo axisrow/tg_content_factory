@@ -17,8 +17,8 @@ class DialogCacheRepository:
 
     Хранит снимок списка диалогов (id, название, username, тип, флаги
     deactivate/is_own), чтобы web/CLI показывали диалоги без обращения к
-    Telegram. Записывается воркером целиком (`replace_dialogs` — атомарная
-    замена всех строк телефона), читается остальными слоями.
+    Telegram. Полный снимок записывается через `replace_dialogs`, а прогресс
+    частичного обхода — через `upsert_dialogs`; читается остальными слоями.
     """
 
     def __init__(
@@ -112,6 +112,62 @@ class DialogCacheRepository:
                         for dialog in dialogs
                     ],
                 )
+
+    async def upsert_dialogs(self, phone: str, dialogs: list[dict]) -> None:
+        """Add or update the dialogs reached by a partial Telegram walk.
+
+        A partial walk must not replace the existing snapshot: Telethon can be
+        stopped by a timeout or FloodWait after yielding only the first page.
+        Keeping those rows makes newly-created dialogs visible while retaining
+        the remainder of the last successful snapshot for the next pass.
+        """
+        assert self._database is not None, (
+            "DialogCacheRepository.upsert_dialogs requires a Database reference"
+        )
+        if not dialogs:
+            return
+        async with self._database.transaction() as conn:
+            # Keep a partial snapshot stale when it was already stale.  The
+            # cache freshness check uses MAX(cached_at) for the whole phone;
+            # stamping only the rows reached in this pass would incorrectly
+            # make the untouched tail look fresh.
+            cur = await conn.execute(
+                "SELECT MAX(cached_at) AS cached_at FROM dialog_cache WHERE phone = ?",
+                (phone,),
+            )
+            row = await cur.fetchone()
+            # A first partial snapshot is not complete/fresh.  Use an old
+            # marker so the next ordinary read retries Telegram instead of
+            # treating incomplete rows as authoritative.
+            cached_at = row["cached_at"] or "1970-01-01T00:00:00+00:00"
+            await conn.executemany(
+                """
+                INSERT INTO dialog_cache (
+                    phone, dialog_id, title, username, channel_type,
+                    deactivate, is_own, cached_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(phone, dialog_id) DO UPDATE SET
+                    title = excluded.title,
+                    username = excluded.username,
+                    channel_type = excluded.channel_type,
+                    deactivate = excluded.deactivate,
+                    is_own = excluded.is_own,
+                    cached_at = excluded.cached_at
+                """,
+                [
+                    (
+                        phone,
+                        int(dialog["channel_id"]),
+                        dialog.get("title"),
+                        dialog.get("username"),
+                        dialog.get("channel_type"),
+                        1 if dialog.get("deactivate") else 0,
+                        1 if dialog.get("is_own") else 0,
+                        cached_at,
+                    )
+                    for dialog in dialogs
+                ],
+            )
 
     async def clear_dialogs(self, phone: str) -> None:
         """Удалить кэш диалогов одного аккаунта."""

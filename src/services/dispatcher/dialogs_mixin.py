@@ -69,7 +69,10 @@ class DialogsCommandsMixin(_Base):
                 "phone": phone,
                 "dialogs_count": len(dialogs),
                 "partial": True,
-                "warning": "Dialog refresh timed out; dialog_cache was not updated.",
+                "warning": (
+                    "Dialog refresh was incomplete; reached dialogs were saved, "
+                    "but the snapshot remains incomplete."
+                ),
             }
         await self._db.repos.dialog_cache.replace_dialogs(phone, dialogs)
         return {"phone": phone, "dialogs_count": len(dialogs)}
