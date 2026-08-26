@@ -3023,6 +3023,33 @@ async def test_resolve_by_numeric_success_on_random_account_persists_preferred_p
 
 
 @pytest.mark.anyio
+async def test_resolve_by_numeric_legacy_group_uses_peerchat():
+    """Basic groups must not be sent to the PeerChannel recovery path (#1352)."""
+    channel = Channel(
+        id=42,
+        channel_id=555,
+        title="Legacy Group",
+        channel_type="group",
+        preferred_phone="+7001",
+    )
+    entity = SimpleNamespace(id=555, title="Legacy Group")
+    pool = make_mock_pool()
+    pool.resolve_entity_with_warm = AsyncMock(return_value=entity)
+    pool.get_phone_for_channel = MagicMock(return_value=None)
+    pool.remember_channel_phone = AsyncMock()
+    pool.forget_channel_phone = AsyncMock()
+    collector = Collector(pool, MagicMock(), SchedulerConfig())
+
+    result = await _resolve_by_numeric(collector, channel, MagicMock(), "+7001", 555)
+
+    assert result.entity is entity
+    peer = pool.resolve_entity_with_warm.await_args.args[2]
+    assert isinstance(peer, PeerChat)
+    assert peer.chat_id == 555
+    pool.forget_channel_phone.assert_not_awaited()
+
+
+@pytest.mark.anyio
 async def test_resolve_by_numeric_success_on_stored_preferred_is_noop():
     """Companion: when the resolve succeeds on the ALREADY-stored preferred
     account, persisting must be a no-op (the DB value is already correct) — no
