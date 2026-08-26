@@ -29,6 +29,7 @@ from src.web.runtime_shims import SnapshotClientPool, SnapshotCollector, Snapsho
 async def _web_mode_client(tmp_path):
     config = AppConfig(database=DatabaseConfig(path=str(tmp_path / "test.db")))
     config.web.password = "testpass"
+    config.security.session_encryption_key = "test-session-encryption-key"
 
     log_buffer = LogBuffer()
     container = await build_container_with_templates(

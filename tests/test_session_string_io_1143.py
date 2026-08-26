@@ -84,7 +84,7 @@ def test_validate_session_string_rejects_structurally_incomplete():
 
 @pytest.mark.anyio
 async def test_cli_import_adds_account(tmp_path, capsys):
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         session = _make_valid_session_string()
@@ -111,7 +111,7 @@ async def test_cli_import_adds_account(tmp_path, capsys):
 
 @pytest.mark.anyio
 async def test_cli_import_rejects_invalid_session(tmp_path, capsys):
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         args = argparse.Namespace(
@@ -140,7 +140,7 @@ async def test_cli_import_rejects_invalid_session(tmp_path, capsys):
 
 @pytest.mark.anyio
 async def test_cli_export_session_roundtrip(tmp_path, capsys):
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         session = _make_valid_session_string()
@@ -164,7 +164,7 @@ async def test_cli_export_session_roundtrip(tmp_path, capsys):
 
 @pytest.mark.anyio
 async def test_cli_export_session_unknown_id(tmp_path, capsys):
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         args = argparse.Namespace(
@@ -188,7 +188,7 @@ async def test_cli_export_survives_broken_sibling_session(tmp_path, capsys):
     Regression guard for the review HIGH: get_accounts() eagerly decrypts every row, so
     export resolved identity via summaries + a single-account decrypt instead.
     """
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         good = _make_valid_session_string()
@@ -209,7 +209,7 @@ async def test_cli_export_survives_broken_sibling_session(tmp_path, capsys):
 @pytest.mark.anyio
 async def test_cli_import_refuses_overwrite_without_force(tmp_path, capsys):
     """Importing onto an existing phone must NOT silently overwrite (data-loss guard)."""
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         original = _make_valid_session_string()
@@ -230,7 +230,7 @@ async def test_cli_import_refuses_overwrite_without_force(tmp_path, capsys):
 @pytest.mark.anyio
 async def test_cli_import_force_overwrites(tmp_path):
     """--force replaces the session of an existing account."""
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         await db.add_account(
@@ -253,7 +253,7 @@ async def test_cli_import_from_stdin(tmp_path, monkeypatch):
     """--session-string-stdin reads the secret from stdin (keeps it out of argv)."""
     import io
 
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         session = _make_valid_session_string()

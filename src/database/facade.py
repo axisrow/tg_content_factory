@@ -62,6 +62,7 @@ _SQLITE_BUSY_MESSAGES = (
     "database is busy",
 )
 _BUSY_RETRY_DELAYS_SEC = (0.05, 0.2)
+_SESSION_ENCRYPTION_SECRET_UNSET = object()
 
 
 class DatabaseBusyError(RuntimeError):
@@ -97,14 +98,18 @@ class Database:
     def __init__(
         self,
         db_path: str = "data/tg_search.db",
-        session_encryption_secret: str | None = None,
+        session_encryption_secret: str | None | object = _SESSION_ENCRYPTION_SECRET_UNSET,
         *,
         read_pool_size: int = 4,
         cache_size_kb: int = 64000,
         mmap_size_mb: int = 256,
     ):
         self._db_path = db_path
-        self._session_encryption_secret = session_encryption_secret
+        self._session_encryption_secret = (
+            os.getenv("SESSION_ENCRYPTION_KEY")
+            if session_encryption_secret is _SESSION_ENCRYPTION_SECRET_UNSET
+            else session_encryption_secret
+        )
         self._tuning = ConnectionTuning(cache_size_kb=cache_size_kb, mmap_size_mb=mmap_size_mb)
         self._connection = DBConnection(db_path, tuning=self._tuning)
         # Lone write connection (`_db`). All DML goes here under `_write_lock` so the

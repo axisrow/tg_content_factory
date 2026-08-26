@@ -81,7 +81,7 @@ async def _serve_app(tmp_path, *, embed_worker: bool):
     # Seed one active channel so trigger_collection finds something to enqueue.
     # We also pre-create an account row so the worker's ClientPool.initialize()
     # skips fast (it sees no usable session and doesn't try to connect).
-    seed_db = Database(str(tmp_path / "e2e.db"))
+    seed_db = Database(str(tmp_path / "e2e.db"), session_encryption_secret="test-session-encryption-key")
     await seed_db.initialize()
     try:
         await seed_db.add_account(Account(phone="+7999", session_string=""))
@@ -109,7 +109,7 @@ async def _serve_app(tmp_path, *, embed_worker: bool):
 async def _wait_for_messages(db_path: str, channel_id: int, n: int, timeout: float = 15.0) -> int:
     """Poll the DB until at least `n` messages for `channel_id` are present."""
     deadline = asyncio.get_running_loop().time() + timeout
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         while asyncio.get_running_loop().time() < deadline:
@@ -127,7 +127,7 @@ async def _wait_for_messages(db_path: str, channel_id: int, n: int, timeout: flo
 
 
 async def _task_status(db_path: str, channel_id: int) -> str | None:
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         rows = await db.execute_fetchall(
@@ -204,7 +204,7 @@ async def test_embedded_worker_publishes_heartbeat(tmp_path):
     ):
         async with _serve_app(tmp_path, embed_worker=True) as (_, config):
             # Wait for the first heartbeat — the worker publishes every ~5s.
-            db = Database(config.database.path)
+            db = Database(config.database.path, session_encryption_secret="test-session-encryption-key")
             await db.initialize()
             try:
                 deadline = asyncio.get_running_loop().time() + 10.0
@@ -239,7 +239,7 @@ async def test_health_reflects_accounts_after_snapshot_publish(tmp_path):
         resp = await client.get("/health")
         assert resp.json()["accounts_connected"] == 0
 
-        db = Database(config.database.path)
+        db = Database(config.database.path, session_encryption_secret="test-session-encryption-key")
         await db.initialize()
         try:
             await db.repos.runtime_snapshots.upsert_snapshot(

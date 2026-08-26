@@ -9,6 +9,7 @@ import pytest
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.messages import MessagesRepository, _normalize_date_to
 from src.models import Message, SearchParams, SearchQuery
+from src.security.session_cipher import SessionCipher
 
 
 @pytest.fixture
@@ -702,7 +703,11 @@ async def test_get_stats(messages_repo, channels_repo):
     from src.database.repositories.search_queries import SearchQueriesRepository
     from src.models import Account, Channel
 
-    accounts_repo = AccountsRepository(messages_repo._db, database=messages_repo._database)
+    accounts_repo = AccountsRepository(
+        messages_repo._db,
+        session_cipher=SessionCipher("test-session-encryption-key"),
+        database=messages_repo._database,
+    )
     queries_repo = SearchQueriesRepository(messages_repo._db, database=messages_repo._database)
 
     # Add some data

@@ -46,7 +46,7 @@ class _FakeClient:
 @pytest.mark.anyio
 async def test_download_media_creates_output_dir(tmp_path, monkeypatch):
     """output_dir must be created (mkdir) and returned path must be inside it."""
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         root = tmp_path / "app"
@@ -86,7 +86,7 @@ async def test_download_media_creates_output_dir(tmp_path, monkeypatch):
 
 @pytest.mark.anyio
 async def test_download_media_rejects_path_escape(tmp_path, monkeypatch):
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         root = tmp_path / "app"
@@ -118,7 +118,7 @@ async def test_download_media_rejects_path_escape(tmp_path, monkeypatch):
 async def test_accounts_connect_reads_session_from_db(tmp_path):
     """accounts.connect handler must NOT accept session_string from payload;
     it reads it from the accounts table."""
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         await db.add_account(
@@ -140,7 +140,7 @@ async def test_accounts_connect_reads_session_from_db(tmp_path):
 
 @pytest.mark.anyio
 async def test_accounts_connect_raises_for_unknown_phone(tmp_path):
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         pool = MagicMock()
@@ -158,7 +158,7 @@ async def test_notification_service_uses_config_prefixes(tmp_path):
     """dispatcher._notification_service must propagate bot prefixes from AppConfig."""
     from src.config import AppConfig
 
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         config = AppConfig()
@@ -176,7 +176,7 @@ async def test_notification_service_uses_config_prefixes(tmp_path):
 
 @pytest.mark.anyio
 async def test_notification_service_without_config_uses_defaults(tmp_path):
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         pool = MagicMock()
@@ -2475,7 +2475,7 @@ async def test_forum_topics_refresh_empty():
 
 
 async def test_download_media_message_not_found(tmp_path, monkeypatch):
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         root = tmp_path / "app"
@@ -2511,7 +2511,7 @@ async def test_download_media_message_not_found(tmp_path, monkeypatch):
 
 
 async def test_download_media_no_media(tmp_path, monkeypatch):
-    db = Database(str(tmp_path / "test.db"))
+    db = Database(str(tmp_path / "test.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         root = tmp_path / "app"

@@ -107,7 +107,7 @@ async def test_old_two_read_pattern_would_mix_phone_and_session(tmp_path):
     code (next test) prevents. If this ever stops mixing, the race model is wrong
     and the guard below would prove nothing.
     """
-    db = Database(str(tmp_path / "old.db"))
+    db = Database(str(tmp_path / "old.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         # Step 1 of the OLD pattern: read identity (summaries) for the FIRST account.
@@ -137,7 +137,7 @@ async def test_get_session_export_never_mixes_across_reused_rowid(tmp_path):
     the same delete+reinsert race it returns a CONSISTENT pair (or None) — never the
     stale_phone+fresh_session mix the sibling test above demonstrates for the old code.
     """
-    db = Database(str(tmp_path / "fixed.db"))
+    db = Database(str(tmp_path / "fixed.db"), session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     try:
         first_id = await db.add_account(Account(phone="+15551110001", session_string="sess_one"))

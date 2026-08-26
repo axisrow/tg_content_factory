@@ -14,11 +14,16 @@ from src.database.repositories.search_log import SearchLogRepository
 from src.database.repositories.search_queries import SearchQueriesRepository
 from src.database.repositories.settings import SettingsRepository
 from src.models import Channel
+from src.security.session_cipher import SessionCipher
 
 
 @pytest.fixture
 async def accounts_repo(db):
-    return AccountsRepository(db.db, database=db)
+    return AccountsRepository(
+        db.db,
+        session_cipher=SessionCipher("test-session-encryption-key"),
+        database=db,
+    )
 
 
 @pytest.fixture
