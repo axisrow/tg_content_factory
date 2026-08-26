@@ -103,6 +103,10 @@ dev = [
     "pytest-xdist>=3.8.0",
     "ruff>=0.15.14",
     "pytest-cov>=7.1.0",
+    # Mutation testing runs in an isolated working tree, so keep it in the
+    # development environment rather than relying on a globally installed
+    # mutmut binary.
+    "mutmut>=3.7.0",
     # Code-health tooling: scripts/code_health.py (radon cc/mi + vulture) and the
     # CI cyclomatic-complexity gate (`--fail-on F`). ruff (above) is the third.
     "radon>=6.0.1",
