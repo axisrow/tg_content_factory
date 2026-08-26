@@ -259,7 +259,7 @@ async def verify_code_impl(
 
         # Fail before sign-in consumes the one-time code when the session could
         # not be persisted safely.
-        db.require_session_encryption_key()
+        db.repos.accounts.require_session_encryption_key()
 
         api_id, api_hash = await _resolve_credentials(config, db, api_id=api_id, api_hash=api_hash)
         if api_id == 0 or not api_hash:
