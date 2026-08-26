@@ -54,6 +54,7 @@ from src.telegram.flood_wait import (
     run_with_flood_wait,
     run_with_flood_wait_retry,
 )
+from src.telegram.rate_limit_gate import TelegramRateLimitedError
 from src.telegram.utils import normalize_utc
 
 if TYPE_CHECKING:
@@ -356,6 +357,13 @@ class DialogsMixin:
                         await self.remember_channel_phone(eid, p)
                 logger.info(
                     "warm_all_dialogs: warmed %s (%d dialogs)", p, len(dialogs or [])
+                )
+            except TelegramRateLimitedError as exc:
+                logger.info(
+                    "warm_all_dialogs: proactive %s rate limit on %s; retry in %.1fs, moving to next phone",
+                    exc.category,
+                    p,
+                    exc.retry_after_sec,
                 )
             except Exception as e:
                 logger.warning("warm_all_dialogs: failed for %s: %s", p, e)

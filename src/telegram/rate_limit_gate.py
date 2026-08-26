@@ -32,6 +32,12 @@ class TelegramRateLimitedError(RuntimeError):
 _OPERATION_CATEGORIES = {
     "telegram_warm_dialog_cache": "dialogs",
     "telegram_stream_dialogs": "dialogs",
+    # Live username resolution is already protected by ResolveGuardMixin.
+    # Cached entity lookups share these operation tags, so generic throttling
+    # must stay disabled for the whole transport operation rather than risk a
+    # second, conflicting limiter on the live path.
+    "telegram_resolve_entity": "resolve",
+    "telegram_resolve_input_entity": "resolve",
     "telegram_stream_messages": "history",
     "telegram_edit_admin": "admin_action",
     "telegram_edit_permissions": "admin_action",
@@ -41,8 +47,8 @@ _OPERATION_CATEGORIES = {
     "telegram_edit_message": "send",
     "telegram_forward_messages": "send",
     "telegram_pin_message": "send",
-    # Reactions retain their dedicated gate for now; do not double throttle.
-    "telegram_send_reaction": "resolve",
+    # _ensure_reaction_can_run remains the sole reaction gate in Phase 1.
+    "telegram_send_reaction": "reaction",
     "telegram_create_channel": "channel_lifecycle",
     "telegram_join_channel": "channel_lifecycle",
     "telegram_delete_channel": "channel_lifecycle",
@@ -88,7 +94,7 @@ class TelegramRateLimitGate:
         return _OPERATION_CATEGORIES.get(operation, "default")
 
     def try_acquire(self, phone: str, category: str) -> float:
-        if category == "resolve":
+        if category in {"resolve", "reaction"}:
             return 0.0
         return self._limiters.get(category, self._limiters["default"]).try_acquire(phone)
 

@@ -38,6 +38,22 @@ def test_categories_have_independent_buckets() -> None:
     assert gate.try_acquire("+1", "history") == 60.0
 
 
+def test_resolve_and_reaction_keep_their_existing_dedicated_gates() -> None:
+    gate = TelegramRateLimitGate(
+        category_limits={"default": RateLimitSpec(max_calls=1, window_sec=60)},
+    )
+
+    for operation, expected_category in (
+        ("telegram_resolve_entity", "resolve"),
+        ("telegram_resolve_input_entity", "resolve"),
+        ("telegram_send_reaction", "reaction"),
+    ):
+        category = gate.category_for(operation)
+        assert category == expected_category
+        assert gate.try_acquire("+1", category) == 0.0
+        assert gate.try_acquire("+1", category) == 0.0
+
+
 @pytest.mark.asyncio
 async def test_issue_1330_repeated_get_dialogs_is_stopped_before_telegram() -> None:
     calls = 0
