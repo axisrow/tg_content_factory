@@ -46,6 +46,7 @@ from src.telegram.flood_wait import (
     run_with_flood_wait_retry,
     sleep_for_flood_wait_seconds,
 )
+from src.telegram.rate_limit_gate import TelegramRateLimitedError
 from src.telegram.rate_limiter import (
     GLOBAL_RESOLVE_BACKOFF_THRESHOLD_SEC,
     UsernameResolveFloodWaitDeferredError,
@@ -461,6 +462,13 @@ class CollectionMixin:
                 logger.warning("Failed to prefetch dialogs for %s: %s", phone, exc.info.detail)
                 await self._pool.release_client(phone)
                 return _ACQUIRE_RETRY
+            except TelegramRateLimitedError as exc:
+                logger.info(
+                    "Proactive %s rate limit prefetching dialogs for %s; retry in %.1fs",
+                    exc.category,
+                    phone,
+                    exc.retry_after_sec,
+                )
             except Exception as e:
                 logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
 
@@ -1318,6 +1326,14 @@ class CollectionMixin:
                     )
                     self._pool.mark_dialogs_fetched(phone)
                 except HandledFloodWaitError:
+                    return []
+                except TelegramRateLimitedError as exc:
+                    logger.info(
+                        "sample_channel: proactive %s rate limit prefetching dialogs for %s; retry in %.1fs",
+                        exc.category,
+                        phone,
+                        exc.retry_after_sec,
+                    )
                     return []
                 except Exception as e:
                     logger.warning("Failed to prefetch dialogs for %s: %s", phone, e)
