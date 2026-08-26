@@ -243,12 +243,14 @@ class PhotoLoaderRepository:
         row = await cur.fetchone()
         return self._to_item(row) if row else None
 
-    async def list_items(self, limit: int = 100) -> list[PhotoBatchItem]:
+    async def list_items(self, limit: int | None = 100) -> list[PhotoBatchItem]:
         """Последние ``limit`` элементов по всем батчам, новые первыми."""
-        cur = await self._db.execute(
-            "SELECT * FROM photo_batch_items ORDER BY id DESC LIMIT ?",
-            (limit,),
-        )
+        query = "SELECT * FROM photo_batch_items ORDER BY id DESC"
+        params: tuple[int, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            params = (limit,)
+        cur = await self._db.execute(query, params)
         return [self._to_item(row) for row in await cur.fetchall()]
 
     async def list_items_for_batch(self, batch_id: int, limit: int | None = None) -> list[PhotoBatchItem]:

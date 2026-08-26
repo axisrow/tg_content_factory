@@ -505,14 +505,18 @@ class CollectionTasksRepository:
             return None
         return self._to_task(row)
 
-    async def get_collection_tasks(self, limit: int = 20) -> list[CollectionTask]:
+    async def get_collection_tasks(self, limit: int | None = 20) -> list[CollectionTask]:
         """Последние ``limit`` задач любого типа, новые первыми.
 
         Без постраничности — для неё см. :meth:`get_collection_tasks_paginated`.
+        ``None`` возвращает все задачи для объединённых read-model выборок.
         """
-        cur = await self._db.execute(
-            "SELECT * FROM collection_tasks ORDER BY id DESC LIMIT ?", (limit,)
-        )
+        query = "SELECT * FROM collection_tasks ORDER BY id DESC"
+        params: tuple[int, ...] = ()
+        if limit is not None:
+            query += " LIMIT ?"
+            params = (limit,)
+        cur = await self._db.execute(query, params)
         rows = await cur.fetchall()
         return [self._to_task(r) for r in rows]
 

@@ -94,18 +94,52 @@ class JobsReadModel:
         limit: int = 100,
         now: datetime | None = None,
     ) -> list[JobView]:
+        """Return the newest jobs up to ``limit`` (legacy non-paginated API)."""
+        fetch_limit = limit if statuses is None else max(limit, _FILTER_FETCH_CAP)
+        jobs = await self._collect_jobs(
+            sources=sources,
+            statuses=statuses,
+            fetch_limit=fetch_limit,
+            now=now,
+        )
+        return jobs[:limit]
+
+    async def list_jobs_paginated(
+        self,
+        *,
+        sources: Iterable[JobSource] | None = None,
+        statuses: Iterable[JobRuntimeState] | None = None,
+        page: int = 1,
+        limit: int = 100,
+        now: datetime | None = None,
+    ) -> tuple[list[JobView], int]:
+        """Return one page after globally sorting/filtering all job sources."""
+        page = max(1, page)
+        limit = max(1, limit)
+        jobs = await self._collect_jobs(
+            sources=sources,
+            statuses=statuses,
+            fetch_limit=None,
+            now=now,
+        )
+        total = len(jobs)
+        offset = (page - 1) * limit
+        return jobs[offset : offset + limit], total
+
+    async def _collect_jobs(
+        self,
+        *,
+        sources: Iterable[JobSource] | None,
+        statuses: Iterable[JobRuntimeState] | None,
+        fetch_limit: int | None,
+        now: datetime | None,
+    ) -> list[JobView]:
         now = now or datetime.now(timezone.utc)
         wanted_sources = set(sources) if sources is not None else None
         wanted_states = set(statuses) if statuses is not None else None
 
         paused, active_ids = await self._queue_runtime()
         jobs: list[JobView] = []
-
-        # runtime_state is derived (not a DB column), so per-source state filtering
-        # can't be pushed into SQL. When filtering, fetch a larger per-source batch
-        # so matching rows aren't truncated away by the per-source limit before the
-        # state filter runs (review on #963); the final slice still caps at `limit`.
-        fetch_limit = limit if wanted_states is None else max(limit, _FILTER_FETCH_CAP)
 
         if self._want(JobSource.COLLECTION_TASK, wanted_sources):
             for task in await self._db.repos.tasks.get_collection_tasks(limit=fetch_limit):
@@ -130,9 +164,7 @@ class JobsReadModel:
         # across sources; normalise every key to UTC-aware so ``sort`` never raises
         # ``TypeError`` on a naive-vs-aware comparison (the ``None``-sentinel is aware).
         jobs.sort(key=lambda j: (normalize_utc(j.created_at) or _NO_TIMESTAMP_SENTINEL), reverse=True)
-        # ``limit`` is the unified cap; each source is also fetched with it as a
-        # per-source bound, so the final slice honours the documented contract.
-        return jobs[:limit]
+        return jobs
 
     async def list_photo_batches(self, *, limit: int = 50) -> list[PhotoBatchView]:
         batches = await self._db.repos.photo_loader.list_batches(limit=limit)

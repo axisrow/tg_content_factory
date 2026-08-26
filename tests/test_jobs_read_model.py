@@ -144,6 +144,49 @@ async def test_list_jobs_aggregates_all_sources(db):
     assert sched.summary == "every 60m"
 
 
+async def test_list_jobs_paginated_sorts_mixed_sources_before_slicing(db):
+    older_task_id = await db.repos.tasks.create_collection_task(101, "Older task")
+    newer_task_id = await db.repos.tasks.create_collection_task(102, "Newest task")
+    command_id = await db.repos.telegram_commands.create_command(
+        TelegramCommand(command_type="middle", payload={"phone": "+1"})
+    )
+    await db.execute_write(
+        "UPDATE collection_tasks SET created_at = ? WHERE id = ?",
+        ("2026-06-22T10:00:00+00:00", older_task_id),
+    )
+    await db.execute_write(
+        "UPDATE collection_tasks SET created_at = ? WHERE id = ?",
+        ("2026-06-22T12:00:00+00:00", newer_task_id),
+    )
+    await db.execute_write(
+        "UPDATE telegram_commands SET created_at = ? WHERE id = ?",
+        ("2026-06-22T11:00:00+00:00", command_id),
+    )
+
+    model = JobsReadModel(db)
+    first, first_total = await model.list_jobs_paginated(page=1, limit=2, now=NOW)
+    second, second_total = await model.list_jobs_paginated(page=2, limit=2, now=NOW)
+
+    assert [job.summary for job in first] == ["Newest task", "middle"]
+    assert [job.summary for job in second] == ["Older task"]
+    assert first_total == second_total == 3
+
+
+async def test_list_jobs_paginated_handles_page_boundaries(db):
+    for index in range(21):
+        await db.repos.tasks.create_collection_task(200 + index, f"Task {index}")
+    model = JobsReadModel(db)
+
+    first, total = await model.list_jobs_paginated(page=0, limit=10, now=NOW)
+    last, last_total = await model.list_jobs_paginated(page=3, limit=10, now=NOW)
+    beyond, beyond_total = await model.list_jobs_paginated(page=4, limit=10, now=NOW)
+
+    assert len(first) == 10
+    assert len(last) == 1
+    assert beyond == []
+    assert total == last_total == beyond_total == 21
+
+
 async def test_photo_batch_read_model_counts_progress(db):
     batch_id = await db.repos.photo_loader.create_batch(
         PhotoBatch(
