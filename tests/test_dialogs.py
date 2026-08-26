@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telethon.tl.types import InputPeerChannel
 
 from src.config import AppConfig
 from src.services.channel_service import ChannelService
@@ -130,10 +131,10 @@ def _make_channel_dialog(
             id=message_id if message_id is not None else abs(channel_id) % 100000,
             date=message_date or datetime(2026, 1, 1, tzinfo=timezone.utc),
         )
-        dialog.input_entity = f"input:{channel_id}"
+        dialog.input_entity = InputPeerChannel(channel_id=abs(channel_id), access_hash=0)
     else:
         dialog.message = None
-        dialog.input_entity = f"input:{channel_id}"
+        dialog.input_entity = InputPeerChannel(channel_id=abs(channel_id), access_hash=0)
     return dialog
 
 
@@ -1089,6 +1090,48 @@ async def test_get_dialogs_for_phone_flood_stale_cache_is_flagged_partial(db):
 
 
 @pytest.mark.anyio
+async def test_get_dialogs_for_phone_empty_partial_uses_stale_cache(db):
+    """A flood before the first dialog must not turn a populated cache empty (#1379)."""
+    from src.telegram.client_pool import ClientPool
+    from src.telegram.flood_wait import FloodWaitInfo, HandledFloodWaitError
+
+    phone = "+1234567890"
+    await db.repos.dialog_cache.replace_dialogs(phone, list(_FAKE_DIALOGS))
+
+    pool = _sweep_pool(db, phone)
+
+    async def _floods_before_first_dialog():
+        if False:  # Keep this an async generator while yielding no dialogs.
+            yield None
+        raise HandledFloodWaitError(
+            FloodWaitInfo(
+                operation="get_dialogs_for_phone",
+                phone=phone,
+                wait_seconds=3600,
+                next_available_at_utc=datetime(2026, 1, 1, tzinfo=timezone.utc),
+                detail="blocking",
+            )
+        )
+
+    mock_client = MagicMock()
+    mock_client.fetch_me = AsyncMock(return_value=SimpleNamespace(id=1))
+    mock_client.iter_dialogs.return_value = _floods_before_first_dialog()
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, phone))
+
+    result = await ClientPool.get_dialogs_for_phone(
+        pool,
+        phone,
+        include_dm=True,
+        mode="full",
+        refresh=True,
+    )
+
+    assert result.partial is True
+    assert _strip_extra_dialog_fields(list(result)) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
+    assert all(dialog.get("_degraded") for dialog in result)
+
+
+@pytest.mark.anyio
 async def test_partial_sweep_over_a_still_fresh_snapshot_is_not_fresh(db):
     """A partial walk must age the snapshot even when it was just refreshed.
 
@@ -1241,14 +1284,44 @@ def test_advance_cursor_mirrors_telethon_split_offsets():
 
     _advance_cursor(cursor, _make_channel_dialog(-1002, message_id=77))
     assert cursor.offset_id == 77
-    assert cursor.offset_peer == "input:-1002"
+    assert cursor.offset_peer.channel_id == 1002
     assert not cursor.is_start
 
     # A trailing message-less dialog still moves the peer (Telethon's buffer[-1])
     # while keeping the last real message id/date.
     _advance_cursor(cursor, _make_channel_dialog(-1003, with_message=False))
-    assert cursor.offset_peer == "input:-1003"
+    assert cursor.offset_peer.channel_id == 1003
     assert cursor.offset_id == 77
+
+
+@pytest.mark.anyio
+async def test_sweep_caps_each_pass_and_retry_to_total_budget(db):
+    """The total sweep deadline also bounds a pass's retry settings (#1379)."""
+    from src.telegram.client_pool import ClientPool
+
+    pool = _sweep_pool(db)
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.return_value = _dialog_stream([])
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, "+1234567890"))
+    observed: dict[str, float | int] = {}
+
+    async def _fake_retry(_factory, **kwargs):
+        observed.update(
+            timeout=kwargs["timeout"],
+            transient_wait_budget_sec=kwargs["transient_wait_budget_sec"],
+        )
+
+    with (
+        patch("src.telegram.pool_dialogs.DIALOG_FETCH_TOTAL_BUDGET_SEC", 1.0),
+        patch("src.telegram.pool_dialogs.time.perf_counter", side_effect=[100.0, 100.5, 100.5]),
+        patch("src.telegram.pool_dialogs.run_with_flood_wait_retry", new=_fake_retry),
+    ):
+        result = await ClientPool._fetch_dialogs_for_phone(
+            pool, "+1234567890", True, "full", "full"
+        )
+
+    assert result.partial is False
+    assert observed == {"timeout": 0.5, "transient_wait_budget_sec": 0}
 
 
 @pytest.mark.anyio

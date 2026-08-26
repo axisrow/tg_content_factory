@@ -94,9 +94,9 @@ async def _dialogs_refresh(args, db, pool, *, channel_service_cls) -> None:
     dialogs = await svc.get_my_dialogs(phone, refresh=True)
     if getattr(dialogs, "partial", False):
         print(
-            f"WARNING: Dialog sweep did not complete; "
-            f"{getattr(dialogs, 'saved', 0)} dialogs saved, stale entries kept. "
-            "Run refresh again to continue."
+            f"WARNING: Обход диалогов завершился частично: сохранено "
+            f"{getattr(dialogs, 'saved', 0)}, устаревшие записи не удалялись. "
+            "Запустите обновление ещё раз, чтобы продолжить."
         )
     else:
         print(f"Dialogs refreshed: {len(dialogs)} total.")
@@ -1094,7 +1094,10 @@ def _print_handoff_result(action: str, result: dict) -> None:
             print(f"  {key}: {value}")
     elif action == "refresh":
         if result.get("partial"):
-            print(result.get("warning") or "Dialog refresh was incomplete; dialog cache was not updated.")
+            print(
+                result.get("warning")
+                or "Обход диалогов завершился частично; устаревшие записи не удалялись."
+            )
         else:
             print(f"Dialogs refreshed: {result.get('dialogs_count', 0)} total.")
 
