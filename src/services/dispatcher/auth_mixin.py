@@ -45,6 +45,9 @@ class AuthCommandsMixin(_Base):
         phone = str(payload["phone"]).strip()
         password_2fa = str(payload.get("password_2fa", "")).strip() or None
         payload["password_2fa"] = ""
+        # Check before Telegram consumes the one-time code. Without a key the
+        # resulting authorized session could not be persisted for retry/use.
+        self._db.require_session_encryption_key()
         session_string = await self._auth.verify_code(
             phone,
             str(payload["code"]),

@@ -420,6 +420,12 @@ class Database:
         )
         return await self._accounts.add_account(account)
 
+    def require_session_encryption_key(self) -> None:
+        """Reject auth flows that cannot persist their resulting session safely."""
+        self._require()
+        assert self._accounts is not None
+        self._accounts.require_session_encryption_key()
+
     async def get_accounts(self, active_only: bool = False) -> list[Account]:
         self._require()
         assert self._accounts is not None, (
