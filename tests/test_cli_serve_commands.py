@@ -149,6 +149,27 @@ def test_serve_non_loopback_with_short_password_exits():
     mock_uv.run.assert_not_called()
 
 
+@pytest.mark.parametrize("weak_password", ["12345678", "aaaaaaaa", "        "])
+def test_serve_non_loopback_with_low_entropy_password_exits(weak_password):
+    """A long-enough but low-entropy password (repeated char, all-digit
+    sequence, all-whitespace) must still fail fast.
+
+    Round-3 review finding (#1305): the length-8 minimum alone let
+    '12345678', 'aaaaaaaa', and whitespace-only values through as "strong".
+    """
+    from src.cli.commands.serve import run
+    cfg = make_app_config()
+    cfg.web.host = "0.0.0.0"
+    cfg.web.password = weak_password
+    with patch("src.cli.commands.serve.load_config", return_value=cfg), \
+         patch("src.cli.commands.serve.create_app") as mock_create_app, \
+         patch("src.cli.commands.serve.uvicorn") as mock_uv:
+        with pytest.raises(SystemExit):
+            run(_args(web_pass=None))
+    mock_create_app.assert_not_called()
+    mock_uv.run.assert_not_called()
+
+
 def test_serve_non_loopback_with_strong_password_starts_with_warning(caplog):
     """A non-loopback host with a strong password should start but warn."""
     from src.cli.commands.serve import run
