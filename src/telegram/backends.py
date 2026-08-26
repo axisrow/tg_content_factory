@@ -15,6 +15,7 @@ from telethon_cli.errors import CLIError
 
 from src.models import Account
 from src.telegram.auth import TelegramAuth
+from src.telegram.flood_breaker import FloodCircuitBreaker
 from src.telegram.flood_wait import HandledFloodWaitError, handle_flood_wait
 from src.telegram.mtproto_watchdog import bind_telethon_base_logger
 from src.telegram.rate_limit_gate import TelegramRateLimitedError, TelegramRateLimitGate
@@ -121,6 +122,7 @@ class TelegramTransportSession:
 
     async def _run(self, operation: str, awaitable: Any, *, gate_reserved: bool = False) -> Any:
         try:
+            self._check_flood_breaker(operation)
             if not gate_reserved:
                 self._reserve_gate_slot(operation)
         except Exception:
@@ -129,14 +131,22 @@ class TelegramTransportSession:
                 close()
             raise
         try:
-            return await awaitable
+            result = await awaitable
         except HandledFloodWaitError:
+            self._record_flood_breaker(operation, flooded=True)
             raise
         except Exception as exc:
-            raise await self._translate_flood_wait(exc, operation) from exc
+            translated = await self._translate_flood_wait(exc, operation)
+            self._record_flood_breaker(
+                operation, flooded=isinstance(translated, HandledFloodWaitError)
+            )
+            raise translated from exc
+        self._record_flood_breaker(operation, flooded=False)
+        return result
 
     async def _stream(self, operation: str, iterator: AsyncIterator[Any]) -> AsyncIterator[Any]:
         try:
+            self._check_flood_breaker(operation)
             self._reserve_gate_slot(operation)
         except Exception:
             close = getattr(iterator, "aclose", None)
@@ -167,9 +177,18 @@ class TelegramTransportSession:
                         except Exception:
                             self._logger.debug("%s: iterator close failed", operation, exc_info=True)
         except HandledFloodWaitError:
+            self._record_flood_breaker(operation, flooded=True)
             raise
         except Exception as exc:
-            raise await self._translate_flood_wait(exc, operation) from exc
+            translated = await self._translate_flood_wait(exc, operation)
+            self._record_flood_breaker(
+                operation, flooded=isinstance(translated, HandledFloodWaitError)
+            )
+            raise translated from exc
+        else:
+            # A stream that drained without flooding clears the account's
+            # accumulated flood waits for this operation.
+            self._record_flood_breaker(operation, flooded=False)
 
     def _reserve_gate_slot(self, operation: str, *, slots: int = 1) -> None:
         """Reserve a proactive slot; unbound adapter sessions remain no-op safe."""
@@ -185,6 +204,32 @@ class TelegramTransportSession:
             retry_after = gate.try_acquire(self._phone, category, slots=slots)
         if retry_after > 0:
             raise TelegramRateLimitedError(self._phone, category, retry_after)
+
+    def _flood_breaker(self) -> FloodCircuitBreaker | None:
+        """The pool's breaker, when this session is bound to one."""
+        if self._pool is None or self._phone is None:
+            return None
+        breaker = getattr(self._pool, "_flood_breaker", None)
+        return breaker if isinstance(breaker, FloodCircuitBreaker) else None
+
+    def _check_flood_breaker(self, operation: str) -> None:
+        """Refuse the call when this operation is suspended for this account.
+
+        Telegram publishes no rate limits to pre-empt, so this reacts to being
+        throttled rather than trying to predict it (#1330/#1368).
+        """
+        breaker = self._flood_breaker()
+        if breaker is not None:
+            breaker.check(operation, self._phone)
+
+    def _record_flood_breaker(self, operation: str, *, flooded: bool) -> None:
+        breaker = self._flood_breaker()
+        if breaker is None:
+            return
+        if flooded:
+            breaker.record_flood(operation, self._phone)
+        else:
+            breaker.record_success(operation, self._phone)
 
     def reserve_rate_limit_slots(self, operation: str, *, slots: int = 1) -> None:
         """Atomically reserve slots before a compound Telegram operation."""
