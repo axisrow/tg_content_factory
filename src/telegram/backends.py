@@ -386,7 +386,7 @@ class TelegramTransportSession:
         from telethon.tl.functions.messages import ImportChatInviteRequest
 
         return await self._run(
-            "telegram_join_channel",
+            "telegram_import_chat_invite",
             self._client(ImportChatInviteRequest(invite_hash)),
         )
 
