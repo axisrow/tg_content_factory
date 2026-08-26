@@ -19,6 +19,23 @@ class DialogBatchService:
     def __init__(self, repository: DialogBatchRepository):
         self._repo = repository
 
+    async def _release_lease(self, batch_id: int, owner: str) -> None:
+        """Persist cancellation cleanup even through transient SQLite contention."""
+        for attempt in range(5):
+            task = asyncio.create_task(self._repo.release_lease(batch_id, owner))
+            try:
+                await asyncio.shield(task)
+                return
+            except asyncio.CancelledError:
+                # The DB operation may already be queued; wait for it before
+                # propagating cancellation so the replacement worker can resume.
+                await asyncio.shield(task)
+                raise
+            except Exception:
+                if attempt == 4:
+                    raise
+                await asyncio.sleep(1)
+
     async def create(self, *, phone: str, op_type: str, dialogs: list[tuple[int, str]]) -> int:
         """Persist the complete input before any Telegram request is made."""
         if not dialogs:
@@ -34,12 +51,17 @@ class DialogBatchService:
             if batch is None:
                 raise ValueError(f"Unknown dialog batch: {batch_id}")
             owner = uuid4().hex
-            if not await self._repo.acquire_lease(batch_id, owner, datetime.now(timezone.utc)):
+            try:
+                acquired = await self._repo.acquire_lease(batch_id, owner, datetime.now(timezone.utc))
+            except asyncio.CancelledError:
+                await self._release_lease(batch_id, owner)
+                raise
+            if not acquired:
                 return batch
             try:
                 await self._repo.recover_running(batch_id)
             except asyncio.CancelledError:
-                await self._repo.release_lease(batch_id, owner)
+                await self._release_lease(batch_id, owner)
                 raise
             stop_heartbeat = asyncio.Event()
             lease_lost = asyncio.Event()
@@ -96,7 +118,7 @@ class DialogBatchService:
                 await self._repo.finish_batch(batch_id, status, owner)
                 return (await self._repo.get_batch(batch_id)) or batch
             except asyncio.CancelledError:
-                await self._repo.release_lease(batch_id, owner)
+                await self._release_lease(batch_id, owner)
                 raise
             finally:
                 stop_heartbeat.set()
