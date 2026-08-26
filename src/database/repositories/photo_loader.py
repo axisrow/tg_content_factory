@@ -243,15 +243,20 @@ class PhotoLoaderRepository:
         row = await cur.fetchone()
         return self._to_item(row) if row else None
 
-    async def list_items(self, limit: int | None = 100) -> list[PhotoBatchItem]:
+    async def list_items(self, limit: int = 100, offset: int = 0) -> list[PhotoBatchItem]:
         """Последние ``limit`` элементов по всем батчам, новые первыми."""
-        query = "SELECT * FROM photo_batch_items ORDER BY id DESC"
-        params: tuple[int, ...] = ()
-        if limit is not None:
-            query += " LIMIT ?"
-            params = (limit,)
-        cur = await self._db.execute(query, params)
+        cur = await self._db.execute(
+            "SELECT * FROM photo_batch_items "
+            "ORDER BY created_at IS NULL ASC, created_at DESC, id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        )
         return [self._to_item(row) for row in await cur.fetchall()]
+
+    async def count_items(self) -> int:
+        """Count all photo items for unified read-model pagination."""
+        cur = await self._db.execute("SELECT COUNT(*) AS count FROM photo_batch_items")
+        row = await cur.fetchone()
+        return int(row["count"]) if row else 0
 
     async def list_items_for_batch(self, batch_id: int, limit: int | None = None) -> list[PhotoBatchItem]:
         """Элементы одного батча по возрастанию id (порядок отправки); ``limit`` ограничивает выборку."""
@@ -521,6 +526,12 @@ class PhotoLoaderRepository:
         sql += " ORDER BY id DESC"
         cur = await self._db.execute(sql, params)
         return [self._to_auto_job(row) for row in await cur.fetchall()]
+
+    async def count_auto_jobs(self) -> int:
+        """Count configured automatic photo-upload jobs."""
+        cur = await self._db.execute("SELECT COUNT(*) AS count FROM photo_auto_upload_jobs")
+        row = await cur.fetchone()
+        return int(row["count"]) if row else 0
 
     async def delete_auto_job(self, job_id: int) -> None:
         """Удалить задание авто-загрузки вместе с его леджером отправленных файлов (одной транзакцией).

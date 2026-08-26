@@ -187,6 +187,51 @@ async def test_list_jobs_paginated_handles_page_boundaries(db):
     assert total == last_total == beyond_total == 21
 
 
+async def test_list_jobs_paginated_keeps_source_fetches_bounded(db, monkeypatch):
+    tasks = [
+        CollectionTask(
+            id=index + 1,
+            task_type=CollectionTaskType.CHANNEL_COLLECT,
+            status=CollectionTaskStatus.PENDING,
+            channel_title=f"Task {index}",
+            created_at=NOW - timedelta(seconds=index),
+        )
+        for index in range(501)
+    ]
+    fetches: list[tuple[int, int]] = []
+
+    async def fake_list_tasks(limit: int = 20, offset: int = 0):
+        fetches.append((limit, offset))
+        return tasks[offset : offset + limit]
+
+    async def fake_count_tasks(status_filter=None):
+        assert status_filter is None
+        return len(tasks)
+
+    monkeypatch.setattr(db.repos.tasks, "get_collection_tasks", fake_list_tasks)
+    monkeypatch.setattr(db.repos.tasks, "count_collection_tasks", fake_count_tasks)
+    model = JobsReadModel(db)
+
+    page, total = await model.list_jobs_paginated(
+        sources=[JobSource.COLLECTION_TASK], page=1, limit=1, now=NOW
+    )
+    assert len(page) == 1
+    assert total == 501
+    assert fetches == [(500, 0)]
+
+    fetches.clear()
+    filtered, filtered_total = await model.list_jobs_paginated(
+        sources=[JobSource.COLLECTION_TASK],
+        statuses=[JobRuntimeState.PENDING],
+        page=2,
+        limit=10,
+        now=NOW,
+    )
+    assert len(filtered) == 10
+    assert filtered_total == 501
+    assert fetches == [(500, 0), (500, 500)]
+
+
 async def test_photo_batch_read_model_counts_progress(db):
     batch_id = await db.repos.photo_loader.create_batch(
         PhotoBatch(

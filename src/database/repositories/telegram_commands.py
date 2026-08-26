@@ -119,20 +119,27 @@ class TelegramCommandsRepository:
     async def list_commands(
         self,
         *,
-        limit: int | None = 100,
+        limit: int = 100,
+        offset: int = 0,
         command_type: str | None = None,
         status: TelegramCommandStatus | None = None,
         phone: str | None = None,
     ) -> list[TelegramCommand]:
         """Список команд (новые сверху) с опциональным фильтром по типу/статусу/телефону."""
         where, params = self._filtered_query(command_type=command_type, status=status, phone=phone)
-        query = f"SELECT * FROM telegram_commands {where} ORDER BY id DESC"
-        if limit is not None:
-            query += " LIMIT ?"
-            params.append(limit)
-        cur = await self._db.execute(query, tuple(params))
+        cur = await self._db.execute(
+            f"SELECT * FROM telegram_commands {where} "
+            "ORDER BY created_at IS NULL ASC, created_at DESC, id DESC LIMIT ? OFFSET ?",
+            (*params, limit, offset),
+        )
         rows = await cur.fetchall()
         return [self._to_command(row) for row in rows]
+
+    async def count_commands(self) -> int:
+        """Count all commands for unified read-model pagination."""
+        cur = await self._db.execute("SELECT COUNT(*) AS count FROM telegram_commands")
+        row = await cur.fetchone()
+        return int(row["count"]) if row else 0
 
     async def count_by_status(
         self,
