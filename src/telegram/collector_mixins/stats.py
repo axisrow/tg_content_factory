@@ -9,11 +9,10 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
 from telethon.errors import UsernameInvalidError, UsernameNotOccupiedError
-from telethon.tl.types import PeerChannel
 
 from src.models import Channel, ChannelStats
 from src.telegram.backends import adapt_transport_session
-from src.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS
+from src.telegram.collector_resolve import TRANSIENT_REVIEW_REASONS, _channel_peer
 from src.telegram.collector_types import (
     AllStatsClientsFloodedError,
     NoActiveStatsClientsError,
@@ -147,7 +146,7 @@ class StatsMixin:
             entity = await self._pool.resolve_entity_with_warm(
                 session,
                 phone,
-                PeerChannel(channel.channel_id),
+                _channel_peer(channel, channel.channel_id),
                 operation=operation,
             )
             if channel.id and channel.review_reason in TRANSIENT_REVIEW_REASONS:

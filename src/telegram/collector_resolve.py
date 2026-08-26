@@ -42,6 +42,13 @@ TRANSIENT_REVIEW_REASONS = frozenset(
 )
 
 
+def _peer_for_channel_type(channel_type: str | None, channel_id: int):
+    """Build the MTProto peer matching a stored channel type."""
+    if channel_type == "group":
+        return PeerChat(abs(channel_id))
+    return PeerChannel(channel_id)
+
+
 def _channel_peer(channel: Channel, channel_id: int):
     """Build the MTProto peer matching the stored channel type.
 
@@ -49,9 +56,7 @@ def _channel_peer(channel: Channel, channel_id: int):
     ``PeerChannel`` raises ``ValueError`` even when the account is a member,
     which incorrectly enters the preferred-phone recovery path.
     """
-    if channel.channel_type == "group":
-        return PeerChat(abs(channel_id))
-    return PeerChannel(channel_id)
+    return _peer_for_channel_type(channel.channel_type, channel_id)
 
 
 class ResolveOutcome:
@@ -304,7 +309,9 @@ async def _resolve_by_numeric(
             await collector._pool.forget_channel_phone(
                 channel_id, only_if_phone=own_preferred
             )
-        found = await collector._discover_phone_for_channel(channel_id, exclude=phone)
+        found = await collector._discover_phone_for_channel(
+            channel_id, exclude=phone, channel_type=channel.channel_type
+        )
         if found is not None:
             collector._pool.register_channel_phone(channel_id, found)
             try:

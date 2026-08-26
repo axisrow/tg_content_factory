@@ -2663,9 +2663,10 @@ async def test_discover_phone_for_channel_success():
     pool.release_client = AsyncMock()
 
     collector = Collector(pool, MagicMock(), SchedulerConfig())
-    result = await collector._discover_phone_for_channel(123, "+7001")
+    result = await collector._discover_phone_for_channel(123, "+7001", channel_type="group")
 
     assert result == "+7002"
+    assert isinstance(client.get_entity.await_args.args[0], PeerChat)
 
 
 @pytest.mark.anyio
