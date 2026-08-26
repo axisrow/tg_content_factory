@@ -70,11 +70,16 @@ class AccountsRepository:
 
     def _encrypt_session_for_storage(self, session_string: str) -> str:
         """Encrypt a session before any account write; never persist it plaintext."""
+        self.require_session_encryption_key()
+        assert self._session_cipher is not None
+        return self._session_cipher.encrypt(session_string)
+
+    def require_session_encryption_key(self) -> None:
+        """Ensure a new Telegram session can be persisted safely."""
         if self._session_cipher is None:
             raise RuntimeError(
                 "SESSION_ENCRYPTION_KEY is required to add or import Telegram accounts."
             )
-        return self._session_cipher.encrypt(session_string)
 
     async def add_account(self, account: Account) -> int:
         """Добавить аккаунт (или обновить существующий по телефону через UPSERT); вернуть id.
