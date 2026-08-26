@@ -877,6 +877,8 @@ async def test_publish_service_slow_send_is_recorded_as_delivered():
     """A slow send is awaited and recorded as delivered, rather than cancelled."""
     from unittest.mock import patch
 
+    import src.services.publish_service as ps
+
     db = FakeDB()
     db.repos.content_pipelines.set_targets(
         [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
@@ -892,8 +894,12 @@ async def test_publish_service_slow_send_is_recorded_as_delivered():
         status="completed",
     )
 
-    # Mutation guard: reintroducing wait_for around the send must fail this test.
-    with patch("src.services.publish_service.asyncio.wait_for", side_effect=AssertionError):
+    # The first wait expires, but the shielded send completes during the grace
+    # period and is recorded as delivered rather than cancelled.
+    with (
+        patch.object(ps, "SEND_TIMEOUT_SEC", 0.005),
+        patch.object(ps, "SEND_CONFIRMATION_GRACE_SEC", 0.05),
+    ):
         results = await service.publish_run(run, make_pipeline())
 
     assert results[0].success is True
@@ -949,6 +955,10 @@ async def test_publish_service_slow_send_not_resent_on_retry():
 @pytest.mark.anyio
 async def test_publish_service_slow_image_send_is_recorded_as_delivered():
     """The image send is also awaited before progress is persisted (#1383)."""
+    from unittest.mock import patch
+
+    import src.services.publish_service as ps
+
     db = FakeDB()
     db.repos.content_pipelines.set_targets(
         [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
@@ -965,7 +975,11 @@ async def test_publish_service_slow_image_send_is_recorded_as_delivered():
         status="completed",
     )
 
-    results = await service.publish_run(run, make_pipeline())
+    with (
+        patch.object(ps, "SEND_TIMEOUT_SEC", 0.005),
+        patch.object(ps, "SEND_CONFIRMATION_GRACE_SEC", 0.05),
+    ):
+        results = await service.publish_run(run, make_pipeline())
 
     assert results[0].success is True
     assert results[0].uncertain is False
@@ -974,6 +988,55 @@ async def test_publish_service_slow_image_send_is_recorded_as_delivered():
         "+1234567890:-1001234567890"
     ]
     assert 1 in db.repos.generation_runs.published_ids
+
+
+class _StalledSendClient(FakeClient):
+    async def send_message(self, entity, text, **kwargs):
+        await super().send_message(entity, text, **kwargs)
+        await asyncio.Event().wait()
+
+
+class _StalledSendPool(FakeClientPool):
+    async def get_client_by_phone(self, phone, *, wait_for_flood=False):
+        if not self._should_succeed or phone in self._fail_phones:
+            return None
+        client = self._clients.setdefault(phone, _StalledSendClient())
+        return (client, phone)
+
+
+@pytest.mark.anyio
+async def test_publish_service_stalled_send_is_bounded_and_unconfirmed():
+    """A send that never completes cannot strand the sequential dispatcher."""
+    from unittest.mock import patch
+
+    import src.services.publish_service as ps
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = _StalledSendPool(should_succeed=True)
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    with (
+        patch.object(ps, "SEND_TIMEOUT_SEC", 0.005),
+        patch.object(ps, "SEND_CONFIRMATION_GRACE_SEC", 0.005),
+    ):
+        results = await asyncio.wait_for(service.publish_run(run, make_pipeline()), timeout=0.1)
+
+    assert results[0].success is False
+    assert results[0].uncertain is True
+    assert db.repos.generation_runs.metadata_by_id[1]["unconfirmed_targets"] == [
+        "+1234567890:-1001234567890"
+    ]
+    assert 1 not in db.repos.generation_runs.published_ids
 
 
 @pytest.mark.anyio

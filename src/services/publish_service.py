@@ -12,6 +12,20 @@ from src.telegram.backends import adapt_transport_session
 logger = logging.getLogger(__name__)
 
 
+# Bound the time the sequential publish dispatcher waits for a send, without
+# cancelling the send task itself. After the first bound, give the request a
+# short confirmation window; if it still does not complete, record it as
+# unconfirmed rather than retrying a possibly delivered post.
+SEND_TIMEOUT_SEC = 120.0
+SEND_CONFIRMATION_GRACE_SEC = 5.0
+
+
+def _consume_task_result(task: asyncio.Task[Any]) -> None:
+    """Consume a detached send task's result so late failures are not warnings."""
+    if not task.cancelled():
+        task.exception()
+
+
 class _PublishClientPool(Protocol):
     async def get_client_by_phone(
         self,
@@ -258,30 +272,40 @@ class PublishService:
                 def _send() -> Any:
                     return session.send_message(entity, run.generated_text, **send_kwargs)
 
-            # Await the irreversible send directly. Wrapping it in
-            # asyncio.wait_for cancels the local coroutine on timeout, while an
-            # already-dispatched MTProto request can still be delivered. That
-            # leaves published_targets empty and lets a retry send a duplicate
-            # (issue #1383). A transport-level TimeoutError is still treated as
-            # unconfirmed below, but this service must not cancel the send itself.
+            # Keep the irreversible send alive in its own task. wait_for wraps
+            # shield(send_task), so its timeout bounds this dispatcher without
+            # cancelling the actual send (issue #1383). A short second wait lets
+            # a slow but successful request be recorded as delivered. If it still
+            # does not finish, the target is unconfirmed and cannot be retried
+            # blindly.
+            send_task = asyncio.create_task(_send())
             try:
-                msg = await _send()
+                msg = await asyncio.wait_for(
+                    asyncio.shield(send_task), timeout=SEND_TIMEOUT_SEC
+                )
             except asyncio.TimeoutError:
-                # A transport timeout gives no delivery guarantee: the request may
-                # already be on its way to Telegram. Mark the target unconfirmed
-                # so a retry does not blindly send a possible duplicate.
-                logger.error(
-                    "Timeout sending to %s:%s — delivery unconfirmed, target needs a manual check",
-                    target.phone,
-                    target.dialog_id,
-                )
-                return PublishResult(
-                    success=False,
-                    error="Timeout — delivery unconfirmed",
-                    uncertain=True,
-                    phone=acquired_phone,
-                    dialog_id=target.dialog_id,
-                )
+                try:
+                    msg = await asyncio.wait_for(
+                        asyncio.shield(send_task), timeout=SEND_CONFIRMATION_GRACE_SEC
+                    )
+                except asyncio.TimeoutError:
+                    # A transport timeout gives no delivery guarantee: the
+                    # request may already be on its way to Telegram. Keep the
+                    # task alive, consume any eventual exception, and mark the
+                    # target unconfirmed so a retry cannot send a duplicate.
+                    send_task.add_done_callback(_consume_task_result)
+                    logger.error(
+                        "Timeout sending to %s:%s — delivery unconfirmed, target needs a manual check",
+                        target.phone,
+                        target.dialog_id,
+                    )
+                    return PublishResult(
+                        success=False,
+                        error="Timeout — delivery unconfirmed",
+                        uncertain=True,
+                        phone=acquired_phone,
+                        dialog_id=target.dialog_id,
+                    )
 
             return PublishResult(
                 success=True,
