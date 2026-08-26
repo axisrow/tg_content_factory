@@ -639,106 +639,141 @@ async def test_warm_stagger_between_phones(real_pool_harness_factory, monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# warm_all_dialogs: skip phones whose session entity cache is already warm
+# warm_all_dialogs: skip phones whose full sweep is already cached
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.anyio
-async def test_warm_skips_phone_with_warm_session_cache(real_pool_harness_factory, monkeypatch):
-    """A session that already has entities must not be warmed again (#1330).
+async def test_warm_skips_phone_with_a_completed_sweep(real_pool_harness_factory, monkeypatch, db):
+    """An account whose full sweep is already cached must not be swept again (#1330).
 
-    The warm-up exists to fill the session entity cache. That cache lives in the
-    materialised SQLite session and survives restarts, while the in-process
-    "already warmed" flag does not -- which is why the warm-up re-ran 67 times
-    in one day and flood-waited an account into a 14.8h ban.
+    The in-process "already warmed" flag is lost on restart, so the warm-up
+    re-ran on every start: 67 times in one day, which flood-waited an account
+    into a 14.8h ban. dialog_cache records a completed sweep persistently.
     """
     monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
 
     harness = real_pool_harness_factory()
-    warm_client = FakeCliTelethonClient(dialogs=[])
-    cold_client = FakeCliTelethonClient(dialogs=[])
+    swept_client = FakeCliTelethonClient(dialogs=[])
+    fresh_client = FakeCliTelethonClient(dialogs=[])
 
     await _setup_warm_harness(harness, {
-        "+70000000001": warm_client,
-        "+70000000002": cold_client,
+        "+70000000001": swept_client,
+        "+70000000002": fresh_client,
     })
 
-    real_has_cached = None
+    # Only the first phone has a recent full snapshot on record.
+    await db.repos.dialog_cache.replace_dialogs(
+        "+70000000001",
+        [{"channel_id": -100777, "channel_type": "channel", "title": "Known"}],
+    )
 
-    def _fake_has_cached(self):
-        # Only the first phone's session is warm.
-        return getattr(self, "_phone", None) == "+70000000001"
+    await harness.pool.warm_all_dialogs(skip_already_swept=True)
 
-    from src.telegram.backends import TelegramTransportSession
-
-    real_has_cached = TelegramTransportSession.has_cached_entities
-    monkeypatch.setattr(TelegramTransportSession, "has_cached_entities", _fake_has_cached)
-    assert real_has_cached is not None  # sanity: the method exists to patch
-
-    await harness.pool.warm_all_dialogs()
-
-    warm_client.get_dialogs.assert_not_awaited()
-    cold_client.get_dialogs.assert_awaited()
-    # The skipped phone still counts as warmed, so collection does not re-warm it.
+    swept_client.get_dialogs.assert_not_awaited()
+    fresh_client.get_dialogs.assert_awaited()
     assert harness.pool.is_dialogs_fetched("+70000000001")
+    # Skipping must not lose the channel->phone mapping the sweep would build:
+    # it is replayed from the cache, without a Telegram call.
+    assert harness.pool._channel_phone_map.get(-100777) == "+70000000001"
 
 
 @pytest.mark.anyio
-async def test_warm_still_runs_when_session_cache_is_cold(real_pool_harness_factory, monkeypatch):
-    """A genuinely cold session (new account) must still be warmed."""
+async def test_warm_runs_for_a_fresh_session_holding_only_its_self_entity(
+    real_pool_harness_factory, monkeypatch, db
+):
+    """A brand-new session must still be swept (#1330).
+
+    Pool init calls fetch_me before this task runs and Telethon persists that
+    self-user, so a fresh session's entity table is NOT empty. Inferring "warm"
+    from table non-emptiness skipped discovery exactly where it is needed most.
+    """
     monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
 
     harness = real_pool_harness_factory()
     client = FakeCliTelethonClient(dialogs=[])
     await _setup_warm_harness(harness, {"+70000000001": client})
 
-    from src.telegram.backends import TelegramTransportSession
+    # No snapshot on record for this phone, whatever its entity cache holds.
+    assert await db.repos.dialog_cache.get_cached_at("+70000000001") is None
 
-    monkeypatch.setattr(
-        TelegramTransportSession, "has_cached_entities", lambda self: False
+    await harness.pool.warm_all_dialogs(skip_already_swept=True)
+    client.get_dialogs.assert_awaited()
+
+
+def test_startup_opts_into_the_skip_but_the_scheduler_does_not():
+    """Wiring guard: only the startup call passes skip_already_swept.
+
+    The skip is what stops the warm-up re-running on every restart, so bootstrap
+    must opt in — and the scheduler must not, or the periodic refresh silently
+    becomes a no-op (#1043/#1330).
+    """
+    import inspect
+
+    from src.scheduler import service as scheduler_service
+    from src.web import bootstrap
+
+    bootstrap_src = inspect.getsource(bootstrap)
+    assert "warm_all_dialogs(skip_already_swept=True)" in bootstrap_src
+
+    scheduler_src = inspect.getsource(scheduler_service)
+    assert "skip_already_swept" not in scheduler_src
+
+
+@pytest.mark.anyio
+async def test_periodic_warm_never_skips_even_with_a_fresh_snapshot(
+    real_pool_harness_factory, monkeypatch, db
+):
+    """The scheduled refresh must sweep unconditionally (#1043).
+
+    The periodic job exists to re-warm a long-lived worker's stale entity cache
+    and to pick up newly joined channels. If it honoured the startup skip, the
+    refresh would become a permanent no-op for every account that has a cached
+    snapshot — silently disabling the very job that keeps routing current. Only
+    the startup call passes skip_already_swept.
+    """
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
+
+    harness = real_pool_harness_factory()
+    client = FakeCliTelethonClient(dialogs=[])
+    await _setup_warm_harness(harness, {"+70000000001": client})
+
+    await db.repos.dialog_cache.replace_dialogs(
+        "+70000000001",
+        [{"channel_id": -100777, "channel_type": "channel", "title": "Known"}],
     )
+    # Startup would skip this phone ...
+    await harness.pool.warm_all_dialogs(skip_already_swept=True)
+    client.get_dialogs.assert_not_awaited()
 
+    # ... but the periodic job (default args, as the scheduler calls it) must not.
     await harness.pool.warm_all_dialogs()
     client.get_dialogs.assert_awaited()
 
 
-def test_has_cached_entities_reads_the_real_session_table(tmp_path):
-    """Answers from the session's entity table, not a constant.
+@pytest.mark.anyio
+async def test_warm_runs_again_after_a_partial_sweep(real_pool_harness_factory, monkeypatch, db):
+    """A truncated sweep must not count as a finished one.
 
-    Asserting only the False case would let a mutation that always returns True
-    pass -- and that mutation would skip warming a genuinely cold session,
-    leaving collection unable to resolve anything.
+    upsert_dialogs deliberately keeps the previous cached_at (#1360/#1347), so a
+    fragment written over an old snapshot stays stale — and the warm-up must
+    still run instead of treating the incomplete rows as a done sweep.
     """
-    from telethon.sessions import SQLiteSession
+    monkeypatch.setattr("src.telegram.pool_dialogs.WARM_STAGGER_DELAY_SEC", 0.0)
 
-    from src.telegram.backends import TelegramTransportSession
+    harness = real_pool_harness_factory()
+    client = FakeCliTelethonClient(dialogs=[])
+    await _setup_warm_harness(harness, {"+70000000001": client})
 
-    db_path = tmp_path / "probe"
-    sqlite_session = SQLiteSession(str(db_path))
-    try:
-        client = FakeCliTelethonClient(dialogs=[])
-        client.session = sqlite_session
-        cold = TelegramTransportSession(client)
-        assert cold.has_cached_entities() is False, "empty entities table must read cold"
+    # An OLD snapshot, then a partial walk that reaches only one new dialog.
+    await db.execute_write(
+        "INSERT INTO dialog_cache (phone, dialog_id, title, channel_type, cached_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("+70000000001", -100777, "A", "channel", "2026-01-01T00:00:00+00:00"),
+    )
+    await db.repos.dialog_cache.upsert_dialogs(
+        "+70000000001", [{"channel_id": -100778, "channel_type": "channel", "title": "B"}]
+    )
 
-        sqlite_session._execute(
-            "insert or replace into entities (id, hash, username, phone, name) "
-            "values (?, ?, ?, ?, ?)",
-            -1001877929309,
-            123456789,
-            None,
-            None,
-            "probe",
-        )
-        warm = TelegramTransportSession(client)
-        assert warm.has_cached_entities() is True, "populated entities table must read warm"
-    finally:
-        sqlite_session.close()
-
-
-def test_has_cached_entities_is_false_without_sqlite_session():
-    """Unknown means cold: warm up rather than silently skipping."""
-    from src.telegram.backends import TelegramTransportSession
-
-    session = TelegramTransportSession(FakeCliTelethonClient(dialogs=[]))
-    assert session.has_cached_entities() is False
+    await harness.pool.warm_all_dialogs(skip_already_swept=True)
+    client.get_dialogs.assert_awaited()

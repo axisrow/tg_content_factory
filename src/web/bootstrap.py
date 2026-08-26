@@ -471,8 +471,11 @@ async def _initialize_startup_telegram_pool(
         # Warm entity cache + preferred_phone map for all accounts in background.
         # Store the task so the collector can wait on it during a race condition.
         if not telegram_pool_degraded and hasattr(pool, "warm_all_dialogs"):
+            # Startup only: skip accounts whose full sweep is already cached.
+            # The periodic refresh job deliberately does NOT pass this (#1043).
             _warm_task = asyncio.create_task(
-                pool.warm_all_dialogs(), name="warm_all_dialogs_startup"
+                pool.warm_all_dialogs(skip_already_swept=True),
+                name="warm_all_dialogs_startup",
             )
             _warm_task.add_done_callback(_log_task_exception)
             pool._warming_task = _warm_task

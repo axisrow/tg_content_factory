@@ -211,6 +211,50 @@ class DialogsMixin:
         """Remove cached phone mapping for a channel (used during error recovery)."""
         self._channel_phone_map.pop(channel_id, None)
 
+    async def _sweep_already_completed(self, phone: str) -> bool:
+        """Is there a recent, non-partial dialog snapshot cached for this account?
+
+        A fact about a sweep that actually happened and was persisted, so it
+        survives restarts -- unlike the in-process ``_dialogs_fetched`` flag.
+
+        Deliberately NOT inferred from the session's entity cache being
+        non-empty: pool init calls ``fetch_me`` before the warm task and
+        Telethon persists that self-user, so a brand-new session already holds
+        one entity. Treating that as "warm" would skip discovery exactly where
+        it is needed most.
+
+        Skipping also skips the channel->phone mapping the sweep builds, so the
+        cached dialogs are replayed into that map here -- from the DB, with no
+        Telegram call.
+        """
+        repo = getattr(getattr(self._db, "repos", None), "dialog_cache", None)
+        if repo is None:
+            return False
+        try:
+            cached_at = await repo.get_cached_at(phone)
+            if cached_at is None:
+                return False
+            # A partial walk deliberately keeps the OLD cached_at (#1360/#1347),
+            # so a fragment reads as stale here and is re-swept rather than
+            # mistaken for a finished sweep.
+            age_sec = (datetime.now(timezone.utc) - cached_at).total_seconds()
+            if age_sec > self._dialogs_db_cache_ttl_sec:
+                return False
+            cached = await repo.list_dialogs(phone)
+        except Exception as exc:  # pragma: no cover - defensive: never block warming
+            logger.warning("warm_all_dialogs: cannot read sweep state for %s: %s", phone, exc)
+            return False
+        if not cached:
+            return False
+        for dialog in cached:
+            channel_id = dialog.get("channel_id")
+            if not channel_id or channel_id in self._channel_phone_map:
+                continue
+            if dialog.get("channel_type") in ("dm", "bot", "saved"):
+                continue
+            await self.remember_channel_phone(int(channel_id), phone)
+        return True
+
     async def remember_channel_phone(
         self,
         channel_id: int,
@@ -307,7 +351,7 @@ class DialogsMixin:
         except (asyncio.TimeoutError, asyncio.CancelledError):
             pass
 
-    async def warm_all_dialogs(self) -> None:
+    async def warm_all_dialogs(self, *, skip_already_swept: bool = False) -> None:
         """Warm entity cache for all connected phones and persist channel→phone to DB.
 
         Records which channels are accessible from which account so that
@@ -317,6 +361,14 @@ class DialogsMixin:
         Uses run_with_flood_wait (single-shot) instead of the retry variant —
         warm is a cache-preheating optimisation and should fail fast rather than
         blocking on FloodWait sleep/retry loops.
+
+        ``skip_already_swept`` is for the STARTUP call only: it skips accounts
+        whose full sweep is already cached, which is what stops the warm-up from
+        re-running on every restart (67 times in one day → a 14.8h ban,
+        #1330/#1368). The PERIODIC job must never pass it: that job exists to
+        refresh a long-lived worker's stale entity cache and pick up newly
+        joined channels (the ``is_dialogs_fetched`` TTL, #1043), so skipping
+        there would silently turn the refresh into a permanent no-op.
         """
         self._warming_task = asyncio.current_task()
         deadline = time.monotonic() + WARM_ALL_PHONES_TOTAL_SEC
@@ -350,17 +402,23 @@ class DialogsMixin:
                 continue
             session, p = result
             try:
-                # The warm-up exists to fill the session's entity cache, and
-                # that cache is persisted in the materialised SQLite session --
-                # so it survives restarts even though the in-process
-                # "already warmed" flag does not. Without this check the
-                # warm-up re-ran on every start: 67 times in one day, which is
-                # what flood-waited an account into a 14.8h ban (#1330/#1368).
-                has_cached = getattr(session, "has_cached_entities", None)
-                if callable(has_cached) and has_cached():
+                # Skip the warm-up only when a PREVIOUS SWEEP ACTUALLY COMPLETED
+                # for this account, which dialog_cache records explicitly. The
+                # in-process "already warmed" flag is lost on restart, so without
+                # a persisted fact the warm-up re-ran on every start: 67 times in
+                # one day, which is what flood-waited an account into a 14.8h ban
+                # (#1330/#1368).
+                #
+                # Deliberately NOT inferred from the session's entity cache being
+                # non-empty: pool init calls fetch_me before this task runs and
+                # Telethon persists that self-user, so even a brand-new session
+                # holds one entity. Treating that as "warm" would skip discovery
+                # exactly where it is needed most, and also skip the
+                # channel->phone mapping below.
+                if skip_already_swept and await self._sweep_already_completed(p):
                     self.mark_dialogs_fetched(p)
                     logger.info(
-                        "warm_all_dialogs: skip %s, session entity cache is already warm", p
+                        "warm_all_dialogs: skip %s, a full dialog sweep is already cached", p
                     )
                     continue
                 dialogs = await run_with_flood_wait(

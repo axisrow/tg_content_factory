@@ -230,26 +230,6 @@ class TelegramTransportSession:
             return await result
         return result
 
-    def has_cached_entities(self) -> bool:
-        """True when this session's local entity cache is already populated.
-
-        Warming the dialog cache exists to fill that cache, so a session that
-        already has entries does not need it. Sessions are materialised to
-        SQLite files (``SessionMaterializer``), so the cache survives restarts
-        even though the in-process "already warmed" flag does not -- which is
-        why the warm-up ran 67 times in one day (#1330/#1368).
-
-        Read-only and network-free: a local SELECT, no Telegram call. Any
-        failure means "unknown", answered as False so the caller warms up.
-        """
-        try:
-            session = object.__getattribute__(self._client, "session")
-            return session._execute("select 1 from entities limit 1") is not None
-        except Exception:
-            # No SQLite-backed session, or the table is missing: treat as cold
-            # and let the caller warm up rather than silently skipping it.
-            return False
-
     async def warm_dialog_cache(self) -> Any:
         return await self._run("telegram_warm_dialog_cache", self._client.get_dialogs())
 
