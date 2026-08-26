@@ -78,6 +78,18 @@ def test_dedupe_recent_unavailability_events_handles_mixed_timezone_datetimes():
     assert events[0]["latest_at"].tzinfo is not None
 
 
+def test_dedupe_recent_unavailability_events_counts_duplicate_messages():
+    note = "Отложено: нет подключённых активных аккаунтов для сбора."
+    events = _dedupe_recent_unavailability_events(
+        [
+            SimpleNamespace(note=note, error=None, completed_at=None, started_at=None, created_at=None),
+            SimpleNamespace(note=note, error=None, completed_at=None, started_at=None, created_at=None),
+        ]
+    )
+
+    assert events == [{"message": note, "count": 2, "latest_at": None}]
+
+
 # --- _compute_load_level ---
 
 

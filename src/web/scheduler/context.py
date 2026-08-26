@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections import Counter
 from datetime import datetime, timezone
 from typing import NamedTuple
 
@@ -221,7 +222,8 @@ class _RecentUnavailabilityEvent(TypedDict):
 
 
 def _dedupe_recent_unavailability_events(recent_tasks: list[CollectionTask]) -> list[_RecentUnavailabilityEvent]:
-    events: dict[str, _RecentUnavailabilityEvent] = {}
+    counts: Counter[str] = Counter()
+    latest_events: dict[str, _RecentUnavailabilityEvent] = {}
     for task in recent_tasks:
         message = ""
         if task.note and "Flood Wait" in task.note:
@@ -232,15 +234,16 @@ def _dedupe_recent_unavailability_events(recent_tasks: list[CollectionTask]) -> 
             message = task.error
         if not message:
             continue
-        item = events.setdefault(message, {"message": message, "count": 0, "latest_at": None})
-        item["count"] = item["count"] + 1
+        counts[message] += 1
+        item = latest_events.setdefault(message, {"message": message, "count": 0, "latest_at": None})
+        item["count"] = counts[message]
         occurred_at = _as_utc_datetime(task.completed_at or task.started_at or task.created_at)
         if occurred_at is not None:
             latest_at = item["latest_at"]
             if latest_at is None or occurred_at > latest_at:
                 item["latest_at"] = occurred_at
     return sorted(
-        events.values(),
+        latest_events.values(),
         key=lambda item: item["latest_at"] or datetime.min.replace(tzinfo=timezone.utc),
         reverse=True,
     )[:5]
