@@ -7,7 +7,7 @@ import sqlite3
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 import aiosqlite
 from tenacity import AsyncRetrying, RetryCallState, RetryError, retry_if_exception, stop_after_attempt
@@ -174,7 +174,10 @@ class Database:
 
         session_cipher = None
         if self._session_encryption_secret:
-            session_cipher = SessionCipher(self._session_encryption_secret)
+            # The constructor accepts a private object sentinel for the
+            # environment-backed default; at this point the truthy value is
+            # necessarily the resolved string secret.
+            session_cipher = SessionCipher(cast(str, self._session_encryption_secret))
 
         self._accounts = AccountsRepository(
             read_db, session_cipher=session_cipher, database=self

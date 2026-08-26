@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import aiosqlite
 
@@ -41,7 +41,7 @@ class DialogBatchRepository:
                 "INSERT INTO dialog_batch_operations(phone, op_type, status) VALUES (?, ?, ?)",
                 (batch.phone, batch.op_type, batch.status.value),
             )
-            batch_id = int(cur.lastrowid)
+            batch_id = int(cast(int, cur.lastrowid))
             await conn.executemany(
                 "INSERT INTO dialog_batch_items(batch_id, phone, dialog_id, channel_type) VALUES (?, ?, ?, ?)",
                 [(batch_id, batch.phone, int(dialog_id), channel_type) for dialog_id, channel_type in dialogs],
