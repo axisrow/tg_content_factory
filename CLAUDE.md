@@ -164,6 +164,7 @@ Reads (`SELECT`) stay lock-free. Repositories accept `database: Database | None 
 
 ## Conventions
 
+- PRs touching pool/lease/session/security layers require dual review (Claude + Codex); reconcile disagreement against the code and prefer the deeper analysis.
 - CLI/Web parity: every web operation must have a CLI equivalent and vice versa
 - Async everywhere (asyncio)
 - Pydantic v2 models (`model_validate`, not `parse_obj`)

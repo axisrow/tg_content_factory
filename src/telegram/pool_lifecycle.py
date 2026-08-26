@@ -126,6 +126,7 @@ class ClientLifecycleMixin:
 
     async def initialize(self, *, phones: Iterable[str] | None = None) -> None:
         """Load active accounts and validate that their sessions are usable."""
+        self._disconnecting = False
         watchdog = getattr(self, "_mtproto_watchdog", None)
         if watchdog is not None:
             watchdog.install(asyncio.get_running_loop())
@@ -198,6 +199,8 @@ class ClientLifecycleMixin:
         rotate a username resolve away from accounts already in resolve
         backoff (#790).
         """
+        if getattr(self, "_disconnecting", False):
+            return None
         for _ in range(max(1, len(self.clients))):
             candidates = self._connected_phones() - set(exclude_phones)
             if not candidates:
@@ -221,6 +224,8 @@ class ClientLifecycleMixin:
         wait_for_flood=True sleeps out a transient (<=60s) flood-wait on the phone
         instead of returning None immediately — for write callers that pin a phone.
         """
+        if getattr(self, "_disconnecting", False):
+            return None
         lease = await self._acquire_phone_lease(phone, wait_for_flood=wait_for_flood)
         if lease is None:
             return None
@@ -233,6 +238,8 @@ class ClientLifecycleMixin:
         wait_for_flood: bool = False,
     ) -> tuple[TelegramTransportSession, str] | None:
         """Get a specific flood-aware client through the native backend for stateful flows."""
+        if getattr(self, "_disconnecting", False):
+            return None
         lease = await self._acquire_phone_lease(phone, wait_for_flood=wait_for_flood)
         if lease is None:
             return None
@@ -243,6 +250,11 @@ class ClientLifecycleMixin:
 
     async def release_client(self, phone: str) -> None:
         """Mark client as no longer in active use.
+
+        Ownership ends at this method: callers invoke it in ``finally`` after
+        every successful pool acquisition. The active-lease pop and
+        exclusive-marker release stay under ``ClientPool._lock``; do not move
+        the nested lease-pool call outside that critical section.
 
         When the lease stack mixes an ephemeral native lease
         (disconnect_on_release=True) and a direct-pool lease, prefer releasing the
@@ -398,6 +410,7 @@ class ClientLifecycleMixin:
                 logger.debug("Failed to disconnect session for %s", phone, exc_info=True)
 
     async def disconnect_all(self) -> None:
+        self._disconnecting = True
         # Detach the watchdog handler from the global telethon.tgcf logger so
         # a torn-down pool is not kept alive by it (#817 review F1); a later
         # initialize() re-installs it. getattr: doubles built via __new__.
@@ -441,6 +454,11 @@ class ClientLifecycleMixin:
     async def _acquire_phone_lease(
         self, phone: str, *, wait_for_flood: bool = False
     ) -> AccountLease | None:
+        """Acquire a phone atomically across lease-pool and pool fallback paths.
+
+        No caller may reverse the lease-pool-lock then pool-lock order or
+        inspect ``_in_use`` between the two phases.
+        """
         if wait_for_flood:
             await self._await_transient_flood(phone)
 
@@ -470,6 +488,11 @@ class ClientLifecycleMixin:
         report_generic_flood: bool = True,
     ) -> tuple[TelegramTransportSession, str] | None:
         phone = account_lease.account.phone
+        if getattr(self, "_disconnecting", False):
+            if not account_lease.shared:
+                async with self._lock:
+                    await self._lease_pool.release(phone)
+            return None
         # force_native bypasses the persistent pool session — callers need a raw native client
         direct_session = None if force_native else self._direct_session(phone)
 
@@ -485,6 +508,7 @@ class ClientLifecycleMixin:
                 direct_session = None
 
         lease: BackendClientLease | None = None
+        installed_pooled_session = False
         try:
             if direct_session is not None:
                 context_session = direct_session.with_flood_context(
@@ -528,9 +552,12 @@ class ClientLifecycleMixin:
                         pool=self,
                         logger_=logger,
                     )
+                    installed_pooled_session = True
                     lease.disconnect_on_release = False
 
             async with self._lock:
+                if getattr(self, "_disconnecting", False):
+                    raise RuntimeError("client pool is disconnecting")
                 self._active_leases[phone].append(lease)
             return lease.session, phone
         except Exception as exc:
@@ -543,6 +570,23 @@ class ClientLifecycleMixin:
                     await self._backend_router.release(lease)
                 except Exception:
                     logger.debug("Failed to release broken lease for %s", phone, exc_info=True)
+            elif lease is not None and installed_pooled_session:
+                # The pool may begin teardown after installing a replacement
+                # session but before the lease-stack append.  The persistent
+                # flag is already false in this branch, so backend release
+                # alone would leave the raw client and its tasks alive.
+                try:
+                    await lease.session.raw_client.disconnect()
+                except Exception:
+                    logger.debug("Failed to disconnect abandoned client for %s", phone, exc_info=True)
+            elif lease is not None and direct_session is not None and getattr(self, "_disconnecting", False):
+                # A direct session may finish reconnecting after teardown has
+                # removed it from ``clients``.  It is a borrowed lease, so
+                # backend release is a no-op; disconnect the raw client here.
+                try:
+                    await direct_session.raw_client.disconnect()
+                except Exception:
+                    logger.debug("Failed to disconnect reconnected client for %s", phone, exc_info=True)
             # Only evict the pooled session when a *pooled* acquisition failed:
             # either its direct session was reconnect-broken above (direct_session
             # set to None on line ~485) or a fresh non-force acquire raised. A
