@@ -315,6 +315,10 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         auth = request.headers.get("Authorization", "")
+        if auth:
+            retry_after = self._blocked(key)
+            if retry_after:
+                return self._rate_limited(retry_after)
         if auth.startswith("Basic "):
             try:
                 decoded = base64.b64decode(auth[6:]).decode()
@@ -336,9 +340,6 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         # A browser request without credentials is an unauthenticated visit,
         # not a failed Basic-auth attempt. Only throttle supplied credentials.
         if auth:
-            retry_after = self._blocked(key)
-            if retry_after:
-                return self._rate_limited(retry_after)
             self._record_failure(key)
 
         target = login_redirect_url(redirect_target_from_request(request))

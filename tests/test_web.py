@@ -1938,7 +1938,7 @@ async def test_basic_auth_rate_limits_repeated_invalid_passwords(unauth_client):
 
 
 @pytest.mark.anyio
-async def test_basic_auth_valid_credentials_bypass_lockout(unauth_client):
+async def test_basic_auth_lockout_blocks_correct_credentials(unauth_client):
     bad_headers = {"Authorization": "Basic YWRtaW46d3Jvbmc="}
     good_headers = {"Authorization": "Basic YWRtaW46dGVzdHBhc3M="}
     for _ in range(5):
@@ -1946,7 +1946,7 @@ async def test_basic_auth_valid_credentials_bypass_lockout(unauth_client):
         assert resp.status_code == 401
 
     resp = await unauth_client.get("/channels/", headers=good_headers, follow_redirects=False)
-    assert resp.status_code != 429
+    assert resp.status_code == 429
 
 
 @pytest.mark.anyio
