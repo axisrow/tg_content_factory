@@ -117,6 +117,81 @@ def test_dialogs_action(tmp_path, cli_init_patch, capsys):
     assert "Test Channel" in out
 
 
+def test_refresh_action_warns_on_partial_sweep(tmp_path, cli_init_patch, capsys):
+    """A partial refresh must not be reported as a refreshed cache (#1350).
+
+    `dialogs refresh` was taught to honour the flag; this second CLI surface
+    printed "Dialogs refreshed: N total." unconditionally, reproducing the exact
+    silent success on `photo-loader refresh`.
+    """
+    from src.telegram.pool_dialogs import DialogFetchResult
+
+    db_path = str(tmp_path / "photo_refresh_partial.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _setup_photo_db(db)
+
+    async def fake_init_pool(_config, _db):
+        pool = MagicMock()
+        pool.disconnect_all = AsyncMock()
+        return MagicMock(), pool
+
+    with (
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
+        patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
+    ):
+        from src.cli.commands.photo_loader import run
+
+        with patch("src.cli.commands.photo_loader.ChannelService") as mock_channel_service:
+            mock_instance = MagicMock()
+            mock_instance.get_my_dialogs = AsyncMock(
+                return_value=DialogFetchResult(
+                    [{"channel_id": 100, "channel_type": "channel", "title": "Test Channel"}],
+                    partial=True,
+                )
+            )
+            mock_channel_service.return_value = mock_instance
+
+            run(_ns(photo_loader_action="refresh", phone="+100"))
+
+    out = capsys.readouterr().out
+    assert "WARNING" in out
+    assert "not updated" in out
+    assert "Dialogs refreshed:" not in out
+
+
+def test_refresh_action_reports_success_on_complete_sweep(tmp_path, cli_init_patch, capsys):
+    """The happy path must still report success (guards against over-warning)."""
+    db_path = str(tmp_path / "photo_refresh_full.db")
+    db = Database(db_path)
+    asyncio.run(db.initialize())
+    _setup_photo_db(db)
+
+    async def fake_init_pool(_config, _db):
+        pool = MagicMock()
+        pool.disconnect_all = AsyncMock()
+        return MagicMock(), pool
+
+    with (
+        cli_init_patch(db, _PHOTO_LOADER_INIT_DB_TARGET),
+        patch("src.cli.commands.photo_loader.runtime.init_pool", side_effect=fake_init_pool),
+    ):
+        from src.cli.commands.photo_loader import run
+
+        with patch("src.cli.commands.photo_loader.ChannelService") as mock_channel_service:
+            mock_instance = MagicMock()
+            mock_instance.get_my_dialogs = AsyncMock(
+                return_value=[{"channel_id": 100, "channel_type": "channel", "title": "T"}]
+            )
+            mock_channel_service.return_value = mock_instance
+
+            run(_ns(photo_loader_action="refresh", phone="+100"))
+
+    out = capsys.readouterr().out
+    assert "Dialogs refreshed: 1 total." in out
+    assert "WARNING" not in out
+
+
 def _create_fake_services(task_methods=None, auto_methods=None):
     """Create fake service classes with proper __init__."""
 

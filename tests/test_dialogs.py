@@ -1063,6 +1063,7 @@ async def test_get_dialogs_for_phone_flood_stale_cache_is_flagged_partial(db):
     assert _strip_extra_dialog_fields(cached) == _strip_extra_dialog_fields(_FAKE_DIALOGS)
 
 
+@pytest.mark.anyio
 async def test_get_dialogs_for_phone_partial_timeout_keeps_existing_db_cache(db):
     from src.telegram.client_pool import ClientPool
 
