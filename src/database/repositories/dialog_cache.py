@@ -136,7 +136,10 @@ class DialogCacheRepository:
                 (phone,),
             )
             row = await cur.fetchone()
-            cached_at = row["cached_at"] or datetime.now(timezone.utc).isoformat()
+            # A first partial snapshot is not complete/fresh.  Use an old
+            # marker so the next ordinary read retries Telegram instead of
+            # treating incomplete rows as authoritative.
+            cached_at = row["cached_at"] or "1970-01-01T00:00:00+00:00"
             await conn.executemany(
                 """
                 INSERT INTO dialog_cache (

@@ -102,3 +102,20 @@ async def test_upsert_dialogs_preserves_stale_snapshot_age(tmp_path):
         assert cached_at.year == 2020
     finally:
         await db.close()
+
+
+@pytest.mark.anyio
+async def test_first_partial_upsert_is_marked_stale(tmp_path):
+    db = Database(str(tmp_path / "test.db"))
+    await db.initialize()
+    try:
+        await db.repos.dialog_cache.upsert_dialogs(
+            "+70005",
+            [{"channel_id": 1, "title": "Partial", "channel_type": "channel"}],
+        )
+
+        cached_at = await db.repos.dialog_cache.get_cached_at("+70005")
+        assert cached_at is not None
+        assert cached_at.year == 1970
+    finally:
+        await db.close()
