@@ -98,8 +98,13 @@ def _future(dt: datetime | None, now: datetime) -> bool:
 def _collection_result_summary(task: CollectionTask) -> str:
     """Build the compact result previously rendered only on /scheduler."""
     collected = int(task.messages_collected or 0)
-    payload = task.payload.model_dump() if hasattr(task.payload, "model_dump") else task.payload
-    payload = payload if isinstance(payload, dict) else {}
+    payload_obj = task.payload
+    if payload_obj is None:
+        payload = {}
+    elif isinstance(payload_obj, dict):
+        payload = payload_obj
+    else:
+        payload = payload_obj.model_dump()
     if task.task_type.value == "channel_collect":
         raw_total = payload.get("messages_total")
         try:
