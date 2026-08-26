@@ -257,6 +257,10 @@ async def verify_code_impl(
         pending = json.loads(pending_raw)
         phone_code_hash = pending["phone_code_hash"]
 
+        # Fail before sign-in consumes the one-time code when the session could
+        # not be persisted safely.
+        db.repos.accounts.require_session_encryption_key()
+
         api_id, api_hash = await _resolve_credentials(config, db, api_id=api_id, api_hash=api_hash)
         if api_id == 0 or not api_hash:
             print("ERROR: API credentials not configured.")

@@ -7,10 +7,10 @@
   с partial-unique-индексом как жёстким бэкстопом. 0 primary допустимо: первая
   вставка с ``is_primary=False`` и деактивация/удаление последнего primary
   оставляют пул без primary-аккаунта;
-* шифрование StringSession — `session_string` хранится как `enc:v2:*`, когда
-  задан `SESSION_ENCRYPTION_KEY`; чтение разделено на «для UI» (статус сессии без
-  расшифровки) и «для живого использования» (расшифровка, иначе аккаунт
-  пропускается).
+* шифрование StringSession — `session_string` хранится как `enc:v2:*`; запись
+  без `SESSION_ENCRYPTION_KEY` запрещена. Чтение разделено на «для UI» (статус
+  сессии без расшифровки) и «для живого использования» (расшифровка, иначе
+  аккаунт пропускается).
 """
 
 from __future__ import annotations
@@ -68,6 +68,19 @@ class AccountsRepository:
         self._session_cipher = session_cipher
         self._database = database
 
+    def _encrypt_session_for_storage(self, session_string: str) -> str:
+        """Encrypt a session before any account write; never persist it plaintext."""
+        self.require_session_encryption_key()
+        assert self._session_cipher is not None
+        return self._session_cipher.encrypt(session_string)
+
+    def require_session_encryption_key(self) -> None:
+        """Ensure a new Telegram session can be persisted safely."""
+        if self._session_cipher is None:
+            raise RuntimeError(
+                "SESSION_ENCRYPTION_KEY is required to add or import Telegram accounts."
+            )
+
     async def add_account(self, account: Account) -> int:
         """Добавить аккаунт (или обновить существующий по телефону через UPSERT); вернуть id.
 
@@ -76,16 +89,14 @@ class AccountsRepository:
         соединении, поэтому для гарантированного id обновлённой строки читайте её
         отдельно по `phone`.
 
-        Сессия шифруется при наличии cipher. Флаг primary назначается атомарно —
+        Сессия всегда шифруется перед записью. Флаг primary назначается атомарно —
         запрошенный ``is_primary`` срабатывает, только если primary-аккаунта ещё
         нет (#733), иначе сохраняется 0.
         """
         assert self._database is not None, (
             "AccountsRepository.add_account requires a Database reference"
         )
-        session_string = account.session_string
-        if self._session_cipher:
-            session_string = self._session_cipher.encrypt(session_string)
+        session_string = self._encrypt_session_for_storage(account.session_string)
 
         # Derive is_primary atomically (#733): the requested primary flag only
         # takes effect when no primary account exists yet. Two concurrent inserts
@@ -129,9 +140,7 @@ class AccountsRepository:
         assert self._database is not None, (
             "AccountsRepository.add_account_if_absent requires a Database reference"
         )
-        session_string = account.session_string
-        if self._session_cipher:
-            session_string = self._session_cipher.encrypt(session_string)
+        session_string = self._encrypt_session_for_storage(account.session_string)
 
         want_primary = int(account.is_primary)
         cur = await self._database.execute_write(

@@ -73,7 +73,7 @@ def test_print_result_with_purged(capsys):
 def test_filter_analyze(tmp_path, cli_init_patch, capsys):
     """Test filter analyze action."""
     db_path = str(tmp_path / "filter_analyze.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     asyncio.run(db.add_account(Account(phone="+100", session_string="sess")))
     asyncio.run(db.add_channel(Channel(channel_id=1001, title="Test Channel")))
@@ -101,7 +101,7 @@ def test_filter_analyze(tmp_path, cli_init_patch, capsys):
 def test_analyze_quick_skips_cross_dupe(tmp_path, cli_init_patch, capsys):
     """`filter analyze --quick` requests the analyzer's quick mode (#774)."""
     db_path = str(tmp_path / "filter_analyze_quick.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     asyncio.run(db.add_account(Account(phone="+100", session_string="sess")))
     asyncio.run(db.add_channel(Channel(channel_id=1001, title="Test Channel")))
@@ -127,7 +127,7 @@ def test_analyze_quick_skips_cross_dupe(tmp_path, cli_init_patch, capsys):
 def test_analyze_quick_sample_size_flows_through(tmp_path, cli_init_patch):
     """`filter analyze --quick --sample-size N` forwards N to the analyzer (#1138)."""
     db_path = str(tmp_path / "filter_analyze_sample.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     asyncio.run(db.add_account(Account(phone="+100", session_string="sess")))
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
@@ -204,7 +204,7 @@ def test_filter_analyze_parser_accepts_sample_size():
 def test_filter_apply(tmp_path, cli_init_patch, capsys):
     """Test filter apply action."""
     db_path = str(tmp_path / "filter_apply.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
@@ -225,7 +225,7 @@ def test_filter_apply(tmp_path, cli_init_patch, capsys):
 def test_filter_precheck(tmp_path, cli_init_patch, capsys):
     """Test filter precheck action."""
     db_path = str(tmp_path / "filter_precheck.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
@@ -244,7 +244,7 @@ def test_filter_precheck(tmp_path, cli_init_patch, capsys):
 def test_filter_reset(tmp_path, cli_init_patch, capsys):
     """Test filter reset action."""
     db_path = str(tmp_path / "filter_reset.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
@@ -263,7 +263,7 @@ def test_filter_reset(tmp_path, cli_init_patch, capsys):
 def test_filter_purge_all(tmp_path, cli_init_patch, capsys):
     """Test filter purge all action."""
     db_path = str(tmp_path / "filter_purge.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
@@ -286,7 +286,7 @@ def test_filter_purge_all(tmp_path, cli_init_patch, capsys):
 def test_filter_purge_by_pks(tmp_path, cli_init_patch, capsys):
     """Test filter purge by PKs action."""
     db_path = str(tmp_path / "filter_purge_pks.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
@@ -309,7 +309,7 @@ def test_filter_purge_by_pks(tmp_path, cli_init_patch, capsys):
 def test_filter_purge_invalid_pks(tmp_path, cli_init_patch, capsys):
     """Test filter purge with invalid PKs."""
     db_path = str(tmp_path / "filter_purge_invalid.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
@@ -323,7 +323,7 @@ def test_filter_purge_invalid_pks(tmp_path, cli_init_patch, capsys):
 def test_filter_hard_delete_requires_dev_mode(tmp_path, cli_init_patch, capsys):
     """Test filter hard-delete requires dev mode."""
     db_path = str(tmp_path / "filter_hard_delete_dev.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     with cli_init_patch(db, _FILTER_INIT_DB_TARGET):
         from src.cli.commands.filter import run
@@ -373,7 +373,7 @@ def test_filter_toggle_flips_flag(tmp_path, cli_init_patch, capsys):
     time, leaving the seed Database fully manageable.
     """
     db_path = str(tmp_path / "filter_toggle.db")
-    seed = Database(db_path)
+    seed = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(seed.initialize())
     try:
         pk = asyncio.run(
@@ -404,7 +404,7 @@ def test_filter_toggle_flips_flag(tmp_path, cli_init_patch, capsys):
 def test_filter_toggle_not_found(tmp_path, cli_init_patch, capsys):
     """filter toggle: pk that doesn't exist prints not-found."""
     db_path = str(tmp_path / "filter_toggle_missing.db")
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     try:
         with cli_init_patch(db, _FILTER_INIT_DB_TARGET, fresh_database=True):
@@ -435,7 +435,7 @@ def _run_hard_delete_with_prompt(tmp_path, cli_init_patch, db_name, typed):
     aiosqlite connections open on one WAL file would deadlock on the write lock.
     """
     db_path = str(tmp_path / db_name)
-    seed = Database(db_path)
+    seed = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(seed.initialize())
     asyncio.run(seed.set_setting("agent_dev_mode_enabled", "1"))
     asyncio.run(seed.close())

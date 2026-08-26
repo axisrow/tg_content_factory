@@ -358,7 +358,7 @@ def _make_pipeline_db(tmp_path, db_name="pipeline.db"):
     from src.models import Account
 
     db_path = str(tmp_path / db_name)
-    db = Database(db_path)
+    db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     asyncio.run(db.initialize())
     asyncio.run(db.add_account(Account(phone="+100", session_string="sess")))
     asyncio.run(db.add_channel(Channel(channel_id=2001, title="Source")))
@@ -375,7 +375,7 @@ def _make_pipeline_db(tmp_path, db_name="pipeline.db"):
 def _pipeline_fake_init_db(db_path):
     async def _inner(_config_path: str):
         config = AppConfig()
-        database = Database(db_path)
+        database = Database(db_path, session_encryption_secret="test-session-encryption-key")
         await database.initialize()
         return config, database
 
@@ -385,7 +385,7 @@ def _pipeline_fake_init_db(db_path):
 class TestCLIPipelineRuns:
     def test_runs_not_found(self, tmp_path, capsys):
         db_path = str(tmp_path / "runs_nf.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -422,7 +422,7 @@ class TestCLIPipelineRuns:
             from src.cli.commands.pipeline import run
 
             # list to get id
-            db = Database(db_path)
+            db = Database(db_path, session_encryption_secret="test-session-encryption-key")
             asyncio.run(db.initialize())
             try:
                 pipelines = asyncio.run(db.repos.content_pipelines.get_all())
@@ -455,7 +455,7 @@ class TestCLIPipelineRuns:
                 )
             )
 
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         try:
             pipelines = asyncio.run(db.repos.content_pipelines.get_all())
@@ -477,7 +477,7 @@ class TestCLIPipelineRuns:
 class TestCLIPipelineEdit:
     def test_edit_not_found(self, tmp_path, capsys):
         db_path = str(tmp_path / "edit_nf.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -524,7 +524,7 @@ class TestCLIPipelineEdit:
                 )
             )
 
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         try:
             pipelines = asyncio.run(db.repos.content_pipelines.get_all())
@@ -557,7 +557,7 @@ class TestCLIPipelineEdit:
 class TestCLIPipelineRunAction:
     def test_run_not_found(self, tmp_path, capsys):
         db_path = str(tmp_path / "run_nf.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -581,7 +581,7 @@ class TestCLIPipelineRunAction:
 class TestCLIPipelineRunShow:
     def test_run_show_not_found(self, tmp_path, capsys):
         db_path = str(tmp_path / "run_show.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -595,7 +595,7 @@ class TestCLIPipelineRunShow:
 class TestCLIPipelineApproveReject:
     def test_approve_not_found(self, tmp_path, capsys):
         db_path = str(tmp_path / "approve_nf.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -607,7 +607,7 @@ class TestCLIPipelineApproveReject:
 
     def test_reject_not_found(self, tmp_path, capsys):
         db_path = str(tmp_path / "reject_nf.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -621,7 +621,7 @@ class TestCLIPipelineApproveReject:
 class TestCLIPipelineQueue:
     def test_queue_not_found(self, tmp_path, capsys):
         db_path = str(tmp_path / "queue_nf.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -635,7 +635,7 @@ class TestCLIPipelineQueue:
 class TestCLIPipelineBulkApproveReject:
     def test_bulk_approve_empty(self, tmp_path, capsys):
         db_path = str(tmp_path / "bulk_approve.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -647,7 +647,7 @@ class TestCLIPipelineBulkApproveReject:
 
     def test_bulk_reject_empty(self, tmp_path, capsys):
         db_path = str(tmp_path / "bulk_reject.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -681,7 +681,7 @@ class TestCLIPipelineDelete:
                 )
             )
 
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         try:
             pipelines = asyncio.run(db.repos.content_pipelines.get_all())
@@ -699,7 +699,7 @@ class TestCLIPipelineDelete:
 class TestCLIPipelineToggle:
     def test_toggle_not_found(self, tmp_path, capsys):
         db_path = str(tmp_path / "toggle_nf.db")
-        db = Database(db_path)
+        db = Database(db_path, session_encryption_secret="test-session-encryption-key")
         asyncio.run(db.initialize())
         asyncio.run(db.close())
 
@@ -929,7 +929,7 @@ async def _base_app_b3(tmp_path):
     config.web.password = "testpass"
 
     app = create_app(config)
-    db = Database(config.database.path)
+    db = Database(config.database.path, session_encryption_secret="test-session-encryption-key")
     await db.initialize()
     app.state.db = db
     app.state.config = config
