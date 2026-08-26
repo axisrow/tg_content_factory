@@ -342,7 +342,8 @@ class StatsMixin:
                 )
                 if channel.channel_type == "group":
                     participants = getattr(full.full_chat, "participants", None)
-                    subscriber_count = len(getattr(participants, "participants", None) or [])
+                    participant_list = getattr(participants, "participants", None)
+                    subscriber_count = len(participant_list) if participant_list is not None else None
                 else:
                     subscriber_count = getattr(full.full_chat, "participants_count", None)
 
