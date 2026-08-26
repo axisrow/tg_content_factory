@@ -251,6 +251,45 @@ class PhotoLoaderRepository:
         )
         return [self._to_item(row) for row in await cur.fetchall()]
 
+    async def list_items_for_jobs_page(
+        self,
+        *,
+        limit: int,
+        cursor: tuple[str | None, int] | None = None,
+    ) -> tuple[list[PhotoBatchItem], tuple[str | None, int] | None]:
+        """Read one created-at ordered jobs page using an indexed keyset cursor."""
+        rows = []
+        if cursor is None or cursor[0] is not None:
+            where = "WHERE created_at IS NOT NULL"
+            params: tuple[object, ...] = ()
+            if cursor is not None:
+                where += " AND (created_at, id) < (?, ?)"
+                params = cursor
+            cur = await self._db.execute(
+                f"SELECT * FROM photo_batch_items {where} ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*params, limit),
+            )
+            rows.extend(await cur.fetchall())
+        if len(rows) < limit:
+            null_params: tuple[int, ...] = ()
+            null_where = "WHERE created_at IS NULL"
+            if cursor is not None and cursor[0] is None:
+                null_where += " AND id < ?"
+                null_params = (cursor[1],)
+            cur = await self._db.execute(
+                f"SELECT * FROM photo_batch_items {null_where} ORDER BY id DESC LIMIT ?",
+                (*null_params, limit - len(rows)),
+            )
+            rows.extend(await cur.fetchall())
+        next_cursor = (rows[-1]["created_at"], rows[-1]["id"]) if len(rows) == limit else None
+        return [self._to_item(row) for row in rows], next_cursor
+
+    async def count_items(self) -> int:
+        """Count all photo items for unified read-model pagination."""
+        cur = await self._db.execute("SELECT COUNT(*) AS count FROM photo_batch_items")
+        row = await cur.fetchone()
+        return int(row["count"]) if row else 0
+
     async def list_items_for_batch(self, batch_id: int, limit: int | None = None) -> list[PhotoBatchItem]:
         """Элементы одного батча по возрастанию id (порядок отправки); ``limit`` ограничивает выборку."""
         sql = "SELECT * FROM photo_batch_items WHERE batch_id = ? ORDER BY id ASC"
@@ -519,6 +558,12 @@ class PhotoLoaderRepository:
         sql += " ORDER BY id DESC"
         cur = await self._db.execute(sql, params)
         return [self._to_auto_job(row) for row in await cur.fetchall()]
+
+    async def count_auto_jobs(self) -> int:
+        """Count configured automatic photo-upload jobs."""
+        cur = await self._db.execute("SELECT COUNT(*) AS count FROM photo_auto_upload_jobs")
+        row = await cur.fetchone()
+        return int(row["count"]) if row else 0
 
     async def delete_auto_job(self, job_id: int) -> None:
         """Удалить задание авто-загрузки вместе с его леджером отправленных файлов (одной транзакцией).

@@ -2611,12 +2611,13 @@ async def test_requeue_startup_tasks(db):
     pool = make_mock_pool(get_available_client=AsyncMock(return_value=None))
     collector = Collector(pool, db, SchedulerConfig())
     queue = CollectionQueue(collector, db)
+    queue._ensure_worker = lambda: None
 
     count = await queue.requeue_startup_tasks()
     assert count == 1
 
-    # Wait for worker to process (will fail — no client, but status transitions)
-    await asyncio.sleep(0.5)
+    # Run synchronously so the assertion does not race a loaded xdist worker.
+    await queue._run_worker()
 
     task = await db.get_collection_task(task_id)
     # Task was picked up but deferred because no client is currently connected.

@@ -28,6 +28,31 @@ async def test_jobs_api_list_returns_all_sources(route_client):
     assert "telegram_command" in sources
 
 
+async def test_jobs_api_list_supports_optional_pagination(route_client):
+    db = route_client._transport_app.state.db
+    await _seed_jobs(db)
+
+    resp = await route_client.get("/jobs/api/list?page=1&limit=1")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["jobs"]) == 1
+    assert data["total_count"] == 2
+    assert data["page"] == 1
+    assert data["limit"] == 1
+
+
+async def test_jobs_api_list_page_beyond_total_is_empty(route_client):
+    db = route_client._transport_app.state.db
+    await _seed_jobs(db)
+
+    resp = await route_client.get("/jobs/api/list?page=99&limit=1")
+
+    assert resp.status_code == 200
+    assert resp.json()["jobs"] == []
+    assert resp.json()["total_count"] == 2
+
+
 async def test_jobs_api_filters_by_source(route_client):
     db = route_client._transport_app.state.db
     await _seed_jobs(db)
@@ -60,6 +85,16 @@ async def test_jobs_fragment_renders(route_client):
     assert resp.status_code == 200
     assert "Jobs Chan" in resp.text
     assert 'hx-target="#jobs-table"' in resp.text
+
+
+async def test_jobs_fragment_accepts_page(route_client):
+    db = route_client._transport_app.state.db
+    await _seed_jobs(db)
+
+    resp = await route_client.get("/jobs/fragments/list?page=2&limit=1")
+
+    assert resp.status_code == 200
+    assert resp.text.count("<tr>") == 2  # header plus one paginated job
 
 
 async def test_jobs_page_renders_lazyload_shell(route_client):

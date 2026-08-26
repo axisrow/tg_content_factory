@@ -19,7 +19,7 @@ without a live worker.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, AsyncIterator, Iterable
 
 from src.models import (
     CollectionTask,
@@ -80,6 +80,7 @@ def _future(dt: datetime | None, now: datetime) -> bool:
 
 # Per-source fetch bound used when a runtime_state filter is active (see list_jobs).
 _FILTER_FETCH_CAP = 500
+_PAGINATION_FETCH_BATCH = 500
 
 
 class JobsReadModel:
@@ -94,18 +95,192 @@ class JobsReadModel:
         limit: int = 100,
         now: datetime | None = None,
     ) -> list[JobView]:
+        """Return the newest jobs up to ``limit`` (legacy non-paginated API)."""
+        fetch_limit = limit if statuses is None else max(limit, _FILTER_FETCH_CAP)
+        jobs = await self._collect_jobs(
+            sources=sources,
+            statuses=statuses,
+            fetch_limit=fetch_limit,
+            now=now,
+        )
+        return jobs[:limit]
+
+    async def list_jobs_paginated(
+        self,
+        *,
+        sources: Iterable[JobSource] | None = None,
+        statuses: Iterable[JobRuntimeState] | None = None,
+        page: int = 1,
+        limit: int = 100,
+        now: datetime | None = None,
+    ) -> tuple[list[JobView], int]:
+        """Return one globally sorted page without materializing full history tables."""
+        page = max(1, page)
+        limit = max(1, limit)
+        now = now or datetime.now(timezone.utc)
+        wanted_sources = set(sources) if sources is not None else None
+        wanted_states = set(statuses) if statuses is not None else None
+        offset = (page - 1) * limit
+
+        paused, active_ids = await self._queue_runtime()
+        scheduler_jobs = (
+            await self._scheduler_jobs()
+            if self._want(JobSource.SCHEDULER_JOB, wanted_sources)
+            else []
+        )
+        total = (
+            await self._count_unfiltered_jobs(wanted_sources, len(scheduler_jobs))
+            if wanted_states is None
+            else None
+        )
+        if total is not None and offset >= total:
+            return [], total
+
+        iterators = self._paginated_source_iterators(
+            wanted_sources=wanted_sources,
+            now=now,
+            paused=paused,
+            active_ids=active_ids,
+            scheduler_jobs=scheduler_jobs,
+        )
+        heads: list[JobView | None] = []
+        for iterator in iterators:
+            heads.append(await anext(iterator, None))
+
+        jobs: list[JobView] = []
+        matched = 0
+        while any(job is not None for job in heads):
+            source_index = max(
+                (index for index, job in enumerate(heads) if job is not None),
+                key=lambda index: self._job_sort_key(heads[index]),
+            )
+            job = heads[source_index]
+            heads[source_index] = await anext(iterators[source_index], None)
+            if job is None or (wanted_states is not None and job.runtime_state not in wanted_states):
+                continue
+            if matched >= offset and len(jobs) < limit:
+                jobs.append(job)
+            matched += 1
+            # Without a derived-state filter, SQL counts already provide the exact
+            # total, so stop once this page is filled instead of scanning history.
+            if total is not None and len(jobs) == limit:
+                break
+
+        return jobs, total if total is not None else matched
+
+    @staticmethod
+    def _job_sort_key(job: JobView | None) -> datetime:
+        if job is None:
+            return _NO_TIMESTAMP_SENTINEL
+        return normalize_utc(job.created_at) or _NO_TIMESTAMP_SENTINEL
+
+    async def _count_unfiltered_jobs(
+        self,
+        wanted_sources: set[JobSource] | None,
+        scheduler_count: int,
+    ) -> int:
+        total = 0
+        if self._want(JobSource.COLLECTION_TASK, wanted_sources):
+            total += await self._db.repos.tasks.count_collection_tasks()
+        if self._want(JobSource.TELEGRAM_COMMAND, wanted_sources):
+            total += await self._db.repos.telegram_commands.count_commands()
+        if self._want(JobSource.PHOTO_BATCH_ITEM, wanted_sources):
+            total += await self._db.repos.photo_loader.count_items()
+        if self._want(JobSource.PHOTO_AUTO_JOB, wanted_sources):
+            total += await self._db.repos.photo_loader.count_auto_jobs()
+        return total + scheduler_count
+
+    def _paginated_source_iterators(
+        self,
+        *,
+        wanted_sources: set[JobSource] | None,
+        now: datetime,
+        paused: bool,
+        active_ids: set[int],
+        scheduler_jobs: list[JobView],
+    ) -> list[AsyncIterator[JobView]]:
+        iterators: list[AsyncIterator[JobView]] = []
+        if self._want(JobSource.COLLECTION_TASK, wanted_sources):
+            iterators.append(self._iter_collection_jobs(now, paused, active_ids))
+        if self._want(JobSource.TELEGRAM_COMMAND, wanted_sources):
+            iterators.append(self._iter_telegram_jobs(now))
+        if self._want(JobSource.PHOTO_BATCH_ITEM, wanted_sources):
+            iterators.append(self._iter_photo_item_jobs())
+        if self._want(JobSource.PHOTO_AUTO_JOB, wanted_sources):
+            iterators.append(self._iter_photo_auto_jobs())
+        if scheduler_jobs:
+            iterators.append(self._iter_job_list(scheduler_jobs))
+        return iterators
+
+    async def _iter_collection_jobs(
+        self,
+        now: datetime,
+        paused: bool,
+        active_ids: set[int],
+    ) -> AsyncIterator[JobView]:
+        cursor: tuple[str | None, int] | None = None
+        while True:
+            rows, next_cursor = await self._db.repos.tasks.get_collection_tasks_for_jobs_page(
+                limit=_PAGINATION_FETCH_BATCH,
+                cursor=cursor,
+            )
+            for task in rows:
+                yield self._from_collection_task(task, now, paused, active_ids)
+            if next_cursor is None:
+                return
+            cursor = next_cursor
+
+    async def _iter_telegram_jobs(self, now: datetime) -> AsyncIterator[JobView]:
+        cursor: tuple[str | None, int] | None = None
+        while True:
+            rows, next_cursor = await self._db.repos.telegram_commands.list_commands_for_jobs_page(
+                limit=_PAGINATION_FETCH_BATCH,
+                cursor=cursor,
+            )
+            for command in rows:
+                yield self._from_telegram_command(command, now)
+            if next_cursor is None:
+                return
+            cursor = next_cursor
+
+    async def _iter_photo_item_jobs(self) -> AsyncIterator[JobView]:
+        cursor: tuple[str | None, int] | None = None
+        while True:
+            rows, next_cursor = await self._db.repos.photo_loader.list_items_for_jobs_page(
+                limit=_PAGINATION_FETCH_BATCH,
+                cursor=cursor,
+            )
+            for item in rows:
+                yield self._from_photo_item(item)
+            if next_cursor is None:
+                return
+            cursor = next_cursor
+
+    async def _iter_photo_auto_jobs(self) -> AsyncIterator[JobView]:
+        jobs = [self._from_photo_auto(job) for job in await self._db.repos.photo_loader.list_auto_jobs()]
+        jobs.sort(key=self._job_sort_key, reverse=True)
+        for job in jobs:
+            yield job
+
+    async def _iter_job_list(self, jobs: list[JobView]) -> AsyncIterator[JobView]:
+        jobs.sort(key=self._job_sort_key, reverse=True)
+        for job in jobs:
+            yield job
+
+    async def _collect_jobs(
+        self,
+        *,
+        sources: Iterable[JobSource] | None,
+        statuses: Iterable[JobRuntimeState] | None,
+        fetch_limit: int,
+        now: datetime | None,
+    ) -> list[JobView]:
         now = now or datetime.now(timezone.utc)
         wanted_sources = set(sources) if sources is not None else None
         wanted_states = set(statuses) if statuses is not None else None
 
         paused, active_ids = await self._queue_runtime()
         jobs: list[JobView] = []
-
-        # runtime_state is derived (not a DB column), so per-source state filtering
-        # can't be pushed into SQL. When filtering, fetch a larger per-source batch
-        # so matching rows aren't truncated away by the per-source limit before the
-        # state filter runs (review on #963); the final slice still caps at `limit`.
-        fetch_limit = limit if wanted_states is None else max(limit, _FILTER_FETCH_CAP)
 
         if self._want(JobSource.COLLECTION_TASK, wanted_sources):
             for task in await self._db.repos.tasks.get_collection_tasks(limit=fetch_limit):
@@ -130,9 +305,7 @@ class JobsReadModel:
         # across sources; normalise every key to UTC-aware so ``sort`` never raises
         # ``TypeError`` on a naive-vs-aware comparison (the ``None``-sentinel is aware).
         jobs.sort(key=lambda j: (normalize_utc(j.created_at) or _NO_TIMESTAMP_SENTINEL), reverse=True)
-        # ``limit`` is the unified cap; each source is also fetched with it as a
-        # per-source bound, so the final slice honours the documented contract.
-        return jobs[:limit]
+        return jobs
 
     async def list_photo_batches(self, *, limit: int = 50) -> list[PhotoBatchView]:
         batches = await self._db.repos.photo_loader.list_batches(limit=limit)

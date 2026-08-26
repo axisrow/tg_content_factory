@@ -133,6 +133,45 @@ class TelegramCommandsRepository:
         rows = await cur.fetchall()
         return [self._to_command(row) for row in rows]
 
+    async def list_commands_for_jobs_page(
+        self,
+        *,
+        limit: int,
+        cursor: tuple[str | None, int] | None = None,
+    ) -> tuple[list[TelegramCommand], tuple[str | None, int] | None]:
+        """Read one created-at ordered jobs page using an indexed keyset cursor."""
+        rows = []
+        if cursor is None or cursor[0] is not None:
+            where = "WHERE created_at IS NOT NULL"
+            params: tuple[Any, ...] = ()
+            if cursor is not None:
+                where += " AND (created_at, id) < (?, ?)"
+                params = cursor
+            cur = await self._db.execute(
+                f"SELECT * FROM telegram_commands {where} ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*params, limit),
+            )
+            rows.extend(await cur.fetchall())
+        if len(rows) < limit:
+            null_params: tuple[int, ...] = ()
+            null_where = "WHERE created_at IS NULL"
+            if cursor is not None and cursor[0] is None:
+                null_where += " AND id < ?"
+                null_params = (cursor[1],)
+            cur = await self._db.execute(
+                f"SELECT * FROM telegram_commands {null_where} ORDER BY id DESC LIMIT ?",
+                (*null_params, limit - len(rows)),
+            )
+            rows.extend(await cur.fetchall())
+        next_cursor = (rows[-1]["created_at"], rows[-1]["id"]) if len(rows) == limit else None
+        return [self._to_command(row) for row in rows], next_cursor
+
+    async def count_commands(self) -> int:
+        """Count all commands for unified read-model pagination."""
+        cur = await self._db.execute("SELECT COUNT(*) AS count FROM telegram_commands")
+        row = await cur.fetchone()
+        return int(row["count"]) if row else 0
+
     async def count_by_status(
         self,
         *,
