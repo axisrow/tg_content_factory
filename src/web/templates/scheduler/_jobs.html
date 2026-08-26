@@ -1,6 +1,4 @@
 {% from "_macros.html" import icon %}
-{% from "_macros_ui.html" import scheduler_filter_qs %}
-{% set filter_qs = scheduler_filter_qs(status_filter, page, limit) %}
 <!-- Scheduler Jobs -->
 {% if scheduler_jobs %}
 <div class="card mb-4">
@@ -26,7 +24,7 @@
                 {% for j in scheduler_jobs %}
                 <tr>
                     <td>
-                        <form method="post" action="/scheduler/jobs/{{ j.job_id }}/toggle{{ filter_qs }}" class="mb-0">
+                        <form method="post" action="/scheduler/jobs/{{ j.job_id }}/toggle" class="mb-0">
                             <input type="checkbox" onchange="this.form.submit()"
                                    {% if j.enabled %}checked{% endif %}
                                    title="{{ 'Отключить' if j.enabled else 'Включить' }}">
@@ -35,7 +33,7 @@
                     <td class="{% if not j.enabled %}text-muted{% endif %}">{{ j.label }}</td>
                     <td>
                         {% if j.interval_editable and j.interval_minutes is not none %}
-                            <form method="post" action="/scheduler/jobs/{{ j.job_id }}/set-interval{{ filter_qs }}"
+                            <form method="post" action="/scheduler/jobs/{{ j.job_id }}/set-interval"
                                   class="d-flex gap-1 mb-0">
                                 <input type="number" name="interval_minutes" value="{{ j.interval_minutes }}"
                                        min="1" max="1440" class="form-control form-control-sm" style="width:75px">

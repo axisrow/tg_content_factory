@@ -336,3 +336,21 @@ async def test_jobs_page_preserves_filters_in_lazy_fragment_url(route_client):
         'hx-get="/jobs/fragments/list?source=collection_task&amp;status=active&amp;page=2&amp;limit=25"'
         in resp.text
     )
+
+
+async def test_jobs_autoreload_is_capped(route_client):
+    """Active jobs refresh only the fragment and stop after a bounded count."""
+    db = route_client._transport_app.state.db
+    await db.repos.tasks.create_collection_task(700930, "Active")
+
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=active&page=1&limit=100"
+    )
+
+    assert resp.status_code == 200
+    assert "window.location.reload" not in resp.text
+    assert 'hx-target="#jobs-table"' in resp.text
+    assert "jobsAutoReload" in resp.text
+    assert "jobs-autoreload-count" in resp.text
+    assert "count >= maxReloads" in resp.text
+    assert 'id="jobs-autoreload-paused"' in resp.text

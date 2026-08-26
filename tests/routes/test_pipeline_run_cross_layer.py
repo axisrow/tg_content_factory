@@ -1,13 +1,12 @@
 """Cross-layer regression for pipeline result semantics (issue #463).
 
-Chains per scenario: real metadata → DB → task row → the scheduler tasks
+Chains per scenario: real metadata → DB → task row → the jobs
 fragment renders a semantic cell. This guards against drift between layers —
 if any single layer starts interpreting the result differently, the test fails
 in that layer rather than silently passing.
 
-The task table moved out of the /scheduler/ skeleton into the lazy
-/scheduler/fragments/tasks fragment (#756 lazyload), so these chains assert
-against the fragment endpoint, not the skeleton.
+The task table lives in the lazy /jobs/fragments/list fragment (#1318), so
+these chains assert against that endpoint, not the page skeleton.
 """
 
 from __future__ import annotations
@@ -59,14 +58,14 @@ def _first_pipeline_row(soup):
             tds = tr.find_all("td")
             if not tds:
                 continue
-            first = tds[0].get_text(strip=True, separator=" ").lower()
-            if "pipeline" in first or "пайплайн" in first:
+            job_type = tds[1].get_text(strip=True, separator=" ").lower()
+            if "pipeline" in job_type or "пайплайн" in job_type:
                 return tr
     return None
 
 
 async def test_generation_run_end_to_end(base_app, route_client):
-    """Generation run: DB → task → /scheduler renders 'Сгенерировано N'."""
+    """Generation run: DB → task → /jobs renders 'Сгенерировано N'."""
     _, db, _ = base_app
     task_id, run_id = await _seed_run_and_task(
         db,
@@ -90,12 +89,14 @@ async def test_generation_run_end_to_end(base_app, route_client):
     assert stored_run.result_kind == "generated_items"
     assert stored_run.result_count == 4
 
-    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=all&page=1&limit=100"
+    )
     assert resp.status_code == 200
     soup = BeautifulSoup(resp.text, "html.parser")
     row = _first_pipeline_row(soup)
     assert row is not None
-    cell = row.find_all("td")[3].get_text(strip=True, separator=" ")
+    cell = row.find_all("td")[4].get_text(strip=True, separator=" ")
     assert "Сгенерировано" in cell
     assert "4" in cell
 
@@ -123,19 +124,21 @@ async def test_action_only_run_end_to_end_empty_text_no_zero(base_app, route_cli
     assert stored_run.result_kind == "processed_messages"
     assert stored_run.result_count == 9
 
-    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=all&page=1&limit=100"
+    )
     assert resp.status_code == 200
     soup = BeautifulSoup(resp.text, "html.parser")
     row = _first_pipeline_row(soup)
     assert row is not None
-    cell = row.find_all("td")[3].get_text(strip=True, separator=" ")
+    cell = row.find_all("td")[4].get_text(strip=True, separator=" ")
     assert "Обработано" in cell, f"expected 'Обработано' in {cell!r}"
     assert "9" in cell
 
 
 async def test_action_run_with_node_errors_shows_warning_badge_end_to_end(base_app, route_client):
     """Issue #463 observability: when action handler records node_errors
-    (e.g. all accounts flood-waited), scheduler UI must show a warning badge.
+    (e.g. all accounts flood-waited), jobs UI must show a warning badge.
     """
     _, db, _ = base_app
     task_id, run_id = await _seed_run_and_task(
@@ -162,11 +165,13 @@ async def test_action_run_with_node_errors_shows_warning_badge_end_to_end(base_a
     assert stored is not None
     assert (stored.metadata or {}).get("node_errors")
 
-    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=all&page=1&limit=100"
+    )
     soup = BeautifulSoup(resp.text, "html.parser")
     row = _first_pipeline_row(soup)
     assert row is not None
-    cell_html = str(row.find_all("td")[3])
+    cell_html = str(row.find_all("td")[4])
     assert "⚠" in cell_html or "pipe-run-warning" in cell_html
 
 
@@ -191,10 +196,12 @@ async def test_mixed_run_end_to_end_shows_generation_count(base_app, route_clien
     assert stored_run is not None
     assert stored_run.metadata["action_counts"] == {"react": 7}
 
-    resp = await route_client.get("/scheduler/fragments/tasks?status=all")
+    resp = await route_client.get(
+        "/jobs/fragments/list?source=collection_task&status=all&page=1&limit=100"
+    )
     soup = BeautifulSoup(resp.text, "html.parser")
     row = _first_pipeline_row(soup)
     assert row is not None
-    cell = row.find_all("td")[3].get_text(strip=True, separator=" ")
+    cell = row.find_all("td")[4].get_text(strip=True, separator=" ")
     assert "Сгенерировано" in cell
     assert "2" in cell

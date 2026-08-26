@@ -19,7 +19,6 @@ from src.web.scheduler import forms
 from src.web.scheduler.context import (
     _build_collector_health_context,
     _build_jobs_context,
-    _load_pipeline_run_result_meta,
     _notification_snapshot_payload,
 )
 from src.web.scheduler.responses import (
@@ -69,17 +68,10 @@ async def clear_pending_collect_tasks(request: Request) -> SchedulerRedirect:
     return SchedulerRedirect(msg=msg)
 
 
-async def render_scheduler_page(
-    request: Request, page: int, status: str, limit: int
-) -> SchedulerPage:
-    """Skeleton — only the lightweight controls. Health/jobs/tasks load lazily (#756)."""
+async def render_scheduler_page(request: Request) -> SchedulerPage:
+    """Skeleton with scheduler controls; health and periodic jobs load lazily."""
     sched = deps.get_scheduler(request)
     db = deps.get_db(request)
-
-    # Filter/page/limit are echoed into the controls' forms and the lazy fragment URLs.
-    page = forms.normalize_page(page)
-    limit = forms.normalize_limit(limit)
-    status_filter = forms.normalize_status(status)
 
     notification_snapshot = await _notification_snapshot_payload(request)
     bot_payload = notification_snapshot.get("bot")
@@ -92,9 +84,6 @@ async def render_scheduler_page(
         "interval_minutes": sched.interval_minutes,
         "msg": request.query_params.get("msg"),
         "bot_configured": bot_configured,
-        "status_filter": status_filter,
-        "page": page,
-        "limit": limit,
     }
     return SchedulerPage(context)
 
@@ -104,9 +93,7 @@ async def render_scheduler_health_fragment(request: Request) -> SchedulerTemplat
     return SchedulerTemplate("scheduler/_health.html", {"collector_health": collector_health})
 
 
-async def render_scheduler_jobs_fragment(
-    request: Request, page: int, status: str, limit: int
-) -> SchedulerTemplate:
+async def render_scheduler_jobs_fragment(request: Request) -> SchedulerTemplate:
     sched = deps.get_scheduler(request)
     db = deps.get_db(request)
     scheduler_jobs, search_log = await asyncio.gather(
@@ -119,63 +106,6 @@ async def render_scheduler_jobs_fragment(
             "scheduler_jobs": scheduler_jobs,
             "search_log": search_log,
             "is_running": sched.is_running,
-            # Echoed into the job toggle/set-interval forms' filter_qs.
-            "status_filter": forms.normalize_status(status),
-            "page": forms.normalize_page(page),
-            "limit": forms.normalize_limit(limit),
-        },
-    )
-
-
-async def render_scheduler_tasks_fragment(
-    request: Request, page: int, status: str, limit: int
-) -> SchedulerTemplate:
-    db = deps.get_db(request)
-    page = forms.normalize_page(page)
-    limit = forms.normalize_limit(limit)
-    status_filter = forms.normalize_status(status)
-    offset = (page - 1) * limit
-
-    (tasks_page, all_count, active_count, pending_collect) = await asyncio.gather(
-        db.get_collection_tasks_paginated(limit=limit, offset=offset, status_filter=status_filter),
-        db.count_collection_tasks(),
-        db.count_collection_tasks("active"),
-        db.get_pending_channel_tasks(),
-    )
-    tasks, filtered_count = tasks_page
-    pipeline_result_meta = await _load_pipeline_run_result_meta(db, tasks)
-    result_column_title = "Результат"
-    visible_pipeline_labels = {
-        str(meta["label"])
-        for meta in pipeline_result_meta.values()
-        if isinstance(meta.get("label"), str)
-    }
-    if tasks and all(task.task_type.value == "pipeline_run" for task in tasks) and len(visible_pipeline_labels) == 1:
-        result_column_title = next(iter(visible_pipeline_labels))
-
-    total_pages = max(1, (filtered_count + limit - 1) // limit)
-    if page > total_pages:
-        page = total_pages
-        offset = (page - 1) * limit
-        tasks, filtered_count = await db.get_collection_tasks_paginated(
-            limit=limit, offset=offset, status_filter=status_filter
-        )
-
-    return SchedulerTemplate(
-        "scheduler/_tasks.html",
-        {
-            "tasks": tasks,
-            "has_active_tasks": active_count > 0,
-            "page": page,
-            "total_pages": total_pages,
-            "all_count": all_count,
-            "active_count": active_count,
-            "completed_count": all_count - active_count,
-            "status_filter": status_filter,
-            "limit": limit,
-            "pending_collect_count": len(pending_collect),
-            "pipeline_result_meta": pipeline_result_meta,
-            "result_column_title": result_column_title,
         },
     )
 

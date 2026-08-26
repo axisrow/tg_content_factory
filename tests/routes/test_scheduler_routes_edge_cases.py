@@ -78,47 +78,14 @@ async def test_clear_pending_collect_shutting_down(client):
 # ── scheduler_page: lines 223, 256-258 ─────────────────────────────────
 
 
-@pytest.mark.anyio
-async def test_scheduler_page_status_filter_completed(client):
-    """Test scheduler page with completed status filter (line 271)."""
-    resp = await client.get("/scheduler/?status=completed")
-    assert resp.status_code == 200
 
 
-@pytest.mark.anyio
-async def test_scheduler_page_status_filter_active(client):
-    """Test scheduler page with active status filter."""
-    resp = await client.get("/scheduler/?status=active")
-    assert resp.status_code == 200
 
 
-@pytest.mark.anyio
-async def test_scheduler_page_status_filter_invalid(client):
-    """Test scheduler page with invalid status filter falls back to 'all'."""
-    resp = await client.get("/scheduler/?status=invalid_status")
-    assert resp.status_code == 200
 
 
-@pytest.mark.anyio
-async def test_scheduler_page_with_pagination(client):
-    """Test scheduler page with pagination parameters (line 256-258)."""
-    resp = await client.get("/scheduler/?page=2&limit=10")
-    assert resp.status_code == 200
 
 
-@pytest.mark.anyio
-async def test_scheduler_page_page_exceeds_total(client):
-    """Test scheduler page when page exceeds total pages (lines 282-286)."""
-    db = client._transport.app.state.db
-    # Create one task
-    await db.create_collection_task(
-        channel_id=-1001234567890,
-        channel_title="Test",
-    )
-
-    # Request page 999, should clamp
-    resp = await client.get("/scheduler/?page=999&limit=50")
-    assert resp.status_code == 200
 
 
 # ── toggle_scheduler_job: line 338 (shutting_down), 348 ────────────────

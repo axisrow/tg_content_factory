@@ -1,14 +1,9 @@
 {% extends "base.html" %}
 {% from "_macros.html" import icon %}
-{% from "_macros_ui.html" import loading, scheduler_filter_qs %}
+{% from "_macros_ui.html" import loading %}
 {% block title %}Планировщик — TG Agent{% endblock %}
 {% block content %}
 <h1>Планировщик</h1>
-
-{# filter_qs preserves the user's filter/page/limit on POST redirects (see the macro);
-   _frag_qs always emits all three params for the lazy fragment GET URLs. #}
-{% set filter_qs = scheduler_filter_qs(status_filter, page, limit) %}
-{% set _frag_qs = '?status=' ~ (status_filter or 'all') ~ '&page=' ~ page ~ '&limit=' ~ limit %}
 
 <div class="card mb-4">
     <div class="card-header fw-semibold">
@@ -25,27 +20,27 @@
 
         <div class="scheduler-actions">
             {% if not is_running %}
-            <form method="post" action="/scheduler/start{{ filter_qs }}" data-busy>
+            <form method="post" action="/scheduler/start" data-busy>
                 <button type="submit" class="btn btn-primary">{{ icon("run") }} Запустить</button>
             </form>
             {% else %}
-            <form method="post" action="/scheduler/stop{{ filter_qs }}" data-busy>
+            <form method="post" action="/scheduler/stop" data-busy>
                 <button type="submit" class="btn btn-secondary">&#9724; Остановить</button>
             </form>
             {% endif %}
-            <form method="post" action="/scheduler/trigger{{ filter_qs }}" data-busy>
+            <form method="post" action="/scheduler/trigger" data-busy>
                 <button type="submit" class="btn btn-outline-primary">{{ icon("run") }} Собрать все каналы</button>
             </form>
             {% if queue_paused %}
-            <form method="post" action="/scheduler/resume{{ filter_qs }}" data-busy>
+            <form method="post" action="/scheduler/resume" data-busy>
                 <button type="submit" class="btn btn-warning">&#9654; Продолжить очередь</button>
             </form>
             {% else %}
-            <form method="post" action="/scheduler/pause{{ filter_qs }}" data-busy>
+            <form method="post" action="/scheduler/pause" data-busy>
                 <button type="submit" class="btn btn-outline-warning">&#9208; Пауза очереди</button>
             </form>
             {% endif %}
-            <form method="post" action="/scheduler/test-notification{{ filter_qs }}" data-busy>
+            <form method="post" action="/scheduler/test-notification" data-busy>
                 <button type="submit" class="btn btn-outline-secondary"
                         {% if not bot_configured %}disabled title="Подключите бот в Настройках → Уведомления"{% endif %}>
                     Тест
@@ -60,29 +55,19 @@
     </div>
 </div>
 
-{# Heavy sections load lazily — health/jobs/tasks each tie up their own queries (#756). #}
+{# Heavy health and periodic-job sections load lazily (#756). #}
 <div hx-get="/scheduler/fragments/health" hx-trigger="load" hx-swap="innerHTML">
     {{ loading(class="my-4") }}
 </div>
 
-<div hx-get="/scheduler/fragments/jobs{{ _frag_qs }}" hx-trigger="load" hx-swap="innerHTML">
+<div hx-get="/scheduler/fragments/jobs" hx-trigger="load" hx-swap="innerHTML">
     {{ loading(class="my-4") }}
 </div>
 
 <!-- Dry-run results (populated via fetch) -->
 <div id="dry-run-results" class="mb-4" style="display:none"></div>
 
-<div id="tasks-fragment"
-     hx-get="/scheduler/fragments/tasks{{ _frag_qs }}" hx-trigger="load" hx-swap="innerHTML">
-    {{ loading(class="my-4") }}
-</div>
-
 <script>
-// Fresh full-page load by the user resets the tasks auto-refresh cap. The cap
-// counter then only grows across fragment self-refreshes (#633 bug #24); this
-// inline script runs once per real navigation, not on HTMX fragment swaps.
-try { sessionStorage.removeItem('scheduler-autoreload-count'); } catch (e) {}
-
 function dryRunNotifications() {
     var btn = document.getElementById('dry-run-btn');
     var container = document.getElementById('dry-run-results');

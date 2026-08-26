@@ -73,11 +73,13 @@ FLASH_MESSAGES = {
     "collect_full_started": "Полный обход истории канала запущен в фоне.",
     "collect_full_queued": "Полный обход истории канала добавлен в очередь.",
     "collect_all_queued": (
-        'Задачи на загрузку добавлены. Откройте <a href="/scheduler">планировщик</a>, '
+        'Задачи на загрузку добавлены. Откройте '
+        '<a href="/jobs?source=collection_task&amp;status=active">активные задачи</a>, '
         'чтобы следить за прогрессом.'
     ),
     "collect_all_noop": (
-        'Новых задач не добавлено. Откройте <a href="/scheduler">планировщик</a>, '
+        'Новых задач не добавлено. Откройте '
+        '<a href="/jobs?source=collection_task&amp;status=active">активные задачи</a>, '
         'чтобы проверить текущую очередь.'
     ),
     "collect_all_empty": "Нет активных каналов для загрузки.",

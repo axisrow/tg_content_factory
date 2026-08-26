@@ -24,18 +24,19 @@ _COLLECT_ALL_BTN = f'<span id="collect-all-btn">{_COLLECT_ALL_FORM}</span>'
 
 
 def _collect_all_result_fragment(result: BulkEnqueueResult) -> str:
-    scheduler_link = (
-        '<a href="/scheduler" class="btn btn-outline-secondary btn-sm">' "Открыть планировщик</a>"
+    jobs_link = (
+        '<a href="/jobs?source=collection_task&amp;status=active" '
+        'class="btn btn-outline-secondary btn-sm">Открыть задачи</a>'
     )
     if result.total_candidates == 0:
         message = "Нет активных каналов для загрузки."
         extra = ""
     elif result.queued_count > 0:
         message = f"Добавлено задач: {result.queued_count}."
-        extra = scheduler_link
+        extra = jobs_link
     else:
         message = "Новых задач не добавлено: всё уже в очереди."
-        extra = scheduler_link
+        extra = jobs_link
     return (
         '<span id="collect-all-btn">'
         '<span style="display:inline-flex;gap:0.5rem;align-items:center;flex-wrap:wrap">'
