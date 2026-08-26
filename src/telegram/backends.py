@@ -601,7 +601,7 @@ class TelegramTransportSession:
         from telethon.tl.functions.messages import DeleteChatRequest
 
         await self._run(
-            "telegram_delete_channel",
+            "telegram_delete_chat",
             self._client(DeleteChatRequest(chat_id=chat_id)),
         )
 
