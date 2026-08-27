@@ -93,8 +93,12 @@ Metadata должны быть доступны для проверки совм
 - `initialize` не должен создавать неконтролируемые фоновые задачи. Для них
   используется host-managed task handle, чтобы ядро могло отменить их при
   остановке;
-- `health` вызывается только для lifecycle-state `active`; timeout, исключение,
-  `degraded` или `unhealthy` не считаются успешной проверкой обновления;
+- `health` вызывается только для lifecycle-state `candidate` или `active`;
+  timeout, исключение, `degraded` или `unhealthy` не считаются успешной
+  проверкой обновления;
+- при проверке update `initialize` получает staging context с read-only plugin
+  storage, а registration handles остаются quarantined. Durable setup выполняет
+  только host-managed migration, не lifecycle-код кандидата;
 - plugin-код не импортирует `src.*` как часть публичного контракта, кроме
   опубликованных versioned API-модулей;
 - плагин должен корректно работать при повторном запуске процесса после
@@ -161,16 +165,29 @@ Write capability выдается только при явном запросе 
 выполняет его до передачи storage port новой ревизии. Плагин не может самовольно
 менять схему при импорте или init.
 
-Перед первой storage-миграцией update хост обязан создать согласованную точку
+Перед первой storage-миграцией update хост обязан выполнить cross-runtime fence
+из раздела 7.2.1 и только после commit fence создать согласованную точку
 восстановления plugin namespace, включающую схему, данные и storage revision.
-Предпочтительный механизм — shadow storage revision: snapshot текущего
-namespace мигрируется отдельно, а принятая ревизия остаётся неизменной до
-атомарного переключения указателя. Если backend не поддерживает shadow copy,
-допустим только cross-runtime fence из раздела 7.2.1, который останавливает все
-plugin writes, и транзакционный snapshot/restore. Process-local lock или
-остановка одной instance недостаточны. Update с destructive migration нельзя
-начинать, если хост не может доказать атомарное восстановление предыдущего
-состояния.
+Это требование одинаково для shadow и snapshot/restore: shadow copy не является
+заменой fence.
+
+Предпочтительный механизм — shadow storage revision. После fence хост снимает
+consistent snapshot принятого namespace, мигрирует отдельную shadow revision и
+проверяет candidate на ней через read-only staging port. Ни старая, ни shadow
+revision не получают runtime write ports до завершения acceptance. Поэтому
+snapshot содержит каждый write, commit-ившийся до fence, а после snapshot не
+может появиться write, потерянный при переключении pointer.
+
+В первой версии не поддерживаются online copy, dual-write и change replay:
+plugin остаётся fenced на всё время migration и stabilization window. Это
+осознанный availability trade-off. Будущий online-вариант потребует отдельного
+storage-local transactional change log, high-watermark и финального fence перед
+replay/cutover; объявить такую схему metadata недостаточно.
+
+Если backend не поддерживает shadow copy, после того же fence допустим
+транзакционный snapshot/restore. Process-local lock или остановка одной instance
+недостаточны. Update с destructive migration нельзя начинать, если хост не
+может доказать атомарное восстановление предыдущего состояния.
 
 ### 4.2. Config
 
@@ -371,13 +388,14 @@ runtime target одновременно выполнены все условия
 1. Хост самостоятельно подтверждает, что загруженная distribution соответствует
    ожидаемым `plugin_id`, version, source revision и digest. Эти значения нельзя
    брать только из self-report плагина.
-2. Registry фиксирует lifecycle-state `active` именно для ожидаемой ревизии;
+2. Registry фиксирует lifecycle-state `candidate` именно для ожидаемой ревизии;
    состояния `discovered`, `disabled`, `failed` и `stopping` неприемлемы.
-3. Все обязательные hooks зарегистрированы этой instance/revision, включены и
-   остались привязаны к выданным registration handles. Заявления самого плагина
-   о регистрации hooks недостаточно.
+3. Все обязательные hooks зарегистрированы этой instance/revision, но остаются
+   quarantined и недоступны consumers до атомарного cutover. Registry, а не
+   self-report плагина, подтверждает их привязку к registration handles.
 4. Хост подтверждает ожидаемую storage revision, успешное завершение
-   host-managed migration и доступность проверенной точки восстановления.
+   host-managed migration, read-only staging port и доступность проверенной
+   точки восстановления. Authoritative fence остаётся установленным.
 5. `health()` завершился в пределах timeout со статусом `healthy`, а все
    обязательные именованные проверки успешны. Пустой report, exception,
    cancellation, `degraded` и timeout означают failure.
@@ -385,12 +403,18 @@ runtime target одновременно выполнены все условия
    stabilization window; это защищает от плагина, который регистрируется, но
    сразу теряет фоновые задачи или внешнюю зависимость.
 
-Acceptance record сохраняется атомарно только после выполнения всего gate.
-Лишь после этого предыдущая ревизия может стать кандидатом на очистку. При
-любом failure или истечении acceptance timeout update остаётся непринятым,
-старая ревизия не удаляется, а следующий контролируемый restart выполняет
-rollback. Статус optional влияет только на возможность продолжить startup
-ядра: он **не** разрешает принять неактивное или нездоровое обновление плагина.
+После выполнения всего gate одна storage-local activation transaction
+переключает pointer на shadow revision, связывает acceptance record с
+code/lock/storage revision и переводит fencing record в `active/new_epoch`.
+Только после commit хост выдаёт writable ports и делает quarantined hooks
+доступными consumers; candidate становится `active`. Лишь после этого
+предыдущая ревизия может стать кандидатом на очистку.
+
+При любом failure или истечении acceptance timeout update остаётся
+непринятым: shadow revision удаляется (либо snapshot-модель выполняет rollback
+из раздела 7.2), а неизменённая принятая revision публикуется в новом epoch.
+Статус optional влияет только на возможность продолжить startup ядра: он **не**
+разрешает принять неактивное или нездоровое обновление плагина.
 
 ### 7.2. Rollback кода и plugin storage
 
@@ -455,6 +479,15 @@ storage backend доказуемо отклоняет их stale tokens. Спи�
 только ожидаемые runtime targets update, но и любую ещё живую instance, которой
 выдавался port этой plugin/storage revision. Не ответивший runtime остаётся
 fenced и не может самостоятельно продолжить работу после восстановления.
+
+Для shadow update barrier достигается **до** snapshot capture и остаётся
+закрытым через copy, migration, candidate initialization и обе health-проверки.
+Candidate видит shadow revision только через read-only staging port; старые
+instances не получают ports к принятой revision. Cutover pointer и переход
+fencing record в `active/new_epoch` выполняются одной storage transaction.
+Только её commit разрешает выдачу write tokens. Если candidate не принят,
+shadow отбрасывается, а прежняя revision активируется в новом epoch без replay:
+она уже содержит все commits, завершившиеся до fence.
 
 Только в состоянии `fenced` хост может перейти в `restoring` и менять plugin
 storage. После атомарного restore/switch coordinator публикует предыдущую
