@@ -1832,6 +1832,23 @@ async def test_channels_refresh_types_unavailable():
     db.set_channel_type.assert_awaited_once_with(-100, "unavailable")
 
 
+async def test_channels_refresh_types_suppressed_deactivation_is_not_reported():
+    from src.models import Channel
+
+    db = _mock_db()
+    pool = _mock_pool()
+    db.get_channels.return_value = [Channel(id=1, channel_id=-100, title="T", username="t")]
+    db.set_channel_active.return_value = 0
+    pool.resolve_channel.return_value = {"gone": True}
+    d = _dispatcher(db=db, pool=pool)
+
+    r = await d._handle_channels_refresh_types({})
+
+    assert r == {"updated": 0, "failed": 1, "deactivated": 0, "quarantined": 0}
+    db.set_channel_active.assert_awaited_once_with(1, False)
+    db.set_channel_type.assert_not_awaited()
+
+
 # --- _handle_channels_refresh_types: resolve returns None ---
 
 
