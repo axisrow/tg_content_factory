@@ -19,6 +19,11 @@ from src.telegram.rate_limiter import ResolveRateLimiter
 # loop's own limiters (max passes, total time budget, no-progress check) and
 # the flood breaker are what bound it.
 DIALOG_SWEEP_MAX_CALLS = 12
+# A logical dialogs operation reserves the conservative ``dialogs`` slot once.
+# Its internal paginated requests use this separate safety budget so a normal
+# multi-page account can finish without consuming another logical-operation
+# slot. This is an implementation guard, not Phase 2 quota calibration.
+DIALOG_PAGE_MAX_CALLS = 1000
 
 
 @dataclass(frozen=True)
@@ -107,6 +112,7 @@ class TelegramRateLimitGate:
     # stopped by the flood breaker (#1372) and the loop's own no-progress
     # check, not by starving it here.
     DIALOG_SWEEP_SPEC = RateLimitSpec(max_calls=DIALOG_SWEEP_MAX_CALLS, window_sec=60.0)
+    DIALOG_PAGE_SPEC = RateLimitSpec(max_calls=DIALOG_PAGE_MAX_CALLS, window_sec=60.0)
     # Phase 2 calibration.  These are intentionally permissive for normal
     # workloads and should be revisited when a larger production sample is
     # available; they are not Telegram's documented quotas.
@@ -124,6 +130,7 @@ class TelegramRateLimitGate:
         specs = {
             "dialogs": self.DIALOGS_SPEC,
             "dialog_sweep": self.DIALOG_SWEEP_SPEC,
+            "dialogs_page": self.DIALOG_PAGE_SPEC,
             "history": self.HISTORY_SPEC,
             "admin_action": self.ADMIN_ACTION_SPEC,
             "send": self.SEND_SPEC,
