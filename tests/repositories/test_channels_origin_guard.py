@@ -73,3 +73,17 @@ async def test_reset_filter_writers_respect_origin(channels_repo):
     assert await channels_repo.reset_filters_for_pks([human_pk], origin="human") == (1, 0)
     human = await channels_repo.get_channel_by_pk(human_pk)
     assert human is not None and human.is_filtered is False
+
+
+async def test_reset_all_filters_does_not_badge_human_unfiltered_rows(channels_repo):
+    pk = await channels_repo.add_channel(Channel(channel_id=108, title="Already clear"))
+    await channels_repo.set_channel_filtered(pk, False, origin="human")
+    before = await channels_repo._database.repos.decisions.history(
+        "channel", 108, field="is_filtered"
+    )
+
+    assert await channels_repo.reset_all_filters() == (0, 0)
+    after = await channels_repo._database.repos.decisions.history(
+        "channel", 108, field="is_filtered"
+    )
+    assert len(after) == len(before) == 1

@@ -587,14 +587,14 @@ class ChannelsRepository:
         rows = await self._channel_rows_for_decision(conn)
         cur = await conn.execute(
             "UPDATE channels SET is_filtered = 0, filtered_origin = ?, filter_flags = '' "
-            "WHERE (? = 'human' OR filtered_origin != 'human')",
+            "WHERE is_filtered = 1 AND (? = 'human' OR filtered_origin != 'human')",
             (origin, origin),
         )
         rowcount = cur.rowcount if cur.rowcount is not None else 0
         suppressed = 0
         if origin == "human":
             for row in rows:
-                if rowcount > 0:
+                if row["is_filtered"] and rowcount > 0:
                     await self._record_channel_decision(
                         row=row,
                         field="is_filtered",
@@ -606,7 +606,7 @@ class ChannelsRepository:
                     )
         else:
             for row in rows:
-                if row["filtered_origin"] == "human":
+                if row["is_filtered"] and row["filtered_origin"] == "human":
                     suppressed += 1
                     self._log_suppressed(row, field="is_filtered", new_value=0)
                     await self._record_channel_decision(
