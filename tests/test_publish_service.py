@@ -223,6 +223,50 @@ async def test_publish_service_keeps_delivery_when_client_release_fails():
 
 
 @pytest.mark.anyio
+async def test_publish_service_defers_release_cancellation_until_delivery_is_recorded():
+    class SlowReleasePool(FakeClientPool):
+        def __init__(self):
+            super().__init__(should_succeed=True)
+            self.release_started = asyncio.Event()
+            self.release_allowed = asyncio.Event()
+            self.release_client = self._slow_release
+
+        async def get_native_client_by_phone(self, phone, *, wait_for_flood=False):
+            client = self._clients.setdefault(phone, FakeClient())
+            return client, phone
+
+        async def _slow_release(self, phone, *, session=None):
+            self.release_started.set()
+            await self.release_allowed.wait()
+
+    db = FakeDB()
+    pool = SlowReleasePool()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    task = asyncio.create_task(service.publish_run(run, make_pipeline()))
+    await pool.release_started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    pool.release_allowed.set()
+    results = await task
+
+    assert results[0].success is True
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
+        "+1234567890:-1001234567890"
+    ]
+
+
+@pytest.mark.anyio
 async def test_publish_service_no_text():
     db = FakeDB()
     pool = FakeClientPool()

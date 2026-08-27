@@ -406,18 +406,37 @@ class PublishService:
                 except (TypeError, ValueError):
                     supports_session = False
                 if supports_session and session is not None:
-                    try:
-                        await pool.release_client(acquired_phone, session=session)
-                    except Exception:
-                        # Delivery has already been classified and must still
-                        # be persisted; a teardown failure cannot turn a known
-                        # successful send into a retryable one.
-                        logger.exception("Failed to release Telegram client for %s", acquired_phone)
+                    release_coro = pool.release_client(acquired_phone, session=session)
                 else:
+                    release_coro = pool.release_client(acquired_phone)
+
+                # Do not let shutdown cancellation erase a known successful
+                # delivery before publish_run persists its progress.  The
+                # release runs in its own task so cancellation is deferred
+                # until cleanup completes; ordinary cleanup errors are logged
+                # without changing the delivery result either.
+                release_task = asyncio.create_task(release_coro)
+                release_cancelled = False
+                while not release_task.done():
                     try:
-                        await pool.release_client(acquired_phone)
+                        await asyncio.shield(release_task)
+                    except asyncio.CancelledError:
+                        release_cancelled = True
                     except Exception:
-                        logger.exception("Failed to release Telegram client for %s", acquired_phone)
+                        # Inspect the task below so cleanup failures are logged
+                        # uniformly without escaping the delivery path.
+                        break
+                try:
+                    release_task.result()
+                except asyncio.CancelledError:
+                    logger.warning("Telegram client release was cancelled for %s", acquired_phone)
+                except Exception:
+                    logger.exception("Failed to release Telegram client for %s", acquired_phone)
+                if release_cancelled:
+                    logger.warning(
+                        "Deferred shutdown cancellation until Telegram delivery was recorded for %s",
+                        acquired_phone,
+                    )
 
     async def _resolve_entity(
         self,
