@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
+from urllib.parse import quote
 
 from src.agent.adk_backend import build_adk_agent
 from src.agent.prompt_template import (
@@ -49,7 +50,10 @@ def _configured_prompt(config: AppConfig) -> str:
         return DEFAULT_AGENT_PROMPT_TEMPLATE
 
     try:
-        uri = f"file:{path.resolve()}?mode=ro"
+        # URI-escape the filename so ?, #, %, and & in a configured path stay
+        # part of the filename rather than becoming SQLite URI syntax.
+        encoded_path = quote(path.resolve().as_posix(), safe="/:")
+        uri = f"file:{encoded_path}?mode=ro"
         with sqlite3.connect(uri, uri=True) as connection:
             row = connection.execute(
                 "SELECT value FROM settings WHERE key = ?",

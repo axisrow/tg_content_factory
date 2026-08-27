@@ -110,3 +110,32 @@ def test_adk_app_loads_dotenv_before_config(tmp_path, monkeypatch):
     spec.loader.exec_module(module)
 
     assert captured == {"path": str(config_path), "model": "from-dotenv"}
+
+
+def test_adk_app_escapes_sqlite_uri_path(tmp_path, monkeypatch):
+    db_path = tmp_path / "agent?mode=memory&cache=shared#db.sqlite"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        connection.execute(
+            "INSERT INTO settings (key, value) VALUES (?, ?)",
+            ("agent_prompt_template", "URI-safe prompt"),
+        )
+
+    config_module = ModuleType("src.config")
+    config_module.AppConfig = object
+    config_module.load_config = lambda _path: SimpleNamespace(
+        database=SimpleNamespace(path=str(db_path))
+    )
+    backend_module = ModuleType("src.agent.adk_backend")
+    backend_module.build_adk_agent = lambda config, **kwargs: object()
+    monkeypatch.setitem(sys.modules, "src.config", config_module)
+    monkeypatch.setitem(sys.modules, "src.agent.adk_backend", backend_module)
+
+    entrypoint = Path(__file__).parents[1] / "adk" / "tg_content_factory" / "agent.py"
+    spec = importlib.util.spec_from_file_location("tg_content_factory_adk_agent_uri", entrypoint)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    config = SimpleNamespace(database=SimpleNamespace(path=str(db_path)))
+    assert module._configured_prompt(config) == "URI-safe prompt"
