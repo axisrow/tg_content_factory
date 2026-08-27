@@ -48,6 +48,50 @@ ADK_API_KEY_ENV_VARS: tuple[str, ...] = (
 )
 
 
+def build_adk_agent(
+    config: AppConfig,
+    *,
+    config_path: str | None = None,
+    client_pool=None,
+    model_id: str = ADK_DEFAULT_MODEL,
+    system_prompt: str = "",
+):
+    """Build the project ADK agent for the backend and the native ADK dev UI.
+
+    Keeping construction in one place is important: ``adk web`` and
+    ``AdkSdkBackend`` must expose the same MCP tool registry and configuration.
+    The standalone dev UI has no in-process Telegram client pool, so it uses
+    ``--no-pool`` and still provides all database-backed tools.
+    """
+    from google.adk.agents import Agent
+    from google.adk.tools.mcp_tool import McpToolset
+    from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
+    from mcp import StdioServerParameters
+
+    mcp_args = [
+        "-m",
+        "src.main",
+        "--config",
+        config_path or os.environ.get("TG_CONFIG_PATH", "").strip() or "config.yaml",
+        "mcp-server",
+    ]
+    if client_pool is None:
+        mcp_args.append("--no-pool")
+    toolset = McpToolset(
+        connection_params=StdioConnectionParams(
+            server_params=StdioServerParameters(command=sys.executable, args=mcp_args),
+            timeout=config.agent.permission_timeout,
+        )
+    )
+    return Agent(
+        name=PROJECT_MCP_SERVER_NAME,
+        model=model_id,
+        description="Telegram content factory assistant",
+        instruction=system_prompt,
+        tools=[toolset],
+    )
+
+
 @functools.lru_cache(maxsize=1)
 def _adk_sdk_installed() -> bool:
     """True when the ``google.adk`` SDK is importable in this environment.
@@ -104,27 +148,14 @@ class AdkSdkBackend:
 
     def _build_agent(self, *, system_prompt: str, model_id: str):
         """Construct the ADK ``LlmAgent`` wired to the project MCP toolset."""
-        from google.adk.agents import Agent
-        from google.adk.tools.mcp_tool import McpToolset
-        from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
-        from mcp import StdioServerParameters
-
-        toolset = McpToolset(
-            connection_params=StdioConnectionParams(
-                server_params=StdioServerParameters(
-                    command=sys.executable,
-                    args=self._mcp_server_args(),
-                ),
-                timeout=self._config.agent.permission_timeout,
-            )
+        agent = build_adk_agent(
+            self._config,
+            config_path=self._config_path(),
+            client_pool=self._client_pool,
+            model_id=model_id,
+            system_prompt=system_prompt or "",
         )
-        return Agent(
-            name=PROJECT_MCP_SERVER_NAME,
-            model=model_id,
-            description="Telegram content factory assistant",
-            instruction=system_prompt or "",
-            tools=[toolset],
-        )
+        return agent
 
     async def chat_stream(
         self,
