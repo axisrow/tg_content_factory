@@ -111,6 +111,7 @@ async def _wait_for_messages(db_path: str, channel_id: int, n: int, timeout: flo
     deadline = asyncio.get_running_loop().time() + timeout
     db = Database(db_path, session_encryption_secret="test-session-encryption-key")
     await db.initialize()
+    count = 0
     try:
         while asyncio.get_running_loop().time() < deadline:
             rows = await db.execute_fetchall(
