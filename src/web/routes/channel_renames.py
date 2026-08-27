@@ -101,7 +101,7 @@ async def rename_event_keep(request: Request, event_id: int):
         # Other filter reasons exist -> channel stays filtered, rename flags stripped.
         await db.set_channels_filtered_bulk(
             [(channel.channel_id, ",".join(sorted(remaining)))],
-            origin="human",
+            origin=channel.filtered_origin,
             actor="web",
         )
         msg = "rename_accepted_still_filtered"

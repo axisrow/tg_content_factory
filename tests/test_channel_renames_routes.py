@@ -124,6 +124,7 @@ async def test_keep_accepted_still_filtered(tmp_path):
         ch = next(c for c in channels if c.channel_id == -100201)
         assert ch.is_filtered is True
         assert ch.filter_flags == "cross_channel_spam"
+        assert ch.filtered_origin == "auto"
     finally:
         await db.close()
 
