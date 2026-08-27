@@ -1402,12 +1402,17 @@ class DialogsMixin:
             if isinstance(exc, (HandledFloodWaitError, TelegramRateLimitedError)):
                 raise
             if stale_cached is not None:
+                # Log the exception itself, not just its class name: this branch
+                # swallows the only evidence of why a live sweep died, and a bare
+                # "after ValueError" is not diagnosable from production logs.
                 logger.warning(
-                    "get_dialogs_for_phone: degraded stale cache for %s mode=%s after %s "
+                    "get_dialogs_for_phone: degraded stale cache for %s mode=%s after %s: %s "
                     "-- dialog_cache was NOT updated",
                     phone,
                     cache_mode,
                     type(exc).__name__,
+                    exc,
+                    exc_info=True,
                 )
                 # The live fetch died (FloodWait, network, ...) and we are handing
                 # back a STALE snapshot. Flag it exactly like a partial refresh so
@@ -1700,6 +1705,12 @@ class DialogsMixin:
                     self.mark_dialogs_fetched(acquired_phone)
                     # A completed sweep is a trustworthy full snapshot.
                     await self._db.repos.dialog_cache.replace_dialogs(acquired_phone, items)
+                # replace_dialogs already wrote every reached dialog with a
+                # current timestamp. The unflushed tail is part of that write,
+                # so the finally-flush below must not upsert it again: doing so
+                # re-ages the whole phone to the epoch and makes the completed
+                # snapshot read as stale (#1359).
+                pending.clear()
             return DialogFetchResult(items, partial=stats.partial, saved=stats.saved)
         finally:
             # Persist whatever the sweep reached even when it is unwinding on an
