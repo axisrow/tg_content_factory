@@ -212,6 +212,17 @@ class CollectionMixin:
             logger.exception("Failed to auto-purge channel %d", channel_id)
             return False
 
+    async def _stop_if_channel_filtered(self: "Collector", channel_id: int) -> bool:
+        """Stop a collection pass when a concurrent human filter is now active."""
+        current = await self._db.get_channel_by_channel_id(channel_id)
+        if current is not None and current.is_filtered:
+            logger.info(
+                "Pre-filter: channel %d was filtered during collection setup, skipping",
+                channel_id,
+            )
+            return True
+        return False
+
     async def _resolve_channel_input_entity(
         self: "Collector",
         session,
@@ -1076,6 +1087,8 @@ class CollectionMixin:
                         )
                         await self._maybe_auto_delete(channel_id)
                         return False
+                    if filter_result.suppressed and await self._stop_if_channel_filtered(channel_id):
+                        return False
                 cur = await self._db.execute(
                     "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
                     (channel_id,),
@@ -1105,6 +1118,8 @@ class CollectionMixin:
                                 threshold,
                             )
                             await self._maybe_auto_delete(channel_id)
+                            return False
+                        if filter_result.suppressed and await self._stop_if_channel_filtered(channel_id):
                             return False
 
         # Pre-check: sample 10 posts to detect cross-channel duplicates.
@@ -1151,6 +1166,8 @@ class CollectionMixin:
                             len(unique_prefixes),
                         )
                         await self._maybe_auto_delete(channel_id)
+                        return False
+                    if filter_result.suppressed and await self._stop_if_channel_filtered(channel_id):
                         return False
         return True
 
