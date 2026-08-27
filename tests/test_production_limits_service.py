@@ -142,7 +142,7 @@ async def test_cost_tracker_estimate_image_cost():
 
 @pytest.mark.anyio
 async def test_cost_tracker_cap_not_exceeded():
-    """check_cost_cap allows when within budget and does not charge."""
+    """check_cost_cap allows and reserves when within budget."""
     tracker = CostTracker(CostConfig(cost_per_1k_tokens=1.0, daily_cost_cap=10.0))
 
     allowed, estimated = await tracker.check_cost_cap(tokens=500, is_image=False)
@@ -150,6 +150,10 @@ async def test_cost_tracker_cap_not_exceeded():
     assert allowed is True
     assert estimated == 0.5
     assert tracker.get_daily_cost() == 0.0
+    assert tracker.get_reserved_cost() == 0.5
+
+    await tracker.release_cost(tokens=500, is_image=False)
+    assert tracker.get_reserved_cost() == 0.0
 
 
 @pytest.mark.anyio
@@ -537,6 +541,19 @@ async def test_cost_cap_blocks_using_other_instances_spend(db):
 
 
 @pytest.mark.anyio
+async def test_check_cost_cap_concurrent_admits_exactly_one():
+    """The public cap check must reserve before returning, not just inspect state."""
+    tracker = CostTracker(CostConfig(cost_per_image=1.0, daily_cost_cap=1.0))
+
+    results = await asyncio.gather(*(tracker.check_cost_cap(is_image=True) for _ in range(5)))
+
+    admitted = [ok for ok, _ in results]
+    assert admitted.count(True) == 1
+    assert tracker.get_reserved_cost() == pytest.approx(1.0)
+    await tracker.release_cost(is_image=True)
+
+
+@pytest.mark.anyio
 async def test_reserve_cost_concurrent_admits_exactly_one():
     """With budget left for exactly one image, N concurrent reservations admit
     exactly one — the check and the claim happen atomically under one lock (#1250)."""
@@ -738,7 +755,10 @@ async def test_reserved_cost_is_cleared_on_day_reset():
     with patch("src.services.production_limits_service.time.time", return_value=fake_time + 86401):
         allowed, _ = await tracker.check_cost_cap(is_image=True)
         assert allowed is True
-        assert tracker.get_reserved_cost() == pytest.approx(0.0)
+        # The new-day check itself owns a fresh reservation; the stale one was
+        # cleared before it was admitted.
+        assert tracker.get_reserved_cost() == pytest.approx(1.0)
+        await tracker.release_cost(is_image=True)
 
 
 @pytest.mark.anyio
