@@ -103,7 +103,7 @@ class DialogBatchService:
             heartbeat_task = asyncio.create_task(heartbeat())
             try:
                 while not lease_lost.is_set() and (item := await self._repo.claim_next(batch_id, owner)) is not None:
-                    execution = asyncio.create_task(executor(item))
+                    execution = asyncio.ensure_future(executor(item))
                     lost_waiter = asyncio.create_task(lease_lost.wait())
                     try:
                         done, _ = await asyncio.wait(
