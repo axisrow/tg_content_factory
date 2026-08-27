@@ -567,13 +567,6 @@ class Database:
             pk, filtered, origin=origin, actor=actor, reason=reason
         )
 
-    async def set_channel_filter_flags(self, pk: int, flags: str) -> None:
-        self._require()
-        assert self._channels is not None, (
-            "Database.set_channel_filter_flags requires initialized ChannelsRepository"
-        )
-        await self._channels.set_channel_filter_flags(pk, flags)
-
     async def set_channels_filtered_bulk(
         self,
         updates: list[tuple[int, str]],
