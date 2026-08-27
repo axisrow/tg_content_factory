@@ -27,6 +27,83 @@ logger = logging.getLogger(__name__)
 STREAM_ITERATOR_CLOSE_TIMEOUT_SEC = 10.0
 
 
+class _DialogRequestGateClient:
+    """Proxy a Telethon client so paginated dialog requests use the gate.
+
+    ``TelegramClient.iter_dialogs`` returns a ``RequestIter`` whose ``client``
+    attribute is used for every page request.  Gating only the surrounding
+    iterator therefore reserves one slot but leaves later ``GetDialogsRequest``
+    calls unprotected.  The first request is covered by the enclosing
+    ``_run``/``_stream`` reservation; subsequent requests go through ``_run``.
+    """
+
+    def __init__(
+        self,
+        session: TelegramTransportSession,
+        client: Any,
+        operation: str,
+        *,
+        first_request_reserved: bool,
+    ) -> None:
+        self._session = session
+        self._client = client
+        self._operation = operation
+        self._first_request_reserved = first_request_reserved
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+    def __call__(self, request: Any) -> Any:
+        awaitable = self._client(request)
+        if self._first_request_reserved:
+            self._first_request_reserved = False
+            return awaitable
+        return self._session._run(self._operation, awaitable)
+
+    def iter_dialogs(self, *args: Any, **kwargs: Any) -> Any:
+        iterator = self._client.iter_dialogs(*args, **kwargs)
+        _bind_dialog_request_gate(
+            iterator,
+            self._session,
+            self._operation,
+            first_request_reserved=self._first_request_reserved,
+        )
+        return iterator
+
+
+def _bind_dialog_request_gate(
+    iterator: Any,
+    session: TelegramTransportSession,
+    operation: str,
+    *,
+    first_request_reserved: bool,
+) -> Any:
+    """Bind a page-request proxy to a Telethon ``RequestIter`` when possible."""
+    pool = getattr(session, "_pool", None)
+    phone = getattr(session, "_phone", None)
+    if (
+        pool is None
+        or phone is None
+        or not isinstance(getattr(pool, "_rate_limit_gate", None), TelegramRateLimitGate)
+    ):
+        return iterator
+    client = getattr(iterator, "client", None)
+    if client is not session._client:
+        return iterator
+    try:
+        iterator.client = _DialogRequestGateClient(
+            session,
+            client,
+            operation,
+            first_request_reserved=first_request_reserved,
+        )
+    except (AttributeError, TypeError):
+        # Third-party/fake iterators may expose a read-only client attribute.
+        # The surrounding transport gate remains in force in that case.
+        return iterator
+    return iterator
+
+
 async def fetch_message_reaction_users_raw(client: Any, peer: Any, message_id: int, *, limit: int) -> Any:
     """Fetch raw Telegram reaction-user rows for a message."""
     from telethon.tl.functions.messages import GetMessageReactionsListRequest
@@ -276,7 +353,27 @@ class TelegramTransportSession:
         return result
 
     async def warm_dialog_cache(self) -> Any:
-        return await self._run("telegram_warm_dialog_cache", self._client.get_dialogs())
+        operation = "telegram_warm_dialog_cache"
+        get_dialogs = self._client.get_dialogs
+        is_native_get_dialogs = (
+            isinstance(self._client, TelegramClient)
+            and getattr(get_dialogs, "__func__", None) is TelegramClient.get_dialogs
+        )
+        if is_native_get_dialogs and self._pool is not None and self._phone is not None:
+            # ``get_dialogs`` is implemented as ``iter_dialogs().collect()``.
+            # Call the Telethon implementation with a proxy so every
+            # paginated GetDialogsRequest, not just the logical operation, is
+            # subject to the same per-phone gate.
+            proxy = _DialogRequestGateClient(
+                self,
+                self._client,
+                operation,
+                first_request_reserved=True,
+            )
+            awaitable = TelegramClient.get_dialogs(proxy)
+        else:
+            awaitable = get_dialogs()
+        return await self._run(operation, awaitable)
 
     async def get_dialogs(self) -> Any:
         return await self.warm_dialog_cache()
@@ -289,7 +386,15 @@ class TelegramTransportSession:
         ``offset_peer``).  Passing none of them keeps the original behaviour:
         every dialog from the start, archived ones included (``folder=None``).
         """
-        return self._stream("telegram_stream_dialogs", self._client.iter_dialogs(**kwargs))
+        operation = "telegram_stream_dialogs"
+        iterator = self._client.iter_dialogs(**kwargs)
+        _bind_dialog_request_gate(
+            iterator,
+            self,
+            operation,
+            first_request_reserved=True,
+        )
+        return self._stream(operation, iterator)
 
     def iter_dialogs(self) -> AsyncIterator[Any]:
         return self.stream_dialogs()
