@@ -12,6 +12,7 @@ from src.agent.tools._formatters import format_filter_report
 from src.agent.tools._registry import (
     ToolInputError,
     _text_response,
+    agent_decision_origin,
     arg_bool,
     arg_int,
     require_confirmation,
@@ -123,12 +124,32 @@ def register(db, client_pool, embedding_service, **kwargs):
     async def reset_filters(args):
         gate = require_confirmation("сбросит все фильтры каналов", args)
         if gate:
+            await agent_decision_origin(
+                db,
+                args,
+                confirmation_passed=False,
+                entity_key=None,
+                entity_name="all channels",
+                field="is_filtered",
+                old_value=None,
+                new_value="0",
+            )
             return gate
         try:
             from src.filters.analyzer import ChannelAnalyzer
 
+            origin = await agent_decision_origin(
+                db,
+                args,
+                confirmation_passed=True,
+                entity_key=None,
+                entity_name="all channels",
+                field="is_filtered",
+                old_value=None,
+                new_value="0",
+            )
             analyzer = ChannelAnalyzer(db)
-            count = await analyzer.reset_filters(origin="human", actor="agent")
+            count = await analyzer.reset_filters(origin=origin, actor="agent")
             return _text_response(f"Фильтры сброшены: {count} каналов разблокированы.")
         except Exception as e:
             return _text_response(f"Ошибка сброса фильтров: {e}")
@@ -138,7 +159,13 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "toggle_channel_filter",
         "Toggle filter status for a specific channel. pk = DB primary key — get it from list_channels.",
-        {"pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"]},
+        {
+            "pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"],
+            "confirm": Annotated[bool, "Подтверждение действия владельцем"],
+            "on_behalf_of_user": Annotated[
+                bool, "true только если владелец прямо попросил выполнить действие"
+            ],
+        },
     )
     async def toggle_channel_filter(args):
         pk = args.get("pk")
@@ -149,8 +176,18 @@ def register(db, client_pool, embedding_service, **kwargs):
             if ch is None:
                 return _text_response(f"Канал pk={pk} не найден.")
             new_filtered = not ch.is_filtered
+            origin = await agent_decision_origin(
+                db,
+                args,
+                confirmation_passed=arg_bool(args, "confirm"),
+                entity_key=ch.channel_id,
+                entity_name=ch.title,
+                field="is_filtered",
+                old_value=str(int(ch.is_filtered)),
+                new_value=str(int(new_filtered)),
+            )
             await db.set_channel_filtered(
-                int(pk), new_filtered, origin="human", actor="agent"
+                int(pk), new_filtered, origin=origin, actor="agent"
             )
             status = "отфильтрован" if new_filtered else "разблокирован"
             return _text_response(f"Канал '{ch.title}' теперь {status}.")

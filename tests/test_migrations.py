@@ -13,6 +13,7 @@ from src.database.migrations import (
     _migrate_vec_to_portable,
     _migrate_zai_empty_base_url_to_coding,
     _migrate_zai_legacy_base_url,
+    backfill_private_channel_provenance,
     run_migrations,
 )
 
@@ -52,6 +53,51 @@ async def test_run_migrations_creates_missing_schema_tables(tmp_path):
             "pipeline_templates",
         ):
             assert table in tables
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
+async def test_private_channel_provenance_backfill_is_idempotent_and_preserves_filter(tmp_path):
+    conn = await _connect(str(tmp_path / "private-provenance.db"))
+    try:
+        await run_migrations(conn)
+        await conn.execute(
+            "INSERT INTO channels (channel_id, title, username, is_filtered, filter_flags) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (1877929309, "802", None, 1, "low_uniqueness"),
+        )
+        await conn.execute(
+            "INSERT INTO channels (channel_id, title, username) VALUES (?, ?, ?)",
+            (12345, "Private", ""),
+        )
+        await conn.commit()
+
+        # Clear the marker to exercise the backfill against these legacy rows.
+        await conn.execute(
+            "DELETE FROM settings WHERE key = '_migration_private_channel_provenance_v1'"
+        )
+        await conn.commit()
+        filtered = await backfill_private_channel_provenance(conn)
+        assert [row["channel_id"] for row in filtered] == [1877929309]
+        cur = await conn.execute(
+            "SELECT is_filtered, filtered_origin FROM channels WHERE channel_id = 1877929309"
+        )
+        row = await cur.fetchone()
+        assert (row["is_filtered"], row["filtered_origin"]) == (1, "human")
+        decisions = await conn.execute_fetchall(
+            "SELECT reason FROM decisions WHERE entity_key = 1877929309"
+        )
+        assert [decision["reason"] for decision in decisions] == [
+            "backfill: private group, owner-supplied"
+        ]
+
+        assert await backfill_private_channel_provenance(conn) == []
+        decisions = await conn.execute_fetchall(
+            "SELECT id FROM decisions WHERE entity_key = 1877929309"
+        )
+        assert len(decisions) == 1
     finally:
         await conn.close()
 

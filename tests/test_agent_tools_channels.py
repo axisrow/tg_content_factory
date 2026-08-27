@@ -152,12 +152,29 @@ class TestToggleChannelTool:
             mock_svc.return_value.toggle = AsyncMock()
             mock_db.get_channel_by_pk = AsyncMock(return_value=ch_after)
             handlers = _get_tool_handlers(mock_db)
-            result = await handlers["toggle_channel"]({"pk": 1})
+            result = await handlers["toggle_channel"](
+                {"pk": 1, "confirm": True, "on_behalf_of_user": True}
+            )
         assert "неактивен" in _text(result)
         assert "MyChan" in _text(result)
         mock_svc.return_value.toggle.assert_awaited_once_with(
             1, origin="human", actor="agent"
         )
+
+    @pytest.mark.anyio
+    async def test_owner_claim_without_confirmation_is_auto_and_journaled(self, mock_db):
+        ch = _make_channel(is_active=True, title="NeedsReview")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.repos.decisions.record = AsyncMock()
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.toggle = AsyncMock()
+            handlers = _get_tool_handlers(mock_db)
+            await handlers["toggle_channel"]({"pk": 1, "on_behalf_of_user": True})
+        mock_svc.return_value.toggle.assert_awaited_once_with(
+            1, origin="auto", actor="agent"
+        )
+        mock_db.repos.decisions.record.assert_awaited_once()
+        assert "without confirmation" in mock_db.repos.decisions.record.call_args.kwargs["reason"]
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
@@ -529,7 +546,9 @@ class TestChannelReviewTools:
         mock_db.set_channel_type = AsyncMock()
         mock_db.repos.channels.clear_channel_review = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
-        result = await handlers["confirm_channel_dead"]({"pk": 4, "confirm": True})
+        result = await handlers["confirm_channel_dead"](
+            {"pk": 4, "confirm": True, "on_behalf_of_user": True}
+        )
         mock_db.set_channel_active.assert_awaited_once_with(
             4, False, origin="human", actor="agent"
         )

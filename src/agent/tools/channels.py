@@ -10,6 +10,7 @@ from src.agent.tools._formatters import format_channel_identity, format_channel_
 from src.agent.tools._registry import (
     ToolInputError,
     _text_response,
+    agent_decision_origin,
     arg_bool,
     arg_int,
     arg_str,
@@ -176,7 +177,13 @@ def register(db, client_pool, embedding_service, **kwargs):
     @tool(
         "toggle_channel",
         "Toggle channel active/inactive status. pk = DB primary key — get it from list_channels.",
-        {"pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"]},
+        {
+            "pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels)"],
+            "confirm": Annotated[bool, "Подтверждение действия владельцем"],
+            "on_behalf_of_user": Annotated[
+                bool, "true только если владелец прямо попросил выполнить действие"
+            ],
+        },
     )
     async def toggle_channel(args):
         try:
@@ -184,8 +191,21 @@ def register(db, client_pool, embedding_service, **kwargs):
         except ToolInputError as exc:
             return exc.to_response()
         try:
+            before = await db.get_channel_by_pk(pk)
+            origin = "auto"
+            if before is not None:
+                origin = await agent_decision_origin(
+                    db,
+                    args,
+                    confirmation_passed=arg_bool(args, "confirm"),
+                    entity_key=before.channel_id,
+                    entity_name=before.title,
+                    field="is_active",
+                    old_value=str(int(before.is_active)),
+                    new_value=str(int(not before.is_active)),
+                )
             svc = ctx.channel_service()
-            await svc.toggle(pk, origin="human", actor="agent")
+            await svc.toggle(pk, origin=origin, actor="agent")
             ch = await db.get_channel_by_pk(pk)
             if ch:
                 status = "активен" if ch.is_active else "неактивен"
@@ -348,7 +368,13 @@ def register(db, client_pool, embedding_service, **kwargs):
         "review_keep_channel",
         "Clear the quarantine flag for a channel (false alarm): keep it active and remove "
         "it from the review queue. pk = DB primary key — get it from list_channels_for_review.",
-        {"pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels_for_review)"]},
+        {
+            "pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels_for_review)"],
+            "confirm": Annotated[bool, "Подтверждение действия владельцем"],
+            "on_behalf_of_user": Annotated[
+                bool, "true только если владелец прямо попросил выполнить действие"
+            ],
+        },
     )
     async def review_keep_channel(args):
         try:
@@ -359,6 +385,16 @@ def register(db, client_pool, embedding_service, **kwargs):
             ch = await db.get_channel_by_pk(pk)
             if not ch:
                 return _text_response(f"Канал pk={pk} не найден.")
+            await agent_decision_origin(
+                db,
+                args,
+                confirmation_passed=arg_bool(args, "confirm"),
+                entity_key=ch.channel_id,
+                entity_name=ch.title,
+                field="needs_review",
+                old_value=str(int(getattr(ch, "needs_review", False))),
+                new_value="0",
+            )
             await db.repos.channels.clear_channel_review(pk)
             return _text_response(f"Канал '{ch.title}' (pk={pk}) снят с ревью, остаётся активным.")
         except Exception as e:
@@ -378,6 +414,9 @@ def register(db, client_pool, embedding_service, **kwargs):
         {
             "pk": Annotated[int, "ID записи в БД (первичный ключ из list_channels_for_review)"],
             "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+            "on_behalf_of_user": Annotated[
+                bool, "true только если владелец прямо попросил выполнить действие"
+            ],
         },
         annotations=ToolAnnotations(destructiveHint=True),
     )
@@ -390,11 +429,31 @@ def register(db, client_pool, embedding_service, **kwargs):
         name = ch.title if ch else f"id={pk}"
         gate = require_confirmation(f"деактивирует канал '{name}' как удалённый", args)
         if gate:
+            await agent_decision_origin(
+                db,
+                args,
+                confirmation_passed=False,
+                entity_key=ch.channel_id if ch else pk,
+                entity_name=ch.title if ch else name,
+                field="is_active",
+                old_value=str(int(ch.is_active)) if ch else None,
+                new_value="0",
+            )
             return gate
         if not ch:
             return _text_response(f"Канал pk={pk} не найден.")
         try:
-            await db.set_channel_active(pk, False, origin="human", actor="agent")
+            origin = await agent_decision_origin(
+                db,
+                args,
+                confirmation_passed=True,
+                entity_key=ch.channel_id,
+                entity_name=ch.title,
+                field="is_active",
+                old_value=str(int(ch.is_active)),
+                new_value="0",
+            )
+            await db.set_channel_active(pk, False, origin=origin, actor="agent")
             await db.set_channel_type(ch.channel_id, "unavailable")
             await db.repos.channels.clear_channel_review(pk)
             return _text_response(f"Канал '{name}' (pk={pk}) деактивирован и снят с ревью.")

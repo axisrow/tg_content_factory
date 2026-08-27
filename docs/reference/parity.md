@@ -88,6 +88,7 @@
 | Сбросить | `filter reset` | `POST /channels/filter/reset` | `reset_filters` |
 | Pre-check | `filter precheck` | `POST /channels/filter/precheck` | `precheck_filters` |
 | Вкл/выкл фильтр | `filter toggle` | `POST /channels/{pk}/filter-toggle` | `toggle_channel_filter` |
+| Показать отфильтрованные приватные каналы для решения владельца | `filter backfill-private` | *исключение: CLI-вывод миграции* | *исключение: миграция не является agent-tool* |
 | Очистить filtered-каналы | `filter purge` | `POST /channels/filter/purge-all` | `purge_filtered_channels` |
 | Выбранные очистить | *исключение: batch UI-выбор* | `POST /channels/filter/purge-selected` | *исключение: batch UI-выбор* |
 | Hard delete | `filter hard-delete` | `POST /channels/filter/hard-delete-selected` | `hard_delete_channels` |

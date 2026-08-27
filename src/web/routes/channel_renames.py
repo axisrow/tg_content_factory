@@ -61,7 +61,11 @@ async def rename_event_filter(request: Request, event_id: int):
         )
     required_flags = _rename_required_flags(event)
     await db.ensure_channel_filtered(
-        event["channel_id"], required_flags, origin="human", actor="web"
+        event["channel_id"],
+        required_flags,
+        origin="human",
+        actor="web",
+        reason="rename review: keep filtered",
     )
     await db.decide_rename_event(event_id, "filter")
     return RedirectResponse(url="/channels/renames?msg=rename_filtered", status_code=303)
@@ -101,13 +105,20 @@ async def rename_event_keep(request: Request, event_id: int):
         # Other filter reasons exist -> channel stays filtered, rename flags stripped.
         await db.set_channels_filtered_bulk(
             [(channel.channel_id, ",".join(sorted(remaining)))],
-            origin=channel.filtered_origin,
+            origin="human",
             actor="web",
+            reason="rename review: accept rename",
         )
         msg = "rename_accepted_still_filtered"
     elif channel.id is not None:
         # No other reasons -> channel returns to active collection.
-        await db.set_channel_filtered(channel.id, False, origin="human", actor="web")
+        await db.set_channel_filtered(
+            channel.id,
+            False,
+            origin="human",
+            actor="web",
+            reason="rename review: accept rename",
+        )
         msg = "rename_accepted"
     else:
         # Should not happen but avoid NPE on malformed channel row.
