@@ -1466,12 +1466,15 @@ class DialogsMixin:
         session, acquired_phone = result
         session = adapt_transport_session(session, disconnect_on_close=False, phone=acquired_phone, pool=self)
         started_at = time.perf_counter()
+        # Bound BEFORE the try: the finally-flush below reads ``pending`` and
+        # ``stats``, so binding them inside would leave the cleanup path reading
+        # names that are not guaranteed to exist.
+        items: list[dict] = []
+        stats = DialogFetchStats()
+        cursor = _DialogCursor()
+        seen_ids: set[int] = set()
+        pending: list[dict] = []
         try:
-            items: list[dict] = []
-            stats = DialogFetchStats()
-            cursor = _DialogCursor()
-            seen_ids: set[int] = set()
-            pending: list[dict] = []
             try:
                 me = await session.fetch_me()
                 my_id: int | None = me.id
