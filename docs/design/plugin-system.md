@@ -166,9 +166,11 @@ Write capability выдается только при явном запросе 
 Предпочтительный механизм — shadow storage revision: snapshot текущего
 namespace мигрируется отдельно, а принятая ревизия остаётся неизменной до
 атомарного переключения указателя. Если backend не поддерживает shadow copy,
-допустим quiesce всех plugin writes и транзакционный snapshot/restore. Update с
-destructive migration нельзя начинать, если хост не может доказать атомарное
-восстановление предыдущего состояния.
+допустим только cross-runtime fence из раздела 7.2.1, который останавливает все
+plugin writes, и транзакционный snapshot/restore. Process-local lock или
+остановка одной instance недостаточны. Update с destructive migration нельзя
+начинать, если хост не может доказать атомарное восстановление предыдущего
+состояния.
 
 ### 4.2. Config
 
@@ -360,6 +362,7 @@ Database. Один сломавшийся плагин не должен пом�
 - runtime targets, в которых плагин должен быть активен;
 - утверждённые capabilities и набор обязательных hook IDs;
 - исходная и целевая plugin storage revision и идентификатор restore point;
+- shared update epoch и множество runtime leases, участвующих в barrier;
 - предыдущая принятая ревизия, доступная для rollback.
 
 После restart обновление принимается только если для каждого ожидаемого
@@ -396,21 +399,64 @@ artifact digest, lock revision, storage revision)`. Нельзя помечат�
 принятым, очищать restore point или запускать предыдущий code revision отдельно
 от соответствующего storage state.
 
+#### 7.2.1. Cross-runtime fencing barrier
+
+`serve` с embedded worker и split web/worker deployment могут держать несколько
+storage ports одного `plugin_id` в одном или разных процессах. Поэтому update и
+rollback координируются не process-local lock, а shared durable host-owned
+записью, доступной всем runtimes этого storage backend:
+
+- монотонный `update_epoch`, lifecycle-state update и active storage revision;
+- уникальные runtime instance IDs, runtime mode и leases всех instances,
+  которым выдавался storage port текущей revision;
+- fencing token каждого port: `(plugin_id, update_epoch, storage_revision,
+  runtime_instance_id)` и heartbeat/lease deadline;
+- barrier acknowledgements для нового epoch.
+
+Coordinator хранится в core-owned storage, который не входит в plugin snapshot
+и не откатывается вместе с ним. Если используется full-database backup, fencing
+record должен жить во внешнем durable store либо быть повторно установлен с
+более новым epoch до открытия восстановленной БД.
+
+Перед migration, restore или переключением storage pointer coordinator
+выполняет compare-and-swap в состояние `fencing`, увеличивает epoch и запрещает
+выдачу новых plugin ports. Каждая операция уже выданного storage port проверяет
+epoch, state и revision внутри той же database transaction, что read/write;
+проверки только в памяти или перед транзакцией недостаточно. Старый token после
+увеличения epoch больше не может читать, писать или менять schema, даже если
+процесс потерял связь с coordinator.
+
+Хост уведомляет все известные runtime leases, останавливает их hooks/tasks,
+закрывает ports и собирает acknowledgement нового epoch. Barrier считается
+достигнутым, когда все holders подтвердили fence либо их leases истекли, а
+storage backend доказуемо отклоняет их stale tokens. Список holders включает не
+только ожидаемые runtime targets update, но и любую ещё живую instance, которой
+выдавался port этой plugin/storage revision. Не ответивший runtime остаётся
+fenced и не может самостоятельно продолжить работу после восстановления.
+
+Только в состоянии `fenced` хост может перейти в `restoring` и менять plugin
+storage. После атомарного restore/switch coordinator публикует предыдущую
+storage revision в новом epoch. Каждый runtime заново сверяет code/storage
+revision и получает новый port; старые tokens не переактивируются. Состояния
+`fencing` и `restoring` durable и восстанавливаемы после crash coordinator:
+startup продолжает barrier/rollback и не выдаёт ports fail-open.
+
 При failure на migration, `initialize`, health или acceptance rollback идёт в
 следующем порядке:
 
-1. Хост запрещает новые вызовы plugin hooks и блокирует запись через его
-   storage port; затем останавливает не принятую instance.
+1. Хост запускает barrier из раздела 7.2.1, отзывает hooks и storage ports во
+   всех runtime holders и останавливает все instances непринятой ревизии.
 2. Проверяет provenance и целостность сохранённого restore point. Для shadow
    storage достаточно отбросить непринятую revision; для snapshot-модели хост
-   в эксклюзивной транзакции восстанавливает прежние схему и данные.
+   только после полного fence в эксклюзивной транзакции восстанавливает прежние
+   схему и данные.
 3. Атомарно возвращает указатель/metadata на предыдущую storage revision вместе
-   с previous code и lock revision. Частично восстановленный кортеж не может
-   стать active.
+   с previous code и lock revision и публикует новый epoch. Частично
+   восстановленный кортеж не может стать active.
 4. Проверяет schema/data revision и только затем инициализирует предыдущую
-   версию плагина. Если restore или проверка не удались, плагин остаётся
-   fail-closed в состоянии `rollback_failed`; старый код не запускается против
-   неизвестной схемы.
+   версию плагина во всех требуемых runtime targets с новыми ports. Если fence,
+   restore или проверка не удались, плагин остаётся fail-closed в состоянии
+   `rollback_failed`; старый код не запускается против неизвестной схемы.
 5. После старта предыдущей версии хост повторяет проверку обязательных hooks и
    plugin-specific `health()`, фиксируя результат rollback в audit.
 
