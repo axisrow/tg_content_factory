@@ -149,6 +149,44 @@ def make_pipeline(**overrides):
 
 
 @pytest.mark.anyio
+async def test_publish_service_prefers_isolated_native_client_when_available():
+    class NativeOnlyPool(FakeClientPool):
+        def __init__(self):
+            super().__init__(should_succeed=True)
+            self.native_calls = 0
+            self.regular_calls = 0
+
+        async def get_native_client_by_phone(self, phone, *, wait_for_flood=False):
+            self.native_calls += 1
+            client = self._clients.setdefault(phone, FakeClient())
+            return client, phone
+
+        async def get_client_by_phone(self, phone, *, wait_for_flood=False):
+            self.regular_calls += 1
+            raise AssertionError("publishing must use the isolated client")
+
+    db = FakeDB()
+    pool = NativeOnlyPool()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is True
+    assert pool.native_calls == 1
+    assert pool.regular_calls == 0
+
+
+@pytest.mark.anyio
 async def test_publish_service_no_text():
     db = FakeDB()
     pool = FakeClientPool()

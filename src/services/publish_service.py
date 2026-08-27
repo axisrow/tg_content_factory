@@ -254,14 +254,27 @@ class PublishService:
             return PublishResult(success=False, error="client_pool not configured")
         acquired_phone: str | None = None
         try:
-            result = await pool.get_client_by_phone(target.phone, wait_for_flood=True)
+            # Publishing may need to abort a stalled transport.  The regular
+            # pool acquisition can return a shared lease, so use an ephemeral
+            # native client when the pool exposes that operation; disconnecting
+            # it cannot tear down another caller's shared pooled session.
+            isolated_acquire = getattr(type(pool), "get_native_client_by_phone", None)
+            if callable(isolated_acquire):
+                result = await isolated_acquire(pool, target.phone, wait_for_flood=True)
+            else:
+                result = await pool.get_client_by_phone(target.phone, wait_for_flood=True)
             if result is None:
                 return PublishResult(
                     success=False,
                     error=f"No client for phone {target.phone}",
                 )
             client, acquired_phone = result
-            session = adapt_transport_session(client, disconnect_on_close=False)
+            session = adapt_transport_session(
+                client,
+                disconnect_on_close=False,
+                phone=acquired_phone,
+                pool=pool,
+            )
 
             entity = await self._resolve_entity(session, acquired_phone, target)
             if entity is None:
