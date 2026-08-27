@@ -413,18 +413,40 @@ rollback координируются не process-local lock, а shared durable
   runtime_instance_id)` и heartbeat/lease deadline;
 - barrier acknowledgements для нового epoch.
 
-Coordinator хранится в core-owned storage, который не входит в plugin snapshot
-и не откатывается вместе с ним. Если используется full-database backup, fencing
-record должен жить во внешнем durable store либо быть повторно установлен с
-более новым epoch до открытия восстановленной БД.
+Authoritative fencing record хранится в core-owned области **того же storage
+backend и transactional domain**, что и plugin tables. Он не входит в plugin
+snapshot и не откатывается вместе с ним. Внешний coordinator может зеркалить
+epoch для уведомлений и recovery, но не может авторизовать storage operation:
+отдельный durable store без distributed transaction оставляет TOCTOU между
+проверкой token и commit plugin write.
 
-Перед migration, restore или переключением storage pointer coordinator
-выполняет compare-and-swap в состояние `fencing`, увеличивает epoch и запрещает
-выдачу новых plugin ports. Каждая операция уже выданного storage port проверяет
-epoch, state и revision внутри той же database transaction, что read/write;
-проверки только в памяти или перед транзакцией недостаточно. Старый token после
-увеличения epoch больше не может читать, писать или менять schema, даже если
-процесс потерял связь с coordinator.
+Перед migration, restore или переключением storage pointer хост открывает
+storage-local write transaction, выполняет compare-and-swap fencing record из
+ожидаемых `active/epoch/revision` в `fencing/new_epoch`, запрещает новые ports и
+только затем commit-ит barrier. Новый epoch публикуется другим runtimes **после**
+этого commit.
+
+Каждый mutating вызов storage port обязан либо быть одним conditional write с
+predicate по fencing record, либо в одной write transaction сначала получить
+тот же storage-local serialization barrier, проверить token/state/revision,
+выполнить все изменения plugin tables и commit. Раздельные «check, затем write»,
+in-memory cache и проверка во внешнем store запрещены. Поэтому существует один
+порядок событий: write, уже владевший barrier, полностью commit-ится до fence и
+попадает в restore point; fence, commit-ившийся первым, заставляет stale write
+abort без изменения данных. Read и schema operations проверяют тот же epoch в
+своей storage transaction.
+
+Backend, который не умеет атомарно сериализовать fencing CAS и plugin write, не
+может использовать shared writable plugin storage. Online full-database-file
+restore также не является допустимым plugin rollback: он заменил бы
+authoritative fencing record. Обычный rollback восстанавливает только plugin
+namespace/shadow revision, сохраняя core fencing rows. Полное восстановление
+файла БД допустимо только как отдельная offline disaster-recovery процедура
+после остановки всех runtimes и закрытия всех соединений; оно не участвует в
+update acceptance и не полагается на plugin fencing protocol.
+
+Старый token после commit storage-local fence больше не может читать, писать
+или менять schema, даже если процесс потерял связь с coordinator.
 
 Хост уведомляет все известные runtime leases, останавливает их hooks/tasks,
 закрывает ports и собирает acknowledgement нового epoch. Barrier считается
@@ -450,9 +472,11 @@ startup продолжает barrier/rollback и не выдаёт ports fail-op
    storage достаточно отбросить непринятую revision; для snapshot-модели хост
    только после полного fence в эксклюзивной транзакции восстанавливает прежние
    схему и данные.
-3. Атомарно возвращает указатель/metadata на предыдущую storage revision вместе
-   с previous code и lock revision и публикует новый epoch. Частично
-   восстановленный кортеж не может стать active.
+3. В одной storage transaction возвращает указатель на предыдущую revision и
+   переводит fencing record в `active/new_epoch`. После commit durable
+   activation record связывает её с previous code и lock revision, и только
+   затем epoch публикуется runtimes. Частично восстановленный кортеж не может
+   получить ports или стать active.
 4. Проверяет schema/data revision и только затем инициализирует предыдущую
    версию плагина во всех требуемых runtime targets с новыми ports. Если fence,
    restore или проверка не удались, плагин остаётся fail-closed в состоянии
