@@ -22,6 +22,7 @@ from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.content_pipelines import ContentPipelinesRepository
+from src.database.repositories.decisions import DecisionsRepository
 from src.database.repositories.dialog_batch import DialogBatchRepository
 from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
@@ -97,6 +98,7 @@ class DatabaseRepositories:
     channel_ratings: ChannelRatingsRepository
     pipeline_action_log: PipelineActionLogRepository
     notified_messages: NotifiedMessagesRepository
+    decisions: DecisionsRepository
 
 
 # ---------------------------------------------------------------------------

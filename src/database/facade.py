@@ -24,6 +24,7 @@ from src.database.repositories.channel_stats import ChannelStatsRepository
 from src.database.repositories.channels import ChannelsRepository
 from src.database.repositories.collection_tasks import CollectionTasksRepository
 from src.database.repositories.content_pipelines import ContentPipelinesRepository
+from src.database.repositories.decisions import DecisionsRepository
 from src.database.repositories.dialog_batch import DialogBatchRepository
 from src.database.repositories.dialog_cache import DialogCacheRepository
 from src.database.repositories.filters import FilterRepository
@@ -145,6 +146,7 @@ class Database:
         self._dialog_cache: DialogCacheRepository | None = None
         self._dialog_batch: DialogBatchRepository | None = None
         self._content_pipelines: ContentPipelinesRepository | None = None
+        self._decisions: DecisionsRepository | None = None
         self._telegram_commands: TelegramCommandsRepository | None = None
         self._runtime_snapshots: RuntimeSnapshotsRepository | None = None
         self._pipeline_action_log: PipelineActionLogRepository | None = None
@@ -197,6 +199,7 @@ class Database:
         self._dialog_cache = DialogCacheRepository(read_db, database=self)
         self._dialog_batch = DialogBatchRepository(read_db, database=self)
         self._content_pipelines = ContentPipelinesRepository(read_db, database=self)
+        self._decisions = DecisionsRepository(read_db, database=self)
         self._telegram_commands = TelegramCommandsRepository(read_db, database=self)
         self._runtime_snapshots = RuntimeSnapshotsRepository(read_db, database=self)
         self._channel_ratings = ChannelRatingsRepository(read_db, database=self)
@@ -227,6 +230,7 @@ class Database:
             runtime_snapshots=self._runtime_snapshots,
             channel_ratings=self._channel_ratings,
             pipeline_action_log=self._pipeline_action_log,
+            decisions=self._decisions,
         )
 
         await self._accounts.migrate_sessions()
@@ -419,6 +423,7 @@ class Database:
                 self._telegram_commands,
                 self._runtime_snapshots,
                 self._pipeline_action_log,
+                self._decisions,
             )
         ):
             raise RuntimeError("Database.initialize() has not been called")

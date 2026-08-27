@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import sqlite3
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -18,12 +19,16 @@ ColumnSpec = Mapping[str, str]
 SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
     "accounts": {
         "is_primary": "is_primary INTEGER DEFAULT 0",
+        "active_origin": "active_origin TEXT NOT NULL DEFAULT 'auto'",
         "flood_wait_until": "flood_wait_until TEXT",
         "is_premium": "is_premium INTEGER DEFAULT 0",
     },
     "channels": {
         "channel_type": "channel_type TEXT",
         "is_filtered": "is_filtered INTEGER DEFAULT 0",
+        "active_origin": "active_origin TEXT NOT NULL DEFAULT 'auto'",
+        "filtered_origin": "filtered_origin TEXT NOT NULL DEFAULT 'auto'",
+        "approval_state": "approval_state TEXT NOT NULL DEFAULT 'approved'",
         "filter_flags": "filter_flags TEXT DEFAULT ''",
         "about": "about TEXT",
         "linked_chat_id": "linked_chat_id INTEGER",
@@ -124,6 +129,7 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
         "updated_at": "updated_at TEXT",
         "image_url": "image_url TEXT",
         "moderation_status": "moderation_status TEXT DEFAULT 'pending'",
+        "moderation_origin": "moderation_origin TEXT NOT NULL DEFAULT 'auto'",
         "published_at": "published_at TEXT",
         "quality_score": "quality_score REAL",
         "quality_issues": "quality_issues TEXT",
@@ -258,7 +264,16 @@ async def ensure_columns(db: aiosqlite.Connection, table: str, columns: ColumnSp
         return
     for column_name, column_sql in columns.items():
         if column_name not in existing:
-            await db.execute(f"ALTER TABLE {table} ADD COLUMN {column_sql}")
+            try:
+                await db.execute(f"ALTER TABLE {table} ADD COLUMN {column_sql}")
+            except sqlite3.OperationalError as exc:
+                # Two split-deployment processes can both observe the old schema
+                # before either ALTER commits. The first ALTER wins; the second
+                # should treat the resulting duplicate-column error as the same
+                # idempotent end state rather than aborting startup.
+                if "duplicate column name" not in str(exc).lower():
+                    raise
+                logger.debug("Column %s.%s was added concurrently", table, column_name)
 
 
 async def ensure_indexes(db: aiosqlite.Connection, index_statements: Sequence[str]) -> None:
