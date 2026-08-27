@@ -187,6 +187,42 @@ async def test_publish_service_prefers_isolated_native_client_when_available():
 
 
 @pytest.mark.anyio
+async def test_publish_service_keeps_delivery_when_client_release_fails():
+    class ReleaseFailurePool(FakeClientPool):
+        def __init__(self):
+            super().__init__(should_succeed=True)
+            self.release_client = self._release_failure
+
+        async def get_native_client_by_phone(self, phone, *, wait_for_flood=False):
+            client = self._clients.setdefault(phone, FakeClient())
+            return client, phone
+
+        async def _release_failure(self, phone, *, session=None):
+            raise RuntimeError("simulated disconnect failure")
+
+    db = FakeDB()
+    pool = ReleaseFailurePool()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is True
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
+        "+1234567890:-1001234567890"
+    ]
+
+
+@pytest.mark.anyio
 async def test_publish_service_no_text():
     db = FakeDB()
     pool = FakeClientPool()

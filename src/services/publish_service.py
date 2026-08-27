@@ -406,9 +406,18 @@ class PublishService:
                 except (TypeError, ValueError):
                     supports_session = False
                 if supports_session and session is not None:
-                    await pool.release_client(acquired_phone, session=session)
+                    try:
+                        await pool.release_client(acquired_phone, session=session)
+                    except Exception:
+                        # Delivery has already been classified and must still
+                        # be persisted; a teardown failure cannot turn a known
+                        # successful send into a retryable one.
+                        logger.exception("Failed to release Telegram client for %s", acquired_phone)
                 else:
-                    await pool.release_client(acquired_phone)
+                    try:
+                        await pool.release_client(acquired_phone)
+                    except Exception:
+                        logger.exception("Failed to release Telegram client for %s", acquired_phone)
 
     async def _resolve_entity(
         self,
