@@ -65,13 +65,17 @@ async def _await_release_task(task: asyncio.Task[Any]) -> bool:
     return cancelled
 
 
-async def _stop_send_task(task: asyncio.Task[Any], session: Any) -> None:
+async def _stop_send_task(task: asyncio.Task[Any], session: Any) -> bool:
     """Stop local and transport work before a target can be manually retried."""
+    caller_cancelled = False
+    current_task = asyncio.current_task()
     if not task.done():
         task.cancel()
     try:
         await task
-    except (asyncio.CancelledError, Exception):
+    except asyncio.CancelledError:
+        caller_cancelled = bool(current_task and current_task.cancelling())
+    except Exception:
         # The send is already classified as unconfirmed; its eventual local
         # exception must not replace that result or produce an unhandled warning.
         pass
@@ -80,13 +84,14 @@ async def _stop_send_task(task: asyncio.Task[Any], session: Any) -> None:
         try:
             await abort()
         except asyncio.CancelledError:
-            # A repeated shutdown cancellation must not skip the uncertainty
-            # marker write below.
-            logger.warning("Cancellation interrupted Telegram send abort")
+            caller_cancelled = caller_cancelled or bool(current_task and current_task.cancelling())
+            if not caller_cancelled:
+                logger.warning("Cancellation interrupted Telegram send abort")
         except Exception:
             # Uncertainty is still the safe outcome if transport cleanup itself
             # fails; the operator must verify the target before retrying.
             logger.warning("Could not abort timed-out Telegram send", exc_info=True)
+    return caller_cancelled
 
 
 class _PublishClientPool(Protocol):
@@ -379,13 +384,28 @@ class PublishService:
                     # request may already be on its way to Telegram. Stop and
                     # drain the local task before exposing the target as
                     # unconfirmed, so a manual retry cannot race a detached send.
-                    await _stop_send_task(send_task, session)
+                    send_cancelled = await _stop_send_task(send_task, session)
                     delivery_uncertain = True
                     logger.error(
                         "Timeout sending to %s:%s — delivery unconfirmed, target needs a manual check",
                         target.phone,
                         target.dialog_id,
                     )
+                    if send_cancelled:
+                        try:
+                            await self._db.repos.generation_runs.set_metadata(
+                                run.id, {"unconfirmed_targets": [_target_key(target)]}
+                            )
+                        except asyncio.CancelledError as exc:
+                            raise _PublishUncertaintyPersistenceError(
+                                f"Cancellation interrupted persistence of uncertain send for "
+                                f"{_target_key(target)}"
+                            ) from exc
+                        except Exception as exc:
+                            raise _PublishUncertaintyPersistenceError(
+                                f"Could not persist uncertain send for {_target_key(target)}"
+                            ) from exc
+                        raise asyncio.CancelledError from None
                     return PublishResult(
                         success=False,
                         error="Timeout — delivery unconfirmed",
