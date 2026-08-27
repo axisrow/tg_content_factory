@@ -477,6 +477,24 @@ class TestRefreshChannelTypesTool:
         mock_db.repos.channels.set_channel_review.assert_awaited_once_with(1, "numeric_unresolved")
         assert "на ревью: 1" in _text(result)
 
+    @pytest.mark.anyio
+    async def test_suppressed_deactivation_is_not_reported_or_typed(self, mock_db):
+        ch = _make_channel(pk=1, channel_id=111, title="Reactivated")
+        mock_db.get_channels = AsyncMock(return_value=[ch])
+        mock_db.set_channel_active = AsyncMock(return_value=0)
+        mock_db.set_channel_type = AsyncMock()
+        pool = MagicMock()
+        pool.resolve_channel = AsyncMock(return_value={"gone": True})
+
+        handlers = _get_tool_handlers(mock_db, client_pool=pool)
+        result = await handlers["refresh_channel_types"]({"confirm": True})
+
+        mock_db.set_channel_active.assert_awaited_once_with(1, False)
+        mock_db.set_channel_type.assert_not_awaited()
+        text = _text(result)
+        assert "деактивировано: 0" in text
+        assert "не удалось: 1" in text
+
 
 class TestChannelReviewTools:
     @pytest.mark.anyio

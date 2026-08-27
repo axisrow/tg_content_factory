@@ -358,6 +358,32 @@ class TestCLIChannelExtended:
         out = capsys.readouterr().out
         assert "DEACTIVATED: T1" in out
 
+    def test_refresh_types_preserves_human_reactivation(self, cli_env_with_mock_pool, capsys):
+        db, pool = cli_env_with_mock_pool
+        pk = asyncio.run(
+            db.add_channel(
+                Channel(channel_id=101, title="T1", is_active=True),
+            )
+        )
+        # A later automatic "gone" result must not override an operator's
+        # explicit decision to keep the channel active.
+        asyncio.run(db.set_channel_active(pk, False, origin="human"))
+        asyncio.run(db.set_channel_active(pk, True, origin="human"))
+        pool.resolve_channel.return_value = {"gone": True}
+
+        from src.cli.commands.channel import run
+
+        run(_ns(channel_action="refresh-types"))
+        out = capsys.readouterr().out
+        assert "DEACTIVATED: T1" not in out
+        assert "Skipped: 1" in out
+
+        _ensure_db_open(db)
+        channel = asyncio.run(db.get_channel_by_pk(pk))
+        assert channel is not None
+        assert channel.is_active is True
+        assert channel.channel_type is None
+
     def test_collect_success(self, cli_env_with_mock_pool, capsys):
         db, pool = cli_env_with_mock_pool
         ch_id = asyncio.run(

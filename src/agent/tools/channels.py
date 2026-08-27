@@ -288,7 +288,11 @@ def register(db, client_pool, embedding_service, **kwargs):
                     quarantined += 1
                     continue
                 if info and info.get("gone"):
-                    await db.set_channel_active(ch.id, False)
+                    if await db.set_channel_active(ch.id, False) == 0:
+                        # The operator's explicit active decision suppresses
+                        # this automatic deactivation. Keep the existing type.
+                        failed += 1
+                        continue
                     await db.set_channel_type(ch.channel_id, "unavailable")
                     deactivated += 1
                     continue

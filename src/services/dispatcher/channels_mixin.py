@@ -92,7 +92,12 @@ class ChannelsCommandsMixin(_Base):
             # Definitive not-found → deactivate; transient None → skip and leave
             # active (audit #835/8; old `if info is False` was unreachable).
             if info and info.get("gone"):
-                await self._db.set_channel_active(channel_pk, False)
+                if await self._db.set_channel_active(channel_pk, False) == 0:
+                    # The operator explicitly kept this channel active, so the
+                    # automatic deactivation was suppressed. Do not overwrite
+                    # its type or count it as deactivated.
+                    failed += 1
+                    continue
                 await self._db.set_channel_type(ch.channel_id, "unavailable")
                 deactivated += 1
                 continue
