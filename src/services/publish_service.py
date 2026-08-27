@@ -399,17 +399,16 @@ class PublishService:
             return PublishResult(success=False, error=str(e))
         finally:
             if acquired_phone is not None:
-                release = pool.release_client
                 # New ClientPool releases the exact lease session; older test
                 # doubles and integrations still expose the phone-only API.
                 try:
-                    supports_session = "session" in inspect.signature(release).parameters
+                    supports_session = "session" in inspect.signature(pool.release_client).parameters
                 except (TypeError, ValueError):
                     supports_session = False
                 if supports_session and session is not None:
-                    await release(acquired_phone, session=session)
+                    await pool.release_client(acquired_phone, session=session)
                 else:
-                    await release(acquired_phone)
+                    await pool.release_client(acquired_phone)
 
     async def _resolve_entity(
         self,
