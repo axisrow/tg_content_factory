@@ -532,6 +532,30 @@ class TestChannelReviewTools:
         assert "снят с ревью" in _text(result)
 
     @pytest.mark.anyio
+    async def test_confirmed_review_keep_records_human_decision(self, mock_db):
+        ch = _make_channel(pk=3, channel_id=303, title="KeepMe")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.repos.channels.clear_channel_review = AsyncMock()
+        mock_db.repos.decisions.record = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+
+        await handlers["review_keep_channel"](
+            {"pk": 3, "confirm": True, "on_behalf_of_user": True}
+        )
+
+        mock_db.repos.decisions.record.assert_awaited_once_with(
+            entity="channel",
+            entity_key=303,
+            entity_name="KeepMe",
+            field="needs_review",
+            old_value="0",
+            new_value="0",
+            origin="human",
+            actor="agent",
+            reason="owner-confirmed review decision",
+        )
+
+    @pytest.mark.anyio
     async def test_confirm_dead_requires_confirmation(self, mock_db):
         mock_db.get_channel_by_pk = AsyncMock(return_value=_make_channel(title="Dead"))
         handlers = _get_tool_handlers(mock_db)

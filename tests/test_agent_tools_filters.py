@@ -246,6 +246,22 @@ class TestToggleChannelFilterTool:
         )
 
     @pytest.mark.anyio
+    async def test_suppressed_change_reports_preserved_human_decision(self, mock_db):
+        ch = MagicMock()
+        ch.is_filtered = False
+        ch.title = "ProtectedChan"
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.set_channel_filtered = AsyncMock(return_value=0)
+        handlers = _get_tool_handlers(mock_db)
+
+        result = await handlers["toggle_channel_filter"](
+            {"pk": 1, "confirm": True, "on_behalf_of_user": False}
+        )
+
+        assert "подавлено" in _text(result)
+        assert "теперь" not in _text(result)
+
+    @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
         mock_db.get_channel_by_pk = AsyncMock(side_effect=Exception("db error"))
         handlers = _get_tool_handlers(mock_db)

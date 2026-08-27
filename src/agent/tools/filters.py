@@ -118,7 +118,12 @@ def register(db, client_pool, embedding_service, **kwargs):
         "reset_filters",
         "⚠️ DANGEROUS: Reset all channel filters — unmark all filtered channels. "
         "Always ask user for confirmation first.",
-        {"confirm": Annotated[bool, "Установите true для подтверждения действия"]},
+        {
+            "confirm": Annotated[bool, "Установите true для подтверждения действия"],
+            "on_behalf_of_user": Annotated[
+                bool, "true только если владелец прямо попросил выполнить действие"
+            ],
+        },
         annotations=ToolAnnotations(destructiveHint=True),
     )
     async def reset_filters(args):
@@ -186,9 +191,14 @@ def register(db, client_pool, embedding_service, **kwargs):
                 old_value=str(int(ch.is_filtered)),
                 new_value=str(int(new_filtered)),
             )
-            await db.set_channel_filtered(
+            changed = await db.set_channel_filtered(
                 int(pk), new_filtered, origin=origin, actor="agent"
             )
+            if not changed:
+                return _text_response(
+                    f"Изменение фильтра канала '{ch.title}' подавлено: "
+                    "сохранено подтверждённое решение владельца."
+                )
             status = "отфильтрован" if new_filtered else "разблокирован"
             return _text_response(f"Канал '{ch.title}' теперь {status}.")
         except Exception as e:

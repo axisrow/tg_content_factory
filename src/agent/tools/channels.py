@@ -385,7 +385,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             ch = await db.get_channel_by_pk(pk)
             if not ch:
                 return _text_response(f"Канал pk={pk} не найден.")
-            await agent_decision_origin(
+            origin = await agent_decision_origin(
                 db,
                 args,
                 confirmation_passed=arg_bool(args, "confirm"),
@@ -395,6 +395,18 @@ def register(db, client_pool, embedding_service, **kwargs):
                 old_value=str(int(getattr(ch, "needs_review", False))),
                 new_value="0",
             )
+            if origin == "human":
+                await db.repos.decisions.record(
+                    entity="channel",
+                    entity_key=ch.channel_id,
+                    entity_name=ch.title,
+                    field="needs_review",
+                    old_value=str(int(getattr(ch, "needs_review", False))),
+                    new_value="0",
+                    origin="human",
+                    actor="agent",
+                    reason="owner-confirmed review decision",
+                )
             await db.repos.channels.clear_channel_review(pk)
             return _text_response(f"Канал '{ch.title}' (pk={pk}) снят с ревью, остаётся активным.")
         except Exception as e:
