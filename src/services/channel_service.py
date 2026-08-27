@@ -161,11 +161,11 @@ class ChannelService:
         origin: str = "auto",
         actor: str | None = None,
         reason: str | None = None,
-    ) -> None:
+    ) -> int | None:
         channel = await self._channels.get_by_pk(pk)
         if not channel:
             return
-        await self._channels.set_active(
+        return await self._channels.set_active(
             pk,
             not channel.is_active,
             origin=origin,

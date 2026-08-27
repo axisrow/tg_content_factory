@@ -273,6 +273,16 @@ class TestToggle:
             7, False, origin="auto", actor=None, reason=None
         )
 
+    async def test_returns_suppressed_update_count(self):
+        ch = _make_channel(pk=8, is_active=True)
+        bundle = _make_bundle()
+        bundle.get_by_pk = AsyncMock(return_value=ch)
+        bundle.set_active = AsyncMock(return_value=0)
+
+        service = _make_service(bundle=bundle)
+
+        assert await service.toggle(8) == 0
+
     async def test_does_nothing_if_channel_not_found(self):
         bundle = _make_bundle()
         bundle.get_by_pk = AsyncMock(return_value=None)

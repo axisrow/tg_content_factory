@@ -205,7 +205,12 @@ def register(db, client_pool, embedding_service, **kwargs):
                     new_value=str(int(not getattr(before, "is_active", True))),
                 )
             svc = ctx.channel_service()
-            await svc.toggle(pk, origin=origin, actor="agent")
+            changed = await svc.toggle(pk, origin=origin, actor="agent")
+            if changed == 0:
+                return _text_response(
+                    f"Изменение статуса канала '{getattr(before, 'title', f'id={pk}')}' подавлено: "
+                    "сохранено подтверждённое решение владельца."
+                )
             ch = await db.get_channel_by_pk(pk)
             if ch:
                 status = "активен" if ch.is_active else "неактивен"

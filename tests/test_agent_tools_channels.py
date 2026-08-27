@@ -162,6 +162,20 @@ class TestToggleChannelTool:
         )
 
     @pytest.mark.anyio
+    async def test_suppressed_active_change_is_reported(self, mock_db):
+        ch = _make_channel(is_active=True, title="ProtectedChan")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.toggle = AsyncMock(return_value=0)
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["toggle_channel"]({"pk": 1})
+
+        text = _text(result)
+        assert "подавлено" in text
+        assert "решение владельца" in text
+        assert "теперь" not in text
+
+    @pytest.mark.anyio
     async def test_owner_claim_without_confirmation_is_auto_and_journaled(self, mock_db):
         ch = _make_channel(is_active=True, title="NeedsReview")
         mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
