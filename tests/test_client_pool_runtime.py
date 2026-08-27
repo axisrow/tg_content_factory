@@ -158,6 +158,32 @@ async def test_native_client_by_phone_returns_flood_aware_session(
 
 @pytest.mark.anyio
 @pytest.mark.native_backend_allowed
+async def test_release_client_with_session_releases_exact_native_lease(
+    real_pool_harness_factory,
+):
+    harness = real_pool_harness_factory()
+    phone = "+70000000001"
+    harness.queue_cli_client(phone=phone, client=FakeCliTelethonClient())
+    first_raw = harness.queue_native_client(client=FakeCliTelethonClient())
+    second_raw = harness.queue_native_client(client=FakeCliTelethonClient())
+    await harness.add_account(phone, session_string="session-exact-release", is_primary=True)
+    await harness.initialize_connected_accounts()
+
+    first = await harness.pool.get_native_client_by_phone(phone)
+    second = await harness.pool.get_native_client_by_phone(phone)
+    assert first is not None and second is not None
+
+    await harness.pool.release_client(phone, session=first[0])
+
+    assert first_raw.disconnect.await_count == 1
+    assert second_raw.disconnect.await_count == 0
+    assert [lease.session.raw_client for lease in harness.pool._active_leases[phone]] == [second[0].raw_client]
+
+    await harness.pool.release_client(phone, session=second[0])
+
+
+@pytest.mark.anyio
+@pytest.mark.native_backend_allowed
 async def test_auto_mode_falls_back_to_native_when_cli_acquire_fails(
     real_pool_harness_factory,
 ):

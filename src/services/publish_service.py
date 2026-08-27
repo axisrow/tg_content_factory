@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -55,7 +56,7 @@ class _PublishClientPool(Protocol):
         wait_for_flood: bool = False,
     ) -> tuple[Any, str] | None: ...
 
-    async def release_client(self, phone: str) -> None: ...
+    async def release_client(self, phone: str, *, session: Any | None = None) -> None: ...
 
     async def resolve_dialog_entity(
         self,
@@ -253,6 +254,7 @@ class PublishService:
         if pool is None:
             return PublishResult(success=False, error="client_pool not configured")
         acquired_phone: str | None = None
+        session = None
         try:
             # Publishing may need to abort a stalled transport.  The regular
             # pool acquisition can return a shared lease, so use an ephemeral
@@ -397,7 +399,17 @@ class PublishService:
             return PublishResult(success=False, error=str(e))
         finally:
             if acquired_phone is not None:
-                await pool.release_client(acquired_phone)
+                release = pool.release_client
+                # New ClientPool releases the exact lease session; older test
+                # doubles and integrations still expose the phone-only API.
+                try:
+                    supports_session = "session" in inspect.signature(release).parameters
+                except (TypeError, ValueError):
+                    supports_session = False
+                if supports_session and session is not None:
+                    await release(acquired_phone, session=session)
+                else:
+                    await release(acquired_phone)
 
     async def _resolve_entity(
         self,
