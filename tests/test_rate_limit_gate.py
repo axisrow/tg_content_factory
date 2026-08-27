@@ -5,6 +5,8 @@ from telethon import TelegramClient
 from telethon.sessions import MemorySession
 
 from src.telegram.backends import TelegramTransportSession
+from src.telegram.flood_breaker import FloodCircuitBreaker
+from src.telegram.flood_wait import HandledFloodWaitError
 from src.telegram.rate_limit_gate import (
     RateLimitSpec,
     TelegramRateLimitedError,
@@ -183,7 +185,10 @@ async def test_paginated_dialog_stream_gates_each_telethon_page() -> None:
 
     class Pool:
         _rate_limit_gate = TelegramRateLimitGate(
-            category_limits={"dialog_sweep": RateLimitSpec(max_calls=1, window_sec=60)}
+            category_limits={
+                "dialog_sweep": RateLimitSpec(max_calls=1, window_sec=60),
+                "dialogs_page": RateLimitSpec(max_calls=1, window_sec=60),
+            }
         )
 
     session = TelegramTransportSession(Client(), phone="+66...2247", pool=Pool())
@@ -195,6 +200,45 @@ async def test_paginated_dialog_stream_gates_each_telethon_page() -> None:
     assert calls == ["page-0"]
 
     await stream.aclose()
+
+
+@pytest.mark.asyncio
+async def test_paginated_dialog_stream_allows_pages_with_separate_budget() -> None:
+    """The logical-operation slot must not truncate a normal multi-page sweep."""
+
+    class PageIterator:
+        def __init__(self, client) -> None:
+            self.client = client
+            self.page = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.page >= 2:
+                raise StopAsyncIteration
+            await self.client(f"page-{self.page}")
+            self.page += 1
+            return self.page
+
+    calls = []
+
+    class Client:
+        def iter_dialogs(self, **kwargs):
+            return PageIterator(self)
+
+        async def __call__(self, request):
+            calls.append(request)
+
+    class Pool:
+        _rate_limit_gate = TelegramRateLimitGate()
+
+    session = TelegramTransportSession(Client(), phone="+66...2247", pool=Pool())
+    stream = session.stream_dialogs()
+    assert [await stream.__anext__(), await stream.__anext__()] == [1, 2]
+    with pytest.raises(StopAsyncIteration):
+        await stream.__anext__()
+    assert calls == ["page-0", "page-1"]
 
 
 @pytest.mark.asyncio
@@ -235,7 +279,10 @@ async def test_paginated_get_dialogs_gates_each_telethon_page() -> None:
 
     class Pool:
         _rate_limit_gate = TelegramRateLimitGate(
-            category_limits={"dialogs": RateLimitSpec(max_calls=1, window_sec=60)}
+            category_limits={
+                "dialogs": RateLimitSpec(max_calls=1, window_sec=60),
+                "dialogs_page": RateLimitSpec(max_calls=1, window_sec=60),
+            }
         )
 
     client = Client()
@@ -243,6 +290,51 @@ async def test_paginated_get_dialogs_gates_each_telethon_page() -> None:
     with pytest.raises(TelegramRateLimitedError):
         await session.warm_dialog_cache()
     assert client.calls == ["page-0"]
+
+
+@pytest.mark.asyncio
+async def test_paginated_flood_updates_breaker_once() -> None:
+    """A page flood is recorded by the enclosing logical stream only once."""
+    from telethon.errors import FloodWaitError
+
+    class PageIterator:
+        def __init__(self, client) -> None:
+            self.client = client
+            self.page = 0
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.page >= 2:
+                raise StopAsyncIteration
+            await self.client(f"page-{self.page}")
+            self.page += 1
+            return self.page
+
+    flood = FloodWaitError(request=None, capture=0)
+    flood.seconds = 23
+
+    class Client:
+        def iter_dialogs(self, **kwargs):
+            return PageIterator(self)
+
+        async def __call__(self, request):
+            if request == "page-1":
+                raise flood
+
+    class Pool:
+        _rate_limit_gate = TelegramRateLimitGate()
+        _flood_breaker = FloodCircuitBreaker(threshold=3, cooldown_seconds=300)
+
+    session = TelegramTransportSession(Client(), phone="+66...2247", pool=Pool())
+    stream = session.stream_dialogs()
+    assert await stream.__anext__() == 1
+    with pytest.raises(HandledFloodWaitError):
+        await stream.__anext__()
+
+    breaker = Pool._flood_breaker._breakers[("telegram_stream_dialogs", "+66...2247")]
+    assert breaker.fail_counter == 1
 
 
 @pytest.mark.asyncio
