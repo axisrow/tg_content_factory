@@ -198,11 +198,11 @@ def register(db, client_pool, embedding_service, **kwargs):
                     db,
                     args,
                     confirmation_passed=arg_bool(args, "confirm"),
-                    entity_key=before.channel_id,
-                    entity_name=before.title,
+                    entity_key=getattr(before, "channel_id", pk),
+                    entity_name=getattr(before, "title", None),
                     field="is_active",
-                    old_value=str(int(before.is_active)),
-                    new_value=str(int(not before.is_active)),
+                    old_value=str(int(getattr(before, "is_active", True))),
+                    new_value=str(int(not getattr(before, "is_active", True))),
                 )
             svc = ctx.channel_service()
             await svc.toggle(pk, origin=origin, actor="agent")
