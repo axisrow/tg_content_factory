@@ -168,6 +168,9 @@ class TestResetFiltersTool:
         text = _text(result)
         assert "7 каналов" in text
         assert "разблокированы" in text
+        mock_analyzer.return_value.reset_filters.assert_awaited_once_with(
+            origin="human", actor="agent"
+        )
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
@@ -205,7 +208,9 @@ class TestToggleChannelFilterTool:
         text = _text(result)
         assert "NewsChan" in text
         assert "отфильтрован" in text
-        mock_db.set_channel_filtered.assert_awaited_once_with(1, True)
+        mock_db.set_channel_filtered.assert_awaited_once_with(
+            1, True, origin="human", actor="agent"
+        )
 
     @pytest.mark.anyio
     async def test_filtered_true_becomes_unblocked(self, mock_db):
@@ -219,7 +224,9 @@ class TestToggleChannelFilterTool:
         text = _text(result)
         assert "SpamChan" in text
         assert "разблокирован" in text
-        mock_db.set_channel_filtered.assert_awaited_once_with(2, False)
+        mock_db.set_channel_filtered.assert_awaited_once_with(
+            2, False, origin="human", actor="agent"
+        )
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):

@@ -117,7 +117,7 @@ class TestChannelBundle:
     async def test_reset_all_filters(self, db):
         b = ChannelBundle.from_database(db)
         pk = await b.add_channel(_channel(channel_id=601))
-        await b.set_filtered_bulk([(pk, "spam")])
+        await b.set_filtered_bulk([(601, "spam")])
         count = await b.reset_all_filters()
         assert count == 1
         ch = await b.get_by_pk(pk)

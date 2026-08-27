@@ -148,7 +148,9 @@ async def test_toggle_deactivates():
 
     svc = ChannelService(channels, pool, None)
     await svc.toggle(pk=1)
-    channels.set_active.assert_called_once_with(1, False)
+    channels.set_active.assert_called_once_with(
+        1, False, origin="auto", actor=None, reason=None
+    )
 
 
 @pytest.mark.anyio
@@ -161,7 +163,9 @@ async def test_toggle_activates():
 
     svc = ChannelService(channels, pool, None)
     await svc.toggle(pk=1)
-    channels.set_active.assert_called_once_with(1, True)
+    channels.set_active.assert_called_once_with(
+        1, True, origin="auto", actor=None, reason=None
+    )
 
 
 @pytest.mark.anyio

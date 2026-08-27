@@ -257,7 +257,9 @@ class TestToggle:
         service = _make_service(bundle=bundle)
         await service.toggle(5)
 
-        bundle.set_active.assert_awaited_once_with(5, True)
+        bundle.set_active.assert_awaited_once_with(
+            5, True, origin="auto", actor=None, reason=None
+        )
 
     async def test_deactivates_active_channel(self):
         ch = _make_channel(pk=7, is_active=True)
@@ -267,7 +269,9 @@ class TestToggle:
         service = _make_service(bundle=bundle)
         await service.toggle(7)
 
-        bundle.set_active.assert_awaited_once_with(7, False)
+        bundle.set_active.assert_awaited_once_with(
+            7, False, origin="auto", actor=None, reason=None
+        )
 
     async def test_does_nothing_if_channel_not_found(self):
         bundle = _make_bundle()

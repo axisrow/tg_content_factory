@@ -121,6 +121,9 @@ async def test_toggle_channel(route_client):
         resp = await route_client.post("/channels/1/toggle", follow_redirects=False)
         assert resp.status_code == 303
         assert "msg=channel_toggled" in resp.headers["location"]
+        mock_svc.return_value.toggle.assert_awaited_once_with(
+            1, origin="human", actor="web"
+        )
 
 
 @pytest.mark.anyio
@@ -332,6 +335,7 @@ async def test_review_confirm_deactivates(route_client, db):
     refreshed = await db.get_channel_by_pk(pk)
     assert refreshed.needs_review is False
     assert refreshed.is_active is False
+    assert refreshed.active_origin == "human"
     assert refreshed.channel_type == "unavailable"
 
 

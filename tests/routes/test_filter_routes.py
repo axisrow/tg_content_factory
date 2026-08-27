@@ -731,6 +731,9 @@ async def test_reset_redirects(route_client):
         resp = await route_client.post("/channels/filter/reset", follow_redirects=False)
         assert resp.status_code == 303
         assert "msg=filter_reset" in resp.headers["location"]
+        mock_instance.reset_filters.assert_awaited_once_with(
+            origin="human", actor="web"
+        )
 
 
 @pytest.mark.anyio
@@ -771,6 +774,8 @@ async def test_filter_toggle_success(route_client, db):
     resp = await route_client.post(f"/channels/{pk}/filter-toggle", follow_redirects=False)
     assert resp.status_code == 303
     assert "msg=filter_toggled" in resp.headers["location"]
+    channel = await db.get_channel_by_pk(pk)
+    assert channel.filtered_origin == "human"
 
 
 # === Additional tests ===

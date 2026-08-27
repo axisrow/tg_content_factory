@@ -143,7 +143,7 @@ async def toggle_impl(config_path: str, *, pk: int) -> None:
             print(f"Channel pk={pk} not found.")
             return
         new_state = not channel.is_filtered
-        await db.set_channel_filtered(pk, new_state)
+        await db.set_channel_filtered(pk, new_state, origin="human", actor="cli")
         status = "filtered" if new_state else "unfiltered"
         print(f"Channel pk={pk} ({channel.title}) marked as {status}.")
     finally:
@@ -160,10 +160,12 @@ async def reset_impl(config_path: str, *, pks: str | None = None) -> None:
             if not pk_list:
                 print("No valid PKs provided.")
                 return
-            count = await analyzer.reset_filters_for_pks(pk_list)
+            count = await analyzer.reset_filters_for_pks(
+                pk_list, origin="human", actor="cli"
+            )
             print(f"Reset filter flag for {count} channel(s).")
         else:
-            await analyzer.reset_filters()
+            await analyzer.reset_filters(origin="human", actor="cli")
             print("All channel filters have been reset.")
     finally:
         await db.close()

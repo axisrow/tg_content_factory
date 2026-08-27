@@ -361,7 +361,9 @@ class ChannelAnalyzer:
         async with self._database.transaction():
             await self._database.reset_all_channel_filters(commit=False)
             if updates:
-                count = await self._database.set_channels_filtered_bulk(updates, commit=False)
+                count, _suppressed = await self._database.set_channels_filtered_bulk(
+                    updates, commit=False
+                )
         return count
 
     async def precheck_subscriber_ratio(self) -> int:
@@ -399,12 +401,34 @@ class ChannelAnalyzer:
                 if subs is not None and subs < min_subs:
                     to_filter.append((channel.channel_id, "low_subscriber_manual"))
 
-        if to_filter:
-            await self._database.set_channels_filtered_bulk(to_filter)
-        return len(to_filter)
+        if not to_filter:
+            return 0
+        result = await self._database.set_channels_filtered_bulk(to_filter)
+        return result.applied
 
-    async def reset_filters(self) -> int:
-        return await self._database.reset_all_channel_filters()
+    async def reset_filters(
+        self,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> int:
+        return (
+            await self._database.reset_all_channel_filters(
+                origin=origin, actor=actor, reason=reason
+            )
+        )[0]
 
-    async def reset_filters_for_pks(self, pks: list[int]) -> int:
-        return await self._database.reset_channel_filters_for_pks(pks)
+    async def reset_filters_for_pks(
+        self,
+        pks: list[int],
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> int:
+        return (
+            await self._database.reset_channel_filters_for_pks(
+                pks, origin=origin, actor=actor, reason=reason
+            )
+        )[0]

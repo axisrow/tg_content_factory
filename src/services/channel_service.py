@@ -154,11 +154,24 @@ class ChannelService:
         )
         return dialogs
 
-    async def toggle(self, pk: int) -> None:
+    async def toggle(
+        self,
+        pk: int,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> None:
         channel = await self._channels.get_by_pk(pk)
         if not channel:
             return
-        await self._channels.set_active(pk, not channel.is_active)
+        await self._channels.set_active(
+            pk,
+            not channel.is_active,
+            origin=origin,
+            actor=actor,
+            reason=reason,
+        )
 
     async def delete(self, pk: int) -> None:
         # Collect active tasks before the delete so we know what to cancel,

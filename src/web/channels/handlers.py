@@ -80,7 +80,7 @@ async def add_bulk(request: Request) -> ChannelsRedirect:
 
 
 async def toggle_channel(request: Request, pk: int) -> ChannelsRedirect:
-    await deps.channel_service(request).toggle(pk)
+    await deps.channel_service(request).toggle(pk, origin="human", actor="web")
     return ChannelsRedirect(msg="channel_toggled")
 
 
@@ -120,7 +120,7 @@ async def review_confirm(request: Request, pk: int) -> ChannelsRedirect:
     ch = await db.get_channel_by_pk(pk)
     if ch is None:
         return ChannelsRedirect(error="resolve")
-    await db.set_channel_active(pk, False)
+    await db.set_channel_active(pk, False, origin="human", actor="web")
     await db.set_channel_type(ch.channel_id, "unavailable")
     await db.repos.channels.clear_channel_review(pk)
     return ChannelsRedirect(msg="channel_review_confirmed")
