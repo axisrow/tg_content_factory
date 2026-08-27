@@ -722,6 +722,28 @@ class TestChannelAnalyzer:
         count = await analyzer.precheck_subscriber_ratio()
         assert count == 1
 
+    async def test_precheck_does_not_count_human_unfiltered_channel(self, db, raw_db):
+        await raw_db.execute(
+            "INSERT INTO channels (channel_id, title, channel_type, is_active) VALUES (?, ?, ?, 1)",
+            (1006, "Human Unfiltered", "channel"),
+        )
+        await raw_db.commit()
+        channel = await db.get_channel_by_channel_id(1006)
+        assert channel is not None and channel.id is not None
+        await db.set_channel_filtered(channel.id, False, origin="human")
+        await _insert_messages(raw_db, 1006, [f"msg {i}" for i in range(20)])
+        await _insert_stats(raw_db, 1006, 10)
+
+        analyzer = ChannelAnalyzer(db)
+        assert await analyzer.precheck_subscriber_ratio() == 0
+
+        cur = await raw_db.execute(
+            "SELECT is_filtered, filtered_origin FROM channels WHERE channel_id = 1006"
+        )
+        row = await cur.fetchone()
+        assert row["is_filtered"] == 0
+        assert row["filtered_origin"] == "human"
+
     async def test_precheck_supergroup_healthy_ratio(self, db, raw_db):
         # @PattayaVse: subscriber_count=7039, message_count=100 -> 70.39 > 0.02 -> NOT filtered
         await raw_db.execute(
