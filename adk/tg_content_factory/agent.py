@@ -28,6 +28,7 @@ from src.agent.prompt_template import (
     render_prompt_template,
     validate_prompt_template,
 )
+from src.cli.dotenv import load_cli_dotenv
 from src.config import AppConfig, load_config
 
 
@@ -68,6 +69,10 @@ def _configured_prompt(config: AppConfig) -> str:
 
 
 _CONFIG_PATH = os.path.abspath(os.environ.get("TG_CONFIG_PATH", "").strip() or "config.yaml")
+# ``load_config`` expands ${ENV_VAR} values while reading YAML. Match the
+# regular CLI startup order so an .env beside TG_CONFIG_PATH is available for
+# those substitutions before the config is parsed.
+load_cli_dotenv(_CONFIG_PATH)
 _CONFIG = load_config(_CONFIG_PATH)
 
 # ADK's CLI requires a module-level ``root_agent``. Imports in
