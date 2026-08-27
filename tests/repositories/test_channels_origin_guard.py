@@ -20,6 +20,19 @@ async def test_channel_active_origin_guard(channels_repo):
     assert [decision.origin for decision in history] == ["auto", "human"]
 
 
+async def test_channel_upsert_preserves_human_active_decision(channels_repo):
+    pk = await channels_repo.add_channel(Channel(channel_id=109, title="Protected"))
+
+    assert await channels_repo.set_channel_active(pk, False, origin="human") == 1
+    await channels_repo.add_channel(Channel(channel_id=109, title="Refreshed", is_active=True))
+
+    channel = await channels_repo.get_channel_by_pk(pk)
+    assert channel is not None
+    assert channel.title == "Refreshed"
+    assert channel.is_active is False
+    assert channel.active_origin == "human"
+
+
 async def test_channel_filtered_origin_guard(channels_repo):
     pk = await channels_repo.add_channel(Channel(channel_id=102, title="Filtered"))
 

@@ -90,7 +90,8 @@ class ChannelsRepository:
                ON CONFLICT(channel_id) DO UPDATE
                SET title=excluded.title, username=excluded.username,
                    channel_type=excluded.channel_type,
-                   is_active=excluded.is_active,
+                   is_active=CASE WHEN channels.active_origin = 'human'
+                                  THEN channels.is_active ELSE excluded.is_active END,
                    about=COALESCE(excluded.about, channels.about),
                    linked_chat_id=COALESCE(excluded.linked_chat_id, channels.linked_chat_id),
                    has_comments=CASE WHEN COALESCE(excluded.linked_chat_id, channels.linked_chat_id)
