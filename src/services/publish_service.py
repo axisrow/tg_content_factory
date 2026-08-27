@@ -23,8 +23,8 @@ class _PublishUncertaintyPersistenceError(RuntimeError):
     """The publish claim must remain held when cancellation cannot be recorded."""
 
 
-async def _stop_send_task(task: asyncio.Task[Any]) -> None:
-    """Cancel and drain a send task before its target can be manually retried."""
+async def _stop_send_task(task: asyncio.Task[Any], session: Any) -> None:
+    """Stop local and transport work before a target can be manually retried."""
     if not task.done():
         task.cancel()
     try:
@@ -33,6 +33,18 @@ async def _stop_send_task(task: asyncio.Task[Any]) -> None:
         # The send is already classified as unconfirmed; its eventual local
         # exception must not replace that result or produce an unhandled warning.
         pass
+    abort = getattr(session, "abort", None)
+    if callable(abort):
+        try:
+            await abort()
+        except asyncio.CancelledError:
+            # A repeated shutdown cancellation must not skip the uncertainty
+            # marker write below.
+            logger.warning("Cancellation interrupted Telegram send abort")
+        except Exception:
+            # Uncertainty is still the safe outcome if transport cleanup itself
+            # fails; the operator must verify the target before retrying.
+            logger.warning("Could not abort timed-out Telegram send", exc_info=True)
 
 
 class _PublishClientPool(Protocol):
@@ -308,7 +320,7 @@ class PublishService:
                     # request may already be on its way to Telegram. Stop and
                     # drain the local task before exposing the target as
                     # unconfirmed, so a manual retry cannot race a detached send.
-                    await _stop_send_task(send_task)
+                    await _stop_send_task(send_task, session)
                     logger.error(
                         "Timeout sending to %s:%s — delivery unconfirmed, target needs a manual check",
                         target.phone,
@@ -326,11 +338,21 @@ class PublishService:
                 # Dispatcher shutdown can cancel either shielded wait while the
                 # request is still in flight. Persist uncertainty before the
                 # publish claim is released, then propagate cancellation.
-                await _stop_send_task(send_task)
+                await _stop_send_task(send_task, session)
                 try:
                     await self._db.repos.generation_runs.set_metadata(
                         run.id, {"unconfirmed_targets": [_target_key(target)]}
                     )
+                except asyncio.CancelledError as exc:
+                    logger.exception(
+                        "Cancellation interrupted persistence of cancelled send for %s:%s",
+                        target.phone,
+                        target.dialog_id,
+                    )
+                    raise _PublishUncertaintyPersistenceError(
+                        f"Cancellation interrupted persistence of cancelled send for "
+                        f"{target.phone}:{target.dialog_id}"
+                    ) from exc
                 except Exception as exc:
                     logger.exception(
                         "Could not persist cancelled send for %s:%s",

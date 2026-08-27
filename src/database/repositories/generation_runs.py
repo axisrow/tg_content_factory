@@ -136,7 +136,9 @@ class GenerationRunsRepository:
             "GenerationRunsRepository.claim_for_publish requires a Database reference"
         )
         cur = await self._database.execute_write(
-            ("UPDATE generation_runs SET moderation_status = 'publishing', updated_at = datetime('now') "
+            ("UPDATE generation_runs SET moderation_status = 'publishing', "
+             "metadata = json_set(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, "
+             "'$.publish_recovery_guard', 1), updated_at = datetime('now') "
              "WHERE id = ? AND moderation_status IN ('approved', 'published') AND moderation_status = ?"),
             (run_id, expected_status),
         )
@@ -434,6 +436,8 @@ class GenerationRunsRepository:
         abandoned = await self._database.execute_write(
             "UPDATE generation_runs SET moderation_status = 'approved', updated_at = datetime('now') "
             "WHERE moderation_status = 'publishing' "
+            "AND COALESCE(json_extract(CASE WHEN json_valid(metadata) THEN metadata ELSE '{}' END, "
+            "'$.publish_recovery_guard'), 0) = 0 "
             "AND updated_at < datetime('now', '-10 minutes')",
         )
         return (cur.rowcount or 0) + (abandoned.rowcount or 0)

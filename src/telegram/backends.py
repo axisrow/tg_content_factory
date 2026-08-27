@@ -239,6 +239,15 @@ class TelegramTransportSession:
         if self._disconnect_on_close:
             await self._client.disconnect()
 
+    async def abort(self) -> None:
+        """Disconnect the underlying client, cancelling pending requests."""
+        disconnect = getattr(self._client, "disconnect", None)
+        if disconnect is None:
+            return
+        result = disconnect()
+        if inspect.isawaitable(result):
+            await result
+
     async def fetch_me(self) -> Any:
         return await self._run("telegram_fetch_me", self._client.get_me())
 
