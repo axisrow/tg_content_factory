@@ -85,13 +85,16 @@ class ChannelsRepository:
         )
         cur = await self._database.execute_write(
             """INSERT INTO channels (channel_id, title, username, channel_type, is_active,
-                                     about, linked_chat_id, has_comments, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     filtered_origin, about, linked_chat_id, has_comments, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(channel_id) DO UPDATE
                SET title=excluded.title, username=excluded.username,
                    channel_type=excluded.channel_type,
                    is_active=CASE WHEN channels.active_origin = 'human'
                                   THEN channels.is_active ELSE excluded.is_active END,
+                   filtered_origin=CASE WHEN channels.filtered_origin = 'human'
+                                       OR excluded.filtered_origin = 'human'
+                                       THEN 'human' ELSE excluded.filtered_origin END,
                    about=COALESCE(excluded.about, channels.about),
                    linked_chat_id=COALESCE(excluded.linked_chat_id, channels.linked_chat_id),
                    has_comments=CASE WHEN COALESCE(excluded.linked_chat_id, channels.linked_chat_id)
@@ -103,6 +106,7 @@ class ChannelsRepository:
                 channel.username,
                 channel.channel_type,
                 int(channel.is_active),
+                channel.filtered_origin,
                 channel.about,
                 channel.linked_chat_id,
                 int(channel.has_comments),

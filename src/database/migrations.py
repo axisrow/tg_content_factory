@@ -625,11 +625,23 @@ async def _ensure_initial_analyze(db: aiosqlite.Connection) -> None:
     )
 
 
-async def backfill_private_channel_provenance(db: aiosqlite.Connection) -> list[dict[str, object]]:
-    """Run the private-channel provenance backfill as one atomic migration."""
+async def backfill_private_channel_provenance(
+    db: aiosqlite.Connection,
+    *,
+    username_column_known: bool = True,
+) -> list[dict[str, object]]:
+    """Run the private-channel provenance backfill as one atomic migration.
+
+    When upgrading a database from before ``channels.username`` existed, a
+    repaired NULL in that column is not evidence that a channel is private.
+    Skip that ambiguous batch rather than marking every legacy channel as
+    owner-supplied.
+    """
     await db.execute("BEGIN IMMEDIATE")
     try:
-        result = await _backfill_private_channel_provenance(db)
+        result = await _backfill_private_channel_provenance(
+            db, username_column_known=username_column_known
+        )
         await db.execute("COMMIT")
         return result
     except Exception:
@@ -637,7 +649,11 @@ async def backfill_private_channel_provenance(db: aiosqlite.Connection) -> list[
         raise
 
 
-async def _backfill_private_channel_provenance(db: aiosqlite.Connection) -> list[dict[str, object]]:
+async def _backfill_private_channel_provenance(
+    db: aiosqlite.Connection,
+    *,
+    username_column_known: bool,
+) -> list[dict[str, object]]:
     """Mark legacy private channels as owner-supplied without changing filters.
 
     A private Telegram group has no public username, so its presence in the
@@ -653,6 +669,17 @@ async def _backfill_private_channel_provenance(db: aiosqlite.Connection) -> list
         (_PRIVATE_CHANNEL_PROVENANCE_MARKER,),
     )
     if await cur.fetchone():
+        return []
+
+    if not username_column_known:
+        logger.warning(
+            "Skipping private channel provenance backfill: legacy channels.username "
+            "was repaired with NULL values and private/public channels cannot be distinguished"
+        )
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')",
+            (_PRIVATE_CHANNEL_PROVENANCE_MARKER,),
+        )
         return []
 
     cur = await db.execute(
@@ -673,11 +700,13 @@ async def _backfill_private_channel_provenance(db: aiosqlite.Connection) -> list
     ]
 
     for row in rows:
-        await db.execute(
+        update_cur = await db.execute(
             "UPDATE channels SET filtered_origin = 'human' "
             "WHERE id = ? AND filtered_origin != 'human'",
             (row["id"],),
         )
+        if update_cur.rowcount != 1:
+            continue
         await db.execute(
             "INSERT INTO decisions "
             "(entity, entity_key, entity_name, field, old_value, new_value, origin, actor, reason) "
@@ -723,6 +752,9 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     """
     await _rebuild_collection_tasks_if_channel_id_notnull(db)
 
+    channels_columns_before_repair = await table_columns(db, "channels")
+    username_column_known = "username" in channels_columns_before_repair
+
     for table, columns in SCHEMA_REPAIR_COLUMNS.items():
         await ensure_columns(db, table, columns)
 
@@ -747,7 +779,9 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     # One-off: private channels are owner-supplied by construction. Do not
     # change ``is_filtered`` here; filtered private channels are reported for
     # explicit owner review instead (#1311).
-    await backfill_private_channel_provenance(db)
+    await backfill_private_channel_provenance(
+        db, username_column_known=username_column_known
+    )
 
     # One-off: fill message_reactions.date for rows that predate the column so
     # reaction analytics can filter by date without joining messages (#760).

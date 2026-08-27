@@ -204,6 +204,40 @@ async def test_run_migrations_adds_missing_columns_and_indexes(tmp_path):
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
+async def test_run_migrations_does_not_treat_repaired_username_as_private(tmp_path):
+    conn = await _connect(str(tmp_path / "legacy-no-username.db"))
+    try:
+        await conn.executescript(
+            """
+            CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE channels (
+                id INTEGER PRIMARY KEY,
+                channel_id INTEGER UNIQUE NOT NULL,
+                title TEXT,
+                is_filtered INTEGER DEFAULT 0,
+                filtered_origin TEXT NOT NULL DEFAULT 'auto'
+            );
+            """
+        )
+        await conn.execute(
+            "INSERT INTO channels (channel_id, title) VALUES (?, ?)",
+            (987654, "Legacy channel"),
+        )
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        cur = await conn.execute(
+            "SELECT filtered_origin FROM channels WHERE channel_id = ?", (987654,)
+        )
+        row = await cur.fetchone()
+        assert row["filtered_origin"] == "auto"
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
 async def test_run_migrations_dedupes_multiple_primary_accounts(tmp_path):
     """#733: a legacy DB corrupted with >1 primary account is collapsed to a
     single primary (lowest id wins) before the single-primary unique index is
