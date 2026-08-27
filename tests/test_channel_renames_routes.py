@@ -127,6 +127,7 @@ async def test_keep_accepted_still_filtered(tmp_path):
         assert ch.filtered_origin == "auto"
         history = await db.repos.decisions.history("channel", -100201, field="rename")
         assert history[0].reason == "rename review: accept rename"
+        assert (history[0].old_value, history[0].new_value) == ("old", "new")
     finally:
         await db.close()
 

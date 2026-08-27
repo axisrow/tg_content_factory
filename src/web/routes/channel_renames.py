@@ -49,6 +49,34 @@ def _rename_required_flags(event: dict) -> set[str]:
     return flags
 
 
+def _rename_decision_entries(event: dict) -> list[tuple[str, str, str]]:
+    """Return a rename journal entry with values from the changed field(s)."""
+    title_changed = event.get("old_title") != event.get("new_title")
+    username_changed = event.get("old_username") != event.get("new_username")
+    if title_changed and not username_changed:
+        old_value = event.get("old_title") or ""
+        new_value = event.get("new_title") or ""
+    elif username_changed and not title_changed:
+        old_value = event.get("old_username") or ""
+        new_value = event.get("new_username") or ""
+    elif title_changed or username_changed:
+        old_value = (
+            f"title={event.get('old_title') or ''}; "
+            f"username={event.get('old_username') or ''}"
+        )
+        new_value = (
+            f"title={event.get('new_title') or ''}; "
+            f"username={event.get('new_username') or ''}"
+        )
+    else:
+        old_value = new_value = ""
+    return [("rename", old_value, new_value)]
+
+
+class _RenameAlreadyDecidedError(Exception):
+    pass
+
+
 @router.post("/renames/{event_id}/filter")
 async def rename_event_filter(request: Request, event_id: int):
     """Keep channel in filter. Guarantees the final filtered state regardless
@@ -91,44 +119,57 @@ async def rename_event_keep(request: Request, event_id: int):
     channel = await db.get_channel_by_channel_id(event["channel_id"])
     if channel is None:
         # Channel was removed while the event was pending — just close the event.
-        await db.decide_rename_event(event_id, "keep")
-        return RedirectResponse(
-            url="/channels/renames?msg=rename_already_decided", status_code=303
-        )
+        try:
+            async with db.transaction():
+                if await db.decide_rename_event(event_id, "keep", commit=False) == 0:
+                    raise _RenameAlreadyDecidedError
+        except _RenameAlreadyDecidedError:
+            pass
+        return RedirectResponse(url="/channels/renames?msg=rename_already_decided", status_code=303)
 
     existing_flags = {
         f.strip() for f in (channel.filter_flags or "").split(",") if f.strip()
     }
     remaining = existing_flags - {"username_changed", "title_changed"}
 
-    if remaining:
-        # Other filter reasons exist -> channel stays filtered, rename flags stripped.
-        await db.repos.channels.set_channel_filter_flags(channel.id, ",".join(sorted(remaining)))
-        await db.repos.decisions.record(
-            entity="channel",
-            entity_key=channel.channel_id,
-            entity_name=channel.title,
-            field="rename",
-            old_value=event.get("old_username") or event.get("old_title") or "",
-            new_value=event.get("new_username") or event.get("new_title") or "",
-            origin="human",
-            actor="web",
-            reason="rename review: accept rename",
-        )
-        msg = "rename_accepted_still_filtered"
-    elif channel.id is not None:
-        # No other reasons -> channel returns to active collection.
-        await db.set_channel_filtered(
-            channel.id,
-            False,
-            origin="human",
-            actor="web",
-            reason="rename review: accept rename",
-        )
-        msg = "rename_accepted"
-    else:
-        # Should not happen but avoid NPE on malformed channel row.
-        msg = "rename_accepted"
+    try:
+        async with db.transaction():
+            if remaining:
+                # Other filter reasons exist -> channel stays filtered, rename flags stripped.
+                await db.repos.channels.set_channel_filter_flags(
+                    channel.id, ",".join(sorted(remaining)), commit=False
+                )
+                msg = "rename_accepted_still_filtered"
+            elif channel.id is not None:
+                # No other reasons -> channel returns to active collection.
+                await db.repos.channels.set_channel_filtered(
+                    channel.id,
+                    False,
+                    origin="human",
+                    actor="web",
+                    reason="rename review: accept rename",
+                    commit=False,
+                )
+                msg = "rename_accepted"
+            else:
+                # Should not happen but avoid NPE on malformed channel row.
+                msg = "rename_accepted"
 
-    await db.decide_rename_event(event_id, "keep")
+            for field, old_value, new_value in _rename_decision_entries(event):
+                await db.repos.decisions.record(
+                    entity="channel",
+                    entity_key=channel.channel_id,
+                    entity_name=channel.title,
+                    field=field,
+                    old_value=old_value,
+                    new_value=new_value,
+                    origin="human",
+                    actor="web",
+                    reason="rename review: accept rename",
+                    commit=False,
+                )
+            if await db.decide_rename_event(event_id, "keep", commit=False) == 0:
+                raise _RenameAlreadyDecidedError
+    except _RenameAlreadyDecidedError:
+        return RedirectResponse(url="/channels/renames?msg=rename_already_decided", status_code=303)
     return RedirectResponse(url=f"/channels/renames?msg={msg}", status_code=303)

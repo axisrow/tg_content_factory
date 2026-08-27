@@ -728,21 +728,29 @@ class Database:
         row = await cur.fetchone()
         return row[0] if row else 0
 
-    async def decide_rename_event(self, event_id: int, decision: str) -> None:
+    async def decide_rename_event(
+        self, event_id: int, decision: str, *, commit: bool = True
+    ) -> int:
         """Mark a rename event as decided (decision: 'filter' or 'keep').
 
         Only updates if the event has not already been decided, preventing
         overwrite of a previous decision in race conditions.
         """
         self._require()
-        await self.execute_write(
-            """
+        sql = """
             UPDATE channel_rename_events
             SET decision = ?, decided_at = datetime('now')
             WHERE id = ? AND decision IS NULL
-            """,
-            (decision, event_id),
-        )
+            """
+        if commit:
+            cur = await self.execute_write(sql, (decision, event_id))
+        else:
+            write_conn = self.db
+            assert write_conn is not None and write_conn.in_transaction, (
+                "Database.decide_rename_event(commit=False) requires an active transaction"
+            )
+            cur = await write_conn.execute(sql, (decision, event_id))
+        return cur.rowcount if cur.rowcount is not None else 0
 
     async def get_rename_event(self, event_id: int) -> dict | None:
         """Return a single rename event by id (including its decision), or None."""

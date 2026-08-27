@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 _PRIVATE_CHANNEL_PROVENANCE_MARKER = "_migration_private_channel_provenance_v1"
 _PRIVATE_CHANNEL_PROVENANCE_REASON = "backfill: private group, owner-supplied"
+_CHANNEL_USERNAME_REPAIR_MARKER = "_migration_channels_username_repaired_v1"
 
 
 ColumnSpec = Mapping[str, str]
@@ -28,7 +29,6 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
     },
     "channels": {
         "channel_type": "channel_type TEXT",
-        "username": "username TEXT",
         "is_filtered": "is_filtered INTEGER DEFAULT 0",
         "active_origin": "active_origin TEXT NOT NULL DEFAULT 'auto'",
         "filtered_origin": "filtered_origin TEXT NOT NULL DEFAULT 'auto'",
@@ -750,6 +750,34 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
 
     channels_columns_before_repair = await table_columns(db, "channels")
     username_column_known = "username" in channels_columns_before_repair
+    if channels_columns_before_repair and not username_column_known:
+        # Keep the schema repair and its marker in the same transaction. If a
+        # process is interrupted after ALTER TABLE, the next startup must not
+        # mistake the resulting NULLs for genuine private-channel usernames.
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS settings "
+                "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            await ensure_columns(db, "channels", {"username": "username TEXT"})
+            await db.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')",
+                (_CHANNEL_USERNAME_REPAIR_MARKER,),
+            )
+            await db.execute("COMMIT")
+        except Exception:
+            await db.execute("ROLLBACK")
+            raise
+    elif channels_columns_before_repair:
+        repair_cur = await db.execute(
+            "SELECT value FROM settings WHERE key = ? LIMIT 1",
+            (_CHANNEL_USERNAME_REPAIR_MARKER,),
+        )
+        username_column_known = not await repair_cur.fetchone()
+    else:
+        # The canonical schema below creates channels.username for a fresh DB.
+        username_column_known = True
 
     for table, columns in SCHEMA_REPAIR_COLUMNS.items():
         await ensure_columns(db, table, columns)
