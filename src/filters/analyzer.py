@@ -401,9 +401,10 @@ class ChannelAnalyzer:
                 if subs is not None and subs < min_subs:
                     to_filter.append((channel.channel_id, "low_subscriber_manual"))
 
-        if to_filter:
-            await self._database.set_channels_filtered_bulk(to_filter)
-        return len(to_filter)
+        if not to_filter:
+            return 0
+        result = await self._database.set_channels_filtered_bulk(to_filter)
+        return result.applied
 
     async def reset_filters(
         self,
