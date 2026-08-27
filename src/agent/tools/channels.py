@@ -185,7 +185,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             return exc.to_response()
         try:
             svc = ctx.channel_service()
-            await svc.toggle(pk)
+            await svc.toggle(pk, origin="human", actor="agent")
             ch = await db.get_channel_by_pk(pk)
             if ch:
                 status = "активен" if ch.is_active else "неактивен"
@@ -394,7 +394,7 @@ def register(db, client_pool, embedding_service, **kwargs):
         if not ch:
             return _text_response(f"Канал pk={pk} не найден.")
         try:
-            await db.set_channel_active(pk, False)
+            await db.set_channel_active(pk, False, origin="human", actor="agent")
             await db.set_channel_type(ch.channel_id, "unavailable")
             await db.repos.channels.clear_channel_review(pk)
             return _text_response(f"Канал '{name}' (pk={pk}) деактивирован и снят с ревью.")

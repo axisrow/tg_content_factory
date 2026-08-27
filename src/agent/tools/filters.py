@@ -128,7 +128,7 @@ def register(db, client_pool, embedding_service, **kwargs):
             from src.filters.analyzer import ChannelAnalyzer
 
             analyzer = ChannelAnalyzer(db)
-            count = await analyzer.reset_filters()
+            count = await analyzer.reset_filters(origin="human", actor="agent")
             return _text_response(f"Фильтры сброшены: {count} каналов разблокированы.")
         except Exception as e:
             return _text_response(f"Ошибка сброса фильтров: {e}")
@@ -149,7 +149,9 @@ def register(db, client_pool, embedding_service, **kwargs):
             if ch is None:
                 return _text_response(f"Канал pk={pk} не найден.")
             new_filtered = not ch.is_filtered
-            await db.set_channel_filtered(int(pk), new_filtered)
+            await db.set_channel_filtered(
+                int(pk), new_filtered, origin="human", actor="agent"
+            )
             status = "отфильтрован" if new_filtered else "разблокирован"
             return _text_response(f"Канал '{ch.title}' теперь {status}.")
         except Exception as e:

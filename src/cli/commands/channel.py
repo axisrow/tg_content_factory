@@ -293,7 +293,7 @@ async def toggle_impl(config_path: str, *, identifier: str) -> None:
             print(f"Channel '{identifier}' not found")
             return
         new_state = not ch.is_active
-        await db.set_channel_active(ch.id, new_state)
+        await db.set_channel_active(ch.id, new_state, origin="human", actor="cli")
         print(f"Channel '{ch.title}' (pk={ch.id}): active={new_state}")
     finally:
         await db.close()
@@ -326,7 +326,7 @@ async def review_confirm_impl(config_path: str, *, identifier: str) -> None:
         if not ch:
             print(f"Channel '{identifier}' not found")
             return
-        await db.set_channel_active(ch.id, False)
+        await db.set_channel_active(ch.id, False, origin="human", actor="cli")
         await db.set_channel_type(ch.channel_id, "unavailable")
         await db.repos.channels.clear_channel_review(ch.id)
         print(f"DEACTIVATED: {ch.title} (pk={ch.id}) — confirmed dead, removed from review")

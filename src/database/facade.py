@@ -761,7 +761,13 @@ class Database:
         return dict(row) if row else None
 
     async def ensure_channel_filtered(
-        self, channel_id: int, required_flags: Iterable[str]
+        self,
+        channel_id: int,
+        required_flags: Iterable[str],
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
     ) -> None:
         """Idempotently mark a channel as filtered and ensure required_flags
         are present in its filter_flags (merged with existing flags).
@@ -783,7 +789,10 @@ class Database:
         }
         merged = existing | set(required_flags)
         await self._channels.set_filtered_bulk(
-            [(channel_id, ",".join(sorted(merged)))]
+            [(channel_id, ",".join(sorted(merged)))],
+            origin=origin,
+            actor=actor,
+            reason=reason,
         )
 
     async def get_forum_topics(self, channel_id: int) -> list[dict]:

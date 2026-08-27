@@ -166,7 +166,7 @@ async def test_filter_ensures_state_even_after_manual_unfilter(tmp_path):
         event_id = await db.create_rename_event(-100203, "Old", "Old", "old", "new")
 
         # Manually unfilter the channel (simulates an admin poke).
-        await db.set_channel_filtered(pk, False)
+        await db.set_channel_filtered(pk, False, origin="human", actor="web")
         channels = await db.get_channels(include_filtered=True)
         pre = next(c for c in channels if c.channel_id == -100203)
         assert pre.is_filtered is False  # sanity

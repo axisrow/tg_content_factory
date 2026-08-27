@@ -891,7 +891,9 @@ class TestFilterToggle:
 
         out = capsys.readouterr().out
         assert "filtered" in out
-        db.set_channel_filtered.assert_awaited_once_with(1, True)
+        db.set_channel_filtered.assert_awaited_once_with(
+            1, True, origin="human", actor="cli"
+        )
 
     def test_toggle_marks_unfiltered(self, capsys):
         from src.cli.commands.filter import run
@@ -907,7 +909,9 @@ class TestFilterToggle:
 
         out = capsys.readouterr().out
         assert "unfiltered" in out
-        db.set_channel_filtered.assert_awaited_once_with(1, False)
+        db.set_channel_filtered.assert_awaited_once_with(
+            1, False, origin="human", actor="cli"
+        )
 
 
 class TestFilterReset:
@@ -926,7 +930,7 @@ class TestFilterReset:
 
         out = capsys.readouterr().out
         assert "reset" in out
-        analyzer.reset_filters.assert_awaited_once()
+        analyzer.reset_filters.assert_awaited_once_with(origin="human", actor="cli")
 
 
 class TestFilterPrecheck:

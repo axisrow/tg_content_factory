@@ -155,6 +155,9 @@ class TestToggleChannelTool:
             result = await handlers["toggle_channel"]({"pk": 1})
         assert "неактивен" in _text(result)
         assert "MyChan" in _text(result)
+        mock_svc.return_value.toggle.assert_awaited_once_with(
+            1, origin="human", actor="agent"
+        )
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
@@ -527,7 +530,9 @@ class TestChannelReviewTools:
         mock_db.repos.channels.clear_channel_review = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
         result = await handlers["confirm_channel_dead"]({"pk": 4, "confirm": True})
-        mock_db.set_channel_active.assert_awaited_once_with(4, False)
+        mock_db.set_channel_active.assert_awaited_once_with(
+            4, False, origin="human", actor="agent"
+        )
         mock_db.set_channel_type.assert_awaited_once_with(444, "unavailable")
         mock_db.repos.channels.clear_channel_review.assert_awaited_once_with(4)
         assert "деактивирован" in _text(result)

@@ -233,7 +233,7 @@ async def precheck_subscriber_ratio(request: Request) -> FilterRedirect:
 async def reset_filters(request: Request) -> FilterRedirect:
     db = deps.get_db(request)
     analyzer = ChannelAnalyzer(db)
-    await analyzer.reset_filters()
+    await analyzer.reset_filters(origin="human", actor="web")
     return manage_redirect(msg="filter_reset")
 
 
@@ -244,7 +244,9 @@ async def reset_filters_selected(request: Request) -> FilterRedirect:
     if not pks:
         return manage_redirect(error="no_filtered_channels")
     analyzer = ChannelAnalyzer(db)
-    count = await analyzer.reset_filters_for_pks(pks)
+    count = await analyzer.reset_filters_for_pks(
+        pks, origin="human", actor="web"
+    )
     return manage_redirect(msg="filter_reset_selected", count=count)
 
 
@@ -262,5 +264,7 @@ async def toggle_channel_filter(request: Request, pk: int) -> FilterRedirect:
     channel = await db.get_channel_by_pk(pk)
     if not channel:
         return channels_redirect(msg="channel_not_found")
-    await db.set_channel_filtered(pk, not channel.is_filtered)
+    await db.set_channel_filtered(
+        pk, not channel.is_filtered, origin="human", actor="web"
+    )
     return channels_redirect(msg="filter_toggled")
