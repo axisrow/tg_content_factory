@@ -626,6 +626,18 @@ async def _ensure_initial_analyze(db: aiosqlite.Connection) -> None:
 
 
 async def backfill_private_channel_provenance(db: aiosqlite.Connection) -> list[dict[str, object]]:
+    """Run the private-channel provenance backfill as one atomic migration."""
+    await db.execute("BEGIN IMMEDIATE")
+    try:
+        result = await _backfill_private_channel_provenance(db)
+        await db.execute("COMMIT")
+        return result
+    except Exception:
+        await db.execute("ROLLBACK")
+        raise
+
+
+async def _backfill_private_channel_provenance(db: aiosqlite.Connection) -> list[dict[str, object]]:
     """Mark legacy private channels as owner-supplied without changing filters.
 
     A private Telegram group has no public username, so its presence in the

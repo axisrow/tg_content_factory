@@ -103,8 +103,14 @@ async def rename_event_keep(request: Request, event_id: int):
 
     if remaining:
         # Other filter reasons exist -> channel stays filtered, rename flags stripped.
-        await db.set_channels_filtered_bulk(
-            [(channel.channel_id, ",".join(sorted(remaining)))],
+        await db.set_channel_filter_flags(channel.id, ",".join(sorted(remaining)))
+        await db.repos.decisions.record(
+            entity="channel",
+            entity_key=channel.channel_id,
+            entity_name=channel.title,
+            field="rename",
+            old_value=event.get("old_username") or event.get("old_title") or "",
+            new_value=event.get("new_username") or event.get("new_title") or "",
             origin="human",
             actor="web",
             reason="rename review: accept rename",

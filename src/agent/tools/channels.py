@@ -401,18 +401,22 @@ def register(db, client_pool, embedding_service, **kwargs):
                 new_value="0",
             )
             if origin == "human":
-                await db.repos.decisions.record(
-                    entity="channel",
-                    entity_key=ch.channel_id,
-                    entity_name=ch.title,
-                    field="needs_review",
-                    old_value=str(int(getattr(ch, "needs_review", False))),
-                    new_value="0",
-                    origin="human",
-                    actor="agent",
-                    reason="owner-confirmed review decision",
-                )
-            await db.repos.channels.clear_channel_review(pk)
+                async with db.transaction():
+                    await db.repos.decisions.record(
+                        entity="channel",
+                        entity_key=ch.channel_id,
+                        entity_name=ch.title,
+                        field="needs_review",
+                        old_value=str(int(getattr(ch, "needs_review", False))),
+                        new_value="0",
+                        origin="human",
+                        actor="agent",
+                        reason="owner-confirmed review decision",
+                        commit=False,
+                    )
+                    await db.repos.channels.clear_channel_review(pk, commit=False)
+            else:
+                await db.repos.channels.clear_channel_review(pk)
             return _text_response(f"Канал '{ch.title}' (pk={pk}) снят с ревью, остаётся активным.")
         except Exception as e:
             return _text_response(f"Ошибка снятия с ревью: {e}")
@@ -470,7 +474,12 @@ def register(db, client_pool, embedding_service, **kwargs):
                 old_value=str(int(ch.is_active)),
                 new_value="0",
             )
-            await db.set_channel_active(pk, False, origin=origin, actor="agent")
+            changed = await db.set_channel_active(pk, False, origin=origin, actor="agent")
+            if changed == 0:
+                return _text_response(
+                    f"Деактивация канала '{name}' подавлена: "
+                    "сохранено подтверждённое решение владельца."
+                )
             await db.set_channel_type(ch.channel_id, "unavailable")
             await db.repos.channels.clear_channel_review(pk)
             return _text_response(f"Канал '{name}' (pk={pk}) деактивирован и снят с ревью.")

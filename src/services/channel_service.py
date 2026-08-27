@@ -99,6 +99,7 @@ class ChannelService:
                 username=dialog["username"],
                 channel_type=dialog.get("channel_type"),
                 is_active=not dialog.get("deactivate", False),
+                filtered_origin="human" if not dialog.get("username") else "auto",
                 created_at=dialog.get("created_at"),
             )
             channel = channel_with_meta(channel, meta)

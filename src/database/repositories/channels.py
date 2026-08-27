@@ -362,14 +362,30 @@ class ChannelsRepository:
             (reason, pk),
         )
 
-    async def clear_channel_review(self, pk: int) -> None:
+    async def clear_channel_review(self, pk: int, *, commit: bool = True) -> None:
         """Clear the review flag (operator decided, or the channel resolved live again)."""
         assert self._database is not None, (
             "ChannelsRepository.clear_channel_review requires a Database reference"
         )
+        sql = "UPDATE channels SET needs_review = 0, review_reason = '' WHERE id = ?"
+        if commit:
+            await self._database.execute_write(sql, (pk,))
+            return
+        write_conn = self._database.db
+        assert write_conn is not None and write_conn.in_transaction, (
+            "ChannelsRepository.clear_channel_review(commit=False) requires an active "
+            "Database.transaction()"
+        )
+        await write_conn.execute(sql, (pk,))
+
+    async def set_channel_filter_flags(self, pk: int, flags: str) -> None:
+        """Update filter reasons without changing their provenance."""
+        assert self._database is not None, (
+            "ChannelsRepository.set_channel_filter_flags requires a Database reference"
+        )
         await self._database.execute_write(
-            "UPDATE channels SET needs_review = 0, review_reason = '' WHERE id = ?",
-            (pk,),
+            "UPDATE channels SET is_filtered = 1, filter_flags = ? WHERE id = ?",
+            (flags, pk),
         )
 
     async def list_channels_for_review(self) -> list[Channel]:
