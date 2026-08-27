@@ -224,6 +224,8 @@ async def test_publish_service_keeps_delivery_when_client_release_fails():
 
 @pytest.mark.anyio
 async def test_publish_service_defers_release_cancellation_until_delivery_is_recorded():
+    from contextlib import suppress
+
     class SlowReleasePool(FakeClientPool):
         def __init__(self):
             super().__init__(should_succeed=True)
@@ -258,9 +260,9 @@ async def test_publish_service_defers_release_cancellation_until_delivery_is_rec
     task.cancel()
     await asyncio.sleep(0)
     pool.release_allowed.set()
-    results = await task
+    with suppress(asyncio.CancelledError):
+        await task
 
-    assert results[0].success is True
     assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
         "+1234567890:-1001234567890"
     ]

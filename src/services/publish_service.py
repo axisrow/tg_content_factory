@@ -18,10 +18,51 @@ logger = logging.getLogger(__name__)
 # and drain the local task before recording an unconfirmed delivery.
 SEND_TIMEOUT_SEC = 120.0
 SEND_CONFIRMATION_GRACE_SEC = 5.0
+CLIENT_RELEASE_TIMEOUT_SEC = 5.0
 
 
 class _PublishUncertaintyPersistenceError(RuntimeError):
     """The publish claim must remain held when cancellation cannot be recorded."""
+
+
+def _consume_release_task(task: asyncio.Task[Any]) -> None:
+    try:
+        task.result()
+    except BaseException:
+        pass
+
+
+async def _await_release_task(task: asyncio.Task[Any]) -> bool:
+    """Wait briefly for client cleanup without losing shutdown cancellation."""
+    cancelled = False
+    deadline = asyncio.get_running_loop().time() + CLIENT_RELEASE_TIMEOUT_SEC
+    while not task.done():
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            task.cancel()
+            task.add_done_callback(_consume_release_task)
+            logger.error("Timed out releasing Telegram client after %.1fs", CLIENT_RELEASE_TIMEOUT_SEC)
+            break
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=remaining)
+        except asyncio.CancelledError:
+            cancelled = True
+        except asyncio.TimeoutError:
+            task.cancel()
+            task.add_done_callback(_consume_release_task)
+            logger.error("Timed out releasing Telegram client after %.1fs", CLIENT_RELEASE_TIMEOUT_SEC)
+            break
+        except Exception:
+            break
+
+    if task.done():
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.warning("Telegram client release task was cancelled")
+        except Exception:
+            logger.exception("Failed to release Telegram client")
+    return cancelled
 
 
 async def _stop_send_task(task: asyncio.Task[Any], session: Any) -> None:
@@ -255,6 +296,9 @@ class PublishService:
             return PublishResult(success=False, error="client_pool not configured")
         acquired_phone: str | None = None
         session = None
+        delivery_confirmed = False
+        delivery_uncertain = False
+        release_cancelled = False
         try:
             # Publishing may need to abort a stalled transport.  The regular
             # pool acquisition can return a shared lease, so use an ephemeral
@@ -336,6 +380,7 @@ class PublishService:
                     # drain the local task before exposing the target as
                     # unconfirmed, so a manual retry cannot race a detached send.
                     await _stop_send_task(send_task, session)
+                    delivery_uncertain = True
                     logger.error(
                         "Timeout sending to %s:%s — delivery unconfirmed, target needs a manual check",
                         target.phone,
@@ -379,6 +424,7 @@ class PublishService:
                     ) from exc
                 raise
 
+            delivery_confirmed = True
             return PublishResult(
                 success=True,
                 message_id=msg.id if hasattr(msg, "id") else None,
@@ -416,27 +462,28 @@ class PublishService:
                 # until cleanup completes; ordinary cleanup errors are logged
                 # without changing the delivery result either.
                 release_task = asyncio.create_task(release_coro)
-                release_cancelled = False
-                while not release_task.done():
-                    try:
-                        await asyncio.shield(release_task)
-                    except asyncio.CancelledError:
-                        release_cancelled = True
-                    except Exception:
-                        # Inspect the task below so cleanup failures are logged
-                        # uniformly without escaping the delivery path.
-                        break
-                try:
-                    release_task.result()
-                except asyncio.CancelledError:
-                    logger.warning("Telegram client release was cancelled for %s", acquired_phone)
-                except Exception:
-                    logger.exception("Failed to release Telegram client for %s", acquired_phone)
+                release_cancelled = await _await_release_task(release_task)
                 if release_cancelled:
                     logger.warning(
                         "Deferred shutdown cancellation until Telegram delivery was recorded for %s",
                         acquired_phone,
                     )
+                    if delivery_confirmed or delivery_uncertain:
+                        key = _target_key(target)
+                        metadata = {
+                            "published_targets" if delivery_confirmed else "unconfirmed_targets": [key]
+                        }
+                        try:
+                            await self._db.repos.generation_runs.set_metadata(run.id, metadata)
+                        except asyncio.CancelledError as exc:
+                            raise _PublishUncertaintyPersistenceError(
+                                f"Cancellation interrupted persistence of delivered send for {key}"
+                            ) from exc
+                        except Exception as exc:
+                            raise _PublishUncertaintyPersistenceError(
+                                f"Could not persist delivered send for {key}"
+                            ) from exc
+                    raise asyncio.CancelledError
 
     async def _resolve_entity(
         self,
