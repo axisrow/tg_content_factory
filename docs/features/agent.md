@@ -22,22 +22,24 @@ ADK получает тот же реестр инструментов чере�
 
 ```bash
 pip install -e ".[adk]"
-TG_CONFIG_PATH=/path/to/config.yaml adk web src/agent
+TG_CONFIG_PATH=/path/to/config.yaml adk web adk
 ```
 
 В UI откройте вкладку **Eval**, создайте eval set и сохраните текущую сессию
 как eval case. После редактирования кейсов тот же набор можно запускать без UI:
 
 ```bash
-adk eval src/agent path/to/evalset.evalset.json --print_detailed_results
+adk eval adk/tg_content_factory path/to/evalset.evalset.json --print_detailed_results
 ```
 
-`src/agent/agent.py` — тонкий ADK entrypoint: он экспортирует `root_agent` и
+`adk/tg_content_factory/agent.py` — тонкий ADK entrypoint: он экспортирует `root_agent` и
 переиспользует MCP wiring из `AdkSdkBackend`. Dev UI запускается без
 in-process Telegram pool (`--no-pool`), поэтому database-backed tools доступны,
 а pool-dependent tools возвращают штатный ответ о недоступности. Eval runs
-следует выполнять с тестовыми данными и отдельным конфигом; это opt-in flow и
-не входит в обычный CI без установленного ADK и Google credentials.
+подхватывают сохранённый `agent_prompt_template` (переменные контекста без
+сессии заменяются пустыми значениями) и следует выполнять с тестовыми данными
+и отдельным конфигом. Это opt-in flow и не входит в обычный CI без
+установленного ADK и Google credentials.
 
 ## Запуск
 
