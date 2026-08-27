@@ -533,44 +533,93 @@ class Database:
         )
         await self._channels.update_channel_last_id(channel_id, last_id)
 
-    async def set_channel_active(self, pk: int, active: bool) -> None:
+    async def set_channel_active(
+        self,
+        pk: int,
+        active: bool,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> int:
         self._require()
         assert self._channels is not None, (
             "Database.set_channel_active requires initialized ChannelsRepository"
         )
-        await self._channels.set_channel_active(pk, active)
+        return await self._channels.set_channel_active(
+            pk, active, origin=origin, actor=actor, reason=reason
+        )
 
-    async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
+    async def set_channel_filtered(
+        self,
+        pk: int,
+        filtered: bool,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> int:
         self._require()
         assert self._channels is not None, (
             "Database.set_channel_filtered requires initialized ChannelsRepository"
         )
-        await self._channels.set_channel_filtered(pk, filtered)
+        return await self._channels.set_channel_filtered(
+            pk, filtered, origin=origin, actor=actor, reason=reason
+        )
 
     async def set_channels_filtered_bulk(
-        self, updates: list[tuple[int, str]], *, commit: bool = True
-    ) -> int:
+        self,
+        updates: list[tuple[int, str]],
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+        commit: bool = True,
+    ) -> tuple[int, int]:
         self._require()
         assert self._channels is not None, (
             "Database.set_channels_filtered_bulk requires initialized ChannelsRepository"
         )
-        return await self._channels.set_filtered_bulk(updates, commit=commit)
+        return await self._channels.set_filtered_bulk(
+            updates,
+            origin=origin,
+            actor=actor,
+            reason=reason,
+            commit=commit,
+        )
 
-    async def reset_all_channel_filters(self, *, commit: bool = True) -> int:
+    async def reset_all_channel_filters(
+        self,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+        commit: bool = True,
+    ) -> tuple[int, int]:
         self._require()
         assert self._channels is not None, (
             "Database.reset_all_channel_filters requires initialized ChannelsRepository"
         )
-        return await self._channels.reset_all_filters(commit=commit)
+        return await self._channels.reset_all_filters(
+            origin=origin, actor=actor, reason=reason, commit=commit
+        )
 
     async def reset_channel_filters_for_pks(
-        self, pks: list[int], *, commit: bool = True
-    ) -> int:
+        self,
+        pks: list[int],
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+        commit: bool = True,
+    ) -> tuple[int, int]:
         self._require()
         assert self._channels is not None, (
             "Database.reset_channel_filters_for_pks requires initialized ChannelsRepository"
         )
-        return await self._channels.reset_filters_for_pks(pks, commit=commit)
+        return await self._channels.reset_filters_for_pks(
+            pks, origin=origin, actor=actor, reason=reason, commit=commit
+        )
 
     async def set_channel_type(self, channel_id: int, channel_type: str) -> None:
         self._require()

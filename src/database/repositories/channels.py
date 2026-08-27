@@ -12,6 +12,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import aiosqlite
@@ -22,6 +23,37 @@ from src.utils.datetime import parse_datetime
 
 if TYPE_CHECKING:
     from src.database.facade import Database
+
+
+logger = logging.getLogger(__name__)
+
+
+class ChannelBulkUpdateResult(tuple[int, int]):
+    """Counts returned by a protected bulk channel update.
+
+    The first item is the number applied and the second is the number
+    suppressed by a human decision. Comparing the result with the old single
+    count remains supported for callers that only care about applied rows.
+    """
+
+    def __new__(cls, applied: int, suppressed: int):
+        return super().__new__(cls, (applied, suppressed))
+
+    @property
+    def applied(self) -> int:
+        return self[0]
+
+    @property
+    def suppressed(self) -> int:
+        return self[1]
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, int):
+            return self.applied == other
+        return super().__eq__(other)
+
+    def __bool__(self) -> bool:
+        return bool(self.applied)
 
 
 class ChannelsRepository:
@@ -215,12 +247,109 @@ class ChannelsRepository:
             (last_id, last_id, channel_id),
         )
 
-    async def set_channel_active(self, pk: int, active: bool) -> None:
-        """Включить/выключить отслеживание канала (неактивный не собирается)."""
+    async def _channel_row_for_decision(
+        self,
+        conn,
+        *,
+        pk: int | None = None,
+        channel_id: int | None = None,
+    ):
+        """Read the channel fields needed for a provenance entry on *conn*."""
+        if pk is not None:
+            cur = await conn.execute(
+                "SELECT id, channel_id, title, is_active, active_origin, "
+                "is_filtered, filtered_origin FROM channels WHERE id = ?",
+                (pk,),
+            )
+        else:
+            assert channel_id is not None
+            cur = await conn.execute(
+                "SELECT id, channel_id, title, is_active, active_origin, "
+                "is_filtered, filtered_origin FROM channels WHERE channel_id = ?",
+                (channel_id,),
+            )
+        return await cur.fetchone()
+
+    async def _record_channel_decision(
+        self,
+        *,
+        row,
+        field: str,
+        old_value: int,
+        new_value: int,
+        origin: str,
+        actor: str | None,
+        reason: str | None,
+    ) -> None:
+        assert self._database is not None
+        await self._database.repos.decisions.record(
+            entity="channel",
+            entity_key=row["channel_id"],
+            entity_name=row["title"],
+            field=field,
+            old_value=str(old_value),
+            new_value=str(new_value),
+            origin=origin,
+            actor=actor,
+            reason=reason,
+            commit=False,
+        )
+
+    @staticmethod
+    def _log_suppressed(row, *, field: str, new_value: int) -> None:
+        logger.info(
+            "Suppressed automatic channel decision: channel_id=%s field=%s "
+            "requested=%s; human decision is authoritative",
+            row["channel_id"] if row is not None else "unknown",
+            field,
+            new_value,
+        )
+
+    async def set_channel_active(
+        self,
+        pk: int,
+        active: bool,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> int:
+        """Включить/выключить канал, не затирая человеческое решение."""
         assert self._database is not None, (
             "ChannelsRepository.set_channel_active requires a Database reference"
         )
-        await self._database.execute_write("UPDATE channels SET is_active = ? WHERE id = ?", (int(active), pk))
+        async with self._database.transaction() as conn:
+            row = await self._channel_row_for_decision(conn, pk=pk) if origin == "human" else None
+            cur = await conn.execute(
+                "UPDATE channels SET is_active = ?, active_origin = ? "
+                "WHERE id = ? AND (? = 'human' OR active_origin != 'human')",
+                (int(active), origin, pk, origin),
+            )
+            rowcount = cur.rowcount if cur.rowcount is not None else 0
+            if rowcount == 0 and origin != "human":
+                row = await self._channel_row_for_decision(conn, pk=pk)
+                self._log_suppressed(row, field="is_active", new_value=int(active))
+                if row is not None and row["active_origin"] == "human":
+                    await self._record_channel_decision(
+                        row=row,
+                        field="is_active",
+                        old_value=int(row["is_active"]),
+                        new_value=int(active),
+                        origin=origin,
+                        actor=actor,
+                        reason=reason,
+                    )
+            elif rowcount > 0 and origin == "human" and row is not None:
+                await self._record_channel_decision(
+                    row=row,
+                    field="is_active",
+                    old_value=int(row["is_active"]),
+                    new_value=int(active),
+                    origin=origin,
+                    actor=actor,
+                    reason=reason,
+                )
+            return rowcount
 
     async def set_channel_review(self, pk: int, reason: str) -> None:
         """Flag a channel for human review (quarantine) — stays active until resolved."""
@@ -250,26 +379,64 @@ class ChannelsRepository:
         rows = await cur.fetchall()
         return [self._map_channel(row) for row in rows]
 
-    async def set_channel_filtered(self, pk: int, filtered: bool) -> None:
-        """Ручная (раз)фильтрация канала: ставит/снимает ``is_filtered`` с флагом ``filter_flags='manual'``."""
+    async def set_channel_filtered(
+        self,
+        pk: int,
+        filtered: bool,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> int:
+        """Изменить фильтрацию канала, не затирая человеческое решение."""
         assert self._database is not None, (
             "ChannelsRepository.set_channel_filtered requires a Database reference"
         )
-        if filtered:
-            await self._database.execute_write(
-                "UPDATE channels SET is_filtered = 1, filter_flags = 'manual' WHERE id = ?",
-                (pk,),
+        new_value = int(filtered)
+        filter_flags = "manual" if filtered else ""
+        async with self._database.transaction() as conn:
+            row = await self._channel_row_for_decision(conn, pk=pk) if origin == "human" else None
+            cur = await conn.execute(
+                "UPDATE channels SET is_filtered = ?, filtered_origin = ?, filter_flags = ? "
+                "WHERE id = ? AND (? = 'human' OR filtered_origin != 'human')",
+                (new_value, origin, filter_flags, pk, origin),
             )
-        else:
-            await self._database.execute_write(
-                "UPDATE channels SET is_filtered = 0, filter_flags = '' WHERE id = ?",
-                (pk,),
-            )
+            rowcount = cur.rowcount if cur.rowcount is not None else 0
+            if rowcount == 0 and origin != "human":
+                row = await self._channel_row_for_decision(conn, pk=pk)
+                self._log_suppressed(row, field="is_filtered", new_value=new_value)
+                if row is not None and row["filtered_origin"] == "human":
+                    await self._record_channel_decision(
+                        row=row,
+                        field="is_filtered",
+                        old_value=int(row["is_filtered"]),
+                        new_value=new_value,
+                        origin=origin,
+                        actor=actor,
+                        reason=reason,
+                    )
+            elif rowcount > 0 and origin == "human" and row is not None:
+                await self._record_channel_decision(
+                    row=row,
+                    field="is_filtered",
+                    old_value=int(row["is_filtered"]),
+                    new_value=new_value,
+                    origin=origin,
+                    actor=actor,
+                    reason=reason,
+                )
+            return rowcount
 
     async def set_filtered_bulk(
-        self, updates: list[tuple[int, str]], *, commit: bool = True
-    ) -> int:
-        """Массово пометить каналы отфильтрованными по ``(channel_id, flags_csv)``; вернуть число изменённых строк.
+        self,
+        updates: list[tuple[int, str]],
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+        commit: bool = True,
+    ) -> ChannelBulkUpdateResult:
+        """Массово пометить каналы; вернуть ``(применено, подавлено)``.
 
         С ``commit=True`` владеет транзакцией сам (#569); с ``commit=False`` пишет
         на write-соединение внутри уже открытой транзакции вызывающего — см.
@@ -279,7 +446,7 @@ class ChannelsRepository:
             "ChannelsRepository.set_filtered_bulk requires a Database reference"
         )
         if not updates:
-            return 0
+            return ChannelBulkUpdateResult(0, 0)
         # When commit=False, the caller already holds a Database.transaction()
         # block on the WRITE connection and owns the commit — we MUST write on
         # that same write connection (self._database.db) so our rows land in the
@@ -292,17 +459,14 @@ class ChannelsRepository:
                 "ChannelsRepository.set_filtered_bulk requires a Database reference "
                 "when commit=True"
             )
-            updated_rows = 0
             async with self._database.transaction() as conn:
-                for channel_id, flags_csv in updates:
-                    cur = await conn.execute(
-                        "UPDATE channels SET is_filtered = 1, filter_flags = ? WHERE channel_id = ?",
-                        (flags_csv, channel_id),
-                    )
-                    rowcount = cur.rowcount if cur.rowcount is not None else 0
-                    if rowcount > 0:
-                        updated_rows += rowcount
-            return updated_rows
+                return await self._set_filtered_bulk_in_transaction(
+                    conn,
+                    updates,
+                    origin=origin,
+                    actor=actor,
+                    reason=reason,
+                )
         db = self._database
         write_conn = db.db
         assert write_conn is not None, (
@@ -317,29 +481,83 @@ class ChannelsRepository:
             "ChannelsRepository.set_filtered_bulk(commit=False) must run inside a "
             "caller-owned Database.transaction() block (write-lock invariant #569)"
         )
-        updated_rows = 0
+        return await self._set_filtered_bulk_in_transaction(
+            write_conn,
+            updates,
+            origin=origin,
+            actor=actor,
+            reason=reason,
+        )
+
+    async def _set_filtered_bulk_in_transaction(
+        self,
+        conn,
+        updates: list[tuple[int, str]],
+        *,
+        origin: str,
+        actor: str | None,
+        reason: str | None,
+    ) -> ChannelBulkUpdateResult:
+        applied = 0
+        suppressed = 0
         for channel_id, flags_csv in updates:
-            cur = await write_conn.execute(
-                "UPDATE channels SET is_filtered = 1, filter_flags = ? WHERE channel_id = ?",
-                (flags_csv, channel_id),
+            row = (
+                await self._channel_row_for_decision(conn, channel_id=channel_id)
+                if origin == "human"
+                else None
+            )
+            cur = await conn.execute(
+                "UPDATE channels SET is_filtered = 1, filtered_origin = ?, filter_flags = ? "
+                "WHERE channel_id = ? AND (? = 'human' OR filtered_origin != 'human')",
+                (origin, flags_csv, channel_id, origin),
             )
             rowcount = cur.rowcount if cur.rowcount is not None else 0
             if rowcount > 0:
-                updated_rows += rowcount
-        return updated_rows
+                applied += rowcount
+                if origin == "human" and row is not None:
+                    await self._record_channel_decision(
+                        row=row,
+                        field="is_filtered",
+                        old_value=int(row["is_filtered"]),
+                        new_value=1,
+                        origin=origin,
+                        actor=actor,
+                        reason=reason,
+                    )
+            elif origin != "human":
+                row = await self._channel_row_for_decision(conn, channel_id=channel_id)
+                if row is not None and row["filtered_origin"] == "human":
+                    suppressed += 1
+                    self._log_suppressed(row, field="is_filtered", new_value=1)
+                    await self._record_channel_decision(
+                        row=row,
+                        field="is_filtered",
+                        old_value=int(row["is_filtered"]),
+                        new_value=1,
+                        origin=origin,
+                        actor=actor,
+                        reason=reason,
+                    )
+        return ChannelBulkUpdateResult(applied, suppressed)
 
-    async def reset_all_filters(self, *, commit: bool = True) -> int:
-        """Снять фильтрацию со всех каналов; вернуть число снятых. ``commit`` — как в :meth:`set_filtered_bulk`."""
+    async def reset_all_filters(
+        self,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+        commit: bool = True,
+    ) -> ChannelBulkUpdateResult:
+        """Снять фильтрацию; вернуть ``(применено, подавлено)``."""
         if commit:
             assert self._database is not None, (
                 "ChannelsRepository.reset_all_filters requires a Database reference "
                 "when commit=True"
             )
-            cur = await self._database.execute_write(
-                "UPDATE channels SET is_filtered = 0, filter_flags = ''"
-            )
-            rowcount = cur.rowcount if cur.rowcount is not None else 0
-            return rowcount if rowcount > 0 else 0
+            async with self._database.transaction() as conn:
+                return await self._reset_all_filters_in_transaction(
+                    conn, origin=origin, actor=actor, reason=reason
+                )
         # commit=False: write on the caller's open write transaction (see set_filtered_bulk).
         assert self._database is not None, (
             "ChannelsRepository.reset_all_filters requires a Database reference"
@@ -354,30 +572,84 @@ class ChannelsRepository:
             "ChannelsRepository.reset_all_filters(commit=False) must run inside a "
             "caller-owned Database.transaction() block (write-lock invariant #569)"
         )
-        cur = await write_conn.execute("UPDATE channels SET is_filtered = 0, filter_flags = ''")
-        rowcount = cur.rowcount if cur.rowcount is not None else 0
-        return rowcount if rowcount > 0 else 0
+        return await self._reset_all_filters_in_transaction(
+            write_conn, origin=origin, actor=actor, reason=reason
+        )
 
-    async def reset_filters_for_pks(self, pks: list[int], *, commit: bool = True) -> int:
-        """Снять фильтрацию только с указанных pk; вернуть число снятых. ``commit`` как в :meth:`set_filtered_bulk`."""
+    async def _reset_all_filters_in_transaction(
+        self,
+        conn,
+        *,
+        origin: str,
+        actor: str | None,
+        reason: str | None,
+    ) -> ChannelBulkUpdateResult:
+        rows = await self._channel_rows_for_decision(conn)
+        cur = await conn.execute(
+            "UPDATE channels SET is_filtered = 0, filtered_origin = ?, filter_flags = '' "
+            "WHERE (? = 'human' OR filtered_origin != 'human')",
+            (origin, origin),
+        )
+        rowcount = cur.rowcount if cur.rowcount is not None else 0
+        suppressed = 0
+        if origin == "human":
+            for row in rows:
+                if rowcount > 0:
+                    await self._record_channel_decision(
+                        row=row,
+                        field="is_filtered",
+                        old_value=int(row["is_filtered"]),
+                        new_value=0,
+                        origin=origin,
+                        actor=actor,
+                        reason=reason,
+                    )
+        else:
+            for row in rows:
+                if row["filtered_origin"] == "human":
+                    suppressed += 1
+                    self._log_suppressed(row, field="is_filtered", new_value=0)
+                    await self._record_channel_decision(
+                        row=row,
+                        field="is_filtered",
+                        old_value=int(row["is_filtered"]),
+                        new_value=0,
+                        origin=origin,
+                        actor=actor,
+                        reason=reason,
+                    )
+        return ChannelBulkUpdateResult(rowcount if rowcount > 0 else 0, suppressed)
+
+    async def reset_filters_for_pks(
+        self,
+        pks: list[int],
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+        commit: bool = True,
+    ) -> ChannelBulkUpdateResult:
+        """Снять фильтрацию по pk; вернуть ``(применено, подавлено)``."""
         assert self._database is not None, (
             "ChannelsRepository.reset_filters_for_pks requires a Database reference"
         )
         if not pks:
-            return 0
+            return ChannelBulkUpdateResult(0, 0)
         placeholders = ",".join("?" * len(pks))
         sql = (
-            f"UPDATE channels SET is_filtered = 0, filter_flags = '' "
-            f"WHERE is_filtered = 1 AND id IN ({placeholders})"
+            f"UPDATE channels SET is_filtered = 0, filtered_origin = ?, filter_flags = '' "
+            f"WHERE is_filtered = 1 AND id IN ({placeholders}) "
+            "AND (? = 'human' OR filtered_origin != 'human')"
         )
         if commit:
             assert self._database is not None, (
                 "ChannelsRepository.reset_filters_for_pks requires a Database reference "
                 "when commit=True"
             )
-            cur = await self._database.execute_write(sql, tuple(pks))
-            rowcount = cur.rowcount if cur.rowcount is not None else 0
-            return rowcount if rowcount > 0 else 0
+            async with self._database.transaction() as conn:
+                return await self._reset_filters_for_pks_in_transaction(
+                    conn, pks, sql, origin=origin, actor=actor, reason=reason
+                )
         # commit=False: write on the caller's open write transaction (see set_filtered_bulk).
         db = self._database
         write_conn = db.db
@@ -389,9 +661,50 @@ class ChannelsRepository:
             "ChannelsRepository.reset_filters_for_pks(commit=False) must run inside a "
             "caller-owned Database.transaction() block (write-lock invariant #569)"
         )
-        cur = await write_conn.execute(sql, tuple(pks))
+        return await self._reset_filters_for_pks_in_transaction(
+            write_conn, pks, sql, origin=origin, actor=actor, reason=reason
+        )
+
+    async def _channel_rows_for_decision(self, conn):
+        cur = await conn.execute(
+            "SELECT id, channel_id, title, is_active, active_origin, "
+            "is_filtered, filtered_origin FROM channels"
+        )
+        return await cur.fetchall()
+
+    async def _reset_filters_for_pks_in_transaction(
+        self,
+        conn,
+        pks: list[int],
+        sql: str,
+        *,
+        origin: str,
+        actor: str | None,
+        reason: str | None,
+    ) -> ChannelBulkUpdateResult:
+        rows = await self._channel_rows_for_decision(conn)
+        params = (origin, *pks, origin)
+        cur = await conn.execute(sql, params)
         rowcount = cur.rowcount if cur.rowcount is not None else 0
-        return rowcount if rowcount > 0 else 0
+        selected = {pk for pk in pks}
+        suppressed = 0
+        for row in rows:
+            if row["id"] not in selected or not row["is_filtered"]:
+                continue
+            if origin == "human" or row["filtered_origin"] == "human":
+                if origin != "human":
+                    suppressed += 1
+                    self._log_suppressed(row, field="is_filtered", new_value=0)
+                await self._record_channel_decision(
+                    row=row,
+                    field="is_filtered",
+                    old_value=int(row["is_filtered"]),
+                    new_value=0,
+                    origin=origin,
+                    actor=actor,
+                    reason=reason,
+                )
+        return ChannelBulkUpdateResult(rowcount if rowcount > 0 else 0, suppressed)
 
     async def set_channel_type(self, channel_id: int, channel_type: str) -> None:
         """Обновить тип канала (channel/supergroup/group/…) по Telegram ``channel_id``."""

@@ -146,9 +146,19 @@ class _ChannelOps:
         """Канал по Telegram `channel_id`, либо None."""
         return await self.channels.get_channel_by_channel_id(channel_id)
 
-    async def set_active(self, pk: int, active: bool) -> None:
+    async def set_active(
+        self,
+        pk: int,
+        active: bool,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+    ) -> int:
         """Включить/выключить канал по pk."""
-        await self.channels.set_channel_active(pk, active)
+        return await self.channels.set_channel_active(
+            pk, active, origin=origin, actor=actor, reason=reason
+        )
 
     async def set_type(self, channel_id: int, channel_type: str) -> None:
         """Задать тип канала (channel/supergroup/...) по Telegram `channel_id`."""
@@ -172,14 +182,32 @@ class _ChannelOps:
         self,
         updates: list[tuple[int, str]],
         *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
         commit: bool = True,
-    ) -> int:
-        """Пакетно проставить флаги фильтрации каналам `(channel_id, flags_csv)`; вернуть число изменённых."""
-        return await self.channels.set_filtered_bulk(updates, commit=commit)
+    ) -> tuple[int, int]:
+        """Пакетно проставить флаги: вернуть ``(применено, подавлено)``."""
+        return await self.channels.set_filtered_bulk(
+            updates,
+            origin=origin,
+            actor=actor,
+            reason=reason,
+            commit=commit,
+        )
 
-    async def reset_all_filters(self, *, commit: bool = True) -> int:
-        """Снять фильтрацию со всех каналов; вернуть число сброшенных."""
-        return await self.channels.reset_all_filters(commit=commit)
+    async def reset_all_filters(
+        self,
+        *,
+        origin: str = "auto",
+        actor: str | None = None,
+        reason: str | None = None,
+        commit: bool = True,
+    ) -> tuple[int, int]:
+        """Снять фильтрацию: вернуть ``(применено, подавлено)``."""
+        return await self.channels.reset_all_filters(
+            origin=origin, actor=actor, reason=reason, commit=commit
+        )
 
 
 class _CollectionTaskCreateOps:

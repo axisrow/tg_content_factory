@@ -361,7 +361,9 @@ class ChannelAnalyzer:
         async with self._database.transaction():
             await self._database.reset_all_channel_filters(commit=False)
             if updates:
-                count = await self._database.set_channels_filtered_bulk(updates, commit=False)
+                count, _suppressed = await self._database.set_channels_filtered_bulk(
+                    updates, commit=False
+                )
         return count
 
     async def precheck_subscriber_ratio(self) -> int:
@@ -404,7 +406,7 @@ class ChannelAnalyzer:
         return len(to_filter)
 
     async def reset_filters(self) -> int:
-        return await self._database.reset_all_channel_filters()
+        return (await self._database.reset_all_channel_filters())[0]
 
     async def reset_filters_for_pks(self, pks: list[int]) -> int:
-        return await self._database.reset_channel_filters_for_pks(pks)
+        return (await self._database.reset_channel_filters_for_pks(pks))[0]
