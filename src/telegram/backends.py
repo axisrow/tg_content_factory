@@ -10,6 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from telethon import TelegramClient
+from telethon.tl.functions.messages import GetDialogsRequest
 from telethon_cli import runtime as telethon_cli_runtime
 from telethon_cli.errors import CLIError
 
@@ -52,6 +53,11 @@ class _DialogRequestGateClient:
         return getattr(self._client, name)
 
     def __call__(self, request: Any) -> Any:
+        # Telethon keeps this client on emitted Dialog/Draft/Message objects.
+        # Those objects may later use the client for unrelated requests; only
+        # the iterator's GetDialogsRequest pages belong to this page budget.
+        if not isinstance(request, GetDialogsRequest):
+            return self._client(request)
         awaitable = self._client(request)
         return self._session._run(
             self._operation,
