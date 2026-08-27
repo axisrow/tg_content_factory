@@ -510,7 +510,12 @@ async def refresh_types_impl(config_path: str) -> None:
             # Definitive not-found → deactivate; transient None → skip and
             # leave active (audit #835/8; old `if info is False` was dead).
             if info and info.get("gone"):
-                await db.set_channel_active(ch.id, False)
+                if await db.set_channel_active(ch.id, False) == 0:
+                    # An operator's explicit active decision suppresses the
+                    # automatic deactivation. Do not report it as applied or
+                    # overwrite the channel type with ``unavailable``.
+                    failed += 1
+                    continue
                 await db.set_channel_type(ch.channel_id, "unavailable")
                 print(
                     f"DEACTIVATED: {ch.title} (@{ch.username or ch.channel_id}) — not found"
@@ -522,7 +527,11 @@ async def refresh_types_impl(config_path: str) -> None:
                 failed += 1
                 continue
             if info.get("deactivate"):
-                await db.set_channel_active(ch.id, False)
+                if await db.set_channel_active(ch.id, False) == 0:
+                    # The automatic decision was suppressed by an operator
+                    # decision; leave the existing type and report a skip.
+                    failed += 1
+                    continue
                 await db.set_channel_type(ch.channel_id, info["channel_type"])
                 print(f"DEACTIVATED ({info['channel_type']}): {ch.title}")
                 deactivated += 1
