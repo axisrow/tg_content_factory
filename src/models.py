@@ -55,6 +55,7 @@ class Account(BaseModel):
     session_string: str
     is_primary: bool = False
     is_active: bool = True
+    active_origin: str = "auto"
     is_premium: bool = False
     flood_wait_until: datetime | None = None
     created_at: datetime | None = None
@@ -87,6 +88,7 @@ class AccountSummary(BaseModel):
     phone: str
     is_primary: bool = False
     is_active: bool = True
+    active_origin: str = "auto"
     is_premium: bool = False
     flood_wait_until: datetime | None = None
     created_at: datetime | None = None
@@ -130,7 +132,10 @@ class Channel(BaseModel):
     username: str | None = None
     channel_type: str | None = None  # "channel"|"supergroup"|"gigagroup"|"group"|"unavailable"
     is_active: bool = True
+    active_origin: str = "auto"
     is_filtered: bool = False
+    filtered_origin: str = "auto"
+    approval_state: str = "approved"
     filter_flags: str = ""
     about: str | None = None
     linked_chat_id: int | None = None
@@ -143,6 +148,22 @@ class Channel(BaseModel):
     created_at: datetime | None = None
     message_count: int = 0
     tags: list[str] = []
+
+
+class Decision(BaseModel):
+    """An auditable decision made about an entity or setting."""
+
+    id: int | None = None
+    entity: str
+    entity_key: int | None = None
+    entity_name: str | None = None
+    field: str
+    old_value: str | None = None
+    new_value: str
+    origin: str
+    actor: str | None = None
+    reason: str | None = None
+    created_at: datetime | None = None
 
 
 class Message(BaseModel):
@@ -916,6 +937,7 @@ class GenerationRun(BaseModel):
     metadata: dict | None = None
     image_url: str | None = None
     moderation_status: str = "pending"
+    moderation_origin: str = "auto"
     quality_score: float | None = None
     quality_issues: list[str] | None = None
     variants: list[str] | None = None

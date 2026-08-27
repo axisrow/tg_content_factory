@@ -52,6 +52,10 @@ class GenerationRunsRepository:
                 row["moderation_status"] if "moderation_status" in row.keys() else "pending"
             )
             or "pending",
+            moderation_origin=(
+                row["moderation_origin"] if "moderation_origin" in row.keys() else "auto"
+            )
+            or "auto",
             quality_score=row["quality_score"] if "quality_score" in row.keys() else None,
             quality_issues=quality_issues,
             variants=variants,

@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     session_string TEXT NOT NULL,
     is_primary INTEGER DEFAULT 0,
     is_active INTEGER DEFAULT 1,
+    active_origin TEXT NOT NULL DEFAULT 'auto',
     flood_wait_until TEXT,
     is_premium INTEGER DEFAULT 0,
     created_at TEXT DEFAULT (datetime('now'))
@@ -20,10 +21,13 @@ CREATE TABLE IF NOT EXISTS channels (
     title TEXT,
     username TEXT,
     is_active INTEGER DEFAULT 1,
+    active_origin TEXT NOT NULL DEFAULT 'auto',
     last_collected_id INTEGER DEFAULT 0,
     added_at TEXT DEFAULT (datetime('now')),
     channel_type TEXT,
     is_filtered INTEGER DEFAULT 0,
+    filtered_origin TEXT NOT NULL DEFAULT 'auto',
+    approval_state TEXT NOT NULL DEFAULT 'approved',
     filter_flags TEXT DEFAULT '',
     about TEXT,
     linked_chat_id INTEGER,
@@ -69,6 +73,23 @@ CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS decisions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity      TEXT NOT NULL,
+    entity_key  INTEGER,
+    entity_name TEXT,
+    field       TEXT NOT NULL,
+    old_value   TEXT,
+    new_value   TEXT,
+    origin      TEXT NOT NULL,
+    actor       TEXT,
+    reason      TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_decisions_entity
+    ON decisions(entity, entity_key, field, id DESC);
 
 CREATE TABLE IF NOT EXISTS collection_tasks (
     id INTEGER PRIMARY KEY,
@@ -392,6 +413,7 @@ CREATE TABLE IF NOT EXISTS generation_runs (
     updated_at TEXT,
     image_url TEXT,
     moderation_status TEXT DEFAULT 'pending',
+    moderation_origin TEXT NOT NULL DEFAULT 'auto',
     published_at TEXT,
     quality_score REAL,
     quality_issues TEXT,
