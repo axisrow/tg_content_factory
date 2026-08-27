@@ -2919,6 +2919,47 @@ async def test_prefilter_broadcast_low_ratio(db):
 
 
 @pytest.mark.anyio
+async def test_prefilter_suppressed_for_human_unfiltered_channel_preserves_messages(db):
+    """A suppressed automatic pre-filter must not stop collection or purge messages."""
+    ch = Channel(
+        channel_id=-100209,
+        title="Human Unfiltered",
+        channel_type="channel",
+        last_collected_id=2,
+    )
+    pk = await db.add_channel(ch)
+    await db.set_channel_filtered(pk, False, origin="human")
+    await db.save_channel_stats(ChannelStats(channel_id=-100209, subscriber_count=1))
+    await db.insert_messages_batch(
+        [
+            Message(
+                channel_id=-100209,
+                message_id=i,
+                text="x",
+                date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            )
+            for i in range(1, 3)
+        ]
+    )
+    await db.set_setting("auto_delete_on_collect", "1")
+
+    mock_client = AsyncMock()
+    mock_client.get_entity = AsyncMock(return_value=SimpleNamespace())
+    mock_client.iter_messages = MagicMock(return_value=_AsyncIterEmpty())
+    pool = make_mock_pool(get_available_client=AsyncMock(return_value=(mock_client, "+7000")))
+    collector = Collector(pool, db, SchedulerConfig())
+
+    assert await collector._collect_channel(ch) == 0
+    mock_client.iter_messages.assert_called_once()
+
+    stored = await db.get_channel_by_pk(pk)
+    assert stored is not None and stored.is_filtered is False
+    cur = await db.execute("SELECT COUNT(*) FROM messages WHERE channel_id = ?", (-100209,))
+    row = await cur.fetchone()
+    assert row[0] == 2
+
+
+@pytest.mark.anyio
 async def test_prefilter_supergroup_low_ratio(db):
     """Supergroup with ratio < 0.02 is filtered before iter_messages."""
     ch = Channel(

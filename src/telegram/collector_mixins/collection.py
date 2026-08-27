@@ -1052,8 +1052,9 @@ class CollectionMixin:
     ) -> bool:
         """Pre-collection filtering before any messages are streamed: manual
         min-subscriber, subscriber/message ratio, and first-run cross-channel
-        duplicate precheck. Returns True to proceed, False when the channel was
-        filtered (caller returns). A precheck ``HandledFloodWaitError`` propagates
+        duplicate precheck. Returns True to proceed, False when a filter was
+        applied (caller returns); suppressed automatic decisions proceed.
+        A precheck ``HandledFloodWaitError`` propagates
         to ``_collect_channel``'s outer handler unchanged. Split out of
         ``_collect_channel`` (#923)."""
         # Превентивная фильтрация по subscriber_ratio до загрузки сообщений.
@@ -1063,17 +1064,18 @@ class CollectionMixin:
             subscriber_count = stats_list[0].subscriber_count if stats_list else None
             if subscriber_count is not None:
                 if min_subs > 0 and subscriber_count < min_subs:
-                    await self._db.set_channels_filtered_bulk(
+                    filter_result = await self._db.set_channels_filtered_bulk(
                         [(channel_id, "low_subscriber_manual")]
                     )
-                    logger.info(
-                        "Pre-filter: channel %d subscribers %d < %d, skipping",
-                        channel_id,
-                        subscriber_count,
-                        min_subs,
-                    )
-                    await self._maybe_auto_delete(channel_id)
-                    return False
+                    if filter_result.applied:
+                        logger.info(
+                            "Pre-filter: channel %d subscribers %d < %d, skipping",
+                            channel_id,
+                            subscriber_count,
+                            min_subs,
+                        )
+                        await self._maybe_auto_delete(channel_id)
+                        return False
                 cur = await self._db.execute(
                     "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
                     (channel_id,),
@@ -1092,17 +1094,18 @@ class CollectionMixin:
                     )
                     ratio = subscriber_count / message_count
                     if ratio < threshold:
-                        await self._db.set_channels_filtered_bulk(
+                        filter_result = await self._db.set_channels_filtered_bulk(
                             [(channel_id, "low_subscriber_ratio")]
                         )
-                        logger.info(
-                            "Pre-filter: channel %d ratio %.4f < %.2f, skipping",
-                            channel_id,
-                            ratio,
-                            threshold,
-                        )
-                        await self._maybe_auto_delete(channel_id)
-                        return False
+                        if filter_result.applied:
+                            logger.info(
+                                "Pre-filter: channel %d ratio %.4f < %.2f, skipping",
+                                channel_id,
+                                ratio,
+                                threshold,
+                            )
+                            await self._maybe_auto_delete(channel_id)
+                            return False
 
         # Pre-check: sample 10 posts to detect cross-channel duplicates.
         if is_first_run and not force:
@@ -1137,17 +1140,18 @@ class CollectionMixin:
                     channel_id, unique_prefixes
                 )
                 if matches / len(unique_prefixes) >= PRECHECK_CROSS_DUPE_RATIO:
-                    await self._db.set_channels_filtered_bulk(
+                    filter_result = await self._db.set_channels_filtered_bulk(
                         [(channel_id, "cross_channel_spam")]
                     )
-                    logger.info(
-                        "Pre-filter: channel %d has %d/%d cross-dupe messages, skipping",
-                        channel_id,
-                        matches,
-                        len(unique_prefixes),
-                    )
-                    await self._maybe_auto_delete(channel_id)
-                    return False
+                    if filter_result.applied:
+                        logger.info(
+                            "Pre-filter: channel %d has %d/%d cross-dupe messages, skipping",
+                            channel_id,
+                            matches,
+                            len(unique_prefixes),
+                        )
+                        await self._maybe_auto_delete(channel_id)
+                        return False
         return True
 
     async def _discover_phone_for_channel(
