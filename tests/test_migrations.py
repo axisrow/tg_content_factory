@@ -232,6 +232,10 @@ async def test_run_migrations_does_not_treat_repaired_username_as_private(tmp_pa
         )
         row = await cur.fetchone()
         assert row["filtered_origin"] == "auto"
+        marker = await conn.execute(
+            "SELECT value FROM settings WHERE key = '_migration_private_channel_provenance_v1'"
+        )
+        assert await marker.fetchone() is None
     finally:
         await conn.close()
 

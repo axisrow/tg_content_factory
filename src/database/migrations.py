@@ -676,10 +676,6 @@ async def _backfill_private_channel_provenance(
             "Skipping private channel provenance backfill: legacy channels.username "
             "was repaired with NULL values and private/public channels cannot be distinguished"
         )
-        await db.execute(
-            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')",
-            (_PRIVATE_CHANNEL_PROVENANCE_MARKER,),
-        )
         return []
 
     cur = await db.execute(
