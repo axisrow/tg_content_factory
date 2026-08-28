@@ -45,36 +45,69 @@ my-digest = "tg_plugin_digest:PLUGIN"
 ```
 
 `PLUGIN` — объект с тремя вещами: кто я, с чем совместим, что регистрирую.
+Публичный модуль — `src.plugin_api` (пакет ставится как `src*`, отдельного
+`tg_agent` пространства имён нет); он реэкспортирует `tool` и
+`text_response` из `src/agent/tools/_registry.py`.
 
 ```python
-from tg_agent.plugin_api import Plugin, PluginContext, tool, text_response
+from datetime import UTC, datetime, timedelta
+
+from src.plugin_api import Plugin, PluginContext, text_response, tool
+
+async def setup(ctx: PluginContext) -> None:
+    # один раз на контейнер, до register; здесь всё, что требует await
+    await ctx.db.execute_write(
+        "CREATE TABLE IF NOT EXISTS plugin_my_digest_runs (ts TEXT NOT NULL)"
+    )
 
 def register(ctx: PluginContext) -> list:
     @tool("digest_today", "Сводка постов за сегодня", {"limit": int}, category="read")
     async def digest_today(args):
-        rows = await ctx.db.repos.messages.get_recent(limit=args.get("limit", 20))
-        return text_response("\n".join(r.text[:80] for r in rows))
+        since = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+        rows = await ctx.db.repos.messages.get_messages_collected_since(
+            since, limit=args.get("limit", 20)
+        )
+        return text_response("\n".join((r.text or "")[:80] for r in rows))
     return [digest_today]
+
+async def shutdown() -> None:
+    pass  # отменить свои фоновые задачи, если были
 
 PLUGIN = Plugin(
     id="my-digest",          # стабильный ключ: имена таблиц, настроек, логов
     version="0.1.0",
-    requires_api="1",        # major-версия plugin_api, с которой совместим
-    register=register,
+    requires_api=1,          # major-версия plugin_api, с которой совместим
+    setup=setup,             # optional, async
+    register=register,       # required, sync
+    shutdown=shutdown,       # optional, async
 )
 ```
 
-Это весь контракт. `register` вызывается один раз на контейнер
-(см. §5), получает `PluginContext`, возвращает список инструментов.
+Три хука, потому что хост живёт в двух режимах: реестр инструментов
+собирается **синхронно** (`build_agent_tool_registry`), а таблицы и
+фоновые задачи требуют `await`. Поэтому:
+
+| Хук | Кто и когда вызывает |
+|---|---|
+| `setup(ctx)` | хост, `await`, один раз на контейнер **до** сборки реестра: в `build_container_with_templates` (веб/воркер) и в `_serve` MCP-сервера до `make_mcp_server` |
+| `register(ctx)` | `build_agent_tool_registry`, sync, сразу после цикла по `TOOL_MODULE_ORDER` — так плагины попадают и в агента, и в standalone MCP-сервер, которые оба строят реестр этой функцией |
+| `shutdown()` | хост, `await`: первым шагом `stop_container` — до закрытия пула и БД, которые плагин получил в `ctx`; в MCP-сервере — в `finally` до `db.close()` |
+
+Экземпляры активированных плагинов хранит `PluginRuntime` (поле
+`AppContainer.plugins`; в MCP-сервере — локальная переменная `_serve`),
+чтобы было у кого звать `shutdown`.
+
 Инструмент обязан указать `category` — `read` / `write` / `delete`;
-без категории он не регистрируется (иначе ACL агента его не увидит).
-Опционально `shutdown()` — если плагин запускал фоновые задачи.
+без категории он не регистрируется. Категории плагинных инструментов
+добавляются в ту же таблицу, из которой `permissions.py` строит
+`TOOL_CATEGORIES` и ACL, до загрузки access policy — иначе агент их не увидит.
 
 `PluginContext` — это те же объекты, что получают встроенные модули:
-`db`, `client_pool` (живой в воркере, snapshot в вебе), `config`,
-`logger` с префиксом `plugin_id`, плюс `extras` (`scheduler_manager`,
-`llm_provider_service`, …). Никаких «портов» и обёрток: код доверенный,
-обёртка только добавила бы слой, который надо поддерживать.
+`db`, `client_pool` (живой в воркере, snapshot в вебе, `None` в MCP без
+`--pool`), `config`, `logger` с префиксом `plugin_id`, плюс `extras`
+(`scheduler_manager`, `runtime_context`, `tool_context`, …). Никаких
+«портов» и обёрток: код доверенный, обёртка только добавила бы слой,
+который надо поддерживать.
 
 ## 4. Одна операция → все поверхности
 
@@ -113,7 +146,7 @@ PLUGIN = Plugin(
   не поддерживается.
 - **Откат:** `pip install` предыдущего sha + перезапуск.
 - **Данные плагина:** свои таблицы с префиксом `plugin_<id>_`, создаются
-  в `register` через `CREATE TABLE IF NOT EXISTS`. Таблицы ядра плагин не
+  в `setup` через `CREATE TABLE IF NOT EXISTS`. Таблицы ядра плагин не
   меняет. Откат данных при откате версии не обещается — механизм тот же,
   что и для всего остального: бэкап файла БД.
 - **Выключить:** список отключённых `id` в настройке `plugins_disabled`;
@@ -133,7 +166,7 @@ health-протокол приёмки обновлений. Всё это — �
 
 | # | Что | ~строк |
 |---|---|---|
-| 325.1 | `src/plugin_api.py` (`Plugin`, `PluginContext`, реэкспорт `tool`), discovery через entry points, вызов `register` в `build_container_with_templates`, `plugins_disabled`, пример плагина в `examples/plugin_digest/`, тест на контракт + правка golden-снапшота `TOOL_CATEGORIES` | ~200 |
+| 325.1 | `src/plugin_api.py` (`Plugin`, `PluginContext`, `PluginRuntime`, `PLUGIN_API_VERSION = 1`, реэкспорт `tool` и `text_response`); discovery через entry points с проверкой `requires_api` и `plugins_disabled`; `await setup` в `build_container_with_templates` и в `_serve` MCP-сервера; `register` в `build_agent_tool_registry` после `TOOL_MODULE_ORDER`; категории плагинов в `permissions.py`; `shutdown` в `stop_container` и в `finally` `_serve`; пример `examples/plugin_digest/` (код из §3, должен реально запускаться); тест на контракт + правка golden-снапшота `TOOL_CATEGORIES` | ~250 |
 | 325.2 | Генератор CLI-команды и JSON endpoint из схемы `tool`; `plugin list` в CLI и на веб-странице настроек | ~200 |
 | 325.3 | Страница в mkdocs: как написать, поставить, обновить плагин | ~100 |
 
