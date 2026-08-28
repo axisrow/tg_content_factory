@@ -744,6 +744,28 @@ class TestChannelAnalyzer:
         assert row["is_filtered"] == 0
         assert row["filtered_origin"] == "human"
 
+    async def test_analyzer_cycle_preserves_human_unfilter(self, db, raw_db):
+        """An automatic apply cycle must not re-filter an owner-unfiltered channel."""
+        await _insert_channel(raw_db, 1311, title="802", channel_type="channel")
+        await _insert_messages(raw_db, 1311, [f"message {i}" for i in range(100)])
+        await _insert_stats(raw_db, 1311, 10)
+        await db.set_setting("min_subscribers_filter", "20")
+        channel = await db.get_channel_by_channel_id(1311)
+        assert channel is not None and channel.id is not None
+        await db.set_channel_filtered(channel.id, True, origin="auto")
+        await db.set_channel_filtered(channel.id, False, origin="human")
+
+        analyzer = ChannelAnalyzer(db)
+        report = await analyzer.analyze_all()
+        assert any(r.channel_id == 1311 and r.is_filtered for r in report.results)
+        await analyzer.apply_filters(report)
+
+        cur = await raw_db.execute(
+            "SELECT is_filtered, filtered_origin FROM channels WHERE channel_id = 1311"
+        )
+        row = await cur.fetchone()
+        assert (row["is_filtered"], row["filtered_origin"]) == (0, "human")
+
     async def test_precheck_supergroup_healthy_ratio(self, db, raw_db):
         # @PattayaVse: subscriber_count=7039, message_count=100 -> 70.39 > 0.02 -> NOT filtered
         await raw_db.execute(

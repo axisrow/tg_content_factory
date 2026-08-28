@@ -85,13 +85,18 @@ class ChannelsRepository:
         )
         cur = await self._database.execute_write(
             """INSERT INTO channels (channel_id, title, username, channel_type, is_active,
-                                     about, linked_chat_id, has_comments, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     filtered_origin, username_state, about, linked_chat_id,
+                                     has_comments, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(channel_id) DO UPDATE
                SET title=excluded.title, username=excluded.username,
                    channel_type=excluded.channel_type,
                    is_active=CASE WHEN channels.active_origin = 'human'
                                   THEN channels.is_active ELSE excluded.is_active END,
+                   filtered_origin=CASE WHEN channels.filtered_origin = 'human'
+                                       OR excluded.filtered_origin = 'human'
+                                       THEN 'human' ELSE excluded.filtered_origin END,
+                   username_state=excluded.username_state,
                    about=COALESCE(excluded.about, channels.about),
                    linked_chat_id=COALESCE(excluded.linked_chat_id, channels.linked_chat_id),
                    has_comments=CASE WHEN COALESCE(excluded.linked_chat_id, channels.linked_chat_id)
@@ -103,6 +108,8 @@ class ChannelsRepository:
                 channel.username,
                 channel.channel_type,
                 int(channel.is_active),
+                channel.filtered_origin,
+                "known",
                 channel.about,
                 channel.linked_chat_id,
                 int(channel.has_comments),
@@ -119,6 +126,7 @@ class ChannelsRepository:
             channel_id=row["channel_id"],
             title=row["title"],
             username=row["username"],
+            username_state=row["username_state"] if "username_state" in keys else "known",
             channel_type=row["channel_type"],
             is_active=bool(row["is_active"]),
             active_origin=row["active_origin"] if "active_origin" in keys else "auto",
@@ -362,15 +370,37 @@ class ChannelsRepository:
             (reason, pk),
         )
 
-    async def clear_channel_review(self, pk: int) -> None:
+    async def clear_channel_review(self, pk: int, *, commit: bool = True) -> None:
         """Clear the review flag (operator decided, or the channel resolved live again)."""
         assert self._database is not None, (
             "ChannelsRepository.clear_channel_review requires a Database reference"
         )
-        await self._database.execute_write(
-            "UPDATE channels SET needs_review = 0, review_reason = '' WHERE id = ?",
-            (pk,),
+        sql = "UPDATE channels SET needs_review = 0, review_reason = '' WHERE id = ?"
+        if commit:
+            await self._database.execute_write(sql, (pk,))
+            return
+        write_conn = self._database.db
+        assert write_conn is not None and write_conn.in_transaction, (
+            "ChannelsRepository.clear_channel_review(commit=False) requires an active "
+            "Database.transaction()"
         )
+        await write_conn.execute(sql, (pk,))
+
+    async def set_channel_filter_flags(self, pk: int, flags: str, *, commit: bool = True) -> None:
+        """Update filter reasons without changing their provenance."""
+        assert self._database is not None, (
+            "ChannelsRepository.set_channel_filter_flags requires a Database reference"
+        )
+        sql = "UPDATE channels SET is_filtered = 1, filter_flags = ? WHERE id = ?"
+        if commit:
+            await self._database.execute_write(sql, (flags, pk))
+            return
+        write_conn = self._database.db
+        assert write_conn is not None and write_conn.in_transaction, (
+            "ChannelsRepository.set_channel_filter_flags(commit=False) requires an active "
+            "Database.transaction()"
+        )
+        await write_conn.execute(sql, (flags, pk))
 
     async def list_channels_for_review(self) -> list[Channel]:
         """Channels currently quarantined for human review (needs_review = 1)."""
@@ -388,6 +418,7 @@ class ChannelsRepository:
         origin: str = "auto",
         actor: str | None = None,
         reason: str | None = None,
+        commit: bool = True,
     ) -> int:
         """Изменить фильтрацию канала, не затирая человеческое решение."""
         assert self._database is not None, (
@@ -395,28 +426,54 @@ class ChannelsRepository:
         )
         new_value = int(filtered)
         filter_flags = "manual" if filtered else ""
-        async with self._database.transaction() as conn:
-            row = await self._channel_row_for_decision(conn, pk=pk) if origin == "human" else None
-            cur = await conn.execute(
-                "UPDATE channels SET is_filtered = ?, filtered_origin = ?, filter_flags = ? "
-                "WHERE id = ? AND (? = 'human' OR filtered_origin != 'human')",
-                (new_value, origin, filter_flags, pk, origin),
-            )
-            rowcount = cur.rowcount if cur.rowcount is not None else 0
-            if rowcount == 0 and origin != "human":
-                row = await self._channel_row_for_decision(conn, pk=pk)
-                self._log_suppressed(row, field="is_filtered", new_value=new_value)
-                if row is not None and row["filtered_origin"] == "human":
-                    await self._record_channel_decision(
-                        row=row,
-                        field="is_filtered",
-                        old_value=int(row["is_filtered"]),
-                        new_value=new_value,
-                        origin=origin,
-                        actor=actor,
-                        reason=reason,
-                    )
-            elif rowcount > 0 and origin == "human" and row is not None:
+        if commit:
+            async with self._database.transaction() as conn:
+                return await self._set_channel_filtered_in_transaction(
+                    conn,
+                    pk,
+                    new_value,
+                    filter_flags,
+                    origin=origin,
+                    actor=actor,
+                    reason=reason,
+                )
+        write_conn = self._database.db
+        assert write_conn is not None and write_conn.in_transaction, (
+            "ChannelsRepository.set_channel_filtered(commit=False) requires an active "
+            "Database.transaction()"
+        )
+        return await self._set_channel_filtered_in_transaction(
+            write_conn,
+            pk,
+            new_value,
+            filter_flags,
+            origin=origin,
+            actor=actor,
+            reason=reason,
+        )
+
+    async def _set_channel_filtered_in_transaction(
+        self,
+        conn,
+        pk: int,
+        new_value: int,
+        filter_flags: str,
+        *,
+        origin: str,
+        actor: str | None,
+        reason: str | None,
+    ) -> int:
+        row = await self._channel_row_for_decision(conn, pk=pk) if origin == "human" else None
+        cur = await conn.execute(
+            "UPDATE channels SET is_filtered = ?, filtered_origin = ?, filter_flags = ? "
+            "WHERE id = ? AND (? = 'human' OR filtered_origin != 'human')",
+            (new_value, origin, filter_flags, pk, origin),
+        )
+        rowcount = cur.rowcount if cur.rowcount is not None else 0
+        if rowcount == 0 and origin != "human":
+            row = await self._channel_row_for_decision(conn, pk=pk)
+            self._log_suppressed(row, field="is_filtered", new_value=new_value)
+            if row is not None and row["filtered_origin"] == "human":
                 await self._record_channel_decision(
                     row=row,
                     field="is_filtered",
@@ -426,7 +483,17 @@ class ChannelsRepository:
                     actor=actor,
                     reason=reason,
                 )
-            return rowcount
+        elif rowcount > 0 and origin == "human" and row is not None:
+            await self._record_channel_decision(
+                row=row,
+                field="is_filtered",
+                old_value=int(row["is_filtered"]),
+                new_value=new_value,
+                origin=origin,
+                actor=actor,
+                reason=reason,
+            )
+        return rowcount
 
     async def set_filtered_bulk(
         self,
@@ -725,7 +792,8 @@ class ChannelsRepository:
             "ChannelsRepository.update_channel_meta requires a Database reference"
         )
         await self._database.execute_write(
-            "UPDATE channels SET username = ?, title = ? WHERE channel_id = ?",
+            "UPDATE channels SET username = ?, username_state = 'known', title = ? "
+            "WHERE channel_id = ?",
             (username, title, channel_id),
         )
 

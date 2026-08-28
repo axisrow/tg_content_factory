@@ -12,6 +12,10 @@ from src.database.schema import SCHEMA_SQL
 
 logger = logging.getLogger(__name__)
 
+_PRIVATE_CHANNEL_PROVENANCE_MARKER = "_migration_private_channel_provenance_v1"
+_PRIVATE_CHANNEL_PROVENANCE_REASON = "backfill: private group, owner-supplied"
+_CHANNEL_USERNAME_REPAIR_MARKER = "_migration_channels_username_repaired_v1"
+
 
 ColumnSpec = Mapping[str, str]
 
@@ -25,6 +29,7 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
     },
     "channels": {
         "channel_type": "channel_type TEXT",
+        "username_state": "username_state TEXT NOT NULL DEFAULT 'known'",
         "is_filtered": "is_filtered INTEGER DEFAULT 0",
         "active_origin": "active_origin TEXT NOT NULL DEFAULT 'auto'",
         "filtered_origin": "filtered_origin TEXT NOT NULL DEFAULT 'auto'",
@@ -621,6 +626,135 @@ async def _ensure_initial_analyze(db: aiosqlite.Connection) -> None:
     )
 
 
+async def backfill_private_channel_provenance(
+    db: aiosqlite.Connection,
+    *,
+    username_column_known: bool = True,
+) -> list[dict[str, object]]:
+    """Run the private-channel provenance backfill as one atomic migration.
+
+    When upgrading a database from before ``channels.username`` existed, a
+    repaired NULL in that column is not evidence that a channel is private.
+    Skip that ambiguous batch rather than marking every legacy channel as
+    owner-supplied.
+    """
+    await db.execute("BEGIN IMMEDIATE")
+    try:
+        result = await _backfill_private_channel_provenance(
+            db, username_column_known=username_column_known
+        )
+        await db.execute("COMMIT")
+        return result
+    except Exception:
+        await db.execute("ROLLBACK")
+        raise
+
+
+async def _backfill_private_channel_provenance(
+    db: aiosqlite.Connection,
+    *,
+    username_column_known: bool,
+) -> list[dict[str, object]]:
+    """Mark legacy private channels as owner-supplied without changing filters.
+
+    A private Telegram group has no public username, so its presence in the
+    database is already evidence that the owner supplied it.  The migration is
+    guarded by a settings marker and also filters on ``filtered_origin`` so a
+    partially completed run cannot duplicate journal rows.  The returned rows
+    are the private channels that were filtered before the backfill; callers can
+    show those to the owner for an explicit decision instead of silently
+    unfiltering them.
+    """
+    cur = await db.execute(
+        "SELECT value FROM settings WHERE key = ? LIMIT 1",
+        (_PRIVATE_CHANNEL_PROVENANCE_MARKER,),
+    )
+    if await cur.fetchone():
+        return []
+
+    if not username_column_known:
+        unknown_cur = await db.execute(
+            "SELECT COUNT(*) FROM channels WHERE username_state = 'unknown'"
+        )
+        unknown_count = (await unknown_cur.fetchone())[0]
+        if unknown_count:
+            logger.info(
+                "Deferring private channel provenance for %d channels until "
+                "Telegram metadata resolves their usernames",
+                unknown_count,
+            )
+
+    cur = await db.execute(
+        "SELECT id, channel_id, title, is_filtered, filtered_origin "
+        "FROM channels WHERE (username IS NULL OR username = '') "
+        "AND username_state = 'known' AND filtered_origin != 'human' ORDER BY id ASC"
+    )
+    rows = await cur.fetchall()
+    filtered_private = [
+        {
+            "id": row["id"],
+            "channel_id": row["channel_id"],
+            "title": row["title"],
+            "is_filtered": bool(row["is_filtered"]),
+        }
+        for row in rows
+        if row["is_filtered"]
+    ]
+
+    for row in rows:
+        update_cur = await db.execute(
+            "UPDATE channels SET filtered_origin = 'human' "
+            "WHERE id = ? AND filtered_origin != 'human'",
+            (row["id"],),
+        )
+        if update_cur.rowcount != 1:
+            continue
+        await db.execute(
+            "INSERT INTO decisions "
+            "(entity, entity_key, entity_name, field, old_value, new_value, origin, actor, reason) "
+            "VALUES ('channel', ?, ?, 'filtered_origin', ?, 'human', 'human', 'migration', ?)",
+            (
+                row["channel_id"],
+                row["title"],
+                row["filtered_origin"],
+                _PRIVATE_CHANNEL_PROVENANCE_REASON,
+            ),
+        )
+
+    unknown_cur = await db.execute(
+        "SELECT COUNT(*) FROM channels WHERE username_state = 'unknown'"
+    )
+    unknown_count = (await unknown_cur.fetchone())[0]
+    if unknown_count:
+        logger.info(
+            "Private channel provenance backfill deferred: %d channels still have "
+            "unresolved usernames",
+            unknown_count,
+        )
+        return filtered_private
+
+    await db.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')",
+        (_PRIVATE_CHANNEL_PROVENANCE_MARKER,),
+    )
+    if filtered_private:
+        details = ", ".join(
+            f"{row['channel_id']} ({row['title'] or 'Без названия'})" for row in filtered_private
+        )
+        logger.warning(
+            "Private filtered channels require explicit owner decision (%d): %s",
+            len(filtered_private),
+            details,
+        )
+    logger.info(
+        "Private channel provenance backfill complete: %d channels marked human; "
+        "%d filtered channels left unchanged",
+        len(rows),
+        len(filtered_private),
+    )
+    return filtered_private
+
+
 async def run_migrations(db: aiosqlite.Connection) -> bool:
     """Repair the SQLite schema without rewriting existing user data.
 
@@ -631,6 +765,65 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
     retained where additive repair cannot preserve existing runtime contracts.
     """
     await _rebuild_collection_tasks_if_channel_id_notnull(db)
+
+    channels_columns_before_repair = await table_columns(db, "channels")
+    username_column_known = "username" in channels_columns_before_repair
+    username_state_column_known = "username_state" in channels_columns_before_repair
+    if channels_columns_before_repair and not username_column_known:
+        # Keep the schema repair and its marker in the same transaction. If a
+        # process is interrupted after ALTER TABLE, the next startup must not
+        # mistake the resulting NULLs for genuine private-channel usernames.
+        await db.execute("BEGIN IMMEDIATE")
+        try:
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS settings "
+                "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+            )
+            await ensure_columns(
+                db,
+                "channels",
+                {
+                    "username": "username TEXT",
+                    "username_state": "username_state TEXT NOT NULL DEFAULT 'unknown'",
+                },
+            )
+            await db.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')",
+                (_CHANNEL_USERNAME_REPAIR_MARKER,),
+            )
+            await db.execute("COMMIT")
+        except Exception:
+            await db.execute("ROLLBACK")
+            raise
+    elif channels_columns_before_repair:
+        # A partially initialized legacy database may already have the
+        # repaired channels table but not the settings table yet.
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS settings "
+            "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
+        repair_cur = await db.execute(
+            "SELECT value FROM settings WHERE key = ? LIMIT 1",
+            (_CHANNEL_USERNAME_REPAIR_MARKER,),
+        )
+        repair_pending = await repair_cur.fetchone()
+        username_column_known = not repair_pending
+        if repair_pending and not username_state_column_known:
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                await ensure_columns(
+                    db,
+                    "channels",
+                    {"username_state": "username_state TEXT NOT NULL DEFAULT 'unknown'"},
+                )
+                await db.execute("UPDATE channels SET username_state = 'unknown'")
+                await db.execute("COMMIT")
+            except Exception:
+                await db.execute("ROLLBACK")
+                raise
+    else:
+        # The canonical schema below creates channels.username for a fresh DB.
+        username_column_known = True
 
     for table, columns in SCHEMA_REPAIR_COLUMNS.items():
         await ensure_columns(db, table, columns)
@@ -652,6 +845,13 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
         await ensure_columns(db, table, columns)
 
     await ensure_indexes(db, SCHEMA_REPAIR_INDEXES)
+
+    # One-off: private channels are owner-supplied by construction. Do not
+    # change ``is_filtered`` here; filtered private channels are reported for
+    # explicit owner review instead (#1311).
+    await backfill_private_channel_provenance(
+        db, username_column_known=username_column_known
+    )
 
     # One-off: fill message_reactions.date for rows that predate the column so
     # reaction analytics can filter by date without joining messages (#760).

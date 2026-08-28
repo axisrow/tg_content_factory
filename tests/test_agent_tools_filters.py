@@ -164,13 +164,26 @@ class TestResetFiltersTool:
         with patch("src.filters.analyzer.ChannelAnalyzer") as mock_analyzer:
             mock_analyzer.return_value.reset_filters = AsyncMock(return_value=7)
             handlers = _get_tool_handlers(mock_db)
-            result = await handlers["reset_filters"]({"confirm": True})
+            result = await handlers["reset_filters"](
+                {"confirm": True, "on_behalf_of_user": True}
+            )
         text = _text(result)
         assert "7 каналов" in text
         assert "разблокированы" in text
         mock_analyzer.return_value.reset_filters.assert_awaited_once_with(
             origin="human", actor="agent"
         )
+
+    @pytest.mark.anyio
+    async def test_owner_claim_without_confirmation_is_auto_and_journaled(self, mock_db):
+        mock_db.repos.decisions.record = AsyncMock()
+        with patch("src.filters.analyzer.ChannelAnalyzer") as mock_analyzer:
+            mock_analyzer.return_value.reset_filters = AsyncMock(return_value=2)
+            handlers = _get_tool_handlers(mock_db)
+            await handlers["reset_filters"]({"on_behalf_of_user": True})
+        mock_analyzer.return_value.reset_filters.assert_not_awaited()
+        mock_db.repos.decisions.record.assert_awaited_once()
+        assert "without confirmation" in mock_db.repos.decisions.record.call_args.kwargs["reason"]
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
@@ -204,7 +217,9 @@ class TestToggleChannelFilterTool:
         mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
         mock_db.set_channel_filtered = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
-        result = await handlers["toggle_channel_filter"]({"pk": 1})
+        result = await handlers["toggle_channel_filter"](
+            {"pk": 1, "confirm": True, "on_behalf_of_user": True}
+        )
         text = _text(result)
         assert "NewsChan" in text
         assert "отфильтрован" in text
@@ -220,13 +235,31 @@ class TestToggleChannelFilterTool:
         mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
         mock_db.set_channel_filtered = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
-        result = await handlers["toggle_channel_filter"]({"pk": 2})
+        result = await handlers["toggle_channel_filter"](
+            {"pk": 2, "confirm": True, "on_behalf_of_user": True}
+        )
         text = _text(result)
         assert "SpamChan" in text
         assert "разблокирован" in text
         mock_db.set_channel_filtered.assert_awaited_once_with(
             2, False, origin="human", actor="agent"
         )
+
+    @pytest.mark.anyio
+    async def test_suppressed_change_reports_preserved_human_decision(self, mock_db):
+        ch = MagicMock()
+        ch.is_filtered = False
+        ch.title = "ProtectedChan"
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.set_channel_filtered = AsyncMock(return_value=0)
+        handlers = _get_tool_handlers(mock_db)
+
+        result = await handlers["toggle_channel_filter"](
+            {"pk": 1, "confirm": True, "on_behalf_of_user": False}
+        )
+
+        assert "подавлено" in _text(result)
+        assert "теперь" not in _text(result)
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):

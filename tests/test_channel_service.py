@@ -161,6 +161,26 @@ class TestAddByIdentifier:
 
         pool.resolve_channel.assert_awaited_once_with("@chan")
 
+    async def test_private_channel_is_marked_human_owned(self):
+        pool = _make_pool()
+        pool.resolve_channel = AsyncMock(
+            return_value={
+                "channel_id": -100,
+                "title": "Private",
+                "username": None,
+                "channel_type": "group",
+                "deactivate": False,
+                "created_at": None,
+            }
+        )
+        bundle = _make_bundle()
+        service = _make_service(bundle=bundle, pool=pool)
+
+        assert await service.add_by_identifier("-100") is True
+
+        channel: Channel = bundle.add_channel.call_args[0][0]
+        assert channel.filtered_origin == "human"
+
 
 class TestGetDialogsWithAddedFlags:
     async def test_marks_existing_channels(self):
@@ -247,6 +267,28 @@ class TestAddBulkByDialogIds:
             "skipped_ids": ["-999"],
         }
 
+    async def test_private_dialog_is_marked_human_owned(self):
+        pool = _make_pool()
+        pool.get_dialogs = AsyncMock(
+            return_value=[
+                {
+                    "channel_id": -100,
+                    "title": "Private",
+                    "username": None,
+                    "channel_type": "group",
+                    "deactivate": False,
+                    "created_at": None,
+                }
+            ]
+        )
+        bundle = _make_bundle()
+        service = _make_service(bundle=bundle, pool=pool)
+
+        await service.add_bulk_by_dialog_ids(["-100"])
+
+        channel: Channel = bundle.add_channel.call_args[0][0]
+        assert channel.filtered_origin == "human"
+
 
 class TestToggle:
     async def test_activates_inactive_channel(self):
@@ -272,6 +314,16 @@ class TestToggle:
         bundle.set_active.assert_awaited_once_with(
             7, False, origin="auto", actor=None, reason=None
         )
+
+    async def test_returns_suppressed_update_count(self):
+        ch = _make_channel(pk=8, is_active=True)
+        bundle = _make_bundle()
+        bundle.get_by_pk = AsyncMock(return_value=ch)
+        bundle.set_active = AsyncMock(return_value=0)
+
+        service = _make_service(bundle=bundle)
+
+        assert await service.toggle(8) == 0
 
     async def test_does_nothing_if_channel_not_found(self):
         bundle = _make_bundle()

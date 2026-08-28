@@ -200,6 +200,9 @@ CLI_REAL_TG_MANUAL_OR_EXCLUDED_COMMANDS: dict[tuple[str, ...], str] = {
     ("dialogs", "queue", "clear-pending"): "local telegram_commands queue cancel — DB-only mutation",
     ("dialogs", "queue", "status"): "list-only but depends on mutable telegram_commands queue",
     ("filter", "apply"): "local filter mutation",
+    ("filter", "backfill-private"): (
+        "local provenance migration/report; covered by migration and CLI unit tests"
+    ),
     ("filter", "hard-delete"): "local hard delete mutation",
     ("filter", "purge"): "local message deletion",
     ("filter", "purge-messages"): "local message deletion",
