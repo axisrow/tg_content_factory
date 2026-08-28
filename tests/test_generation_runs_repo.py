@@ -458,6 +458,7 @@ async def test_publish_claim_allows_only_one_caller(db):
     run = await repo.get(run_id)
     assert run is not None
     assert run.moderation_status == "publishing"
+    assert run.metadata["publish_recovery_guard"] == 1
     await repo.release_publish_claim(run_id, "approved")
 
 
@@ -475,3 +476,21 @@ async def test_reset_running_on_startup_recovers_expired_publish_claim(db):
     run = await repo.get(run_id)
     assert run is not None
     assert run.moderation_status == "approved"
+
+
+@pytest.mark.anyio
+async def test_reset_running_on_startup_does_not_recover_guarded_publish_claim(db):
+    """A claimed publish is fail-closed across restart recovery (#1383)."""
+    repo = db.repos.generation_runs
+    run_id = await repo.create_run(42, "prompt-template")
+    await repo.set_moderation_status(run_id, "approved")
+    assert await repo.claim_for_publish(run_id, "approved") is True
+    await db.execute_write(
+        "UPDATE generation_runs SET updated_at = datetime('now', '-11 minutes') WHERE id = ?",
+        (run_id,),
+    )
+
+    assert await repo.reset_running_on_startup() == 0
+    run = await repo.get(run_id)
+    assert run is not None
+    assert run.moderation_status == "publishing"

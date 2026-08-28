@@ -248,13 +248,23 @@ class ClientLifecycleMixin:
             return None
         return result
 
-    async def release_client(self, phone: str) -> None:
+    async def release_client(
+        self,
+        phone: str,
+        *,
+        session: TelegramTransportSession | None = None,
+    ) -> None:
         """Mark client as no longer in active use.
 
         Ownership ends at this method: callers invoke it in ``finally`` after
         every successful pool acquisition. The active-lease pop and
         exclusive-marker release stay under ``ClientPool._lock``; do not move
         the nested lease-pool call outside that critical section.
+
+        When ``session`` is supplied, release that exact lease rather than
+        relying on stack order. This is required for abortable ephemeral
+        operations: another caller may acquire a later lease for the same phone
+        before this caller finishes.
 
         When the lease stack mixes an ephemeral native lease
         (disconnect_on_release=True) and a direct-pool lease, prefer releasing the
@@ -265,14 +275,18 @@ class ClientLifecycleMixin:
         async with self._lock:
             stack = self._active_leases.get(phone)
             if stack:
-                # Strict LIFO: release the most-recently-acquired lease for this phone.
-                # release_client takes only a phone (not a lease handle), so it cannot know
-                # WHICH caller is finishing. Scanning the stack for any disconnect_on_release
-                # lease could pop a native lease still in use by another caller while a live
-                # direct lease sits on top — closing that session mid-operation (#868 review).
-                # The leak this scan targeted (native acquired LAST) is already covered by
-                # LIFO: a native lease acquired last is on top, so pop() tears it down promptly.
-                lease = stack.pop()
+                if session is None:
+                    # Legacy callers release by phone and retain the historical
+                    # LIFO behavior.
+                    lease = stack.pop()
+                else:
+                    for index in range(len(stack) - 1, -1, -1):
+                        if stack[index].session is session:
+                            lease = stack.pop(index)
+                            break
+                    if lease is None:
+                        logger.warning("Could not find exact lease for %s; leaving leases untouched", phone)
+                        return
                 if not stack:
                     self._active_leases.pop(phone, None)
             # Drop the exclusive _in_use marker in the SAME critical section that

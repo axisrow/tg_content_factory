@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -11,13 +12,86 @@ from src.telegram.backends import adapt_transport_session
 
 logger = logging.getLogger(__name__)
 
-# Upper bound on a single send to Telegram. Kept as the ONLY guard against an
-# in-flight request hanging forever on a dead connection — clients run with
-# connection_retries=None so nothing at the transport layer bounds it, and the
-# publish dispatcher awaits targets sequentially, so one hung send blocks every
-# later publish permanently. On timeout the request may already have reached
-# Telegram, so the target is marked UNCONFIRMED (not failed) — see publish_run.
+
+# Bound the time the sequential publish dispatcher waits for a send without
+# cancelling it at the first deadline. After a short confirmation window, stop
+# and drain the local task before recording an unconfirmed delivery.
 SEND_TIMEOUT_SEC = 120.0
+SEND_CONFIRMATION_GRACE_SEC = 5.0
+CLIENT_RELEASE_TIMEOUT_SEC = 5.0
+
+
+class _PublishUncertaintyPersistenceError(RuntimeError):
+    """The publish claim must remain held when cancellation cannot be recorded."""
+
+
+def _consume_release_task(task: asyncio.Task[Any]) -> None:
+    try:
+        task.result()
+    except BaseException:
+        pass
+
+
+async def _await_release_task(task: asyncio.Task[Any]) -> bool:
+    """Wait briefly for client cleanup without losing shutdown cancellation."""
+    cancelled = False
+    deadline = asyncio.get_running_loop().time() + CLIENT_RELEASE_TIMEOUT_SEC
+    while not task.done():
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            task.cancel()
+            task.add_done_callback(_consume_release_task)
+            logger.error("Timed out releasing Telegram client after %.1fs", CLIENT_RELEASE_TIMEOUT_SEC)
+            break
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=remaining)
+        except asyncio.CancelledError:
+            cancelled = True
+        except asyncio.TimeoutError:
+            task.cancel()
+            task.add_done_callback(_consume_release_task)
+            logger.error("Timed out releasing Telegram client after %.1fs", CLIENT_RELEASE_TIMEOUT_SEC)
+            break
+        except Exception:
+            break
+
+    if task.done():
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.warning("Telegram client release task was cancelled")
+        except Exception:
+            logger.exception("Failed to release Telegram client")
+    return cancelled
+
+
+async def _stop_send_task(task: asyncio.Task[Any], session: Any) -> bool:
+    """Stop local and transport work before a target can be manually retried."""
+    caller_cancelled = False
+    current_task = asyncio.current_task()
+    if not task.done():
+        task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        caller_cancelled = bool(current_task and current_task.cancelling())
+    except Exception:
+        # The send is already classified as unconfirmed; its eventual local
+        # exception must not replace that result or produce an unhandled warning.
+        pass
+    abort = getattr(session, "abort", None)
+    if callable(abort):
+        try:
+            await abort()
+        except asyncio.CancelledError:
+            caller_cancelled = caller_cancelled or bool(current_task and current_task.cancelling())
+            if not caller_cancelled:
+                logger.warning("Cancellation interrupted Telegram send abort")
+        except Exception:
+            # Uncertainty is still the safe outcome if transport cleanup itself
+            # fails; the operator must verify the target before retrying.
+            logger.warning("Could not abort timed-out Telegram send", exc_info=True)
+    return caller_cancelled
 
 
 class _PublishClientPool(Protocol):
@@ -28,7 +102,7 @@ class _PublishClientPool(Protocol):
         wait_for_flood: bool = False,
     ) -> tuple[Any, str] | None: ...
 
-    async def release_client(self, phone: str) -> None: ...
+    async def release_client(self, phone: str, *, session: Any | None = None) -> None: ...
 
     async def resolve_dialog_entity(
         self,
@@ -135,14 +209,11 @@ class PublishService:
             # targets that already succeeded, duplicating messages (issue #633).
             metadata = dict(run.metadata or {})
             delivered: set[str] = set(metadata.get("published_targets") or [])
-            # Targets whose send timed out AFTER the request may have reached
+            # A transport-level send timeout may happen AFTER the request reached
             # Telegram (issue #1239). The delivery is UNCONFIRMED — neither known-
             # delivered nor known-failed. A retry must NOT re-send these blindly (it
             # would duplicate the post if the send actually landed); instead they are
-            # surfaced for a manual check. The timeout is kept as the ONLY guard
-            # against a send hanging forever on a dead connection (clients run with
-            # connection_retries=None, so nothing else bounds an in-flight request)
-            # and blocking the sequential publish dispatcher for good.
+            # surfaced for a manual check.
             unconfirmed: set[str] = set(metadata.get("unconfirmed_targets") or [])
 
             results: list[PublishResult] = []
@@ -207,6 +278,12 @@ class PublishService:
 
             return results
 
+        except _PublishUncertaintyPersistenceError:
+            # Releasing the claim after losing the uncertainty marker would make
+            # the next publish retry a possibly delivered message. Leave the
+            # claim held so the run fails closed until an operator repairs it.
+            claim_active = False
+            raise
         finally:
             if claim_active:
                 await self._db.repos.generation_runs.release_publish_claim(
@@ -223,15 +300,32 @@ class PublishService:
         if pool is None:
             return PublishResult(success=False, error="client_pool not configured")
         acquired_phone: str | None = None
+        session = None
+        delivery_confirmed = False
+        delivery_uncertain = False
+        release_cancelled = False
         try:
-            result = await pool.get_client_by_phone(target.phone, wait_for_flood=True)
+            # Publishing may need to abort a stalled transport.  The regular
+            # pool acquisition can return a shared lease, so use an ephemeral
+            # native client when the pool exposes that operation; disconnecting
+            # it cannot tear down another caller's shared pooled session.
+            isolated_acquire = getattr(type(pool), "get_native_client_by_phone", None)
+            if callable(isolated_acquire):
+                result = await isolated_acquire(pool, target.phone, wait_for_flood=True)
+            else:
+                result = await pool.get_client_by_phone(target.phone, wait_for_flood=True)
             if result is None:
                 return PublishResult(
                     success=False,
                     error=f"No client for phone {target.phone}",
                 )
             client, acquired_phone = result
-            session = adapt_transport_session(client, disconnect_on_close=False)
+            session = adapt_transport_session(
+                client,
+                disconnect_on_close=False,
+                phone=acquired_phone,
+                pool=pool,
+            )
 
             entity = await self._resolve_entity(session, acquired_phone, target)
             if entity is None:
@@ -269,37 +363,88 @@ class PublishService:
                 def _send() -> Any:
                     return session.send_message(entity, run.generated_text, **send_kwargs)
 
-            # The send is bounded by SEND_TIMEOUT_SEC (issue #1239). The timeout
-            # is REQUIRED, not optional: with connection_retries=None a send on a
-            # dead connection would otherwise hang forever and, because the
-            # publish dispatcher awaits targets sequentially, freeze all later
-            # publishes permanently. BUT a client-side timeout cancels only the
-            # local wait — the MTProto request may already have reached Telegram
-            # and the post may be delivered. So a timeout HERE — scoped to ONLY
-            # the send, with every pre-send step (acquire, resolve, S3 re-sign)
-            # kept above — is NOT a known failure: it returns uncertain=True and
-            # publish_run records the target as UNCONFIRMED, so a retry surfaces it
-            # for a manual check instead of re-sending a possibly-delivered post.
+            # Keep the irreversible send alive in its own task. wait_for wraps
+            # shield(send_task), so its timeout bounds this dispatcher without
+            # cancelling the actual send (issue #1383). A short second wait lets
+            # a slow but successful request be recorded as delivered. If it still
+            # does not finish, the target is unconfirmed and cannot be retried
+            # blindly.
+            send_task = asyncio.create_task(_send())
             try:
-                msg = await asyncio.wait_for(_send(), timeout=SEND_TIMEOUT_SEC)
+                msg = await asyncio.wait_for(
+                    asyncio.shield(send_task), timeout=SEND_TIMEOUT_SEC
+                )
             except asyncio.TimeoutError:
-                # The send outran the timeout: the request may already be on its
-                # way to Telegram, so we cannot say whether the post was
-                # delivered. Mark the target uncertain so publish_run records it
-                # as UNCONFIRMED and a retry does NOT re-send it blindly (#1239).
-                logger.error(
-                    "Timeout sending to %s:%s — delivery unconfirmed, target needs a manual check",
-                    target.phone,
-                    target.dialog_id,
-                )
-                return PublishResult(
-                    success=False,
-                    error="Timeout — delivery unconfirmed",
-                    uncertain=True,
-                    phone=acquired_phone,
-                    dialog_id=target.dialog_id,
-                )
+                try:
+                    msg = await asyncio.wait_for(
+                        asyncio.shield(send_task), timeout=SEND_CONFIRMATION_GRACE_SEC
+                    )
+                except asyncio.TimeoutError:
+                    # A transport timeout gives no delivery guarantee: the
+                    # request may already be on its way to Telegram. Stop and
+                    # drain the local task before exposing the target as
+                    # unconfirmed, so a manual retry cannot race a detached send.
+                    send_cancelled = await _stop_send_task(send_task, session)
+                    delivery_uncertain = True
+                    logger.error(
+                        "Timeout sending to %s:%s — delivery unconfirmed, target needs a manual check",
+                        target.phone,
+                        target.dialog_id,
+                    )
+                    if send_cancelled:
+                        try:
+                            await self._db.repos.generation_runs.set_metadata(
+                                run.id, {"unconfirmed_targets": [_target_key(target)]}
+                            )
+                        except asyncio.CancelledError as exc:
+                            raise _PublishUncertaintyPersistenceError(
+                                f"Cancellation interrupted persistence of uncertain send for "
+                                f"{_target_key(target)}"
+                            ) from exc
+                        except Exception as exc:
+                            raise _PublishUncertaintyPersistenceError(
+                                f"Could not persist uncertain send for {_target_key(target)}"
+                            ) from exc
+                        raise asyncio.CancelledError from None
+                    return PublishResult(
+                        success=False,
+                        error="Timeout — delivery unconfirmed",
+                        uncertain=True,
+                        phone=acquired_phone,
+                        dialog_id=target.dialog_id,
+                    )
 
+            except asyncio.CancelledError:
+                # Dispatcher shutdown can cancel either shielded wait while the
+                # request is still in flight. Persist uncertainty before the
+                # publish claim is released, then propagate cancellation.
+                await _stop_send_task(send_task, session)
+                try:
+                    await self._db.repos.generation_runs.set_metadata(
+                        run.id, {"unconfirmed_targets": [_target_key(target)]}
+                    )
+                except asyncio.CancelledError as exc:
+                    logger.exception(
+                        "Cancellation interrupted persistence of cancelled send for %s:%s",
+                        target.phone,
+                        target.dialog_id,
+                    )
+                    raise _PublishUncertaintyPersistenceError(
+                        f"Cancellation interrupted persistence of cancelled send for "
+                        f"{target.phone}:{target.dialog_id}"
+                    ) from exc
+                except Exception as exc:
+                    logger.exception(
+                        "Could not persist cancelled send for %s:%s",
+                        target.phone,
+                        target.dialog_id,
+                    )
+                    raise _PublishUncertaintyPersistenceError(
+                        f"Could not persist cancelled send for {target.phone}:{target.dialog_id}"
+                    ) from exc
+                raise
+
+            delivery_confirmed = True
             return PublishResult(
                 success=True,
                 message_id=msg.id if hasattr(msg, "id") else None,
@@ -307,6 +452,8 @@ class PublishService:
                 dialog_id=target.dialog_id,
             )
 
+        except _PublishUncertaintyPersistenceError:
+            raise
         except asyncio.TimeoutError:
             # A timeout BEFORE the send (client acquisition / flood wait / entity
             # resolution). Nothing was dispatched, so this is a plain failure the
@@ -318,7 +465,45 @@ class PublishService:
             return PublishResult(success=False, error=str(e))
         finally:
             if acquired_phone is not None:
-                await pool.release_client(acquired_phone)
+                # New ClientPool releases the exact lease session; older test
+                # doubles and integrations still expose the phone-only API.
+                try:
+                    supports_session = "session" in inspect.signature(pool.release_client).parameters
+                except (TypeError, ValueError):
+                    supports_session = False
+                if supports_session and session is not None:
+                    release_coro = pool.release_client(acquired_phone, session=session)
+                else:
+                    release_coro = pool.release_client(acquired_phone)
+
+                # Do not let shutdown cancellation erase a known successful
+                # delivery before publish_run persists its progress.  The
+                # release runs in its own task so cancellation is deferred
+                # until cleanup completes; ordinary cleanup errors are logged
+                # without changing the delivery result either.
+                release_task = asyncio.create_task(release_coro)
+                release_cancelled = await _await_release_task(release_task)
+                if release_cancelled:
+                    logger.warning(
+                        "Deferred shutdown cancellation until Telegram delivery was recorded for %s",
+                        acquired_phone,
+                    )
+                    if delivery_confirmed or delivery_uncertain:
+                        key = _target_key(target)
+                        metadata = {
+                            "published_targets" if delivery_confirmed else "unconfirmed_targets": [key]
+                        }
+                        try:
+                            await self._db.repos.generation_runs.set_metadata(run.id, metadata)
+                        except asyncio.CancelledError as exc:
+                            raise _PublishUncertaintyPersistenceError(
+                                f"Cancellation interrupted persistence of delivered send for {key}"
+                            ) from exc
+                        except Exception as exc:
+                            raise _PublishUncertaintyPersistenceError(
+                                f"Could not persist delivered send for {key}"
+                            ) from exc
+                    raise asyncio.CancelledError
 
     async def _resolve_entity(
         self,
