@@ -242,6 +242,29 @@ async def test_run_migrations_does_not_treat_repaired_username_as_private(tmp_pa
 
 @pytest.mark.anyio
 @pytest.mark.aiosqlite_serial
+async def test_run_migrations_creates_settings_before_repair_marker_lookup(tmp_path):
+    conn = await _connect(str(tmp_path / "partial-schema.db"))
+    try:
+        await conn.execute(
+            "CREATE TABLE channels ("
+            "id INTEGER PRIMARY KEY, channel_id INTEGER UNIQUE NOT NULL, "
+            "title TEXT, username TEXT, filtered_origin TEXT NOT NULL DEFAULT 'auto'"
+            ")"
+        )
+        await conn.commit()
+
+        await run_migrations(conn)
+
+        cur = await conn.execute(
+            "SELECT value FROM settings WHERE key = '_migration_private_channel_provenance_v1'"
+        )
+        assert await cur.fetchone() is not None
+    finally:
+        await conn.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.aiosqlite_serial
 async def test_run_migrations_dedupes_multiple_primary_accounts(tmp_path):
     """#733: a legacy DB corrupted with >1 primary account is collapsed to a
     single primary (lowest id wins) before the single-primary unique index is

@@ -770,6 +770,12 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
             await db.execute("ROLLBACK")
             raise
     elif channels_columns_before_repair:
+        # A partially initialized legacy database may already have the
+        # repaired channels table but not the settings table yet.
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS settings "
+            "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
+        )
         repair_cur = await db.execute(
             "SELECT value FROM settings WHERE key = ? LIMIT 1",
             (_CHANNEL_USERNAME_REPAIR_MARKER,),
