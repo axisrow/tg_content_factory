@@ -152,12 +152,43 @@ class TestToggleChannelTool:
             mock_svc.return_value.toggle = AsyncMock()
             mock_db.get_channel_by_pk = AsyncMock(return_value=ch_after)
             handlers = _get_tool_handlers(mock_db)
-            result = await handlers["toggle_channel"]({"pk": 1})
+            result = await handlers["toggle_channel"](
+                {"pk": 1, "confirm": True, "on_behalf_of_user": True}
+            )
         assert "неактивен" in _text(result)
         assert "MyChan" in _text(result)
         mock_svc.return_value.toggle.assert_awaited_once_with(
             1, origin="human", actor="agent"
         )
+
+    @pytest.mark.anyio
+    async def test_suppressed_active_change_is_reported(self, mock_db):
+        ch = _make_channel(is_active=True, title="ProtectedChan")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.toggle = AsyncMock(return_value=0)
+            handlers = _get_tool_handlers(mock_db)
+            result = await handlers["toggle_channel"]({"pk": 1})
+
+        text = _text(result)
+        assert "подавлено" in text
+        assert "решение владельца" in text
+        assert "теперь" not in text
+
+    @pytest.mark.anyio
+    async def test_owner_claim_without_confirmation_is_auto_and_journaled(self, mock_db):
+        ch = _make_channel(is_active=True, title="NeedsReview")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.repos.decisions.record = AsyncMock()
+        with patch("src.services.channel_service.ChannelService") as mock_svc:
+            mock_svc.return_value.toggle = AsyncMock()
+            handlers = _get_tool_handlers(mock_db)
+            await handlers["toggle_channel"]({"pk": 1, "on_behalf_of_user": True})
+        mock_svc.return_value.toggle.assert_awaited_once_with(
+            1, origin="auto", actor="agent"
+        )
+        mock_db.repos.decisions.record.assert_awaited_once()
+        assert "without confirmation" in mock_db.repos.decisions.record.call_args.kwargs["reason"]
 
     @pytest.mark.anyio
     async def test_error_returns_text(self, mock_db):
@@ -533,6 +564,32 @@ class TestChannelReviewTools:
         assert "снят с ревью" in _text(result)
 
     @pytest.mark.anyio
+    async def test_confirmed_review_keep_records_human_decision(self, mock_db):
+        ch = _make_channel(pk=3, channel_id=303, title="KeepMe")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.repos.channels.clear_channel_review = AsyncMock()
+        mock_db.repos.decisions.record = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+
+        await handlers["review_keep_channel"](
+            {"pk": 3, "confirm": True, "on_behalf_of_user": True}
+        )
+
+        mock_db.repos.decisions.record.assert_awaited_once_with(
+            entity="channel",
+            entity_key=303,
+            entity_name="KeepMe",
+            field="needs_review",
+            old_value="0",
+            new_value="0",
+            origin="human",
+            actor="agent",
+            reason="owner-confirmed review decision",
+            commit=False,
+        )
+        mock_db.repos.channels.clear_channel_review.assert_awaited_once_with(3, commit=False)
+
+    @pytest.mark.anyio
     async def test_confirm_dead_requires_confirmation(self, mock_db):
         mock_db.get_channel_by_pk = AsyncMock(return_value=_make_channel(title="Dead"))
         handlers = _get_tool_handlers(mock_db)
@@ -547,10 +604,29 @@ class TestChannelReviewTools:
         mock_db.set_channel_type = AsyncMock()
         mock_db.repos.channels.clear_channel_review = AsyncMock()
         handlers = _get_tool_handlers(mock_db)
-        result = await handlers["confirm_channel_dead"]({"pk": 4, "confirm": True})
+        result = await handlers["confirm_channel_dead"](
+            {"pk": 4, "confirm": True, "on_behalf_of_user": True}
+        )
         mock_db.set_channel_active.assert_awaited_once_with(
             4, False, origin="human", actor="agent"
         )
         mock_db.set_channel_type.assert_awaited_once_with(444, "unavailable")
         mock_db.repos.channels.clear_channel_review.assert_awaited_once_with(4)
         assert "деактивирован" in _text(result)
+
+    @pytest.mark.anyio
+    async def test_confirm_dead_reports_suppressed_deactivation(self, mock_db):
+        ch = _make_channel(pk=4, channel_id=444, title="ProtectedDead")
+        mock_db.get_channel_by_pk = AsyncMock(return_value=ch)
+        mock_db.set_channel_active = AsyncMock(return_value=0)
+        mock_db.set_channel_type = AsyncMock()
+        mock_db.repos.channels.clear_channel_review = AsyncMock()
+        handlers = _get_tool_handlers(mock_db)
+
+        result = await handlers["confirm_channel_dead"](
+            {"pk": 4, "confirm": True}
+        )
+
+        assert "подавлена" in _text(result)
+        mock_db.set_channel_type.assert_not_awaited()
+        mock_db.repos.channels.clear_channel_review.assert_not_awaited()

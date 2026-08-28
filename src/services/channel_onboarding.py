@@ -50,6 +50,7 @@ def channel_from_resolved_info(info: dict[str, Any], meta: dict | None = None) -
         username=info.get("username"),
         channel_type=info.get("channel_type"),
         is_active=not info.get("deactivate", False),
+        filtered_origin="human" if not info.get("username") else "auto",
         about=clean_meta["about"],
         linked_chat_id=clean_meta["linked_chat_id"],
         has_comments=clean_meta["has_comments"],

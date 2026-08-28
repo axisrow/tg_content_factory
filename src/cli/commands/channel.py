@@ -649,6 +649,7 @@ async def add_bulk_impl(config_path: str, *, phone: str, dialog_ids: str) -> Non
                 username=i.get("username"),
                 channel_type=i.get("channel_type"),
                 is_active=True,
+                filtered_origin="human" if not i.get("username") else "auto",
                 created_at=i.get("created_at"),
             )
             return channel_with_meta(channel, meta)

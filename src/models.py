@@ -130,6 +130,7 @@ class Channel(BaseModel):
     channel_id: int
     title: str | None = None
     username: str | None = None
+    username_state: str = "known"
     channel_type: str | None = None  # "channel"|"supergroup"|"gigagroup"|"group"|"unavailable"
     is_active: bool = True
     active_origin: str = "auto"

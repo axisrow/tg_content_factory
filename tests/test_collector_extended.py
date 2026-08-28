@@ -353,6 +353,18 @@ async def test_handle_meta_change_review_no_change(collector, mock_db):
 
 
 @pytest.mark.anyio
+async def test_handle_meta_change_review_marks_unknown_legacy_row_known(collector, mock_db):
+    channel = Channel(
+        channel_id=777, username=None, title="Same", filter_flags="", username_state="unknown"
+    )
+    changed = await collector._handle_meta_change_review(
+        channel, None, "Same", log_prefix="Channel"
+    )
+    assert changed is False
+    mock_db.update_channel_meta.assert_called_once_with(777, username=None, title="Same")
+
+
+@pytest.mark.anyio
 async def test_handle_meta_change_review_username_only(collector, mock_db):
     channel = Channel(channel_id=777, username="old", title="Same", filter_flags="")
     changed = await collector._handle_meta_change_review(

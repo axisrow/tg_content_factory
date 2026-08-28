@@ -134,6 +134,37 @@ async def precheck_impl(config_path: str) -> None:
         await db.close()
 
 
+async def provenance_backfill_impl(config_path: str) -> None:
+    """Show private channels left filtered by the provenance migration.
+
+    Database initialization runs the idempotent backfill.  This explicit CLI
+    view gives the owner the required list for deciding which private channels
+    may be unfiltered; it intentionally performs no filter-state changes.
+    """
+    _, db = await runtime.init_db(config_path)
+    try:
+        channels = await db.get_channels(active_only=False, include_filtered=True)
+        filtered_private = [
+            ch
+            for ch in channels
+            if ch.username_state == "known" and not ch.username and ch.is_filtered
+        ]
+        if not filtered_private:
+            print("No filtered private channels require an explicit decision.")
+            return
+        print(
+            "Filtered private channels require an explicit owner decision "
+            f"({len(filtered_private)}):"
+        )
+        for channel in filtered_private:
+            print(
+                f"  {channel.channel_id}\t{channel.title or 'Без названия'} "
+                f"(pk={channel.id})"
+            )
+    finally:
+        await db.close()
+
+
 async def toggle_impl(config_path: str, *, pk: int) -> None:
     """Toggle the filter flag for a single channel."""
     _, db = await runtime.init_db(config_path)
@@ -363,6 +394,13 @@ def filter_precheck(ctx: typer.Context) -> None:
     """Apply pre-filter by subscriber ratio (no Telegram needed)."""
     apply_startup(ctx)
     run_async(precheck_impl(ctx.obj.config))
+
+
+@filter_app.command("backfill-private")
+def filter_backfill_private(ctx: typer.Context) -> None:
+    """Show filtered private channels requiring an owner decision."""
+    apply_startup(ctx)
+    run_async(provenance_backfill_impl(ctx.obj.config))
 
 
 @filter_app.command("toggle")

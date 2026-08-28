@@ -150,6 +150,14 @@ class CollectionMixin:
         if new_title != channel.title:
             meta_flags.append("title_changed")
         if not meta_flags:
+            # A repaired legacy row can still have a NULL username even after
+            # Telegram successfully resolved it as private. Record that the
+            # current metadata is trustworthy so the provenance backfill can
+            # process it on the next startup.
+            if channel.username_state == "unknown":
+                await self._db.update_channel_meta(
+                    channel.channel_id, username=new_username, title=new_title
+                )
             return False
 
         logger.warning(

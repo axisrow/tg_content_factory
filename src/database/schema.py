@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS channels (
     channel_type TEXT,
     is_filtered INTEGER DEFAULT 0,
     filtered_origin TEXT NOT NULL DEFAULT 'auto',
+    username_state TEXT NOT NULL DEFAULT 'known',
     approval_state TEXT NOT NULL DEFAULT 'approved',
     filter_flags TEXT DEFAULT '',
     about TEXT,

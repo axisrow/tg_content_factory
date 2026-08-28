@@ -603,6 +603,48 @@ def require_confirmation(action_description: str, args: dict) -> dict | None:
     )
 
 
+async def agent_decision_origin(
+    db: Database,
+    args: dict,
+    *,
+    confirmation_passed: bool,
+    entity_key: int | None,
+    entity_name: str | None,
+    field: str,
+    old_value: str | None,
+    new_value: str,
+) -> str:
+    """Resolve provenance for an agent mutation.
+
+    An agent may claim to act for the owner, but that claim is only trusted when
+    the tool's confirmation gate has also passed.  Keep the attempted claim in
+    the decision journal when the second condition is absent; otherwise a
+    provenance audit would lose precisely the suspicious case it is meant to
+    expose.
+    """
+    on_behalf_of_user = arg_bool(args, "on_behalf_of_user")
+    if on_behalf_of_user and not confirmation_passed:
+        reason = "agent requested action on behalf of owner without confirmation"
+        logger.warning(
+            "Agent claimed owner authority without confirmation: entity=%s key=%s field=%s",
+            entity_name or entity_key,
+            entity_key,
+            field,
+        )
+        await db.repos.decisions.record(
+            entity="channel",
+            entity_key=entity_key,
+            entity_name=entity_name,
+            field=field,
+            old_value=old_value,
+            new_value=new_value,
+            origin="auto",
+            actor="agent",
+            reason=reason,
+        )
+    return "human" if on_behalf_of_user and confirmation_passed else "auto"
+
+
 def require_pool(client_pool: object | None, action: str = "Эта операция") -> dict | None:
     """Return an error response if client_pool is None (CLI mode), else None."""
     if client_pool is not None:

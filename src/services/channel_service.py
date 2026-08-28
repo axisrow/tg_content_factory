@@ -99,6 +99,7 @@ class ChannelService:
                 username=dialog["username"],
                 channel_type=dialog.get("channel_type"),
                 is_active=not dialog.get("deactivate", False),
+                filtered_origin="human" if not dialog.get("username") else "auto",
                 created_at=dialog.get("created_at"),
             )
             channel = channel_with_meta(channel, meta)
@@ -161,11 +162,11 @@ class ChannelService:
         origin: str = "auto",
         actor: str | None = None,
         reason: str | None = None,
-    ) -> None:
+    ) -> int | None:
         channel = await self._channels.get_by_pk(pk)
         if not channel:
             return
-        await self._channels.set_active(
+        return await self._channels.set_active(
             pk,
             not channel.is_active,
             origin=origin,
