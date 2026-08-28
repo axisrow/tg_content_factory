@@ -97,6 +97,8 @@ nav:
   - Operators:
     - SSO Session Transfer: operators/sso-session-transfer.md
     - Scheduler: operators/scheduler.md
-  - Architecture: architecture.md
+  - Architecture:
+    - Core Architecture: architecture.md
+    - Plugin System Design: design/plugin-system.md
   - Service Map: feature-map.md
   - Parity Matrix: parity-matrix.md
