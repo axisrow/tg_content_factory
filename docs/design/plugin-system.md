@@ -41,13 +41,19 @@ def register(db, client_pool, embedding_service, **extras) -> list[tool]
 
 ```toml
 [project.entry-points."tg_agent.plugins"]
-my-digest = "tg_plugin_digest:PLUGIN"
+my_digest = "tg_plugin_digest:PLUGIN"
 ```
 
 `PLUGIN` — объект с тремя вещами: кто я, с чем совместим, что регистрирую.
 Публичный модуль — `src.plugin_api` (пакет ставится как `src*`, отдельного
-`tg_agent` пространства имён нет); он реэкспортирует `tool` и
-`text_response` из `src/agent/tools/_registry.py`.
+`tg_agent` пространства имён нет). Он реэкспортирует `text_response` из
+`src/agent/tools/_registry.py` и даёт **свой** декоратор `tool`: у
+`claude_agent_sdk.tool` нет параметров `category`/`phone_bound`, поэтому
+обёртка принимает их, создаёт `ToolMeta` (`src/agent/tools/_categories.py`)
+и вызывает SDK-декоратор.
+
+`id` плагина — только `[a-z][a-z0-9_]*`: он идёт в имена таблиц без
+экранирования, и `my-digest` превратился бы в вычитание в SQL.
 
 ```python
 from datetime import UTC, datetime, timedelta
@@ -74,7 +80,7 @@ async def shutdown() -> None:
     pass  # отменить свои фоновые задачи, если были
 
 PLUGIN = Plugin(
-    id="my-digest",          # стабильный ключ: имена таблиц, настроек, логов
+    id="my_digest",          # стабильный ключ: имена таблиц, настроек, логов
     version="0.1.0",
     requires_api=1,          # major-версия plugin_api, с которой совместим
     setup=setup,             # optional, async
@@ -98,9 +104,13 @@ PLUGIN = Plugin(
 чтобы было у кого звать `shutdown`.
 
 Инструмент обязан указать `category` — `read` / `write` / `delete`;
-без категории он не регистрируется. Категории плагинных инструментов
-добавляются в ту же таблицу, из которой `permissions.py` строит
-`TOOL_CATEGORIES` и ACL, до загрузки access policy — иначе агент их не увидит.
+без категории он не регистрируется. Инструмент, который работает с
+конкретным Telegram-аккаунтом через `ctx.client_pool`, дополнительно
+ставит `phone_bound=True` — тогда он попадает в `PHONE_BINDED_TOOLS` и
+получает тот же per-phone ACL и session gate, что встроенные. `ToolMeta`
+плагинных инструментов добавляются в ту же таблицу, из которой
+`permissions.py` строит `TOOL_CATEGORIES` и ACL, до загрузки access
+policy — иначе агент их не увидит.
 
 `PluginContext` — это те же объекты, что получают встроенные модули:
 `db`, `client_pool` (живой в воркере, snapshot в вебе, `None` в MCP без
@@ -166,7 +176,7 @@ health-протокол приёмки обновлений. Всё это — �
 
 | # | Что | ~строк |
 |---|---|---|
-| 325.1 | `src/plugin_api.py` (`Plugin`, `PluginContext`, `PluginRuntime`, `PLUGIN_API_VERSION = 1`, реэкспорт `tool` и `text_response`); discovery через entry points с проверкой `requires_api` и `plugins_disabled`; `await setup` в `build_container_with_templates` и в `_serve` MCP-сервера; `register` в `build_agent_tool_registry` после `TOOL_MODULE_ORDER`; категории плагинов в `permissions.py`; `shutdown` в `stop_container` и в `finally` `_serve`; пример `examples/plugin_digest/` (код из §3, должен реально запускаться); тест на контракт + правка golden-снапшота `TOOL_CATEGORIES` | ~250 |
+| 325.1 | `src/plugin_api.py` (`Plugin`, `PluginContext`, `PluginRuntime`, `PLUGIN_API_VERSION = 1`, обёртка `tool(category=, phone_bound=)` → `ToolMeta`, реэкспорт `text_response`, валидация `id`); discovery через entry points с проверкой `requires_api` и `plugins_disabled`; `await setup` в `build_container_with_templates` и в `_serve` MCP-сервера; `register` в `build_agent_tool_registry` после `TOOL_MODULE_ORDER`; категории плагинов в `permissions.py`; `shutdown` в `stop_container` и в `finally` `_serve`; пример `examples/plugin_digest/` (код из §3, должен реально запускаться); тест на контракт + правка golden-снапшота `TOOL_CATEGORIES` | ~250 |
 | 325.2 | Генератор CLI-команды и JSON endpoint из схемы `tool`; `plugin list` в CLI и на веб-странице настроек | ~200 |
 | 325.3 | Страница в mkdocs: как написать, поставить, обновить плагин | ~100 |
 
