@@ -42,18 +42,18 @@ async def test_channel_upsert_persists_and_preserves_human_filter_provenance(cha
     assert channel is not None
     assert channel.filtered_origin == "human"
 
-
-async def test_private_channel_insert_derives_human_filter_provenance(channels_repo):
-    pk = await channels_repo.add_channel(
-        Channel(channel_id=111, title="Private", filtered_origin="human")
+    await channels_repo.add_channel(
+        Channel(channel_id=110, title="Refreshed", filtered_origin="auto")
     )
 
     channel = await channels_repo.get_channel_by_pk(pk)
     assert channel is not None
     assert channel.filtered_origin == "human"
 
-    await channels_repo.add_channel(
-        Channel(channel_id=110, title="Refreshed", filtered_origin="auto")
+
+async def test_private_channel_insert_derives_human_filter_provenance(channels_repo):
+    pk = await channels_repo.add_channel(
+        Channel(channel_id=111, title="Private", filtered_origin="human")
     )
 
     channel = await channels_repo.get_channel_by_pk(pk)
