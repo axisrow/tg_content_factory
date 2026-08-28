@@ -29,6 +29,7 @@ SCHEMA_REPAIR_COLUMNS: Mapping[str, ColumnSpec] = {
     },
     "channels": {
         "channel_type": "channel_type TEXT",
+        "username_state": "username_state TEXT NOT NULL DEFAULT 'known'",
         "is_filtered": "is_filtered INTEGER DEFAULT 0",
         "active_origin": "active_origin TEXT NOT NULL DEFAULT 'auto'",
         "filtered_origin": "filtered_origin TEXT NOT NULL DEFAULT 'auto'",
@@ -672,16 +673,21 @@ async def _backfill_private_channel_provenance(
         return []
 
     if not username_column_known:
-        logger.warning(
-            "Skipping private channel provenance backfill: legacy channels.username "
-            "was repaired with NULL values and private/public channels cannot be distinguished"
+        unknown_cur = await db.execute(
+            "SELECT COUNT(*) FROM channels WHERE username_state = 'unknown'"
         )
-        return []
+        unknown_count = (await unknown_cur.fetchone())[0]
+        if unknown_count:
+            logger.info(
+                "Deferring private channel provenance for %d channels until "
+                "Telegram metadata resolves their usernames",
+                unknown_count,
+            )
 
     cur = await db.execute(
         "SELECT id, channel_id, title, is_filtered, filtered_origin "
         "FROM channels WHERE (username IS NULL OR username = '') "
-        "AND filtered_origin != 'human' ORDER BY id ASC"
+        "AND username_state = 'known' AND filtered_origin != 'human' ORDER BY id ASC"
     )
     rows = await cur.fetchall()
     filtered_private = [
@@ -714,6 +720,18 @@ async def _backfill_private_channel_provenance(
                 _PRIVATE_CHANNEL_PROVENANCE_REASON,
             ),
         )
+
+    unknown_cur = await db.execute(
+        "SELECT COUNT(*) FROM channels WHERE username_state = 'unknown'"
+    )
+    unknown_count = (await unknown_cur.fetchone())[0]
+    if unknown_count:
+        logger.info(
+            "Private channel provenance backfill deferred: %d channels still have "
+            "unresolved usernames",
+            unknown_count,
+        )
+        return filtered_private
 
     await db.execute(
         "INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')",
@@ -750,6 +768,7 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
 
     channels_columns_before_repair = await table_columns(db, "channels")
     username_column_known = "username" in channels_columns_before_repair
+    username_state_column_known = "username_state" in channels_columns_before_repair
     if channels_columns_before_repair and not username_column_known:
         # Keep the schema repair and its marker in the same transaction. If a
         # process is interrupted after ALTER TABLE, the next startup must not
@@ -760,7 +779,14 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
                 "CREATE TABLE IF NOT EXISTS settings "
                 "(key TEXT PRIMARY KEY, value TEXT NOT NULL)"
             )
-            await ensure_columns(db, "channels", {"username": "username TEXT"})
+            await ensure_columns(
+                db,
+                "channels",
+                {
+                    "username": "username TEXT",
+                    "username_state": "username_state TEXT NOT NULL DEFAULT 'unknown'",
+                },
+            )
             await db.execute(
                 "INSERT OR IGNORE INTO settings (key, value) VALUES (?, '1')",
                 (_CHANNEL_USERNAME_REPAIR_MARKER,),
@@ -780,7 +806,21 @@ async def run_migrations(db: aiosqlite.Connection) -> bool:
             "SELECT value FROM settings WHERE key = ? LIMIT 1",
             (_CHANNEL_USERNAME_REPAIR_MARKER,),
         )
-        username_column_known = not await repair_cur.fetchone()
+        repair_pending = await repair_cur.fetchone()
+        username_column_known = not repair_pending
+        if repair_pending and not username_state_column_known:
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                await ensure_columns(
+                    db,
+                    "channels",
+                    {"username_state": "username_state TEXT NOT NULL DEFAULT 'unknown'"},
+                )
+                await db.execute("UPDATE channels SET username_state = 'unknown'")
+                await db.execute("COMMIT")
+            except Exception:
+                await db.execute("ROLLBACK")
+                raise
     else:
         # The canonical schema below creates channels.username for a fresh DB.
         username_column_known = True

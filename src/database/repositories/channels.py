@@ -85,8 +85,9 @@ class ChannelsRepository:
         )
         cur = await self._database.execute_write(
             """INSERT INTO channels (channel_id, title, username, channel_type, is_active,
-                                     filtered_origin, about, linked_chat_id, has_comments, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                     filtered_origin, username_state, about, linked_chat_id,
+                                     has_comments, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(channel_id) DO UPDATE
                SET title=excluded.title, username=excluded.username,
                    channel_type=excluded.channel_type,
@@ -107,6 +108,7 @@ class ChannelsRepository:
                 channel.channel_type,
                 int(channel.is_active),
                 channel.filtered_origin,
+                "known",
                 channel.about,
                 channel.linked_chat_id,
                 int(channel.has_comments),
@@ -788,7 +790,8 @@ class ChannelsRepository:
             "ChannelsRepository.update_channel_meta requires a Database reference"
         )
         await self._database.execute_write(
-            "UPDATE channels SET username = ?, title = ? WHERE channel_id = ?",
+            "UPDATE channels SET username = ?, username_state = 'known', title = ? "
+            "WHERE channel_id = ?",
             (username, title, channel_id),
         )
 

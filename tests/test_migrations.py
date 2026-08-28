@@ -236,6 +236,33 @@ async def test_run_migrations_does_not_treat_repaired_username_as_private(tmp_pa
             "SELECT value FROM settings WHERE key = '_migration_private_channel_provenance_v1'"
         )
         assert await marker.fetchone() is None
+
+        # A later Telegram refresh can make individual repaired rows
+        # trustworthy; the migration must retry those rows instead of being
+        # permanently disabled by the schema-repair marker.
+        await conn.execute(
+            "UPDATE channels SET username = 'public', username_state = 'known' "
+            "WHERE channel_id = ?",
+            (987654,),
+        )
+        await conn.execute(
+            "INSERT INTO channels "
+            "(channel_id, title, username, username_state) VALUES (?, ?, ?, ?)",
+            (987655, "Private later", None, "unknown"),
+        )
+        await conn.commit()
+        await run_migrations(conn)
+
+        await conn.execute(
+            "UPDATE channels SET username_state = 'known' WHERE channel_id = ?",
+            (987655,),
+        )
+        await conn.commit()
+        await run_migrations(conn)
+        cur = await conn.execute(
+            "SELECT filtered_origin FROM channels WHERE channel_id = ?", (987655,)
+        )
+        assert (await cur.fetchone())["filtered_origin"] == "human"
     finally:
         await conn.close()
 
