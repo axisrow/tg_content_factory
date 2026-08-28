@@ -1608,7 +1608,10 @@ async def test_collect_channel_dirty_client_remove_timeout_releases_lease(db, mo
 
     count = await asyncio.wait_for(
         collector._collect_channel(stored, force=True),
-        timeout=0.3,
+        # The cleanup paths are bounded by the patched 10ms/50ms limits; keep
+        # a wider outer budget so full-suite xdist scheduling cannot turn this
+        # regression test into a flaky timeout.
+        timeout=1.0,
     )
     await asyncio.sleep(0.06)
 

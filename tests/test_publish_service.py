@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from src.models import ContentPipeline, GenerationRun, PipelinePublishMode, PipelineTarget
@@ -46,6 +48,7 @@ class FakeGenerationRunsRepo:
         # would read back.
         self._fail_after = fail_set_metadata_after
         self.set_metadata_calls = 0
+        self.release_calls = []
 
     async def set_published_at(self, run_id):
         self.published_ids.append(run_id)
@@ -54,7 +57,7 @@ class FakeGenerationRunsRepo:
         return True
 
     async def release_publish_claim(self, run_id, previous_status):
-        pass
+        self.release_calls.append((run_id, previous_status))
 
     async def refresh_publish_claim(self, run_id):
         pass
@@ -143,6 +146,126 @@ def make_pipeline(**overrides):
     }
     defaults.update(overrides)
     return ContentPipeline(**defaults)
+
+
+@pytest.mark.anyio
+async def test_publish_service_prefers_isolated_native_client_when_available():
+    class NativeOnlyPool(FakeClientPool):
+        def __init__(self):
+            super().__init__(should_succeed=True)
+            self.native_calls = 0
+            self.regular_calls = 0
+
+        async def get_native_client_by_phone(self, phone, *, wait_for_flood=False):
+            self.native_calls += 1
+            client = self._clients.setdefault(phone, FakeClient())
+            return client, phone
+
+        async def get_client_by_phone(self, phone, *, wait_for_flood=False):
+            self.regular_calls += 1
+            raise AssertionError("publishing must use the isolated client")
+
+    db = FakeDB()
+    pool = NativeOnlyPool()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is True
+    assert pool.native_calls == 1
+    assert pool.regular_calls == 0
+
+
+@pytest.mark.anyio
+async def test_publish_service_keeps_delivery_when_client_release_fails():
+    class ReleaseFailurePool(FakeClientPool):
+        def __init__(self):
+            super().__init__(should_succeed=True)
+            self.release_client = self._release_failure
+
+        async def get_native_client_by_phone(self, phone, *, wait_for_flood=False):
+            client = self._clients.setdefault(phone, FakeClient())
+            return client, phone
+
+        async def _release_failure(self, phone, *, session=None):
+            raise RuntimeError("simulated disconnect failure")
+
+    db = FakeDB()
+    pool = ReleaseFailurePool()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is True
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
+        "+1234567890:-1001234567890"
+    ]
+
+
+@pytest.mark.anyio
+async def test_publish_service_defers_release_cancellation_until_delivery_is_recorded():
+    from contextlib import suppress
+
+    class SlowReleasePool(FakeClientPool):
+        def __init__(self):
+            super().__init__(should_succeed=True)
+            self.release_started = asyncio.Event()
+            self.release_allowed = asyncio.Event()
+            self.release_client = self._slow_release
+
+        async def get_native_client_by_phone(self, phone, *, wait_for_flood=False):
+            client = self._clients.setdefault(phone, FakeClient())
+            return client, phone
+
+        async def _slow_release(self, phone, *, session=None):
+            self.release_started.set()
+            await self.release_allowed.wait()
+
+    db = FakeDB()
+    pool = SlowReleasePool()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    task = asyncio.create_task(service.publish_run(run, make_pipeline()))
+    await pool.release_started.wait()
+    task.cancel()
+    await asyncio.sleep(0)
+    pool.release_allowed.set()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
+        "+1234567890:-1001234567890"
+    ]
 
 
 @pytest.mark.anyio
@@ -841,56 +964,38 @@ async def test_publish_service_db_failure_on_second_write_bounds_loss_to_one_tar
     ]
 
 
-# === issue #1239: a send that outruns the timeout may already have reached
-# Telegram. The timeout MUST stay (clients run with connection_retries=None, so
-# a send on a dead connection would otherwise hang forever and freeze the
-# sequential publish dispatcher), but a timed-out send is UNCONFIRMED, not
-# known-failed: it is recorded in metadata.unconfirmed_targets and a retry must
-# NOT re-send it blindly (would duplicate) — it surfaces it for a manual check.
-#
-# The fake send below actually BLOCKS past the (patched-tiny) timeout so the
-# real asyncio.wait_for fires — this reproduces the true timeout-vs-delivery
-# race, not a `sleep(0)` stand-in. ===
+# === issue #1383: the irreversible send must not be wrapped in
+# asyncio.wait_for. Cancelling the local wait does not cancel an MTProto request
+# already accepted by Telegram, so a retry can otherwise publish a duplicate.
+# The fake send below completes slowly and proves that the service awaits the
+# actual delivery before recording published_targets. ===
 
 
-class _HangingSendClient(FakeClient):
-    """A client whose send blocks longer than the (patched) send timeout, so the
-    real asyncio.wait_for around the send actually fires — modelling a send that
-    is in flight to Telegram when the local wait is cancelled. It still records
-    the send (the request left the process) to mirror a possibly-delivered post.
-    """
+class _SlowSendClient(FakeClient):
+    """A client whose send completes after a short delay."""
 
     async def send_message(self, entity, text, **kwargs):
-        import asyncio
-
         await super().send_message(entity, text, **kwargs)  # record the attempt
-        await asyncio.sleep(1.0)  # outlast the patched tiny timeout → wait_for fires
+        await asyncio.sleep(0.02)
         return FakeMessage()
 
     async def send_file(self, entity, files, caption=None, schedule=None):
-        import asyncio
-
         await super().send_file(entity, files, caption=caption, schedule=schedule)
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(0.02)
         return FakeMessage()
 
 
-class _HangingSendPool(FakeClientPool):
+class _SlowSendPool(FakeClientPool):
     async def get_client_by_phone(self, phone, *, wait_for_flood=False):
         if not self._should_succeed or phone in self._fail_phones:
             return None
-        client = self._clients.setdefault(phone, _HangingSendClient())
+        client = self._clients.setdefault(phone, _SlowSendClient())
         return (client, phone)
 
 
 @pytest.mark.anyio
-async def test_publish_service_send_timeout_marks_unconfirmed_not_failed():
-    """A send that outruns SEND_TIMEOUT_SEC returns uncertain=True and is recorded
-    in unconfirmed_targets, NOT published_targets and NOT a plain failure (#1239).
-
-    The timeout fires for real (the fake send blocks past it), proving the guard
-    against a forever-hung send is intact — no vertical freeze of the dispatcher.
-    """
+async def test_publish_service_slow_send_is_recorded_as_delivered():
+    """A slow send is awaited and recorded as delivered, rather than cancelled."""
     from unittest.mock import patch
 
     import src.services.publish_service as ps
@@ -899,7 +1004,7 @@ async def test_publish_service_send_timeout_marks_unconfirmed_not_failed():
     db.repos.content_pipelines.set_targets(
         [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
     )
-    pool = _HangingSendPool(should_succeed=True)
+    pool = _SlowSendPool(should_succeed=True)
     service = PublishService(db, pool)
 
     run = GenerationRun(
@@ -910,39 +1015,30 @@ async def test_publish_service_send_timeout_marks_unconfirmed_not_failed():
         status="completed",
     )
 
-    # Tiny timeout so the blocking send trips it fast; the whole test still ends
-    # (the guard works — the send does NOT hang forever).
-    with patch.object(ps, "SEND_TIMEOUT_SEC", 0.02):
+    # The first wait expires, but the shielded send completes during the grace
+    # period and is recorded as delivered rather than cancelled.
+    with (
+        patch.object(ps, "SEND_TIMEOUT_SEC", 0.005),
+        patch.object(ps, "SEND_CONFIRMATION_GRACE_SEC", 0.05),
+    ):
         results = await service.publish_run(run, make_pipeline())
 
-    assert results[0].success is False
-    assert results[0].uncertain is True
-    assert "unconfirmed" in results[0].error.lower()
-    # Recorded as unconfirmed, NOT delivered → run is not marked published.
+    assert results[0].success is True
+    assert results[0].uncertain is False
     md = db.repos.generation_runs.metadata_by_id[1]
-    assert md["unconfirmed_targets"] == ["+1234567890:-1001234567890"]
-    assert md.get("published_targets", []) == []
-    assert 1 not in db.repos.generation_runs.published_ids
+    assert md["published_targets"] == ["+1234567890:-1001234567890"]
+    assert md.get("unconfirmed_targets", []) == []
+    assert 1 in db.repos.generation_runs.published_ids
 
 
 @pytest.mark.anyio
-async def test_publish_service_unconfirmed_target_not_resent_on_retry():
-    """The core #1239 fix: a target left UNCONFIRMED by a timed-out send is NOT
-    re-sent on retry — no duplicate post — and is surfaced for a manual check.
-
-    This is the exact production scenario: attempt 1 times out mid-send (post may
-    already be live), the run stays retry-eligible, the operator hits publish
-    again; the retry must not blindly re-send that target.
-    """
-    from unittest.mock import patch
-
-    import src.services.publish_service as ps
-
+async def test_publish_service_slow_send_not_resent_on_retry():
+    """A slow-but-completed send is not repeated on a subsequent publish."""
     db = FakeDB()
     db.repos.content_pipelines.set_targets(
         [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
     )
-    pool = _HangingSendPool(should_succeed=True)
+    pool = _SlowSendPool(should_succeed=True)
     service = PublishService(db, pool)
 
     run = GenerationRun(
@@ -953,17 +1049,14 @@ async def test_publish_service_unconfirmed_target_not_resent_on_retry():
         status="completed",
     )
 
-    # Attempt 1: the send times out → target recorded unconfirmed, one send tried.
-    with patch.object(ps, "SEND_TIMEOUT_SEC", 0.02):
-        await service.publish_run(run, make_pipeline())
+    first_results = await service.publish_run(run, make_pipeline())
+    assert first_results[0].success is True
     assert len(pool._clients["+1234567890"].sent_messages) == 1
-    assert db.repos.generation_runs.metadata_by_id[1]["unconfirmed_targets"] == [
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
         "+1234567890:-1001234567890"
     ]
 
-    # Attempt 2 (retry): reload from persisted metadata like the dispatcher does.
-    # No new timeout patch needed — the target must be skipped WITHOUT sending.
-    retry_pool = _HangingSendPool(should_succeed=True)
+    retry_pool = _SlowSendPool(should_succeed=True)
     retry_service = PublishService(db, retry_pool)
     retry_run = GenerationRun(
         id=1,
@@ -975,20 +1068,14 @@ async def test_publish_service_unconfirmed_target_not_resent_on_retry():
     )
     retry_results = await retry_service.publish_run(retry_run, make_pipeline())
 
-    # NOT re-sent — no client was even acquired for the unconfirmed target → no
-    # duplicate. It is surfaced as an unconfirmed failure for a manual check.
     assert retry_pool._clients == {}
-    assert retry_results[0].success is False
-    assert retry_results[0].uncertain is True
-    assert "manual check" in retry_results[0].error.lower()
-    # Still not marked published — a human must confirm/re-drive it.
-    assert 1 not in db.repos.generation_runs.published_ids
+    assert retry_results[0].success is True
+    assert 1 in db.repos.generation_runs.published_ids
 
 
 @pytest.mark.anyio
-async def test_publish_service_image_send_timeout_marks_unconfirmed():
-    """The image branch (publish_files) gets the same unconfirmed handling as the
-    text branch — both irreversible sends are covered (#1239, Codex review)."""
+async def test_publish_service_slow_image_send_is_recorded_as_delivered():
+    """The image send is also awaited before progress is persisted (#1383)."""
     from unittest.mock import patch
 
     import src.services.publish_service as ps
@@ -997,7 +1084,7 @@ async def test_publish_service_image_send_timeout_marks_unconfirmed():
     db.repos.content_pipelines.set_targets(
         [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
     )
-    pool = _HangingSendPool(should_succeed=True)
+    pool = _SlowSendPool(should_succeed=True)
     service = PublishService(db, pool)
 
     run = GenerationRun(
@@ -1009,17 +1096,145 @@ async def test_publish_service_image_send_timeout_marks_unconfirmed():
         status="completed",
     )
 
-    with patch.object(ps, "SEND_TIMEOUT_SEC", 0.02):
+    with (
+        patch.object(ps, "SEND_TIMEOUT_SEC", 0.005),
+        patch.object(ps, "SEND_CONFIRMATION_GRACE_SEC", 0.05),
+    ):
         results = await service.publish_run(run, make_pipeline())
+
+    assert results[0].success is True
+    assert results[0].uncertain is False
+    assert len(pool._clients["+1234567890"].sent_files) == 1
+    assert db.repos.generation_runs.metadata_by_id[1]["published_targets"] == [
+        "+1234567890:-1001234567890"
+    ]
+    assert 1 in db.repos.generation_runs.published_ids
+
+
+class _StalledSendClient(FakeClient):
+    def __init__(self):
+        super().__init__()
+        self.cancelled = False
+
+    async def send_message(self, entity, text, **kwargs):
+        await super().send_message(entity, text, **kwargs)
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+
+
+class _StalledSendPool(FakeClientPool):
+    async def get_client_by_phone(self, phone, *, wait_for_flood=False):
+        if not self._should_succeed or phone in self._fail_phones:
+            return None
+        client = self._clients.setdefault(phone, _StalledSendClient())
+        return (client, phone)
+
+
+@pytest.mark.anyio
+async def test_publish_service_stalled_send_is_bounded_and_unconfirmed():
+    """A send that never completes cannot strand the sequential dispatcher."""
+    from unittest.mock import patch
+
+    import src.services.publish_service as ps
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = _StalledSendPool(should_succeed=True)
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    with (
+        patch.object(ps, "SEND_TIMEOUT_SEC", 0.005),
+        patch.object(ps, "SEND_CONFIRMATION_GRACE_SEC", 0.005),
+    ):
+        results = await asyncio.wait_for(service.publish_run(run, make_pipeline()), timeout=0.1)
 
     assert results[0].success is False
     assert results[0].uncertain is True
-    # The image send (send_file) was attempted, then recorded unconfirmed.
-    assert len(pool._clients["+1234567890"].sent_files) == 1
+    assert db.repos.generation_runs.metadata_by_id[1]["unconfirmed_targets"] == [
+        "+1234567890:-1001234567890"
+    ]
+    assert pool._clients["+1234567890"].cancelled is True
+    assert 1 not in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
+async def test_publish_service_cancelled_send_is_persisted_unconfirmed():
+    """Cancellation during a send must preserve retry-safe uncertainty."""
+    from contextlib import suppress
+    from unittest.mock import patch
+
+    import src.services.publish_service as ps
+
+    db = FakeDB()
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = _StalledSendPool(should_succeed=True)
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    with patch.object(ps, "SEND_TIMEOUT_SEC", 30.0):
+        task = asyncio.create_task(service.publish_run(run, make_pipeline()))
+        while not pool._clients:
+            await asyncio.sleep(0)
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
     assert db.repos.generation_runs.metadata_by_id[1]["unconfirmed_targets"] == [
         "+1234567890:-1001234567890"
     ]
     assert 1 not in db.repos.generation_runs.published_ids
+
+
+@pytest.mark.anyio
+async def test_publish_service_cancelled_send_persistence_failure_holds_claim():
+    """If uncertainty cannot be persisted, the run stays fail-closed."""
+    from unittest.mock import patch
+
+    import src.services.publish_service as ps
+
+    db = FakeDB(fail_set_metadata_after=0)
+    db.repos.content_pipelines.set_targets(
+        [PipelineTarget(id=1, pipeline_id=1, phone="+1234567890", dialog_id=-1001234567890)]
+    )
+    pool = _StalledSendPool(should_succeed=True)
+    service = PublishService(db, pool)
+    run = GenerationRun(
+        id=1,
+        pipeline_id=1,
+        generated_text="Test content",
+        moderation_status="approved",
+        status="completed",
+    )
+
+    with patch.object(ps, "SEND_TIMEOUT_SEC", 30.0):
+        task = asyncio.create_task(service.publish_run(run, make_pipeline()))
+        while not pool._clients:
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(ps._PublishUncertaintyPersistenceError):
+            await task
+
+    assert db.repos.generation_runs.release_calls == []
 
 
 @pytest.mark.anyio
