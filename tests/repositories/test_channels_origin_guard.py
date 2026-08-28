@@ -51,6 +51,21 @@ async def test_channel_upsert_persists_and_preserves_human_filter_provenance(cha
     assert channel.filtered_origin == "human"
 
 
+async def test_channel_upsert_marks_resolved_legacy_username_known(channels_repo):
+    pk = await channels_repo.add_channel(
+        Channel(channel_id=112, title="Legacy", username=None, username_state="unknown")
+    )
+
+    await channels_repo.add_channel(
+        Channel(channel_id=112, title="Resolved", username="public_name")
+    )
+
+    channel = await channels_repo.get_channel_by_pk(pk)
+    assert channel is not None
+    assert channel.username == "public_name"
+    assert channel.username_state == "known"
+
+
 async def test_private_channel_insert_derives_human_filter_provenance(channels_repo):
     pk = await channels_repo.add_channel(
         Channel(channel_id=111, title="Private", filtered_origin="human")

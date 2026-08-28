@@ -96,6 +96,7 @@ class ChannelsRepository:
                    filtered_origin=CASE WHEN channels.filtered_origin = 'human'
                                        OR excluded.filtered_origin = 'human'
                                        THEN 'human' ELSE excluded.filtered_origin END,
+                   username_state=excluded.username_state,
                    about=COALESCE(excluded.about, channels.about),
                    linked_chat_id=COALESCE(excluded.linked_chat_id, channels.linked_chat_id),
                    has_comments=CASE WHEN COALESCE(excluded.linked_chat_id, channels.linked_chat_id)

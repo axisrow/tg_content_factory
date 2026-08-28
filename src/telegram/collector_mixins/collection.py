@@ -154,9 +154,10 @@ class CollectionMixin:
             # Telegram successfully resolved it as private. Record that the
             # current metadata is trustworthy so the provenance backfill can
             # process it on the next startup.
-            await self._db.update_channel_meta(
-                channel.channel_id, username=new_username, title=new_title
-            )
+            if channel.username_state == "unknown":
+                await self._db.update_channel_meta(
+                    channel.channel_id, username=new_username, title=new_title
+                )
             return False
 
         logger.warning(
