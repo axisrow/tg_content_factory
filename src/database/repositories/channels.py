@@ -125,6 +125,7 @@ class ChannelsRepository:
             channel_id=row["channel_id"],
             title=row["title"],
             username=row["username"],
+            username_state=row["username_state"] if "username_state" in keys else "known",
             channel_type=row["channel_type"],
             is_active=bool(row["is_active"]),
             active_origin=row["active_origin"] if "active_origin" in keys else "auto",

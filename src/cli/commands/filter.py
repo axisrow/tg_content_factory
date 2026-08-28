@@ -144,7 +144,11 @@ async def provenance_backfill_impl(config_path: str) -> None:
     _, db = await runtime.init_db(config_path)
     try:
         channels = await db.get_channels(active_only=False, include_filtered=True)
-        filtered_private = [ch for ch in channels if not ch.username and ch.is_filtered]
+        filtered_private = [
+            ch
+            for ch in channels
+            if ch.username_state == "known" and not ch.username and ch.is_filtered
+        ]
         if not filtered_private:
             print("No filtered private channels require an explicit decision.")
             return

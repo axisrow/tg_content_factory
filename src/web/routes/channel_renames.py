@@ -88,14 +88,33 @@ async def rename_event_filter(request: Request, event_id: int):
             url="/channels/renames?msg=rename_already_decided", status_code=303
         )
     required_flags = _rename_required_flags(event)
-    await db.ensure_channel_filtered(
-        event["channel_id"],
-        required_flags,
-        origin="human",
-        actor="web",
-        reason="rename review: keep filtered",
-    )
-    await db.decide_rename_event(event_id, "filter")
+    channel = await db.get_channel_by_channel_id(event["channel_id"])
+    try:
+        async with db.transaction():
+            if channel is not None:
+                existing_flags = {
+                    f.strip()
+                    for f in (channel.filter_flags or "").split(",")
+                    if f.strip()
+                }
+                await db.repos.channels.set_filtered_bulk(
+                    [
+                        (
+                            event["channel_id"],
+                            ",".join(sorted(existing_flags | required_flags)),
+                        )
+                    ],
+                    origin="human",
+                    actor="web",
+                    reason="rename review: keep filtered",
+                    commit=False,
+                )
+            if await db.decide_rename_event(event_id, "filter", commit=False) == 0:
+                raise _RenameAlreadyDecidedError
+    except _RenameAlreadyDecidedError:
+        return RedirectResponse(
+            url="/channels/renames?msg=rename_already_decided", status_code=303
+        )
     return RedirectResponse(url="/channels/renames?msg=rename_filtered", status_code=303)
 
 
