@@ -1625,3 +1625,48 @@ async def test_sweep_ends_partial_when_the_gate_refuses_the_next_pass(db):
     assert mock_client.iter_dialogs.call_count == 1
     cached = await db.repos.dialog_cache.list_dialogs("+1234567890")
     assert [row["channel_id"] for row in cached] == [-1001]
+
+
+@pytest.mark.anyio
+async def test_completed_sweep_leaves_a_fresh_snapshot(db):
+    """A sweep that finishes must leave the cache readable as fresh (#1359).
+
+    The chunk flushes run on the success path too — they accumulate long before
+    anyone knows the sweep will finish. Each one ages the WHOLE phone on
+    purpose, so an incomplete snapshot can never read as current. The success
+    path then rewrites everything with replace_dialogs and a current timestamp.
+
+    But the ``finally`` flush fires on the success path as well, and the tail
+    left in ``pending`` (whatever did not fill the last chunk) went through
+    upsert_dialogs AFTER replace_dialogs had already stamped the snapshot —
+    re-ageing all of it to the epoch. A completed full sweep therefore marked
+    itself stale, and the very next read re-fetched every dialog from Telegram:
+    observed live as 2367 dialogs all sitting at 1970-01-01.
+    """
+    from src.telegram.client_pool import ClientPool
+    from src.telegram.pool_dialogs import DIALOG_FETCH_UPSERT_CHUNK
+
+    phone = "+1234567890"
+    pool = _sweep_pool(db, phone)
+    # More than one chunk, and deliberately NOT a multiple of the chunk size:
+    # the remainder is what the finally-flush picks up.
+    total = DIALOG_FETCH_UPSERT_CHUNK + 7
+    dialogs = [
+        _make_channel_dialog(-(1000 + i), title=f"Chan {i}", message_id=i + 1)
+        for i in range(total)
+    ]
+
+    mock_client = MagicMock()
+    mock_client.iter_dialogs.return_value = _dialog_stream(dialogs)
+    pool.get_client_by_phone = AsyncMock(return_value=(mock_client, phone))
+
+    result = await ClientPool._fetch_dialogs_for_phone(pool, phone, True, "full", "full")
+
+    assert result.partial is False, "the sweep drained without interruption"
+    assert len(result) == total
+
+    cached_at = await db.repos.dialog_cache.get_cached_at(phone)
+    age_sec = (datetime.now(timezone.utc) - cached_at).total_seconds()
+    assert age_sec < 3600, (
+        f"a completed sweep left the snapshot looking stale: cached_at={cached_at}"
+    )
