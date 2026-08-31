@@ -26,6 +26,7 @@ classifiers = [
 ]
 dependencies = [
     "telethon>=1.43.2",
+    "telethon-floodgate>=0.1.0,<0.2",
     "telethon-cli>=0.1.1",
     # Live dialog history reads (`dialogs read` / GET /dialogs/history, #1234
     # follow-up) reuse tg_messenger's StandaloneTelegramClient.history() for its

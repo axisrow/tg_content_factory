@@ -2162,7 +2162,7 @@ async def test_collect_channel_waits_when_all_clients_transient_flooded(db, monk
     async def fake_sleep(seconds):
         sleeps.append(seconds)
 
-    monkeypatch.setattr("src.telegram.flood_wait.asyncio.sleep", fake_sleep)
+    monkeypatch.setattr("telethon_floodgate.flood_wait.asyncio.sleep", fake_sleep)
 
     client1 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
     client2 = FakeTelethonClient(entity_resolver=lambda _arg: SimpleNamespace())
