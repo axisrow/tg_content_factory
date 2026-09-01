@@ -7,6 +7,7 @@ from telethon_floodgate.rate_limit_gate import (
     DIALOG_PAGE_MAX_CALLS,
     DIALOG_SWEEP_MAX_CALLS,
     RateLimitSpec,
+    TelegramPeerRateLimitedError,
     TelegramRateLimitedError,
     TelegramRateLimitGate,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "DIALOG_PAGE_MAX_CALLS",
     "DIALOG_SWEEP_MAX_CALLS",
     "RateLimitSpec",
-    "TelegramRateLimitGate",
+    "TelegramPeerRateLimitedError",
     "TelegramRateLimitedError",
+    "TelegramRateLimitGate",
 ]
